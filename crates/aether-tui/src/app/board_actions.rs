@@ -60,6 +60,7 @@ impl App {
                     command: Command::Resume {
                         agent: id,
                         subtree: true,
+                        idempotency_key: None,
                     },
                     then: Then::Resumed(id),
                 }];
@@ -67,12 +68,16 @@ impl App {
             'P' => Command::Pause {
                 agent: id,
                 subtree: true,
+                idempotency_key: None,
             },
             'I' if agent.status.kind() != AgentStatusKind::Running => {
                 self.flash("agent has no turn running");
                 return Vec::new();
             }
-            'I' => Command::Interrupt { agent: id },
+            'I' => Command::Interrupt {
+                agent: id,
+                idempotency_key: None,
+            },
             _ => return Vec::new(),
         };
         vec![Effect::Request {
@@ -158,6 +163,7 @@ impl App {
             command: Command::Archive {
                 target: ArchiveTarget::Agent(id),
                 archived,
+                idempotency_key: None,
             },
             then: Then::BoardArchived {
                 agent: id,

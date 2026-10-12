@@ -48,7 +48,9 @@ use tokio_util::sync::CancellationToken;
 
 pub use approval::{Gate, Remember};
 pub use bus::{BusMessage, DeltaKind, EventBus};
-pub use commands::{AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus};
+pub use commands::{
+    AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, pending_question,
+};
 pub use retention::HistorySweep;
 
 #[derive(Debug, thiserror::Error)]
@@ -451,6 +453,14 @@ impl Runtime {
 
     pub fn store(&self) -> &Arc<dyn Store> {
         &self.store
+    }
+
+    /// Read the store while no commit is being built, passing the log position
+    /// `read` sees. Keep `read` short; every writer waits for it.
+    pub fn read_at_rest<T>(&self, read: impl FnOnce(&dyn Store, u64) -> Result<T>) -> Result<T> {
+        let _hold = self.hold();
+        let last_seq = self.store.last_seq()?;
+        read(self.store.as_ref(), last_seq)
     }
 
     pub fn models(&self) -> &Arc<Models> {

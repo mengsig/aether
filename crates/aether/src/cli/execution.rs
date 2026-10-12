@@ -8,12 +8,14 @@ use anyhow::{anyhow, bail};
 use std::io::Write as _;
 
 pub async fn run(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     explicit_socket: bool,
     options: RunOptions,
 ) -> anyhow::Result<i32> {
+    let socket = socket.into();
     let command = super::command_hint(&socket, explicit_socket);
     let RunOptions {
+        workspace,
         objective,
         model,
         role,
@@ -30,14 +32,23 @@ pub async fn run(
     let _guard = crate::logging::init("aether.log", false)?;
     // A broken ui.toml must not stop `run`: say so and fall back to the
     // daemon's own defaults, same as the TUI (`cli::tui` above).
-    let prefs = match UiPrefs::load(&aether_tui::prefs::dir()) {
+    anyhow::ensure!(
+        !socket.is_remote() || workspace.is_some(),
+        "remote run requires --workspace /path/on/host; choose a host workspace in the TUI with /workspace"
+    );
+    let mut client = connect_or_start(&socket).await?;
+    let instance = client
+        .welcome()
+        .map(|w| w.instance_id.as_str())
+        .unwrap_or("unknown");
+    let prefs_dir = aether_tui::prefs::session_dir(&socket, instance, &aether_tui::prefs::dir());
+    let prefs = match aether_tui::prefs::UiPrefs::load(&prefs_dir) {
         Ok(prefs) => prefs,
         Err(e) => {
             eprintln!("ignoring bad preferences: {}", super::sane(&e.to_string()));
             UiPrefs::default()
         }
     };
-    let client = connect_or_start(&socket).await?;
     let chain = match model {
         Some(m) => Some(
             ModelChain::parse(&m)
@@ -61,6 +72,7 @@ pub async fn run(
         Some(false) => NetworkPolicy::Denied,
         None => client.status().await?.network_default,
     };
+    let scope = run_scope(&client, &socket, workspace, backend, network).await?;
     // Capture the cursor before creation so a fast outcome can be replayed.
     let initial = client.subscribe(None, EventQuery::default(), false).await?;
     let mut last_seq = initial.last_seq();
@@ -70,7 +82,7 @@ pub async fn run(
             objective: Some(objective),
             model: chain.as_ref().map(|c| c.primary.clone()),
             fallbacks: chain.map(|c| c.fallbacks).unwrap_or_default(),
-            scope: Some(here(backend, network)?),
+            scope: Some(scope),
             config: effort.map(|effort| AgentConfig {
                 effort: Some(effort),
                 ..Default::default()
@@ -85,7 +97,7 @@ pub async fn run(
             ..Default::default()
         })
         .await?;
-    drop(initial);
+    initial.unsubscribe().await?;
     let query = EventQuery {
         agent: Some(agent.id),
         ..Default::default()
@@ -102,7 +114,29 @@ pub async fn run(
     let mut out = std::io::stdout();
     let mut streaming = false;
     let mut outcome = None;
-    while let Some(frame) = sub.next().await {
+    loop {
+        let next = if socket.is_remote() {
+            tokio::select! { _ = tokio::signal::ctrl_c() => bail!("remote run monitoring interrupted; the agent remains on the host"), next = sub.next() => next }
+        } else {
+            sub.next().await
+        };
+        let frame = match next {
+            Some(frame) => frame,
+            None if socket.is_remote() => {
+                finish_stream(&mut out, &mut streaming)?;
+                let (connected, subscribed, snapshot) =
+                    reconnect_run(&socket, &client, &query, last_seq).await?;
+                client = connected;
+                sub = subscribed;
+                last_seq = sub.last_seq();
+                if snapshot.is_some() {
+                    outcome = snapshot;
+                    break;
+                }
+                continue;
+            }
+            None => break,
+        };
         if let SubscriptionFrame::Event(event) = &frame {
             last_seq = event.seq;
         }
@@ -216,6 +250,7 @@ pub async fn run(
     finish_stream(&mut out, &mut streaming)?;
     let outcome =
         outcome.ok_or_else(|| anyhow!("run subscription ended before an outcome arrived"))?;
+    sub.unsubscribe().await?;
     tracing::debug!(agent = %agent.id, "run finished; fetching final usage");
     let final_agent = client.get_agent(agent.id).await?;
     tracing::debug!("final usage fetched");
@@ -276,4 +311,75 @@ fn finish_stream(out: &mut impl std::io::Write, streaming: &mut bool) -> std::io
 
 fn agent_is_idle(condition: &aether_core::agent::WaitCondition) -> bool {
     matches!(condition, aether_core::agent::WaitCondition::Inbox)
+}
+
+async fn run_scope(
+    client: &aether_client::Client,
+    endpoint: &aether_client::Endpoint,
+    workspace: Option<PathBuf>,
+    backend: aether_core::agent::ExecutionBackend,
+    network: NetworkPolicy,
+) -> anyhow::Result<aether_core::agent::Scope> {
+    let Some(path) = workspace else {
+        return here(backend, network);
+    };
+    let path = if endpoint.is_remote() {
+        match client
+            .request(aether_protocol::Command::ValidateWorkspace {
+                path: path
+                    .to_str()
+                    .ok_or_else(|| anyhow!("workspace must be UTF-8"))?
+                    .into(),
+            })
+            .await?
+        {
+            aether_protocol::Reply::WorkspaceValidation(validation) => {
+                anyhow::ensure!(
+                    validation.valid,
+                    "{}",
+                    validation
+                        .reason
+                        .as_deref()
+                        .unwrap_or("invalid host workspace")
+                );
+                let canonical = validation
+                    .path
+                    .ok_or_else(|| anyhow!("host returned no canonical workspace"))?;
+                anyhow::ensure!(canonical.is_absolute(), "host workspace is not absolute");
+                canonical
+            }
+            other => bail!("expected host workspace validation, got {other:?}"),
+        }
+    } else {
+        std::fs::canonicalize(path)?
+    };
+    Ok(aether_core::agent::Scope {
+        workspace_root: Some(path),
+        backend,
+        network,
+        ..Default::default()
+    })
+}
+
+#[path = "run_reconnect.rs"]
+mod run_reconnect;
+use run_reconnect::reconnect_run;
+
+async fn recovered_run_outcome(
+    client: &aether_client::Client,
+    query: &EventQuery,
+) -> anyhow::Result<Option<&'static str>> {
+    let agent = query
+        .agent
+        .ok_or_else(|| anyhow!("run reconnect has no agent"))?;
+    let status = client.get_agent(agent).await?.status;
+    Ok(match status {
+        aether_core::agent::AgentStatus::Completed { .. } => Some("completed"),
+        aether_core::agent::AgentStatus::Failed { .. } => Some("failed"),
+        aether_core::agent::AgentStatus::Cancelled { .. } => Some("cancelled"),
+        aether_core::agent::AgentStatus::Waiting { ref condition } if agent_is_idle(condition) => {
+            Some("waiting")
+        }
+        _ => None,
+    })
 }

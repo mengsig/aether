@@ -1,11 +1,13 @@
 //! One client connection: handshake, request dispatch, subscriptions.
 
 use crate::Daemon;
+use crate::authz::{self, AuthContext};
 use crate::listen::ConnectionPolicy;
-use aether_core::event::{Actor, OperatorOrigin};
+use aether_core::event::Actor;
 use aether_protocol::{
     ClientFrame, Command, ErrorCode, ErrorReply, Reply, ServerFrame, Welcome, compat, features,
 };
+use aether_remote::Ended;
 use aether_runtime::RuntimeError;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,18 +15,25 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
-use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
+use tokio_util::codec::{FramedRead, LinesCodec};
 use tokio_util::sync::CancellationToken;
 
-use futures::{SinkExt as _, StreamExt as _};
+use futures::StreamExt as _;
 
 mod dispatch;
+mod host_services;
 mod providers;
+mod push;
+mod remote_admin;
+mod resolution;
 mod subscription;
+mod writer;
 #[cfg(test)]
 use dispatch::dispatch;
 use dispatch::dispatch_version;
 use subscription::{SubscriptionControl, spawn_subscription};
+
+const MAX_SUBSCRIPTIONS: usize = 16;
 
 const MAX_LINE: usize = 64 * 1024 * 1024;
 const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
@@ -107,16 +116,15 @@ pub(crate) async fn serve<S>(
     peer: Option<std::net::SocketAddr>,
     mut gate: Option<Gate>,
     shutdown: CancellationToken,
-) -> anyhow::Result<()>
+) -> anyhow::Result<Ended>
 where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     // Read and write are framed separately so the read side's line cap can be
     // raised once the peer is authorized, without disturbing the writer.
     let (read, write) = tokio::io::split(stream);
-    let mut sink = FramedWrite::new(write, LinesCodec::new_with_max_length(MAX_LINE));
     let mut lines = FramedRead::new(read, LinesCodec::new_with_max_length(PRE_AUTH_MAX_LINE));
-    let (out_tx, mut out_rx) = mpsc::channel::<ServerFrame>(1024);
+    let (out_tx, out_rx) = mpsc::channel::<ServerFrame>(1024);
     let (replay_failure_tx, mut replay_failure_rx) = mpsc::channel::<ErrorReply>(1);
 
     // The version this connection speaks. The writer starts before the
@@ -124,56 +132,33 @@ where
     // welcome is queued, and nothing before the welcome needs translating.
     let version = Arc::new(AtomicU32::new(aether_protocol::PROTOCOL_VERSION));
 
-    // One writer serializes every frame for this connection. A reply
-    // that cannot be encoded still gets answered, as an error, so the client
-    // never waits on a dropped frame.
-    let writing_version = version.clone();
-    let writer = async move {
-        while let Some(frame) = out_rx.recv().await {
-            let speaking = writing_version.load(Ordering::SeqCst);
-            let line = match compat::encode_for(speaking, &frame) {
-                Ok(line) => line,
-                Err(e) => {
-                    tracing::error!(error = %e, "could not encode frame");
-                    let ServerFrame::Reply { id, .. } = frame else {
-                        continue;
-                    };
-                    let fallback = ServerFrame::Reply {
-                        id,
-                        result: Err(ErrorReply::internal(format!("could not encode reply: {e}"))),
-                    };
-                    match compat::encode_for(speaking, &fallback) {
-                        Ok(line) => line,
-                        Err(_) => continue,
-                    }
-                }
-            };
-            if sink.send(line.trim_end().to_owned()).await.is_err() {
-                break;
-            }
-        }
-    };
+    let (auth_tx, auth_rx) = tokio::sync::watch::channel::<Option<AuthContext>>(None);
+    let writer = writer::run(write, out_rx, version.clone(), auth_rx);
     tokio::pin!(writer);
 
     let connection_cancel = shutdown.child_token();
     let _cancel_on_drop = connection_cancel.clone().drop_guard();
-    let mut subscriptions: HashMap<u64, CancellationToken> = HashMap::new();
+    let mut subscriptions: HashMap<u64, (CancellationToken, tokio::task::JoinHandle<()>)> =
+        HashMap::new();
     let mut next_sub: u64 = 1;
-    let mut greeted = false;
+    // Set when the hello is accepted: who this connection is from then on.
+    let mut standing: Option<(AuthContext, Actor)> = None;
+    let mut ended = Ended::Closed;
     let connection = ulid::Ulid::generate().to_string();
-    let origin = match peer {
-        Some(peer) => OperatorOrigin::Tcp { peer, connection },
-        None => OperatorOrigin::LocalSocket { connection },
-    };
-    let operator = Actor::connected_user(origin);
 
     let writer_finished = {
         let reading = async {
+            // A carrier connection is challenged before it may greet.
+            if let Some(challenge) = challenge_frame(&daemon, &policy)
+                && !send_frame(&out_tx, challenge, &connection_cancel).await
+            {
+                return;
+            }
             loop {
                 // An un-greeted peer is on the short handshake deadline, whatever the
                 // idle timeout is: until it presents a token it is holding a slot on
                 // no authority at all.
-                let limit = if greeted {
+                let limit = if standing.is_some() {
                     policy.idle_timeout
                 } else {
                     Some(policy.handshake_timeout)
@@ -185,14 +170,30 @@ where
                     }
                 };
                 let line = tokio::select! {
+                    biased;
+                    _ = revoked(standing.as_ref()) => {
+                        ended = Ended::Revoked;
+                        break
+                    },
+                    _ = connection_cancel.cancelled() => {
+                        if shutdown.is_cancelled() {
+                            ended = Ended::ShuttingDown;
+                        }
+                        break
+                    },
+                    Some(error) = replay_failure_rx.recv() => {
+                        let _ = send_frame(&out_tx, ServerFrame::Reply { id: 0, result: Err(error) }, &connection_cancel).await;
+                        break;
+                    },
                     l = next => match l {
                         Ok(Some(Ok(l))) => l,
                         Ok(Some(Err(e))) => { tracing::debug!(error = %e, "read failed"); break }
                         Ok(None) => break,
                         Err(_) => {
+                            ended = Ended::TimedOut;
                             // A peer that never greeted is owed no explanation, and
                             // giving one would be answering a request it never made.
-                            if !greeted {
+                            if standing.is_none() {
                                 tracing::debug!("closed a connection that did not greet in time");
                                 break;
                             }
@@ -204,11 +205,6 @@ where
                             ))}, &connection_cancel).await;
                             break
                         }
-                    },
-                    _ = connection_cancel.cancelled() => break,
-                    Some(error) = replay_failure_rx.recv() => {
-                        let _ = send_frame(&out_tx, ServerFrame::Reply { id: 0, result: Err(error) }, &connection_cancel).await;
-                        break;
                     },
                 };
                 let (id, decoded) = match parse_frame(&line) {
@@ -241,13 +237,13 @@ where
                         // Before the hello, a line that does not decode is not a
                         // client making a mistake: it is a peer holding a slot and
                         // refreshing the deadline without ever authorizing.
-                        if !greeted {
+                        if standing.is_none() {
                             break;
                         }
                         continue;
                     }
                 };
-                if !greeted {
+                let Some((auth, operator)) = standing.as_ref() else {
                     let result = match &frame.command {
                         Command::Hello(hello) => match compat::negotiate(hello) {
                             Err(refusal) => Err(refusal),
@@ -259,12 +255,12 @@ where
                             // cannot decode.
                             Ok(speaking) => {
                                 version.store(speaking, Ordering::SeqCst);
-                                match policy.authorize(hello) {
+                                match policy.admit(hello) {
                                     Err(refusal) => {
                                         tokio::time::sleep(policy.refusal_delay()).await;
                                         Err(refusal)
                                     }
-                                    Ok(()) => {
+                                    Ok(context) => {
                                         // Authorized: the full frame size, and the
                                         // slot this connection holds from here on.
                                         // `LinesCodec` fixes its cap at
@@ -291,7 +287,10 @@ where
                                          time",
                                             ))
                                         } else {
-                                            greeted = true;
+                                            let device = context.device().cloned();
+                                            let actor = context.actor(peer, connection.clone());
+                                            auth_tx.send_replace(Some(context.clone()));
+                                            standing = Some((context, actor));
                                             Ok(Reply::Welcome(Welcome {
                                                 protocol_version: speaking,
                                                 daemon_version: daemon.version.clone(),
@@ -312,6 +311,10 @@ where
                                                 idle_timeout_secs: policy
                                                     .idle_timeout
                                                     .map(|limit| limit.as_secs()),
+                                                device,
+                                                submission_horizon: resolution::greeting_horizon(
+                                                    &daemon, speaking,
+                                                ),
                                             }))
                                         }
                                     }
@@ -324,6 +327,9 @@ where
                         )),
                     };
                     let ok = result.is_ok();
+                    if matches!(&result, Err(refusal) if refusal.code == ErrorCode::Unauthorized) {
+                        ended = Ended::Refused;
+                    }
                     let _ = send_frame(
                         &out_tx,
                         ServerFrame::Reply { id, result },
@@ -334,10 +340,35 @@ where
                         break;
                     }
                     continue;
+                };
+                // Before any branch below: subscriptions and shutdown never
+                // reach dispatch, so a check there would not cover them.
+                let allowed = auth
+                    .authorize(&frame.command)
+                    .and_then(|()| authz::guard(&daemon, auth, &frame.command));
+                if let Err(refusal) = allowed {
+                    let refused = ServerFrame::Reply {
+                        id,
+                        result: Err(refusal),
+                    };
+                    if !send_frame(&out_tx, refused, &connection_cancel).await {
+                        break;
+                    }
+                    continue;
+                }
+                if let Err(error) = reap_subscriptions(&mut subscriptions).await {
+                    tracing::error!(%error, "subscription task failed; closing its connection");
+                    break;
                 }
                 let result = match frame.command {
                     Command::Subscribe { ref query, .. } if query.before.is_some() => {
                         Err(ErrorReply::invalid("before is only supported by GetEvents"))
+                    }
+                    Command::Subscribe { .. } if subscriptions.len() >= MAX_SUBSCRIPTIONS => {
+                        Err(ErrorReply::new(
+                            ErrorCode::Unavailable,
+                            "connection subscription limit reached (16); unsubscribe before opening another",
+                        ))
                     }
                     Command::Subscribe {
                         after,
@@ -347,8 +378,7 @@ where
                         let sub = next_sub;
                         next_sub += 1;
                         let cancel = connection_cancel.child_token();
-                        subscriptions.insert(sub, cancel.clone());
-                        let last_seq = match spawn_subscription(
+                        let (last_seq, task) = match spawn_subscription(
                             daemon.clone(),
                             out_tx.clone(),
                             sub,
@@ -356,13 +386,13 @@ where
                             query.into(),
                             deltas,
                             SubscriptionControl {
-                                cancel,
+                                cancel: cancel.clone(),
                                 failure: replay_failure_tx.clone(),
+                                auth: auth.clone(),
                             },
                         ) {
                             Ok(seq) => seq,
                             Err(e) => {
-                                subscriptions.remove(&sub);
                                 let _ = send_frame(
                                     &out_tx,
                                     ServerFrame::Reply {
@@ -375,11 +405,20 @@ where
                                 continue;
                             }
                         };
+                        assert!(
+                            subscriptions.insert(sub, (cancel, task)).is_none(),
+                            "subscription ids are unique"
+                        );
+                        debug_assert!(subscriptions.len() <= MAX_SUBSCRIPTIONS);
                         Ok(Reply::Subscribed { id: sub, last_seq })
                     }
                     Command::Unsubscribe { id: sub } => {
-                        if let Some(c) = subscriptions.remove(&sub) {
-                            c.cancel();
+                        if let Some((cancel, task)) = subscriptions.remove(&sub) {
+                            cancel.cancel();
+                            if let Err(error) = task.await {
+                                tracing::error!(%error, "unsubscribed task failed");
+                                break;
+                            }
                         }
                         Ok(Reply::Ok)
                     }
@@ -396,15 +435,7 @@ where
                         shutdown.cancel();
                         break;
                     }
-                    other => {
-                        dispatch_version(
-                            &daemon,
-                            other,
-                            operator.clone(),
-                            version.load(Ordering::SeqCst),
-                        )
-                        .await
-                    }
+                    other => dispatch_version(&daemon, other, operator.clone(), auth).await,
                 };
                 if !send_frame(
                     &out_tx,
@@ -428,8 +459,11 @@ where
             },
         }
     };
-    for (_, c) in subscriptions {
-        c.cancel();
+    for (_, (cancel, task)) in subscriptions {
+        cancel.cancel();
+        if let Err(error) = task.await {
+            tracing::error!(%error, "subscription cleanup failed");
+        }
     }
     drop(out_tx);
     if !writer_finished
@@ -439,7 +473,51 @@ where
     {
         tracing::debug!("closed a connection whose writer did not drain in time");
     }
+    Ok(ended)
+}
+
+async fn reap_subscriptions(
+    subscriptions: &mut HashMap<u64, (CancellationToken, tokio::task::JoinHandle<()>)>,
+) -> Result<(), tokio::task::JoinError> {
+    debug_assert!(subscriptions.len() <= MAX_SUBSCRIPTIONS);
+    let finished: Vec<_> = subscriptions
+        .iter()
+        .filter_map(|(&id, (_, task))| task.is_finished().then_some(id))
+        .collect();
+    for id in finished {
+        let Some((_, task)) = subscriptions.remove(&id) else {
+            unreachable!("completed subscription ids came from this map");
+        };
+        assert!(
+            task.is_finished(),
+            "only completed tasks release their accounting"
+        );
+        task.await?;
+    }
     Ok(())
+}
+
+/// The frame a carrier connection is sent before it may greet.
+fn challenge_frame(daemon: &Daemon, policy: &ConnectionPolicy) -> Option<ServerFrame> {
+    let challenge = &policy.device.as_ref()?.challenge;
+    debug_assert_eq!(
+        challenge.instance_id, daemon.instance_id,
+        "a challenge names the daemon that issued it"
+    );
+    debug_assert!(!challenge.nonce.is_empty(), "a challenge carries a nonce");
+    Some(ServerFrame::Challenge {
+        nonce: challenge.nonce.clone(),
+        instance_id: challenge.instance_id.clone(),
+    })
+}
+
+/// Resolves when the device behind this connection is revoked or re-roled.
+/// Never resolves for the host, or before the hello.
+async fn revoked(standing: Option<&(AuthContext, Actor)>) {
+    match standing.and_then(|(auth, _)| auth.closed()) {
+        Some(closed) => closed.cancelled().await,
+        None => std::future::pending().await,
+    }
 }
 
 async fn send_frame(

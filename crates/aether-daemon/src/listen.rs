@@ -97,6 +97,9 @@ pub struct ConnectionPolicy {
     /// there is no transport on which sitting silent before the hello is a
     /// thing a client legitimately does.
     pub handshake_timeout: Duration,
+    /// Set on the remote carrier: the hello must prove a paired device
+    /// against this challenge. `None` on the socket and the TCP listener.
+    pub device: Option<aether_remote::DeviceGate>,
 }
 
 /// Manual, for the same reason as `TcpListen`'s.
@@ -106,6 +109,7 @@ impl std::fmt::Debug for ConnectionPolicy {
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .field("idle_timeout", &self.idle_timeout)
             .field("handshake_timeout", &self.handshake_timeout)
+            .field("device", &self.device.is_some())
             .finish()
     }
 }
@@ -116,6 +120,7 @@ impl Default for ConnectionPolicy {
             token: None,
             idle_timeout: None,
             handshake_timeout: HANDSHAKE_TIMEOUT,
+            device: None,
         }
     }
 }
@@ -141,7 +146,7 @@ impl ConnectionPolicy {
 
     /// How long to hold a peer that failed to authorize before answering it.
     pub fn refusal_delay(&self) -> Duration {
-        if self.token.is_some() {
+        if self.token.is_some() || self.device.is_some() {
             BAD_TOKEN_DELAY
         } else {
             Duration::ZERO

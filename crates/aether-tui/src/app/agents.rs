@@ -132,6 +132,7 @@ impl App {
                     fallbacks: Some(chain.fallbacks),
                     ..Default::default()
                 },
+                idempotency_key: None,
             },
             then: Then::ModelPatched(id),
         }
@@ -177,7 +178,10 @@ impl App {
     /// for the next message. The reply says whether anything was running.
     pub(super) fn interrupt_agent(&mut self, agent: AgentId) -> Vec<Effect> {
         vec![Effect::Request {
-            command: Command::Interrupt { agent },
+            command: Command::Interrupt {
+                agent,
+                idempotency_key: None,
+            },
             then: Then::Interrupted(agent),
         }]
     }
@@ -192,6 +196,7 @@ impl App {
                         effort: Some(effort),
                         ..Default::default()
                     },
+                    idempotency_key: None,
                 },
                 then: Then::AgentPatched,
             }],
@@ -241,6 +246,7 @@ impl App {
                     ApprovalPolicy::default()
                 },
                 subtree: true,
+                idempotency_key: None,
             },
             then: Then::ApprovalsSet { agent, on },
         }]

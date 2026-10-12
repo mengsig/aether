@@ -562,6 +562,7 @@ fn slash_toggle_settings_persistence_and_reload() {
     let temp = tempfile::tempdir().unwrap();
     let mut app = app_with_transcript(&["hello"]);
     app.options.prefs_dir = Some(temp.path().into());
+    app.options.definitions_dir = Some(temp.path().into());
     app.view_modes.modes.insert(
         "brief".into(),
         Mode {
@@ -612,6 +613,7 @@ fn settings_edit_keys_and_view_mode_without_losing_either_preference() {
     let temp = tempfile::tempdir().unwrap();
     let mut app = app_with_transcript(&["hello"]);
     app.options.prefs_dir = Some(temp.path().into());
+    app.options.definitions_dir = Some(temp.path().into());
     submit(&mut app, "/focus");
     submit(&mut app, "/settings");
     let press =

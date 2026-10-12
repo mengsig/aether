@@ -11,6 +11,7 @@ class NewApprovalRule(TypedDict, total=False):
     A remembered decision written directly, without answering a call first.
     """
     decision: _protocol.ApprovalDecision
+    idempotency_key: str | None  # optional
     match: _protocol.RuleMatch
     note: str | None  # optional
     scope: _protocol.RuleScope

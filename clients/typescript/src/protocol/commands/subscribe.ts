@@ -2,7 +2,9 @@
 // Do not edit: change the Rust types and regenerate.
 
 import type {
+  AttentionKind,
   EventQuery,
+  PushSubscription,
 } from "../../protocol.ts";
 
 /**
@@ -17,4 +19,18 @@ export interface SubscribeCommand {
 
 export function subscribe(args: Omit<SubscribeCommand, "cmd">): SubscribeCommand {
   return { cmd: "subscribe", ...args };
+}
+
+/**
+ * Store the calling device's push subscription, replacing any earlier
+ * one. Only a paired device can call it.
+ */
+export interface SubscribePushCommand {
+  "cmd": "subscribe_push";
+  "kinds"?: Array<AttentionKind>;
+  "subscription": PushSubscription;
+}
+
+export function subscribePush(args: Omit<SubscribePushCommand, "cmd">): SubscribePushCommand {
+  return { cmd: "subscribe_push", ...args };
 }

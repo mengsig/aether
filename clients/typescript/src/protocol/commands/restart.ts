@@ -12,6 +12,7 @@ import type {
 export interface RestartCommand {
   "cmd": "restart";
   "agent": AgentId;
+  "idempotency_key"?: string | null;
 }
 
 export function restart(args: Omit<RestartCommand, "cmd">): RestartCommand {

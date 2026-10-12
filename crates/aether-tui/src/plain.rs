@@ -88,7 +88,7 @@ async fn run_loop(
     let mut out = Printer::default();
     out.line("aether - plain mode - type a message, /help for commands, Ctrl+D or /quit to leave")?;
 
-    let mut pending = app.reduce(AppEvent::Connected);
+    let mut pending = app.reconnected(&client);
     let mut input_open = true;
     let mut reconnecting = false;
     let mut eof_at = Instant::now();
@@ -131,8 +131,15 @@ async fn run_loop(
             event = rx.recv() => match event {
                 Some(LoopEvent::Mouse(_)) => continue,
                 None => return Ok(()),
+                Some(LoopEvent::AppFrom { instance, event }) => {
+                    if !client.welcome().is_some_and(|welcome| welcome.instance_id == instance) { continue; }
+                    let lost = matches!(event, AppEvent::Disconnected { .. } | AppEvent::HistoryExpired);
+                    let effects = app.reduce(event);
+                    if lost && !reconnecting { reconnecting = true; crate::runner::spawn_reconnect(&app, tx.clone()); }
+                    effects
+                }
                 Some(LoopEvent::App(event)) => {
-                    let lost = matches!(event, AppEvent::Disconnected { .. });
+                    let lost = matches!(event, AppEvent::Disconnected { .. } | AppEvent::HistoryExpired);
                     let effects = match event {
                         AppEvent::Paste(line) => submit_line(&mut app, &mut out, &line)?,
                         event => app.reduce(event),
@@ -169,9 +176,10 @@ async fn run_loop(
                     Vec::new()
                 }
                 Some(LoopEvent::Reconnected(new_client)) => {
+                    let effects = app.reconnected(&new_client);
                     client = new_client;
                     reconnecting = false;
-                    app.reduce(AppEvent::Connected)
+                    effects
                 }
             },
             _ = clock.tick() => app.reduce(AppEvent::Tick {
@@ -256,6 +264,7 @@ fn submit_line<W: Write>(
                     command: aether_protocol::Command::Cancel {
                         agent,
                         reason: Some("stopped from plain mode".into()),
+                        idempotency_key: None,
                     },
                     then: crate::app::Then::Ignore,
                 }]);

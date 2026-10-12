@@ -188,6 +188,8 @@ fn client_error(error: &ClientError) -> Value {
         ClientError::InvalidUsage(_) => "invalid_usage",
         ClientError::TimedOut { .. } => "request_timeout",
         ClientError::DaemonStartup(_) => "daemon_startup",
+        ClientError::Ssh(_) => "ssh_failure",
+        ClientError::DeliveryUnconfirmed(_) => "delivery_unconfirmed",
     };
     json!({"kind": kind, "detail": REDACTED})
 }

@@ -13,6 +13,7 @@ import type {
 export interface PauseCommand {
   "cmd": "pause";
   "agent": AgentId;
+  "idempotency_key"?: string | null;
   "subtree"?: boolean;
 }
 

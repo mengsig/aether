@@ -10,8 +10,20 @@ use crate::ui::views::{self, ViewKind};
 impl App {
     /// Push the view for `kind` onto the bottom pane and return its data requests.
     pub(crate) fn open_view(&mut self, kind: ViewKind) -> Vec<Effect> {
+        if self.options.is_remote()
+            && matches!(
+                kind,
+                ViewKind::Login | ViewKind::Doctor | ViewKind::Voice | ViewKind::VoiceInstall(_)
+            )
+        {
+            self.flash_error("this feature is local-only; run aether --local on the host instead");
+            return Vec::new();
+        }
         let effects = self.view_requests(kind);
-        let view = match kind {
+        let view: Box<dyn crate::ui::bottom::BottomView> = match kind {
+            ViewKind::Workspace if self.options.is_remote() => {
+                Box::new(views::remote_workspace::RemoteWorkspaceView::default())
+            }
             ViewKind::Workspace => {
                 let (view, missing) = views::workspace::WorkspaceView::discover(self);
                 self.flag_missing_workspace_roots(&missing);
@@ -26,6 +38,10 @@ impl App {
 
     fn view_requests(&mut self, kind: ViewKind) -> Vec<Effect> {
         match kind {
+            ViewKind::Workspace if self.options.is_remote() => vec![super::host::request(
+                Command::ListWorkspaces { limit: Some(200) },
+                super::host::HostRequest::Workspaces,
+            )],
             ViewKind::Model => vec![Effect::Request {
                 command: Command::ListModels,
                 then: Then::Models,
@@ -37,6 +53,7 @@ impl App {
             ViewKind::Memory => vec![self.memories_request()],
             ViewKind::Schedules => vec![self.schedules_request()],
             ViewKind::Mcp => vec![self.mcp_request(false)],
+            ViewKind::Outbox => vec![Effect::Outbox { settle: None }],
             ViewKind::Report => self.report_requests(),
             ViewKind::Artifacts => self.artifact_list_requests(),
             ViewKind::Login => vec![Effect::Request {

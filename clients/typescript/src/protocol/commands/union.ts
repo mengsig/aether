@@ -6,8 +6,12 @@ import type {
   ArchiveCommand,
   AuthStatusCommand,
   CancelCommand,
+  CancelPairingCommand,
   CompactCommand,
+  CompletePathCommand,
   ConfigureGithubWatcherCommand,
+  ConfigureRemoteCommand,
+  ConfirmPairingCommand,
   CreateAgentCommand,
   CreateMemoryCommand,
   CreateScheduleCommand,
@@ -18,11 +22,16 @@ import type {
   ForgetMemoryCommand,
   GetAgentCommand,
   GetArtifactCommand,
+  GetAttentionCommand,
   GetCheckpointCommand,
   GetEventsCommand,
+  GetGitSummaryCommand,
   GetGithubWatcherCommand,
   GetInboxCommand,
   GetInvocationCommand,
+  GetPairingCommand,
+  GetPushConfigCommand,
+  GetRemoteCommand,
   GetRunReportCommand,
   GetScheduleCommand,
   GetSnapshotCommand,
@@ -37,11 +46,13 @@ import type {
   ListApprovalRulesCommand,
   ListApprovalsCommand,
   ListArtifactsCommand,
+  ListDevicesCommand,
   ListInvocationsCommand,
   ListModelsCommand,
   ListRunsCommand,
   ListSchedulesCommand,
   ListTasksCommand,
+  ListWorkspacesCommand,
   McpServersCommand,
   MemoriesCommand,
   PauseCommand,
@@ -54,21 +65,29 @@ import type {
   ReplayCommand,
   ReplyToQuestionCommand,
   ResolveApprovalCommand,
+  ResolveSubmissionCommand,
   RestartCommand,
   RestoreMemoryCommand,
   ResumeCommand,
   RevokeApprovalRuleCommand,
+  RevokeDeviceCommand,
   ScheduleHistoryCommand,
   SendMessageCommand,
   SetApprovalsCommand,
   ShutdownCommand,
+  StartPairingCommand,
   StatusCommand,
   SubscribeCommand,
+  SubscribePushCommand,
   SyncRepositoryKnowledgeCommand,
+  TestPushCommand,
   TriggerCommand,
   UnsubscribeCommand,
+  UnsubscribePushCommand,
   UpdateAgentCommand,
+  UpdateDeviceCommand,
   UpdateScheduleCommand,
+  ValidateWorkspaceCommand,
   WakeCommand,
 } from "../../protocol.ts";
 
@@ -77,8 +96,12 @@ export type Command =
   | ArchiveCommand
   | AuthStatusCommand
   | CancelCommand
+  | CancelPairingCommand
   | CompactCommand
+  | CompletePathCommand
   | ConfigureGithubWatcherCommand
+  | ConfigureRemoteCommand
+  | ConfirmPairingCommand
   | CreateAgentCommand
   | CreateMemoryCommand
   | CreateScheduleCommand
@@ -89,11 +112,16 @@ export type Command =
   | ForgetMemoryCommand
   | GetAgentCommand
   | GetArtifactCommand
+  | GetAttentionCommand
   | GetCheckpointCommand
   | GetEventsCommand
+  | GetGitSummaryCommand
   | GetGithubWatcherCommand
   | GetInboxCommand
   | GetInvocationCommand
+  | GetPairingCommand
+  | GetPushConfigCommand
+  | GetRemoteCommand
   | GetRunReportCommand
   | GetScheduleCommand
   | GetSnapshotCommand
@@ -108,11 +136,13 @@ export type Command =
   | ListApprovalRulesCommand
   | ListApprovalsCommand
   | ListArtifactsCommand
+  | ListDevicesCommand
   | ListInvocationsCommand
   | ListModelsCommand
   | ListRunsCommand
   | ListSchedulesCommand
   | ListTasksCommand
+  | ListWorkspacesCommand
   | McpServersCommand
   | MemoriesCommand
   | PauseCommand
@@ -125,19 +155,27 @@ export type Command =
   | ReplayCommand
   | ReplyToQuestionCommand
   | ResolveApprovalCommand
+  | ResolveSubmissionCommand
   | RestartCommand
   | RestoreMemoryCommand
   | ResumeCommand
   | RevokeApprovalRuleCommand
+  | RevokeDeviceCommand
   | ScheduleHistoryCommand
   | SendMessageCommand
   | SetApprovalsCommand
   | ShutdownCommand
+  | StartPairingCommand
   | StatusCommand
   | SubscribeCommand
+  | SubscribePushCommand
   | SyncRepositoryKnowledgeCommand
+  | TestPushCommand
   | TriggerCommand
   | UnsubscribeCommand
+  | UnsubscribePushCommand
   | UpdateAgentCommand
+  | UpdateDeviceCommand
   | UpdateScheduleCommand
+  | ValidateWorkspaceCommand
   | WakeCommand;

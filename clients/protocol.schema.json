@@ -341,6 +341,38 @@
       ],
       "type": "object"
     },
+    "AgentAttention": {
+      "description": "A failed agent, or one blocked on something only the operator can clear.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "agent_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/AttentionKind",
+          "description": "`agent_failed` or `agent_blocked`."
+        },
+        "reason": {
+          "type": "string"
+        },
+        "since": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "kind",
+        "reason",
+        "since"
+      ],
+      "type": "object"
+    },
     "AgentConfig": {
       "description": "Per-agent configuration the runtime enforces.",
       "properties": {
@@ -1539,6 +1571,63 @@
       },
       "type": "object"
     },
+    "Attention": {
+      "description": "Everything waiting on the operator, read at one sequence number.",
+      "properties": {
+        "agents": {
+          "items": {
+            "$ref": "#/$defs/AgentAttention"
+          },
+          "type": "array"
+        },
+        "approvals": {
+          "items": {
+            "$ref": "#/$defs/ApprovalRequest"
+          },
+          "type": "array"
+        },
+        "last_seq": {
+          "description": "The log position this was read at; subscribe after it to stay current.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/PendingQuestion"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "last_seq",
+        "approvals",
+        "questions",
+        "agents"
+      ],
+      "type": "object"
+    },
+    "AttentionKind": {
+      "description": "What can wait on the operator, and what a push notification is about.",
+      "oneOf": [
+        {
+          "enum": [
+            "approval",
+            "question",
+            "agent_failed",
+            "agent_blocked",
+            "task_completed",
+            "task_failed"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "test",
+          "description": "Sent only by `test_push`.",
+          "type": "string"
+        }
+      ]
+    },
     "AuthInfo": {
       "properties": {
         "configured": {
@@ -2112,6 +2201,12 @@
             "id": {
               "$ref": "#/$defs/AgentId"
             },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "patch": {
               "$ref": "#/$defs/AgentPatch"
             }
@@ -2198,6 +2293,12 @@
               "const": "cancel",
               "type": "string"
             },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "reason": {
               "type": [
                 "string",
@@ -2220,6 +2321,12 @@
             "cmd": {
               "const": "interrupt",
               "type": "string"
+            },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -2337,6 +2444,12 @@
             },
             "id": {
               "$ref": "#/$defs/ScheduleId"
+            },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -2408,6 +2521,13 @@
             "cmd": {
               "const": "restart",
               "type": "string"
+            },
+            "idempotency_key": {
+              "description": "Makes the restart retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -2443,6 +2563,12 @@
               "const": "pause",
               "type": "string"
             },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "subtree": {
               "default": false,
               "type": "boolean"
@@ -2463,6 +2589,12 @@
             "cmd": {
               "const": "resume",
               "type": "string"
+            },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "subtree": {
               "default": false,
@@ -2487,6 +2619,12 @@
               "const": "archive",
               "type": "string"
             },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "target": {
               "$ref": "#/$defs/ArchiveTarget"
             }
@@ -2506,6 +2644,12 @@
             "cmd": {
               "const": "set_approvals",
               "type": "string"
+            },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "policy": {
               "$ref": "#/$defs/ApprovalPolicy"
@@ -2655,6 +2799,13 @@
             },
             "id": {
               "$ref": "#/$defs/ApprovalId"
+            },
+            "idempotency_key": {
+              "description": "Makes the answer retryable; see [`CreateAgent::idempotency_key`].",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "note": {
               "type": [
@@ -3023,6 +3174,12 @@
               "const": "create_memory",
               "type": "string"
             },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "spec": {
               "$ref": "#/$defs/OperatorMemorySpec"
             }
@@ -3263,6 +3420,382 @@
           },
           "required": [
             "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Everything waiting on the operator: pending approvals, unanswered\nquestions, and failed or blocked agents, read at one sequence number.",
+          "properties": {
+            "cmd": {
+              "const": "get_attention",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Complete a partial path on the daemon's machine. Bounded: at most\n`limit` entries (default 50, never more than 200).",
+          "properties": {
+            "cmd": {
+              "const": "complete_path",
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/PathCompletionKind"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "prefix": {
+              "description": "What was typed so far. `~/` is the daemon user's home.",
+              "type": "string"
+            },
+            "workspace": {
+              "description": "The workspace to stay inside. Required for `workspace_file`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "kind",
+            "prefix"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Workspaces holding root agents, most recently active first.",
+          "properties": {
+            "cmd": {
+              "const": "list_workspaces",
+              "type": "string"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Whether an agent can be started in `path`, and its canonical form.",
+          "properties": {
+            "cmd": {
+              "const": "validate_workspace",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Branch and dirtiness of a workspace on the daemon's machine.",
+          "properties": {
+            "cmd": {
+              "const": "get_git_summary",
+              "type": "string"
+            },
+            "workspace": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "workspace"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The remote listener's settings and state. Host only.",
+          "properties": {
+            "cmd": {
+              "const": "get_remote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Replace the remote settings only if nobody else changed them. Opens\nor closes the listener at once. Host only.",
+          "properties": {
+            "cmd": {
+              "const": "configure_remote",
+              "type": "string"
+            },
+            "expected_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "settings": {
+              "$ref": "#/$defs/RemoteSettings"
+            }
+          },
+          "required": [
+            "cmd",
+            "settings",
+            "expected_revision"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Open a pairing and mint its single-use code. Host only.",
+          "properties": {
+            "cmd": {
+              "const": "start_pairing",
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/$defs/DeviceRole",
+              "default": "operator"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Read a pairing's state; the code is never repeated. Host only.",
+          "properties": {
+            "cmd": {
+              "const": "get_pairing",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Enrol or reject the device that claimed a pairing. Host only.",
+          "properties": {
+            "accept": {
+              "type": "boolean"
+            },
+            "cmd": {
+              "const": "confirm_pairing",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "accept"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Close a pairing nobody confirmed. Host only.",
+          "properties": {
+            "cmd": {
+              "const": "cancel_pairing",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Enrolled devices, oldest first. Host only.",
+          "properties": {
+            "cmd": {
+              "const": "list_devices",
+              "type": "string"
+            },
+            "include_revoked": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Revoke a device and close its connections and subscriptions at once.\nHost only.",
+          "properties": {
+            "cmd": {
+              "const": "revoke_device",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/DeviceId"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Rename a device or change its role. A role change closes its live\nconnections. Host only.",
+          "properties": {
+            "cmd": {
+              "const": "update_device",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/DeviceId"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DeviceRole"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Whether the daemon sends Web Push, and the key to subscribe with.",
+          "properties": {
+            "cmd": {
+              "const": "get_push_config",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Store the calling device's push subscription, replacing any earlier\none. Only a paired device can call it.",
+          "properties": {
+            "cmd": {
+              "const": "subscribe_push",
+              "type": "string"
+            },
+            "kinds": {
+              "default": [],
+              "description": "Notify about these kinds only; empty means all of them.",
+              "items": {
+                "$ref": "#/$defs/AttentionKind"
+              },
+              "type": "array"
+            },
+            "subscription": {
+              "$ref": "#/$defs/PushSubscription"
+            }
+          },
+          "required": [
+            "cmd",
+            "subscription"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Forget the calling device's push subscription.",
+          "properties": {
+            "cmd": {
+              "const": "unsubscribe_push",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Send the calling device one `test` notification.",
+          "properties": {
+            "cmd": {
+              "const": "test_push",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Ask what became of a keyed command whose acknowledgement was lost.\nRead-only, within the caller's own keys; needs `command`'s standing.",
+          "properties": {
+            "cmd": {
+              "const": "resolve_submission",
+              "type": "string"
+            },
+            "command": {
+              "additionalProperties": true,
+              "description": "The keyed command exactly as first sent: its `cmd`, its fields and\nits `idempotency_key`.",
+              "type": "object"
+            },
+            "horizon": {
+              "description": "The `submission_horizon` the client held when it first sent\n`command`. Without one an absent receipt proves nothing.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "command"
           ],
           "type": "object"
         }
@@ -4091,6 +4624,127 @@
         }
       ]
     },
+    "Device": {
+      "description": "One enrolled device as `aether remote devices` and a phone's settings list it.",
+      "properties": {
+        "connections": {
+          "default": 0,
+          "description": "Live connections authenticated as this device right now.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "current": {
+          "default": false,
+          "description": "Whether this is the device the request came from.",
+          "type": "boolean"
+        },
+        "fingerprint": {
+          "description": "Lowercase hex SHA-256 of the raw public key. Only the host is told.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "last_seen_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "push": {
+          "default": false,
+          "description": "Whether the device holds a push subscription.",
+          "type": "boolean"
+        },
+        "revoked_at": {
+          "description": "Set once revoked; a revoked device never authenticates again.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "$ref": "#/$defs/DeviceRole"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "role",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "DeviceId": {
+      "description": "A dev_ prefixed ULID.",
+      "pattern": "^dev_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "DeviceIdentity": {
+      "description": "The device a connection authenticated as, echoed in [`crate::Welcome`].",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/DeviceRole"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "role"
+      ],
+      "type": "object"
+    },
+    "DeviceProof": {
+      "description": "A device's answer to the carrier's challenge, sent in [`crate::Hello`].",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/DeviceId"
+        },
+        "signature": {
+          "description": "ECDSA P-256/SHA-256 over the signing input, as raw `r || s`\n(64 bytes), base64url without padding.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "signature"
+      ],
+      "type": "object"
+    },
+    "DeviceRole": {
+      "description": "What a paired device may do. See the authorization matrix in docs/remote.md.",
+      "oneOf": [
+        {
+          "const": "operator",
+          "description": "Everything an operator at the host can do, minus the host-only set.",
+          "type": "string"
+        },
+        {
+          "const": "observer",
+          "description": "Read-only: sees the fleet, changes nothing.",
+          "type": "string"
+        }
+      ]
+    },
     "DroppedItem": {
       "description": "A constraint the compactor decided no longer applies, with its reason.",
       "properties": {
@@ -4271,6 +4925,16 @@
         {
           "const": "unavailable",
           "description": "The provider or model is not configured.",
+          "type": "string"
+        },
+        {
+          "const": "forbidden",
+          "description": "The connection is authenticated, but its transport or role may not\nrun this command.",
+          "type": "string"
+        },
+        {
+          "const": "unimplemented",
+          "description": "The command is part of the protocol and this build does not serve it.",
           "type": "string"
         }
       ]
@@ -6592,6 +7256,87 @@
       ],
       "type": "object"
     },
+    "GitSummary": {
+      "properties": {
+        "ahead": {
+          "description": "Commits the branch has that its upstream lacks; absent without an upstream.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "behind": {
+          "description": "Commits its upstream has that the branch lacks; absent without an upstream.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "branch": {
+          "description": "Current branch; absent when detached or not a repository.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detached": {
+          "default": false,
+          "type": "boolean"
+        },
+        "dirty": {
+          "default": false,
+          "description": "Uncommitted changes to tracked files, or untracked files.",
+          "type": "boolean"
+        },
+        "head": {
+          "description": "Abbreviated commit of `HEAD`, when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modified": {
+          "default": 0,
+          "description": "Tracked paths changed in the work tree but not staged, conflicts included.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repository": {
+          "description": "Whether the directory is inside a git work tree at all.",
+          "type": "boolean"
+        },
+        "root": {
+          "description": "Top level of the work tree; absent when not a repository.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "staged": {
+          "default": 0,
+          "description": "Paths with changes staged in the index.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "untracked": {
+          "default": 0,
+          "description": "Untracked paths that are not ignored.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "repository"
+      ],
+      "type": "object"
+    },
     "GithubDispatchMode": {
       "description": "How a repository's accepted requests reach an agent.",
       "oneOf": [
@@ -6800,6 +7545,36 @@
       ],
       "type": "object"
     },
+    "Health": {
+      "description": "Body of `GET /api/health`.",
+      "properties": {
+        "min_protocol_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pairing_open": {
+          "description": "Whether a pairing is open for a device to claim.",
+          "type": "boolean"
+        },
+        "protocol_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "description": "Always `ok`: a daemon that cannot answer does not answer.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "protocol_version",
+        "min_protocol_version",
+        "pairing_open"
+      ],
+      "type": "object"
+    },
     "Hello": {
       "properties": {
         "client_name": {
@@ -6807,6 +7582,17 @@
         },
         "client_version": {
           "type": "string"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceProof"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A paired device's answer to the challenge the remote carrier sent.\nOther transports ignore it."
         },
         "features": {
           "default": [],
@@ -6834,6 +7620,52 @@
         "client_version"
       ],
       "type": "object"
+    },
+    "HttpError": {
+      "description": "Every non-2xx HTTP response body: `{\"error\": {\"code\", \"message\"}}`.",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/HttpErrorBody"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "type": "object"
+    },
+    "HttpErrorBody": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/HttpErrorCode"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "HttpErrorCode": {
+      "description": "Why an HTTP request was refused. See the table in docs/remote.md.",
+      "enum": [
+        "bad_request",
+        "forbidden_host",
+        "forbidden_origin",
+        "not_found",
+        "method_not_allowed",
+        "unsupported_media_type",
+        "payload_too_large",
+        "pairing_closed",
+        "invalid_code",
+        "expired",
+        "rate_limited",
+        "unavailable",
+        "internal"
+      ],
+      "type": "string"
     },
     "IdempotencyKey": {
       "description": "What makes two calls the same effect.",
@@ -7045,6 +7877,16 @@
           "properties": {
             "approval": {
               "$ref": "#/$defs/ApprovalId"
+            },
+            "by": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Actor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "decision": {
               "$ref": "#/$defs/ApprovalDecision"
@@ -8296,6 +9138,12 @@
         "decision": {
           "$ref": "#/$defs/ApprovalDecision"
         },
+        "idempotency_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "match": {
           "$ref": "#/$defs/RuleMatch"
         },
@@ -8529,8 +9377,278 @@
             "connection"
           ],
           "type": "object"
+        },
+        {
+          "description": "A paired remote device, named as the daemon enrolled it.",
+          "properties": {
+            "connection": {
+              "type": "string"
+            },
+            "device": {
+              "$ref": "#/$defs/DeviceId"
+            },
+            "name": {
+              "type": "string"
+            },
+            "transport": {
+              "const": "device",
+              "type": "string"
+            }
+          },
+          "required": [
+            "transport",
+            "device",
+            "name",
+            "connection"
+          ],
+          "type": "object"
         }
       ]
+    },
+    "PairClaimRequest": {
+      "description": "Body of `POST /api/pair/claim`.",
+      "properties": {
+        "code": {
+          "description": "The single-use code, as printed or read from the URL fragment.",
+          "type": "string"
+        },
+        "device_name": {
+          "description": "1 to 64 characters once whitespace is folded; no control, format or invisible\ncharacters (docs/remote.md, Device names).",
+          "type": "string"
+        },
+        "public_key": {
+          "description": "The device's raw P-256 public key (65-byte uncompressed point),\nbase64url without padding.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "public_key",
+        "device_name"
+      ],
+      "type": "object"
+    },
+    "PairClaimResponse": {
+      "properties": {
+        "expires_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "pairing": {
+          "description": "Names this attempt in `POST /api/pair/status`.",
+          "type": "string"
+        },
+        "phrase": {
+          "description": "Show it; the operator compares it with the host's.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pairing",
+        "fingerprint",
+        "phrase",
+        "expires_at"
+      ],
+      "type": "object"
+    },
+    "PairStatusRequest": {
+      "properties": {
+        "pairing": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pairing"
+      ],
+      "type": "object"
+    },
+    "PairStatusResponse": {
+      "properties": {
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present once `enrolled`: the identity to authenticate as."
+        },
+        "state": {
+          "$ref": "#/$defs/PairingState",
+          "description": "`claimed`, `enrolled`, `rejected`, `expired` or `cancelled`."
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "Pairing": {
+      "description": "One pairing attempt. Reply to the four pairing commands.",
+      "properties": {
+        "candidate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PairingCandidate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present from `claimed` on."
+        },
+        "code": {
+          "description": "The single-use code. Present only in the reply to `start_pairing`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present once `enrolled`."
+        },
+        "expires_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/DeviceRole",
+          "description": "The role the device is enrolled with on confirmation."
+        },
+        "state": {
+          "$ref": "#/$defs/PairingState"
+        },
+        "url": {
+          "description": "The pairing URL with the code in its fragment. Same presence as `code`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "role",
+        "expires_at"
+      ],
+      "type": "object"
+    },
+    "PairingCandidate": {
+      "description": "The device asking to be enrolled, as the host must confirm it.",
+      "properties": {
+        "claimed_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "fingerprint": {
+          "description": "Lowercase hex SHA-256 of the raw public key.",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "phrase": {
+          "description": "Shown on both screens; the operator confirms they match.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "fingerprint",
+        "phrase",
+        "claimed_at"
+      ],
+      "type": "object"
+    },
+    "PairingState": {
+      "oneOf": [
+        {
+          "enum": [
+            "enrolled",
+            "rejected",
+            "expired",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "open",
+          "description": "Waiting for a device to claim the code.",
+          "type": "string"
+        },
+        {
+          "const": "claimed",
+          "description": "A device claimed the code; waiting for the host to confirm.",
+          "type": "string"
+        }
+      ]
+    },
+    "PathCompletion": {
+      "properties": {
+        "is_dir": {
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Absolute for `directory`; relative to the workspace for\n`workspace_file`. A directory ends in `/`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "is_dir"
+      ],
+      "type": "object"
+    },
+    "PathCompletionKind": {
+      "oneOf": [
+        {
+          "const": "directory",
+          "description": "Directories anywhere on the host, for choosing a workspace.",
+          "type": "string"
+        },
+        {
+          "const": "workspace_file",
+          "description": "Files and directories inside `workspace`, for mentions.",
+          "type": "string"
+        }
+      ]
+    },
+    "PathCompletions": {
+      "properties": {
+        "entries": {
+          "description": "Sorted by `path`.",
+          "items": {
+            "$ref": "#/$defs/PathCompletion"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "description": "More matched than `limit` allowed.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entries",
+        "truncated"
+      ],
+      "type": "object"
     },
     "PendingArtifactCleanup": {
       "properties": {
@@ -8552,6 +9670,40 @@
       "required": [
         "pending_unlinks",
         "staged_publications"
+      ],
+      "type": "object"
+    },
+    "PendingQuestion": {
+      "description": "An agent's question nobody has answered or superseded.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "agent_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "asked_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "question_seq": {
+          "description": "What `reply_to_question` takes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "agent",
+        "question_seq",
+        "question",
+        "asked_at"
       ],
       "type": "object"
     },
@@ -8806,6 +9958,164 @@
       ],
       "type": "object"
     },
+    "PushConfig": {
+      "description": "Reply to the push commands: what the daemon sends this device.",
+      "properties": {
+        "enabled": {
+          "description": "Whether the daemon sends notifications at all.",
+          "type": "boolean"
+        },
+        "kinds": {
+          "default": [],
+          "description": "The kinds the asking device is notified about; empty means all.",
+          "items": {
+            "$ref": "#/$defs/AttentionKind"
+          },
+          "type": "array"
+        },
+        "previews": {
+          "default": false,
+          "description": "Whether payloads may carry `preview` text.",
+          "type": "boolean"
+        },
+        "subscribed": {
+          "default": false,
+          "description": "Whether the asking device holds a subscription.",
+          "type": "boolean"
+        },
+        "vapid_public_key": {
+          "description": "The VAPID application server key (uncompressed P-256 point,\nbase64url without padding). Absent while push was never enabled.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "PushPayload": {
+      "description": "The decrypted body of one Web Push message.",
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApprovalId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "instance_id": {
+          "description": "The daemon that sent it; a client ignores another instance's.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AttentionKind"
+        },
+        "preview": {
+          "description": "At most 200 characters of content; only with `[remote] push_previews`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "question_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "seq": {
+          "description": "The event that caused it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "description": "Fixed text per kind; never transcript content.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Where a tap lands: a fragment route of the web app, such as\n`#attention?item=apr_...`, relative to the service worker's scope.",
+          "type": "string"
+        },
+        "v": {
+          "description": "Payload schema version; 1.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "kind",
+        "instance_id",
+        "seq",
+        "at",
+        "title",
+        "url"
+      ],
+      "type": "object"
+    },
+    "PushSubscription": {
+      "description": "A browser's `PushSubscription`, as `toJSON()` gives it.",
+      "properties": {
+        "auth": {
+          "description": "The subscription's auth secret, base64url without padding.",
+          "type": "string"
+        },
+        "endpoint": {
+          "description": "The push service URL. Must be https.",
+          "type": "string"
+        },
+        "p256dh": {
+          "description": "The subscription's P-256 public key, base64url without padding.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint",
+        "p256dh",
+        "auth"
+      ],
+      "type": "object"
+    },
     "QuotaWindow": {
       "description": "A subscription usage window as an engine reported it. Opaque JSON on the\nwire from the CLI; normalized here so every reader agrees.",
       "properties": {
@@ -8919,6 +10229,97 @@
           "type": "boolean"
         }
       },
+      "type": "object"
+    },
+    "RemoteSettings": {
+      "description": "The runtime-changeable remote settings, saved whole under a revision.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether the remote listener is open.",
+          "type": "boolean"
+        },
+        "pairing": {
+          "default": false,
+          "description": "Whether `start_pairing` may open a pairing.",
+          "type": "boolean"
+        },
+        "public_origins": {
+          "default": [],
+          "description": "Exact origins browsers reach the listener by, e.g.\n`https://host.tailnet.ts.net`. The Host and Origin allowlist.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "push": {
+          "default": false,
+          "description": "Whether the daemon sends Web Push notifications.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "RemoteStatus": {
+      "description": "Reply to `get_remote` and `configure_remote`.",
+      "properties": {
+        "address": {
+          "description": "`[remote] address` as configured.",
+          "type": "string"
+        },
+        "allow_remote": {
+          "default": false,
+          "description": "`[remote] allow_remote` as configured.",
+          "type": "boolean"
+        },
+        "connections": {
+          "default": 0,
+          "description": "Live device connections.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "devices": {
+          "default": 0,
+          "description": "Enrolled, unrevoked devices.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "description": "Why the listener is not open although enabled.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "listening": {
+          "description": "The address actually bound; absent while the listener is closed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "push_previews": {
+          "default": false,
+          "description": "`[remote] push_previews` as configured.",
+          "type": "boolean"
+        },
+        "revision": {
+          "description": "Bumped by every accepted `configure_remote`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settings": {
+          "$ref": "#/$defs/RemoteSettings"
+        }
+      },
+      "required": [
+        "revision",
+        "settings",
+        "address"
+      ],
       "type": "object"
     },
     "ReplayApproval": {
@@ -10043,6 +11444,188 @@
             "data"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/Attention"
+            },
+            "reply": {
+              "const": "attention",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/PathCompletions"
+            },
+            "reply": {
+              "const": "path_completions",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "items": {
+                "$ref": "#/$defs/Workspace"
+              },
+              "type": "array"
+            },
+            "reply": {
+              "const": "workspaces",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/WorkspaceValidation"
+            },
+            "reply": {
+              "const": "workspace_validation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/GitSummary"
+            },
+            "reply": {
+              "const": "git_summary",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/RemoteStatus"
+            },
+            "reply": {
+              "const": "remote",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/Pairing"
+            },
+            "reply": {
+              "const": "pairing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/Device"
+            },
+            "reply": {
+              "const": "device",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "items": {
+                "$ref": "#/$defs/Device"
+              },
+              "type": "array"
+            },
+            "reply": {
+              "const": "devices",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/PushConfig"
+            },
+            "reply": {
+              "const": "push_config",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/SubmissionResolution"
+            },
+            "reply": {
+              "const": "submission_resolved",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -11146,6 +12729,28 @@
             "delta"
           ],
           "type": "object"
+        },
+        {
+          "description": "The remote carrier speaking first: what a device signs to\nauthenticate its hello. Never sent on the socket or the token listener.",
+          "properties": {
+            "frame": {
+              "const": "challenge",
+              "type": "string"
+            },
+            "instance_id": {
+              "type": "string"
+            },
+            "nonce": {
+              "description": "32 random bytes, base64url without padding. Single use.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "frame",
+            "nonce",
+            "instance_id"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -11345,6 +12950,80 @@
           "required": [
             "reason",
             "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SubmissionResolution": {
+      "description": "What became of a keyed command, as far as the daemon can prove. Each\ncarries the daemon's `horizon` now; `retained_since` is for people to read.",
+      "oneOf": [
+        {
+          "description": "It ran. `reply` is what a duplicate under the same key is answered.",
+          "properties": {
+            "horizon": {
+              "type": "string"
+            },
+            "outcome": {
+              "const": "executed",
+              "type": "string"
+            },
+            "reply": {
+              "$ref": "#/$defs/Reply"
+            }
+          },
+          "required": [
+            "outcome",
+            "reply",
+            "horizon"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "It never ran: no receipt, and no receipt recorded since the request's\nhorizon was ever dropped. Sending it again under the same key is safe.",
+          "properties": {
+            "horizon": {
+              "type": "string"
+            },
+            "outcome": {
+              "const": "absent_safe",
+              "type": "string"
+            },
+            "retained_since": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "outcome",
+            "horizon",
+            "retained_since"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "No receipt, and nothing proves there never was one. Only a person can\ndecide whether to send it again.",
+          "properties": {
+            "horizon": {
+              "type": "string"
+            },
+            "outcome": {
+              "const": "unknown",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/UnprovenAbsence"
+            },
+            "retained_since": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "outcome",
+            "reason",
+            "horizon",
+            "retained_since"
           ],
           "type": "object"
         }
@@ -12346,6 +14025,31 @@
         }
       ]
     },
+    "UnprovenAbsence": {
+      "description": "Why an absent receipt does not prove its key was never executed.",
+      "oneOf": [
+        {
+          "const": "no_horizon",
+          "description": "The request named no horizon, so nothing bounds when the key was sent.",
+          "type": "string"
+        },
+        {
+          "const": "foreign_horizon",
+          "description": "The horizon was issued under another ledger: the store was replaced,\nrestored from before the ledger existed, or its identity changed.",
+          "type": "string"
+        },
+        {
+          "const": "horizon_ahead",
+          "description": "The horizon counts more receipts than the store has recorded: the\nstore was rolled back to an earlier state.",
+          "type": "string"
+        },
+        {
+          "const": "forgotten",
+          "description": "Receipts recorded after the horizon have been evicted or expired.",
+          "type": "string"
+        }
+      ]
+    },
     "Usage": {
       "description": "Token accounting for one invocation, or a running total.\n\n`cost_usd` sums invocations with a configured price or provider-reported\ncost; `cost_basis` distinguishes those sources and `cost_complete` says\nwhether any invocations were left out. List prices are estimates, even\nwhen every invocation was priced. A budget enforces on this accounting\nbound - an unpriced invocation\ncannot make what was already spent smaller - so nothing silently stops\nfiring when a model or engine reports no price.",
       "properties": {
@@ -12587,6 +14291,17 @@
         "daemon_version": {
           "type": "string"
         },
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The paired device this connection authenticated as. Absent on the\nUnix socket and the token listener."
+        },
         "features": {
           "default": [],
           "items": {
@@ -12630,6 +14345,13 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "submission_horizon": {
+          "description": "Opaque receipt count at the handshake, kept with each keyed send for\n[`Command::ResolveSubmission`]. Absent before protocol 18.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -12640,14 +14362,97 @@
         "pid"
       ],
       "type": "object"
+    },
+    "Workspace": {
+      "description": "One workspace the daemon knows: it holds or held a root agent.",
+      "properties": {
+        "active_at": {
+          "description": "Latest update of any root agent here; what orders the list.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "agents": {
+          "description": "Live agents in trees rooted here.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exists": {
+          "description": "The directory is still there.",
+          "type": "boolean"
+        },
+        "git": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GitSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "description": "Canonical absolute path on the host.",
+          "type": "string"
+        },
+        "running": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "agents",
+        "running",
+        "active_at",
+        "exists"
+      ],
+      "type": "object"
+    },
+    "WorkspaceValidation": {
+      "properties": {
+        "git": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GitSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "description": "The canonical path, when the input resolved to one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why not, in one sentence. Absent when `valid`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "valid": {
+          "description": "Whether an agent can be started here.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "valid"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "client_frame": {
     "$ref": "#/$defs/ClientFrame"
   },
-  "min_protocol_version": 16,
-  "protocol_version": 17,
+  "min_protocol_version": 17,
+  "protocol_version": 18,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },

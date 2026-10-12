@@ -38,6 +38,8 @@ const HEADER: &str = "# Aether TUI preferences. The app rewrites this file, so k
 #[serde(default)]
 pub struct UiPrefs {
     pub view_mode: Option<String>,
+    pub last_seq: Option<u64>,
+    pub draft: Option<String>,
     /// Raw overrides keep bad entries visible on startup and across unrelated saves.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub keys: std::collections::BTreeMap<String, toml::Value>,
@@ -277,7 +279,16 @@ impl PrefsError {
     }
 }
 
-/// Where `ui.toml` lives: the same directory as `config.toml`.
+/// Keep local preferences in their legacy location; isolate remote session state.
+pub fn session_dir(endpoint: &aether_client::Endpoint, instance: &str, shared: &Path) -> PathBuf {
+    if endpoint.is_remote() {
+        endpoint.state_dir(instance)
+    } else {
+        shared.to_owned()
+    }
+}
+
+/// Shared configuration, custom themes and modes.
 pub fn dir() -> PathBuf {
     aether_model::config::config_dir(None)
 }
@@ -296,6 +307,8 @@ mod tests {
 
         let prefs = UiPrefs {
             view_mode: Some("focus".into()),
+            last_seq: Some(12),
+            draft: Some("later".into()),
             theme: Some("nord-light".parse().unwrap()),
             reduced_motion: Some(true),
             ascii: Some(true),
@@ -572,5 +585,34 @@ mod tests {
         std::fs::create_dir(&blocked).unwrap();
         std::fs::create_dir(blocked.join("ui.lock")).unwrap();
         assert!(UiPrefs::update(&blocked, |_| panic!("no lock must mean no edit")).is_err());
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod upgrade_tests {
+    use super::*;
+
+    #[test]
+    fn local_upgrade_changes_one_preference_and_preserves_the_complete_legacy_file() {
+        let shared = tempfile::tempdir().expect("config");
+        let endpoint = aether_client::Endpoint::Socket(shared.path().join("daemon.sock"));
+        let mut original = UiPrefs {
+            model: Some("mock/m".into()),
+            keys: [("details".into(), "f2".into())].into(),
+            theme: Some("nord".parse().expect("theme")),
+            pinned_workspaces: vec!["/work/project".into()],
+            queued: [("agt_1".into(), vec!["pending".into()])].into(),
+            ..Default::default()
+        };
+        original.save(shared.path()).expect("legacy preferences");
+        let directory = session_dir(&endpoint, "new-store", shared.path());
+        assert_eq!(directory, shared.path());
+        assert_eq!(UiPrefs::load(&directory).expect("startup"), original);
+        UiPrefs::update(&directory, |prefs| prefs.reduced_motion = Some(true)).expect("change");
+        original.reduced_motion = Some(true);
+        let restarted = session_dir(&endpoint, "new-store", shared.path());
+        assert_eq!(UiPrefs::load(&restarted).expect("restart"), original);
+        assert!(!shared.path().join("endpoints").exists());
     }
 }

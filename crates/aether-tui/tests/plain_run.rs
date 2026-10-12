@@ -143,6 +143,8 @@ fn reply_to(command: &Command, mock: &Mock) -> Result<Reply, ErrorReply> {
                 daemon_protocol_version: None,
                 min_protocol_version: None,
                 idle_timeout_secs: None,
+                device: None,
+                submission_horizon: None,
             }))
         }
         Command::Providers => {

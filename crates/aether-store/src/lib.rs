@@ -22,10 +22,12 @@ use aether_core::checkpoint::Checkpoint;
 use aether_core::event::{Event, EventDraft};
 use aether_core::id::ScheduleId;
 use aether_core::id::{
-    AgentId, ApprovalId, ApprovalRuleId, ArtifactId, CheckpointId, EventId, InvocationId, MemoryId,
-    RunId, SnapshotId, TaskId, ToolCallId,
+    AgentId, ApprovalId, ApprovalRuleId, ArtifactId, CheckpointId, DeviceId, EventId, InvocationId,
+    MemoryId, RunId, SnapshotId, TaskId, ToolCallId,
 };
-use aether_core::idempotency::{IdempotencyKey, RecordedOutcome, RecordedSubmission};
+use aether_core::idempotency::{
+    IdempotencyKey, RecordedOutcome, RecordedSubmission, SubmissionLedger,
+};
 use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::{MemoryKind, MemoryRecord, MemoryScope};
@@ -37,7 +39,7 @@ use aether_core::time::Timestamp;
 use aether_core::tool::ApprovalRequest;
 
 pub use schema::SCHEMA_VERSION;
-pub use sqlite::{RunExpiry, SqliteStore};
+pub use sqlite::{PushSubscriptionRow, RunExpiry, SqliteStore};
 
 /// The single write path, shared by everything that commits to one store.
 ///
@@ -173,6 +175,27 @@ pub enum Mutation {
         key: String,
         value: String,
     },
+    /// Insert a paired device, or replace its record and revocation. Never
+    /// moves `last_seen_at`: that belongs to [`Mutation::TouchDevice`].
+    PutDevice(DeviceRow),
+    /// Stamp a device's last accepted hello. An unknown id fails the commit.
+    TouchDevice {
+        id: DeviceId,
+        at: Timestamp,
+    },
+}
+
+/// One paired remote device as the store keeps it. The store indexes the
+/// lifecycle columns and carries `record` for the layer that enrolled it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceRow {
+    pub id: DeviceId,
+    pub created_at: Timestamp,
+    pub revoked_at: Option<Timestamp>,
+    /// Read-only here: written by [`Mutation::TouchDevice`] alone.
+    pub last_seen_at: Option<Timestamp>,
+    /// Name, role and public key, as the enrolling layer serialized them.
+    pub record: serde_json::Value,
 }
 
 /// An event replayed into this store from another daemon's export. It keeps
@@ -533,9 +556,17 @@ pub trait Store: Send + Sync {
     /// key. Daemon-wide: the key is the whole identity.
     fn submission(&self, key: &IdempotencyKey) -> Result<Option<RecordedSubmission>>;
 
+    /// How many receipts this store has recorded and which it has dropped.
+    /// Read it *after* looking a key up, so a drop the lookup missed is in it.
+    fn submission_ledger(&self) -> Result<SubmissionLedger>;
+
     fn approval_rule(&self, id: ApprovalRuleId) -> Result<Option<ApprovalRule>>;
     /// Remembered decisions, oldest first. Revoked ones only when asked for.
     fn approval_rules(&self, include_revoked: bool) -> Result<Vec<ApprovalRule>>;
+
+    fn device(&self, id: DeviceId) -> Result<Option<DeviceRow>>;
+    /// Paired devices, oldest first. Revoked ones only when asked for.
+    fn devices(&self, include_revoked: bool) -> Result<Vec<DeviceRow>>;
 
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>>;
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>>;

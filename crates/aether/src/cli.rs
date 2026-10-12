@@ -1,6 +1,8 @@
 //! Subcommand implementations.
 
+pub(crate) mod bridge;
 pub(crate) mod github_watcher;
+pub(crate) mod remote;
 pub(crate) mod schedules;
 pub(crate) mod voice;
 
@@ -14,6 +16,9 @@ use memory::{memory_scope_label, parse_memory_scope};
 
 mod retention;
 pub use retention::retention_preview;
+
+mod outbox;
+pub use outbox::{outbox_list, outbox_settle};
 
 mod reports;
 pub use reports::{replay, run_export, run_import, run_report, runs_list};
@@ -44,7 +49,7 @@ use lifecycle::record_startup_failure;
 use lifecycle::report_startup_result;
 #[cfg(test)]
 use lifecycle::stop_unaskable_daemon;
-pub use lifecycle::{daemon, serve, stop};
+pub use lifecycle::{daemon, serve, stop_endpoint};
 
 mod providers;
 use providers::health_segments;
@@ -104,7 +109,9 @@ use aether_core::provider::ProviderHealth;
 use aether_core::task::Priority;
 use aether_core::tool::ApprovalDecision;
 use aether_daemon::DaemonConfig;
-use aether_protocol::command_hint::command_hint;
+fn command_hint(endpoint: impl Into<aether_client::Endpoint>, explicit: bool) -> String {
+    endpoint.into().command_hint(explicit)
+}
 use aether_protocol::{
     AgentQuery, ArtifactQuery, CreateAgent, Delta, EventQuery, MemoryQuerySpec, NewApprovalRule,
     RememberSpec, TaskQuery,
@@ -146,11 +153,19 @@ fn daemon_command(
     Ok(command)
 }
 
-async fn connect_or_start(socket: &PathBuf) -> anyhow::Result<Client> {
-    let command = daemon_command(socket, false, None, false)?;
-    ensure_daemon(socket, command).await.map_err(|e| {
+async fn connect_or_start(endpoint: impl Into<aether_client::Endpoint>) -> anyhow::Result<Client> {
+    let endpoint = endpoint.into();
+    if endpoint.is_remote() {
+        return connect(&endpoint).await;
+    }
+    let socket = endpoint
+        .local_path()
+        .ok_or_else(|| anyhow!("missing local socket"))?
+        .to_path_buf();
+    let command = daemon_command(&socket, false, None, false)?;
+    ensure_daemon(&socket, command).await.map_err(|e| {
         failed_connection(
-            socket,
+            &socket,
             e,
             format!(
                 "could not reach or start the daemon at {}",
@@ -160,19 +175,45 @@ async fn connect_or_start(socket: &PathBuf) -> anyhow::Result<Client> {
     })
 }
 
-async fn connect(socket: &PathBuf) -> anyhow::Result<Client> {
-    Client::connect(socket).await.map_err(|e| {
-        failed_connection(
-            socket,
-            e,
-            format!(
-                "no daemon at {} (start one with `{}` or `{} daemon`)",
-                socket.display(),
-                command_hint(socket, false),
-                command_hint(socket, false)
+async fn connect(endpoint: impl Into<aether_client::Endpoint>) -> anyhow::Result<Client> {
+    let endpoint = endpoint.into();
+    let client = connect_unannounced(&endpoint).await?;
+    outbox::announce_unconfirmed(&client, &endpoint).await?;
+    Ok(client)
+}
+
+/// Connect without naming the operations still waiting on a decision, for the
+/// commands that are about to show or settle them.
+async fn connect_unannounced(endpoint: &aether_client::Endpoint) -> anyhow::Result<Client> {
+    let client =
+        Client::connect_endpoint(endpoint)
+            .await
+            .map_err(|error| match endpoint.local_path() {
+                Some(path) => failed_connection(
+                    path,
+                    error,
+                    format!(
+                        "no daemon at {} (start one with `{}`)",
+                        path.display(),
+                        endpoint.command_hint(false)
+                    ),
+                ),
+                None => anyhow::Error::new(error).context(format!(
+                    "could not reach {}; check SSH access and the daemon on that host",
+                    endpoint.display()
+                )),
+            })?;
+    for (command, result) in client.recovered_commands() {
+        match result {
+            Ok(_) => eprintln!("confirmed queued remote {}", command.name()),
+            Err(error) => eprintln!(
+                "queued remote {} refused: {}",
+                command.name(),
+                sane(&error.to_string())
             ),
-        )
-    })
+        }
+    }
+    Ok(client)
 }
 
 /// A connection that did not happen, said in terms of what to do next.
@@ -215,6 +256,7 @@ pub fn schema() -> anyhow::Result<()> {
 /// What `aether run` was asked for, as the person wrote it.
 #[derive(Debug)]
 pub struct RunOptions {
+    pub workspace: Option<PathBuf>,
     pub objective: String,
     /// `provider/model`; the configured default when absent.
     pub model: Option<String>,
@@ -261,6 +303,8 @@ pub(crate) fn error_json(error: &anyhow::Error, socket: &Path) -> serde_json::Va
                 serde_json::json!("protocol_error")
             }
             ClientError::Disconnected => serde_json::json!("daemon_unreachable"),
+            ClientError::Ssh(_) => serde_json::json!("ssh_failure"),
+            ClientError::DeliveryUnconfirmed(_) => serde_json::json!("delivery_unconfirmed"),
         }
     } else {
         serde_json::json!("internal")

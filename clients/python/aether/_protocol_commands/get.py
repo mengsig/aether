@@ -27,6 +27,13 @@ def get_artifact(*, id: ArtifactId) -> dict[str, Any]:
     frame["id"] = id
     return frame
 
+def get_attention() -> dict[str, Any]:
+    """Everything waiting on the operator: pending approvals, unanswered
+    questions, and failed or blocked agents, read at one sequence number.
+    """
+    frame: dict[str, Any] = {"cmd": "get_attention"}
+    return frame
+
 def get_checkpoint(*, id: CheckpointId) -> dict[str, Any]:
     """The `get_checkpoint` command."""
     frame: dict[str, Any] = {"cmd": "get_checkpoint"}
@@ -39,6 +46,12 @@ def get_events(*, after: int, limit: int, query: EventQuery) -> dict[str, Any]:
     frame["after"] = after
     frame["limit"] = limit
     frame["query"] = query
+    return frame
+
+def get_git_summary(*, workspace: str) -> dict[str, Any]:
+    """Branch and dirtiness of a workspace on the daemon's machine."""
+    frame: dict[str, Any] = {"cmd": "get_git_summary"}
+    frame["workspace"] = workspace
     return frame
 
 def get_github_watcher() -> dict[str, Any]:
@@ -57,6 +70,22 @@ def get_invocation(*, id: InvocationId) -> dict[str, Any]:
     """The `get_invocation` command."""
     frame: dict[str, Any] = {"cmd": "get_invocation"}
     frame["id"] = id
+    return frame
+
+def get_pairing(*, id: str) -> dict[str, Any]:
+    """Read a pairing's state; the code is never repeated. Host only."""
+    frame: dict[str, Any] = {"cmd": "get_pairing"}
+    frame["id"] = id
+    return frame
+
+def get_push_config() -> dict[str, Any]:
+    """Whether the daemon sends Web Push, and the key to subscribe with."""
+    frame: dict[str, Any] = {"cmd": "get_push_config"}
+    return frame
+
+def get_remote() -> dict[str, Any]:
+    """The remote listener's settings and state. Host only."""
+    frame: dict[str, Any] = {"cmd": "get_remote"}
     return frame
 
 def get_run_report(*, run: RunId) -> dict[str, Any]:

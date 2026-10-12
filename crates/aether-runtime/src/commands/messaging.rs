@@ -2,13 +2,44 @@ use super::MessageDelivery;
 use crate::submission::wrong_shape;
 use crate::{CommitHold, Result, Runtime, RuntimeError};
 use aether_core::agent::Agent;
-use aether_core::event::{Actor, EventDraft, EventKind};
+use aether_core::event::{Actor, Event, EventDraft, EventKind};
 use aether_core::id::{AgentId, InboxItemId, MessageId};
 use aether_core::idempotency::{Submission, SubmissionOutcome};
 use aether_core::inbox::{InboxItem, InboxKind};
 use aether_core::model::ContentBlock;
 use aether_core::time::now;
-use aether_store::{Commit, EventFilter, Mutation};
+use aether_store::{Commit, EventFilter, Mutation, Store};
+
+/// The question `agent` asked last, unless an operator has answered it since.
+/// Delivery of the answer closes it, so two replies cannot both queue.
+pub fn pending_question(store: &dyn Store, agent: AgentId) -> Result<Option<Event>> {
+    let mut filter = EventFilter::own_events(agent);
+    filter.types = vec!["question.asked".into()];
+    let Some(asked) = store.latest_events(1, &filter)?.pop() else {
+        return Ok(None);
+    };
+    if asked.actor.agent_id() != Some(agent)
+        || !matches!(asked.kind, EventKind::QuestionAsked { .. })
+    {
+        return Ok(None);
+    }
+    filter.types = vec!["message.sent".into()];
+    let mut after = asked.seq;
+    loop {
+        let events = store.events(after, 128, &filter)?;
+        for event in &events {
+            if matches!(&event.kind, EventKind::MessageSent { from, to, .. }
+                if *to == agent && matches!(from, Actor::User { .. } | Actor::Client { .. }))
+            {
+                return Ok(None);
+            }
+            after = event.seq;
+        }
+        if events.len() < 128 {
+            return Ok(Some(asked));
+        }
+    }
+}
 
 impl Runtime {
     /// Deliver a message to an agent's inbox. Waking is the scheduler's job.
@@ -102,38 +133,11 @@ impl Runtime {
         to: AgentId,
         question_seq: u64,
     ) -> Result<()> {
-        let stale = || {
-            RuntimeError::Invalid(format!(
+        match pending_question(self.store.as_ref(), to)? {
+            Some(asked) if asked.seq == question_seq => Ok(()),
+            _ => Err(RuntimeError::Invalid(format!(
                 "question {question_seq} is not the pending question for agent {to}"
-            ))
-        };
-        let mut filter = EventFilter::own_events(to);
-        filter.types = vec!["question.asked".into()];
-        let latest = self.store.latest_events(1, &filter)?;
-        if !latest.first().is_some_and(|event| {
-            event.seq == question_seq
-                && event.actor.agent_id() == Some(to)
-                && matches!(event.kind, EventKind::QuestionAsked { .. })
-        }) {
-            return Err(stale());
-        }
-        // Delivery, not later inbox consumption, closes the question so two
-        // operator replies cannot both be queued while the agent is busy.
-        filter.types = vec!["message.sent".into()];
-        let mut after = question_seq;
-        loop {
-            let events = self.store.events(after, 128, &filter)?;
-            for event in &events {
-                if matches!(&event.kind, EventKind::MessageSent { from, to: recipient, .. }
-                    if *recipient == to && matches!(from, Actor::User { .. } | Actor::Client { .. }))
-                {
-                    return Err(stale());
-                }
-                after = event.seq;
-            }
-            if events.len() < 128 {
-                return Ok(());
-            }
+            ))),
         }
     }
 

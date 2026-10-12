@@ -37,6 +37,8 @@ pub enum InboxKind {
         approval: ApprovalId,
         decision: ApprovalDecision,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<Actor>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
     },
     ChildFailed {

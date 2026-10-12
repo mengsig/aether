@@ -1,7 +1,9 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+mod remote;
 mod subcommands;
+pub(crate) use remote::*;
 pub(crate) use subcommands::*;
 
 #[derive(Debug, Parser)]
@@ -15,6 +17,12 @@ pub(crate) struct Args {
     /// Unix socket of the daemon (default: $XDG_RUNTIME_DIR/aether/aetherd.sock).
     #[arg(long, global = true, env = "AETHER_SOCKET")]
     pub(crate) socket: Option<PathBuf>,
+    /// Use another machine's daemon, by the name `aether remote add` gave it.
+    #[arg(long, global = true, env = "AETHER_REMOTE", value_name = "NAME")]
+    pub(crate) remote: Option<String>,
+    /// Use this machine's daemon, whatever AETHER_REMOTE says.
+    #[arg(long, global = true)]
+    pub(crate) local: bool,
     /// TUI theme for this run: auto, dark, light, mono, a built-in such as
     /// nord or gruvbox-light, or a theme file's name. `/theme` saves one.
     #[arg(long, global = true, env = "AETHER_THEME")]
@@ -105,6 +113,11 @@ pub(crate) enum Cmd {
         #[command(subcommand)]
         command: RetentionCmd,
     },
+    /// Decide remote operations whose delivery the host could not confirm.
+    Outbox {
+        #[command(subcommand)]
+        command: Option<OutboxCmd>,
+    },
     /// Show daemon status.
     Status {
         /// Print the whole status as JSON.
@@ -122,6 +135,9 @@ pub(crate) enum Cmd {
         after_help = "Exit codes: 0 = completed or waiting for operator input; 1 = failed run or command error; 2 = invalid command-line arguments; 3 = cancelled run. Usage and --json output are printed before the run's exit status is returned. Delegated runs also show subtree usage, including descendants."
     )]
     Run {
+        /// Workspace on the selected host; required for --remote.
+        #[arg(long)]
+        workspace: Option<PathBuf>,
         /// The objective, as one argument or several words.
         objective: Vec<String>,
         /// Model as provider/model, or a fallback chain:
@@ -438,6 +454,19 @@ pub(crate) enum Cmd {
     Memory {
         #[command(subcommand)]
         command: MemoryCmd,
+    },
+    /// Control this daemon from a phone or browser, and reach other
+    /// machines' daemons over SSH.
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCmd,
+    },
+    /// Copy bytes between standard streams and the daemon's socket. What
+    /// `--remote` runs on the far side of SSH; it starts no daemon.
+    Bridge {
+        /// Required: the only carrier there is.
+        #[arg(long, required = true)]
+        stdio: bool,
     },
     /// MCP bridge spawned by engines (Claude Code, Codex); not for direct use.
     #[command(hide = true)]

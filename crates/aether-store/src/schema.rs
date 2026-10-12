@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 15;
+pub const SCHEMA_VERSION: u32 = 18;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -349,8 +349,36 @@ BEGIN
 END;
 "#;
 
+// Web Push subscriptions, one per paired device. The body is opaque here.
+const V16: &str = r#"
+CREATE TABLE push_subscriptions (
+    device     TEXT PRIMARY KEY,
+    updated_at TEXT NOT NULL,
+    body       TEXT NOT NULL
+);
+"#;
+
+// Paired remote devices. `last_seen_at` is the one field outside `body`:
+// every device hello stamps it, and must not race a rename of the record.
+const V17: &str = r#"
+CREATE TABLE devices (
+    id           TEXT PRIMARY KEY,
+    created_at   TEXT NOT NULL,
+    revoked_at   TEXT,
+    last_seen_at TEXT,
+    body         TEXT NOT NULL
+);
+CREATE INDEX devices_created ON devices(created_at, id);
+"#;
+
+// Receipts are numbered as recorded (`SubmissionLedger`). Rows from before
+// the ledger keep 0: no horizon was ever issued below them.
+const V18: &str = r#"
+ALTER TABLE submissions ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0;
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the

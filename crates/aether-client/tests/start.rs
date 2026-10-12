@@ -43,6 +43,8 @@ async fn answer_handshake(stream: UnixStream) {
                 daemon_protocol_version: None,
                 min_protocol_version: None,
                 idle_timeout_secs: None,
+                device: None,
+                submission_horizon: None,
             })),
         };
         let mut encoded = serde_json::to_string(&reply).expect("encode");

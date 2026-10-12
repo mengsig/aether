@@ -11,11 +11,15 @@ from ._ReplyApprovals import ReplyApprovals
 from ._ReplyArtifact import ReplyArtifact
 from ._ReplyArtifactBytes import ReplyArtifactBytes
 from ._ReplyArtifacts import ReplyArtifacts
+from ._ReplyAttention import ReplyAttention
 from ._ReplyAuth import ReplyAuth
 from ._ReplyCheckpoint import ReplyCheckpoint
+from ._ReplyDevice import ReplyDevice
+from ._ReplyDevices import ReplyDevices
 from ._ReplyEngineTool import ReplyEngineTool
 from ._ReplyEngineTools import ReplyEngineTools
 from ._ReplyEvents import ReplyEvents
+from ._ReplyGitSummary import ReplyGitSummary
 from ._ReplyGithubWatcher import ReplyGithubWatcher
 from ._ReplyInbox import ReplyInbox
 from ._ReplyInterrupted import ReplyInterrupted
@@ -29,8 +33,12 @@ from ._ReplyMessageSent import ReplyMessageSent
 from ._ReplyMessagesSent import ReplyMessagesSent
 from ._ReplyModels import ReplyModels
 from ._ReplyOk import ReplyOk
+from ._ReplyPairing import ReplyPairing
+from ._ReplyPathCompletions import ReplyPathCompletions
 from ._ReplyPaused import ReplyPaused
 from ._ReplyProviders import ReplyProviders
+from ._ReplyPushConfig import ReplyPushConfig
+from ._ReplyRemote import ReplyRemote
 from ._ReplyReplay import ReplyReplay
 from ._ReplyRetentionPreview import ReplyRetentionPreview
 from ._ReplyRunExported import ReplyRunExported
@@ -42,12 +50,15 @@ from ._ReplyScheduleHistory import ReplyScheduleHistory
 from ._ReplySchedules import ReplySchedules
 from ._ReplySnapshot import ReplySnapshot
 from ._ReplyStatus import ReplyStatus
+from ._ReplySubmissionResolved import ReplySubmissionResolved
 from ._ReplySubscribed import ReplySubscribed
 from ._ReplyTask import ReplyTask
 from ._ReplyTasks import ReplyTasks
 from ._ReplyTranscript import ReplyTranscript
 from ._ReplyTree import ReplyTree
 from ._ReplyWelcome import ReplyWelcome
+from ._ReplyWorkspaceValidation import ReplyWorkspaceValidation
+from ._ReplyWorkspaces import ReplyWorkspaces
 
 
 Reply = (
@@ -95,5 +106,16 @@ Reply = (
     ReplyProviders |
     ReplyAuth |
     ReplyEngineTool |
-    ReplyEngineTools
+    ReplyEngineTools |
+    ReplyAttention |
+    ReplyPathCompletions |
+    ReplyWorkspaces |
+    ReplyWorkspaceValidation |
+    ReplyGitSummary |
+    ReplyRemote |
+    ReplyPairing |
+    ReplyDevice |
+    ReplyDevices |
+    ReplyPushConfig |
+    ReplySubmissionResolved
 )

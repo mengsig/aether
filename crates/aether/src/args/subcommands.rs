@@ -546,6 +546,37 @@ pub(crate) struct MatchArgs {
     pub(crate) resource: Option<String>,
 }
 
+/// Remote operations whose delivery the host could not confirm.
+#[derive(Debug, Subcommand)]
+pub(crate) enum OutboxCmd {
+    /// List the operations that may or may not have run on the host.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record that an operation did run, and stop tracking it. Sends nothing.
+    Delivered {
+        /// The operation's idempotency key, as `outbox list` prints it.
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Send an operation again under its original key, accepting that it may
+    /// run a second time if the host no longer holds its receipt.
+    Resend {
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record that an operation is no longer wanted, and stop tracking it.
+    /// Sends nothing; it may already have run.
+    Discard {
+        key: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 pub(crate) enum RetentionCmd {
     /// Preview eligible runs, protected reasons, payload bytes, and pending cleanup.

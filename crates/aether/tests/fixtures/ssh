@@ -1,0 +1,8 @@
+#!/bin/sh
+for arg do
+    case "$arg" in
+        auth-failure) echo 'Permission denied (publickey).' >&2; exit 255;;
+    esac
+    remote_command=$arg
+done
+exec /bin/sh -c "exec $remote_command"

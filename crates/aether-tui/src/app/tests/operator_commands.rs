@@ -41,7 +41,7 @@ fn operator_commands_wait_for_replies_and_keep_unicode_in_ascii_mode() {
     let original_name = app.selected_agent().unwrap().name.clone();
     let effects = app.run_command(SlashCommand::Rename("名前 café".into()));
     assert!(
-        matches!(&effects[..], [Effect::Request { command: Command::UpdateAgent { id: target, patch }, then: Then::AgentRenamed(reply_id) }] if *target == id && *reply_id == id && patch.name.as_deref() == Some("名前 café"))
+        matches!(&effects[..], [Effect::Request { command: Command::UpdateAgent { id: target, patch , idempotency_key: None, }, then: Then::AgentRenamed(reply_id) }] if *target == id && *reply_id == id && patch.name.as_deref() == Some("名前 café"))
     );
     assert_eq!(app.selected_agent().unwrap().name, original_name);
     let mut renamed = app.selected_agent().unwrap().clone();
@@ -60,7 +60,7 @@ fn operator_commands_wait_for_replies_and_keep_unicode_in_ascii_mode() {
         scope: commands::RememberScope::Agent,
     });
     assert!(
-        matches!(&effects[..], [Effect::Request { command: Command::CreateMemory { spec }, then: Then::MemoryCreated { selected } }] if *selected == Some(id) && spec.scope == OperatorMemoryScope::Agent { id })
+        matches!(&effects[..], [Effect::Request { command: Command::CreateMemory { spec , idempotency_key: None, }, then: Then::MemoryCreated { selected } }] if *selected == Some(id) && spec.scope == OperatorMemoryScope::Agent { id })
     );
     let mut record = memory_record(false);
     record.scope = MemoryScope::Agent { id };
@@ -127,7 +127,7 @@ fn operator_commands_reject_missing_selection_and_surface_errors_without_stale_n
         scope: commands::RememberScope::Repository,
     });
     assert!(
-        matches!(&repository[..], [Effect::Request { command: Command::CreateMemory { spec }, .. }] if spec.scope == aether_core::memory::OperatorMemoryScope::Repository { root: Some(root) })
+        matches!(&repository[..], [Effect::Request { command: Command::CreateMemory { spec , idempotency_key: None, }, .. }] if spec.scope == aether_core::memory::OperatorMemoryScope::Repository { root: Some(root) })
     );
     app.on_reply(
         Then::MemoryCreated { selected: Some(id) },

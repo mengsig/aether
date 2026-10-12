@@ -423,11 +423,20 @@ impl Store for CommitsMidPass {
     ) -> Result<Option<aether_core::idempotency::RecordedSubmission>> {
         self.inner.submission(key)
     }
+    fn submission_ledger(&self) -> Result<aether_core::idempotency::SubmissionLedger> {
+        self.inner.submission_ledger()
+    }
     fn approval_rule(&self, id: ApprovalRuleId) -> Result<Option<ApprovalRule>> {
         self.inner.approval_rule(id)
     }
     fn approval_rules(&self, include_revoked: bool) -> Result<Vec<ApprovalRule>> {
         self.inner.approval_rules(include_revoked)
+    }
+    fn device(&self, id: aether_core::id::DeviceId) -> Result<Option<aether_store::DeviceRow>> {
+        self.inner.device(id)
+    }
+    fn devices(&self, include_revoked: bool) -> Result<Vec<aether_store::DeviceRow>> {
+        self.inner.devices(include_revoked)
     }
     fn artifacts(&self, filter: &ArtifactFilter) -> Result<Vec<Artifact>> {
         self.inner.artifacts(filter)

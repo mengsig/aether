@@ -187,7 +187,13 @@ impl Client {
         &self,
         spec: aether_core::memory::OperatorMemorySpec,
     ) -> Result<MemoryRecord> {
-        match self.request(Command::CreateMemory { spec }).await? {
+        match self
+            .request(Command::CreateMemory {
+                spec,
+                idempotency_key: None,
+            })
+            .await?
+        {
             Reply::Memory(record) => Ok(record),
             other => Err(unexpected("memory", &other)),
         }

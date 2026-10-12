@@ -119,6 +119,8 @@ mod memories;
 
 mod submissions;
 
+mod ledger;
+
 mod artifacts;
 
 mod commit_stalls;

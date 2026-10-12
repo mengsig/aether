@@ -14,6 +14,7 @@ import type {
 export interface ArchiveCommand {
   "cmd": "archive";
   "archived"?: boolean;
+  "idempotency_key"?: string | null;
   "target": ArchiveTarget;
 }
 

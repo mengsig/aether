@@ -47,14 +47,28 @@ impl Client {
         target: aether_protocol::ArchiveTarget,
         archived: bool,
     ) -> Result<Vec<Agent>> {
-        match self.request(Command::Archive { target, archived }).await? {
+        match self
+            .request(Command::Archive {
+                target,
+                archived,
+                idempotency_key: None,
+            })
+            .await?
+        {
             Reply::Agents(a) => Ok(a),
             other => Err(unexpected("agents", &other)),
         }
     }
 
     pub async fn update_agent(&self, id: AgentId, patch: AgentPatch) -> Result<Agent> {
-        match self.request(Command::UpdateAgent { id, patch }).await? {
+        match self
+            .request(Command::UpdateAgent {
+                id,
+                patch,
+                idempotency_key: None,
+            })
+            .await?
+        {
             Reply::Agent(a) => Ok(a),
             other => Err(unexpected("agent", &other)),
         }
@@ -97,13 +111,26 @@ impl Client {
     }
 
     pub async fn cancel(&self, agent: AgentId, reason: Option<String>) -> Result<()> {
-        expect_ok(self.request(Command::Cancel { agent, reason }).await?)
+        expect_ok(
+            self.request(Command::Cancel {
+                agent,
+                reason,
+                idempotency_key: None,
+            })
+            .await?,
+        )
     }
 
     /// Stop the agent's running turn, keeping the agent. True when a turn
     /// was running.
     pub async fn interrupt(&self, agent: AgentId) -> Result<bool> {
-        match self.request(Command::Interrupt { agent }).await? {
+        match self
+            .request(Command::Interrupt {
+                agent,
+                idempotency_key: None,
+            })
+            .await?
+        {
             Reply::Interrupted { was_running } => Ok(was_running),
             other => Err(unexpected("interrupted", &other)),
         }
@@ -112,7 +139,13 @@ impl Client {
     /// Recreate a failed or cancelled agent from its last checkpoint.
     /// Returns the new agent.
     pub async fn restart(&self, agent: AgentId) -> Result<Agent> {
-        match self.request(Command::Restart { agent }).await? {
+        match self
+            .request(Command::Restart {
+                agent,
+                idempotency_key: None,
+            })
+            .await?
+        {
             Reply::Agent(a) => Ok(a),
             other => Err(unexpected("agent", &other)),
         }
@@ -130,7 +163,14 @@ impl Client {
     /// Pause an agent, and with `subtree` every live agent beneath it.
     /// Returns the agents it moved and those finishing a turn first.
     pub async fn pause(&self, agent: AgentId, subtree: bool) -> Result<(Vec<Agent>, Vec<AgentId>)> {
-        match self.request(Command::Pause { agent, subtree }).await? {
+        match self
+            .request(Command::Pause {
+                agent,
+                subtree,
+                idempotency_key: None,
+            })
+            .await?
+        {
             Reply::Paused { agents, mid_turn } => Ok((agents, mid_turn)),
             other => Err(unexpected("paused", &other)),
         }
@@ -138,7 +178,14 @@ impl Client {
 
     /// Lift a pause, or clear a wait or an inspection. Returns the agents it moved.
     pub async fn resume(&self, agent: AgentId, subtree: bool) -> Result<Vec<Agent>> {
-        match self.request(Command::Resume { agent, subtree }).await? {
+        match self
+            .request(Command::Resume {
+                agent,
+                subtree,
+                idempotency_key: None,
+            })
+            .await?
+        {
             Reply::Agents(agents) => Ok(agents),
             other => Err(unexpected("agents", &other)),
         }

@@ -34,6 +34,13 @@ def list_artifacts(*, query: ArtifactQuery) -> dict[str, Any]:
     frame["query"] = query
     return frame
 
+def list_devices(*, include_revoked: bool | None = None) -> dict[str, Any]:
+    """Enrolled devices, oldest first. Host only."""
+    frame: dict[str, Any] = {"cmd": "list_devices"}
+    if include_revoked is not None:
+        frame["include_revoked"] = include_revoked
+    return frame
+
 def list_invocations(*, agent: AgentId) -> dict[str, Any]:
     """The `list_invocations` command."""
     frame: dict[str, Any] = {"cmd": "list_invocations"}
@@ -62,4 +69,11 @@ def list_tasks(*, query: TaskQuery) -> dict[str, Any]:
     """The `list_tasks` command."""
     frame: dict[str, Any] = {"cmd": "list_tasks"}
     frame["query"] = query
+    return frame
+
+def list_workspaces(*, limit: int | None = None) -> dict[str, Any]:
+    """Workspaces holding root agents, most recently active first."""
+    frame: dict[str, Any] = {"cmd": "list_workspaces"}
+    if limit is not None:
+        frame["limit"] = limit
     return frame

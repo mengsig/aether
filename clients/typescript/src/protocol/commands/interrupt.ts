@@ -12,6 +12,7 @@ import type {
 export interface InterruptCommand {
   "cmd": "interrupt";
   "agent": AgentId;
+  "idempotency_key"?: string | null;
 }
 
 export function interrupt(args: Omit<InterruptCommand, "cmd">): InterruptCommand {

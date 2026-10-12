@@ -26,6 +26,15 @@ mod json_parity {
             "aether schema",
             "its whole output is the JSON Schema document",
         ),
+        (
+            "aether remote setup",
+            "a guided flow: it asks before each step and waits for the person",
+        ),
+        (
+            "aether remote pair",
+            "an interactive flow: it shows a code and waits for a confirmation",
+        ),
+        ("aether bridge", "it is a byte pump on stdio for ssh"),
     ];
 
     /// Every leaf command, as the path a person would type, with its flags.
@@ -537,4 +546,30 @@ fn retention_preview_accepts_json_and_has_no_destructive_mode() {
         })
     ));
     assert!(Args::try_parse_from(["aether", "retention", "delete"]).is_err());
+}
+
+#[test]
+fn outbox_lists_by_default_and_every_decision_names_one_key() {
+    use clap::Parser as _;
+    let parse = |args: &[&str]| Args::try_parse_from(args).map(|parsed| parsed.command);
+    assert!(matches!(
+        parse(&["aether", "--remote", "box", "outbox"]),
+        Ok(Some(Cmd::Outbox { command: None }))
+    ));
+    assert!(matches!(
+        parse(&["aether", "outbox", "list", "--json"]),
+        Ok(Some(Cmd::Outbox {
+            command: Some(OutboxCmd::List { json: true })
+        }))
+    ));
+    for decision in ["delivered", "resend", "discard"] {
+        assert!(parse(&["aether", "outbox", decision, "ssh-1"]).is_ok());
+        assert!(parse(&["aether", "outbox", decision, "ssh-1", "--json"]).is_ok());
+        assert!(
+            parse(&["aether", "outbox", decision]).is_err(),
+            "{decision} must name the operation it decides"
+        );
+    }
+    let outbox = Cmd::Outbox { command: None };
+    assert!(check_remote_command(Some(&outbox)).is_ok());
 }

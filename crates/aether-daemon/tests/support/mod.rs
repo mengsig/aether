@@ -51,12 +51,40 @@ impl TestDaemon {
         Self::launch(None, configured, override_limit).await
     }
 
+    /// A daemon whose `config.toml` is exactly `toml`.
+    pub async fn start_with_config(toml: &str) -> TestDaemon {
+        let dir = tempfile::tempdir().expect("tempdir");
+        Self::launch_in(dir, None, Some(toml.to_owned()), None).await
+    }
+
+    /// Stop, then start again over the same store and configuration.
+    pub async fn restart(self) -> TestDaemon {
+        self.shutdown.cancel();
+        let stopped = tokio::time::timeout(Duration::from_secs(10), self.serving).await;
+        stopped
+            .expect("the daemon stops in time")
+            .expect("the daemon task joins")
+            .expect("the daemon stops cleanly");
+        Self::launch_in(self._dir, None, None, None).await
+    }
+
     async fn launch(
         tcp: Option<TcpListen>,
         configured: Option<usize>,
         override_limit: Option<usize>,
     ) -> TestDaemon {
         let dir = tempfile::tempdir().expect("tempdir");
+        let toml = configured.map(|limit| format!("[scheduler]\nmax_concurrent_turns = {limit}\n"));
+        Self::launch_in(dir, tcp, toml, override_limit).await
+    }
+
+    /// Start a daemon in `dir`, writing `toml` as its configuration first.
+    async fn launch_in(
+        dir: tempfile::TempDir,
+        tcp: Option<TcpListen>,
+        toml: Option<String>,
+        override_limit: Option<usize>,
+    ) -> TestDaemon {
         let root = dir.path().to_path_buf();
         let socket = root.join("aetherd.sock");
         let address = tcp.as_ref().map(|listen| listen.addr);
@@ -71,13 +99,9 @@ impl TestDaemon {
             allow_remote: false,
         };
         std::fs::create_dir_all(root.join("workspace")).expect("workspace");
-        if let Some(limit) = configured {
+        if let Some(toml) = toml {
             std::fs::create_dir_all(root.join("config")).expect("config dir");
-            std::fs::write(
-                root.join("config/config.toml"),
-                format!("[scheduler]\nmax_concurrent_turns = {limit}\n"),
-            )
-            .expect("config");
+            std::fs::write(root.join("config/config.toml"), toml).expect("config");
         }
         let shutdown = CancellationToken::new();
         let serving = tokio::spawn(aether_daemon::run(config, shutdown.clone()));

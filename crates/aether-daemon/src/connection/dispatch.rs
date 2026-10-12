@@ -1,4 +1,5 @@
 use crate::Daemon;
+use crate::authz::AuthContext;
 use aether_core::event::Actor;
 use aether_core::idempotency::Submission;
 use aether_core::model::ContentBlock;
@@ -6,7 +7,7 @@ use aether_core::schedule::ScheduleTarget;
 use aether_protocol::{Command, DaemonStatus, ErrorCode, ErrorReply, Reply};
 use aether_runtime::{AgentUpdate, CreateAgentSpec, CreateTaskSpec, Remember};
 
-use super::{map_err, providers, store_err};
+use super::{host_services, map_err, providers, push, remote_admin, resolution, store_err};
 use base64::Engine as _;
 
 /// Where to cut `bytes` at about `max` so that text stays text. Slicing at a
@@ -25,7 +26,7 @@ pub(super) fn text_safe_end(bytes: &[u8], max: usize) -> usize {
 
 /// Run `work` on the blocking pool. A panic in it is the connection's
 /// internal error, not a lost reply.
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ErrorReply> {
     tokio::task::spawn_blocking(work)
@@ -45,25 +46,36 @@ async fn blocking<T: Send + 'static>(
 /// field this daemon learns about later cannot change a digest an earlier one
 /// wrote. Untyped values (a `trigger` or schedule `payload`) are the exception:
 /// they are digested as spelled.
-fn submission_of(command: &Command) -> Result<Option<Submission>, ErrorReply> {
-    let Some(keyed) = command.keyed_request() else {
-        return Ok(None);
-    };
-    let keyed = keyed.map_err(ErrorReply::internal)?;
-    Submission::new(keyed.key, &keyed.fields)
-        .map(Some)
-        .map_err(|e| ErrorReply::invalid(e.to_string()))
+fn submission_of(command: &Command, auth: &AuthContext) -> Result<Option<Submission>, ErrorReply> {
+    auth.submission(command)
 }
 
 pub(super) async fn dispatch_version(
     daemon: &Daemon,
     command: Command,
     by: Actor,
-    version: u32,
+    auth: &AuthContext,
+) -> Result<Reply, ErrorReply> {
+    auth.authorize(&command)?;
+    crate::authz::guard(daemon, auth, &command)?;
+    if let Command::ResolveSubmission { command, horizon } = command {
+        return resolution::resolve(daemon, *command, horizon, by, auth).await;
+    }
+    let submission = submission_of(&command, auth)?;
+    dispatch_authorized(daemon, command, by, auth, submission).await
+}
+
+/// Run a command its connection is already cleared to send. `submission` is
+/// the command's own, or its replay-only twin when a resolution reads back.
+pub(super) async fn dispatch_authorized(
+    daemon: &Daemon,
+    command: Command,
+    by: Actor,
+    auth: &AuthContext,
+    submission: Option<Submission>,
 ) -> Result<Reply, ErrorReply> {
     let rt = &daemon.runtime;
     let store = rt.store().as_ref();
-    let submission = submission_of(&command)?;
     match command {
         Command::Hello(_) => Err(ErrorReply::invalid("already greeted")),
         // Nothing but a frame in: the point is to hold a quiet connection
@@ -117,6 +129,9 @@ pub(super) async fn dispatch_version(
         Command::Shutdown | Command::Subscribe { .. } | Command::Unsubscribe { .. } => {
             Err(ErrorReply::internal("handled by the connection loop"))
         }
+        Command::ResolveSubmission { .. } => Err(ErrorReply::internal(
+            "a resolution is answered before dispatch",
+        )),
         Command::CreateAgent(req) => {
             if rt.default_model().is_none() && req.model.is_none() {
                 rt.set_default_model(daemon.models.default_model().await);
@@ -182,10 +197,13 @@ pub(super) async fn dispatch_version(
         } => Ok(Reply::Tree(
             crate::projections::build_tree(store, run, include_archived).map_err(store_err)?,
         )),
-        Command::Archive { target, archived } => Ok(Reply::Agents(
-            rt.archive_agents(target, archived, by).map_err(map_err)?,
+        Command::Archive {
+            target, archived, ..
+        } => Ok(Reply::Agents(
+            rt.archive_agents_keyed(target, archived, by, submission)
+                .map_err(map_err)?,
         )),
-        Command::UpdateAgent { id, patch } => {
+        Command::UpdateAgent { id, patch, .. } => {
             let update = AgentUpdate {
                 name: patch.name,
                 model: patch.model,
@@ -205,7 +223,8 @@ pub(super) async fn dispatch_version(
                 backend: patch.backend,
             };
             Ok(Reply::Agent(
-                rt.update_agent(id, update, by).map_err(map_err)?,
+                rt.update_agent_keyed(id, update, by, submission)
+                    .map_err(map_err)?,
             ))
         }
         Command::ReplyToQuestion {
@@ -249,12 +268,15 @@ pub(super) async fn dispatch_version(
                 .collect();
             Ok(Reply::MessagesSent { deliveries })
         }
-        Command::Cancel { agent, reason } => {
-            rt.cancel_agent(agent, reason, by).map_err(map_err)?;
+        Command::Cancel { agent, reason, .. } => {
+            rt.cancel_agent_keyed(agent, reason, by, submission)
+                .map_err(map_err)?;
             Ok(Reply::Ok)
         }
-        Command::Interrupt { agent } => {
-            let was_running = rt.interrupt_agent(agent, by).map_err(map_err)?;
+        Command::Interrupt { agent, .. } => {
+            let was_running = rt
+                .interrupt_agent_keyed(agent, by, submission)
+                .map_err(map_err)?;
             Ok(Reply::Interrupted { was_running })
         }
         Command::GetGithubWatcher => Ok(Reply::GithubWatcher(
@@ -269,30 +291,6 @@ pub(super) async fn dispatch_version(
                     ErrorCode::Unauthorized,
                     "only an operator may configure the GitHub watcher",
                 ));
-            }
-            // A v14 client cannot carry an allowlist, so its whole-config save
-            // would clear one and widen who may dispatch.
-            if version < 15 {
-                use aether_protocol::compat::has_watcher_allowlist;
-                let current = rt.github_watcher_status().map_err(map_err)?;
-                if has_watcher_allowlist(&current.config) || has_watcher_allowlist(&config) {
-                    return Err(ErrorReply::new(
-                        ErrorCode::Incompatible,
-                        aether_protocol::compat::ALLOWLIST_WATCHER_VERSION_ERROR,
-                    ));
-                }
-            }
-            // A v16 client cannot carry operator_users, so its whole-config
-            // save would drop the list without the operator seeing it.
-            if version < 17 {
-                use aether_protocol::compat::has_watcher_operator_users as has_operators;
-                let current = rt.github_watcher_status().map_err(map_err)?;
-                if has_operators(&current.config) || has_operators(&config) {
-                    return Err(ErrorReply::new(
-                        ErrorCode::Incompatible,
-                        aether_protocol::compat::OPERATOR_USERS_WATCHER_VERSION_ERROR,
-                    ));
-                }
             }
             Ok(Reply::GithubWatcher(
                 rt.configure_github_watcher(config, expected_revision)
@@ -321,8 +319,9 @@ pub(super) async fn dispatch_version(
         Command::ListSchedules { target } => Ok(Reply::Schedules(
             rt.store().schedules(target).map_err(store_err)?,
         )),
-        Command::UpdateSchedule { id, action } => Ok(Reply::Schedule(
-            rt.update_schedule(id, action, by).map_err(map_err)?,
+        Command::UpdateSchedule { id, action, .. } => Ok(Reply::Schedule(
+            rt.update_schedule_keyed(id, action, by, submission)
+                .map_err(map_err)?,
         )),
         Command::ScheduleHistory { id, limit } => Ok(Reply::ScheduleHistory(
             rt.store()
@@ -339,27 +338,33 @@ pub(super) async fn dispatch_version(
                 .map_err(map_err)?;
             Ok(Reply::Ok)
         }
-        Command::Restart { agent } => {
-            Ok(Reply::Agent(rt.restart_agent(agent, by).map_err(map_err)?))
-        }
+        Command::Restart { agent, .. } => Ok(Reply::Agent(
+            rt.restart_agent_keyed(agent, by, submission)
+                .map_err(map_err)?,
+        )),
         Command::Wake { agent } => Ok(Reply::Agent(rt.wake_agent(agent, by).map_err(map_err)?)),
-        Command::Pause { agent, subtree } => {
-            let outcome = rt.pause_agent(agent, subtree, by).map_err(map_err)?;
+        Command::Pause { agent, subtree, .. } => {
+            let outcome = rt
+                .pause_agent_keyed(agent, subtree, by, submission)
+                .map_err(map_err)?;
             Ok(Reply::Paused {
                 agents: outcome.changed,
                 mid_turn: outcome.mid_turn,
             })
         }
-        Command::Resume { agent, subtree } => {
-            let agents = rt.resume_agent(agent, subtree, by).map_err(map_err)?;
+        Command::Resume { agent, subtree, .. } => {
+            let agents = rt
+                .resume_agent_keyed(agent, subtree, by, submission)
+                .map_err(map_err)?;
             Ok(Reply::Agents(agents))
         }
         Command::SetApprovals {
             agent,
             policy,
             subtree,
+            ..
         } => Ok(Reply::Agents(
-            rt.set_approvals(agent, policy, subtree, by)
+            rt.set_approvals_keyed(agent, policy, subtree, by, submission)
                 .map_err(map_err)?,
         )),
         Command::Compact { agent } => {
@@ -407,13 +412,14 @@ pub(super) async fn dispatch_version(
             decision,
             note,
             remember,
+            ..
         } => {
             let remember = remember.map(|r| Remember {
                 scope: r.scope,
                 tool_wide: r.tool_wide,
                 note: r.note,
             });
-            rt.resolve_approval(id, decision, by, note, remember)
+            rt.resolve_approval_keyed(id, decision, by, note, remember, submission)
                 .map_err(map_err)?;
             Ok(Reply::Ok)
         }
@@ -493,8 +499,15 @@ pub(super) async fn dispatch_version(
             rt.approval_rules(include_revoked).map_err(map_err)?,
         )),
         Command::AddApprovalRule(req) => Ok(Reply::ApprovalRule(
-            rt.add_approval_rule(req.decision, req.matcher, req.scope, by, req.note)
-                .map_err(map_err)?,
+            rt.add_approval_rule_keyed(
+                req.decision,
+                req.matcher,
+                req.scope,
+                by,
+                req.note,
+                submission,
+            )
+            .map_err(map_err)?,
         )),
         Command::RevokeApprovalRule { id, reason } => Ok(Reply::ApprovalRule(
             rt.revoke_approval_rule(id, by, reason).map_err(map_err)?,
@@ -577,9 +590,9 @@ pub(super) async fn dispatch_version(
         Command::Memories { query } => Ok(Reply::Memories(
             store.memories(&query.into()).map_err(store_err)?,
         )),
-        Command::CreateMemory { spec } => {
+        Command::CreateMemory { spec, .. } => {
             let rt = rt.clone();
-            let result = blocking(move || rt.create_memory(spec, by)).await?;
+            let result = blocking(move || rt.create_memory_keyed(spec, by, submission)).await?;
             Ok(Reply::Memory(result.map_err(map_err)?))
         }
         Command::ForgetMemory { id, reason } => Ok(Reply::Memory(
@@ -604,6 +617,25 @@ pub(super) async fn dispatch_version(
         Command::AuthStatus => providers::auth_status(daemon).await,
 
         Command::Providers => providers::providers(daemon).await,
+
+        command @ (Command::GetAttention
+        | Command::CompletePath { .. }
+        | Command::ListWorkspaces { .. }
+        | Command::ValidateWorkspace { .. }
+        | Command::GetGitSummary { .. }) => host_services::dispatch(daemon, command).await,
+        command @ (Command::GetRemote
+        | Command::ConfigureRemote { .. }
+        | Command::StartPairing { .. }
+        | Command::GetPairing { .. }
+        | Command::ConfirmPairing { .. }
+        | Command::CancelPairing { .. }
+        | Command::ListDevices { .. }
+        | Command::RevokeDevice { .. }
+        | Command::UpdateDevice { .. }) => remote_admin::dispatch(daemon, command, by, auth).await,
+        command @ (Command::GetPushConfig
+        | Command::SubscribePush { .. }
+        | Command::UnsubscribePush
+        | Command::TestPush) => push::dispatch(daemon, command, auth).await,
     }
 }
 
@@ -613,5 +645,5 @@ pub(super) async fn dispatch(
     command: Command,
     by: Actor,
 ) -> Result<Reply, ErrorReply> {
-    dispatch_version(daemon, command, by, aether_protocol::PROTOCOL_VERSION).await
+    dispatch_version(daemon, command, by, &AuthContext::Local).await
 }

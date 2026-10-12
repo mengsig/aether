@@ -9,6 +9,7 @@ from .. import protocol as _protocol
 class Welcome(TypedDict, total=False):
     daemon_protocol_version: int | None  # optional
     daemon_version: str
+    device: _protocol.DeviceIdentity | None  # optional
     features: list[str]  # optional
     idle_timeout_secs: int | None  # optional
     instance_id: str
@@ -16,3 +17,4 @@ class Welcome(TypedDict, total=False):
     pid: int
     protocol_version: int
     schema_version: int
+    submission_horizon: str | None  # optional

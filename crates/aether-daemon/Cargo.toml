@@ -19,6 +19,8 @@ aether-model = { workspace = true }
 aether-tools = { workspace = true }
 aether-runtime = { workspace = true }
 aether-protocol = { workspace = true }
+aether-remote = { workspace = true }
+async-trait = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -30,11 +32,14 @@ base64 = { workspace = true }
 ulid = { workspace = true }
 tempfile = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs", "process"] }
+ignore = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 aether-engine = { workspace = true }
-async-trait = { workspace = true }
 aether-client = { workspace = true }
+aether-remote = { workspace = true, features = ["test-support"] }
 chrono = { workspace = true }
 rusqlite = { workspace = true }
+aws-lc-rs = { workspace = true }
+tokio-tungstenite = { workspace = true }

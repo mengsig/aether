@@ -678,6 +678,7 @@ fn every_owned_config_section_rejects_unknown_keys() {
         "web",
         "web.search",
         "listen",
+        "remote",
         "serve",
         "retention",
     ] {
@@ -751,6 +752,7 @@ fn root_typos_name_the_key_and_valid_sections_while_theme_is_allowed() {
             "mcp",
             "memory",
             "listen",
+            "remote",
             "serve",
         ] {
             assert!(error.contains(expected), "{error}");

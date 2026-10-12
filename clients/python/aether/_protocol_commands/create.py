@@ -46,9 +46,11 @@ def create_agent(*, role: str, approval: ApprovalPolicy | None = None, config: A
         frame["start"] = start
     return frame
 
-def create_memory(*, spec: OperatorMemorySpec) -> dict[str, Any]:
+def create_memory(*, spec: OperatorMemorySpec, idempotency_key: str | None = None) -> dict[str, Any]:
     """Admit an operator-authored fact. Rejections return an error without mutation."""
     frame: dict[str, Any] = {"cmd": "create_memory"}
+    if idempotency_key is not None:
+        frame["idempotency_key"] = idempotency_key
     frame["spec"] = spec
     return frame
 

@@ -13,6 +13,7 @@ import type {
 export interface AddApprovalRuleCommand {
   "cmd": "add_approval_rule";
   "decision": ApprovalDecision;
+  "idempotency_key"?: string | null;
   "match": RuleMatch;
   "note"?: string | null;
   "scope": RuleScope;

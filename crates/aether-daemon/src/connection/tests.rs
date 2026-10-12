@@ -3,7 +3,9 @@ use aether_core::agent::DeadlineUpdate;
 use aether_runtime::CreateAgentSpec;
 use std::sync::Arc;
 
+mod device_gate;
 mod history_expiry;
+mod resolution;
 mod shutdown;
 mod shutdown_approval;
 mod subscription_cancel;
@@ -115,13 +117,20 @@ async fn github_watcher_configuration_is_operator_only_and_revision_checked() {
 /// without a socket. The config directory is returned with it: dropped
 /// here it would be removed while the daemon still names it, and leaked
 /// it would stay on disk after the run.
-async fn daemon() -> (Daemon, tempfile::TempDir) {
+pub(super) async fn daemon() -> (Daemon, tempfile::TempDir) {
     let store: Arc<dyn aether_store::Store> =
         Arc::new(aether_store::SqliteStore::open_in_memory().expect("store"));
     daemon_with_store(store).await
 }
 
 async fn daemon_with_store(store: Arc<dyn aether_store::Store>) -> (Daemon, tempfile::TempDir) {
+    daemon_with_network(store, aether_core::agent::NetworkPolicy::Allowed).await
+}
+
+async fn daemon_with_network(
+    store: Arc<dyn aether_store::Store>,
+    network: aether_core::agent::NetworkPolicy,
+) -> (Daemon, tempfile::TempDir) {
     let config_dir = tempfile::tempdir().expect("config dir");
     let models = Arc::new(
         aether_model::Models::load(Some(config_dir.path().to_path_buf())).expect("models"),
@@ -129,6 +138,7 @@ async fn daemon_with_store(store: Arc<dyn aether_store::Store>) -> (Daemon, temp
     let runtime = aether_runtime::Runtime::start_with_engines(
         aether_runtime::RuntimeConfig {
             holder: "test".into(),
+            network_default: network,
             default_model: Some(aether_core::model::ModelRef::new(
                 "anthropic",
                 "claude-sonnet-5-5",
@@ -149,6 +159,8 @@ async fn daemon_with_store(store: Arc<dyn aether_store::Store>) -> (Daemon, temp
             models,
             instance_id: "inst".into(),
             version: "test".into(),
+            push: None,
+            remote: Default::default(),
         },
         config_dir,
     )
@@ -177,6 +189,7 @@ async fn pause_resume_and_set_answer_the_shapes_the_client_expects() {
         Command::Pause {
             agent: root.id,
             subtree: true,
+            idempotency_key: None,
         },
         Actor::user(),
     )
@@ -196,6 +209,7 @@ async fn pause_resume_and_set_answer_the_shapes_the_client_expects() {
         Command::Resume {
             agent: root.id,
             subtree: true,
+            idempotency_key: None,
         },
         Actor::user(),
     )
@@ -231,6 +245,7 @@ async fn pause_resume_and_set_answer_the_shapes_the_client_expects() {
                 deadline: Some(DeadlineUpdate::Clear),
                 ..Default::default()
             },
+            idempotency_key: None,
         },
         Actor::user(),
     )

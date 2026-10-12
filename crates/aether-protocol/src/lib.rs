@@ -11,11 +11,8 @@
 //! correlation key receives an ID-zero diagnostic followed by connection closure;
 //! clients fail all pending requests on closure. See docs/protocol.md.
 //!
-//! The commands that create work - [`Command::SendMessage`], [`Command::ReplyToQuestion`],
-//! [`Command::CreateAgent`], [`Command::CreateTask`], [`Command::Trigger`] and
-//! [`Command::CreateSchedule`] - take an optional `idempotency_key`, so a
-//! client that lost an acknowledgement can retry without creating the work
-//! twice. See ARCHITECTURE §13.6 for what the daemon guarantees under it.
+//! Eighteen commands take an optional `idempotency_key` so a lost acknowledgement
+//! can be retried safely (docs/remote.md).
 //!
 //! This crate is types and paths only. The client and daemon crates own the
 //! sockets.
@@ -24,6 +21,7 @@ pub mod auth;
 pub mod command_hint;
 pub mod compat;
 pub mod paths;
+pub mod remote;
 pub mod schema;
 
 use std::collections::BTreeMap;
@@ -44,6 +42,7 @@ use aether_core::id::{
     AgentId, ApprovalId, ApprovalRuleId, ArtifactId, CheckpointId, InvocationId, MemoryId,
     MessageId, RunId, SnapshotId, TaskId,
 };
+pub use aether_core::idempotency::UnprovenAbsence;
 use aether_core::inbox::InboxItem;
 use aether_core::lease::{Lease, ResourceHolding};
 use aether_core::mcp::McpServerHealth;
@@ -140,7 +139,10 @@ use serde::{Deserialize, Serialize};
 /// drop it on save. v16 watcher replies carrying it become a clear
 /// incompatible error, and v16 saves are refused while it is set. The trigger
 /// field is additive: an older peer ignores it and reads the trigger as external.
-pub const PROTOCOL_VERSION: u32 = 17;
+///
+/// 18: remote control (docs/protocol.md). Device origins and the `forbidden` and
+/// `unimplemented` codes are folded for v17 by `compat`; the rest is additive.
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
@@ -161,10 +163,12 @@ pub use command::{Command, KeyedRequest};
 mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ErrorCode, ErrorReply, MessageDelivery, ModelInfo,
-    ProviderInfo, Reply, RunListing, TranscriptEntry, TreeNode,
+    ProviderInfo, Reply, RunListing, SubmissionResolution, TranscriptEntry, TreeNode,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};
+mod access;
+pub use access::Access;
 
 #[cfg(test)]
 mod tests;

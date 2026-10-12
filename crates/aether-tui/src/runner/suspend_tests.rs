@@ -50,6 +50,8 @@ fn suspend_loop_child() {
                         daemon_protocol_version: None,
                         min_protocol_version: None,
                         idle_timeout_secs: None,
+                        device: None,
+                        submission_horizon: None,
                     }),
                     Command::Subscribe { .. } => Reply::Subscribed { id: 1, last_seq: 1 },
                     Command::GetTree { .. } => Reply::Tree(tree.clone()),

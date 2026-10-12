@@ -1,15 +1,16 @@
 use super::{
-    AgentId, ApprovalPolicy, DeadlineUpdate, Effort, ModelChain, NetworkPolicy, PathBuf, Priority,
-    SetKnobs, connect, parse_backend,
+    AgentId, ApprovalPolicy, DeadlineUpdate, Effort, ModelChain, NetworkPolicy, Priority, SetKnobs,
+    connect, parse_backend,
 };
 use anyhow::{Context as _, anyhow, bail};
 
 pub async fn set(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     agent: String,
     knobs: SetKnobs,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     use aether_core::tool::ToolExposure;
     use aether_protocol::AgentPatch;
 

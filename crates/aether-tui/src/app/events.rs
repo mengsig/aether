@@ -5,6 +5,9 @@ use crate::ui::views::ViewKind;
 
 impl App {
     pub(super) fn on_event(&mut self, event: Event) -> Vec<Effect> {
+        if self.options.is_remote() && self.last_seq.is_some_and(|last| event.seq <= last) {
+            return Vec::new();
+        }
         let mut effects = Vec::new();
         self.backfill_note(&event);
         // Another agent's event only moves board rows and counts: no rush.
