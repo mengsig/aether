@@ -1,5 +1,5 @@
 //! One physical row for routine coordination; source bodies stay in the transcript.
-use crate::app::transcript::{CellModel, ChildOutcome, UserFrom};
+use crate::app::transcript::{CallStatus, CallTarget, CellModel, ChildOutcome, UserFrom};
 use crate::ui::theme::Theme;
 use ratatui::text::Line;
 use std::borrow::Cow;
@@ -49,7 +49,7 @@ pub fn line(model: &CellModel, width: u16, theme: &Theme) -> Option<Line<'static
             };
             parts.push(notice_text.as_ref());
         }
-        _ => return None,
+        _ => parts = failed_call(model)?,
     }
     let prefix = format!("{} ", theme.glyphs().bullet);
     let text = clipped(
@@ -58,6 +58,37 @@ pub fn line(model: &CellModel, width: u16, theme: &Theme) -> Option<Line<'static
         theme.glyphs().ellipsis,
     );
     Some(Line::styled(text, theme.text()))
+}
+
+/// `label failed: first error line`: the call's input and its later output stay out.
+fn failed_call(model: &CellModel) -> Option<Vec<&str>> {
+    let (mut parts, error) = match model {
+        CellModel::Exec {
+            status: CallStatus::Failed,
+            output,
+            ..
+        } => (vec!["Command"], output.as_str()),
+        CellModel::Called {
+            target,
+            status: CallStatus::Failed,
+            error,
+            ..
+        } => {
+            let label = match target {
+                CallTarget::Mcp { server, tool } => vec![server.as_str(), ".", tool],
+                CallTarget::WebSearch { .. } => vec!["Web search"],
+                CallTarget::WebFetch { .. } => vec!["Web fetch"],
+                CallTarget::Tool { name } => vec![name.as_str()],
+            };
+            (label, error.as_deref().unwrap_or_default())
+        }
+        _ => return None,
+    };
+    parts.push(" failed");
+    if let Some(first) = error.lines().map(str::trim).find(|line| !line.is_empty()) {
+        parts.extend([": ", first]);
+    }
+    Some(parts)
 }
 
 fn clipped<'a>(parts: impl Iterator<Item = &'a str>, width: usize, marker: &str) -> String {

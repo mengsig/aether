@@ -154,13 +154,21 @@ impl<'a> Rows<'a> {
             cell: cell.id,
             revision: cell.revision,
             width: self.width,
-            detail: self.detail
-                || self.policy.definition.is_some() && crate::view_modes::mandatory(&cell.model),
+            detail: self.detail || self.policy.expands(&cell.model),
             theme_epoch: self.theme_epoch,
             names: self.names,
             presentation: self.presentation,
             compact: self.policy.compact(&cell.model),
         }
+    }
+
+    /// A failed tool line under another: a run of failures reads as its first line.
+    fn folded(&self, item: usize) -> bool {
+        let failed = |at: usize| {
+            self.cell(at)
+                .is_some_and(|cell| self.policy.failed_tool_line(&cell.model))
+        };
+        item > 0 && failed(item) && failed(item - 1)
     }
 
     pub fn lines(&self, item: usize, cache: &mut LayoutCache) -> ItemLines<'a> {
@@ -170,6 +178,9 @@ impl<'a> Rows<'a> {
                 None => ItemLines::Cell(Arc::default()),
             };
         };
+        if self.folded(item) {
+            return ItemLines::Cell(Arc::default());
+        }
         let key = self.key(cell);
         if let Some(lines) = cache.get(&key) {
             return ItemLines::Cell(lines);
@@ -232,6 +243,9 @@ impl<'a> Rows<'a> {
     }
 
     pub fn height(&self, item: usize, cache: &mut LayoutCache) -> usize {
+        if self.folded(item) {
+            return 0;
+        }
         if let Some(cell) = self.cell(item)
             && let Some(height) = cache.height(&self.key(cell))
         {

@@ -1790,7 +1790,7 @@ fn grouped_tool_failures_keep_full_named_mode_notices_and_stock_cells() {
     );
     let transcript = &feed.transcripts[&agent];
     assert_eq!(transcript.presentation_cells(false).count(), before);
-    assert!(transcript.presentation_cells(true).any(|cell| matches!(&cell.model, CellModel::Error { message, .. } if message.contains("full failure detail"))));
+    assert!(transcript.presentation_cells(true).any(|cell| matches!(&cell.model, CellModel::Called { status: CallStatus::Failed, error: Some(error), .. } if error.contains("full failure detail"))));
 }
 
 #[test]
