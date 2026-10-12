@@ -75,6 +75,7 @@ function localCommand(name, context, state, compose, search, schedule) {
   if (name === 'help') { compose.openCommands(); return; }
   if (name === 'search') { search.focus(); return; }
   if (name === 'voice') { context.toast('Tap the microphone on your phone keyboard, dictate into the draft, review, then Send.'); return; }
+  if (name === 'image') { context.toast('Attaching an image from the phone is not available yet. In the terminal, use /image or aether send --image.'); return; }
   if (name === 'clear') {
     state.hiddenBefore = state.entries.reduce((maximum, entry) => Math.max(maximum, entry.seq), state.hiddenBefore);
     schedule();
