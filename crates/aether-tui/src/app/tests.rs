@@ -244,6 +244,8 @@ mod memory;
 
 mod composer;
 
+mod images;
+
 mod streaming;
 
 mod backfill;

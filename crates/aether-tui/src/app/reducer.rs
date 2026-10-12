@@ -65,6 +65,11 @@ impl App {
             AppEvent::Key(key) => self.dispatch_key(key),
 
             AppEvent::Paste(text) => self.dispatch_paste(&text),
+            AppEvent::ImagePathPasted { text, image } => self.image_path_pasted(&text, image),
+            AppEvent::ImageRead(image) => {
+                self.image_read(image);
+                Vec::new()
+            }
             AppEvent::Resize(w, h) => {
                 // §1.2: a docked board that would become an overlay closes instead;
                 // not saved, since narrowing the terminal is not a choice to hide it.

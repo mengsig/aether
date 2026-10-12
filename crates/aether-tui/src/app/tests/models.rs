@@ -551,7 +551,7 @@ fn failed_pending_root_model_change_holds_messages_for_retry() {
     });
     assert_eq!(
         app.held_messages(fresh).cloned(),
-        Some(vec!["first task".to_owned()])
+        Some(vec!["first task".into()])
     );
     assert!(
         app.live_flash()

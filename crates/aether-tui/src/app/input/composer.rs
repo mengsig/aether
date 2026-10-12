@@ -29,6 +29,9 @@ impl App {
             self.composer_unqueue();
             return Dispatch::Handled(Vec::new());
         }
+        if self.keys.matches(KeyAction::PasteImage, key) {
+            return Dispatch::Handled(self.paste_clipboard_image());
+        }
         if self.keys.matches(KeyAction::Shortcuts, key)
             && (self.input.text.is_empty() || self.bottom.shortcuts)
         {
@@ -64,7 +67,9 @@ impl App {
                 Vec::new()
             }
             KeyCode::Backspace if plain => {
-                self.composer_edit(EditOp::Backspace);
+                if !self.remove_last_image() {
+                    self.composer_edit(EditOp::Backspace);
+                }
                 Vec::new()
             }
             KeyCode::Delete if plain => {

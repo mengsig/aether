@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::images::Outgoing;
 use super::{
     Agent, AgentConfig, AgentId, AgentPatch, App, ApprovalPolicy, Command, CreateAgent, Effect,
     Intent, ModelChain, Role, Scope, Then,
@@ -22,7 +23,7 @@ pub(super) struct RootStart {
     /// Where it works; `None` leaves it to the daemon.
     workspace: Option<PathBuf>,
     /// Sent to it once it exists, oldest first.
-    messages: Vec<String>,
+    messages: Vec<Outgoing>,
     /// Applied before any of those messages.
     pub(super) model: Option<ModelChain>,
     /// Its last request failed and none is outstanding.
@@ -34,7 +35,7 @@ pub(super) struct RootStart {
 pub(super) struct HeldRoot {
     /// Where it was started, for the notice if its messages are dropped.
     workspace: Option<PathBuf>,
-    messages: Vec<String>,
+    messages: Vec<Outgoing>,
     /// Chosen while a change was in flight; sent once that one settles.
     next_model: Option<ModelChain>,
     patching: bool,
@@ -44,7 +45,7 @@ impl App {
     /// `/new`: a root of its own, even beside one already starting there.
     pub(super) fn start_new_root(
         &mut self,
-        objective: Option<String>,
+        objective: Option<Outgoing>,
         workspace: Option<PathBuf>,
     ) -> Effect {
         let id = StartId(self.next_start);
@@ -67,7 +68,7 @@ impl App {
     pub(super) fn await_root_in(
         &mut self,
         workspace: Option<PathBuf>,
-        message: Option<String>,
+        message: Option<Outgoing>,
     ) -> Option<Effect> {
         let wanted = workspace.as_deref().map(workspace::canonical);
         let here =
@@ -237,14 +238,14 @@ impl App {
             effects.push(Self::root_model_request(agent, chain));
             return effects;
         }
-        for text in start.messages {
-            effects.extend(self.send_message(agent, text));
+        for message in start.messages {
+            effects.extend(self.send_message(agent, message));
         }
         effects
     }
 
     /// The messages of `to`, a new root still waiting on its model change.
-    pub(super) fn held_messages(&mut self, to: AgentId) -> Option<&mut Vec<String>> {
+    pub(super) fn held_messages(&mut self, to: AgentId) -> Option<&mut Vec<Outgoing>> {
         self.held_roots.get_mut(&to).map(|held| &mut held.messages)
     }
 
@@ -288,8 +289,8 @@ impl App {
         let mut effects = Vec::new();
         self.refresh_tree(&mut effects);
         let held = self.held_roots.remove(&id);
-        for text in held.map(|held| held.messages).unwrap_or_default() {
-            effects.extend(self.send_message(id, text));
+        for message in held.map(|held| held.messages).unwrap_or_default() {
+            effects.extend(self.send_message(id, message));
         }
         effects
     }

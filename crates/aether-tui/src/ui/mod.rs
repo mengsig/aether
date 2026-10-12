@@ -77,12 +77,12 @@ fn render_panes(frame: &mut Frame, app: &App, cache: &mut ViewCache) {
         cache.regions.view = at.composer;
     } else if approval.is_none() && !app.approval_too_short() {
         cache.regions.composer_block = at.composer;
-        let pad = u16::from(at.composer.height > layout::COMPOSER_PADDING_ROWS);
+        let rows = bottom::composer::block_rows(app, at.composer.height);
         cache.regions.composer = Rect::new(
             at.composer.x + 2.min(at.composer.width),
-            at.composer.y + pad,
+            at.composer.y + rows.pad + rows.chips,
             at.composer.width.saturating_sub(4),
-            at.composer.height.saturating_sub(pad * 2),
+            rows.draft,
         );
     }
     transcript::render(frame, at.transcript, app, cache, theme);

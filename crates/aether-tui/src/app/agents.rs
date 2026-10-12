@@ -1,6 +1,7 @@
 //! Application agents.
 use std::path::Path;
 
+use super::images::Outgoing;
 use super::{
     AgentId, AgentPatch, AgentTree, App, ApprovalDefault, ApprovalPolicy, Command, Effect, Effort,
     InputAction, ModelChain, ShowFilter, Then, commands,
@@ -319,9 +320,9 @@ impl App {
             .is_some_and(|node| node.agent.status.is_terminal())
     }
 
-    pub(super) fn send_message(&mut self, to: AgentId, text: String) -> Vec<Effect> {
+    pub(super) fn send_message(&mut self, to: AgentId, message: Outgoing) -> Vec<Effect> {
         if let Some(held) = self.held_messages(to) {
-            held.push(text);
+            held.push(message);
             self.flash("message queued until the new agent's model change succeeds");
             return Vec::new();
         }
@@ -329,8 +330,9 @@ impl App {
         vec![Effect::Request {
             command: Command::SendMessage {
                 to,
-                content: text,
+                content: message.text,
                 subtree: false,
+                attachments: message.images,
                 // A person retrying is a new message, not a resubmission.
                 idempotency_key: None,
             },
@@ -341,20 +343,30 @@ impl App {
     pub(super) fn submit_input(&mut self) -> Vec<Effect> {
         let text = self.input.take();
         self.dirty = true;
-        match commands::parse(&text) {
-            InputAction::Empty => Vec::new(),
-            // With no live agent, every message queues for the one being
-            // created: the daemon refuses a message to a terminal agent, and
-            // a second message typed before the agent arrives (a pipe does
-            // this every time) must not start a second agent.
-            InputAction::Message(text) => match self.selected.filter(|id| !self.is_terminal(*id)) {
-                Some(agent) => self.send_message(agent, text),
-                None => {
-                    let here = self.active_workspace().map(Path::to_path_buf);
-                    self.await_root_in(here, Some(text)).into_iter().collect()
-                }
-            },
-            InputAction::Command(cmd) => self.run_command(cmd),
+        let text = match commands::parse(&text) {
+            // A command leaves the attached images for the message after it.
+            InputAction::Command(cmd) => return self.run_command(cmd),
+            InputAction::Empty if self.input.images.is_empty() => return Vec::new(),
+            // Images need no words to be a message.
+            InputAction::Empty => String::new(),
+            InputAction::Message(text) => text,
+        };
+        let message = Outgoing {
+            text,
+            images: std::mem::take(&mut self.input.images),
+        };
+        // With no live agent, every message queues for the one being
+        // created: the daemon refuses a message to a terminal agent, and
+        // a second message typed before the agent arrives (a pipe does
+        // this every time) must not start a second agent.
+        match self.selected.filter(|id| !self.is_terminal(*id)) {
+            Some(agent) => self.send_message(agent, message),
+            None => {
+                let here = self.active_workspace().map(Path::to_path_buf);
+                self.await_root_in(here, Some(message))
+                    .into_iter()
+                    .collect()
+            }
         }
     }
 }

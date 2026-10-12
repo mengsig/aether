@@ -18,6 +18,8 @@ pub struct InputState {
     /// Byte offset of the cursor.
     pub cursor: usize,
     pub(crate) pastes: Vec<PastedText>,
+    /// Images that leave with the next message; the chips above the draft.
+    pub(crate) images: Vec<aether_core::attachment::ImageAttachment>,
     pub(super) history: Vec<String>,
     pub(super) history_pos: Option<usize>,
 }

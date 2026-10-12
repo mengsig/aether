@@ -9,6 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use aether_core::agent::AgentStatusKind;
 use aether_core::id::AgentId;
 
+use super::images::Outgoing;
 use super::transcript::{ScrollIntent, Steer};
 use super::{App, ClientError, Command, Effect, InputState, Then};
 use crate::commands::InputAction;
@@ -233,9 +234,9 @@ impl App {
         // History keeps the expanded text, so ↑ recalls what was really sent.
         self.input.set_text(text);
         self.bottom.approval.deny_target = None;
-        let steer = match self.parse_input(&self.input.text) {
-            InputAction::Message(text) => self.viewed_running().map(|agent| (agent, text)),
-            InputAction::Empty => None,
+        let text = match self.parse_input(&self.input.text) {
+            InputAction::Message(text) => text,
+            InputAction::Empty => String::new(),
             InputAction::Command(command) => {
                 // Taken (into history) the way `submit_input` takes a message.
                 self.input.take();
@@ -243,10 +244,18 @@ impl App {
                 return self.run_slash(command);
             }
         };
+        // The preview reads as the transcript will: the text, then a line per image.
+        let preview = Outgoing {
+            text,
+            images: self.input.images.clone(),
+        }
+        .shown_text();
+        let steer = self.viewed_running().filter(|_| !preview.is_empty());
         let effects = self.submit_input();
-        if let Some((agent, text)) = steer {
+        if let Some(agent) = steer {
             let sent_at = self.now;
             let transcript = self.transcripts.entry(agent).or_default();
+            let text = preview;
             transcript.steering.push(Steer { text, sent_at });
         }
         effects
@@ -258,9 +267,12 @@ impl App {
             return self.composer_submit();
         };
         let text = match self.parse_input(&self.input.text) {
-            InputAction::Empty => return Vec::new(),
             // A command is never "after this turn": run it now.
             InputAction::Command(_) => return self.composer_submit(),
+            InputAction::Empty | InputAction::Message(_) if self.refuse_queued_images() => {
+                return Vec::new();
+            }
+            InputAction::Empty => return Vec::new(),
             InputAction::Message(_) if self.refuse_damaged_paste() => return Vec::new(),
             InputAction::Message(_) => self.expanded_draft(),
         };
@@ -340,6 +352,7 @@ impl App {
                 to: agent,
                 content: text,
                 subtree: false,
+                attachments: Vec::new(),
                 // Every client sees the same turn end: the daemon delivers it once.
                 idempotency_key: Some(format!("tui-queue-{agent}-{seq}")),
             },

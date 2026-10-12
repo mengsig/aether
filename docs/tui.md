@@ -452,6 +452,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+A / Ctrl+E` | start / end of the line |
 | `Ctrl+W / Ctrl+U / Ctrl+K` | delete word back / to line start / to line end |
 | `Ctrl+Y` | paste what was last deleted |
+| `Alt+V` | attach the image on the clipboard |
 | `Alt+B / Alt+F / Ctrl+← / Ctrl+→` | move a word back / forward |
 
 **In the board (Ctrl+G)**
@@ -539,6 +540,7 @@ listed. A few take an argument directly: `/theme nord`, `/mouse scroll`,
 | `/agent [name]` | open the agents board, or view the named agent | `Ctrl+G` |
 | `/compact` | fold older context into a checkpoint |  |
 | `/copy` | copy the last reply to the clipboard |  |
+| `/image [path\|--clear]` | attach an image file, or the clipboard image; --clear drops them | `Alt+V` |
 | `/memory` | browse durable memories; pin or forget one |  |
 | `/approvals` | remembered approval rules and the auto-approve toggle |  |
 | `/usage` | providers, sign-in, health and account limits |  |

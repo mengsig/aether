@@ -9,6 +9,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use aether_core::agent::AgentStatusKind;
+use aether_core::attachment::ImageAttachment;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 use crate::input_layout::{InputLayout, InputRow, cursor_position};
@@ -85,10 +87,58 @@ fn text_width(width: u16) -> u16 {
     width.saturating_sub(PROMPT_COLS + RIGHT_MARGIN_COLS).max(1)
 }
 
-/// Block height at `width`: padding rows plus 1..=8 input rows.
+/// Block height at `width`: padding rows, the chips row when images are
+/// attached, plus 1..=8 input rows.
 pub fn desired_height(app: &App, width: u16, cache: &mut ComposerCache) -> u16 {
     let rows = u16::try_from(cache.rows(app, width).len()).unwrap_or(u16::MAX);
-    rows.clamp(1, COMPOSER_MAX_INPUT_ROWS) + COMPOSER_PADDING_ROWS
+    let chips = u16::from(!app.input.images.is_empty());
+    rows.clamp(1, COMPOSER_MAX_INPUT_ROWS) + COMPOSER_PADDING_ROWS + chips
+}
+
+/// How a block `height` rows tall is shared out, top to bottom: padding,
+/// chips, draft, padding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BlockRows {
+    /// Rows of padding on each side.
+    pub pad: u16,
+    pub chips: u16,
+    pub draft: u16,
+}
+
+pub(crate) fn block_rows(app: &App, height: u16) -> BlockRows {
+    let pad = u16::from(height > COMPOSER_PADDING_ROWS);
+    let inner = height - pad * 2;
+    // The draft keeps a row before the chips get one.
+    let chips = u16::from(!app.input.images.is_empty() && inner > 1);
+    let rows = BlockRows {
+        pad,
+        chips,
+        draft: inner - chips,
+    };
+    debug_assert_eq!(rows.pad * 2 + rows.chips + rows.draft, height);
+    rows
+}
+
+/// The attached images on one row: as many chips as fit, then how many more.
+pub(crate) fn chips_text(images: &[ImageAttachment], width: usize) -> String {
+    let mut text = String::new();
+    for (shown, image) in images.iter().enumerate() {
+        let chip = crate::app::image_label(image);
+        let rest = images.len() - shown - 1;
+        let more = if rest == 0 {
+            String::new()
+        } else {
+            format!("  +{rest} more")
+        };
+        let gap = if shown == 0 { "" } else { "  " };
+        // The first chip always shows, cut by the row if it must be.
+        if shown > 0 && text.width() + gap.width() + chip.width() + more.width() > width {
+            return format!("{text}  +{} more", rest + 1);
+        }
+        text.push_str(gap);
+        text.push_str(&chip);
+    }
+    text
 }
 
 /// The bottom pane has focus: the board is not focused and no view is open.
@@ -108,8 +158,8 @@ pub fn render(
         return None;
     }
     let focused = focused(app);
-    let pad = u16::from(area.height > COMPOSER_PADDING_ROWS);
-    let visible = usize::from(area.height - pad * 2);
+    let BlockRows { pad, chips, draft } = block_rows(app, area.height);
+    let visible = usize::from(draft);
     let prompt_style = if focused {
         theme.title()
     } else {
@@ -117,6 +167,13 @@ pub fn render(
     };
     let prompt = Span::styled(format!("{} ", theme.glyphs().prompt), prompt_style);
     let mut lines = vec![Line::default(); usize::from(pad)];
+    if chips > 0 {
+        let room = usize::from(text_width(area.width));
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(usize::from(PROMPT_COLS))),
+            Span::styled(chips_text(&app.input.images, room), theme.secondary()),
+        ]));
+    }
 
     let cursor = if app.input.text.is_empty() {
         let hint = placeholder(app).unwrap_or_default();
@@ -155,7 +212,7 @@ pub fn render(
     }
     let (row, column) = cursor;
     let x = area.x + PROMPT_COLS + u16::try_from(column).unwrap_or(u16::MAX);
-    let y = area.y + pad + u16::try_from(row).unwrap_or(u16::MAX);
+    let y = area.y + pad + chips + u16::try_from(row).unwrap_or(u16::MAX);
     (x < area.right() && y < area.bottom()).then_some((x, y))
 }
 

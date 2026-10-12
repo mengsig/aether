@@ -89,6 +89,7 @@ pub(super) fn cases() -> Vec<KeyCase> {
             Draft,
         ),
         case("Ctrl+Y", Input, KeyCode::Char('y'), ctrl, Killed),
+        case("Alt+V", Input, KeyCode::Char('v'), alt, Idle),
         case(
             "Alt+B / Alt+F / Ctrl+← / Ctrl+→",
             Input,

@@ -312,3 +312,62 @@ fn a_tiny_area_paints_without_padding_and_never_panics() {
             .unwrap();
     }
 }
+
+fn attached(name: &str) -> ImageAttachment {
+    ImageAttachment {
+        media_type: "image/png".into(),
+        data: "iVBORw0KGgpwaXhlbHM=".into(),
+        name: Some(name.into()),
+    }
+}
+
+#[test]
+fn attached_images_are_a_row_of_chips_above_the_draft() {
+    for width in WIDTHS {
+        let mut app = app_with(AgentStatus::Ready);
+        let bare = draw(&app, width);
+        app.input.images = vec![attached("shot.png"), attached("second.png")];
+        app.input.set_text("what is this?");
+        let frame = draw(&app, width);
+        assert_eq!(frame.rows().len(), bare.rows().len() + 1);
+        assert_eq!(
+            frame.row(1),
+            "  [image: shot.png, 14 B]  [image: second.png, 14 B]"
+        );
+        assert_eq!(frame.row(2), "› what is this?");
+        assert!(styled(frame.cell(2, 1), app.theme.secondary()));
+        // The cursor follows the draft down a row.
+        assert_eq!(frame.cursor, Some((15, 2)));
+    }
+}
+
+#[test]
+fn chips_that_do_not_fit_are_counted() {
+    let images = [attached("a.png"), attached("b.png"), attached("c.png")];
+    let one = "[image: a.png, 14 B]";
+    assert_eq!(chips_text(&images[..1], 80), one);
+    assert_eq!(
+        chips_text(&images, 80),
+        "[image: a.png, 14 B]  [image: b.png, 14 B]  [image: c.png, 14 B]"
+    );
+    assert_eq!(
+        chips_text(&images, 52),
+        "[image: a.png, 14 B]  [image: b.png, 14 B]  +1 more"
+    );
+    assert_eq!(chips_text(&images, 30), "[image: a.png, 14 B]  +2 more");
+    // Even a row too narrow for one chip names the first image.
+    assert_eq!(chips_text(&images, 4), "[image: a.png, 14 B]  +2 more");
+    assert_eq!(chips_text(&[], 80), "");
+}
+
+#[test]
+fn the_draft_keeps_its_row_before_the_chips_get_one() {
+    let mut app = app_with(AgentStatus::Ready);
+    app.input.images = vec![attached("shot.png")];
+    let rows = |height| block_rows(&app, height);
+    assert_eq!((rows(4).pad, rows(4).chips, rows(4).draft), (1, 1, 1));
+    assert_eq!((rows(3).pad, rows(3).chips, rows(3).draft), (1, 0, 1));
+    assert_eq!((rows(2).pad, rows(2).chips, rows(2).draft), (0, 1, 1));
+    assert_eq!((rows(1).pad, rows(1).chips, rows(1).draft), (0, 0, 1));
+    assert_eq!((rows(0).pad, rows(0).chips, rows(0).draft), (0, 0, 0));
+}

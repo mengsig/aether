@@ -579,6 +579,15 @@ fn text_of(content: &[ContentBlock]) -> String {
         .join("")
 }
 
+/// A delivered message as its cell reads: the text, then a line per image.
+fn message_text(content: &[ContentBlock]) -> String {
+    let labels = content.iter().filter_map(|block| match block {
+        ContentBlock::ImageRef(image) => Some(image.label()),
+        _ => None,
+    });
+    crate::app::with_image_lines(&text_of(content), labels)
+}
+
 // ----- routing --------------------------------------------------------------------
 
 /// Route one event to the transcript(s) it belongs to: the agent's own, the
@@ -1093,7 +1102,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 if !t.private.delivered.insert(item.id) {
                     return;
                 }
-                let text = text_of(content).trim().to_owned();
+                let text = message_text(content);
                 let pending = if matches!(sender, UserFrom::Message { .. }) && !text.is_empty() {
                     let cell = t.mint(
                         at,

@@ -77,6 +77,8 @@ pub enum SlashCommand {
     Yolo,
     /// Copy the last reply to the clipboard.
     Copy,
+    /// Attach an image to the draft, or drop the ones attached.
+    Image(ImageArg),
     /// `/theme` with no argument: the theme picker.
     Theme,
     /// `/theme <name>`: a built-in (`auto`, `nord-light`, …) or a theme file.
@@ -99,6 +101,17 @@ pub enum SlashCommand {
     Unknown(String),
     /// Well-formed command with a bad argument; carries the message to show.
     Invalid(String),
+}
+
+/// What `/image` was asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageArg {
+    /// No argument: the image on the system clipboard.
+    Clipboard,
+    /// A path as typed; `~` and a relative path are resolved when it runs.
+    File(String),
+    /// `--clear`: remove every attached image.
+    Clear,
 }
 
 /// Whether archived work is shown (the board's `.`).
@@ -228,6 +241,11 @@ pub fn parse(text: &str) -> InputAction {
         },
         "yolo" => SlashCommand::Yolo,
         "copy" => SlashCommand::Copy,
+        "image" | "img" | "attach" => SlashCommand::Image(match arg_opt {
+            None => ImageArg::Clipboard,
+            Some(flag) if flag == "--clear" => ImageArg::Clear,
+            Some(path) => ImageArg::File(path),
+        }),
         "instructions" | "standing" => match arg_opt {
             Some(text) => SlashCommand::Instructions(text),
             None => SlashCommand::Invalid("usage: /instructions <standing instructions>".into()),

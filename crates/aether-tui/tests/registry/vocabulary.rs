@@ -109,6 +109,7 @@ fn the_palette_is_the_ranked_vocabulary() {
             "agent",
             "compact",
             "copy",
+            "image",
             "memory",
             "approvals",
             "usage",

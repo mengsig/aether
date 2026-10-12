@@ -21,6 +21,7 @@ pub mod app;
 mod clipboard;
 pub mod commands;
 pub mod format;
+pub mod image_input;
 mod input_layout;
 mod keyboard;
 pub mod keys;

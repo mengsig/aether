@@ -25,7 +25,11 @@ impl Observer {
             #[cfg(unix)]
             LoopEvent::Suspend => Some(json!({"kind": "resumed"})),
             LoopEvent::App(
-                AppEvent::Key(_) | AppEvent::Paste(_) | AppEvent::Resize(_, _) | AppEvent::Focus(_),
+                AppEvent::Key(_)
+                | AppEvent::Paste(_)
+                | AppEvent::ImagePathPasted { .. }
+                | AppEvent::Resize(_, _)
+                | AppEvent::Focus(_),
             ) => Some(json!({"kind": "input"})),
             LoopEvent::App(AppEvent::Reply {
                 then: Then::Backfill(_),

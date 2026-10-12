@@ -217,12 +217,14 @@ pub use view_data::{ArtifactsState, OpenArtifact, ReportView, ScheduleView};
 mod input_state;
 pub use input_state::{EFFORTS, InputState, PastedText};
 mod helpers;
+mod images;
 pub(crate) use helpers::sibling_names;
 pub use helpers::{
     InboxEntry, cli_missing, install_command, name_of_id, split_inbox_text, status_glyph,
     subscription_query, tool_input_hint,
 };
 use helpers::{decode_artifact, eviction_notice, explain, names_version, then_operation};
+pub(crate) use images::{image_label, with_image_lines};
 mod agents;
 pub mod approval_flow;
 pub(crate) mod approvals;

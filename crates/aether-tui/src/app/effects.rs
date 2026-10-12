@@ -142,6 +142,8 @@ pub enum Effect {
     SetMouse(bool),
     /// Put text on the system clipboard.
     Copy(String),
+    /// Read an image for the draft; it comes back as `AppEvent::ImageRead`.
+    AttachImage(crate::image_input::ImageSource),
     /// Ring the terminal bell (attention while the window is unfocused).
     Bell,
     /// Ask the terminal to raise a desktop notification. Terminals that do
@@ -161,6 +163,13 @@ pub enum AppEvent {
     Voice(crate::voice::Reply),
     Key(KeyEvent),
     Paste(String),
+    /// A paste that was exactly the path of an image file, and the file as read.
+    ImagePathPasted {
+        text: String,
+        image: Result<aether_core::attachment::ImageAttachment, String>,
+    },
+    /// `Effect::AttachImage` finished; the error is one line for the status row.
+    ImageRead(Result<aether_core::attachment::ImageAttachment, String>),
     Resize(u16, u16),
     /// The terminal window gained or lost focus.
     Focus(bool),

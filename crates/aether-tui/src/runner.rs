@@ -529,11 +529,21 @@ fn map_terminal_event(ev: Event) -> Option<AppEvent> {
         Event::Key(key) if key.kind != KeyEventKind::Release => Some(AppEvent::Key(key)),
         Event::Key(_) => None,
         Event::Mouse(_) => None,
-        Event::Paste(text) => Some(AppEvent::Paste(text)),
+        Event::Paste(text) => Some(paste_event(text)),
         Event::Resize(w, h) => Some(AppEvent::Resize(w, h)),
         Event::FocusGained => Some(AppEvent::Focus(true)),
         Event::FocusLost => Some(AppEvent::Focus(false)),
     }
+}
+
+/// A paste as the app takes it: text, or the image file the text names.
+pub(crate) fn paste_event(text: String) -> AppEvent {
+    let home = crate::workspace::home_dir();
+    let Some(path) = crate::image_input::pasted_image_path(&text, home.as_deref()) else {
+        return AppEvent::Paste(text);
+    };
+    let image = aether_client::images::read_image_file(&path).map_err(|e| e.to_string());
+    AppEvent::ImagePathPasted { text, image }
 }
 
 fn dispatch_app_event(app: &mut App, cache: &mut ViewCache, event: AppEvent) -> Vec<Effect> {
@@ -591,6 +601,13 @@ pub(crate) fn execute_effects(
             }
             Effect::Copy(text) => {
                 spawn_copy(tx.clone(), text, out);
+            }
+            Effect::AttachImage(source) => {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let image = crate::image_input::read(source).await;
+                    let _ = tx.send(LoopEvent::App(AppEvent::ImageRead(image)));
+                });
             }
             Effect::Bell => {
                 use std::io::Write as _;

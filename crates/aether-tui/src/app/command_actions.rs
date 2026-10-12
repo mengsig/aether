@@ -10,7 +10,7 @@ impl App {
             SlashCommand::Voice(action) => self.voice_action(action),
             SlashCommand::New { objective } => {
                 let here = self.active_workspace().map(std::path::Path::to_path_buf);
-                vec![self.start_new_root(objective, here)]
+                vec![self.start_new_root(objective.map(Into::into), here)]
             }
             SlashCommand::Workspace(Some(path)) => self.open_workspace(&path),
             SlashCommand::Model {
@@ -18,6 +18,7 @@ impl App {
                 default_only,
             } => self.use_model(chain, default_only),
             SlashCommand::Effort(effort) => self.use_effort(effort),
+            SlashCommand::Image(arg) => self.run_image_command(arg),
             SlashCommand::Copy => match self.last_reply() {
                 Some(text) => vec![Effect::Copy(text)],
                 None => {

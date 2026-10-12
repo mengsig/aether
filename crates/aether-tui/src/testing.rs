@@ -180,13 +180,24 @@ pub fn push_user_message(app: &mut App, text: &str) {
 pub fn push_message(app: &mut App, agent: AgentId, role: MessageRole, text: &str) {
     // An operator message becomes a cell when the agent consumes it from its inbox.
     let kinds = match role {
-        MessageRole::User => operator_message(agent, text),
+        MessageRole::User => operator_message(agent, vec![ContentBlock::text(text)]),
         _ => vec![EventKind::AgentMessage {
             role,
             content: vec![ContentBlock::text(text)],
             invocation: None,
         }],
     };
+    push_events(app, agent, kinds);
+}
+
+/// A message from the person with any content, such as stored images.
+#[allow(clippy::expect_used)]
+pub fn push_user_content(app: &mut App, content: Vec<ContentBlock>) {
+    let agent = app.selected.expect("an agent is selected");
+    push_events(app, agent, operator_message(agent, content));
+}
+
+fn push_events(app: &mut App, agent: AgentId, kinds: Vec<EventKind>) {
     for kind in kinds {
         let seq = app.transcripts.get(&agent).map_or(0, |t| t.max_seq) + 1;
         app.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(
@@ -201,7 +212,7 @@ pub fn push_message(app: &mut App, agent: AgentId, role: MessageRole, text: &str
 }
 
 /// The daemon's two events for a message the person sent: delivered, then consumed.
-fn operator_message(agent: AgentId, text: &str) -> Vec<EventKind> {
+fn operator_message(agent: AgentId, content: Vec<ContentBlock>) -> Vec<EventKind> {
     let item = InboxItem {
         id: InboxItemId::new(),
         agent_id: agent,
@@ -209,7 +220,7 @@ fn operator_message(agent: AgentId, text: &str) -> Vec<EventKind> {
         kind: InboxKind::Message {
             message_id: MessageId::new(),
             from: Actor::user(),
-            content: vec![ContentBlock::text(text)],
+            content,
         },
         delivered_at: now(),
     };
@@ -352,7 +363,10 @@ pub fn populated_app() -> App {
             now(),
         )
     };
-    for kind in operator_message(id, "please list the files in this repo") {
+    for kind in operator_message(
+        id,
+        vec![ContentBlock::text("please list the files in this repo")],
+    ) {
         app.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(ev(
             1, kind,
         )))));

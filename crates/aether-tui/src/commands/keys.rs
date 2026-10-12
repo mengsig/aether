@@ -195,6 +195,13 @@ pub const KEYS: &[KeySpec] = &[
     .bound(&[KeyAction::Yank]),
     key(
         Compose,
+        "Alt+V",
+        "attach the image on the clipboard",
+        "attach clipboard image",
+    )
+    .bound(&[KeyAction::PasteImage]),
+    key(
+        Compose,
         "Alt+B / Alt+F / Ctrl+← / Ctrl+→",
         "move a word back / forward",
         "move by word · Alt+B/F",

@@ -175,7 +175,8 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
         app.last_seq = Some(seq);
     };
     for i in 0..messages {
-        for kind in super::operator_message(root_id, &format!("question {i} about the build")) {
+        let question = ContentBlock::text(format!("question {i} about the build"));
+        for kind in super::operator_message(root_id, vec![question]) {
             push(&mut app, kind);
         }
         push(

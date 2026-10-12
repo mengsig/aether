@@ -13,12 +13,12 @@ ascii=false
   Alt+↑          view the parent agent    Ctrl+A/E     line start / end
   Ctrl+T         details & reasoning      Ctrl+W/U/K   erase word / start / end
   Ctrl+R         search history           Ctrl+Y       paste last erased
-  Ctrl+F         find in transcript       Ctrl+←/→     move by word · Alt+B/F
-  Alt+,/.        less / more effort
-  PgUp/PgDn      scroll a page            Agents board (Ctrl+G)
-  Shift+↑/↓      scroll a line            ↑/↓         move between agents
-  Ctrl+Home/End  top / follow latest      ←/→         fold / unfold
-                                          Home/End    first / last agent
+  Ctrl+F         find in transcript       Alt+V        attach clipboard image
+  Alt+,/.        less / more effort       Ctrl+←/→     move by word · Alt+B/F
+  PgUp/PgDn      scroll a page
+  Shift+↑/↓      scroll a line            Agents board (Ctrl+G)
+  Ctrl+Home/End  top / follow latest      ↑/↓         move between agents
+                                          ←/→         fold / unfold
   ↓ 13 more · ↑↓ pgup pgdn scroll · ? or esc to close
 
 
@@ -45,7 +45,7 @@ ascii=true
   Shift+Up/Down  scroll a line
   Ctrl+Home/End  top / follow latest
 
-  v 38 more | up/down pgup/pgdn scroll | ? or esc to close
+  v 39 more | up/down pgup/pgdn scroll | ? or esc to close
 
 
 
