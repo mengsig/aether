@@ -207,6 +207,55 @@ async fn folds_transcript_into_validated_checkpoint_with_candidates() {
     assert!(req.messages[0].text().contains("\"required\""));
 }
 
+/// A folded message that had an image: the compaction request names the
+/// image as text and carries no reference a model adapter would have to read.
+#[tokio::test]
+async fn a_folded_message_with_a_stored_image_names_it_in_text() {
+    use aether_core::attachment::{AttachmentId, AttachmentRef};
+
+    let client = Arc::new(ScriptedClient::with_responses([ScriptedClient::text(
+        &good_json(),
+    )]));
+    let compactor = Compactor::new(client.clone(), ModelRef::new("mock", "m"));
+    let a = agent();
+    let mut asked = entry(1, MessageRole::User, "what is on this screen?");
+    asked
+        .message
+        .content
+        .push(ContentBlock::ImageRef(AttachmentRef {
+            id: AttachmentId::of(b"pixels"),
+            media_type: "image/png".into(),
+            size_bytes: 6,
+            name: Some("shot.png".into()),
+        }));
+    let entries = vec![asked, entry(2, MessageRole::Assistant, "a login form")];
+    compactor
+        .compact(
+            CompactionInputs {
+                agent: &a,
+                task: None,
+                child_tasks: &[],
+                previous: None,
+                entries: &entries,
+                trigger: None,
+            },
+            CancellationToken::new(),
+        )
+        .await
+        .expect("compact");
+    let request = &client.requests()[0];
+    let folded = request.messages[0].text();
+    assert!(folded.contains("what is on this screen?\n[image: shot.png, 6 B]\n"));
+    let blocks = request.messages.iter().flat_map(|m| &m.content);
+    assert!(
+        blocks
+            .clone()
+            .all(|block| matches!(block, ContentBlock::Text { .. })),
+        "the compaction request is text only"
+    );
+    assert!(blocks.count() > 0);
+}
+
 #[tokio::test]
 async fn retries_when_previous_open_loop_is_dropped() {
     let dropped = serde_json::json!({"checkpoint": {"objective": "o", "state": "s"}}).to_string();
