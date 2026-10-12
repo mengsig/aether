@@ -4,6 +4,8 @@ use aether_core::{
     id::RunId,
 };
 use aether_store::{Commit, SqliteStore, Store};
+use futures::SinkExt as _;
+use tokio_util::codec::FramedWrite;
 
 #[tokio::test]
 async fn expired_subscription_reports_the_reason_and_closes_instead_of_hanging() {

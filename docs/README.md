@@ -19,7 +19,12 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
   semantics.
 - [MCP servers](mcp-servers.md): configured servers and the caller identity
   each call carries in `_meta`.
-- [Daemon protocol](protocol.md): request correlation and malformed-frame errors.
+- [Daemon protocol](protocol.md): request correlation, malformed-frame errors,
+  and the served version window with what protocol 18 changed.
+- [Phone setup](remote-setup.md): the guided `aether remote setup` for a
+  non-technical reader, with troubleshooting and what protects you.
+- [Remote control](remote.md): the phone web app's contract (endpoints, device
+  handshake, pairing, authorization matrix, push, reconnect) and SSH remotes.
 - [GitHub watcher](github-watcher.md): fixed/per-thread routing, permissions,
   matching, and live configuration.
 - [Terminal UI](tui.md): layout, the agents board, approvals, keys, and

@@ -9,6 +9,7 @@ from .. import protocol as _protocol
 class Hello(TypedDict, total=False):
     client_name: str
     client_version: str
+    device: _protocol.DeviceProof | None  # optional
     features: list[str]  # optional
     protocol_version: int
     token: str | None  # optional

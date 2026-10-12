@@ -1,0 +1,649 @@
+[
+  {
+    "access": "observe",
+    "command": {
+      "protocol_version": 1,
+      "client_name": "fixture",
+      "client_version": "fixture",
+      "cmd": "hello"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "status"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "preview_retention"
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "shutdown"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "ping"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "role": "fixture",
+      "cmd": "create_agent"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_agent",
+      "id": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_agents",
+      "query": {}
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_tree"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "update_agent",
+      "id": "agt_00000000000000000000000000",
+      "patch": {}
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "reply_to_question",
+      "to": "agt_00000000000000000000000000",
+      "question_seq": 1,
+      "content": "fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "send_message",
+      "to": "agt_00000000000000000000000000",
+      "content": "fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "cancel",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "interrupt",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_github_watcher"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "configure_github_watcher",
+      "config": {},
+      "expected_revision": 1
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "create_schedule",
+      "spec": {
+        "name": "fixture",
+        "recurrence": {
+          "kind": "interval",
+          "seconds": 1
+        },
+        "target": "agt_00000000000000000000000000"
+      }
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_schedule",
+      "id": "sch_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_schedules"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "update_schedule",
+      "id": "sch_00000000000000000000000000",
+      "action": "pause"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "schedule_history",
+      "id": "sch_00000000000000000000000000",
+      "limit": 1
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "trigger",
+      "agent": "agt_00000000000000000000000000",
+      "source": "fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "restart",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "wake",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "pause",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "resume",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "archive",
+      "target": "all_finished"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "set_approvals",
+      "agent": "agt_00000000000000000000000000",
+      "policy": {}
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "compact",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "engine_tool",
+      "agent": "agt_00000000000000000000000000",
+      "token": "fixture",
+      "name": "fixture",
+      "input": null
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "engine_tools",
+      "agent": "agt_00000000000000000000000000",
+      "token": "fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "objective": "fixture",
+      "cmd": "create_task"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_task",
+      "id": "tsk_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_tasks",
+      "query": {}
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_approvals"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "resolve_approval",
+      "id": "apr_00000000000000000000000000",
+      "decision": "approved"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_approval_rules"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "decision": "approved",
+      "match": {},
+      "scope": {
+        "scope": "agent",
+        "id": "agt_00000000000000000000000000"
+      },
+      "cmd": "add_approval_rule"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "revoke_approval_rule",
+      "id": "rule_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "subscribe",
+      "query": {},
+      "deltas": false
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "unsubscribe",
+      "id": 1
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_events",
+      "after": 1,
+      "limit": 1,
+      "query": {}
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_transcript",
+      "agent": "agt_00000000000000000000000000",
+      "after": 1
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_inbox",
+      "agent": "agt_00000000000000000000000000",
+      "after": 1
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_snapshot",
+      "id": "snp_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_invocation",
+      "id": "inv_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_invocations",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_checkpoint",
+      "id": "chk_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "latest_checkpoint",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "task": "tsk_00000000000000000000000000",
+      "name": "fixture",
+      "summary": "fixture",
+      "content_type": "fixture",
+      "text": "fixture",
+      "cmd": "publish_artifact"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_artifact",
+      "id": "art_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_artifacts",
+      "query": {}
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "read_artifact",
+      "id": "art_00000000000000000000000000",
+      "max_bytes": 1
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "memories",
+      "query": {}
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "create_memory",
+      "spec": {
+        "text": "fixture",
+        "kind": "fact",
+        "scope": {
+          "scope": "agent",
+          "id": "agt_00000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "forget_memory",
+      "id": "mem_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "restore_memory",
+      "id": "mem_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "pin_memory",
+      "id": "mem_00000000000000000000000000",
+      "pinned": false
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "sync_repository_knowledge"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_runs",
+      "limit": 1
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_run_report",
+      "run": "run_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "export_run",
+      "run": "run_00000000000000000000000000",
+      "path": "fixture"
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "import_run",
+      "path": "fixture"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "replay",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_models"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "auth_status"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "providers"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "mcp_servers"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_attention"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "complete_path",
+      "kind": "directory",
+      "prefix": "fixture"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_workspaces"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "validate_workspace",
+      "path": "fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "get_git_summary",
+      "workspace": "fixture"
+    }
+  },
+  {
+    "access": "remote_admin",
+    "command": {
+      "cmd": "get_remote"
+    }
+  },
+  {
+    "access": "remote_admin",
+    "command": {
+      "cmd": "configure_remote",
+      "settings": {},
+      "expected_revision": 1
+    }
+  },
+  {
+    "access": "remote_admin",
+    "command": {
+      "cmd": "start_pairing"
+    }
+  },
+  {
+    "access": "remote_admin",
+    "command": {
+      "cmd": "get_pairing",
+      "id": "fixture"
+    }
+  },
+  {
+    "access": "remote_admin",
+    "command": {
+      "cmd": "confirm_pairing",
+      "id": "fixture",
+      "accept": false
+    }
+  },
+  {
+    "access": "remote_admin",
+    "command": {
+      "cmd": "cancel_pairing",
+      "id": "fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "list_devices"
+    }
+  },
+  {
+    "access": "remote_admin",
+    "command": {
+      "cmd": "revoke_device",
+      "id": "dev_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "remote_admin",
+    "command": {
+      "cmd": "update_device",
+      "id": "dev_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_push_config"
+    }
+  },
+  {
+    "access": "device_self",
+    "command": {
+      "cmd": "subscribe_push",
+      "subscription": {
+        "endpoint": "fixture",
+        "p256dh": "fixture",
+        "auth": "fixture"
+      }
+    }
+  },
+  {
+    "access": "device_self",
+    "command": {
+      "cmd": "unsubscribe_push"
+    }
+  },
+  {
+    "access": "device_self",
+    "command": {
+      "cmd": "test_push"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "resolve_submission",
+      "command": {
+        "cmd": "send_message",
+        "to": "agt_00000000000000000000000000",
+        "content": "fixture",
+        "idempotency_key": "fixture"
+      },
+      "horizon": "00000000000000000000000000:0"
+    }
+  }
+]

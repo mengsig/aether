@@ -106,6 +106,13 @@ pub struct App {
     pub last_seq: Option<u64>,
     pub subscription: Option<u64>,
     pub connected: bool,
+    pub host: host::HostState,
+    remote_pending: HashMap<String, Then>,
+    /// Remote operations the host could not account for, awaiting `/outbox`.
+    pub undelivered: Vec<aether_client::Unresolved>,
+    /// Outbox files that are not operations; `/outbox` can only discard them.
+    pub unreadable: Vec<aether_client::Unreadable>,
+    remote_snapshot_pending: bool,
     /// Bumped on each disconnect; a reply tagged with an older value came from a dead connection.
     pub(crate) connection: u64,
     /// Every animation's timing comes from here.
@@ -235,9 +242,11 @@ mod composer_ops;
 mod events;
 mod flash;
 pub(crate) mod git;
+pub mod host;
 mod input;
 mod intent;
 mod memories;
+mod outbox;
 mod preferences;
 mod reducer;
 mod replies;
@@ -255,3 +264,6 @@ pub use workspaces::LiveWorkspace;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod host_tests;

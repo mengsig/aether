@@ -133,6 +133,22 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # max_connections = 64
 # idle_timeout_secs = 300   # at least 3: the clients ping at a third of it
 
+# Remote control: a phone or browser drives this daemon through a web app the
+# daemon serves, over plain HTTP on loopback with `tailscale serve` (or another
+# TLS reverse proxy on this machine) in front. Nothing listens until
+# `aether remote enable`; devices are paired with `aether remote pair`. These
+# are the fixed limits; what is enabled is changed with `aether remote`, live.
+# See docs/remote.md.
+#
+# [remote]
+# address = "127.0.0.1:8377"
+# allow_remote = false      # bind outside loopback, in plaintext
+# max_connections = 32
+# idle_timeout_secs = 300
+# push_previews = false     # put a short content preview in push notifications
+# push_subject = ""         # VAPID contact (mailto: or https:); empty derives it
+# push_hosts = []           # extra push services, e.g. ["push.example.org"]
+
 # `aether serve` connects the outside world to inboxes: a signed POST becomes
 # an external trigger on an agent, and an event subscription posts to a URL
 # with bounded retries and a dead letter for what never landed. Secrets are

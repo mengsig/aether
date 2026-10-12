@@ -179,17 +179,22 @@ impl SqliteStore {
                 )?;
             }
             Mutation::RecordSubmission(rec) => {
+                // Numbered in this transaction, so a refused insert takes its
+                // ordinal back and the ledger never counts an unrecorded one.
+                let ordinal = super::ledger::ordinal_to_sql(Self::next_submission_ordinal(tx)?)?;
                 // Plain INSERT: a key already recorded means this commit is a
                 // duplicate creation, and failing the transaction is what
                 // stops it becoming durable. The runtime checks the key under
                 // the commit lock first, so reaching this is a bug, not a race.
                 tx.execute(
-                    "INSERT INTO submissions(key, fingerprint, at, body) VALUES (?1, ?2, ?3, ?4)",
+                    "INSERT INTO submissions(key, fingerprint, at, body, ordinal)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         rec.key.0.clone(),
                         rec.fingerprint.clone(),
                         submission_time(rec.at),
                         serde_json::to_string(&rec)?,
+                        ordinal,
                     ],
                 )?;
             }
@@ -253,6 +258,8 @@ impl SqliteStore {
                     params![key, value],
                 )?;
             }
+            Mutation::PutDevice(device) => Self::put_device(tx, &device)?,
+            Mutation::TouchDevice { id, at } => Self::touch_device(tx, id, at)?,
         }
         Ok(())
     }

@@ -15,6 +15,7 @@ import type {
 export interface SetApprovalsCommand {
   "cmd": "set_approvals";
   "agent": AgentId;
+  "idempotency_key"?: string | null;
   "policy": ApprovalPolicy;
   "subtree"?: boolean;
 }

@@ -109,6 +109,7 @@ fn each_answer_sends_its_exact_command() {
                         tool_wide: false,
                         note: None,
                     }),
+                    idempotency_key: None,
                 },
                 then: Then::ApprovalResolved(id),
             },

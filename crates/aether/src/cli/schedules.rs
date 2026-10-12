@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use aether_client::Client;
 use aether_core::agent::{AgentConfig, NetworkPolicy, Role};
 use aether_core::model::{Effort, ModelChain};
@@ -25,7 +23,11 @@ struct Template {
     network: Option<bool>,
 }
 
-pub(crate) async fn run(socket: PathBuf, command: ScheduleCmd) -> anyhow::Result<()> {
+pub(crate) async fn run(
+    socket: impl Into<aether_client::Endpoint>,
+    command: ScheduleCmd,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     match command {
         ScheduleCmd::Create {

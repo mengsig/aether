@@ -61,6 +61,9 @@ impl Runtime {
         by: Actor,
         submission: Option<Submission>,
     ) -> Result<Schedule> {
+        if let Some(outcome) = self.recorded_submission(submission.as_ref())? {
+            return self.replayed_schedule(outcome);
+        }
         let name = spec.name.trim();
         if name.is_empty() || name.len() > 256 {
             return Err(RuntimeError::Invalid(
@@ -76,11 +79,6 @@ impl Runtime {
         }
         let at = now();
         let next_due = next_occurrence(&spec.recurrence, at)?;
-        // Unheld and ahead of the template's dry run, which may run `git`:
-        // most retries are answered here. The check under the hold decides.
-        if let Some(outcome) = self.recorded_submission(submission.as_ref())? {
-            return self.replayed_schedule(outcome);
-        }
         let target = match spec.target {
             ScheduleTarget::Agent(id) => ScheduleTarget::Agent(id),
             ScheduleTarget::Spawn(template) => {
@@ -133,19 +131,16 @@ impl Runtime {
         };
         let mut commit = Commit::new();
         record_schedule(&mut commit, &schedule, "created", by);
-        if let Some(submission) = &submission {
-            commit.push_mutation(Mutation::RecordSubmission(submission.record(
-                at,
-                SubmissionOutcome::Schedule {
-                    schedule: schedule.id,
-                },
-            )));
-        }
+        crate::submission::record_receipt(&mut commit, submission.as_ref(), &schedule)?;
         self.apply_held(hold, commit)?;
         Ok(schedule)
     }
 
     fn replayed_schedule(&self, outcome: SubmissionOutcome) -> Result<Schedule> {
+        if let SubmissionOutcome::Receipt { value } = outcome {
+            return serde_json::from_value(value)
+                .map_err(|e| RuntimeError::Internal(format!("decode schedule receipt: {e}")));
+        }
         let SubmissionOutcome::Schedule { schedule } = outcome else {
             return Err(wrong_shape(&outcome, "schedule"));
         };
@@ -216,7 +211,20 @@ impl Runtime {
         action: ScheduleAction,
         by: Actor,
     ) -> Result<Schedule> {
+        self.update_schedule_keyed(id, action, by, None)
+    }
+
+    pub fn update_schedule_keyed(
+        &self,
+        id: ScheduleId,
+        action: ScheduleAction,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<Schedule> {
         let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let mut job = self
             .store
             .schedule(id)?
@@ -236,7 +244,10 @@ impl Runtime {
             ),
             (ScheduleAction::Pause, ScheduleStatus::Paused { .. })
             | (ScheduleAction::Resume, ScheduleStatus::Active { .. })
-            | (ScheduleAction::Cancel, ScheduleStatus::Cancelled { .. }) => return Ok(job),
+            | (ScheduleAction::Cancel, ScheduleStatus::Cancelled { .. }) => {
+                self.commit_receipt(hold, Commit::new(), submission.as_ref(), &job)?;
+                return Ok(job);
+            }
             (ScheduleAction::Resume, ScheduleStatus::Paused { next_due }) => {
                 self.check_delivery_target(&job)?;
                 (
@@ -264,7 +275,7 @@ impl Runtime {
         job.updated_at = at;
         let mut commit = Commit::new();
         record_schedule(&mut commit, &job, verb, by);
-        self.apply_held(hold, commit)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &job)?;
         Ok(job)
     }
 

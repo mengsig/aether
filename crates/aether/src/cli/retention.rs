@@ -1,7 +1,11 @@
-use super::{PathBuf, connect};
+use super::connect;
 use aether_core::retention::RunRetentionDecision;
 
-pub async fn retention_preview(socket: PathBuf, json: bool) -> anyhow::Result<()> {
+pub async fn retention_preview(
+    socket: impl Into<aether_client::Endpoint>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let preview = client.preview_retention().await?;
     if json {

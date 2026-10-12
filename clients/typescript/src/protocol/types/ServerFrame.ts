@@ -7,6 +7,7 @@ import type {
   Event,
   InvocationId,
   Result_of_Reply_or_ErrorReply,
+  hello,
 } from "../../protocol.ts";
 
 /**
@@ -33,4 +34,19 @@ export interface ServerFrameDelta {
   "sub": number;
 }
 
-export type ServerFrame = ServerFrameReply | ServerFrameEvent | ServerFrameDelta;
+/**
+ * The remote carrier speaking first: what a device signs to
+ * authenticate its hello. Never sent on the socket or the token listener.
+ */
+export interface ServerFrameChallenge {
+  "frame": "challenge";
+  "instance_id": string;
+  "nonce": string;
+}
+
+export type ServerFrame =
+    ServerFrameReply |
+    ServerFrameEvent |
+    ServerFrameDelta |
+    ServerFrameChallenge
+;

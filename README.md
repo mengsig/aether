@@ -72,7 +72,7 @@ curl -fsSL https://claude.ai/install.sh | bash
 ```
 
 After installation, `aether doctor` checks configuration, daemon, storage, disk, providers,
-engines, and configured MCP servers; it is not a check of every optional program.
+engines, configured MCP servers, and remote access; it is not a check of every optional program.
 
 ## Quick start
 
@@ -93,6 +93,17 @@ you see “no model to run on yet”; use `/login claude-code` or `/login codex`
 For scripts, use `aether run "Explain what this project does. Do not edit files." --model claude-code/default --effort medium` (for Codex, use `--model codex/default`).
 `default` lets that engine CLI select its model; the run prints the agent's response.
 Use `aether doctor` when something does not work, and `aether auth` to see each provider's sign-in status (`ready` or `not set`).
+
+## Use it from your phone
+
+```sh
+aether remote setup
+```
+
+A guided setup puts Aether on your phone's home screen through a private
+Tailscale network, with no ports opened to the internet and no files to edit.
+See [Use Aether from your phone](docs/remote-setup.md); it works for someone who
+has never heard of Tailscale and can be re-run at any time.
 
 ## Core ideas
 
@@ -159,7 +170,7 @@ and [known limitations](docs/known-limitations.md) before running untrusted work
 ## Documentation and status
 
 - [User guide](docs/guide.md) · [Terminal UI](docs/tui.md) · [Engine behavior](docs/engines.md)
-- [GitHub integration](docs/github-watcher.md) · [MCP](docs/mcp-servers.md) · [Protocol](docs/protocol.md)
+- [GitHub integration](docs/github-watcher.md) · [MCP](docs/mcp-servers.md) · [Protocol](docs/protocol.md) · [Remote control](docs/remote.md) · [Phone setup](docs/remote-setup.md)
 - [Python client](clients/python/README.md) · [TypeScript client](clients/typescript/README.md)
 - [Benchmarks and their limits](docs/benchmarks.md) · [All documentation](docs/README.md)
 

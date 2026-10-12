@@ -1,7 +1,8 @@
 use super::{AgentId, ApprovalDefault, PathBuf, connect, health_segments, sane};
 use anyhow::Context as _;
 
-pub async fn status(socket: PathBuf, json: bool) -> anyhow::Result<()> {
+pub async fn status(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let s = client.status().await?;
     if json {
@@ -170,11 +171,12 @@ fn render_mcp_summary(servers: &[aether_core::mcp::McpServerHealth]) -> String {
 
 /// Configured MCP servers, optionally reconnecting first.
 pub async fn mcp_list(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     refresh: bool,
     server: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     use aether_core::mcp::McpServerState;
     let client = connect(&socket).await?;
     let servers = client.mcp_servers(refresh, server).await?;
@@ -211,11 +213,12 @@ pub async fn mcp_list(
 /// Serve Aether's own surface over MCP. Stdio is the default; HTTP needs a
 /// token, taken from the environment so it never lands in a config file.
 pub async fn mcp_serve(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     http: Option<std::net::SocketAddr>,
     token_env: String,
     allow_remote: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let sink = aether_client::mcp::DaemonSink(connect(&socket).await?);
     let Some(addr) = http else {
         // stdout is the protocol channel: the log must go to a file.

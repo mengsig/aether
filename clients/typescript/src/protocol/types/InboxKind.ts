@@ -44,6 +44,7 @@ export interface InboxKindMessage {
 
 export interface InboxKindApprovalResolved {
   "approval": ApprovalId;
+  "by"?: Actor | null;
   "decision": ApprovalDecision;
   "kind": "approval_resolved";
   "note"?: string | null;

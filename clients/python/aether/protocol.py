@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-PROTOCOL_VERSION = 17
-MIN_PROTOCOL_VERSION = 16
+PROTOCOL_VERSION = 18
+MIN_PROTOCOL_VERSION = 17
 
 from ._protocol_types import *
 
@@ -27,14 +27,24 @@ from ._protocol_commands.auth import (
 
 from ._protocol_commands.cancel import (
     cancel,
+    cancel_pairing,
 )
 
 from ._protocol_commands.compact import (
     compact,
 )
 
+from ._protocol_commands.complete import (
+    complete_path,
+)
+
 from ._protocol_commands.configure import (
     configure_github_watcher,
+    configure_remote,
+)
+
+from ._protocol_commands.confirm import (
+    confirm_pairing,
 )
 
 from ._protocol_commands.create import (
@@ -60,11 +70,16 @@ from ._protocol_commands.forget import (
 from ._protocol_commands.get import (
     get_agent,
     get_artifact,
+    get_attention,
     get_checkpoint,
     get_events,
+    get_git_summary,
     get_github_watcher,
     get_inbox,
     get_invocation,
+    get_pairing,
+    get_push_config,
+    get_remote,
     get_run_report,
     get_schedule,
     get_snapshot,
@@ -94,11 +109,13 @@ from ._protocol_commands.list import (
     list_approval_rules,
     list_approvals,
     list_artifacts,
+    list_devices,
     list_invocations,
     list_models,
     list_runs,
     list_schedules,
     list_tasks,
+    list_workspaces,
 )
 
 from ._protocol_commands.mcp import (
@@ -147,6 +164,7 @@ from ._protocol_commands.reply import (
 
 from ._protocol_commands.resolve import (
     resolve_approval,
+    resolve_submission,
 )
 
 from ._protocol_commands.restart import (
@@ -163,6 +181,7 @@ from ._protocol_commands.resume import (
 
 from ._protocol_commands.revoke import (
     revoke_approval_rule,
+    revoke_device,
 )
 
 from ._protocol_commands.schedule import (
@@ -181,16 +200,25 @@ from ._protocol_commands.shutdown import (
     shutdown,
 )
 
+from ._protocol_commands.start import (
+    start_pairing,
+)
+
 from ._protocol_commands.status import (
     status,
 )
 
 from ._protocol_commands.subscribe import (
     subscribe,
+    subscribe_push,
 )
 
 from ._protocol_commands.sync import (
     sync_repository_knowledge,
+)
+
+from ._protocol_commands.test import (
+    test_push,
 )
 
 from ._protocol_commands.trigger import (
@@ -199,11 +227,17 @@ from ._protocol_commands.trigger import (
 
 from ._protocol_commands.unsubscribe import (
     unsubscribe,
+    unsubscribe_push,
 )
 
 from ._protocol_commands.update import (
     update_agent,
+    update_device,
     update_schedule,
+)
+
+from ._protocol_commands.validate import (
+    validate_workspace,
 )
 
 from ._protocol_commands.wake import (

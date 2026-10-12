@@ -100,6 +100,8 @@ async fn daemon_shutdown_releases_an_engine_tool_waiting_for_approval() {
         models,
         instance_id: "inst".into(),
         version: "test".into(),
+        push: None,
+        remote: Default::default(),
     });
     let shutdown = CancellationToken::new();
     let (client, server) = tokio::io::duplex(16 * 1024);

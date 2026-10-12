@@ -134,6 +134,7 @@ fn the_palette_is_the_ranked_vocabulary() {
             "help",
             "quit",
             "mode",
+            "outbox",
         ]
     );
     for (index, spec) in COMMANDS.iter().enumerate() {

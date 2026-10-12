@@ -8,6 +8,7 @@ from .. import protocol as _protocol
 
 class InboxKindApprovalResolved(TypedDict, total=False):
     approval: _protocol.ApprovalId
+    by: _protocol.Actor | None  # optional
     decision: _protocol.ApprovalDecision
     kind: Literal["approval_resolved"]
     note: str | None  # optional

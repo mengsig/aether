@@ -16,9 +16,22 @@ impl Runtime {
     /// sense. Only a subtree pause is inherited by children created under it
     /// (`paused_via` records its root); a plain pause holds the one agent.
     pub fn pause_agent(&self, root: AgentId, subtree: bool, by: Actor) -> Result<PauseOutcome> {
+        self.pause_agent_keyed(root, subtree, by, None)
+    }
+
+    pub fn pause_agent_keyed(
+        &self,
+        root: AgentId,
+        subtree: bool,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<PauseOutcome> {
         // Read and written under one hold: the rows are written back whole, so
         // a change committed in between would be reverted.
         let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let targets = self.live_targets(root, subtree, "pause target")?;
         let ids: Vec<AgentId> = targets.iter().map(|a| a.id).collect();
         let at = now();
@@ -48,22 +61,15 @@ impl Runtime {
             commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
             changed.push(agent);
         }
-        if changed.is_empty() {
-            drop(hold);
-        } else {
-            self.apply_held(hold, commit)?;
-        }
-        // Read once, after the commit: a turn that started meanwhile is still
-        // a turn the caller has to wait out. Over every target, not only the
-        // ones this call moved: an agent already paused mid-turn is still
-        // mid-turn, and saying otherwise reads as "the pause has taken hold".
         let running = self.sched.lock();
         let mid_turn = ids
             .into_iter()
             .filter(|id| running.running.contains_key(id))
             .collect();
         drop(running);
-        Ok(PauseOutcome { changed, mid_turn })
+        let outcome = PauseOutcome { changed, mid_turn };
+        self.commit_receipt(hold, commit, submission.as_ref(), &outcome)?;
+        Ok(outcome)
     }
 
     /// Lift a pause, clear a wait or an inspection the operator owns, or probe
@@ -72,11 +78,24 @@ impl Runtime {
     /// those: clearing a wait or an inspection is a per-agent judgement a person
     /// makes with the agent in front of them (§3.9), never a silent sweep.
     pub fn resume_agent(&self, root: AgentId, subtree: bool, by: Actor) -> Result<Vec<Agent>> {
+        self.resume_agent_keyed(root, subtree, by, None)
+    }
+
+    pub fn resume_agent_keyed(
+        &self,
+        root: AgentId,
+        subtree: bool,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<Vec<Agent>> {
         if subtree {
-            return self.resume_subtree(root, by);
+            return self.resume_subtree(root, by, submission);
         }
         // Read and written under one hold, as `pause_agent` does.
         let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let mut agent = self.live_agent(root, "resume target")?;
         let at = now();
         let run = agent.run;
@@ -100,7 +119,7 @@ impl Runtime {
             agent.updated_at = at;
             commit.push_event(resumed("unpaused by operator"));
             commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
-            self.apply_held(hold, commit)?;
+            self.commit_receipt(hold, commit, submission.as_ref(), &vec![agent.clone()])?;
             return Ok(vec![agent]);
         }
         // A turn blocked on a resource lease resumes itself when the keys
@@ -164,7 +183,7 @@ impl Runtime {
         }
         commit.push_event(resumed("resumed by operator"));
         commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
-        self.apply_held(hold, commit)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &vec![agent.clone()])?;
         if clearing_inspection {
             self.resources.release_quarantine(root);
         }
@@ -175,8 +194,16 @@ impl Runtime {
         Ok(vec![agent])
     }
 
-    fn resume_subtree(&self, root: AgentId, by: Actor) -> Result<Vec<Agent>> {
+    fn resume_subtree(
+        &self,
+        root: AgentId,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<Vec<Agent>> {
         let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let targets = self.resume_targets(root)?;
         let at = now();
         let mut commit = Commit::new();
@@ -232,7 +259,7 @@ impl Runtime {
                 "nothing is paused or suspended in agent {root}'s subtree"
             )));
         }
-        self.apply_held(hold, commit)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &changed)?;
         for provider in probing {
             crate::scheduler::clear_bench(self, &provider)?;
             crate::scheduler::clear_probe_claim(self, &provider);

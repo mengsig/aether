@@ -77,6 +77,12 @@ impl Runtime {
         outcome: SubmissionOutcome,
         by: Actor,
     ) -> Result<(Agent, Option<Task>)> {
+        if let SubmissionOutcome::Receipt { value } = outcome {
+            let (agent, task): (Agent, Option<Task>) = serde_json::from_value(value)
+                .map_err(|e| RuntimeError::Internal(format!("decode agent receipt: {e}")))?;
+            self.seed_repository_knowledge(&agent, by);
+            return Ok((agent, task));
+        }
         let SubmissionOutcome::Agent { agent, task } = outcome else {
             return Err(wrong_shape(&outcome, "agent"));
         };
@@ -98,7 +104,7 @@ impl Runtime {
             mut commit,
             parent,
         } = self.prepare_agent(spec, &by, preflight)?;
-        let (run, at) = (agent.run, agent.created_at);
+        let run = agent.run;
         let hold = self.hold();
         // The authoritative replay check: only a retry that raced the original
         // gets this far, and this is where it is caught. Ahead of the budget
@@ -123,15 +129,7 @@ impl Runtime {
             crate::cancellation::check_parent(self, &hold, parent.id)?;
         }
         commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
-        if let Some(submission) = submission {
-            commit.push_mutation(Mutation::RecordSubmission(submission.record(
-                at,
-                SubmissionOutcome::Agent {
-                    agent: agent.id,
-                    task: task.as_ref().map(|t| t.id),
-                },
-            )));
-        }
+        crate::submission::record_receipt(&mut commit, submission, &(agent.clone(), task.clone()))?;
         self.apply_held(hold, commit)?;
         self.seed_repository_knowledge(&agent, by);
         Ok((agent, task))
@@ -262,6 +260,23 @@ impl Runtime {
             (None, Some(p)) => p.config.approval.clone(),
             (None, None) => self.config.approval_default.policy(),
         };
+        if !self.config.yolo
+            && matches!(
+                by,
+                Actor::User {
+                    origin: Some(aether_core::event::OperatorOrigin::Device { .. }),
+                    ..
+                }
+            )
+            && !config.approval.is_yolo()
+            && std::iter::once(&model)
+                .chain(&fallbacks)
+                .any(|model| !self.engine_can_gate(model))
+        {
+            return Err(RuntimeError::Invalid(
+                "remote creation cannot select an engine that drops required approvals".into(),
+            ));
+        }
         if !self.config.yolo && !config.approval.is_yolo() && !self.engine_can_gate(&model) {
             // set_approvals refuses this same end state loudly (an engine
             // that cannot gate); creation dropped it silently. Emit it here

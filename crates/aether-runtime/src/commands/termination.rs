@@ -12,6 +12,19 @@ impl Runtime {
     /// Stop the running turn but keep the agent: it records what it has so
     /// far and waits for the next message. False when no turn was running.
     pub fn interrupt_agent(&self, id: AgentId, by: Actor) -> Result<bool> {
+        self.interrupt_agent_keyed(id, by, None)
+    }
+
+    pub fn interrupt_agent_keyed(
+        &self,
+        id: AgentId,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<bool> {
+        let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let agent = self
             .store
             .agent(id)?
@@ -28,17 +41,34 @@ impl Runtime {
             .running
             .get(&id)
             .map(|r| r.interrupt.clone());
-        let Some(token) = token else {
-            return Ok(false);
-        };
-        tracing::info!(agent = %id, by = %by.label(), "turn interrupted");
-        token.cancel();
-        Ok(true)
+        let was_running = token.is_some();
+        self.commit_receipt(hold, Commit::new(), submission.as_ref(), &was_running)?;
+        if let Some(token) = token {
+            tracing::info!(agent = %id, by = %by.label(), "turn interrupted");
+            token.cancel();
+        }
+        Ok(was_running)
     }
 
     /// Cancel an agent and everything beneath it.
     pub fn cancel_agent(&self, id: AgentId, reason: Option<String>, by: Actor) -> Result<()> {
         crate::cancellation::request(self, id, reason, by)?;
+        crate::cancellation::process(self, id)
+    }
+
+    pub fn cancel_agent_keyed(
+        &self,
+        id: AgentId,
+        reason: Option<String>,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<()> {
+        let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
+        let commit = crate::cancellation::prepare(self, &hold, id, reason, by)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &())?;
         crate::cancellation::process(self, id)
     }
 
@@ -314,3 +344,6 @@ impl Runtime {
         Ok(PendingReap(id))
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -275,6 +275,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         hidden_aliases: &[],
         key: "",
     },
+    CommandSpec {
+        name: "outbox",
+        usage: "",
+        about: "remote operations the host cannot confirm; deliver, resend or discard",
+        rank: 32,
+        hidden_aliases: &[],
+        key: "",
+    },
 ];
 
 /// Palette entries matching what is typed so far: a `/` followed by part of

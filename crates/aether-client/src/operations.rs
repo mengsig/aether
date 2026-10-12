@@ -88,7 +88,14 @@ impl Client {
         id: aether_core::id::ScheduleId,
         action: aether_core::schedule::ScheduleAction,
     ) -> Result<aether_core::schedule::Schedule> {
-        match self.request(Command::UpdateSchedule { id, action }).await? {
+        match self
+            .request(Command::UpdateSchedule {
+                id,
+                action,
+                idempotency_key: None,
+            })
+            .await?
+        {
             Reply::Schedule(job) => Ok(job),
             other => Err(unexpected("schedule", &other)),
         }
@@ -135,6 +142,7 @@ impl Client {
                 agent,
                 policy,
                 subtree,
+                idempotency_key: None,
             })
             .await?
         {
@@ -195,6 +203,7 @@ impl Client {
                 decision,
                 note,
                 remember,
+                idempotency_key: None,
             })
             .await?,
         )

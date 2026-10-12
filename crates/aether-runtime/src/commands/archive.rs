@@ -64,6 +64,41 @@ impl Runtime {
         Ok(changed)
     }
 
+    pub fn archive_agents_keyed(
+        &self,
+        target: ArchiveTarget,
+        archived: bool,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<Vec<Agent>> {
+        if submission.is_none() {
+            return self.archive_agents(target, archived, by);
+        }
+        let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
+        let single = matches!(target, ArchiveTarget::Agent(_));
+        let candidates = match target {
+            ArchiveTarget::Agent(id) => vec![id],
+            other => self
+                .store
+                .agents(&AgentFilter {
+                    run: match other {
+                        ArchiveTarget::Run(run) => Some(run),
+                        _ => None,
+                    },
+                    ..Default::default()
+                })?
+                .into_iter()
+                .map(|agent| agent.id)
+                .collect(),
+        };
+        let (commit, moved) = self.prepare_archive(&candidates, archived, single, &by)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &moved)?;
+        Ok(moved)
+    }
+
     fn archive_chunk(
         &self,
         candidates: &[AgentId],
@@ -72,6 +107,18 @@ impl Runtime {
         by: &Actor,
     ) -> Result<Vec<Agent>> {
         let hold = self.hold();
+        let (commit, moved) = self.prepare_archive(candidates, archived, single_agent, by)?;
+        self.apply_held(hold, commit)?;
+        Ok(moved)
+    }
+
+    fn prepare_archive(
+        &self,
+        candidates: &[AgentId],
+        archived: bool,
+        single_agent: bool,
+        by: &Actor,
+    ) -> Result<(Commit, Vec<Agent>)> {
         let at = now();
         let mut commit = Commit::new();
         let mut moved = Vec::new();
@@ -108,7 +155,6 @@ impl Runtime {
             commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
             moved.push(agent);
         }
-        self.apply_held(hold, commit)?;
-        Ok(moved)
+        Ok((commit, moved))
     }
 }

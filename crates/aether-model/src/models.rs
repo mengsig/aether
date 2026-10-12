@@ -513,6 +513,7 @@ mod tests {
             mcp: Default::default(),
             memory: Default::default(),
             listen: Default::default(),
+            remote: Default::default(),
             serve: Default::default(),
         };
         // Engine providers consult the real CLIs on this machine; keep the

@@ -132,6 +132,16 @@ pub(super) fn decode_artifact(artifact: Artifact, base64: &str, truncated: bool)
 /// about it (§9.9). The original error is always kept as the cause.
 pub(super) fn explain(theme: &Theme, error: &ClientError, then: Then, command: &str) -> String {
     let text = error.to_string();
+    if command.contains("--remote ")
+        && matches!(
+            error,
+            ClientError::Incompatible(_) | ClientError::Disconnected | ClientError::Io(_)
+        )
+    {
+        return format!(
+            "{text}; check SSH connectivity and the Aether versions on the host and this client"
+        );
+    }
     if matches!(then, Then::AgentCreated(_)) && text.contains("model") {
         return theme
             .decoration(
@@ -204,6 +214,9 @@ pub(super) fn explain(theme: &Theme, error: &ClientError, then: Then, command: &
                 "the daemon said something unexpected | /doctor, and the log in ~/.local/state/aether"
             )
         }
+        ClientError::Ssh(_) | ClientError::DeliveryUnconfirmed(_) => {
+            "check the host connection and refresh state before retrying".into()
+        }
         ClientError::InvalidUsage(_) => crate::ui_format!(
             theme,
             "client request error · report this with the log in ~/.local/state/aether",
@@ -219,6 +232,8 @@ pub(super) fn explain(theme: &Theme, error: &ClientError, then: Then, command: &
 /// error rather than the request it answers.
 pub(super) fn then_operation(then: &Then) -> &'static str {
     match then {
+        Then::RemoteAck { next, .. } => then_operation(next),
+        Then::Host(_) => "host workspace service",
         Then::RootDefaults(_) | Then::AgentCreated(_) => "starting the agent",
         Then::Ignore => "that request",
         Then::CompactionAccepted(_) => "requesting compaction",

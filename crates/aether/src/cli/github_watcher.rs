@@ -1,7 +1,5 @@
 //! Live watcher configuration through the daemon; no client-side config file.
 
-use std::path::PathBuf;
-
 use aether_client::Client;
 use aether_core::agent::{AgentConfig, NetworkPolicy};
 use aether_core::github::{GithubDispatchMode, GithubRepositoryConfig, GithubWatcherStatus};
@@ -37,7 +35,11 @@ enum AddDispatch {
     Unchanged,
 }
 
-pub async fn run(socket: PathBuf, command: GithubWatcherCmd) -> anyhow::Result<()> {
+pub async fn run(
+    socket: impl Into<aether_client::Endpoint>,
+    command: GithubWatcherCmd,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect_or_start(&socket).await?;
     let current = client.github_watcher().await?;
     let mut config = current.config.clone();
@@ -315,7 +317,11 @@ fn set_enabled(
     Ok(())
 }
 
-fn show(json: bool, status: &GithubWatcherStatus, socket: &std::path::Path) -> anyhow::Result<()> {
+fn show(
+    json: bool,
+    status: &GithubWatcherStatus,
+    socket: &aether_client::Endpoint,
+) -> anyhow::Result<()> {
     acted(
         json,
         &describe(status, &super::command_hint(socket, false)),

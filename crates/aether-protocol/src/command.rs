@@ -1,3 +1,6 @@
+use super::remote::{
+    AttentionKind, DeviceId, DeviceRole, PathCompletionKind, PushSubscription, RemoteSettings,
+};
 use super::requests::default_true;
 #[expect(
     unused_imports,
@@ -44,6 +47,8 @@ pub enum Command {
     UpdateAgent {
         id: AgentId,
         patch: AgentPatch,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Operator-only reply to one unanswered, unsuperseded question event.
     /// A stale question is refused without delivering anything.
@@ -70,11 +75,15 @@ pub enum Command {
     Cancel {
         agent: AgentId,
         reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Stop the running turn only; the agent keeps its transcript and waits
     /// for the next message.
     Interrupt {
         agent: AgentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Inspect the opt-in GitHub watcher and its per-repository health.
     GetGithubWatcher,
@@ -99,6 +108,8 @@ pub enum Command {
     UpdateSchedule {
         id: aether_core::id::ScheduleId,
         action: aether_core::schedule::ScheduleAction,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     ScheduleHistory {
         id: aether_core::id::ScheduleId,
@@ -119,6 +130,9 @@ pub enum Command {
     /// new agent linked to it.
     Restart {
         agent: AgentId,
+        /// Makes the restart retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Bring a failed agent back in place, with its history and context:
     /// it becomes Ready and reachable again under the same id. Additive in
@@ -132,6 +146,8 @@ pub enum Command {
         agent: AgentId,
         #[serde(default)]
         subtree: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Lift a pause, or clear a wait or an inspection the operator owns.
     /// With `subtree` it lifts the pause across the subtree, and only that.
@@ -139,6 +155,8 @@ pub enum Command {
         agent: AgentId,
         #[serde(default)]
         subtree: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Clear finished work out of the live view, or bring it back. The mark
     /// is durable and hides nothing from the store, reports or replay.
@@ -148,6 +166,8 @@ pub enum Command {
         /// `false` un-archives.
         #[serde(default = "default_true")]
         archived: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Turn approvals off (yolo) or back on for an agent and, with
     /// `subtree`, every live agent beneath it. A separate command
@@ -158,6 +178,8 @@ pub enum Command {
         policy: ApprovalPolicy,
         #[serde(default)]
         subtree: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Ask the runtime to compact the agent's context before its next turn.
     Compact {
@@ -194,6 +216,9 @@ pub enum Command {
         /// Turn this answer into a durable rule as well.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         remember: Option<RememberSpec>,
+        /// Makes the answer retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Remembered decisions, oldest first.
     ListApprovalRules {
@@ -263,6 +288,8 @@ pub enum Command {
     /// Admit an operator-authored fact. Rejections return an error without mutation.
     CreateMemory {
         spec: aether_core::memory::OperatorMemorySpec,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Curate a memory out. The record stays; it is never retrieved again.
     ForgetMemory {
@@ -329,6 +356,112 @@ pub enum Command {
         /// Refresh only this server; all of them when absent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         server: Option<String>,
+    },
+
+    /// Everything waiting on the operator: pending approvals, unanswered
+    /// questions, and failed or blocked agents, read at one sequence number.
+    GetAttention,
+
+    /// Complete a partial path on the daemon's machine. Bounded: at most
+    /// `limit` entries (default 50, never more than 200).
+    CompletePath {
+        kind: PathCompletionKind,
+        /// What was typed so far. `~/` is the daemon user's home.
+        prefix: String,
+        /// The workspace to stay inside. Required for `workspace_file`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<std::path::PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Workspaces holding root agents, most recently active first.
+    ListWorkspaces {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Whether an agent can be started in `path`, and its canonical form.
+    ValidateWorkspace {
+        path: String,
+    },
+    /// Branch and dirtiness of a workspace on the daemon's machine.
+    GetGitSummary {
+        workspace: std::path::PathBuf,
+    },
+
+    /// The remote listener's settings and state. Host only.
+    GetRemote,
+    /// Replace the remote settings only if nobody else changed them. Opens
+    /// or closes the listener at once. Host only.
+    ConfigureRemote {
+        settings: RemoteSettings,
+        expected_revision: u64,
+    },
+    /// Open a pairing and mint its single-use code. Host only.
+    StartPairing {
+        #[serde(default)]
+        role: DeviceRole,
+    },
+    /// Read a pairing's state; the code is never repeated. Host only.
+    GetPairing {
+        id: String,
+    },
+    /// Enrol or reject the device that claimed a pairing. Host only.
+    ConfirmPairing {
+        id: String,
+        accept: bool,
+    },
+    /// Close a pairing nobody confirmed. Host only.
+    CancelPairing {
+        id: String,
+    },
+    /// Enrolled devices, oldest first. Host only.
+    ListDevices {
+        #[serde(default)]
+        include_revoked: bool,
+    },
+    /// Revoke a device and close its connections and subscriptions at once.
+    /// Host only.
+    RevokeDevice {
+        id: DeviceId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// Rename a device or change its role. A role change closes its live
+    /// connections. Host only.
+    UpdateDevice {
+        id: DeviceId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<DeviceRole>,
+    },
+
+    /// Whether the daemon sends Web Push, and the key to subscribe with.
+    GetPushConfig,
+    /// Store the calling device's push subscription, replacing any earlier
+    /// one. Only a paired device can call it.
+    SubscribePush {
+        subscription: PushSubscription,
+        /// Notify about these kinds only; empty means all of them.
+        #[serde(default)]
+        kinds: Vec<AttentionKind>,
+    },
+    /// Forget the calling device's push subscription.
+    UnsubscribePush,
+    /// Send the calling device one `test` notification.
+    TestPush,
+
+    /// Ask what became of a keyed command whose acknowledgement was lost.
+    /// Read-only, within the caller's own keys; needs `command`'s standing.
+    ResolveSubmission {
+        /// The keyed command exactly as first sent: its `cmd`, its fields and
+        /// its `idempotency_key`.
+        #[schemars(with = "serde_json::Map<String, serde_json::Value>")]
+        command: Box<Command>,
+        /// The `submission_horizon` the client held when it first sent
+        /// `command`. Without one an absent receipt proves nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        horizon: Option<String>,
     },
 }
 
@@ -482,9 +615,126 @@ impl Command {
                     }),
                 )
             }
-            _ => return None,
+            Self::ResolveApproval {
+                id,
+                decision,
+                note,
+                remember,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::to_value(ResolveApprovalFingerprint {
+                    cmd: "resolve_approval",
+                    id: *id,
+                    decision,
+                    note,
+                    remember,
+                }),
+            ),
+            Self::Restart {
+                agent,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::to_value(RestartFingerprint {
+                    cmd: "restart",
+                    agent: *agent,
+                }),
+            ),
+            _ => return self.additional_keyed_request(),
         };
         Some(fields.map(|fields| KeyedRequest { key, fields }))
+    }
+    fn additional_keyed_request(&self) -> Option<serde_json::Result<KeyedRequest<'_>>> {
+        let (key, fields) = match self {
+            Self::Cancel {
+                agent,
+                reason,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd": "cancel", "agent": agent, "reason": reason}),
+            ),
+            Self::Interrupt {
+                agent,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd": "interrupt", "agent": agent}),
+            ),
+            Self::Pause {
+                agent,
+                subtree,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd": "pause", "agent": agent, "subtree": subtree}),
+            ),
+            Self::Resume {
+                agent,
+                subtree,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd": "resume", "agent": agent, "subtree": subtree}),
+            ),
+            Self::Archive {
+                target,
+                archived,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd": "archive", "target": target, "archived": archived}),
+            ),
+            _ => return self.configuration_keyed_request(),
+        };
+        Some(Ok(KeyedRequest { key, fields }))
+    }
+
+    fn configuration_keyed_request(&self) -> Option<serde_json::Result<KeyedRequest<'_>>> {
+        let (key, fields) = match self {
+            Self::UpdateAgent {
+                id,
+                patch,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd": "update_agent", "id": id, "patch": patch}),
+            ),
+            Self::SetApprovals {
+                agent,
+                policy,
+                subtree,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd": "set_approvals", "agent": agent, "policy": policy, "subtree": subtree}),
+            ),
+            Self::UpdateSchedule {
+                id,
+                action,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd": "update_schedule", "id": id, "action": action}),
+            ),
+            Self::CreateMemory {
+                spec,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd": "create_memory", "spec": spec}),
+            ),
+            Self::AddApprovalRule(rule) => (
+                rule.idempotency_key.as_deref()?,
+                serde_json::json!({
+                    "cmd": "add_approval_rule", "decision": rule.decision, "matcher": rule.matcher,
+                    "scope": rule.scope, "note": rule.note,
+                }),
+            ),
+            _ => return None,
+        };
+        Some(Ok(KeyedRequest { key, fields }))
     }
 }
 
@@ -566,6 +816,21 @@ struct CreateScheduleFingerprint<'a> {
     busy: aether_core::schedule::BusyPolicy,
     payload: &'a serde_json::Value,
     max_deliveries: Option<std::num::NonZeroU64>,
+}
+
+#[derive(Serialize)]
+struct ResolveApprovalFingerprint<'a> {
+    cmd: &'static str,
+    id: ApprovalId,
+    decision: &'a ApprovalDecision,
+    note: &'a Option<String>,
+    remember: &'a Option<RememberSpec>,
+}
+
+#[derive(Serialize)]
+struct RestartFingerprint {
+    cmd: &'static str,
+    agent: AgentId,
 }
 
 fn is_skip(busy: &aether_core::schedule::BusyPolicy) -> bool {

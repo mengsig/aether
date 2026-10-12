@@ -153,3 +153,33 @@ Optional `[listen]` settings expose the protocol over token-authenticated TCP.
 There is no built-in TLS; use an SSH tunnel. `[serve]` settings configure the
 separate webhook/event bridge. See the [protocol](protocol.md),
 [MCP](mcp-servers.md), and [GitHub watcher](github-watcher.md) guides.
+
+### Remote control
+
+`[remote]` holds the fixed limits of [remote control](remote.md). Whether the
+listener is enabled, its public origins and push are changed live with
+`aether remote`, never here. Nothing listens until `aether remote enable`.
+
+```toml
+[remote]
+address = "127.0.0.1:8377"
+allow_remote = false
+max_connections = 32
+idle_timeout_secs = 300
+push_previews = false
+push_subject = ""
+push_hosts = []
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `address` | `"127.0.0.1:8377"` | `host:port` the listener binds once enabled. |
+| `allow_remote` | `false` | Required to bind outside loopback; the listener speaks plaintext HTTP. |
+| `max_connections` | `32` | At least 1. HTTP connections served at once, and WebSockets open at once. |
+| `idle_timeout_secs` | `300` | At least 3. A WebSocket silent for this long is closed. |
+| `push_previews` | `false` | Let a push notification carry a short preview of what an agent wrote. |
+| `push_subject` | `""` | VAPID contact, a `mailto:` or `https://` URL; empty derives it from the first public origin. |
+| `push_hosts` | `[]` | Extra push service hosts a device may subscribe with: exact names or `*.suffix`. |
+
+Unknown keys and values that cannot mean what they say are refused when the
+configuration loads.

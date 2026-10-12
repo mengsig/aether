@@ -16,6 +16,14 @@ pub fn schema() -> Value {
     let mut generator = schemars::generate::SchemaSettings::draft2020_12().into_generator();
     let client = generator.subschema_for::<ClientFrame>();
     let server = generator.subschema_for::<ServerFrame>();
+    // Bodies that never ride a frame: the HTTP endpoints and the push payload.
+    generator.subschema_for::<crate::remote::PairClaimRequest>();
+    generator.subschema_for::<crate::remote::PairClaimResponse>();
+    generator.subschema_for::<crate::remote::PairStatusRequest>();
+    generator.subschema_for::<crate::remote::PairStatusResponse>();
+    generator.subschema_for::<crate::remote::Health>();
+    generator.subschema_for::<crate::remote::HttpError>();
+    generator.subschema_for::<crate::remote::PushPayload>();
     let defs = generator.take_definitions(true);
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",

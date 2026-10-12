@@ -152,8 +152,9 @@ impl App {
                 counts.join(&format!(" {} ", self.theme.glyphs().dot))
             )
         };
+        let command = self.options.command_hint();
         self.exit_message = Some(format!(
-            "Agents keep running in the daemon{counts}. Reattach with: aether"
+            "Agents keep running in the daemon{counts}. Reattach with: {command}"
         ));
         self.quit_requested = true;
         vec![Effect::Quit]

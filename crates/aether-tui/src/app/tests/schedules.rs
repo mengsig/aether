@@ -22,7 +22,7 @@ fn schedules_view_requests_history_and_confirms_cancellation() {
     let effects = app.on_reply(Then::Schedules, Ok(Reply::Schedules(vec![job.clone()])));
     assert!(effects.iter().any(|effect| matches!(effect, Effect::Request { command: Command::ScheduleHistory { id, .. }, .. } if *id == job.id)));
     let effects = app.reduce(key(KeyCode::Char('p')));
-    assert!(effects.iter().any(|effect| matches!(effect, Effect::Request { command: Command::UpdateSchedule { id, action: ScheduleAction::Pause }, .. } if *id == job.id)));
+    assert!(effects.iter().any(|effect| matches!(effect, Effect::Request { command: Command::UpdateSchedule { id, action: ScheduleAction::Pause , idempotency_key: None, }, .. } if *id == job.id)));
 
     let armed = "c again to cancel";
     assert!(app.reduce(key(KeyCode::Char('c'))).is_empty());
@@ -33,7 +33,7 @@ fn schedules_view_requests_history_and_confirms_cancellation() {
     assert!(!text.contains(armed), "any other key disarms:\n{text}");
     assert!(app.reduce(key(KeyCode::Char('c'))).is_empty());
     let effects = app.reduce(key(KeyCode::Char('c')));
-    assert!(effects.iter().any(|effect| matches!(effect, Effect::Request { command: Command::UpdateSchedule { id, action: ScheduleAction::Cancel }, .. } if *id == job.id)));
+    assert!(effects.iter().any(|effect| matches!(effect, Effect::Request { command: Command::UpdateSchedule { id, action: ScheduleAction::Cancel , idempotency_key: None, }, .. } if *id == job.id)));
 }
 
 #[test]

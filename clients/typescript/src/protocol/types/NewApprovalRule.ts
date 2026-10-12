@@ -12,6 +12,7 @@ import type {
  */
 export interface NewApprovalRule {
   "decision": ApprovalDecision;
+  "idempotency_key"?: string | null;
   "match": RuleMatch;
   "note"?: string | null;
   "scope": RuleScope;

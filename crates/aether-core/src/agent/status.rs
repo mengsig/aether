@@ -100,6 +100,12 @@ impl BlockReason {
         }
     }
 
+    /// Whether only the operator can clear this block: the others resolve
+    /// when the task or resource they wait on does.
+    pub fn needs_operator(&self) -> bool {
+        matches!(self, Self::Inspection { .. } | Self::Exhausted { .. })
+    }
+
     /// The dependency this block is waiting on, for the event's field.
     pub fn dependency(&self) -> Option<TaskId> {
         match self {

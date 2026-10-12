@@ -7,10 +7,18 @@ from ..protocol import (
     Any,
 )
 
-def cancel(*, agent: AgentId, reason: str | None = None) -> dict[str, Any]:
+def cancel(*, agent: AgentId, idempotency_key: str | None = None, reason: str | None = None) -> dict[str, Any]:
     """The `cancel` command."""
     frame: dict[str, Any] = {"cmd": "cancel"}
     frame["agent"] = agent
+    if idempotency_key is not None:
+        frame["idempotency_key"] = idempotency_key
     if reason is not None:
         frame["reason"] = reason
+    return frame
+
+def cancel_pairing(*, id: str) -> dict[str, Any]:
+    """Close a pairing nobody confirmed. Host only."""
+    frame: dict[str, Any] = {"cmd": "cancel_pairing"}
+    frame["id"] = id
     return frame

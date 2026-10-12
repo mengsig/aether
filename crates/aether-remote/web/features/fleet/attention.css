@@ -1,0 +1,48 @@
+.attention-heading { margin-bottom: 18px; }
+.fleet-inbox-counts { gap: 8px 20px; margin-bottom: 22px; color: var(--muted); font-size: .8125rem; }
+.fleet-inbox-counts > :first-child { color: var(--warning); }
+.fleet-inbox { max-width: 780px; gap: 16px; }
+.fleet-attention-card { padding: 22px 24px 8px; border-color: transparent; box-shadow: none; min-width: 0; }
+.fleet-attention-meta { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.attention-marker { display: grid; place-items: center; flex: 0 0 38px; height: 38px; border-radius: 12px; background: var(--warning-soft); color: var(--warning); }
+[data-kind="agent_failed"] .attention-marker { background: var(--danger-soft); color: var(--danger); }
+.attention-identity { flex: 1; min-width: 0; }
+.attention-identity .fleet-agent-link { display: flex; font-weight: 600; font-size: .875rem; min-height: 44px; margin-top: -10px; margin-bottom: -6px; }
+.attention-kind { display: block; color: var(--muted); font-size: .75rem; }
+.fleet-attention-meta time { font-size: .75rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fleet-attention-card h2 { font-size: 1.25rem; font-weight: 560; line-height: 1.4; letter-spacing: -.025em; margin: 0 0 16px; }
+.attention-command { min-width: 0; background: var(--surface-soft); border-radius: 10px; padding: 10px 12px; }
+.attention-command-label { display: block; color: var(--muted); font-size: .6875rem; margin-bottom: 3px; }
+.attention-command code { display: block; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: .75rem; line-height: 1.65; }
+.fleet-attention-card .fleet-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); gap: 10px; padding-top: 16px; }
+.fleet-actions .button { min-height: 48px; border: 0; border-radius: 12px; }
+.attention-deny { background: var(--danger-soft); color: var(--danger); }
+.attention-deny:hover { background: var(--danger-soft); box-shadow: inset 0 0 0 1px var(--danger); }
+.attention-exact > summary { padding-block: 14px; }
+.attention-swipe-help { display: none; color: var(--muted); font-size: .6875rem; text-align: center; margin-top: 10px; }
+.attention-exact[open] { padding-bottom: 16px; }
+.attention-effect { font-size: .8125rem; color: var(--muted); }
+.attention-exact .fleet-exact { margin-top: 16px; }
+.attention-exact pre { background: var(--surface-soft); border: 0; padding: 12px; border-radius: 10px; }
+.attention-raw { margin-top: 8px; }
+.attention-readonly { font-size: .8125rem; margin-bottom: 20px; }
+.fleet-attention-card .fleet-request-detail { margin: -4px 0 16px; font-size: .9375rem; line-height: 1.6; }
+.fleet-attention-card .fleet-reply { min-height: 88px; padding: 12px; background: var(--surface-soft); border-color: transparent; }
+.fleet-attention-card > .stack { margin-bottom: 14px; }
+.fleet-attention-card > .button, .fleet-attention-card > .fleet-error { margin-bottom: 16px; }
+.attention-swipe { touch-action: pan-y pinch-zoom; transition: box-shadow var(--duration) var(--ease); }
+.attention-swipe[data-swipe="approved"] { box-shadow: inset 4px 0 var(--accent); }
+.attention-swipe[data-swipe="denied"] { box-shadow: inset -4px 0 var(--danger); }
+@media (pointer: coarse) { .attention-swipe-help { display: block; } }
+@media (max-width: 650px) {
+  .fleet-attention-card { padding: 16px 18px 6px; }
+  .fleet-attention-meta { gap: 10px; margin-bottom: 12px; }
+  .fleet-attention-card h2 { font-size: 1.1875rem; margin-bottom: 12px; }
+  .fleet-attention-card .fleet-actions { padding-top: 12px; }
+  .fleet-attention-card .fleet-reply { min-height: 72px; }
+  .attention-exact > summary { padding-block: 12px; }
+}
+@media (max-width: 359px) {
+  .fleet-attention-meta { flex-wrap: wrap; }
+  .fleet-attention-meta time { margin-inline-start: auto; }
+}

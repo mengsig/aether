@@ -46,6 +46,13 @@ pub enum ServerFrame {
         invocation: InvocationId,
         delta: Delta,
     },
+    /// The remote carrier speaking first: what a device signs to
+    /// authenticate its hello. Never sent on the socket or the token listener.
+    Challenge {
+        /// 32 random bytes, base64url without padding. Single use.
+        nonce: String,
+        instance_id: String,
+    },
 }
 
 /// Encode one frame as a single JSON line.

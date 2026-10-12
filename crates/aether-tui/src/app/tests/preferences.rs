@@ -19,6 +19,7 @@ fn the_overrides_survive_interactive_theme_switches() {
             ..Default::default()
         },
         prefs_dir: Some(dir.path().to_path_buf()),
+        definitions_dir: Some(dir.path().to_path_buf()),
         ..Default::default()
     });
     let expected = app.theme.accent();
@@ -52,6 +53,7 @@ fn a_theme_file_is_read_when_chosen_and_its_problems_are_shown() {
     .unwrap();
     let mut app = App::new(TuiOptions {
         prefs_dir: Some(dir.path().to_path_buf()),
+        definitions_dir: Some(dir.path().to_path_buf()),
         ..Default::default()
     });
     app.run_command(SlashCommand::SetTheme("ember".parse().unwrap()));
@@ -191,5 +193,46 @@ fn a_failed_yolo_save_still_updates_the_option_and_refreshes_the_tree() {
             }
         )),
         "the tree must still refresh so the view is not left stale"
+    );
+}
+
+#[test]
+fn remote_theme_and_mode_reload_read_shared_definitions_and_save_endpoint_state() {
+    let shared = tempfile::tempdir().unwrap();
+    let endpoint = tempfile::tempdir().unwrap();
+    std::fs::create_dir(shared.path().join("themes")).unwrap();
+    std::fs::create_dir(shared.path().join("modes")).unwrap();
+    std::fs::write(shared.path().join("themes/ember.toml"), "base = \"nord\"\n").unwrap();
+    std::fs::write(
+        shared.path().join("modes/custom.toml"),
+        "version = 1\nshow = [\"user_text\"]\n",
+    )
+    .unwrap();
+    let mut app = App::new(TuiOptions {
+        definitions_dir: Some(shared.path().into()),
+        prefs_dir: Some(endpoint.path().into()),
+        ..Default::default()
+    });
+    app.run_command(SlashCommand::SetTheme("ember".parse().unwrap()));
+    assert_eq!(app.theme_choice.to_string(), "ember");
+    assert_eq!(
+        crate::prefs::UiPrefs::load(endpoint.path()).unwrap().theme,
+        Some(app.theme_choice.clone())
+    );
+    assert!(!shared.path().join(crate::prefs::FILE).exists());
+    let effects = app.run_command(SlashCommand::ViewMode(Some("reload".into())));
+    let [Effect::ReloadViewModes(directory)] = effects.as_slice() else {
+        panic!("reload effect");
+    };
+    assert_eq!(directory, shared.path());
+    app.modes_loaded(crate::view_modes::discover(directory));
+    app.run_command(SlashCommand::ViewMode(Some("custom".into())));
+    assert_eq!(app.view_mode, "custom");
+    assert_eq!(
+        crate::prefs::UiPrefs::load(endpoint.path())
+            .unwrap()
+            .view_mode
+            .as_deref(),
+        Some("custom")
     );
 }

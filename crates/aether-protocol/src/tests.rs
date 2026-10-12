@@ -113,12 +113,14 @@ fn every_command_survives_the_frame_roundtrip() {
         Command::UpdateAgent {
             id: agent,
             patch: AgentPatch::default(),
+            idempotency_key: None,
         },
         Command::ResolveApproval {
             id: ApprovalId::new(),
             decision: ApprovalDecision::Approved,
             note: None,
             remember: None,
+            idempotency_key: None,
         },
         Command::ResolveApproval {
             id: ApprovalId::new(),
@@ -129,6 +131,7 @@ fn every_command_survives_the_frame_roundtrip() {
                 tool_wide: true,
                 note: None,
             }),
+            idempotency_key: Some("answer-1".into()),
         },
         // The narrowest form: no scope, no widening.
         Command::ResolveApproval {
@@ -136,6 +139,7 @@ fn every_command_survives_the_frame_roundtrip() {
             decision: ApprovalDecision::Denied,
             note: None,
             remember: Some(RememberSpec::default()),
+            idempotency_key: None,
         },
         Command::ListApprovalRules {
             include_revoked: true,
@@ -153,6 +157,7 @@ fn every_command_survives_the_frame_roundtrip() {
             matcher: RuleMatch::tool("bash").with_argument("rm -rf *"),
             scope: RuleScope::Everywhere,
             note: Some("never".into()),
+            idempotency_key: None,
         }),
         Command::RevokeApprovalRule {
             id: ApprovalRuleId::new(),
@@ -160,7 +165,10 @@ fn every_command_survives_the_frame_roundtrip() {
         },
         Command::Unsubscribe { id: 3 },
         Command::Compact { agent },
-        Command::Restart { agent },
+        Command::Restart {
+            agent,
+            idempotency_key: None,
+        },
         Command::Wake { agent },
         Command::EngineTool {
             agent,
@@ -204,10 +212,12 @@ fn every_command_survives_the_frame_roundtrip() {
         Command::Pause {
             agent,
             subtree: true,
+            idempotency_key: None,
         },
         Command::Resume {
             agent,
             subtree: false,
+            idempotency_key: None,
         },
         Command::UpdateAgent {
             id: agent,
@@ -215,6 +225,7 @@ fn every_command_survives_the_frame_roundtrip() {
                 deadline: Some(DeadlineUpdate::Clear),
                 ..Default::default()
             },
+            idempotency_key: None,
         },
         Command::UpdateAgent {
             id: agent,
@@ -222,6 +233,7 @@ fn every_command_survives_the_frame_roundtrip() {
                 deadline: Some(DeadlineUpdate::Set(aether_core::time::now())),
                 ..Default::default()
             },
+            idempotency_key: None,
         },
         // These four shapes are non-trivial encodings that were once
         // missing from this roundtrip.
@@ -232,19 +244,23 @@ fn every_command_survives_the_frame_roundtrip() {
         Command::Archive {
             target: ArchiveTarget::Agent(agent),
             archived: true,
+            idempotency_key: None,
         },
         Command::Archive {
             target: ArchiveTarget::Run(RunId::new()),
             archived: false,
+            idempotency_key: None,
         },
         Command::Archive {
             target: ArchiveTarget::AllFinished,
             archived: true,
+            idempotency_key: None,
         },
         Command::SetApprovals {
             agent,
             policy: ApprovalPolicy::none(),
             subtree: true,
+            idempotency_key: None,
         },
         Command::CreateAgent(CreateAgent {
             role: "worker".into(),
@@ -431,6 +447,9 @@ fn create_agent_defaults_to_start() {
 
 #[path = "tests/idempotency.rs"]
 mod idempotency;
+
+#[path = "tests/resolution.rs"]
+mod resolution;
 
 #[test]
 fn event_query_before_is_optional_and_old_wire_shape_is_unchanged() {

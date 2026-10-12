@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use aether_core::disk::{DiskFloor, LowDisk};
+use aether_protocol::remote::RemoteStatus;
 use aether_protocol::{AuthInfo, DaemonStatus};
 use serde::{Deserialize, Serialize};
 
@@ -677,6 +678,59 @@ pub fn check_mcp(
             "`{command} mcp refresh <server>` retries; their tools are withheld until one does"
         ),
     )
+}
+
+/// Remote access: whether the phone listener is open, reachable by name, and
+/// has someone to talk to. `None` is a daemon that could not say.
+pub fn check_remote(status: Option<&RemoteStatus>, command: &str) -> Check {
+    let Some(status) = status else {
+        return Check::ok("remote", "not checked: no daemon answered");
+    };
+    if !status.settings.enabled {
+        return Check::ok(
+            "remote",
+            format!("off; `{command} remote setup` turns on phone access"),
+        );
+    }
+    if let Some(error) = &status.error {
+        return Check::fail(
+            "remote",
+            format!("enabled, but the listener is not open: {error}"),
+            format!(
+                "fix that, then `{command} remote status`; `{command} remote setup` re-checks every step"
+            ),
+        );
+    }
+    let Some(listening) = &status.listening else {
+        return Check::warn(
+            "remote",
+            "enabled, but the listener is not open yet",
+            format!("`{command} remote status` shows when it is"),
+        );
+    };
+    let origins = &status.settings.public_origins;
+    if origins.is_empty() {
+        return Check::warn(
+            "remote",
+            format!(
+                "listening on {listening}, but no public address is allowed, so phones are refused"
+            ),
+            format!("`{command} remote setup` publishes one"),
+        );
+    }
+    let detail = format!(
+        "listening on {listening} · {} · {} device(s) paired",
+        origins.join(", "),
+        status.devices
+    );
+    if status.devices == 0 {
+        return Check::warn(
+            "remote",
+            detail,
+            format!("`{command} remote pair` adds a phone"),
+        );
+    }
+    Check::ok("remote", detail)
 }
 
 #[cfg(test)]

@@ -1,8 +1,9 @@
+use super::ledger::NewestDropped;
 use super::{SqliteStore, submission_time};
 use crate::Result;
 use aether_core::{
     event::{Actor, EventDraft, EventKind},
-    time::{Timestamp, now},
+    time::Timestamp,
 };
 use rusqlite::{Connection, OptionalExtension};
 use std::sync::atomic::Ordering;
@@ -19,6 +20,8 @@ pub(super) struct SubmissionSweep {
     pub(super) evicted: usize,
     /// `at` of the oldest evicted record, as stored.
     pub(super) oldest_evicted: Option<String>,
+    /// The newest record either pass dropped, which the ledger is told of.
+    pub(super) newest_dropped: Option<NewestDropped>,
 }
 
 impl SubmissionSweep {
@@ -67,31 +70,69 @@ impl SqliteStore {
     /// cap)` spelling this replaced materialized every surviving key into
     /// an ephemeral index and scanned the table against it.
     pub(super) const OVERFLOW_DELETE_SQL: &'static str = "DELETE FROM submissions WHERE key IN
-               (SELECT key FROM submissions ORDER BY at ASC, key ASC LIMIT ?1)";
+               (SELECT key FROM submissions ORDER BY at ASC, key ASC LIMIT ?1)
+               RETURNING ordinal, at";
 
-    /// Age-then-size retention for `submissions`, in whichever transaction the
-    /// caller is already in.
-    ///
-    /// The age pass runs on every recorded submission: it is one seek into the
-    /// `at` index plus whatever it deletes. Finding the overflow means counting
-    /// the table, so `size_pass` says whether this write is the one that pays
-    /// for that. Everything the size pass evicts was inside the age window by
-    /// construction, since the age pass has already taken everything outside
-    /// it, which is why the sweep reports it rather than dropping it quietly.
+    /// Run one of the two deletes and fold what it returned: how many records
+    /// went, and the newest of them by ordinal and by `at`.
+    fn drop_submissions(
+        tx: &Connection,
+        sql: &str,
+        bound: &dyn rusqlite::ToSql,
+    ) -> Result<(usize, Option<NewestDropped>)> {
+        let mut statement = tx.prepare_cached(sql)?;
+        let mut rows = statement.query([bound])?;
+        let mut dropped = 0;
+        let mut newest: Option<NewestDropped> = None;
+        while let Some(row) = rows.next()? {
+            let ordinal = super::ledger::ordinal_from_sql(row.get(0)?)?;
+            let at: String = row.get(1)?;
+            dropped += 1;
+            newest = Some(match newest {
+                Some((seen, seen_at)) => (seen.max(ordinal), seen_at.max(at)),
+                None => (ordinal, at),
+            });
+        }
+        debug_assert_eq!(dropped == 0, newest.is_none());
+        Ok((dropped, newest))
+    }
+
+    /// Age-then-size retention for `submissions`, in the caller's transaction.
+    /// What a pass drops moves the ledger's watermark in that same transaction.
     pub(super) fn prune_submissions_in(
         tx: &Connection,
         before: Timestamp,
         max_rows: usize,
         size_pass: bool,
     ) -> Result<SubmissionSweep> {
-        let aged = tx.execute(
-            "DELETE FROM submissions WHERE at < ?1",
-            [submission_time(before)],
+        let mut sweep = Self::drop_aged_and_overflow(tx, before, max_rows, size_pass)?;
+        debug_assert_eq!(
+            sweep.newest_dropped.is_none(),
+            sweep.aged + sweep.evicted == 0
+        );
+        if let Some(newest) = sweep.newest_dropped.take() {
+            Self::forget_submissions(tx, &newest)?;
+            sweep.newest_dropped = Some(newest);
+        }
+        Ok(sweep)
+    }
+
+    fn drop_aged_and_overflow(
+        tx: &Connection,
+        before: Timestamp,
+        max_rows: usize,
+        size_pass: bool,
+    ) -> Result<SubmissionSweep> {
+        let (aged, newest_dropped) = Self::drop_submissions(
+            tx,
+            "DELETE FROM submissions WHERE at < ?1 RETURNING ordinal, at",
+            &submission_time(before),
         )?;
         let mut sweep = SubmissionSweep {
             aged,
             evicted: 0,
             oldest_evicted: None,
+            newest_dropped,
         };
         if !size_pass {
             return Ok(sweep);
@@ -111,7 +152,15 @@ impl SqliteStore {
                 |r| r.get::<_, String>(0),
             )
             .optional()?;
-        sweep.evicted = tx.execute(Self::OVERFLOW_DELETE_SQL, [overflow])?;
+        let (evicted, newest_evicted) =
+            Self::drop_submissions(tx, Self::OVERFLOW_DELETE_SQL, &overflow)?;
+        sweep.evicted = evicted;
+        sweep.newest_dropped = match (sweep.newest_dropped.take(), newest_evicted) {
+            (Some((aged, aged_at)), Some((evicted, evicted_at))) => {
+                Some((aged.max(evicted), aged_at.max(evicted_at)))
+            }
+            (aged, evicted) => aged.or(evicted),
+        };
         Ok(sweep)
     }
 
@@ -138,7 +187,7 @@ impl SqliteStore {
             .submissions_since_size_pass
             .fetch_add(1, Ordering::Relaxed)
             + 1
-            >= aether_core::idempotency::SUBMISSION_SIZE_PASS_EVERY;
+            >= self.size_pass_every;
         if due {
             self.submissions_since_size_pass.store(0, Ordering::Relaxed);
         }
@@ -147,7 +196,8 @@ impl SqliteStore {
         // skewed clock must not sweep away good ones.
         Self::prune_submissions_in(
             tx,
-            now() - chrono::Duration::days(aether_core::idempotency::SUBMISSION_RETENTION_DAYS),
+            (self.retention_clock)()
+                - chrono::Duration::days(aether_core::idempotency::SUBMISSION_RETENTION_DAYS),
             self.max_submissions,
             due,
         )

@@ -47,6 +47,18 @@ export function listArtifacts(args: Omit<ListArtifactsCommand, "cmd">): ListArti
   return { cmd: "list_artifacts", ...args };
 }
 
+/**
+ * Enrolled devices, oldest first. Host only.
+ */
+export interface ListDevicesCommand {
+  "cmd": "list_devices";
+  "include_revoked"?: boolean;
+}
+
+export function listDevices(args: Omit<ListDevicesCommand, "cmd">): ListDevicesCommand {
+  return { cmd: "list_devices", ...args };
+}
+
 export interface ListInvocationsCommand {
   "cmd": "list_invocations";
   "agent": AgentId;
@@ -92,4 +104,16 @@ export interface ListTasksCommand {
 
 export function listTasks(args: Omit<ListTasksCommand, "cmd">): ListTasksCommand {
   return { cmd: "list_tasks", ...args };
+}
+
+/**
+ * Workspaces holding root agents, most recently active first.
+ */
+export interface ListWorkspacesCommand {
+  "cmd": "list_workspaces";
+  "limit"?: number | null;
+}
+
+export function listWorkspaces(args: Omit<ListWorkspacesCommand, "cmd">): ListWorkspacesCommand {
+  return { cmd: "list_workspaces", ...args };
 }
