@@ -577,6 +577,7 @@ The default `standard` keeps the stock view. The built-in `focus` shows prose,
 delegations, messages, completions and status, with compact coordination rows.
 Tools, thinking, memory, compaction and accounting remain available with Ctrl+T.
 Questions, approvals, failures and actionable health notices always stay visible.
+A failed tool call is tool detail: a mode without `tool` keeps one line for it.
 Modes do not alter agent execution, event ingestion, approval controls or the board.
 
 Embedders can supply `<config dir>/modes/brief.toml` alongside `ui.toml`:
@@ -600,9 +601,20 @@ rendering); `compact` makes routine coordination one physical line and reduces
 gaps. Prose and decisions keep their full bodies; the Details shortcut (Ctrl+T
 by default, editable in `/settings` → Keys) reveals truncated rows.
 The remaining categories are `tool`, `reasoning`, `memory`, `compaction`, and
-`usage`. Failed tools, children and compactions are visible even when their
-category is omitted. There is no subtree inheritance or combined fleet feed.
+`usage`. Failed children and compactions are visible even when their category
+is omitted. There is no subtree inheritance or combined fleet feed.
 A scope mismatch uses standard presentation for that agent.
+
+`error` covers the agent and the session: a failed turn, a model or provider
+error, a daemon, store or connection fault. These are drawn whole in every mode,
+listed or not. A tool call that failed belongs to `tool`. A mode that lists
+`tool` draws it whole. A mode that omits `tool` draws one row for it, clipped to
+the width: the tool's name (`Command` for a shell call), `failed`, and the first
+line of its error. The command, the arguments and the rest of the output stay
+out. Failed calls with nothing shown between them share the row of the first.
+Ctrl+T and the standard mode still draw every call: nothing leaves the
+transcript. A call that waits for approval, was denied or was cancelled is drawn
+whole in every mode.
 
 External trigger notices show `Trigger from <source> · <summary>` when the JSON
 payload is an object with a nonblank top-level string `summary`. This applies to

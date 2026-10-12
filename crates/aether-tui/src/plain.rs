@@ -568,20 +568,26 @@ impl<W: Write> Printer<W> {
             let mut said: Vec<(CellId, Vec<String>)> = Vec::new();
             let policy = app.policy(Some(agent));
             let named = policy.definition.is_some() || app.details && app.view_mode != "standard";
+            let mut after_failed = false;
             for cell in transcript.presentation_cells(named) {
+                let visible = policy.shows(&cell.model);
+                // Only the first of a run of failed tool lines is said.
+                let failed = visible && policy.failed_tool_line(&cell.model);
+                let folded = failed && after_failed;
+                if visible {
+                    after_failed = failed;
+                }
                 if self.revisions.get(&(agent, cell.id)) == Some(&cell.revision) {
                     continue;
                 }
                 self.revisions.insert((agent, cell.id), cell.revision);
-                let visible = policy.shows(&cell.model);
-                let lines = if !visible {
+                let lines = if !visible || folded {
                     Vec::new()
                 } else if policy.compact(&cell.model) {
                     crate::ui::cells::compact::line(&cell.model, PLAIN_WIDTH, &plain_theme())
                         .map(|line| vec![sanitise(&line.to_string())])
                         .unwrap_or_else(|| describe(cell))
-                } else if policy.definition.is_some()
-                    && crate::view_modes::mandatory(&cell.model)
+                } else if policy.expands(&cell.model)
                     && !matches!(cell.model, CellModel::Question { .. })
                 {
                     cell.model
@@ -1479,5 +1485,45 @@ mod tests {
             );
         }
         assert!(!out.drain(&app).unwrap());
+    }
+
+    #[test]
+    fn a_run_of_failed_calls_is_one_plain_line_in_a_mode_without_tools() {
+        use crate::app::transcript::CallStatus;
+        let mut app = app_with_transcript(&[]);
+        let agent = app.selected.unwrap();
+        let definition = crate::view_modes::Definition::parse("version=1\nshow=[]").unwrap();
+        app.view_modes.modes.insert(
+            "quiet".into(),
+            crate::view_modes::Mode {
+                name: "quiet".into(),
+                source: "fixture".into(),
+                definition,
+            },
+        );
+        app.view_mode = "quiet".into();
+        let mut out = Printer::new(Vec::new());
+        for n in 0..3 {
+            let failed = CellModel::Exec {
+                call: None,
+                command: format!("probe {n}"),
+                status: CallStatus::Failed,
+                output: format!("refused {n}\nlater line"),
+                exit: Some(1),
+                duration_ms: None,
+                is_search: false,
+                artifacts: vec![],
+            };
+            let transcript = app.transcripts.get_mut(&agent).unwrap();
+            transcript.push_for_test(app.now, failed);
+            out.drain(&app).unwrap();
+        }
+        let failures: Vec<&str> = output(&out)
+            .lines()
+            .filter(|line| line.contains("failed"))
+            .collect();
+        assert_eq!(failures, ["* Command failed: refused 0"]);
+        assert!(!output(&out).contains("probe"), "{}", output(&out));
+        assert!(!output(&out).contains("later line"), "{}", output(&out));
     }
 }

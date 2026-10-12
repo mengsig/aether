@@ -122,7 +122,8 @@ fn mode_only_grouped_errors_preserve_board_activity() {
     assert_eq!(app.view_mode, "standard");
     assert_eq!(transcript.named_only.len(), 1);
     assert!(transcript.presentation_cells(true).any(|cell| matches!(
-        &cell.model, CellModel::Error { message, .. } if message.contains("not found")
+        &cell.model,
+        CellModel::Called { status: CallStatus::Failed, error: Some(error), .. } if error == "not found"
     )));
     assert!(
         !transcript
@@ -1060,7 +1061,15 @@ fn finding_an_already_visible_failure_keeps_hidden_categories_filtered() {
             .join("\n")
             .contains("needle")
     );
-    submit(&mut app, "/focus");
+    app.view_modes.modes.insert(
+        "tools".into(),
+        Mode {
+            name: "tools".into(),
+            source: "fixture".into(),
+            definition: Definition::parse("version=1\nshow=['assistant_text','tool']").unwrap(),
+        },
+    );
+    submit(&mut app, "/mode tools");
     let screen = render_to(&app, 120, 40);
     assert!(screen.contains("needle evidence"), "{screen}");
     app.reduce(AppEvent::Key(KeyEvent::new(
@@ -1077,6 +1086,220 @@ fn finding_an_already_visible_failure_keeps_hidden_categories_filtered() {
         !app.details,
         "the failure was already fully visible in this mode"
     );
+}
+
+const CALM: &str = r#"version = 1
+label = "Calm"
+description = "Archon coordination and decisions without tool detail"
+density = "compact"
+show = ["user_text", "assistant_text", "delegation", "agent_message", "completion", "status", "question", "approval", "error"]
+
+[scope]
+role = "archon-orchestrator"
+"#;
+
+fn enter_calm(app: &mut App) {
+    let agent = app.selected.unwrap();
+    app.tree.nodes.get_mut(&agent).unwrap().agent.role.0 = "archon-orchestrator".into();
+    app.names_version += 1;
+    app.view_modes.modes.insert(
+        "calm".into(),
+        Mode {
+            name: "calm".into(),
+            source: "fixture".into(),
+            definition: Definition::parse(CALM).unwrap(),
+        },
+    );
+    submit(app, "/mode calm");
+    assert_eq!(app.view_mode, "calm");
+    assert!(app.policy(Some(agent)).definition.is_some());
+}
+
+fn failed_tool(app: &mut App, name: &str, input: serde_json::Value, error: &str) {
+    use aether_core::event::EventKind;
+    use aether_core::id::ToolCallId;
+    use aether_core::tool::{SideEffectClass, ToolCall};
+    let agent = app.selected.unwrap();
+    let id = ToolCallId::new();
+    let call = ToolCall {
+        id,
+        provider_call_id: "fixture".into(),
+        name: name.into(),
+        input,
+        agent_id: agent,
+        task_id: None,
+        invocation_id: None,
+        resources: vec![],
+        idempotency_key: None,
+        requested_at: app.now,
+    };
+    own_event(
+        app,
+        EventKind::ToolRequested {
+            call,
+            side_effect: SideEffectClass::ReadOnly,
+        },
+    );
+    let outcome = ToolOutcome::error(error);
+    own_event(app, EventKind::ToolSucceeded { call: id, outcome });
+}
+
+fn failed_shell(app: &mut App, command: &str, output: &str) {
+    failed_tool(
+        app,
+        "bash",
+        serde_json::json!({ "command": command }),
+        output,
+    );
+}
+
+fn say(app: &mut App, text: &str) {
+    let agent = app.selected.unwrap();
+    let role = aether_core::model::MessageRole::Assistant;
+    aether_tui::testing::push_message(app, agent, role, text);
+}
+
+fn lines_with<'a>(screen: &'a str, needle: &str) -> Vec<&'a str> {
+    screen
+        .lines()
+        .filter(|line| line.contains(needle))
+        .map(str::trim)
+        .collect()
+}
+
+/// A shell loop that exits 1 after several hundred lines of usage text.
+fn app_with_a_long_failed_shell_call() -> App {
+    let mut app = app_with_transcript(&[]);
+    let usage: String = (0..400).map(|n| format!("usage line {n}\n")).collect();
+    let output = format!("Exit code 1\nargument required when using the --repo flag\n{usage}");
+    failed_shell(&mut app, "gh pr view 62 -R example-org/engine", &output);
+    say(&mut app, "Visible answer");
+    app
+}
+
+#[test]
+fn a_failed_shell_call_is_one_line_in_a_mode_without_tools() {
+    let mut app = app_with_a_long_failed_shell_call();
+    enter_calm(&mut app);
+    for width in [40, 120] {
+        let screen = render_to(&app, width, 40);
+        assert_eq!(
+            lines_with(&screen, "failed"),
+            ["• Command failed: Exit code 1"],
+            "{screen}"
+        );
+        for hidden in ["gh pr view", "argument required", "usage line"] {
+            assert!(!screen.contains(hidden), "{hidden} in {screen}");
+        }
+        assert!(screen.contains("Visible answer"), "{screen}");
+    }
+    // Nothing left the transcript: details draw the whole call again.
+    app.reduce(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('t'),
+        KeyModifiers::CONTROL,
+    )));
+    let screen = render_to(&app, 120, 40);
+    assert!(screen.contains("usage line 380"), "{screen}");
+    assert!(screen.contains("usage line 399"), "{screen}");
+}
+
+#[test]
+fn the_standard_mode_draws_a_failed_shell_call_as_before() {
+    let mut app = app_with_a_long_failed_shell_call();
+    enter_calm(&mut app);
+    submit(&mut app, "/mode standard");
+    let screen = render_to(&app, 120, 40);
+    let call: Vec<&str> = screen
+        .lines()
+        .map(str::trim)
+        .skip_while(|line| !line.starts_with("• Ran"))
+        .take(7)
+        .collect();
+    assert_eq!(
+        call,
+        [
+            "• Ran gh pr view 62 -R example-org/engine",
+            "└ Exit code 1",
+            "argument required when using the --repo flag",
+            "… +397 lines (ctrl+t to view)",
+            "usage line 397",
+            "usage line 398",
+            "usage line 399",
+        ],
+        "{screen}"
+    );
+}
+
+#[test]
+fn an_agent_error_is_drawn_whole_in_a_mode_without_tools() {
+    use aether_core::event::EventKind;
+    let mut app = app_with_transcript(&["go"]);
+    let error = "provider exploded\nfirst cause line\nsecond cause line".to_owned();
+    own_event(&mut app, EventKind::AgentFailed { error });
+    enter_calm(&mut app);
+    let screen = render_to(&app, 120, 40);
+    for shown in ["provider exploded", "first cause line", "second cause line"] {
+        assert!(screen.contains(shown), "{shown} not in {screen}");
+    }
+}
+
+#[test]
+fn consecutive_failed_calls_share_one_line_until_something_else_is_shown() {
+    let mut app = app_with_transcript(&[]);
+    for n in 0..5 {
+        failed_shell(&mut app, &format!("probe {n}"), &format!("refused {n}"));
+    }
+    say(&mut app, "Trying another way");
+    failed_shell(&mut app, "probe 9", "refused 9");
+    enter_calm(&mut app);
+    let screen = render_to(&app, 120, 40);
+    assert_eq!(
+        lines_with(&screen, "failed"),
+        ["• Command failed: refused 0", "• Command failed: refused 9"],
+        "{screen}"
+    );
+    assert!(!screen.contains("probe"), "{screen}");
+    app.reduce(AppEvent::Resize(120, 40));
+    app.reduce(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('f'),
+        KeyModifiers::CONTROL,
+    )));
+    app.reduce(AppEvent::Paste("refused".into()));
+    assert_eq!(app.bottom.find.as_ref().unwrap().matches.len(), 2);
+    assert!(!app.details, "both matches are on shown rows");
+}
+
+#[test]
+fn failed_grouped_calls_are_one_line_each_in_a_mode_without_tools() {
+    let mut app = app_with_transcript(&[]);
+    let path = serde_json::json!({ "path": "notes.txt" });
+    failed_tool(
+        &mut app,
+        "read_file",
+        path.clone(),
+        "not found\nsearched: /srv",
+    );
+    say(&mut app, "Editing instead");
+    let edit = serde_json::json!({ "path": "notes.txt", "old_string": "secret before", "new_string": "secret after" });
+    failed_tool(
+        &mut app,
+        "edit_file",
+        edit,
+        "old_string not found\nin notes.txt",
+    );
+    enter_calm(&mut app);
+    let screen = render_to(&app, 120, 40);
+    assert_eq!(
+        lines_with(&screen, "failed"),
+        [
+            "• read_file failed: not found",
+            "• edit_file failed: old_string not found"
+        ],
+        "{screen}"
+    );
+    for hidden in ["searched: /srv", "in notes.txt", "secret"] {
+        assert!(!screen.contains(hidden), "{hidden} in {screen}");
+    }
 }
 
 #[test]
