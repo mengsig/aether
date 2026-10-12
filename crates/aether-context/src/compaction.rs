@@ -430,6 +430,10 @@ impl Compactor {
                     ));
                 }
                 ContentBlock::Image { .. } => out.push_str("[image]\n"),
+                ContentBlock::ImageRef(image) => {
+                    out.push_str(&image.label());
+                    out.push('\n');
+                }
             }
         }
         out

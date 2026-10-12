@@ -3,6 +3,10 @@
 
 use aether_core::model::{ContentBlock, Message, ToolResultBlock, ToolSpec};
 
+/// What a stored image costs: the providers scale one down to about this
+/// many tokens whatever its file size.
+const STORED_IMAGE_TOKENS: u32 = 1_600;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TokenEstimator;
 
@@ -39,6 +43,7 @@ impl TokenEstimator {
                         .sum::<u32>()
                 }
                 ContentBlock::Image { data, .. } => (data.len() / 100) as u32 + 100,
+                ContentBlock::ImageRef(_) => STORED_IMAGE_TOKENS,
             };
         }
         total

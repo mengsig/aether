@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::attachment::AttachmentRef;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
@@ -102,6 +104,10 @@ pub enum ContentBlock {
         /// Base64 payload.
         data: String,
     },
+    /// An image a person sent with a message, kept by the daemon. Durable
+    /// state carries this reference; the bytes are read back only to build
+    /// a model request.
+    ImageRef(AttachmentRef),
 }
 
 impl ContentBlock {

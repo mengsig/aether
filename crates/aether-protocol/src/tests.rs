@@ -193,13 +193,33 @@ fn every_command_survives_the_frame_roundtrip() {
             to: agent,
             content: "hi".into(),
             subtree: true,
+            attachments: Vec::new(),
             idempotency_key: None,
         },
         Command::SendMessage {
             to: agent,
             content: "hi".into(),
             subtree: false,
+            attachments: Vec::new(),
             idempotency_key: Some("outbox-7".into()),
+        },
+        Command::SendMessage {
+            to: agent,
+            content: "what is this?".into(),
+            subtree: false,
+            attachments: vec![
+                ImageAttachment {
+                    media_type: "image/png".into(),
+                    data: "iVBORw0KGgo=".into(),
+                    name: Some("shot.png".into()),
+                },
+                ImageAttachment {
+                    media_type: "image/jpeg".into(),
+                    data: "/9j/4AAQ".into(),
+                    name: None,
+                },
+            ],
+            idempotency_key: None,
         },
         Command::Pause {
             agent,
@@ -430,6 +450,7 @@ fn create_agent_defaults_to_start() {
 }
 
 #[path = "tests/idempotency.rs"]
+mod attachments;
 mod idempotency;
 
 #[test]

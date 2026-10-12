@@ -61,6 +61,9 @@ pub struct ContextInputs<'a> {
     pub engine_policy: Option<&'a str>,
     pub capabilities: &'a CapabilityProfile,
     pub adapter: &'a str,
+    /// Where the daemon stores message images, so the user turn can name
+    /// each file. `None` when this daemon keeps none.
+    pub attachment_dir: Option<&'a std::path::Path>,
     pub turn: u32,
     pub now: Timestamp,
 }
@@ -203,7 +206,7 @@ impl ContextManager {
             .map(|e| e.message.clone())
             .collect();
         let (new_user_message, consumed_inbox, consumed_up_to) =
-            render::inbox_message(inputs.pending_inbox);
+            render::inbox_message(inputs.pending_inbox, inputs.attachment_dir);
         if let Some(m) = &new_user_message {
             messages.push(m.clone());
         }

@@ -3,6 +3,7 @@
 
 import type {
   AgentId,
+  ImageAttachment,
 } from "../../protocol.ts";
 
 /**
@@ -12,6 +13,7 @@ import type {
  */
 export interface SendMessageCommand {
   "cmd": "send_message";
+  "attachments"?: Array<ImageAttachment>;
   "content": string;
   "idempotency_key"?: string | null;
   "subtree"?: boolean;

@@ -90,6 +90,7 @@ fn inputs<'a>(
         engine_policy: None,
         capabilities: caps,
         adapter: "scripted/1",
+        attachment_dir: None,
         turn: 1,
         now: now(),
     }

@@ -33,6 +33,7 @@ use aether_core::agent::{
     Agent, AgentConfig, AgentStatusKind, ApprovalDefault, ApprovalPolicy, DeadlineUpdate,
     ExecutionBackend, NetworkPolicy, Scope,
 };
+pub use aether_core::attachment::{AttachmentId, AttachmentRef, ImageAttachment};
 
 use aether_core::approval::{ApprovalRule, RuleMatch, RuleScope};
 use aether_core::artifact::Artifact;
@@ -140,7 +141,12 @@ use serde::{Deserialize, Serialize};
 /// drop it on save. v16 watcher replies carrying it become a clear
 /// incompatible error, and v16 saves are refused while it is set. The trigger
 /// field is additive: an older peer ignores it and reads the trigger as external.
-pub const PROTOCOL_VERSION: u32 = 17;
+///
+/// 18: `SendMessage.attachments` and the `image_ref` content block a message
+/// with images then carries. A v17 daemon would drop the images in silence,
+/// so it is refused at hello. A v17 client cannot decode the block; `compat`
+/// hands it the same line of text a newer client prints for the image.
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {

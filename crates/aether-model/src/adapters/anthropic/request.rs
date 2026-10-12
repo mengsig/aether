@@ -292,6 +292,9 @@ fn block_to_json(block: &ContentBlock) -> Option<Value> {
             "type": "image",
             "source": {"type": "base64", "media_type": media_type, "data": data}
         })),
+        // The runtime inlines stored images before a request; one that
+        // reaches here has no bytes, so the model is told what was there.
+        ContentBlock::ImageRef(image) => Some(json!({"type": "text", "text": image.label()})),
     }
 }
 

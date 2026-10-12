@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-PROTOCOL_VERSION = 17
-MIN_PROTOCOL_VERSION = 16
+PROTOCOL_VERSION = 18
+MIN_PROTOCOL_VERSION = 17
 
 from ._protocol_types import *
 

@@ -23,6 +23,7 @@ fn keyed_commands(key: &str) -> Vec<Command> {
             to: agent,
             content: "hi".into(),
             subtree: false,
+            attachments: Vec::new(),
             idempotency_key: Some(key.into()),
         },
         Command::Trigger {
@@ -100,6 +101,7 @@ fn the_fingerprint_view_names_the_command_and_follows_its_arguments() {
             to: agent,
             content: content.into(),
             subtree: false,
+            attachments: Vec::new(),
             idempotency_key: Some("k-1".into()),
         }
         .keyed_request()
@@ -187,6 +189,7 @@ fn an_unkeyed_command_has_no_fingerprint_view() {
             to: AgentId::new(),
             content: "hi".into(),
             subtree: false,
+            attachments: Vec::new(),
             idempotency_key: None,
         }
         .keyed_request()

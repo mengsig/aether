@@ -11,6 +11,11 @@
 //! `no_command_requires_a_field_an_older_client_would_not_send` holds that
 //! true against the live schema.
 //!
+//! v18 adds images on a message. Stored state then carries `image_ref`
+//! content blocks, which a v17 client cannot decode: it would lose the whole
+//! event or transcript. Each block is rewritten into the line of text a
+//! newer client prints for it, so the message still reads as sent.
+//!
 //! v17 adds the watcher's `operator_users`. A v16 client cannot represent
 //! the list, and saving a configuration without it would silently take
 //! operator standing away from every listed login, so a watcher reply
@@ -26,6 +31,8 @@
 
 use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame};
 use aether_core::github::GithubWatcherConfig;
+use aether_core::model::ContentBlock;
+use serde_json::Value;
 
 pub const ALLOWLIST_WATCHER_VERSION_ERROR: &str =
     "GitHub watcher allowed_users requires protocol 15; upgrade the Aether client";
@@ -109,7 +116,55 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
             )),
         });
     }
+    if version < 18 {
+        return encode_without_image_refs(frame);
+    }
     crate::encode(frame)
+}
+
+/// The wire tag of a stored image's content block.
+const IMAGE_REF_TAG: &str = "image_ref";
+
+/// Encode a frame for a client that predates images on a message. A frame
+/// without one is encoded exactly as it always was.
+fn encode_without_image_refs(frame: &ServerFrame) -> Result<String, serde_json::Error> {
+    let line = crate::encode(frame)?;
+    if !line.contains(IMAGE_REF_TAG) {
+        return Ok(line);
+    }
+    let mut value: Value = serde_json::from_str(&line)?;
+    replace_image_refs(&mut value);
+    serde_json::to_string(&value)
+}
+
+/// Turn every `image_ref` block under `value` into a text block. Depth is
+/// bounded: the value was parsed, and the parser stops at 128 levels.
+fn replace_image_refs(value: &mut Value) {
+    match value {
+        Value::Array(items) => items.iter_mut().for_each(replace_image_refs),
+        Value::Object(fields) => {
+            let tagged = fields.get("type").and_then(Value::as_str) == Some(IMAGE_REF_TAG);
+            if tagged && let Some(text) = image_ref_text(value) {
+                *value = text;
+                return;
+            }
+            if let Value::Object(fields) = value {
+                fields.values_mut().for_each(replace_image_refs);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+/// The text block standing in for `value`, when it is a stored image's block
+/// and not arbitrary JSON (a tool's input) that happens to carry the tag.
+fn image_ref_text(value: &Value) -> Option<Value> {
+    match serde_json::from_value::<ContentBlock>(value.clone()) {
+        Ok(ContentBlock::ImageRef(image)) => {
+            serde_json::to_value(ContentBlock::text(image.label())).ok()
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -119,7 +174,6 @@ mod tests {
     use aether_core::agent::{Agent, AgentStatus, BlockReason};
     use aether_core::github::{GithubRepositoryConfig, GithubWatcherStatus};
     use aether_core::inbox::{InboxItem, InboxKind};
-    use serde_json::Value;
 
     #[test]
     fn v15_watcher_allowlists_are_preserved_in_the_served_window() {
@@ -143,43 +197,22 @@ mod tests {
     }
 
     #[test]
-    fn v16_watcher_reply_with_operator_users_is_a_clear_error() {
+    fn v17_watcher_operator_users_are_preserved_in_the_served_window() {
         let mut status = GithubWatcherStatus::default();
-        status.config.operator_users = Some(vec!["mengsig".into()]);
+        status.config.operator_users = Some(vec!["octocat".into()]);
         let frame = ServerFrame::Reply {
             id: 7,
-            result: Ok(Reply::GithubWatcher(status.clone())),
-        };
-        let old: ServerFrame = crate::decode(&encode_for(16, &frame).unwrap()).unwrap();
-        let ServerFrame::Reply {
-            id,
-            result: Err(error),
-        } = old
-        else {
-            panic!("v16 receives an incompatible error");
-        };
-        assert_eq!(id, 7);
-        assert_eq!(error.code, ErrorCode::Incompatible);
-        assert_eq!(error.message, OPERATOR_USERS_WATCHER_VERSION_ERROR);
-        assert!(error.message.contains("protocol 17"), "{}", error.message);
-        assert_eq!(
-            crate::decode::<ServerFrame>(&encode_for(17, &frame).unwrap()).unwrap(),
-            frame
-        );
-        // Without the list a v16 client reads the same reply it always did,
-        // allowlists included: v15 already carries those.
-        status.config.operator_users = None;
-        let mut repository = GithubRepositoryConfig::automatic("o/r".into());
-        repository.allowed_users = Some(vec!["octocat".into()]);
-        status.config.repositories.push(repository);
-        let unset = ServerFrame::Reply {
-            id: 8,
             result: Ok(Reply::GithubWatcher(status)),
         };
-        let encoded = encode_for(16, &unset).unwrap();
-        assert_eq!(encoded, crate::encode(&unset).unwrap());
-        assert!(!encoded.contains("operator_users"));
-        assert!(encoded.contains("allowed_users"));
+        for version in [MIN_PROTOCOL_VERSION, PROTOCOL_VERSION] {
+            assert_eq!(
+                crate::decode::<ServerFrame>(&encode_for(version, &frame).unwrap()).unwrap(),
+                frame
+            );
+        }
+        let mut old = Hello::new("v16", "test");
+        old.protocol_version = 16;
+        assert!(negotiate(&old).is_err());
     }
 
     /// The trigger's `operator` flag is additive: unset it is not written, so
@@ -612,7 +645,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (16, 17));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 18));
     }
 
     #[test]
@@ -628,9 +661,90 @@ mod tests {
                 assert_eq!(decoded, frame);
             }
         }
-        assert_eq!(MIN_PROTOCOL_VERSION, 16);
-        let mut hello = Hello::new("v15", "test");
-        hello.protocol_version = 15;
+        assert_eq!(MIN_PROTOCOL_VERSION, 17);
+        let mut hello = Hello::new("v16", "test");
+        hello.protocol_version = 16;
         assert!(negotiate(&hello).is_err());
+    }
+
+    fn stored_image() -> aether_core::attachment::AttachmentRef {
+        aether_core::attachment::AttachmentRef {
+            id: aether_core::attachment::AttachmentId::of(b"png bytes"),
+            media_type: "image/png".into(),
+            size_bytes: 1_258_291,
+            name: Some("shot.png".into()),
+        }
+    }
+
+    fn message_with_image() -> ServerFrame {
+        reply(Reply::Inbox(vec![InboxItem {
+            id: aether_core::id::InboxItemId::new(),
+            agent_id: aether_core::id::AgentId::new(),
+            seq: 4,
+            kind: InboxKind::Message {
+                message_id: aether_core::id::MessageId::new(),
+                from: aether_core::event::Actor::user(),
+                content: vec![
+                    ContentBlock::text("what is this?"),
+                    ContentBlock::ImageRef(stored_image()),
+                ],
+            },
+            delivered_at: "2026-10-12T11:00:00Z".parse().expect("timestamp"),
+        }]))
+    }
+
+    /// A v17 client cannot decode `image_ref`. It reads the line a newer
+    /// client prints instead of losing the whole reply.
+    #[test]
+    fn a_v17_client_reads_a_stored_image_as_its_line_of_text() {
+        let frame = message_with_image();
+        let current = encode_for(18, &frame).expect("encode");
+        assert_eq!(
+            crate::decode::<ServerFrame>(&current).expect("decode"),
+            frame
+        );
+        assert!(current.contains("\"image_ref\""), "{current}");
+
+        let old = encode_for(17, &frame).expect("encode");
+        assert!(!old.contains("image_ref"), "{old}");
+        let ServerFrame::Reply {
+            id: 7,
+            result: Ok(Reply::Inbox(items)),
+        } = crate::decode(&old).expect("a v17 client decodes it")
+        else {
+            panic!("the reply keeps its shape: {old}");
+        };
+        let InboxKind::Message { content, .. } = &items[0].kind else {
+            panic!("still a message");
+        };
+        assert_eq!(
+            content,
+            &[
+                ContentBlock::text("what is this?"),
+                ContentBlock::text("[image: shot.png, 1.2 MB]"),
+            ]
+        );
+    }
+
+    /// Only a real stored-image block is rewritten: JSON that merely carries
+    /// the tag (a tool's input) reaches a v17 client untouched.
+    #[test]
+    fn json_that_only_looks_like_a_stored_image_is_left_alone() {
+        let lookalike = serde_json::json!({"type": "image_ref", "note": "not a block"});
+        let mut value =
+            serde_json::json!({"input": lookalike.clone(), "list": [lookalike.clone()]});
+        replace_image_refs(&mut value);
+        assert_eq!(value["input"], lookalike);
+        assert_eq!(value["list"][0], lookalike);
+
+        let mut real = serde_json::json!({"nested": [serde_json::to_value(
+            ContentBlock::ImageRef(stored_image())
+        )
+        .expect("block")]});
+        replace_image_refs(&mut real);
+        assert_eq!(
+            real["nested"][0],
+            serde_json::json!({"type": "text", "text": "[image: shot.png, 1.2 MB]"})
+        );
     }
 }

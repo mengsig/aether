@@ -12,6 +12,8 @@ use super::{
     Serialize, SnapshotId, TaskId, TaskQuery,
 };
 
+use aether_core::attachment::{AttachmentId, ImageAttachment};
+
 /// Everything a client can ask the daemon to do.
 // Wire types are built once and serialized; variant size differences are irrelevant.
 #[allow(clippy::large_enum_variant)]
@@ -63,6 +65,11 @@ pub enum Command {
         content: String,
         #[serde(default)]
         subtree: bool,
+        /// Images sent with the text: PNG, JPEG, GIF or WebP, base64. The
+        /// daemon checks each (type by its bytes, size, count), stores it
+        /// once, and the message then carries a reference to it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<ImageAttachment>,
         /// Makes the delivery retryable; see [`CreateAgent::idempotency_key`].
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idempotency_key: Option<String>,
@@ -426,6 +433,7 @@ impl Command {
                 to,
                 content,
                 subtree,
+                attachments,
                 idempotency_key,
             } => (
                 idempotency_key.as_deref()?,
@@ -434,6 +442,7 @@ impl Command {
                     to: *to,
                     content,
                     subtree: *subtree,
+                    attachments: attachments.iter().map(AttachmentFingerprint::of).collect(),
                 }),
             ),
             Self::Trigger {
@@ -541,6 +550,27 @@ struct SendMessageFingerprint<'a> {
     to: AgentId,
     content: &'a str,
     subtree: bool,
+    // Absent without images, so a text-only message keeps its old digest.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<AttachmentFingerprint<'a>>,
+}
+
+/// One image as a retry must repeat it: a digest stands in for the payload.
+#[derive(Serialize)]
+struct AttachmentFingerprint<'a> {
+    media_type: &'a str,
+    name: Option<&'a str>,
+    sha256: AttachmentId,
+}
+
+impl<'a> AttachmentFingerprint<'a> {
+    fn of(image: &'a ImageAttachment) -> Self {
+        Self {
+            media_type: &image.media_type,
+            name: image.name.as_deref(),
+            sha256: AttachmentId::of(image.data.as_bytes()),
+        }
+    }
 }
 
 #[derive(Serialize)]

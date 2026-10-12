@@ -207,6 +207,10 @@ fn push_user(out: &mut Vec<Value>, msg: &Message) {
                 "type": "input_image",
                 "image_url": format!("data:{media_type};base64,{data}"),
             })),
+            // Inlined by the runtime before a request; see the Anthropic adapter.
+            ContentBlock::ImageRef(image) => {
+                parts.push(json!({"type": "input_text", "text": image.label()}));
+            }
             ContentBlock::Thinking { .. } | ContentBlock::ToolUse { .. } => {}
         }
     }
@@ -231,7 +235,8 @@ fn push_assistant(out: &mut Vec<Value>, msg: &Message) {
             // encrypted payload, which Aether does not store.
             ContentBlock::Thinking { .. }
             | ContentBlock::ToolResult { .. }
-            | ContentBlock::Image { .. } => {}
+            | ContentBlock::Image { .. }
+            | ContentBlock::ImageRef(_) => {}
         }
     }
     if !text.is_empty() {

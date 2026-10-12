@@ -7,6 +7,7 @@
 pub mod agent;
 pub mod approval;
 pub mod artifact;
+pub mod attachment;
 pub mod budget;
 pub mod checkpoint;
 pub mod disk;
@@ -45,6 +46,7 @@ pub mod prelude {
         ApprovalRule, CallSubject, Revocation, RuleContext, RuleMatch, RuleScope,
     };
     pub use crate::artifact::{Artifact, ArtifactKind};
+    pub use crate::attachment::{AttachmentId, AttachmentRef, ImageAttachment};
     pub use crate::budget::{RunSummary, active_runs, subtree_usage};
     pub use crate::checkpoint::{
         Checkpoint, CheckpointDraft, CheckpointError, CheckpointProvenance,

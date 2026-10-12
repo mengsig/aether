@@ -1,8 +1,10 @@
 //! Rendering authoritative state into prompt text.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use aether_core::agent::{Agent, AgentStatusKind, NetworkPolicy, WaitCondition};
+use aether_core::attachment::AttachmentRef;
 use aether_core::checkpoint::Checkpoint;
 use aether_core::id::InboxItemId;
 use aether_core::inbox::{InboxItem, InboxKind};
@@ -321,9 +323,56 @@ fn trigger_provenance(source: &str, operator: bool) -> &'static str {
     }
 }
 
+/// The line that names a stored image in the user turn. It carries the file's
+/// path when the daemon keeps one, so an agent whose model or engine cannot
+/// take the image can still open it with a tool.
+pub fn stored_image_line(image: &AttachmentRef, attachment_dir: Option<&Path>) -> String {
+    let Some(dir) = attachment_dir else {
+        return image.label();
+    };
+    format!(
+        "[image: {}, stored at {}]",
+        image.summary(),
+        dir.join(image.file_name()).display()
+    )
+}
+
+/// One message's images: each is named in the text, then follows as its own
+/// block after the text written so far.
+fn push_message_images(
+    content: &[ContentBlock],
+    attachment_dir: Option<&Path>,
+    text: &mut String,
+    blocks: &mut Vec<ContentBlock>,
+) {
+    for block in content {
+        if let ContentBlock::ImageRef(image) = block {
+            let _ = writeln!(text, "{}", stored_image_line(image, attachment_dir));
+        }
+    }
+    for block in content {
+        if !matches!(
+            block,
+            ContentBlock::Image { .. } | ContentBlock::ImageRef(_)
+        ) {
+            continue;
+        }
+        if !text.is_empty() {
+            blocks.push(ContentBlock::Text {
+                text: std::mem::take(text),
+            });
+        }
+        blocks.push(block.clone());
+    }
+}
+
 /// Render unconsumed inbox items as the user turn. Returns the message, the
-/// ids rendered, and the highest seq consumed.
-pub fn inbox_message(items: &[InboxItem]) -> (Option<Message>, Vec<InboxItemId>, Option<u64>) {
+/// ids rendered, and the highest seq consumed. `attachment_dir` is where the
+/// daemon stores the images its messages refer to.
+pub fn inbox_message(
+    items: &[InboxItem],
+    attachment_dir: Option<&Path>,
+) -> (Option<Message>, Vec<InboxItemId>, Option<u64>) {
     if items.is_empty() {
         return (None, Vec::new(), None);
     }
@@ -351,16 +400,7 @@ pub fn inbox_message(items: &[InboxItem]) -> (Option<Message>, Vec<InboxItemId>,
                 if !body.is_empty() {
                     let _ = writeln!(text, "{}", body.trim());
                 }
-                for block in content {
-                    if let ContentBlock::Image { .. } = block {
-                        if !text.is_empty() {
-                            blocks.push(ContentBlock::Text {
-                                text: std::mem::take(&mut text),
-                            });
-                        }
-                        blocks.push(block.clone());
-                    }
-                }
+                push_message_images(content, attachment_dir, &mut text, &mut blocks);
             }
             InboxKind::TaskCompleted { task, result } => {
                 let _ = writeln!(
@@ -602,7 +642,7 @@ mod inbox_authority_tests {
                 },
                 delivered_at: now(),
             };
-            let (message, ids, last) = inbox_message(std::slice::from_ref(&item));
+            let (message, ids, last) = inbox_message(std::slice::from_ref(&item), None);
             let text = message.expect("message").text();
             assert_eq!(
                 text.contains("[authenticated operator instruction]"),
@@ -630,7 +670,7 @@ mod inbox_authority_tests {
             },
             delivered_at: now(),
         };
-        let (message, _, last) = inbox_message(std::slice::from_ref(&item));
+        let (message, _, last) = inbox_message(std::slice::from_ref(&item), None);
         assert_eq!(last, Some(4));
         message.expect("message").text()
     }
