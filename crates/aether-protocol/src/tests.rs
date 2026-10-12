@@ -449,8 +449,9 @@ fn create_agent_defaults_to_start() {
     );
 }
 
-#[path = "tests/idempotency.rs"]
+#[path = "tests/attachments.rs"]
 mod attachments;
+#[path = "tests/idempotency.rs"]
 mod idempotency;
 
 #[test]

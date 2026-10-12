@@ -28,7 +28,8 @@ fn a_text_only_message_keeps_its_wire_shape_and_an_old_frame_still_parses() {
         line,
         r#"{"cmd":"send_message","to":"agt_01ARZ3NDEKTSV4RRFFQ69G5FAV","content":"what is this?","subtree":false}"#
     );
-    let old = r#"{"cmd":"send_message","to":"agt_01ARZ3NDEKTSV4RRFFQ69G5FAV","content":"what is this?"}"#;
+    let old =
+        r#"{"cmd":"send_message","to":"agt_01ARZ3NDEKTSV4RRFFQ69G5FAV","content":"what is this?"}"#;
     assert_eq!(
         serde_json::from_str::<Command>(old).expect("an old frame decodes"),
         send(Vec::new(), None)
