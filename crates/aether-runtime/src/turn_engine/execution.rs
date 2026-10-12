@@ -65,8 +65,11 @@ pub(crate) async fn execute(
         .into_iter()
         .filter(|t| t.creator == Actor::agent(ctx.agent.id))
         .collect();
-    let pending_inbox = runtime.store.inbox(ctx.agent.id, ctx.agent.inbox_cursor)?;
-    ctx.user_reply_pending |= crate::turn::has_direct_user_message(&pending_inbox);
+    let queued_inbox = runtime.store.inbox(ctx.agent.id, ctx.agent.inbox_cursor)?;
+    // Messages whose images would not fit one input line stay queued: they
+    // are steered in mid-turn or open the next turn.
+    let pending_inbox = aether_context::render::deliverable_prefix(&queued_inbox);
+    ctx.user_reply_pending |= crate::turn::has_direct_user_message(pending_inbox);
     let pending_approvals: Vec<ApprovalRequest> = runtime
         .store
         .pending_approvals()?
@@ -119,7 +122,7 @@ pub(crate) async fn execute(
         task: ctx.task.as_ref(),
         children: &children,
         child_tasks: &child_tasks,
-        pending_inbox: &pending_inbox,
+        pending_inbox,
         pending_approvals: &pending_approvals,
         checkpoint: carried.as_ref(),
         transcript: &transcript,

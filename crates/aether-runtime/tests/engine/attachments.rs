@@ -98,6 +98,8 @@ fn assert_is_the_screenshot(images: &[EngineImage], dir: &std::path::Path) {
     assert_eq!(images.len(), 1, "{images:?}");
     assert_eq!(images[0].media_type, "image/png");
     assert!(images[0].path.starts_with(dir), "{:?}", images[0].path);
+    // The engine opens it from the agent's workspace, not the daemon's directory.
+    assert!(images[0].path.is_absolute(), "{:?}", images[0].path);
     assert_eq!(std::fs::read(&images[0].path).expect("stored bytes"), PNG);
 }
 
@@ -162,5 +164,90 @@ async fn a_message_with_an_image_sent_mid_turn_reaches_the_engine_with_its_image
         agent.inbox_cursor,
         h.store.inbox_last_seq(id).expect("seq"),
         "the acknowledged message is consumed"
+    );
+}
+
+/// A PNG of the largest size one image may have, told apart by `fill`.
+fn largest_image(fill: u8) -> ImageAttachment {
+    let mut bytes = PNG.to_vec();
+    bytes.resize(aether_core::attachment::MAX_IMAGE_BYTES, fill);
+    ImageAttachment {
+        media_type: "image/png".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        name: None,
+    }
+}
+
+fn stored_bytes(images: &[EngineImage]) -> u64 {
+    images
+        .iter()
+        .map(|image| std::fs::metadata(&image.path).expect("stored").len())
+        .sum()
+}
+
+/// Two messages, each within the limits, queued before the turn: folded into
+/// one input line their images would exceed what the engine's echo may be.
+#[tokio::test]
+async fn queued_image_messages_reach_the_engine_one_messages_worth_at_a_time() {
+    let limit = aether_core::attachment::MAX_MESSAGE_IMAGE_BYTES as u64;
+    let attachments = tempfile::tempdir().expect("attachment dir");
+    let engine = RecordingEngine::new(true);
+    let h = recording_harness(engine.clone(), attachments.path()).await;
+    let id = chat_agent(&h);
+    wait_for(h.store.as_ref(), id, |a| {
+        a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    let pair = h
+        .runtime
+        .store_attachments(&[largest_image(1), largest_image(2)])
+        .expect("store two images");
+    // No await between the sends: both are in the inbox when the turn starts.
+    for text in ["first pair", "second pair"] {
+        h.runtime
+            .send_message(
+                id,
+                message_content(text.into(), pair.clone()),
+                Actor::user(),
+            )
+            .expect("send");
+    }
+    let agent = wait_for(h.store.as_ref(), id, |a| {
+        a.stats.turns >= 1 && a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+
+    let turns = engine.turns.lock().unwrap().clone();
+    assert_eq!(
+        turns.len(),
+        1,
+        "the second message is steered, not a new turn"
+    );
+    assert!(
+        turns[0].prompt.contains("first pair"),
+        "{}",
+        turns[0].prompt
+    );
+    assert!(
+        !turns[0].prompt.contains("second pair"),
+        "{}",
+        turns[0].prompt
+    );
+    assert_eq!(turns[0].images.len(), 2);
+    assert!(stored_bytes(&turns[0].images) <= limit);
+
+    let steered = engine.steered.lock().unwrap().clone();
+    assert_eq!(steered.len(), 1, "{} inputs", steered.len());
+    assert!(
+        steered[0].text.contains("second pair"),
+        "{}",
+        steered[0].text
+    );
+    assert_eq!(steered[0].images.len(), 2);
+    assert!(stored_bytes(&steered[0].images) <= limit);
+    assert_eq!(
+        agent.inbox_cursor,
+        h.store.inbox_last_seq(id).expect("seq"),
+        "both messages are consumed, each once"
     );
 }

@@ -233,6 +233,34 @@ fn a_user_message_line_carries_its_images_after_the_text() {
     );
 }
 
+/// The CLI echoes every user line back (`--replay-user-messages`), and the
+/// reader refuses a longer line: one message's worth of images must fit it.
+#[test]
+fn a_line_with_one_messages_worth_of_images_fits_the_echo_the_reader_accepts() {
+    use aether_core::attachment::{MAX_IMAGE_BYTES, MAX_MESSAGE_IMAGE_BYTES};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let image = |name: &str, len: usize| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, vec![0u8; len]).expect("write image");
+        crate::EngineImage {
+            path,
+            media_type: "image/png".into(),
+        }
+    };
+    let full = image("full.png", MAX_IMAGE_BYTES);
+    let rest = image("rest.png", MAX_MESSAGE_IMAGE_BYTES - 2 * MAX_IMAGE_BYTES);
+    let one_message = [full.clone(), full.clone(), rest];
+    let line = user_message_line("look", &one_message);
+    assert!(
+        line.len() < crate::output::MAX_LINE_BYTES,
+        "{} bytes",
+        line.len()
+    );
+    // Two legal messages folded into one line would not: the runtime splits them.
+    let folded = [full.clone(), full.clone(), full.clone(), full];
+    assert!(user_message_line("look", &folded).len() > crate::output::MAX_LINE_BYTES);
+}
+
 /// The CLI echoes a steered message with its images; that echo is still the
 /// acknowledgement of its text.
 #[test]

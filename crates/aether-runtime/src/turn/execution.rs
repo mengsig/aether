@@ -328,8 +328,10 @@ pub(super) async fn run_link(
         .into_iter()
         .filter(|t| t.creator == Actor::agent(ctx.agent.id))
         .collect();
-    let pending_inbox = runtime.store.inbox(ctx.agent.id, ctx.agent.inbox_cursor)?;
-    ctx.user_reply_pending |= has_direct_user_message(&pending_inbox);
+    let queued_inbox = runtime.store.inbox(ctx.agent.id, ctx.agent.inbox_cursor)?;
+    // Messages whose images would not fit one model request stay queued for the next turn.
+    let pending_inbox = aether_context::render::deliverable_prefix(&queued_inbox);
+    ctx.user_reply_pending |= has_direct_user_message(pending_inbox);
     let pending_approvals: Vec<ApprovalRequest> = runtime
         .store
         .pending_approvals()?
@@ -355,7 +357,7 @@ pub(super) async fn run_link(
         .map(|c| c.provenance.to_seq)
         .unwrap_or(0);
     let transcript = runtime.store.transcript(ctx.agent.id, transcript_after)?;
-    let memories = retrieve_memories(runtime, ctx, &pending_inbox)?;
+    let memories = retrieve_memories(runtime, ctx, pending_inbox)?;
     let memory_records: Vec<_> = memories.iter().map(|m| m.record.clone()).collect();
     let mut tools = runtime.agent_tool_specs(&ctx.agent);
     // Task-closing tools make no sense without a task; hiding them avoids
@@ -374,7 +376,7 @@ pub(super) async fn run_link(
         task: ctx.task.as_ref(),
         children: &children,
         child_tasks: &child_tasks,
-        pending_inbox: &pending_inbox,
+        pending_inbox,
         pending_approvals: &pending_approvals,
         checkpoint: checkpoint.as_ref(),
         transcript: &transcript,

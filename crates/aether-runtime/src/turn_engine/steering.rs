@@ -13,7 +13,8 @@ pub(super) struct Steering {
     pub(super) outstanding: VecDeque<PendingInbox>,
     /// Inbox seq up to which items were handed over (consumed or outstanding).
     pub(super) sent_up_to: u64,
-    /// Input was full; retry on capacity even if no new inbox item arrives.
+    /// Input was full, or more is queued than one line carries: steer again
+    /// on capacity even if no new inbox item arrives.
     pub(super) retry: bool,
 }
 
@@ -45,8 +46,8 @@ impl Steering {
     }
 }
 
-/// Hand every unconsumed inbox item to the running engine; they are recorded
-/// consumed when it acknowledges them.
+/// Hand the unconsumed inbox items one input line may carry to the running
+/// engine; they are recorded consumed when it acknowledges them.
 pub(super) async fn steer(
     runtime: &Arc<Runtime>,
     ctx: &mut TurnCtx,
@@ -61,6 +62,7 @@ pub(super) async fn steer(
         return Ok(());
     };
     let from_user = pending.from_user;
+    let more_queued = pending.more_queued;
     let message = EngineInput {
         text: pending.message.text(),
         images: runtime.engine_images(&pending.message),
@@ -78,6 +80,8 @@ pub(super) async fn steer(
         }
     }
     steering.handed(pending);
+    // What did not fit this line follows as soon as the engine takes input.
+    steering.retry = more_queued;
     ctx.user_reply_pending |= from_user;
     Ok(())
 }
@@ -114,15 +118,18 @@ pub(super) async fn answer_question(
         ));
     }
     steering.sent_up_to = steering.sent_up_to.max(pending.up_to);
+    steering.retry = pending.more_queued;
     record_consumed(runtime, ctx, pending)
 }
 
-/// Unconsumed inbox items rendered as one user message.
+/// The unconsumed inbox items one input line may carry, as one user message.
 pub(super) struct PendingInbox {
     pub(super) message: aether_core::model::Message,
     pub(super) ids: Vec<aether_core::id::InboxItemId>,
     pub(super) up_to: u64,
     pub(super) from_user: bool,
+    /// Later items were left queued: their images did not fit this message.
+    pub(super) more_queued: bool,
 }
 
 fn pending_inbox_after(
@@ -130,16 +137,19 @@ fn pending_inbox_after(
     ctx: &TurnCtx,
     after: u64,
 ) -> Result<Option<PendingInbox>> {
-    let items = runtime.store.inbox(ctx.agent.id, after)?;
-    let from_user = crate::turn::has_direct_user_message(&items);
+    let queued = runtime.store.inbox(ctx.agent.id, after)?;
+    // One input line carries what one message may; the rest follow once this is handed over.
+    let items = aether_context::render::deliverable_prefix(&queued);
+    let from_user = crate::turn::has_direct_user_message(items);
     let (message, ids, up_to) =
-        aether_context::render::inbox_message(&items, runtime.attachment_dir());
+        aether_context::render::inbox_message(items, runtime.attachment_dir());
     Ok(match (message, up_to) {
         (Some(message), Some(up_to)) => Some(PendingInbox {
             message,
             ids,
             up_to,
             from_user,
+            more_queued: items.len() < queued.len(),
         }),
         _ => None,
     })

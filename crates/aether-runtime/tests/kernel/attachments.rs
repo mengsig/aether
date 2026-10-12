@@ -274,3 +274,63 @@ async fn an_image_whose_file_was_removed_does_not_break_the_turn() {
         text_in(&request)
     );
 }
+
+/// Two messages within the limits, queued before the turn: the model is asked
+/// about one message's worth of images at a time, and the second is not lost.
+#[tokio::test]
+async fn queued_image_messages_reach_a_native_model_one_turn_each() {
+    let attachments = tempfile::tempdir().expect("attachment dir");
+    let dir = attachments.path().join("images");
+    let h = harness_configured(
+        vec![ScriptedClient::text("one"), ScriptedClient::text("two")],
+        |_| {},
+        |config| config.attachment_dir = Some(dir.clone()),
+    )
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(chat_spec(None), Actor::user())
+        .expect("create");
+    h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    let largest = |fill: u8| {
+        let mut bytes = PNG.to_vec();
+        bytes.resize(aether_core::attachment::MAX_IMAGE_BYTES, fill);
+        ImageAttachment {
+            media_type: "image/png".into(),
+            data: base64::engine::general_purpose::STANDARD.encode(bytes),
+            name: None,
+        }
+    };
+    let pair = h
+        .runtime
+        .store_attachments(&[largest(1), largest(2)])
+        .expect("store two images");
+    // No await between the sends: both are in the inbox when the turn starts.
+    for text in ["first pair", "second pair"] {
+        h.runtime
+            .send_message(
+                agent.id,
+                message_content(text.into(), pair.clone()),
+                Actor::user(),
+            )
+            .expect("send");
+    }
+    h.wait_for("both turns to ask the model", || h.client.remaining() == 0)
+        .await;
+    h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+
+    let requests = h.client.requests();
+    assert_eq!(requests.len(), 2, "one request per message");
+    let first = text_in(&requests[0]);
+    assert!(first.contains("first pair") && !first.contains("second pair"));
+    assert_eq!(images_in(&requests[0]).len(), 2);
+    assert!(text_in(&requests[1]).contains("second pair"));
+    let stored = h.store.agent(agent.id).expect("agent").expect("exists");
+    assert_eq!(
+        stored.inbox_cursor,
+        h.store.inbox_last_seq(agent.id).expect("seq"),
+        "both messages are consumed"
+    );
+}

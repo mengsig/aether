@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use aether_core::agent::{Agent, AgentStatusKind, NetworkPolicy, WaitCondition};
-use aether_core::attachment::AttachmentRef;
+use aether_core::attachment::{AttachmentRef, MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_IMAGE_BYTES};
 use aether_core::checkpoint::Checkpoint;
 use aether_core::id::InboxItemId;
 use aether_core::inbox::{InboxItem, InboxKind};
@@ -364,6 +364,39 @@ fn push_message_images(
         }
         blocks.push(block.clone());
     }
+}
+
+/// How many stored images an inbox item carries, and their bytes together.
+fn image_load(item: &InboxItem) -> (usize, u64) {
+    let InboxKind::Message { content, .. } = &item.kind else {
+        return (0, 0);
+    };
+    let mut load = (0, 0);
+    for block in content {
+        if let ContentBlock::ImageRef(image) = block {
+            load = (load.0 + 1, load.1 + image.size_bytes);
+        }
+    }
+    load
+}
+
+/// The leading inbox items one delivery may carry: together their images
+/// stay within what a single message is held to, so the user turn they fold
+/// into fits one engine input line and one model request. The rest stay
+/// unconsumed for the next delivery. Never empty when `items` is not: the
+/// first item alone passed those limits when it was sent.
+pub fn deliverable_prefix(items: &[InboxItem]) -> &[InboxItem] {
+    let (mut count, mut bytes) = (0usize, 0u64);
+    for (index, item) in items.iter().enumerate() {
+        let (item_count, item_bytes) = image_load(item);
+        count += item_count;
+        bytes += item_bytes;
+        let over = count > MAX_IMAGES_PER_MESSAGE || bytes > MAX_MESSAGE_IMAGE_BYTES as u64;
+        if over && index > 0 {
+            return &items[..index];
+        }
+    }
+    items
 }
 
 /// Render unconsumed inbox items as the user turn. Returns the message, the
@@ -796,5 +829,72 @@ mod inbox_authority_tests {
             serde_json::from_value::<InboxKind>(json).expect("decode"),
             granted
         );
+    }
+
+    /// A message at `seq` carrying `images` stored images of `size` bytes each.
+    fn image_message(seq: u64, images: usize, size: u64) -> InboxItem {
+        let image = ContentBlock::ImageRef(AttachmentRef {
+            id: aether_core::attachment::AttachmentId::of(b"pixels"),
+            media_type: "image/png".into(),
+            size_bytes: size,
+            name: None,
+        });
+        let mut content = vec![ContentBlock::text(format!("message {seq}"))];
+        content.extend(std::iter::repeat_n(image, images));
+        InboxItem {
+            id: InboxItemId::new(),
+            agent_id: AgentId::new(),
+            seq,
+            kind: InboxKind::Message {
+                message_id: aether_core::id::MessageId::new(),
+                from: aether_core::event::Actor::user(),
+                content,
+            },
+            delivered_at: now(),
+        }
+    }
+
+    fn seqs(items: &[InboxItem]) -> Vec<u64> {
+        items.iter().map(|item| item.seq).collect()
+    }
+
+    #[test]
+    fn a_delivery_stops_before_the_message_whose_images_no_longer_fit() {
+        let large = aether_core::attachment::MAX_IMAGE_BYTES as u64;
+        // Two legal messages, 7.5 MiB of images each: 15 MiB together is too much.
+        let queued = [
+            image_message(1, 2, large),
+            image_message(2, 2, large),
+            image_message(3, 0, 0),
+        ];
+        assert_eq!(seqs(deliverable_prefix(&queued)), [1]);
+        assert_eq!(seqs(deliverable_prefix(&queued[1..])), [2, 3]);
+
+        let (message, ids, up_to) = inbox_message(deliverable_prefix(&queued), None);
+        assert_eq!(up_to, Some(1), "the cursor stops at what was rendered");
+        assert_eq!(ids, [queued[0].id]);
+        let text = message.expect("a user turn").text();
+        assert!(text.contains("message 1") && !text.contains("message 2"));
+    }
+
+    #[test]
+    fn a_delivery_carries_at_most_one_messages_count_of_images() {
+        let queued = [
+            image_message(1, MAX_IMAGES_PER_MESSAGE - 1, 1),
+            image_message(2, 1, 1),
+            image_message(3, 1, 1),
+        ];
+        assert_eq!(seqs(deliverable_prefix(&queued)), [1, 2]);
+        assert_eq!(seqs(deliverable_prefix(&queued[2..])), [3]);
+    }
+
+    #[test]
+    fn a_delivery_is_never_empty_and_text_is_never_held_back() {
+        assert!(deliverable_prefix(&[]).is_empty());
+        // Alone, a message is delivered whatever it carries: the send checked it.
+        let alone = [image_message(1, MAX_IMAGES_PER_MESSAGE + 1, 1)];
+        assert_eq!(seqs(deliverable_prefix(&alone)), [1]);
+        let text_only: Vec<InboxItem> = (1..=40).map(|seq| image_message(seq, 0, 0)).collect();
+        assert_eq!(deliverable_prefix(&text_only).len(), 40);
     }
 }
