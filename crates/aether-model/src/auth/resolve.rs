@@ -79,6 +79,18 @@ impl AuthResolver {
 
     pub async fn resolve(&self, provider: &ProviderDef) -> Result<Option<ResolvedAuth>, AuthError> {
         let methods = &provider.auth;
+        let stored = match self.store.read(&provider.id).await {
+            Ok(stored) => stored,
+            // CLI/no-auth providers can work without this store; doctor reports its failure.
+            Err(_) if methods.cli.is_some() || methods.none => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(stored) = stored {
+            return self.resolve_stored(provider, stored).await.map(Some);
+        }
+        if let Some(auth) = self.resolve_ambient(provider).await? {
+            return Ok(Some(auth));
+        }
         if let Some(cli) = &methods.cli {
             let status = cli.status().await;
             if !status.available {
@@ -99,10 +111,7 @@ impl AuthResolver {
                 kind: AuthKind::None,
             }));
         }
-        if let Some(stored) = self.store.read(&provider.id).await? {
-            return self.resolve_stored(provider, stored).await.map(Some);
-        }
-        self.resolve_ambient(provider).await
+        Ok(None)
     }
 
     async fn resolve_ambient(
@@ -415,6 +424,98 @@ mod tests {
             "{detail}"
         );
         assert!(!dir.path().join("credentials.json.lock").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn optional_auth_uses_env_key_with_healthy_or_unsafe_store() {
+        use crate::auth::FileCredentialStore;
+        use std::os::unix::fs::PermissionsExt;
+
+        let p = provider(AuthMethods {
+            none: true,
+            ..AuthMethods::api_key(["P_KEY"])
+        });
+        for mode in [0o700, 0o775] {
+            let dir = tempfile::tempdir().expect("config");
+            std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode))
+                .expect("directory permissions");
+            let r = AuthResolver::new(
+                Arc::new(FileCredentialStore::in_config_dir(dir.path())),
+                reqwest::Client::new(),
+            )
+            .with_env(|key| (key == "P_KEY").then(|| "env-key".into()));
+            let auth = r.resolve(&p).await.expect("resolve").expect("ready");
+            assert_eq!(auth.auth, RequestAuth::ApiKey("env-key".into()));
+            assert_eq!(auth.source, "P_KEY");
+            assert_eq!(auth.kind, AuthKind::ApiKey);
+            assert_eq!(
+                dir.path().join("credentials.json.lock").exists(),
+                mode == 0o700
+            );
+            assert_eq!(
+                std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777,
+                mode
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn optional_auth_uses_stored_key_before_env_or_none() {
+        let r = resolver(vec![("P_KEY", "env-key")]);
+        let p = provider(AuthMethods {
+            none: true,
+            ..AuthMethods::api_key(["P_KEY"])
+        });
+        r.store()
+            .modify(
+                "p",
+                Box::new(|_| {
+                    Box::pin(async {
+                        Ok(Some(Credential::ApiKey {
+                            key: "stored".into(),
+                            env: BTreeMap::new(),
+                        }))
+                    })
+                }),
+            )
+            .await
+            .expect("store");
+        let auth = r.resolve(&p).await.expect("resolve").expect("ready");
+        assert_eq!(auth.auth, RequestAuth::ApiKey("stored".into()));
+        assert_eq!(auth.source, "stored credential");
+        assert_eq!(auth.kind, AuthKind::ApiKey);
+    }
+
+    #[tokio::test]
+    async fn cli_auth_uses_stored_or_env_key_before_cli_status() {
+        let mut p = crate::Registry::builtin()
+            .provider("codex")
+            .expect("CLI provider")
+            .clone();
+        p.auth.api_key_env = vec!["P_KEY".into()];
+        p.auth.cli.as_mut().expect("CLI auth").program = "/missing-cli".into();
+        let r = resolver(vec![("P_KEY", "env-key")]);
+        let auth = r.resolve(&p).await.expect("resolve").expect("ready");
+        assert_eq!(auth.auth, RequestAuth::ApiKey("env-key".into()));
+        assert_eq!(auth.source, "P_KEY");
+        r.store()
+            .modify(
+                &p.id,
+                Box::new(|_| {
+                    Box::pin(async {
+                        Ok(Some(Credential::ApiKey {
+                            key: "stored".into(),
+                            env: BTreeMap::new(),
+                        }))
+                    })
+                }),
+            )
+            .await
+            .expect("store");
+        let auth = r.resolve(&p).await.expect("resolve").expect("ready");
+        assert_eq!(auth.auth, RequestAuth::ApiKey("stored".into()));
+        assert_eq!(auth.source, "stored credential");
     }
 
     #[tokio::test]
