@@ -210,8 +210,8 @@ class ProcessBudgetTests(unittest.TestCase):
             while time.monotonic() < deadline:
                 try:
                     state = Path(f"/proc/{descendant}/stat").read_text().rsplit(")", 1)[1].split()[0]
-                except FileNotFoundError:
-                    break
+                except (FileNotFoundError, ProcessLookupError):
+                    break  # Reaped already; a read that races the reaper gets ESRCH.
                 if state == "Z":
                     break  # Only the adopting parent can reap this killed descendant.
                 time.sleep(.01)
