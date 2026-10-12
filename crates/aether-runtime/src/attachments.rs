@@ -96,6 +96,19 @@ fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Refuse a relative attachment directory. An engine is handed a stored
+/// image's path and opens it from its agent's workspace, not the daemon's.
+pub(crate) fn check_attachment_dir(dir: Option<&Path>) -> Result<()> {
+    match dir {
+        Some(dir) if !dir.is_absolute() => Err(RuntimeError::Invalid(format!(
+            "the attachment directory {} is relative; an engine opens a stored image from its \
+             agent's workspace, so the directory must be absolute",
+            dir.display()
+        ))),
+        _ => Ok(()),
+    }
+}
+
 impl Runtime {
     /// Where this daemon stores message images, when it stores any.
     pub fn attachment_dir(&self) -> Option<&Path> {
@@ -296,6 +309,15 @@ mod tests {
         let error = check_images(&[broken]).unwrap_err();
         assert!(matches!(error, AttachmentError::NotBase64 { .. }));
         assert!(error.to_string().contains("x.png"), "{error}");
+    }
+
+    #[test]
+    fn a_relative_attachment_directory_is_refused() {
+        let error = check_attachment_dir(Some(Path::new("data/aether.attachments"))).unwrap_err();
+        assert!(matches!(error, RuntimeError::Invalid(_)), "{error}");
+        assert!(error.to_string().contains("data/aether.attachments"));
+        assert!(check_attachment_dir(Some(Path::new("/var/lib/aether.attachments"))).is_ok());
+        assert!(check_attachment_dir(None).is_ok());
     }
 
     #[test]

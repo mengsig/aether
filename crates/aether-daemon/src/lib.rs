@@ -267,7 +267,8 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             memory_index: memory_index_of(models.config().memory.index),
             default_model,
             workspace_root: config.workspace_root.clone(),
-            attachment_dir: Some(config.store_path.with_extension("attachments")),
+            // Beside the resolved store: an engine opens the file from its agent's workspace.
+            attachment_dir: Some(store_path.with_extension("attachments")),
             github_checkout_root: Some(config.store_path.with_extension("github-workspaces")),
             delegated_workspace_root: Some(
                 config.store_path.with_extension("delegated-workspaces"),

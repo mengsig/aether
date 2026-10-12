@@ -339,6 +339,7 @@ impl Runtime {
         engines: HashMap<aether_engine::EngineKind, Arc<dyn aether_engine::Engine>>,
         engine_unavailable: HashMap<aether_engine::EngineKind, String>,
     ) -> Result<Arc<Self>> {
+        attachments::check_attachment_dir(config.attachment_dir.as_deref())?;
         // One gate for the whole daemon: memory curation is a read-modify-write
         // against the same store a turn commits to, so both take this.
         let commit_lock = aether_store::WriteGate::new();
