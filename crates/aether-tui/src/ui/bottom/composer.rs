@@ -141,6 +141,14 @@ pub(crate) fn chips_text(images: &[ImageAttachment], width: usize) -> String {
     text
 }
 
+fn chips_line(app: &App, width: u16, theme: &Theme) -> Line<'static> {
+    let room = usize::from(text_width(width));
+    Line::from(vec![
+        Span::raw(" ".repeat(usize::from(PROMPT_COLS))),
+        Span::styled(chips_text(&app.input.images, room), theme.secondary()),
+    ])
+}
+
 /// The bottom pane has focus: the board is not focused and no view is open.
 pub fn focused(app: &App) -> bool {
     !app.board.focused() && app.bottom.top_view().is_none()
@@ -168,11 +176,7 @@ pub fn render(
     let prompt = Span::styled(format!("{} ", theme.glyphs().prompt), prompt_style);
     let mut lines = vec![Line::default(); usize::from(pad)];
     if chips > 0 {
-        let room = usize::from(text_width(area.width));
-        lines.push(Line::from(vec![
-            Span::raw(" ".repeat(usize::from(PROMPT_COLS))),
-            Span::styled(chips_text(&app.input.images, room), theme.secondary()),
-        ]));
+        lines.push(chips_line(app, area.width, theme));
     }
 
     let cursor = if app.input.text.is_empty() {

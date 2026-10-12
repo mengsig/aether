@@ -266,36 +266,39 @@ fn block_to_json(block: &ContentBlock) -> Option<Value> {
             tool_use_id,
             content,
             is_error,
-        } => {
-            let parts: Vec<Value> = content
-                .iter()
-                .map(|c| match c {
-                    ToolResultBlock::Text { text } => json!({"type": "text", "text": text}),
-                    ToolResultBlock::Image { media_type, data } => json!({
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": media_type, "data": data}
-                    }),
-                })
-                .collect();
-            let mut v = json!({"type": "tool_result", "tool_use_id": tool_use_id});
-            v["content"] = if parts.is_empty() {
-                json!("")
-            } else {
-                Value::Array(parts)
-            };
-            if *is_error {
-                v["is_error"] = Value::Bool(true);
-            }
-            Some(v)
-        }
-        ContentBlock::Image { media_type, data } => Some(json!({
-            "type": "image",
-            "source": {"type": "base64", "media_type": media_type, "data": data}
-        })),
+        } => Some(tool_result_json(tool_use_id, content, *is_error)),
+        ContentBlock::Image { media_type, data } => Some(image_json(media_type, data)),
         // The runtime inlines stored images before a request; one that
         // reaches here has no bytes, so the model is told what was there.
         ContentBlock::ImageRef(image) => Some(json!({"type": "text", "text": image.label()})),
     }
+}
+
+fn image_json(media_type: &str, data: &str) -> Value {
+    json!({
+        "type": "image",
+        "source": {"type": "base64", "media_type": media_type, "data": data}
+    })
+}
+
+fn tool_result_json(tool_use_id: &str, content: &[ToolResultBlock], is_error: bool) -> Value {
+    let parts: Vec<Value> = content
+        .iter()
+        .map(|c| match c {
+            ToolResultBlock::Text { text } => json!({"type": "text", "text": text}),
+            ToolResultBlock::Image { media_type, data } => image_json(media_type, data),
+        })
+        .collect();
+    let mut v = json!({"type": "tool_result", "tool_use_id": tool_use_id});
+    v["content"] = if parts.is_empty() {
+        json!("")
+    } else {
+        Value::Array(parts)
+    };
+    if is_error {
+        v["is_error"] = Value::Bool(true);
+    }
+    v
 }
 
 fn internal(msg: &str) -> ModelError {

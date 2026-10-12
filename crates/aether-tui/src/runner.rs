@@ -1,6 +1,7 @@
 //! The async event loop: terminal setup, input, subscription frames, replies
 //! and the frame tick, with effects executed on the reducer's behalf.
 
+use crate::image_input::ImageSource;
 use crate::keyboard::KeyboardMode;
 use std::io::{Stdout, stdout};
 use std::sync::Arc;
@@ -557,6 +558,14 @@ fn dispatch_app_event(app: &mut App, cache: &mut ViewCache, event: AppEvent) -> 
     app.reduce(event)
 }
 
+/// Read an image off the UI loop; the helper behind a clipboard can take seconds.
+fn spawn_image_read(tx: mpsc::UnboundedSender<LoopEvent>, source: ImageSource) {
+    tokio::spawn(async move {
+        let image = crate::image_input::read(source).await;
+        let _ = tx.send(LoopEvent::App(AppEvent::ImageRead(image)));
+    });
+}
+
 pub(crate) fn execute_effects(
     client: &Client,
     tx: &mpsc::UnboundedSender<LoopEvent>,
@@ -602,13 +611,7 @@ pub(crate) fn execute_effects(
             Effect::Copy(text) => {
                 spawn_copy(tx.clone(), text, out);
             }
-            Effect::AttachImage(source) => {
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let image = crate::image_input::read(source).await;
-                    let _ = tx.send(LoopEvent::App(AppEvent::ImageRead(image)));
-                });
-            }
+            Effect::AttachImage(source) => spawn_image_read(tx.clone(), source),
             Effect::Bell => {
                 use std::io::Write as _;
                 let mut out = stdout();
