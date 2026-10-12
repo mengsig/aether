@@ -159,6 +159,7 @@ pub fn refresh(bar: &mut FindBar, app: &App) {
     let searcher = Needle::new(&bar.query);
     let mut matches = Vec::new();
     let named = policy.definition.is_some() || app.details && app.view_mode != "standard";
+    let mut after_failed = false;
     for cell in cells.iter().chain(
         transcript
             .into_iter()
@@ -170,6 +171,13 @@ pub fn refresh(bar: &mut FindBar, app: &App) {
         {
             continue;
         }
+        // Only the first of a run of failed tool lines is drawn.
+        let failed = policy.failed_tool_line(&cell.model);
+        let folded = failed && after_failed;
+        after_failed = failed;
+        if folded {
+            continue;
+        }
         let entry = index
             .cells
             .entry(cell.id)
@@ -178,8 +186,7 @@ pub fn refresh(bar: &mut FindBar, app: &App) {
             *entry = Searchable::of(&cell.model, cell.revision, &theme);
         }
         // These rows are already expanded; finding them must not reveal hidden categories.
-        if policy.definition.is_some()
-            && crate::view_modes::mandatory(&cell.model)
+        if policy.expands(&cell.model)
             && let Some(detail) = entry.detail.take()
         {
             entry.compact = detail;

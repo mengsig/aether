@@ -90,13 +90,19 @@ struct Session {
 // ----- cell bookkeeping ---------------------------------------------------------
 
 impl AgentTranscript {
-    fn mode_failure(&mut self, at: Timestamp, message: String) {
+    /// A grouped call's own failure, as the call cell only named modes draw.
+    fn mode_failure(&mut self, at: Timestamp, name: &str, status: CallStatus, error: &str) {
         self.push_named(
             at,
-            CellModel::Error {
-                message,
-                cause: None,
-                hint: None,
+            CellModel::Called {
+                target: CallTarget::Tool {
+                    name: name.to_owned(),
+                },
+                args: String::new(),
+                result: String::new(),
+                status,
+                error: (!error.is_empty()).then(|| error.to_owned()),
+                artifacts: Vec::new(),
             },
         );
     }
@@ -1655,7 +1661,7 @@ fn tool_succeeded(t: &mut AgentTranscript, at: Timestamp, call: ToolCallId, outc
             Some(CellModel::Explored { .. } | CellModel::Edited { .. } | CellModel::Memory(_))
         )
     {
-        t.mode_failure(at, format!("{} failed: {}", open.name, text.body));
+        t.mode_failure(at, &open.name, CallStatus::Failed, &text.body);
     }
     let still_open = t.private.calls.values().any(|c| c.cell == open.cell);
     let mut ids = outcome.artifacts.clone();
@@ -1797,7 +1803,7 @@ fn tool_settled(
         t.cell(open.cell).map(|c| &c.model),
         Some(CellModel::Explored { .. } | CellModel::Edited { .. } | CellModel::Memory(_))
     ) {
-        t.mode_failure(at, format!("{} {settled:?}: {reason}", open.name));
+        t.mode_failure(at, &open.name, settled, &reason);
     }
     let still_open = t.private.calls.values().any(|c| c.cell == open.cell);
     t.update(open.cell, |model| match model {
