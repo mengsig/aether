@@ -152,7 +152,7 @@ pub(super) struct ParkEngine {
 /// The channels one wind-down watches: what the runtime does to the turn,
 /// and what the fake engine says back.
 struct Winding {
-    input: Option<mpsc::Receiver<String>>,
+    input: Option<mpsc::Receiver<aether_engine::EngineInput>>,
     stop: mpsc::Receiver<Duration>,
     decisions: mpsc::Receiver<PermissionDecision>,
     events: mpsc::Sender<EngineEvent>,
@@ -239,8 +239,10 @@ async fn wind_down(
                 if w.input.is_some() =>
             {
                 match msg {
-                    Some(text) if w.script.input_gate.is_some() && text != "fixture-prefill" => {
-                        w.observed.steered.lock().expect("steered").push(text);
+                    Some(message)
+                        if w.script.input_gate.is_some() && message.text != "fixture-prefill" =>
+                    {
+                        w.observed.steered.lock().expect("steered").push(message.text);
                         let _ = w.events.send(EngineEvent::InputAccepted).await;
                     }
                     Some(_) => {}

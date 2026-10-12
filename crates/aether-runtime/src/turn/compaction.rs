@@ -197,6 +197,7 @@ pub(super) async fn compaction_client(
         engine,
         turn: aether_engine::EngineTurn {
             prompt: String::new(),
+            images: Vec::new(),
             system_prompt: String::new(),
             session: None,
             session_usage: aether_core::model::Usage::default(),

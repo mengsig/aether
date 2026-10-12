@@ -247,7 +247,8 @@ async fn a_structured_failure_reaches_the_parent_inbox_and_its_rendering() {
     assert_eq!(error, "the migration never converged");
     assert_eq!(structured.as_ref(), Some(&json!({"attempts": 3})));
 
-    let (message, _, _) = aether_context::render::inbox_message(std::slice::from_ref(failure));
+    let (message, _, _) =
+        aether_context::render::inbox_message(std::slice::from_ref(failure), None);
     let rendered = aether_core::model::text_of(&message.expect("rendered").content);
     assert!(
         rendered.contains("the migration never converged")

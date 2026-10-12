@@ -27,6 +27,8 @@ use tokio_util::sync::CancellationToken;
 
 use scripted::{Reply, ScriptedEngine};
 
+#[path = "engine/attachments.rs"]
+mod attachments;
 #[path = "engine/budgets.rs"]
 mod budgets;
 #[path = "engine/compaction.rs"]

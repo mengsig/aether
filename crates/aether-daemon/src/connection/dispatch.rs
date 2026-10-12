@@ -229,9 +229,12 @@ pub(super) async fn dispatch_version(
             to,
             content,
             subtree,
+            attachments,
             ..
         } => {
-            let content = vec![ContentBlock::text(content)];
+            // Checked and stored before delivery: a refused image refuses the message.
+            let images = rt.store_attachments(&attachments).map_err(map_err)?;
+            let content = aether_runtime::attachments::message_content(content, images);
             if !subtree {
                 let id = rt
                     .send_message_keyed(to, content, by, submission)

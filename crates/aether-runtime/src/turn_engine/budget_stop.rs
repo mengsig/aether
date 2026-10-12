@@ -4,6 +4,7 @@ use super::{
     EngineRequest, EventKind, MessageRole, Park, PendingCall, Result, Runtime, StreamState,
     TurnCtx, Usage, json, mpsc, start_park,
 };
+use aether_engine::EngineInput;
 
 /// A grant the agent has crossed: what to report, and the figure it crossed on.
 pub(super) struct Crossed {
@@ -41,7 +42,7 @@ pub(super) fn stop_for_crossing(
     agent: AgentId,
     grace: std::time::Duration,
     background: &BTreeSet<String>,
-    input: &mut Option<mpsc::Sender<String>>,
+    input: &mut Option<mpsc::Sender<EngineInput>>,
     stop: Option<&mpsc::Sender<std::time::Duration>>,
     cancel: &CancellationToken,
     fired: mpsc::Sender<()>,

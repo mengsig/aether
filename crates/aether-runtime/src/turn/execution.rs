@@ -384,6 +384,7 @@ pub(super) async fn run_link(
         engine_policy: None,
         capabilities: &resolved.model.capabilities,
         adapter: client.adapter(),
+        attachment_dir: runtime.attachment_dir(),
         turn: ctx.turn,
         now: now(),
     });
@@ -492,6 +493,8 @@ pub(super) async fn run_link(
     // snapshot keeps the configured link, as the engine path does.
     let mut request = assembled.request;
     request.model.model.clone_from(&resolved.model.id);
+    // The snapshot keeps references; only the request sent carries the bytes.
+    runtime.inline_images(&mut request.messages, resolved.model.capabilities.vision);
     let stream = match client.stream(request, cancel.child_token()).await {
         Ok(s) => s,
         Err(e) => {

@@ -8,6 +8,7 @@
 
 pub mod approval;
 pub mod artifacts;
+pub mod attachments;
 pub mod bus;
 mod cancellation;
 pub mod commands;

@@ -32,6 +32,9 @@ pub struct RuntimeConfig {
     /// be told from another daemon's.
     pub instance_id: Arc<str>,
     pub max_concurrent_turns: usize,
+    /// Where message images are stored, one file per digest. `None` refuses
+    /// a message that carries images.
+    pub attachment_dir: Option<PathBuf>,
     /// Cap on simultaneous turns carried by an engine (Claude Code, Codex),
     /// within `max_concurrent_turns`. `None` leaves engine turns bounded only
     /// by the other limits, which is what the daemon did before the knob.
@@ -114,6 +117,7 @@ impl Default for RuntimeConfig {
             holder: format!("aether-{}", std::process::id()),
             instance_id: "unnamed-instance".into(),
             max_concurrent_turns: DEFAULT_MAX_CONCURRENT_TURNS,
+            attachment_dir: None,
             max_concurrent_engine_turns: None,
             run_budget_usd: None,
             lease_ttl: Duration::from_secs(120),

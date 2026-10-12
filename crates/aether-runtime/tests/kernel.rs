@@ -121,6 +121,8 @@ mod archive_checkpoint;
 mod artifact_dedup;
 #[path = "kernel/assignment_delivery.rs"]
 mod assignment_delivery;
+#[path = "kernel/attachments.rs"]
+mod attachments;
 #[path = "kernel/background_tools.rs"]
 mod background_tools;
 #[path = "kernel/budget_delegation.rs"]

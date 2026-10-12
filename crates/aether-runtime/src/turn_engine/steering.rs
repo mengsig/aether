@@ -3,6 +3,7 @@ use super::{
     Arc, CancellationToken, Commit, EventKind, MessageRole, Mutation, PermissionDecision, Result,
     Runtime, TurnCtx, VecDeque, mpsc, now,
 };
+use aether_engine::EngineInput;
 
 /// Messages handed to the running engine ahead of the turn boundary. An item
 /// is recorded consumed only once the engine acknowledges it, so nothing a
@@ -50,7 +51,7 @@ pub(super) async fn steer(
     runtime: &Arc<Runtime>,
     ctx: &mut TurnCtx,
     steering: &mut Steering,
-    input: &mut Option<mpsc::Sender<String>>,
+    input: &mut Option<mpsc::Sender<EngineInput>>,
 ) -> Result<()> {
     steering.retry = false;
     let Some(tx) = input.as_ref() else {
@@ -60,7 +61,11 @@ pub(super) async fn steer(
         return Ok(());
     };
     let from_user = pending.from_user;
-    match tx.try_send(pending.message.text()) {
+    let message = EngineInput {
+        text: pending.message.text(),
+        images: runtime.engine_images(&pending.message),
+    };
+    match tx.try_send(message) {
         Ok(()) => {}
         Err(mpsc::error::TrySendError::Full(_)) => {
             // The adapter can be waiting for this loop to drain its events.
@@ -127,7 +132,8 @@ fn pending_inbox_after(
 ) -> Result<Option<PendingInbox>> {
     let items = runtime.store.inbox(ctx.agent.id, after)?;
     let from_user = crate::turn::has_direct_user_message(&items);
-    let (message, ids, up_to) = aether_context::render::inbox_message(&items);
+    let (message, ids, up_to) =
+        aether_context::render::inbox_message(&items, runtime.attachment_dir());
     Ok(match (message, up_to) {
         (Some(message), Some(up_to)) => Some(PendingInbox {
             message,

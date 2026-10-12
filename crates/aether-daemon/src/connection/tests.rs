@@ -3,6 +3,7 @@ use aether_core::agent::DeadlineUpdate;
 use aether_runtime::CreateAgentSpec;
 use std::sync::Arc;
 
+mod attachments;
 mod history_expiry;
 mod shutdown;
 mod shutdown_approval;
@@ -133,6 +134,7 @@ async fn daemon_with_store(store: Arc<dyn aether_store::Store>) -> (Daemon, temp
                 "anthropic",
                 "claude-sonnet-5-5",
             )),
+            attachment_dir: Some(config_dir.path().join("attachments")),
             ..Default::default()
         },
         store,
@@ -212,6 +214,7 @@ async fn pause_resume_and_set_answer_the_shapes_the_client_expects() {
             to: root.id,
             content: "stand down".into(),
             subtree: true,
+            attachments: Vec::new(),
             idempotency_key: None,
         },
         Actor::user(),
@@ -263,6 +266,7 @@ async fn a_retried_frame_is_answered_with_the_first_submissions_identity() {
         to: agent.id,
         content: content.into(),
         subtree: false,
+        attachments: Vec::new(),
         idempotency_key: Some(key.into()),
     };
 

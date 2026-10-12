@@ -134,7 +134,7 @@ fn triggers(rt: &Runtime, agent: AgentId) -> Vec<(Value, bool)> {
 /// The inbox as the agent reads it.
 fn rendered(rt: &Runtime, agent: AgentId) -> String {
     let items = rt.store.inbox(agent, 0).unwrap();
-    let (message, _, _) = aether_context::render::inbox_message(&items);
+    let (message, _, _) = aether_context::render::inbox_message(&items, None);
     message.expect("a rendered inbox").text()
 }
 

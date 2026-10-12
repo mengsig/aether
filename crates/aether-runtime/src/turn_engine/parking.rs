@@ -3,6 +3,7 @@ use super::{
     AgentId, Arc, AtomicBool, BTreeSet, CancellationToken, Commit, EngineKind, EngineOutcome,
     EventKind, Next, Ordering, Result, Runtime, TurnCtx, json, mpsc,
 };
+use aether_engine::EngineInput;
 
 /// After background tasks finish, how long to wait for the engine's next
 /// result before treating the last one as final.
@@ -191,7 +192,7 @@ pub(super) fn start_park(
     agent: AgentId,
     grace: std::time::Duration,
     background: &BTreeSet<String>,
-    input: &mut Option<mpsc::Sender<String>>,
+    input: &mut Option<mpsc::Sender<EngineInput>>,
     stop: Option<&mpsc::Sender<std::time::Duration>>,
     cancel: &CancellationToken,
     fired: mpsc::Sender<()>,
@@ -242,7 +243,7 @@ pub(super) fn park_grace(
 /// long the runtime will wait before stopping the process itself, so an
 /// adapter with its own wind-down timer does not outlast it.
 pub(super) fn ask_to_stop(
-    input: &mut Option<mpsc::Sender<String>>,
+    input: &mut Option<mpsc::Sender<EngineInput>>,
     stop: Option<&mpsc::Sender<std::time::Duration>>,
     grace: std::time::Duration,
 ) {

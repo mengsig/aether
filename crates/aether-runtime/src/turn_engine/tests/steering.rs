@@ -39,11 +39,11 @@ async fn full_steering_channel_preserves_messages_without_blocking() {
         )
         .expect("deliver another message while full");
 
-    assert_eq!(rx.recv().await.as_deref(), Some("already queued"));
+    assert_eq!(rx.recv().await, Some("already queued".into()));
     steer(&runtime, &mut ctx, &mut steering, &mut input)
         .await
         .expect("retry steering");
-    let text = rx.recv().await.expect("message");
+    let text = rx.recv().await.expect("message").text;
     assert!(
         text.find("status?").expect("first message")
             < text.find("second message").expect("second message")

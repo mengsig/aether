@@ -105,7 +105,7 @@ impl Engine for ScriptedEngine {
                 stop: None,
             });
         }
-        let (input_tx, mut input) = mpsc::channel::<String>(16);
+        let (input_tx, mut input) = mpsc::channel::<aether_engine::EngineInput>(16);
         tokio::spawn(async move {
             let say = |text: &str| EngineEvent::Assistant {
                 content: vec![ContentBlock::text(text)],
@@ -159,7 +159,7 @@ impl Engine for ScriptedEngine {
             tokio::pin!(window);
             loop {
                 tokio::select! {
-                    Some(text) = input.recv() => queued.push(text),
+                    Some(message) = input.recv() => queued.push(message.text),
                     () = &mut window => break,
                 }
             }
@@ -169,7 +169,7 @@ impl Engine for ScriptedEngine {
                 let text = match queued.next() {
                     Some(t) => t,
                     None => match input.recv().await {
-                        Some(t) => t,
+                        Some(message) => message.text,
                         None => break,
                     },
                 };

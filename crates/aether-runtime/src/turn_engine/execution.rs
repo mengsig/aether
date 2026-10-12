@@ -129,6 +129,7 @@ pub(crate) async fn execute(
         engine_policy: None,
         capabilities: &resolved.model.capabilities,
         adapter: &adapter,
+        attachment_dir: runtime.attachment_dir(),
         turn: ctx.turn,
         now: now(),
     };
@@ -157,6 +158,11 @@ pub(crate) async fn execute(
             .filter(|text| !text.trim().is_empty())
             .unwrap_or_else(|| "Continue with your task.".into())
     };
+    let images = assembled
+        .new_user_message
+        .as_ref()
+        .map(|message| runtime.engine_images(message))
+        .unwrap_or_default();
     // A retained session already holds what it was sent, so an unchanged
     // task or checkpoint is not repeated into it; the nonce marks this
     // turn's harness blocks as unforgeable by earlier-written content.
@@ -215,6 +221,7 @@ pub(crate) async fn execute(
     let tool_ctx = Arc::new(tool_context(runtime, ctx));
     let mut turn = EngineTurn {
         prompt,
+        images,
         system_prompt,
         session: ctx.agent.engine_session.clone(),
         session_usage: ctx.agent.engine_session_usage(),
@@ -404,6 +411,8 @@ pub(crate) async fn execute(
                 delivered = true;
                 pending_prompt = super::transient::continuation_note(class);
                 turn.prompt.clone_from(&pending_prompt);
+                // The session holds the message's images with its prompt.
+                turn.images.clear();
             }
             super::transient::Resume::Recheck => {
                 delivered = true;

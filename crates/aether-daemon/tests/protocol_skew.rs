@@ -8,30 +8,8 @@ mod support;
 use aether_core::github::GithubWatcherConfig;
 use aether_protocol::PROTOCOL_VERSION;
 use aether_protocol::compat::MIN_PROTOCOL_VERSION;
-use serde_json::{Value, json};
+use serde_json::json;
 use support::{RawConn, TestDaemon};
-
-async fn save_watcher(conn: &mut RawConn, config: &Value, revision: u64) -> Value {
-    conn.call(json!({
-        "cmd":"configure_github_watcher",
-        "config":config,
-        "expected_revision":revision
-    }))
-    .await
-}
-
-fn revision_of(reply: &Value) -> u64 {
-    reply["result"]["Ok"]["data"]["revision"]
-        .as_u64()
-        .unwrap_or_else(|| panic!("a watcher reply with a revision: {reply}"))
-}
-
-fn assert_needs_protocol_17(reply: &Value) {
-    let error = &reply["result"]["Err"];
-    assert_eq!(error["code"], "incompatible", "{reply}");
-    let message = error["message"].as_str().unwrap_or_default();
-    assert!(message.contains("protocol 17"), "{reply}");
-}
 
 #[tokio::test]
 async fn previous_version_preserves_watcher_allowlists() {
@@ -59,109 +37,48 @@ async fn previous_version_preserves_watcher_allowlists() {
     daemon.stop().await;
 }
 
+/// The same stored image, read at both versions: the current one gets the
+/// reference, the previous one a line of text it can decode.
 #[tokio::test]
-async fn v16_watcher_config_stays_editable_until_operator_users_are_present() {
+async fn a_client_one_version_back_reads_a_stored_image_as_text() {
+    const PNG_BASE64: &str = "iVBORw0KGgpwaXhlbHM=";
     let daemon = TestDaemon::start().await;
-    let mut old = RawConn::connect(&daemon.socket)
-        .await
-        .expect("v16 connection");
-    old.hello(16).await.expect("v16 served");
-    let initial = old.call(json!({"cmd":"get_github_watcher"})).await;
-    assert_eq!(
-        initial["result"]["Ok"]["reply"], "github_watcher",
-        "{initial}"
-    );
-    // A v16 client keeps everything it can represent, allowlists included.
-    let mut narrowed = serde_json::to_value(GithubWatcherConfig::default()).unwrap();
-    assert!(narrowed.get("operator_users").is_none(), "{narrowed}");
-    narrowed["repositories"] = json!([{
-        "repository":"o/r", "enabled":true,
-        "dispatch":{"mode":"automatic"},
-        "allowed_users":["octoCat"]
-    }]);
-    let legacy = save_watcher(&mut old, &narrowed, revision_of(&initial)).await;
-    let config = &legacy["result"]["Ok"]["data"]["config"];
-    assert_eq!(
-        config["repositories"][0]["allowed_users"],
-        json!(["octocat"]),
-        "{legacy}"
-    );
-    assert!(config.get("operator_users").is_none(), "{legacy}");
-
-    let mut current = RawConn::connect(&daemon.socket)
-        .await
-        .expect("v17 connection");
-    current.hello(PROTOCOL_VERSION).await.expect("v17 served");
-    let mut with_operators = narrowed.clone();
-    with_operators["operator_users"] = json!(["Mengsig", "octoCat"]);
-    let saved = save_watcher(&mut current, &with_operators, revision_of(&legacy)).await;
-    assert_eq!(
-        saved["result"]["Ok"]["data"]["config"]["operator_users"],
-        json!(["mengsig", "octocat"]),
-        "{saved}"
-    );
-    let saved_revision = revision_of(&saved);
-
-    let unreadable = old.call(json!({"cmd":"get_github_watcher"})).await;
-    assert_needs_protocol_17(&unreadable);
-    // The v16 save carries no operator_users and would drop the list.
-    let overwrite = save_watcher(&mut old, &narrowed, saved_revision).await;
-    assert_needs_protocol_17(&overwrite);
-    let kept = current.call(json!({"cmd":"get_github_watcher"})).await;
-    assert_eq!(revision_of(&kept), saved_revision);
-    assert_eq!(
-        kept["result"]["Ok"]["data"]["config"]["operator_users"],
-        json!(["mengsig", "octocat"])
-    );
-    assert_eq!(
-        old.call(json!({"cmd":"ping"})).await["result"]["Ok"]["reply"],
-        "ok"
-    );
-    // What version 16 itself added still answers while the list is set.
-    let preview = old.call(json!({"cmd":"preview_retention"})).await;
-    assert_eq!(
-        preview["result"]["Ok"]["reply"], "retention_preview",
-        "{preview}"
-    );
-    daemon.stop().await;
-}
-
-/// A v16 client may not introduce the list either: it could not read back or
-/// preserve what it set. Once the list is cleared it edits the watcher again.
-#[tokio::test]
-async fn a_v16_client_can_neither_set_operator_users_nor_edit_around_them() {
-    let daemon = TestDaemon::start().await;
-    let mut old = RawConn::connect(&daemon.socket).await.expect("connect");
-    old.hello(16).await.expect("v16 served");
-    let initial = old.call(json!({"cmd":"get_github_watcher"})).await;
-    let plain = serde_json::to_value(GithubWatcherConfig::default()).unwrap();
-    let mut granting = plain.clone();
-    granting["operator_users"] = json!(["mallory"]);
-    let refused = save_watcher(&mut old, &granting, revision_of(&initial)).await;
-    assert_needs_protocol_17(&refused);
-    let unchanged = old.call(json!({"cmd":"get_github_watcher"})).await;
-    assert_eq!(revision_of(&unchanged), revision_of(&initial));
-    assert!(
-        unchanged["result"]["Ok"]["data"]["config"]
-            .get("operator_users")
-            .is_none(),
-        "{unchanged}"
-    );
-
     let mut current = RawConn::connect(&daemon.socket).await.expect("connect");
-    current.hello(PROTOCOL_VERSION).await.expect("v17 served");
-    let mut listed = plain.clone();
-    listed["operator_users"] = json!(["mengsig"]);
-    let set = save_watcher(&mut current, &listed, revision_of(&initial)).await;
-    let cleared = save_watcher(&mut current, &plain, revision_of(&set)).await;
-    assert!(
-        cleared["result"]["Ok"]["data"]["config"]
-            .get("operator_users")
-            .is_none(),
-        "{cleared}"
+    current.hello(PROTOCOL_VERSION).await.expect("served");
+    let created = current
+        .call(json!({"cmd": "create_agent", "role": "skew", "start": false, "model": {"provider": "claude-code", "model": "haiku"}}))
+        .await;
+    let agent = created["result"]["Ok"]["data"]["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("an agent id: {created}"))
+        .to_owned();
+    let sent = current
+        .call(
+            json!({"cmd": "send_message", "to": agent, "content": "look",
+            "attachments": [{"media_type": "image/png", "data": PNG_BASE64, "name": "shot.png"}]}),
+        )
+        .await;
+    assert_eq!(sent["result"]["Ok"]["reply"], "message_sent", "{sent}");
+
+    let inbox = json!({"cmd": "get_inbox", "agent": agent, "after": 0});
+    let now = current.call(inbox.clone()).await;
+    let blocks = &now["result"]["Ok"]["data"][0]["kind"]["content"];
+    assert_eq!(blocks[0], json!({"type": "text", "text": "look"}), "{now}");
+    assert_eq!(blocks[1]["type"], "image_ref", "{now}");
+    assert_eq!(blocks[1]["name"], "shot.png", "{now}");
+    assert_eq!(blocks[1]["size_bytes"], 14, "{now}");
+
+    let mut old = RawConn::connect(&daemon.socket).await.expect("connect");
+    old.hello(MIN_PROTOCOL_VERSION).await.expect("served");
+    let before = old.call(inbox).await;
+    assert_eq!(
+        before["result"]["Ok"]["data"][0]["kind"]["content"],
+        json!([
+            {"type": "text", "text": "look"},
+            {"type": "text", "text": "[image: shot.png, 14 B]"}
+        ]),
+        "{before}"
     );
-    let again = save_watcher(&mut old, &plain, revision_of(&cleared)).await;
-    assert_eq!(again["result"]["Ok"]["reply"], "github_watcher", "{again}");
     daemon.stop().await;
 }
 
