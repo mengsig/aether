@@ -13,8 +13,9 @@ Aether does not silently proceed without the backup. Existing snapshots are
 never overwritten or automatically pruned.
 
 These are database snapshots, not complete workspace archives. Artifact bytes
-remain in the database's sibling `artifacts/` directory; retain that directory
-when preserving a rollback point. A rollback also requires a compatible Aether
+remain in the database's sibling `artifacts/` directory, and the images sent
+with messages in `aether.attachments/`; retain those directories when
+preserving a rollback point. A rollback also requires a compatible Aether
 binary and an orderly daemon stop. Do not replace an active daemon's database,
 and do not open the snapshot with a newer Aether binary merely to inspect it:
 that would migrate the snapshot too. A read-only SQLite connection can inspect

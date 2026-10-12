@@ -124,6 +124,11 @@ The limits are `MAX_IMAGES_PER_MESSAGE`, `MAX_IMAGE_BYTES` and
 `name`, only the last path component is kept, without control characters and
 cut at 120 characters.
 
+The limits also bound what an agent is handed at once. Messages that wait in
+its inbox together are folded into one user turn only while their images stay
+within one message's limits; the rest stay unconsumed and follow as the next
+input (a steer into the running engine turn, or the next turn).
+
 Image bytes are never written to the event log, an inbox item or a
 transcript. The daemon stores each image once, under the SHA-256 of its bytes,
 in `aether.attachments/` beside `aether.db` (mode 0700), and everything
@@ -133,6 +138,9 @@ durable carries a reference in its place:
 {"type": "image_ref", "id": "<64 hex digits>", "media_type": "image/png",
  "size_bytes": 48211, "name": "shot.png"}
 ```
+
+A reference is a stored format too: store schema 19 marks a database whose
+records may hold one, so a binary that cannot read it refuses the store.
 
 That block follows the text block in a message's `content` wherever a message
 appears: `inbox.delivered`, `get_inbox` and `get_transcript`. A message that

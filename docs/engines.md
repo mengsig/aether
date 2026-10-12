@@ -626,6 +626,17 @@ with its own tools, and the turn does not fail.
 A message without images is byte for byte what it was before: the same
 stream-json line, the same arguments, the same request body.
 
+Messages that wait in an agent's inbox together are folded into one user turn
+only while their images stay within one message's limits (10 images, 10 MiB).
+The rest stay unconsumed: a running engine is steered with them as soon as it
+takes input, and otherwise they open the next turn. An input line therefore
+never carries more than one message may, which keeps Claude Code's echo of it
+under the 16 MiB line the reader accepts.
+
+The attachment directory is always an absolute path, also when
+`AETHER_DATA_DIR` is relative: an engine opens the file from its agent's
+workspace, not from the daemon's working directory.
+
 If a stored file has been removed, the engine or model gets the text only and
 the daemon logs a warning; a resumed or compacted agent never fails on an old
 message. Stored references survive a daemon restart, and a turn retried after

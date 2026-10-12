@@ -21,6 +21,21 @@ release is also the text of its GitHub release.
   unchanged on the wire. The daemon serves 17, 18 and 19; older clients,
   the phone web app among them, read each image as a line of text.
 - The phone web app does not attach images yet.
+- Messages that wait in an agent's inbox together are handed over one
+  message's worth of images at a time (10 images, 10 MiB), so several
+  screenshots sent in a row cannot outgrow one engine input line. The rest
+  follow as soon as the engine takes input, or open the next turn.
+- The generated Python and TypeScript types of an `image_ref` content block
+  carry its `id`, `media_type`, `size_bytes` and `name`.
+
+### Before updating
+
+- **Store schema 19.** No table changes: the step marks a store whose records
+  may hold image references, which an older binary cannot read. The migration
+  is one way: Aether saves the old database first (see
+  [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)), and a binary that predates
+  schema 19 refuses to open a migrated database. To go back, stop the daemon
+  and restore that backup with the older binary; changes made since are lost.
 
 ## 1.0.2
 
