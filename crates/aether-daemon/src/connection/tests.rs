@@ -4,6 +4,8 @@ use aether_runtime::CreateAgentSpec;
 use std::sync::Arc;
 
 mod attachments;
+#[cfg(unix)]
+mod credential_directory;
 mod device_gate;
 mod history_expiry;
 mod resolution;

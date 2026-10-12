@@ -307,7 +307,7 @@ async fn install_with_tools(
     mut progress: impl FnMut(String),
 ) -> anyhow::Result<String> {
     setup::check_cancel(control)?;
-    std::fs::create_dir_all(&prefs_dir)?;
+    aether_model::config::create_config_dir(&prefs_dir)?;
     let prefs_dir = std::fs::canonicalize(prefs_dir)?;
     let _lock = setup::lock_setup(&prefs_dir)?;
     let snapshot = setup::config_snapshot(&prefs_dir)?;

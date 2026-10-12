@@ -75,8 +75,15 @@ pub async fn auth(socket: impl Into<aether_client::Endpoint>, json: bool) -> any
                 ""
             }
         );
+        if let Some(detail) = auth_detail(&r) {
+            println!("  {}", sane(detail));
+        }
     }
     Ok(())
+}
+
+fn auth_detail(info: &aether_protocol::AuthInfo) -> Option<&str> {
+    info.detail.as_deref().filter(|_| !info.configured)
 }
 
 pub async fn models(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
@@ -190,7 +197,7 @@ pub async fn providers(
 
 #[cfg(test)]
 mod tests {
-    use super::model_cost_label;
+    use super::{auth_detail, model_cost_label};
     use aether_core::model::{ModelCost, ModelCostTier};
 
     #[test]
@@ -215,5 +222,23 @@ mod tests {
             model_cost_label(Some(cost)),
             "$0.1/$0.5 (>100001: $0.5/$2.5)"
         );
+    }
+    #[test]
+    fn auth_detail_keeps_failure_reason_in_table_and_json() {
+        let mut info = aether_protocol::AuthInfo {
+            provider: "anthropic".into(),
+            provider_name: "Anthropic".into(),
+            configured: false,
+            source: None,
+            methods: vec!["api_key".into()],
+            subscription: false,
+            detail: Some("credential store: unsafe directory; run chmod 700 config".into()),
+            program: None,
+        };
+        assert_eq!(auth_detail(&info), info.detail.as_deref());
+        let json = serde_json::to_value(&info).expect("JSON");
+        assert_eq!(json["detail"], info.detail.as_ref().unwrap().as_str());
+        info.configured = true;
+        assert!(auth_detail(&info).is_none());
     }
 }

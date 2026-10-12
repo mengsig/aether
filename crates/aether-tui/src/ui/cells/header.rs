@@ -28,6 +28,7 @@ pub fn display_lines_with_keys(
         version,
         cwd,
         needs_sign_in,
+        sign_in_details,
     } = cell
     else {
         unreachable!("header::display_lines called for {cell:?}");
@@ -51,6 +52,9 @@ pub fn display_lines_with_keys(
             ("/login".to_owned(), theme.accent()),
             (" to connect a provider".to_owned(), theme.text()),
         ]);
+        for detail in sign_in_details {
+            rows.push(vec![(detail.clone(), theme.secondary())]);
+        }
     }
     rows.push(vec![(
         format!(
@@ -113,6 +117,7 @@ mod tests {
             version: "0.9.0".into(),
             cwd: "/work/aether".into(),
             needs_sign_in,
+            sign_in_details: Vec::new(),
         }
     }
 
@@ -210,5 +215,23 @@ mod tests {
         assert!(shows(&buffer[(2, 0)], theme.title()));
         assert!(shows(&buffer[(9, 0)], theme.secondary()));
         assert!(shows(&buffer[(2, 2)], theme.secondary()));
+    }
+    #[test]
+    fn sign_in_hint_displays_daemon_details() {
+        let mut cell = header(true);
+        let CellModel::Header {
+            sign_in_details, ..
+        } = &mut cell
+        else {
+            unreachable!()
+        };
+        sign_in_details.push("claude-code: /second/claude: status timed out".into());
+        let lines = plain_lines(&cell, 120);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("/second/claude: status timed out"))
+        );
+        assert!(lines.iter().any(|line| line.contains("/login")));
     }
 }

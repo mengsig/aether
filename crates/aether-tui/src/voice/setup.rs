@@ -535,7 +535,7 @@ pub(crate) async fn install(
     let ffmpeg =
         find_in_path(path_env.as_deref(), "ffmpeg").context("ffmpeg disappeared from PATH")?;
 
-    std::fs::create_dir_all(&prefs_dir)
+    aether_model::config::create_config_dir(&prefs_dir)
         .with_context(|| format!("create {}", prefs_dir.display()))?;
     let prefs_dir = std::fs::canonicalize(&prefs_dir).context("resolve the config directory")?;
     let _lock = lock_setup(&prefs_dir)?;

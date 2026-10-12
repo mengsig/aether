@@ -193,7 +193,7 @@ pub(super) async fn install(
     cancelled(control)?;
     let python = find_tool("python3")?;
     let ffmpeg = find_tool("ffmpeg")?;
-    std::fs::create_dir_all(&prefs_dir)?;
+    aether_model::config::create_config_dir(&prefs_dir)?;
     let prefs_dir = std::fs::canonicalize(prefs_dir)?;
     let _lock = lock_setup(&prefs_dir)?;
     let snapshot = config_snapshot(&prefs_dir)?;

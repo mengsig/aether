@@ -255,6 +255,24 @@ fn create_private_dir(dir: &Path) -> Result<(), AuthError> {
     Ok(())
 }
 
+/// Check the directory without reading credentials or creating a lock file.
+pub fn validate_credentials_dir(dir: &Path) -> Result<(), AuthError> {
+    match fs::symlink_metadata(dir) {
+        Ok(metadata) => validate_private_dir(dir, &metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(AuthError::Store(format!(
+            "inspect directory {}: {error}",
+            dir.display()
+        ))),
+    }
+}
+
+/// A shell-quoted repair command for an existing directory.
+pub fn credentials_dir_fix(dir: &Path) -> String {
+    let path = dir.to_string_lossy();
+    format!("chmod 700 -- '{}'", path.replace('\'', "'\\''"))
+}
+
 fn validate_private_dir(dir: &Path, metadata: &fs::Metadata) -> Result<(), AuthError> {
     if metadata.file_type().is_symlink() {
         return Err(AuthError::Store(format!(
@@ -274,8 +292,9 @@ fn validate_private_dir(dir: &Path, metadata: &fs::Metadata) -> Result<(), AuthE
         let mode = metadata.permissions().mode();
         if mode & 0o022 != 0 {
             return Err(AuthError::Store(format!(
-                "credentials parent {} is group- or world-writable",
-                dir.display()
+                "credentials parent {} is group- or world-writable; run `{}`",
+                dir.display(),
+                credentials_dir_fix(dir)
             )));
         }
     }

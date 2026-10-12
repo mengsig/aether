@@ -27,6 +27,13 @@ aether run "Review the current diff without editing files" \
 
 Use `aether doctor`, `aether models`, and `aether providers` to inspect your
 actual installation. Available models depend on your CLI, account, and provider.
+Aether creates its configuration directory with mode 0700 on Unix. If an existing
+credential directory is group- or world-writable, `aether doctor` and API sign-in
+status show the repair command, such as `chmod 700 ~/.config/aether`. Aether keeps
+refusing stored secrets until it is repaired; Claude Code, Codex, and providers
+that need no authentication can still work through their own sign-in methods.
+Failed CLI sign-in checks show the program and reason in `aether auth`, `/login`,
+and the session's sign-in hint.
 For a portable redacted diagnostic directory, run
 `aether diagnose --out ./aether-diagnostics`; see the [bundle guide](diagnose.md)
 for run selection, contents and redaction limits.

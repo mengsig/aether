@@ -1931,3 +1931,22 @@ fn outbox_with_nothing_waiting_offers_only_the_way_out() {
     let actions = acted(press(view.as_mut(), &app, KeyCode::Char('r')));
     assert!(flash(&actions[0]).contains("no operation"));
 }
+
+#[test]
+fn login_status_keeps_daemon_failure_detail_for_cli_and_api_providers() {
+    for provider in ["claude-code", "anthropic"] {
+        let info = aether_protocol::AuthInfo {
+            provider: provider.into(),
+            provider_name: provider.into(),
+            configured: false,
+            source: None,
+            methods: Vec::new(),
+            subscription: false,
+            detail: Some("config directory is group-writable; chmod 700 config".into()),
+            program: None,
+        };
+        let status = super::login::status(&info, &crate::ui::theme::tokens::Theme::default());
+        assert!(status.contains("not signed in"), "{status}");
+        assert!(status.contains(info.detail.as_deref().unwrap()), "{status}");
+    }
+}
