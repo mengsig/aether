@@ -287,7 +287,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         name: "outbox",
         usage: "",
         about: "remote operations the host cannot confirm; deliver, resend or discard",
-        rank: 32,
+        rank: 33,
         hidden_aliases: &[],
         key: "",
     },
