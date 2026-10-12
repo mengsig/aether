@@ -12,6 +12,8 @@ Usage: python3 scripts/mock_openai.py [port]   (0 picks a free one, printed on s
 Provider config: see scripts/mock_providers.toml
 """
 
+import base64
+import hashlib
 import json
 import re
 import sys
@@ -29,6 +31,34 @@ def last_user_text(messages):
             if isinstance(c, list):
                 return " ".join(p.get("text", "") for p in c if p.get("type") == "text")
     return ""
+
+
+def last_user_images(messages):
+    """The images on the latest user message, each as (media type, bytes)."""
+    for m in reversed(messages):
+        if m.get("role") != "user":
+            continue
+        parts = m.get("content")
+        if not isinstance(parts, list):
+            return []
+        return [data_url(p["image_url"]["url"]) for p in parts if p.get("type") == "image_url"]
+    return []
+
+
+def data_url(url):
+    match = re.fullmatch(r"data:([^;,]+);base64,(.*)", url, re.DOTALL)
+    if match is None:
+        raise ValueError(f"an image that is not a base64 data URL: {url[:60]}")
+    return match.group(1), base64.b64decode(match.group(2), validate=True)
+
+
+def images_reply(images):
+    """Names what arrived exactly, so a check can compare it with what was sent."""
+    seen = "; ".join(
+        f"{media_type}, {len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()}"
+        for media_type, data in images
+    )
+    return f"I was sent {len(images)} image(s): {seen}"
 
 
 def last_tool_result(messages):
@@ -130,6 +160,13 @@ def decide(messages, names):
     system = " ".join(m.get("content", "") if isinstance(m.get("content"), str) else "" for m in messages if m.get("role") == "system")
     if "compaction service" in system:
         return (compaction_reply(messages), [])
+    images = last_user_images(messages)
+    if images:
+        return (images_reply(images), [])
+    # A model that takes no images is told where the daemon keeps the file.
+    stored = re.search(r"\[image: [^\]\n]*, stored at ([^\]\n]+)\]", last_user_text(messages))
+    if stored:
+        return (f"I was sent no image, only the file {stored.group(1)}", [])
     user = last_user_text(messages).lower()
     # Answers only from context carried across a handoff, so a check can tell
     # what survived the switch from what the model was told this turn.
@@ -292,18 +329,24 @@ def responses_messages(req):
         role = item.get("role")
         if role is None:
             continue
-        content = item.get("content")
-        if isinstance(content, str):
-            text = content
-        else:
-            text = " ".join(p.get("text", "") for p in content or []
-                            if p.get("type") in ("input_text", "output_text"))
-        messages.append({"role": role, "content": text})
+        messages.append({"role": role, "content": chat_content(item.get("content"))})
         if role == "user":
             messages.extend(pending_output)
             pending_output = []
     messages.extend(pending_output)
     return messages
+
+
+def chat_content(content):
+    """A Responses item's content in the chat shape: a string, or parts once it has an image."""
+    if isinstance(content, str):
+        return content
+    parts = content or []
+    text = " ".join(p.get("text", "") for p in parts if p.get("type") in ("input_text", "output_text"))
+    images = [p["image_url"] for p in parts if p.get("type") == "input_image"]
+    if not images:
+        return text
+    return [{"type": "text", "text": text}] + [{"type": "image_url", "image_url": {"url": url}} for url in images]
 
 
 def usage_of(messages, text, calls):

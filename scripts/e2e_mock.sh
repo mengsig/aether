@@ -52,6 +52,14 @@ name = "Mock model"
 context_window = 32768
 max_output_tokens = 4096
 tools = true
+[[providers.mock.models]]
+id = "mock-vision"
+name = "Mock model that takes images"
+[providers.mock.models.capabilities]
+context_window = 32768
+max_output_tokens = 4096
+tools = true
+vision = true
 
 # The same mock server over the Responses wire, so both adapters are
 # smoke-tested against one script. family picks the GPT model profile.
@@ -69,6 +77,7 @@ name = "Mock model"
 context_window = 32768
 max_output_tokens = 4096
 tools = true
+vision = true
 EOF
 {
   printf '[model]\ndefault = "mock/mock-1"\n'
@@ -142,6 +151,9 @@ step "run: openai-responses adapter, same mock server"
   2>&1 | tee "$ROOT/responses.log"
 grep -q "bash" "$ROOT/responses.log" \
   || { echo "no tool call over the responses adapter"; exit 1; }
+
+step "send --image: the model gets the picture, or the stored file's path"
+python3 scripts/check_image_send.py "$AETHER_SOCKET" "$BIN" "$ROOT"
 
 step "run: delegate"
 "$BIN" run --yes "delegate the listing to a child" 2>&1 | tee "$ROOT/delegate.log"
