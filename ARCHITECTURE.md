@@ -62,8 +62,18 @@ model. GitHub can route to a fixed agent or reuse per-thread agents. Authorized
 GitHub activity remains external input, not an authenticated operator message,
 unless the operator named the requesting login in the watcher's
 `operator_users` and the watcher verified that account wrote the text.
-Webhooks use signed deliveries. TCP access needs a trusted tunnel: Aether does
-not terminate TLS.
+Webhooks use signed deliveries. Phones and browsers reach a loopback HTTP
+listener that is off until enabled, through `tailscale serve` or another HTTPS
+proxy; each is a device with its own key, enrolled by a one-time code the
+operator confirms at the host, and the Host and Origin allowlist names the
+public address. `aether remote setup` drives that path and reaches the daemon
+only through protocol commands, running Tailscale without a shell, and never
+changing host configuration silently. See [remote setup](docs/remote-setup.md).
+Another machine's daemon is reached with `aether --remote NAME`, which runs
+`aether bridge --stdio` over SSH to that user's Unix socket: no listener, token
+or pairing, and the standing of a local client. See [remote control](docs/remote.md).
+The `[listen]` TCP transport needs a trusted tunnel: Aether does not terminate
+TLS.
 
 ## Safety, accounting, and storage
 
@@ -115,6 +125,7 @@ different lifecycles.
 | `aether-net` | Shared network-safety boundaries |
 | `aether-protocol` | Versioned daemon commands and replies |
 | `aether-daemon` | Connections and daemon lifecycle |
+| `aether-remote` | Phone listener, WebSocket carrier, device pairing, embedded web app, Web Push; the daemon serves it through `RemoteHost` |
 | `aether-client` | Rust client and integration surfaces |
 | `aether-tui` | Terminal projections, input, inspection, themes |
 | `aether` | CLI and binary entry point |

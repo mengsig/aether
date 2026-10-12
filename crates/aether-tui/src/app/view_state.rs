@@ -21,6 +21,8 @@ impl App {
             reduced_motion: options.reduced_motion,
             ..options.theme_spec
         });
+        let resume_seq = options.resume_seq;
+        let draft = options.draft.clone();
         let motion = Motion::new(options.reduced_motion);
         let recent_models = options.recent_models.clone();
         let recent_workspaces = options.recent_workspaces.clone();
@@ -62,9 +64,14 @@ impl App {
             artifacts: ArtifactsState::default(),
             usage_loading: false,
             usage_error: None,
-            last_seq: None,
+            last_seq: resume_seq,
             subscription: None,
             connected: false,
+            host: Default::default(),
+            remote_pending: Default::default(),
+            undelivered: Vec::new(),
+            unreadable: Vec::new(),
+            remote_snapshot_pending: false,
             connection: 0,
             motion,
             size: (0, 0),
@@ -118,6 +125,9 @@ impl App {
         };
         app.report_mode_diagnostics();
         app.restore_queues();
+        if let Some(draft) = draft {
+            app.input.set_text(draft);
+        }
         app.refresh_branches();
         app.rebuild_board();
         if let Some(text) = startup_flash {

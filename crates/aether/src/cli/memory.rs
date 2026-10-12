@@ -124,7 +124,7 @@ fn memory_origin(provenance: &aether_core::memory::MemoryProvenance) -> Vec<Stri
 }
 
 pub async fn memory_list(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     scope: Option<String>,
     text: Option<String>,
     tag: Vec<String>,
@@ -132,6 +132,7 @@ pub async fn memory_list(
     limit: usize,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let scope = scope.as_deref().map(parse_memory_scope).transpose()?;
     let unfiltered = scope.is_none() && text.is_none() && tag.is_empty();
     let client = connect(&socket).await?;
@@ -174,7 +175,12 @@ pub async fn memory_list(
     Ok(())
 }
 
-pub async fn memory_show(socket: PathBuf, id: String, json: bool) -> anyhow::Result<()> {
+pub async fn memory_show(
+    socket: impl Into<aether_client::Endpoint>,
+    id: String,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let id: aether_core::id::MemoryId = id.parse().context("invalid memory id")?;
     let one = |list: Vec<aether_core::memory::MemoryRecord>| list.into_iter().next();
@@ -240,11 +246,12 @@ pub async fn memory_show(socket: PathBuf, id: String, json: bool) -> anyhow::Res
 }
 
 pub async fn memory_forget(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     id: String,
     reason: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let id = id.parse().context("invalid memory id")?;
     let record = client.forget_memory(id, reason).await?;
@@ -256,7 +263,12 @@ pub async fn memory_forget(
     Ok(())
 }
 
-pub async fn memory_restore(socket: PathBuf, id: String, json: bool) -> anyhow::Result<()> {
+pub async fn memory_restore(
+    socket: impl Into<aether_client::Endpoint>,
+    id: String,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let id = id.parse().context("invalid memory id")?;
     let record = client.restore_memory(id).await?;
@@ -269,11 +281,12 @@ pub async fn memory_restore(socket: PathBuf, id: String, json: bool) -> anyhow::
 }
 
 pub async fn memory_pin(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     id: String,
     unpin: bool,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let id = id.parse().context("invalid memory id")?;
     let record = client.pin_memory(id, !unpin).await?;
@@ -287,7 +300,12 @@ pub async fn memory_pin(
     Ok(())
 }
 
-pub async fn memory_sync(socket: PathBuf, root: Option<PathBuf>, json: bool) -> anyhow::Result<()> {
+pub async fn memory_sync(
+    socket: impl Into<aether_client::Endpoint>,
+    root: Option<PathBuf>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let (repository, report) = client.sync_repository_knowledge(root).await?;
     if json {

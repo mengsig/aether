@@ -1,17 +1,18 @@
 use super::{
-    ArtifactContents, ArtifactKind, ArtifactQuery, PathBuf, connect, io, sane, sane_document, short,
+    ArtifactContents, ArtifactKind, ArtifactQuery, connect, io, sane, sane_document, short,
 };
 use anyhow::Context as _;
 use std::io::Write as _;
 
 pub async fn artifacts_list(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     agent: Option<String>,
     task: Option<String>,
     with_bytes: bool,
     limit: usize,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let rows = client
         .list_artifacts(ArtifactQuery {
@@ -75,11 +76,12 @@ where
 }
 
 pub async fn artifact_show(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     id: String,
     max_bytes: usize,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let id = id.parse().context("invalid artifact id")?;
     let artifact = client.get_artifact(id).await?;

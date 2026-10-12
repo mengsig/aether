@@ -127,6 +127,52 @@ fn own_events_leave_out_what_children_emitted() {
     assert!(EventFilter::for_agent(parent.id).matches(childs));
 }
 
+/// Connections that may not read `remote.*` events get them renamed after
+/// they were filtered, so a filter must never select on a custom name.
+#[test]
+fn a_filter_cannot_tell_custom_events_apart_by_name() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let custom = |name: &str| {
+        let kind = EventKind::Custom {
+            name: name.into(),
+            payload: serde_json::json!({"secret": true}),
+        };
+        EventDraft::new(Actor::System, kind)
+    };
+    let commit = Commit::new()
+        .event(custom("remote.device_revoked"))
+        .event(custom("orchestrator.note"));
+    let events = store.commit(commit).expect("commit");
+    let selecting = |families: &[&str], types: &[&str]| EventFilter {
+        families: families.iter().map(|family| (*family).to_owned()).collect(),
+        types: types.iter().map(|kind| (*kind).to_owned()).collect(),
+        ..Default::default()
+    };
+
+    let by_name = [
+        selecting(&["remote"], &[]),
+        selecting(&["orchestrator"], &[]),
+        selecting(&[], &["remote.device_revoked"]),
+        selecting(&[], &["remote.restricted"]),
+    ];
+    for filter in by_name {
+        let found = store.events(0, 10, &filter).expect("events");
+        assert!(found.is_empty(), "{filter:?} selected {found:?}");
+        assert!(
+            events.iter().all(|event| !filter.matches(event)),
+            "{filter:?}"
+        );
+    }
+    for filter in [selecting(&["custom"], &[]), selecting(&[], &["custom"])] {
+        let found = store.events(0, 10, &filter).expect("events");
+        assert_eq!(found.len(), 2, "all of them or none: {filter:?}");
+        assert!(
+            events.iter().all(|event| filter.matches(event)),
+            "{filter:?}"
+        );
+    }
+}
+
 #[test]
 fn agent_and_task_filters() {
     let store = SqliteStore::open_in_memory().expect("open");

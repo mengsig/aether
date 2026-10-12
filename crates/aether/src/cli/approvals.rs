@@ -1,11 +1,11 @@
 use super::{
-    ApprovalDecision, NewApprovalRule, PathBuf, RememberSpec, RuleMatch, RuleScope, RuleScopeArgs,
-    acted, connect, short,
+    ApprovalDecision, NewApprovalRule, RememberSpec, RuleMatch, RuleScope, RuleScopeArgs, acted,
+    connect, short,
 };
 use anyhow::{Context as _, anyhow, bail};
 
 pub async fn approve(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     approval: String,
     approve: bool,
     remember: bool,
@@ -13,6 +13,7 @@ pub async fn approve(
     tool_wide: bool,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let id = approval.parse().context("invalid approval id")?;
     let decision = decision_of(approve);
@@ -46,7 +47,12 @@ fn decision_of(approve: bool) -> ApprovalDecision {
     }
 }
 
-pub async fn rules_list(socket: PathBuf, all: bool, json: bool) -> anyhow::Result<()> {
+pub async fn rules_list(
+    socket: impl Into<aether_client::Endpoint>,
+    all: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let rules = client.list_approval_rules(all).await?;
     if json {
@@ -100,7 +106,7 @@ fn describe_scope(scope: &RuleScope) -> String {
 
 #[allow(clippy::too_many_arguments)]
 pub async fn rules_add(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     allow: bool,
     tool: Option<String>,
     argument: Option<String>,
@@ -109,6 +115,7 @@ pub async fn rules_add(
     note: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let matcher = RuleMatch {
         tool,
@@ -133,6 +140,7 @@ pub async fn rules_add(
             matcher,
             scope,
             note,
+            idempotency_key: None,
         })
         .await?;
     if json {
@@ -144,11 +152,12 @@ pub async fn rules_add(
 }
 
 pub async fn rules_revoke(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     id: String,
     reason: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let id = id.parse().context("invalid rule id")?;
     let rule = client.revoke_approval_rule(id, reason).await?;

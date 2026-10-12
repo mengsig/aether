@@ -50,11 +50,12 @@ pub struct CreateAgentSpec {
 }
 
 pub use aether_core::inbox::MessageDelivery;
+pub use messaging::pending_question;
 
 /// What a pause moved (§3.1). `changed` is empty when every target was
 /// already paused; `mid_turn` names those still finishing a turn, so a caller
 /// can say when the pause takes effect instead of implying it already has.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct PauseOutcome {
     pub changed: Vec<Agent>,
     pub mid_turn: Vec<AgentId>,

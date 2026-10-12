@@ -11,6 +11,7 @@ import type {
   ScheduleId,
   SnapshotId,
   TaskId,
+  subscribe,
 } from "../../protocol.ts";
 
 
@@ -32,6 +33,18 @@ export function getArtifact(args: Omit<GetArtifactCommand, "cmd">): GetArtifactC
   return { cmd: "get_artifact", ...args };
 }
 
+/**
+ * Everything waiting on the operator: pending approvals, unanswered
+ * questions, and failed or blocked agents, read at one sequence number.
+ */
+export interface GetAttentionCommand {
+  "cmd": "get_attention";
+}
+
+export function getAttention(): GetAttentionCommand {
+  return { cmd: "get_attention" };
+}
+
 export interface GetCheckpointCommand {
   "cmd": "get_checkpoint";
   "id": CheckpointId;
@@ -50,6 +63,18 @@ export interface GetEventsCommand {
 
 export function getEvents(args: Omit<GetEventsCommand, "cmd">): GetEventsCommand {
   return { cmd: "get_events", ...args };
+}
+
+/**
+ * Branch and dirtiness of a workspace on the daemon's machine.
+ */
+export interface GetGitSummaryCommand {
+  "cmd": "get_git_summary";
+  "workspace": string;
+}
+
+export function getGitSummary(args: Omit<GetGitSummaryCommand, "cmd">): GetGitSummaryCommand {
+  return { cmd: "get_git_summary", ...args };
 }
 
 /**
@@ -80,6 +105,40 @@ export interface GetInvocationCommand {
 
 export function getInvocation(args: Omit<GetInvocationCommand, "cmd">): GetInvocationCommand {
   return { cmd: "get_invocation", ...args };
+}
+
+/**
+ * Read a pairing's state; the code is never repeated. Host only.
+ */
+export interface GetPairingCommand {
+  "cmd": "get_pairing";
+  "id": string;
+}
+
+export function getPairing(args: Omit<GetPairingCommand, "cmd">): GetPairingCommand {
+  return { cmd: "get_pairing", ...args };
+}
+
+/**
+ * Whether the daemon sends Web Push, and the key to subscribe with.
+ */
+export interface GetPushConfigCommand {
+  "cmd": "get_push_config";
+}
+
+export function getPushConfig(): GetPushConfigCommand {
+  return { cmd: "get_push_config" };
+}
+
+/**
+ * The remote listener's settings and state. Host only.
+ */
+export interface GetRemoteCommand {
+  "cmd": "get_remote";
+}
+
+export function getRemote(): GetRemoteCommand {
+  return { cmd: "get_remote" };
 }
 
 /**

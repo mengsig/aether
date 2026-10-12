@@ -8,7 +8,11 @@ impl App {
             Some(id) => {
                 self.flash(what);
                 vec![Effect::Request {
-                    command: Command::UpdateAgent { id, patch },
+                    command: Command::UpdateAgent {
+                        id,
+                        patch,
+                        idempotency_key: None,
+                    },
                     then: Then::AgentPatched,
                 }]
             }

@@ -40,6 +40,7 @@ export function createAgent(args: Omit<CreateAgentCommand, "cmd">): CreateAgentC
  */
 export interface CreateMemoryCommand {
   "cmd": "create_memory";
+  "idempotency_key"?: string | null;
   "spec": OperatorMemorySpec;
 }
 

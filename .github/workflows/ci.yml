@@ -104,6 +104,15 @@ jobs:
           node --version
           npm --version
           python3 -c 'import sys, PIL; assert sys.version_info >= (3, 11), sys.version'
+      # scripts/ci.sh skips the phone app's browser checks when Chromium is missing.
+      - if: steps.scope.outputs.code == 'true' && matrix.stage == 'binary'
+        name: install the phone web app's test dependencies and Chromium
+        working-directory: crates/aether-remote/web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/crates/aether-remote/web/node_modules/.browsers
       - if: steps.scope.outputs.code == 'true'
         name: scripts/ci.sh ${{ matrix.stage }}
         run: |

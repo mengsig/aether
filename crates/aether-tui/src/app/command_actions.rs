@@ -5,11 +5,24 @@ impl App {
     /// Commands without a view of their own. `run_slash` opens the views and
     /// handles the rest of the redesign's commands; they are routed back there.
     pub(super) fn run_command(&mut self, cmd: SlashCommand) -> Vec<Effect> {
+        if self.options.is_remote()
+            && matches!(
+                cmd,
+                SlashCommand::Login { .. } | SlashCommand::Logout(_) | SlashCommand::Voice(_)
+            )
+        {
+            self.flash_error("provider login/logout and voice are local-only; run aether --local on the host instead");
+            return Vec::new();
+        }
         match cmd {
             SlashCommand::ViewMode(_) => self.run_slash(cmd),
             SlashCommand::Voice(action) => self.voice_action(action),
             SlashCommand::New { objective } => {
                 let here = self.active_workspace().map(std::path::Path::to_path_buf);
+                if self.options.is_remote() && here.is_none() {
+                    self.flash_error("choose a host workspace with /workspace first");
+                    return Vec::new();
+                }
                 vec![self.start_new_root(objective.map(Into::into), here)]
             }
             SlashCommand::Workspace(Some(path)) => self.open_workspace(&path),
@@ -60,6 +73,7 @@ impl App {
                             name: Some(name),
                             ..Default::default()
                         },
+                        idempotency_key: None,
                     },
                     then: Then::AgentRenamed(id),
                 }],
@@ -82,7 +96,10 @@ impl App {
             SlashCommand::Yolo => self.toggle_yolo(),
             SlashCommand::Restart => match self.need_agent() {
                 Some(agent) => vec![Effect::Request {
-                    command: Command::Restart { agent },
+                    command: Command::Restart {
+                        agent,
+                        idempotency_key: None,
+                    },
                     then: Then::Restarted { from: agent },
                 }],
                 None => Vec::new(),
@@ -96,14 +113,22 @@ impl App {
             },
             SlashCommand::Pause { subtree } => match self.need_agent() {
                 Some(agent) => vec![Effect::Request {
-                    command: Command::Pause { agent, subtree },
+                    command: Command::Pause {
+                        agent,
+                        subtree,
+                        idempotency_key: None,
+                    },
                     then: Then::Paused(agent),
                 }],
                 None => Vec::new(),
             },
             SlashCommand::Resume { subtree } => match self.need_agent() {
                 Some(agent) => vec![Effect::Request {
-                    command: Command::Resume { agent, subtree },
+                    command: Command::Resume {
+                        agent,
+                        subtree,
+                        idempotency_key: None,
+                    },
                     then: Then::Resumed(agent),
                 }],
                 None => Vec::new(),
@@ -117,6 +142,7 @@ impl App {
                     command: Command::Archive {
                         target: ArchiveTarget::AllFinished,
                         archived: true,
+                        idempotency_key: None,
                     },
                     then: Then::Archived,
                 }]
@@ -129,6 +155,7 @@ impl App {
             | SlashCommand::Memory
             | SlashCommand::Schedules
             | SlashCommand::Mcp
+            | SlashCommand::Outbox
             | SlashCommand::Doctor
             | SlashCommand::Report
             | SlashCommand::Artifacts

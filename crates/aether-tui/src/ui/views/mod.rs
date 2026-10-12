@@ -10,8 +10,10 @@ pub mod mcp;
 pub mod memory;
 pub mod model;
 pub mod modes;
+pub mod outbox;
 pub mod pager;
 pub mod picker;
+pub mod remote_workspace;
 pub mod report;
 pub mod schedules;
 pub mod settings;
@@ -57,6 +59,8 @@ pub enum ViewKind {
     Memory,
     Schedules,
     Mcp,
+    /// `/outbox`: remote operations whose delivery is unconfirmed.
+    Outbox,
     Doctor,
     Report,
     Artifacts,
@@ -87,6 +91,7 @@ pub fn open(kind: ViewKind, app: &App) -> Box<dyn BottomView> {
         ViewKind::Memory => Box::new(memory::MemoryView::default()),
         ViewKind::Schedules => Box::new(schedules::SchedulesView::default()),
         ViewKind::Mcp => Box::new(mcp::McpView::default()),
+        ViewKind::Outbox => Box::new(outbox::OutboxView::default()),
         ViewKind::Doctor => Box::new(doctor::DoctorView::default()),
         ViewKind::Report => Box::new(report::ReportView::default()),
         ViewKind::Artifacts => Box::new(artifacts::ArtifactsView::default()),

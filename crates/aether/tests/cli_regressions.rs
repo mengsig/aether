@@ -171,6 +171,8 @@ async fn cli_with_socket(
                     daemon_protocol_version: None,
                     min_protocol_version: None,
                     idle_timeout_secs: None,
+                    device: None,
+                    submission_horizon: None,
                 })),
                 Command::Subscribe { query, .. } if run_created && query.agent.is_some() => {
                     Ok(Reply::Subscribed { id: 1, last_seq: 0 })

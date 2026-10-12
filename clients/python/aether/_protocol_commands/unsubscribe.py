@@ -11,3 +11,8 @@ def unsubscribe(*, id: int) -> dict[str, Any]:
     frame: dict[str, Any] = {"cmd": "unsubscribe"}
     frame["id"] = id
     return frame
+
+def unsubscribe_push() -> dict[str, Any]:
+    """Forget the calling device's push subscription."""
+    frame: dict[str, Any] = {"cmd": "unsubscribe_push"}
+    return frame

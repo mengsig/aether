@@ -17,12 +17,16 @@ use std::sync::atomic::AtomicU64;
 
 mod blobs;
 mod checkpoint;
+mod devices;
 mod event_queries;
 mod history_retention;
 pub use history_retention::RunExpiry;
+mod ledger;
 mod memories;
 mod mutations;
 mod publication;
+mod push_subscriptions;
+pub use push_subscriptions::PushSubscriptionRow;
 mod retention;
 mod store;
 
@@ -50,6 +54,10 @@ pub struct SqliteStore {
     /// Submission records kept whatever their age. Fixed at construction; a
     /// test opens a store with a cap it can actually reach.
     max_submissions: usize,
+    /// Recorded submissions between size passes.
+    size_pass_every: u64,
+    /// The clock receipts are aged against; a test moves it past the window.
+    retention_clock: Box<dyn Fn() -> Timestamp + Send + Sync>,
 }
 
 impl std::fmt::Debug for SqliteStore {
@@ -160,6 +168,26 @@ impl SqliteStore {
         Ok(store)
     }
 
+    /// The same store with a receipt cap and a size-pass cadence a caller can
+    /// reach: the defaults take a hundred thousand keyed commands to exercise.
+    pub fn with_submission_limits(mut self, max_submissions: usize, size_pass_every: u64) -> Self {
+        assert!(max_submissions > 0, "a store keeps at least one receipt");
+        assert!(size_pass_every > 0, "the size pass runs on some write");
+        self.max_submissions = max_submissions;
+        self.size_pass_every = size_pass_every;
+        self
+    }
+
+    /// The same store ageing receipts against `clock` instead of the wall
+    /// clock, so a test can let the retention window pass without waiting.
+    pub fn with_retention_clock(
+        mut self,
+        clock: impl Fn() -> Timestamp + Send + Sync + 'static,
+    ) -> Self {
+        self.retention_clock = Box::new(clock);
+        self
+    }
+
     fn init(conn: Connection, artifact_dir: Option<PathBuf>) -> Result<Self> {
         schema::migrate(&conn)?;
         conn.execute(
@@ -170,6 +198,7 @@ impl SqliteStore {
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('last_seq', '0')",
             [],
         )?;
+        Self::ensure_submission_ledger(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
             reader: None,
@@ -181,6 +210,8 @@ impl SqliteStore {
             commits: AtomicU64::new(0),
             submissions_since_size_pass: AtomicU64::new(0),
             max_submissions: aether_core::idempotency::MAX_SUBMISSIONS,
+            size_pass_every: aether_core::idempotency::SUBMISSION_SIZE_PASS_EVERY,
+            retention_clock: Box::new(aether_core::time::now),
         })
     }
 

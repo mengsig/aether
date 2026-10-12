@@ -210,6 +210,11 @@ typed_id!(
     MessageId,
     "msg"
 );
+typed_id!(
+    /// Identifies a paired remote device for as long as it stays enrolled.
+    DeviceId,
+    "dev"
+);
 
 #[cfg(test)]
 mod tests {

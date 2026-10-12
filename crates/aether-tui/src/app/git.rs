@@ -9,6 +9,9 @@ use super::App;
 impl App {
     /// Re-read the branch of the cwd and of every agent's workspace.
     pub(super) fn refresh_branches(&mut self) {
+        if self.options.is_remote() {
+            return;
+        }
         let paths: BTreeSet<PathBuf> = self
             .options
             .cwd

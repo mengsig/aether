@@ -52,8 +52,17 @@ looks like a boundary and is not one.
   tool surface and not the native CLI engines. Isolated delegation requires
   the host backend because a linked Git worktree's metadata is outside the
   container's workspace mount.
-- **Remote TCP access has no built-in TLS.** Use an SSH tunnel; do not expose
-  a daemon to an untrusted network.
+- **Aether terminates no TLS itself.** Phone access goes through Tailscale or
+  your own HTTPS proxy in front of a loopback listener, set up by
+  `aether remote setup` ([guide](remote-setup.md)); it is private to your
+  tailnet unless you opt in to Funnel. The `[listen]` TCP transport and its
+  shared token have no TLS: use an SSH tunnel, and do not expose a daemon to an
+  untrusted network.
+- **A paired phone acts with your authority.** An operator device can approve
+  tool calls that run commands and edit files on the host. Revoke a lost phone
+  with `aether remote revoke` and remove it from your Tailscale account.
+- **Tailscale HTTPS publishes machine names.** Enabling HTTPS certificates for
+  a tailnet lists its machine names in public certificate-transparency logs.
 - **The GitHub watcher turns repository text into agent work.** Who may
   trigger it is decided by repository permission and the allowlists described
   in the [GitHub watcher guide](github-watcher.md); the text itself is

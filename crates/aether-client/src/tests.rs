@@ -17,7 +17,7 @@ use aether_core::model::Usage;
 use aether_core::time::now;
 use aether_protocol::PROTOCOL_VERSION;
 
-fn welcome() -> Welcome {
+pub(super) fn welcome() -> Welcome {
     Welcome {
         protocol_version: PROTOCOL_VERSION,
         daemon_version: "test".into(),
@@ -28,6 +28,8 @@ fn welcome() -> Welcome {
         daemon_protocol_version: None,
         min_protocol_version: None,
         idle_timeout_secs: None,
+        device: None,
+        submission_horizon: None,
     }
 }
 
@@ -361,6 +363,7 @@ async fn a_version_outside_the_window_is_refused_at_hello_in_either_direction() 
             client_version: "test".into(),
             features: vec![],
             token: None,
+            device: None,
         };
         let err = aether_protocol::compat::negotiate(&hello)
             .expect_err("a daemon refuses a client built against another shape");

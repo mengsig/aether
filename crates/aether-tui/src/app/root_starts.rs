@@ -70,9 +70,20 @@ impl App {
         workspace: Option<PathBuf>,
         message: Option<Outgoing>,
     ) -> Option<Effect> {
-        let wanted = workspace.as_deref().map(workspace::canonical);
-        let here =
-            |start: &RootStart| start.workspace.as_deref().map(workspace::canonical) == wanted;
+        if self.options.is_remote() && workspace.is_none() {
+            self.flash_error("choose a host workspace with /workspace before starting an agent");
+            return None;
+        }
+        let remote = self.options.is_remote();
+        let canonical = |path: &Path| {
+            if remote {
+                path.to_owned()
+            } else {
+                workspace::canonical(path)
+            }
+        };
+        let wanted = workspace.as_deref().map(canonical);
+        let here = |start: &RootStart| start.workspace.as_deref().map(canonical) == wanted;
         let existing = self
             .awaited_start()
             .filter(|id| self.root_starts.get(id).is_some_and(here))
@@ -137,7 +148,7 @@ impl App {
             .and_then(|id| self.root_starts.get(&id))
             .filter(|start| !start.failed)
             .and_then(|start| start.workspace.as_deref())
-            .is_some_and(|dir| workspace::canonical(dir) == path)
+            .is_some_and(|dir| self.workspace_path(dir) == path)
     }
 
     /// The start the operator waits on, while its request is outstanding.
@@ -322,6 +333,7 @@ impl App {
                     fallbacks: Some(chain.fallbacks),
                     ..Default::default()
                 },
+                idempotency_key: None,
             },
             then: Then::PendingRootModelPatched(id),
         }

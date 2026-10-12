@@ -7,11 +7,14 @@ import type {
   ApprovalRequest,
   ApprovalRule,
   Artifact,
+  Attention,
   AuthInfo,
   Checkpoint,
   DaemonStatus,
+  Device,
   Event,
   ExportSummary,
+  GitSummary,
   GithubWatcherStatus,
   ImportSummary,
   InboxItem,
@@ -20,16 +23,23 @@ import type {
   McpServerHealth,
   MemoryRecord,
   ModelInfo,
+  Pairing,
+  PathCompletions,
   ProviderInfo,
+  PushConfig,
+  RemoteStatus,
   ReplayFrame,
   RetentionPreview,
   RunListing,
   RunReport,
   Schedule,
   ScheduleOccurrence,
+  SubmissionResolution,
   Task,
   TranscriptEntry,
   Welcome,
+  Workspace,
+  WorkspaceValidation,
   memories,
   pause,
   providers,
@@ -275,6 +285,61 @@ export interface ReplyEngineTools {
   "reply": "engine_tools";
 }
 
+export interface ReplyAttention {
+  "data": Attention;
+  "reply": "attention";
+}
+
+export interface ReplyPathCompletions {
+  "data": PathCompletions;
+  "reply": "path_completions";
+}
+
+export interface ReplyWorkspaces {
+  "data": Array<Workspace>;
+  "reply": "workspaces";
+}
+
+export interface ReplyWorkspaceValidation {
+  "data": WorkspaceValidation;
+  "reply": "workspace_validation";
+}
+
+export interface ReplyGitSummary {
+  "data": GitSummary;
+  "reply": "git_summary";
+}
+
+export interface ReplyRemote {
+  "data": RemoteStatus;
+  "reply": "remote";
+}
+
+export interface ReplyPairing {
+  "data": Pairing;
+  "reply": "pairing";
+}
+
+export interface ReplyDevice {
+  "data": Device;
+  "reply": "device";
+}
+
+export interface ReplyDevices {
+  "data": Array<Device>;
+  "reply": "devices";
+}
+
+export interface ReplyPushConfig {
+  "data": PushConfig;
+  "reply": "push_config";
+}
+
+export interface ReplySubmissionResolved {
+  "data": SubmissionResolution;
+  "reply": "submission_resolved";
+}
+
 export type Reply =
     ReplyRetentionPreview |
     ReplyGithubWatcher |
@@ -320,5 +385,16 @@ export type Reply =
     ReplyProviders |
     ReplyAuth |
     ReplyEngineTool |
-    ReplyEngineTools
+    ReplyEngineTools |
+    ReplyAttention |
+    ReplyPathCompletions |
+    ReplyWorkspaces |
+    ReplyWorkspaceValidation |
+    ReplyGitSummary |
+    ReplyRemote |
+    ReplyPairing |
+    ReplyDevice |
+    ReplyDevices |
+    ReplyPushConfig |
+    ReplySubmissionResolved
 ;

@@ -11,11 +11,8 @@
 //! correlation key receives an ID-zero diagnostic followed by connection closure;
 //! clients fail all pending requests on closure. See docs/protocol.md.
 //!
-//! The commands that create work - [`Command::SendMessage`], [`Command::ReplyToQuestion`],
-//! [`Command::CreateAgent`], [`Command::CreateTask`], [`Command::Trigger`] and
-//! [`Command::CreateSchedule`] - take an optional `idempotency_key`, so a
-//! client that lost an acknowledgement can retry without creating the work
-//! twice. See ARCHITECTURE §13.6 for what the daemon guarantees under it.
+//! Eighteen commands take an optional `idempotency_key` so a lost acknowledgement
+//! can be retried safely (docs/remote.md).
 //!
 //! This crate is types and paths only. The client and daemon crates own the
 //! sockets.
@@ -24,6 +21,7 @@ pub mod auth;
 pub mod command_hint;
 pub mod compat;
 pub mod paths;
+pub mod remote;
 pub mod schema;
 
 use std::collections::BTreeMap;
@@ -45,6 +43,7 @@ use aether_core::id::{
     AgentId, ApprovalId, ApprovalRuleId, ArtifactId, CheckpointId, InvocationId, MemoryId,
     MessageId, RunId, SnapshotId, TaskId,
 };
+pub use aether_core::idempotency::UnprovenAbsence;
 use aether_core::inbox::InboxItem;
 use aether_core::lease::{Lease, ResourceHolding};
 use aether_core::mcp::McpServerHealth;
@@ -62,10 +61,11 @@ use aether_core::transfer::{ExportSummary, ImportSummary};
 use serde::{Deserialize, Serialize};
 
 /// Bumped on any incompatible change to frames, commands or replies. The
-/// daemon serves this version and the one before it, translating the changed
-/// shapes at the edge ([`compat`]); anything outside that window is refused at
-/// hello rather than failing to decode a reply later. Bumping this constant
-/// therefore also means writing the rewrite that keeps the new N-1 served.
+/// daemon serves this version and at least the one before it, translating the
+/// changed shapes at the edge ([`compat`]); anything outside that window is
+/// refused at hello rather than failing to decode a reply later. Bumping this
+/// constant therefore also means writing the rewrite that keeps the new N-1
+/// served.
 ///
 /// 2: `Reply::Paused` carries `agents`/`mid_turn` instead of
 /// `after_current_turn`. `AgentPatch.deadline` is new in this version and is
@@ -142,11 +142,15 @@ use serde::{Deserialize, Serialize};
 /// incompatible error, and v16 saves are refused while it is set. The trigger
 /// field is additive: an older peer ignores it and reads the trigger as external.
 ///
-/// 18: `SendMessage.attachments` and the `image_ref` content block a message
-/// with images then carries. A v17 daemon would drop the images in silence,
-/// so it is refused at hello. A v17 client cannot decode the block; `compat`
-/// hands it the same line of text a newer client prints for the image.
-pub const PROTOCOL_VERSION: u32 = 18;
+/// 18: remote control (docs/protocol.md). Device origins and the `forbidden` and
+/// `unimplemented` codes are folded for v17 by `compat`; the rest is additive.
+///
+/// 19: `SendMessage.attachments` and the `image_ref` content block a message
+/// with images then carries. A v18 daemon would drop the images in silence,
+/// so it is refused at hello. An older client cannot decode the block; `compat`
+/// hands it the same line of text a newer client prints for the image. This
+/// build serves two versions back, 17 and 18.
+pub const PROTOCOL_VERSION: u32 = 19;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
@@ -167,10 +171,12 @@ pub use command::{Command, KeyedRequest};
 mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ErrorCode, ErrorReply, MessageDelivery, ModelInfo,
-    ProviderInfo, Reply, RunListing, TranscriptEntry, TreeNode,
+    ProviderInfo, Reply, RunListing, SubmissionResolution, TranscriptEntry, TreeNode,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};
+mod access;
+pub use access::Access;
 
 #[cfg(test)]
 mod tests;

@@ -52,6 +52,7 @@ impl App {
                     tags: Vec::new(),
                     supersedes: None,
                 },
+                idempotency_key: None,
             },
             then: Then::MemoryCreated {
                 selected: self.selected,

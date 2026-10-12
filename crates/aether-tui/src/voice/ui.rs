@@ -187,6 +187,10 @@ impl App {
     }
 
     pub(crate) fn voice_action(&mut self, action: Action) -> Vec<Effect> {
+        if self.options.is_remote() {
+            self.flash_error("voice is local-only; run aether --local on the host instead");
+            return Vec::new();
+        }
         if !self.voice.available {
             self.flash(
                 "local voice requires the interactive TUI on Linux or macOS; see docs/voice.md",
@@ -424,6 +428,9 @@ impl App {
     }
 
     pub(crate) fn voice_reconcile(&mut self) -> Vec<Effect> {
+        if self.options.is_remote() {
+            return Vec::new();
+        }
         let mut effects = self.restore_voice_prefs();
         effects.extend(self.reconcile_voice_replies());
         if !self.connected || self.quit_requested {

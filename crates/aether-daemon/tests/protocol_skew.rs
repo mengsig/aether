@@ -1,15 +1,30 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-//! Version skew against a real daemon: N and N-1 are served, anything else is
-//! refused at hello with both bounds named.
+//! Version skew against a real daemon: N and the two before it are served,
+//! anything else is refused at hello with both bounds named.
 
 mod support;
 
 use aether_core::github::GithubWatcherConfig;
 use aether_protocol::PROTOCOL_VERSION;
 use aether_protocol::compat::MIN_PROTOCOL_VERSION;
-use serde_json::json;
+use serde_json::{Value, json};
 use support::{RawConn, TestDaemon};
+
+async fn save_watcher(conn: &mut RawConn, config: &Value, revision: u64) -> Value {
+    conn.call(json!({
+        "cmd":"configure_github_watcher",
+        "config":config,
+        "expected_revision":revision
+    }))
+    .await
+}
+
+fn revision_of(reply: &Value) -> u64 {
+    reply["result"]["Ok"]["data"]["revision"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("a watcher reply with a revision: {reply}"))
+}
 
 #[tokio::test]
 async fn previous_version_preserves_watcher_allowlists() {
@@ -37,10 +52,10 @@ async fn previous_version_preserves_watcher_allowlists() {
     daemon.stop().await;
 }
 
-/// The same stored image, read at both versions: the current one gets the
-/// reference, the previous one a line of text it can decode.
+/// The same stored image, read at every served version: the current one gets
+/// the reference, each older one a line of text it can decode.
 #[tokio::test]
-async fn a_client_one_version_back_reads_a_stored_image_as_text() {
+async fn an_older_client_reads_a_stored_image_as_text() {
     const PNG_BASE64: &str = "iVBORw0KGgpwaXhlbHM=";
     let daemon = TestDaemon::start().await;
     let mut current = RawConn::connect(&daemon.socket).await.expect("connect");
@@ -68,17 +83,50 @@ async fn a_client_one_version_back_reads_a_stored_image_as_text() {
     assert_eq!(blocks[1]["name"], "shot.png", "{now}");
     assert_eq!(blocks[1]["size_bytes"], 14, "{now}");
 
+    for version in MIN_PROTOCOL_VERSION..PROTOCOL_VERSION {
+        let mut old = RawConn::connect(&daemon.socket).await.expect("connect");
+        old.hello(version).await.expect("served");
+        let before = old.call(inbox.clone()).await;
+        assert_eq!(
+            before["result"]["Ok"]["data"][0]["kind"]["content"],
+            json!([
+                {"type": "text", "text": "look"},
+                {"type": "text", "text": "[image: shot.png, 14 B]"}
+            ]),
+            "v{version}: {before}"
+        );
+    }
+    daemon.stop().await;
+}
+
+/// `operator_users` arrived in v17, now the oldest version served, so a
+/// client one version back reads and saves the list like the current one.
+#[tokio::test]
+async fn a_client_one_version_back_reads_and_saves_operator_users() {
+    let daemon = TestDaemon::start().await;
     let mut old = RawConn::connect(&daemon.socket).await.expect("connect");
-    old.hello(MIN_PROTOCOL_VERSION).await.expect("served");
-    let before = old.call(inbox).await;
+    old.hello(MIN_PROTOCOL_VERSION).await.expect("N-1 served");
+    let initial = old.call(json!({"cmd":"get_github_watcher"})).await;
+    let mut listed = serde_json::to_value(GithubWatcherConfig::default()).unwrap();
+    assert!(listed.get("operator_users").is_none(), "{listed}");
+    listed["operator_users"] = json!(["Mengsig", "octoCat"]);
+    let saved = save_watcher(&mut old, &listed, revision_of(&initial)).await;
+    let stored = json!(["mengsig", "octocat"]);
     assert_eq!(
-        before["result"]["Ok"]["data"][0]["kind"]["content"],
-        json!([
-            {"type": "text", "text": "look"},
-            {"type": "text", "text": "[image: shot.png, 14 B]"}
-        ]),
-        "{before}"
+        saved["result"]["Ok"]["data"]["config"]["operator_users"], stored,
+        "{saved}"
     );
+
+    let mut current = RawConn::connect(&daemon.socket).await.expect("connect");
+    current.hello(PROTOCOL_VERSION).await.expect("N served");
+    for conn in [&mut old, &mut current] {
+        let read = conn.call(json!({"cmd":"get_github_watcher"})).await;
+        assert_eq!(revision_of(&read), revision_of(&saved), "{read}");
+        assert_eq!(
+            read["result"]["Ok"]["data"]["config"]["operator_users"], stored,
+            "{read}"
+        );
+    }
     daemon.stop().await;
 }
 

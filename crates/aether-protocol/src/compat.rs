@@ -1,66 +1,15 @@
-//! Serving the previous protocol version.
-//!
-//! This build speaks [`PROTOCOL_VERSION`] and also serves
-//! [`MIN_PROTOCOL_VERSION`], one back, by rewriting the frames whose shape
-//! changed. A client inside that window is translated at the edge, never
-//! refused; one outside it is refused at hello with both bounds named.
-//!
-//! Only the daemon's answers need rewriting. Every field a newer version
-//! added to a command carries `#[serde(default)]`, so an older client's
-//! request is a strict subset of the current one and decodes unchanged -
-//! `no_command_requires_a_field_an_older_client_would_not_send` holds that
-//! true against the live schema.
-//!
-//! v18 adds images on a message. Stored state then carries `image_ref`
-//! content blocks, which a v17 client cannot decode: it would lose the whole
-//! event or transcript. Each block is rewritten into the line of text a
-//! newer client prints for it, so the message still reads as sent.
-//!
-//! v17 adds the watcher's `operator_users`. A v16 client cannot represent
-//! the list, and saving a configuration without it would silently take
-//! operator standing away from every listed login, so a watcher reply
-//! carrying it becomes an explicit compatibility error. Existing v16 replies
-//! and events remain unchanged; the `operator` flag on an external trigger is
-//! absent unless set, and a v16 client ignores it.
-//!
-//! v16 adds retention preview requests. v15 replies need no rewriting.
-//! Previously, v15 added per-repository watcher allowlists. A v14 client cannot represent
-//! one, and saving a configuration without it would silently widen who may
-//! dispatch, so a watcher reply carrying one becomes an explicit
-//! compatibility error. Existing v14 replies and events remain unchanged.
+//! Serving older protocol versions: replies are rewritten for a client behind
+//! this build, and its requests decode unchanged (docs/protocol.md).
 
-use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame};
-use aether_core::github::GithubWatcherConfig;
+use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, ServerFrame};
 use aether_core::model::ContentBlock;
 use serde_json::Value;
 
-pub const ALLOWLIST_WATCHER_VERSION_ERROR: &str =
-    "GitHub watcher allowed_users requires protocol 15; upgrade the Aether client";
+/// Oldest protocol version this build still serves. Two back, not one: 18
+/// and 19 were released days apart, and both rewrites are small.
+pub const MIN_PROTOCOL_VERSION: u32 = 17;
 
-pub const OPERATOR_USERS_WATCHER_VERSION_ERROR: &str =
-    "GitHub watcher operator_users requires protocol 17; upgrade the Aether client";
-
-/// Whether any repository narrows its requesters: the shape a v14 peer
-/// cannot read or preserve.
-pub fn has_watcher_allowlist(config: &GithubWatcherConfig) -> bool {
-    config
-        .repositories
-        .iter()
-        .any(|repo| repo.allowed_users.is_some())
-}
-
-/// Whether the watcher names operator logins: the shape a v16 peer cannot
-/// read or preserve.
-pub fn has_watcher_operator_users(config: &GithubWatcherConfig) -> bool {
-    config.operator_users.is_some()
-}
-
-/// Oldest protocol version this build still serves. Saturating, and never
-/// below 1: version 0 was never a thing to serve.
-pub const MIN_PROTOCOL_VERSION: u32 = {
-    let one_back = PROTOCOL_VERSION.saturating_sub(1);
-    if one_back < 1 { 1 } else { one_back }
-};
+const _: () = assert!(MIN_PROTOCOL_VERSION >= 1 && MIN_PROTOCOL_VERSION < PROTOCOL_VERSION);
 
 /// The version a connection will speak, or why the client is refused.
 pub fn negotiate(hello: &Hello) -> Result<u32, ErrorReply> {
@@ -80,61 +29,54 @@ pub fn negotiate(hello: &Hello) -> Result<u32, ErrorReply> {
 /// Encode one server frame as a client speaking `version` reads it. Every
 /// shape this build changed for an older client in the window is rewritten
 /// here, keyed on `version`, so the daemon's writer never has to know which.
-///
 pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_json::Error> {
     debug_assert!(
         (MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&version),
         "a connection only ever speaks a negotiated version, got {version}"
     );
-    if version < 15
-        && let ServerFrame::Reply {
-            id,
-            result: Ok(Reply::GithubWatcher(status)),
-        } = frame
-        && has_watcher_allowlist(&status.config)
+    if version < 18
+        && let Some(folded) = v17_error_reply(frame)
     {
-        return crate::encode(&ServerFrame::Reply {
-            id: *id,
-            result: Err(ErrorReply::new(
-                ErrorCode::Incompatible,
-                ALLOWLIST_WATCHER_VERSION_ERROR,
-            )),
-        });
+        return crate::encode(&folded);
     }
-    if version < 17
-        && let ServerFrame::Reply {
-            id,
-            result: Ok(Reply::GithubWatcher(status)),
-        } = frame
-        && has_watcher_operator_users(&status.config)
-    {
-        return crate::encode(&ServerFrame::Reply {
-            id: *id,
-            result: Err(ErrorReply::new(
-                ErrorCode::Incompatible,
-                OPERATOR_USERS_WATCHER_VERSION_ERROR,
-            )),
-        });
-    }
-    if version < 18 {
-        return encode_without_image_refs(frame);
-    }
-    crate::encode(frame)
-}
-
-/// The wire tag of a stored image's content block.
-const IMAGE_REF_TAG: &str = "image_ref";
-
-/// Encode a frame for a client that predates images on a message. A frame
-/// without one is encoded exactly as it always was.
-fn encode_without_image_refs(frame: &ServerFrame) -> Result<String, serde_json::Error> {
     let line = crate::encode(frame)?;
-    if !line.contains(IMAGE_REF_TAG) {
+    let hide_images = version < 19 && line.contains(IMAGE_REF_TAG);
+    let hide_devices = version < 18 && line.contains(DEVICE_ORIGIN);
+    if !hide_images && !hide_devices {
         return Ok(line);
     }
     let mut value: Value = serde_json::from_str(&line)?;
-    replace_image_refs(&mut value);
-    serde_json::to_string(&value)
+    if hide_images {
+        replace_image_refs(&mut value);
+    }
+    if hide_devices {
+        hide_device_origins(&mut value);
+    }
+    crate::encode(&value)
+}
+
+/// What marks a device origin in an encoded frame. Quotes inside a JSON
+/// string are escaped, so this only ever matches structure.
+const DEVICE_ORIGIN: &str = r#""transport":"device""#;
+
+/// The wire tag of a stored image's content block, new in v19.
+const IMAGE_REF_TAG: &str = "image_ref";
+
+/// An error reply whose code a v17 client cannot decode, with the code it
+/// reads in its place.
+fn v17_error_reply(frame: &ServerFrame) -> Option<ServerFrame> {
+    let ServerFrame::Reply {
+        id,
+        result: Err(error),
+    } = frame
+    else {
+        return None;
+    };
+    let code = v17_error_code(error.code)?;
+    Some(ServerFrame::Reply {
+        id: *id,
+        result: Err(ErrorReply::new(code, error.message.clone())),
+    })
 }
 
 /// Turn every `image_ref` block under `value` into a text block. Depth is
@@ -164,6 +106,34 @@ fn image_ref_text(value: &Value) -> Option<Value> {
             serde_json::to_value(ContentBlock::text(image.label())).ok()
         }
         _ => None,
+    }
+}
+
+/// The code a v17 client reads in place of one it cannot decode.
+fn v17_error_code(code: ErrorCode) -> Option<ErrorCode> {
+    match code {
+        ErrorCode::Forbidden => Some(ErrorCode::Unauthorized),
+        ErrorCode::Unimplemented => Some(ErrorCode::Unavailable),
+        _ => None,
+    }
+}
+
+/// Rewrite every `user` actor with a device origin into a named user with no
+/// origin. Depth is bounded by the parser's own nesting limit.
+fn hide_device_origins(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let is_device = map.get("actor").and_then(Value::as_str) == Some("user")
+                && map.get("origin").and_then(|o| o.get("transport")) == Some(&"device".into());
+            if is_device && let Some(origin) = map.remove("origin") {
+                let device = origin.get("name").and_then(Value::as_str).unwrap_or("?");
+                map.entry("name")
+                    .or_insert_with(|| format!("device:{device}").into());
+            }
+            map.values_mut().for_each(hide_device_origins);
+        }
+        Value::Array(items) => items.iter_mut().for_each(hide_device_origins),
+        _ => {}
     }
 }
 
@@ -199,7 +169,7 @@ mod tests {
     #[test]
     fn v17_watcher_operator_users_are_preserved_in_the_served_window() {
         let mut status = GithubWatcherStatus::default();
-        status.config.operator_users = Some(vec!["octocat".into()]);
+        status.config.operator_users = Some(vec!["mengsig".into()]);
         let frame = ServerFrame::Reply {
             id: 7,
             result: Ok(Reply::GithubWatcher(status)),
@@ -213,6 +183,70 @@ mod tests {
         let mut old = Hello::new("v16", "test");
         old.protocol_version = 16;
         assert!(negotiate(&old).is_err());
+    }
+
+    /// A v17 client cannot decode a device origin, so it reads the device as
+    /// a named user; a v18 client reads the origin itself.
+    #[test]
+    fn a_device_origin_becomes_a_named_user_for_v17() {
+        use aether_core::event::{Actor, OperatorOrigin};
+        let device = aether_core::id::DeviceId::new();
+        let item = InboxItem {
+            id: aether_core::id::InboxItemId::new(),
+            agent_id: aether_core::id::AgentId::new(),
+            seq: 1,
+            kind: InboxKind::Message {
+                message_id: aether_core::id::MessageId::new(),
+                from: Actor::connected_user(OperatorOrigin::Device {
+                    device,
+                    name: "phone".into(),
+                    connection: "c1".into(),
+                }),
+                content: vec![],
+            },
+            delivered_at: "2026-09-09T11:00:00Z".parse().expect("timestamp"),
+        };
+        let frame = reply(Reply::Inbox(vec![item]));
+        let current = encode_for(PROTOCOL_VERSION, &frame).unwrap();
+        assert_eq!(crate::decode::<ServerFrame>(&current).unwrap(), frame);
+        let old = encode_for(17, &frame).unwrap();
+        assert!(!old.contains("\"transport\""), "{old}");
+        let decoded: ServerFrame = crate::decode(&old).expect("a v17 client decodes it");
+        let ServerFrame::Reply {
+            result: Ok(Reply::Inbox(items)),
+            ..
+        } = decoded
+        else {
+            panic!("an inbox reply");
+        };
+        let InboxKind::Message { from, .. } = &items[0].kind else {
+            panic!("a message");
+        };
+        assert_eq!(from.label(), "user:device:phone");
+    }
+
+    #[test]
+    fn the_v18_error_codes_fold_into_ones_v17_knows() {
+        for (code, folded) in [
+            (ErrorCode::Forbidden, ErrorCode::Unauthorized),
+            (ErrorCode::Unimplemented, ErrorCode::Unavailable),
+            (ErrorCode::NotFound, ErrorCode::NotFound),
+        ] {
+            let frame = ServerFrame::Reply {
+                id: 3,
+                result: Err(ErrorReply::new(code, "why")),
+            };
+            let old: ServerFrame = crate::decode(&encode_for(17, &frame).unwrap()).unwrap();
+            let ServerFrame::Reply {
+                result: Err(error), ..
+            } = old
+            else {
+                panic!("an error reply");
+            };
+            assert_eq!((error.code, error.message.as_str()), (folded, "why"));
+            let new = encode_for(PROTOCOL_VERSION, &frame).unwrap();
+            assert_eq!(crate::decode::<ServerFrame>(&new).unwrap(), frame);
+        }
     }
 
     /// The trigger's `operator` flag is additive: unset it is not written, so
@@ -262,8 +296,12 @@ mod tests {
             ("archive", &["target"]),
             ("auth_status", &[]),
             ("cancel", &["agent"]),
+            ("cancel_pairing", &["id"]),
             ("compact", &["agent"]),
+            ("complete_path", &["kind", "prefix"]),
             ("configure_github_watcher", &["config", "expected_revision"]),
+            ("configure_remote", &["expected_revision", "settings"]),
+            ("confirm_pairing", &["accept", "id"]),
             ("create_agent", &["role"]),
             ("create_memory", &["spec"]),
             ("create_schedule", &["spec"]),
@@ -274,11 +312,16 @@ mod tests {
             ("forget_memory", &["id"]),
             ("get_agent", &["id"]),
             ("get_artifact", &["id"]),
+            ("get_attention", &[]),
             ("get_checkpoint", &["id"]),
             ("get_events", &["after", "limit", "query"]),
+            ("get_git_summary", &["workspace"]),
             ("get_github_watcher", &[]),
             ("get_inbox", &["after", "agent"]),
             ("get_invocation", &["id"]),
+            ("get_pairing", &["id"]),
+            ("get_push_config", &[]),
+            ("get_remote", &[]),
             ("get_run_report", &["run"]),
             ("get_schedule", &["id"]),
             ("get_snapshot", &["id"]),
@@ -296,11 +339,13 @@ mod tests {
             ("list_approval_rules", &[]),
             ("list_approvals", &[]),
             ("list_artifacts", &["query"]),
+            ("list_devices", &[]),
             ("list_invocations", &["agent"]),
             ("list_models", &[]),
             ("list_runs", &["limit"]),
             ("list_schedules", &[]),
             ("list_tasks", &["query"]),
+            ("list_workspaces", &[]),
             ("mcp_servers", &[]),
             ("memories", &["query"]),
             ("pause", &["agent"]),
@@ -316,21 +361,29 @@ mod tests {
             ("replay", &["agent"]),
             ("reply_to_question", &["content", "question_seq", "to"]),
             ("resolve_approval", &["decision", "id"]),
+            ("resolve_submission", &["command"]),
             ("restart", &["agent"]),
             ("restore_memory", &["id"]),
             ("resume", &["agent"]),
             ("revoke_approval_rule", &["id"]),
+            ("revoke_device", &["id"]),
             ("schedule_history", &["id", "limit"]),
             ("send_message", &["content", "to"]),
             ("set_approvals", &["agent", "policy"]),
             ("shutdown", &[]),
+            ("start_pairing", &[]),
             ("status", &[]),
             ("subscribe", &["deltas", "query"]),
+            ("subscribe_push", &["subscription"]),
             ("sync_repository_knowledge", &[]),
+            ("test_push", &[]),
             ("trigger", &["agent", "source"]),
             ("unsubscribe", &["id"]),
+            ("unsubscribe_push", &[]),
             ("update_agent", &["id", "patch"]),
+            ("update_device", &["id"]),
             ("update_schedule", &["action", "id"]),
+            ("validate_workspace", &["path"]),
             ("wake", &["agent"]),
         ];
 
@@ -405,11 +458,13 @@ mod tests {
     }
 
     #[test]
-    fn the_window_is_this_version_and_one_back() {
-        let mut hello = Hello::new("t", "0");
-        assert_eq!(negotiate(&hello), Ok(PROTOCOL_VERSION));
-        hello.protocol_version = MIN_PROTOCOL_VERSION;
-        assert_eq!(negotiate(&hello), Ok(MIN_PROTOCOL_VERSION));
+    fn the_window_is_this_version_and_two_back() {
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 19));
+        for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
+            let mut hello = Hello::new("t", "0");
+            hello.protocol_version = version;
+            assert_eq!(negotiate(&hello), Ok(version));
+        }
     }
 
     #[test]
@@ -566,6 +621,8 @@ mod tests {
             daemon_protocol_version: Some(PROTOCOL_VERSION),
             min_protocol_version: Some(MIN_PROTOCOL_VERSION),
             idle_timeout_secs: None,
+            device: None,
+            submission_horizon: None,
         };
         let json = serde_json::to_value(&welcome).expect("ser");
         assert_eq!(json["protocol_version"], MIN_PROTOCOL_VERSION);
@@ -645,7 +702,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 18));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 19));
     }
 
     #[test]
@@ -676,14 +733,14 @@ mod tests {
         }
     }
 
-    fn message_with_image() -> ServerFrame {
+    fn message_with_image(from: aether_core::event::Actor) -> ServerFrame {
         reply(Reply::Inbox(vec![InboxItem {
             id: aether_core::id::InboxItemId::new(),
             agent_id: aether_core::id::AgentId::new(),
             seq: 4,
             kind: InboxKind::Message {
                 message_id: aether_core::id::MessageId::new(),
-                from: aether_core::event::Actor::user(),
+                from,
                 content: vec![
                     ContentBlock::text("what is this?"),
                     ContentBlock::ImageRef(stored_image()),
@@ -693,41 +750,68 @@ mod tests {
         }]))
     }
 
-    /// A v17 client cannot decode `image_ref`. It reads the line a newer
-    /// client prints instead of losing the whole reply.
+    fn message_content(line: &str) -> (String, Vec<ContentBlock>) {
+        let ServerFrame::Reply {
+            id: 7,
+            result: Ok(Reply::Inbox(items)),
+        } = crate::decode(line).expect("the client decodes it")
+        else {
+            panic!("the reply keeps its shape: {line}");
+        };
+        let InboxKind::Message { from, content, .. } = &items[0].kind else {
+            panic!("still a message");
+        };
+        (from.label(), content.clone())
+    }
+
+    /// A v17 or v18 client cannot decode `image_ref`. It reads the line a
+    /// newer client prints instead of losing the whole reply.
     #[test]
-    fn a_v17_client_reads_a_stored_image_as_its_line_of_text() {
-        let frame = message_with_image();
-        let current = encode_for(18, &frame).expect("encode");
+    fn an_older_client_reads_a_stored_image_as_its_line_of_text() {
+        let frame = message_with_image(aether_core::event::Actor::user());
+        let current = encode_for(PROTOCOL_VERSION, &frame).expect("encode");
         assert_eq!(
             crate::decode::<ServerFrame>(&current).expect("decode"),
             frame
         );
         assert!(current.contains("\"image_ref\""), "{current}");
 
-        let old = encode_for(17, &frame).expect("encode");
-        assert!(!old.contains("image_ref"), "{old}");
-        let ServerFrame::Reply {
-            id: 7,
-            result: Ok(Reply::Inbox(items)),
-        } = crate::decode(&old).expect("a v17 client decodes it")
-        else {
-            panic!("the reply keeps its shape: {old}");
-        };
-        let InboxKind::Message { content, .. } = &items[0].kind else {
-            panic!("still a message");
-        };
-        assert_eq!(
-            content,
-            &[
-                ContentBlock::text("what is this?"),
-                ContentBlock::text("[image: shot.png, 1.2 MB]"),
-            ]
-        );
+        for version in [17, 18] {
+            let old = encode_for(version, &frame).expect("encode");
+            assert!(!old.contains("image_ref"), "v{version}: {old}");
+            assert_eq!(
+                message_content(&old).1,
+                [
+                    ContentBlock::text("what is this?"),
+                    ContentBlock::text("[image: shot.png, 1.2 MB]"),
+                ],
+                "v{version}"
+            );
+        }
+    }
+
+    /// A phone's message with an image needs both rewrites for v17 and only
+    /// the image's for v18, which reads the device origin itself.
+    #[test]
+    fn a_device_message_with_an_image_gets_each_versions_rewrites() {
+        use aether_core::event::{Actor, OperatorOrigin};
+        let frame = message_with_image(Actor::connected_user(OperatorOrigin::Device {
+            device: aether_core::id::DeviceId::new(),
+            name: "phone".into(),
+            connection: "c1".into(),
+        }));
+        let v18 = encode_for(18, &frame).expect("encode");
+        assert!(v18.contains(DEVICE_ORIGIN), "{v18}");
+        assert!(!v18.contains("image_ref"), "{v18}");
+        let v17 = encode_for(17, &frame).expect("encode");
+        assert!(!v17.contains(DEVICE_ORIGIN), "{v17}");
+        let (from, content) = message_content(&v17);
+        assert_eq!(from, "user:device:phone");
+        assert_eq!(content[1], ContentBlock::text("[image: shot.png, 1.2 MB]"));
     }
 
     /// Only a real stored-image block is rewritten: JSON that merely carries
-    /// the tag (a tool's input) reaches a v17 client untouched.
+    /// the tag (a tool's input) reaches an older client untouched.
     #[test]
     fn json_that_only_looks_like_a_stored_image_is_left_alone() {
         let lookalike = serde_json::json!({"type": "image_ref", "note": "not a block"});

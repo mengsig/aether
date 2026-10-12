@@ -14,12 +14,62 @@
 //! commit rather than landing beside the first.
 
 use aether_core::idempotency::{
-    FINGERPRINT_SCHEME, RecordedSubmission, Submission, SubmissionOutcome,
+    FINGERPRINT_SCHEME, RecordedSubmission, Submission, SubmissionHorizon, SubmissionOutcome,
+    UnprovenAbsence,
 };
+use aether_core::time::Timestamp;
 
 use crate::{CommitHold, Result, Runtime, RuntimeError};
 
+/// Whether a keyed submission was executed, as far as the store can prove.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmissionStanding {
+    /// Its receipt is held: it ran, and a retry would be answered from it.
+    Recorded,
+    /// No receipt, and none recorded since its horizon was ever dropped.
+    NeverExecuted,
+    /// No receipt, and nothing proves there never was one.
+    Unproven(UnprovenAbsence),
+}
+
+/// The answer to [`Runtime::resolve_submission`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmissionResolution {
+    pub standing: SubmissionStanding,
+    /// The store's horizon now, for whatever the client sends next.
+    pub horizon: SubmissionHorizon,
+    /// Every receipt stamped after this is still held. For display only.
+    pub retained_since: Timestamp,
+}
+
 impl Runtime {
+    pub(crate) fn replay_receipt<T: serde::de::DeserializeOwned>(
+        &self,
+        hold: &CommitHold<'_>,
+        submission: Option<&Submission>,
+    ) -> Result<Option<T>> {
+        let Some(outcome) = self.replayed_submission(hold, submission)? else {
+            return Ok(None);
+        };
+        let SubmissionOutcome::Receipt { value } = outcome else {
+            return Err(wrong_shape(&outcome, "receipt"));
+        };
+        serde_json::from_value(value)
+            .map(Some)
+            .map_err(|error| RuntimeError::Internal(format!("decode submission receipt: {error}")))
+    }
+
+    pub(crate) fn commit_receipt<T: serde::Serialize>(
+        &self,
+        hold: CommitHold<'_>,
+        mut commit: aether_store::Commit,
+        submission: Option<&Submission>,
+        receipt: &T,
+    ) -> Result<()> {
+        record_receipt(&mut commit, submission, receipt)?;
+        self.apply_held(hold, commit)?;
+        Ok(())
+    }
     /// What `submission` already created, if this store has seen its key.
     /// `None` means the caller must do the work and commit the record with it.
     ///
@@ -57,6 +107,16 @@ impl Runtime {
         let Some(submission) = submission else {
             return Ok(None);
         };
+        let outcome = self.held_receipt(submission)?;
+        // Every keyed command asks here before it does any work, so this is
+        // where a submission that may only be replayed is stopped.
+        if outcome.is_none() && submission.is_replay_only() {
+            return Err(receipt_gone(submission));
+        }
+        Ok(outcome)
+    }
+
+    fn held_receipt(&self, submission: &Submission) -> Result<Option<SubmissionOutcome>> {
         let Some(record) = self.store.submission(&submission.key)? else {
             return Ok(None);
         };
@@ -72,6 +132,63 @@ impl Runtime {
         }
         Ok(Some(record.outcome))
     }
+
+    /// Where a keyed submission stands; executes and writes nothing. Lock-free
+    /// on purpose: one committing now reads as absent and its retry replays.
+    pub fn resolve_submission(
+        &self,
+        submission: &Submission,
+        horizon: Option<&SubmissionHorizon>,
+    ) -> Result<SubmissionResolution> {
+        // The receipt first and the ledger second: a ledger read after the
+        // lookup covers every drop the lookup could have missed.
+        let held = self.held_receipt(submission)?.is_some();
+        let ledger = self.store.submission_ledger()?;
+        let standing = match (held, ledger.proves_absence(horizon)) {
+            (true, _) => SubmissionStanding::Recorded,
+            (false, Ok(())) => SubmissionStanding::NeverExecuted,
+            (false, Err(unproven)) => SubmissionStanding::Unproven(unproven),
+        };
+        Ok(SubmissionResolution {
+            standing,
+            horizon: ledger.horizon(),
+            retained_since: ledger.retained_since(),
+        })
+    }
+
+    /// What a client is told at the handshake and keeps with each key it
+    /// sends, so a lost acknowledgement can later be resolved.
+    pub fn submission_horizon(&self) -> Result<SubmissionHorizon> {
+        Ok(self.store.submission_ledger()?.horizon())
+    }
+}
+
+pub(crate) fn record_receipt<T: serde::Serialize>(
+    commit: &mut aether_store::Commit,
+    submission: Option<&Submission>,
+    receipt: &T,
+) -> Result<()> {
+    let Some(submission) = submission else {
+        return Ok(());
+    };
+    let value = serde_json::to_value(receipt)
+        .map_err(|error| RuntimeError::Internal(format!("encode submission receipt: {error}")))?;
+    debug_assert!(!submission.key.0.is_empty());
+    debug_assert_eq!(submission.fingerprint.len(), 64);
+    commit.push_mutation(aether_store::Mutation::RecordSubmission(submission.record(
+        aether_core::time::now(),
+        SubmissionOutcome::Receipt { value },
+    )));
+    Ok(())
+}
+
+/// A replay-only submission found no receipt to replay: it was evicted after
+/// the resolution that saw it, and the caller resolves again.
+fn receipt_gone(submission: &Submission) -> RuntimeError {
+    RuntimeError::NotFound(format!(
+        "the receipt held for idempotency_key `{}`",
+        submission.key
+    ))
 }
 
 /// A record whose fingerprint was taken over a different field set - written

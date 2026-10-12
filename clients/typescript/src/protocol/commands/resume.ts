@@ -13,6 +13,7 @@ import type {
 export interface ResumeCommand {
   "cmd": "resume";
   "agent": AgentId;
+  "idempotency_key"?: string | null;
   "subtree"?: boolean;
 }
 

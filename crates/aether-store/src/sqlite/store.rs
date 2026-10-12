@@ -8,10 +8,12 @@ use aether_core::checkpoint::Checkpoint;
 use aether_core::event::{Event, EventKind};
 use aether_core::id::ScheduleId;
 use aether_core::id::{
-    AgentId, ApprovalId, ApprovalRuleId, ArtifactId, CheckpointId, EventId, InvocationId, MemoryId,
-    SnapshotId, TaskId, ToolCallId,
+    AgentId, ApprovalId, ApprovalRuleId, ArtifactId, CheckpointId, DeviceId, EventId, InvocationId,
+    MemoryId, SnapshotId, TaskId, ToolCallId,
 };
-use aether_core::idempotency::{IdempotencyKey, RecordedOutcome, RecordedSubmission};
+use aether_core::idempotency::{
+    IdempotencyKey, RecordedOutcome, RecordedSubmission, SubmissionLedger,
+};
 use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::MemoryRecord;
@@ -24,8 +26,8 @@ use aether_core::tool::ApprovalRequest;
 use rusqlite::{OptionalExtension, params};
 
 use crate::{
-    AgentFilter, ArtifactFilter, Commit, EventFilter, ImportedEvent, MemoryQuery, Mutation, Result,
-    Store, StoreError, TaskFilter, TranscriptEntry,
+    AgentFilter, ArtifactFilter, Commit, DeviceRow, EventFilter, ImportedEvent, MemoryQuery,
+    Mutation, Result, Store, StoreError, TaskFilter, TranscriptEntry,
 };
 
 use super::{SqliteStore, schedule_time};
@@ -467,6 +469,10 @@ impl Store for SqliteStore {
         )
     }
 
+    fn submission_ledger(&self) -> Result<SubmissionLedger> {
+        Self::ledger_in(&self.read_conn())
+    }
+
     fn approval_rule(&self, id: ApprovalRuleId) -> Result<Option<ApprovalRule>> {
         self.read_one(
             "SELECT body FROM approval_rules WHERE id = ?1",
@@ -482,6 +488,14 @@ impl Store for SqliteStore {
             "SELECT body FROM approval_rules WHERE revoked = 0 ORDER BY created_at ASC"
         };
         Self::read_many(&conn, sql, &[])
+    }
+
+    fn device(&self, id: DeviceId) -> Result<Option<DeviceRow>> {
+        Self::read_device(&self.read_conn(), id)
+    }
+
+    fn devices(&self, include_revoked: bool) -> Result<Vec<DeviceRow>> {
+        Self::read_devices(&self.read_conn(), include_revoked)
     }
 
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>> {

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
+from ._OperatorOriginDevice import OperatorOriginDevice
 from ._OperatorOriginLocalSocket import OperatorOriginLocalSocket
 from ._OperatorOriginTcp import OperatorOriginTcp
 
 
-OperatorOrigin = OperatorOriginLocalSocket | OperatorOriginTcp
+OperatorOrigin = OperatorOriginLocalSocket | OperatorOriginTcp | OperatorOriginDevice

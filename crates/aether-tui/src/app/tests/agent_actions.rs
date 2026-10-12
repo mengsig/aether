@@ -82,7 +82,7 @@ fn esc_interrupts_and_the_streamed_text_is_kept() {
     let effects = app.reduce(key(KeyCode::Esc));
     assert!(matches!(
         &effects[..],
-        [Effect::Request { command: Command::Interrupt { agent }, then: Then::Interrupted(a) }]
+        [Effect::Request { command: Command::Interrupt { agent , idempotency_key: None, }, then: Then::Interrupted(a) }]
             if *agent == id && *a == id
     ));
     let inv = InvocationId::new();

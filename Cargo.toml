@@ -24,10 +24,12 @@ aether-protocol = { path = "crates/aether-protocol" }
 aether-client = { path = "crates/aether-client" }
 aether-engine = { path = "crates/aether-engine" }
 aether-daemon = { path = "crates/aether-daemon" }
+aether-remote = { path = "crates/aether-remote" }
 aether-tui = { path = "crates/aether-tui" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"
+aws-lc-rs = "1.18.1"
 base64 = "0.23.1"
 bytes = "1.12.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
@@ -48,6 +50,7 @@ nix = { version = "0.31.3", features = ["signal", "process", "user"] }
 open = "5.4.3"
 parking_lot = "0.12.5"
 pretty_assertions = "1.4.1"
+qrcode = { version = "0.14.1", default-features = false }
 rand = "0.10.2"
 ratatui = "0.30.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "charset", "http2"] }
@@ -64,6 +67,7 @@ tempfile = "3.27.0"
 textwrap = "0.16.2"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["full"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 tokio-util = { version = "0.7.19", features = ["codec"] }
 toml = "1.1.5"

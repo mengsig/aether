@@ -11,3 +11,14 @@ export interface UnsubscribeCommand {
 export function unsubscribe(args: Omit<UnsubscribeCommand, "cmd">): UnsubscribeCommand {
   return { cmd: "unsubscribe", ...args };
 }
+
+/**
+ * Forget the calling device's push subscription.
+ */
+export interface UnsubscribePushCommand {
+  "cmd": "unsubscribe_push";
+}
+
+export function unsubscribePush(): UnsubscribePushCommand {
+  return { cmd: "unsubscribe_push" };
+}

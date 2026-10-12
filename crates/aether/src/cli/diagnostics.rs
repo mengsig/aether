@@ -50,6 +50,10 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
         Some(c) => c.auth_status().await.unwrap_or_default(),
         None => Vec::new(),
     };
+    let remote = match &client {
+        Some(c) => remote_status(c).await,
+        None => None,
+    };
     let mcp_health = status.as_ref().map(|s| s.mcp.clone()).unwrap_or_default();
     // A config that does not load is `check_config`'s to report.
     let config = aether_model::config::load_config(&paths.config_dir).ok();
@@ -87,7 +91,17 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
         providers,
         doctor::check_engines(&engines_found().await, &command),
         doctor::check_mcp(configured_mcp, &mcp_health, &command),
+        doctor::check_remote(remote.as_ref(), &command),
     ])
+}
+
+/// The daemon's remote access status, or `None` from a daemon that predates
+/// the command or does not answer it.
+async fn remote_status(client: &Client) -> Option<aether_protocol::remote::RemoteStatus> {
+    match client.request(aether_protocol::Command::GetRemote).await {
+        Ok(aether_protocol::Reply::Remote(status)) => Some(status),
+        _ => None,
+    }
 }
 
 /// The engine CLIs on this machine: ready, usable with a known limitation, or

@@ -137,6 +137,8 @@ async fn reply_to(
             daemon_protocol_version: None,
             min_protocol_version: None,
             idle_timeout_secs: None,
+            device: None,
+            submission_horizon: None,
         })),
         Command::GetTree { .. } => plain(Reply::Tree(store.lock().await.tree())),
         Command::GetTranscript { .. } => plain(Reply::Transcript(Vec::new())),

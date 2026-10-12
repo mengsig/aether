@@ -3,7 +3,12 @@ use anyhow::{Context as _, bail};
 use std::io::Write as _;
 
 /// Every run this daemon's store knows about, newest first.
-pub async fn runs_list(socket: PathBuf, limit: usize, json: bool) -> anyhow::Result<()> {
+pub async fn runs_list(
+    socket: impl Into<aether_client::Endpoint>,
+    limit: usize,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let runs = client.runs(limit).await?;
     if json {
@@ -49,7 +54,11 @@ pub async fn runs_list(socket: PathBuf, limit: usize, json: bool) -> anyhow::Res
 }
 
 /// What a run did, composed from its events.
-pub async fn run_report(socket: PathBuf, options: ReportOptions) -> anyhow::Result<()> {
+pub async fn run_report(
+    socket: impl Into<aether_client::Endpoint>,
+    options: ReportOptions,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let run = options
         .run
         .parse::<RunId>()
@@ -91,11 +100,12 @@ pub async fn run_report(socket: PathBuf, options: ReportOptions) -> anyhow::Resu
 
 /// Write a finished run to one file, on the daemon's machine.
 pub async fn run_export(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     run: String,
     out: PathBuf,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let run = run
         .parse::<RunId>()
         .with_context(|| format!("invalid run id {run:?}"))?;
@@ -124,7 +134,12 @@ pub async fn run_export(
 }
 
 /// Recreate a run from an export, under fresh ids.
-pub async fn run_import(socket: PathBuf, file: PathBuf, json: bool) -> anyhow::Result<()> {
+pub async fn run_import(
+    socket: impl Into<aether_client::Endpoint>,
+    file: PathBuf,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let file = std::path::absolute(&file).with_context(|| format!("path {}", file.display()))?;
     let client = connect(&socket).await?;
     let s = client.import_run(file).await?;
@@ -163,7 +178,12 @@ pub(super) fn imported_lines(s: &aether_core::transfer::ImportSummary, command: 
 }
 
 /// Step through an agent's turns as they happened.
-pub async fn replay(socket: PathBuf, agent: String, json: bool) -> anyhow::Result<()> {
+pub async fn replay(
+    socket: impl Into<aether_client::Endpoint>,
+    agent: String,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let agent = agent
         .parse::<AgentId>()
         .with_context(|| format!("invalid agent id {agent:?}"))?;

@@ -254,6 +254,7 @@ impl App {
                 decision,
                 note: None,
                 remember,
+                idempotency_key: None,
             },
             then: Then::ApprovalResolved(id),
         }];

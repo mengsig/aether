@@ -70,7 +70,7 @@ impl App {
             self.flash("view mode reload already in progress");
             return Vec::new();
         }
-        match self.options.prefs_dir.clone() {
+        match self.options.definitions_dir.clone() {
             Some(dir) => {
                 self.modes_reloading = true;
                 vec![Effect::ReloadViewModes(dir)]

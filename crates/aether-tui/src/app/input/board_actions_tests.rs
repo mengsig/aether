@@ -148,14 +148,14 @@ fn both_shift_encodings_dispatch_and_unshifted_letters_are_safe() {
 fn pause_resume_and_interrupt_use_cursor_not_viewed_agent() {
     let (mut app, root, child) = fixture();
     assert!(
-        matches!(&press(&mut app, KeyCode::Char('P'), KeyModifiers::NONE)[..], [Effect::Request { command: Command::Pause { agent, subtree: true }, then: Then::Paused(target) }] if *agent == child && *target == child)
+        matches!(&press(&mut app, KeyCode::Char('P'), KeyModifiers::NONE)[..], [Effect::Request { command: Command::Pause { agent, subtree: true , idempotency_key: None, }, then: Then::Paused(target) }] if *agent == child && *target == child)
     );
     app.tree.nodes.get_mut(&child).unwrap().agent.paused = true;
     assert!(
-        matches!(&press(&mut app, KeyCode::Char('p'), KeyModifiers::SHIFT)[..], [Effect::Request { command: Command::Resume { agent, subtree: true }, then: Then::Resumed(target) }] if *agent == child && *target == child)
+        matches!(&press(&mut app, KeyCode::Char('p'), KeyModifiers::SHIFT)[..], [Effect::Request { command: Command::Resume { agent, subtree: true , idempotency_key: None, }, then: Then::Resumed(target) }] if *agent == child && *target == child)
     );
     assert!(
-        matches!(&press(&mut app, KeyCode::Char('I'), KeyModifiers::SHIFT)[..], [Effect::Request { command: Command::Interrupt { agent }, then: Then::Interrupted(target) }] if *agent == child && *target == child)
+        matches!(&press(&mut app, KeyCode::Char('I'), KeyModifiers::SHIFT)[..], [Effect::Request { command: Command::Interrupt { agent , idempotency_key: None, }, then: Then::Interrupted(target) }] if *agent == child && *target == child)
     );
     assert_eq!(app.selected, Some(root));
     assert!(app.bottom.view_stack.is_empty());
@@ -167,7 +167,7 @@ fn archive_restore_round_trip_preserves_the_viewed_agent() {
     app.tree.nodes.get_mut(&child).unwrap().agent.status = AgentStatus::Completed { summary: None };
     let effects = press(&mut app, KeyCode::Char('D'), KeyModifiers::NONE);
     assert!(
-        matches!(&effects[..], [Effect::Request { command: Command::Archive { target: ArchiveTarget::Agent(id), archived: true }, .. }] if *id == child)
+        matches!(&effects[..], [Effect::Request { command: Command::Archive { target: ArchiveTarget::Agent(id), archived: true , idempotency_key: None, }, .. }] if *id == child)
     );
     let mut archived = app.tree.nodes[&child].agent.clone();
     archived.archived = true;
@@ -191,7 +191,7 @@ fn archive_restore_round_trip_preserves_the_viewed_agent() {
     app.rebuild_board();
     focus(&mut app, child);
     assert!(
-        matches!(&press(&mut app, KeyCode::Char('d'), KeyModifiers::SHIFT)[..], [Effect::Request { command: Command::Archive { target: ArchiveTarget::Agent(id), archived: false }, .. }] if *id == child)
+        matches!(&press(&mut app, KeyCode::Char('d'), KeyModifiers::SHIFT)[..], [Effect::Request { command: Command::Archive { target: ArchiveTarget::Agent(id), archived: false , idempotency_key: None, }, .. }] if *id == child)
     );
     archived.archived = false;
     reply(
@@ -238,7 +238,7 @@ fn live_delete_waits_for_terminal_snapshot_then_archives_only_the_agent() {
     let mut tree = app.tree.clone();
     tree.nodes.get_mut(&child).unwrap().agent.status = AgentStatus::Cancelled { reason: None };
     let effects = reply(&mut app, Then::Tree, Ok(Reply::Tree(tree)));
-    assert!(effects.iter().any(|e| matches!(e, Effect::Request { command: Command::Archive { target: ArchiveTarget::Agent(id), archived: true }, then: Then::BoardArchived { after_stop: true, .. } } if *id == child)));
+    assert!(effects.iter().any(|e| matches!(e, Effect::Request { command: Command::Archive { target: ArchiveTarget::Agent(id), archived: true , idempotency_key: None, }, then: Then::BoardArchived { after_stop: true, .. } } if *id == child)));
     assert!(app.board.pending_removals.is_empty());
 }
 
@@ -305,7 +305,7 @@ fn removing_viewed_root_confirms_even_when_finished_and_selects_a_live_agent() {
     focus(&mut app, root);
     confirm(&mut app, 'D', root, true);
     assert!(
-        matches!(&press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE)[..], [Effect::Request { command: Command::Archive { target: ArchiveTarget::Agent(id), archived: true }, .. }] if *id == root)
+        matches!(&press(&mut app, KeyCode::Char('y'), KeyModifiers::NONE)[..], [Effect::Request { command: Command::Archive { target: ArchiveTarget::Agent(id), archived: true , idempotency_key: None, }, .. }] if *id == root)
     );
     let mut archived = app.tree.nodes[&root].agent.clone();
     archived.archived = true;

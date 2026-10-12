@@ -31,6 +31,10 @@ impl Runtime {
         // row is written back whole, and its `current_task` must not be lost.
         let hold = self.hold();
         if let Some(outcome) = self.replayed_submission(&hold, submission.as_ref())? {
+            if let SubmissionOutcome::Receipt { value } = outcome {
+                return serde_json::from_value(value)
+                    .map_err(|e| RuntimeError::Internal(format!("decode task receipt: {e}")));
+            }
             let SubmissionOutcome::Task { task } = outcome else {
                 return Err(wrong_shape(&outcome, "task"));
             };
@@ -108,11 +112,7 @@ impl Runtime {
             commit.push_mutation(Mutation::UpsertAgent(owner));
         }
         commit.push_mutation(Mutation::UpsertTask(task.clone()));
-        if let Some(submission) = &submission {
-            commit.push_mutation(Mutation::RecordSubmission(
-                submission.record(at, SubmissionOutcome::Task { task: task.id }),
-            ));
-        }
+        crate::submission::record_receipt(&mut commit, submission.as_ref(), &task)?;
         self.apply_held(hold, commit)?;
         Ok(task)
     }

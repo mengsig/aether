@@ -94,7 +94,7 @@ fn quits(effects: &[Effect]) -> bool {
 
 fn interrupts(effects: &[Effect], agent: AgentId) -> bool {
     effects.iter().any(|e| {
-        matches!(e, Effect::Request { command: Command::Interrupt { agent: a }, .. } if *a == agent)
+        matches!(e, Effect::Request { command: Command::Interrupt { agent: a , idempotency_key: None, }, .. } if *a == agent)
     })
 }
 

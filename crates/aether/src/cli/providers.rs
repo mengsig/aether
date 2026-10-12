@@ -1,4 +1,4 @@
-use super::{CancellationToken, PathBuf, ProviderHealth, acted, connect_or_start, sane};
+use super::{CancellationToken, ProviderHealth, acted, connect_or_start, sane};
 
 pub async fn login(provider: String, api_key: bool, method: Option<String>) -> anyhow::Result<()> {
     use aether_model::LoginMethod;
@@ -49,7 +49,8 @@ pub async fn logout(provider: String, json: bool) -> anyhow::Result<()> {
     )
 }
 
-pub async fn auth(socket: PathBuf, json: bool) -> anyhow::Result<()> {
+pub async fn auth(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect_or_start(&socket).await?;
     let rows = client.auth_status().await?;
     if json {
@@ -78,7 +79,8 @@ pub async fn auth(socket: PathBuf, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn models(socket: PathBuf, json: bool) -> anyhow::Result<()> {
+pub async fn models(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect_or_start(&socket).await?;
     let rows = client.list_models().await?;
     if json {
@@ -156,7 +158,11 @@ pub(super) fn health_segments(h: &ProviderHealth) -> Vec<String> {
     parts.into_iter().map(|part| sane(&part)).collect()
 }
 
-pub async fn providers(socket: PathBuf, json: bool) -> anyhow::Result<()> {
+pub async fn providers(
+    socket: impl Into<aether_client::Endpoint>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect_or_start(&socket).await?;
     let rows = client.providers().await?;
     if json {
