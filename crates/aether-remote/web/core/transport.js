@@ -293,6 +293,8 @@ export class RemoteTransport {
       const paired = await this.adapter.pairDevice(identity, secret, name, progress, signal);
       checkAbort(signal);
       await this.device.saveIdentity(paired);
+      // A forget that landed during the save must win: never leave its identity behind.
+      if (signal.aborted) { await this.device.deleteIdentity(); checkAbort(signal); }
     } catch (error) {
       if (!signal.aborted) this.connection('unpaired', 'Pairing did not finish');
       throw error;

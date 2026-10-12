@@ -143,3 +143,14 @@ test('pairing stays unpaired, never offline, and ignores reconnect attempts unti
   assert.deepEqual(statuses,['unpaired','unpaired']);
   await transport.connect(); assert.equal(loads,1); assert.equal(statuses.at(-1),'unpaired');
 });
+test('a forget that lands while pairing saves its identity leaves nothing stored',async()=>{
+  let stored=false; let saving=()=>{}; const started=new Promise(resolve=>{saving=resolve;}); let finishSave=()=>{};
+  const transport = createTransport({socket:()=>{throw new Error('a forgotten pairing must not connect');},
+    adapter:{...contract,pairDevice:async identity=>({...identity,deviceId:'device'})},
+    identity:{...identity,newIdentity:async()=>({keys:{}}),loadIdentity:async()=>undefined,deleteIdentity:async()=>{stored=false;},
+      saveIdentity:()=>new Promise(resolve=>{saving();finishSave=()=>{stored=true;resolve();};})}});
+  const pairing = transport.pair('ABCD-1234','Phone'); await started;
+  const forgetting = transport.forget(); finishSave();
+  await assert.rejects(pairing,/cancelled/); await forgetting;
+  assert.equal(stored,false); assert.equal(transport.status,'unpaired');
+});
