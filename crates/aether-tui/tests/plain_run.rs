@@ -30,6 +30,8 @@ struct Mock {
     hellos: AtomicUsize,
     providers: AtomicUsize,
     messages: AtomicUsize,
+    /// Images the messages carried between them.
+    images: AtomicUsize,
     /// Backfills asked for: plain mode only asks once it has the tree.
     backfills: AtomicUsize,
     /// One tree for the whole session, so an approval can name its agent.
@@ -45,6 +47,7 @@ impl Mock {
             hellos: AtomicUsize::new(0),
             providers: AtomicUsize::new(0),
             messages: AtomicUsize::new(0),
+            images: AtomicUsize::new(0),
             backfills: AtomicUsize::new(0),
             tree: tree(),
             approval: Mutex::new(None),
@@ -149,7 +152,8 @@ fn reply_to(command: &Command, mock: &Mock) -> Result<Reply, ErrorReply> {
             mock.providers.fetch_add(1, Ordering::SeqCst);
             Ok(Reply::Providers(Vec::new()))
         }
-        Command::SendMessage { .. } => {
+        Command::SendMessage { attachments, .. } => {
+            mock.images.fetch_add(attachments.len(), Ordering::SeqCst);
             mock.messages.fetch_add(1, Ordering::SeqCst);
             Ok(Reply::MessageSent {
                 message: aether_core::id::MessageId::new(),
@@ -260,6 +264,52 @@ async fn plain_reconnects_and_then_leaves_when_the_pipe_closes() {
         .expect("plain mode hung after EOF instead of draining and leaving");
     assert!(left.expect("plain mode panicked").is_ok());
     second.abort();
+}
+
+/// A pipe hands over the line after `/image` before the file is read.
+#[tokio::test]
+async fn the_plain_message_after_an_image_command_carries_the_image() {
+    let directory = tempfile::tempdir().unwrap();
+    let socket = directory.path().join("aether.sock");
+    let shot = directory.path().join("shot.png");
+    std::fs::write(&shot, b"\x89PNG\r\n\x1a\npixels").unwrap();
+    let mock = Arc::new(Mock::new());
+    let server = listen(&socket, mock.clone());
+    let client = Client::connect(&socket).await.unwrap();
+    let (mut writer, reader) = tokio::net::unix::pipe::pipe().unwrap();
+    let run = tokio::spawn(aether_tui::plain::run_with_input(
+        client,
+        TuiOptions {
+            socket_path: Some(socket),
+            ..Default::default()
+        },
+        reader,
+    ));
+    // The tree first: a line typed before it would ask for a new agent.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while mock.backfills.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(mock.backfills.load(Ordering::SeqCst), 1);
+    let lines = format!("/image {}\nwhat is this?\n", shot.display());
+    writer.write_all(lines.as_bytes()).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while mock.messages.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(mock.messages.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        mock.images.load(Ordering::SeqCst),
+        1,
+        "the message left before its image was read"
+    );
+    writer.write_all(b"/quit\n").await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), run)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    server.abort();
 }
 
 #[tokio::test]

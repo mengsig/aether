@@ -79,6 +79,13 @@ fn sent_none(effects: &[Effect]) -> bool {
     })
 }
 
+/// Attach `image` the way the clipboard key does: ask, then the read comes back.
+fn attach(app: &mut App, image: ImageAttachment) {
+    let asked = app.paste_clipboard_image();
+    assert_eq!(asked, vec![Effect::AttachImage(ImageSource::Clipboard)]);
+    app.reduce(AppEvent::ImageRead(Ok(image)));
+}
+
 fn chips(app: &App) -> Vec<String> {
     app.input
         .images
@@ -150,7 +157,7 @@ fn a_path_pasted_into_the_find_bar_is_searched_not_attached() {
 #[test]
 fn an_image_needs_no_words_and_steers_a_running_agent() {
     let (mut app, agent) = app_viewing(AgentStatus::Running);
-    app.reduce(AppEvent::ImageRead(Ok(png("shot.png"))));
+    attach(&mut app, png("shot.png"));
     let effects = app.reduce(key(KeyCode::Enter));
     let (to, text, images) = sent(&effects);
     assert_eq!((to, text.as_str()), (agent, ""));
@@ -163,7 +170,7 @@ fn an_image_needs_no_words_and_steers_a_running_agent() {
 #[test]
 fn the_first_message_to_a_new_agent_keeps_its_image() {
     let mut app = app_with_status(TuiOptions::default());
-    app.reduce(AppEvent::ImageRead(Ok(png("shot.png"))));
+    attach(&mut app, png("shot.png"));
     app.reduce(AppEvent::Paste("what is this?".into()));
     let start = app.reduce(key(KeyCode::Enter));
     assert!(sent_none(&start), "nothing is sent before the agent exists");
@@ -183,7 +190,7 @@ fn the_first_message_to_a_new_agent_keeps_its_image() {
 fn chips_come_off_with_backspace_and_with_the_clear_flag() {
     let (mut app, _) = app_viewing(AgentStatus::Ready);
     for name in ["a.png", "b.png", "c.png"] {
-        app.reduce(AppEvent::ImageRead(Ok(png(name))));
+        attach(&mut app, png(name));
     }
     assert_eq!(app.input.images.len(), 3);
 
@@ -256,10 +263,15 @@ fn the_image_command_and_its_key_ask_for_a_file_or_the_clipboard() {
 #[test]
 fn a_message_takes_no_more_images_than_the_daemon_does() {
     let (mut app, _) = app_viewing(AgentStatus::Ready);
-    for n in 0..=MAX_IMAGES_PER_MESSAGE {
-        app.reduce(AppEvent::ImageRead(Ok(png(&format!("{n}.png")))));
+    for n in 0..MAX_IMAGES_PER_MESSAGE {
+        attach(&mut app, png(&format!("{n}.png")));
     }
+    app.reduce(AppEvent::ImagePathPasted {
+        text: "/home/user/one-more.png".into(),
+        image: Ok(png("one-more.png")),
+    });
     assert_eq!(app.input.images.len(), MAX_IMAGES_PER_MESSAGE);
+    assert_eq!(app.input.text, "", "a refused image is not typed either");
     let flash = app.live_flash().unwrap_or_default().to_owned();
     assert!(flash.contains("at most 10 images"), "{flash}");
     assert!(
@@ -269,9 +281,39 @@ fn a_message_takes_no_more_images_than_the_daemon_does() {
 }
 
 #[test]
+fn a_message_waits_for_an_image_that_is_still_being_read() {
+    let (mut app, agent) = app_viewing(AgentStatus::Ready);
+    assert_eq!(app.paste_clipboard_image().len(), 1);
+    app.reduce(AppEvent::Paste("what is this?".into()));
+    for send in [KeyCode::Enter, KeyCode::Tab] {
+        assert!(app.reduce(key(send)).is_empty(), "sent without its image");
+        assert_eq!(app.input.text, "what is this?", "the draft is kept");
+        let flash = app.live_flash().unwrap_or_default().to_owned();
+        assert!(flash.contains("still being read"), "{flash}");
+    }
+
+    app.reduce(AppEvent::ImageRead(Ok(png("shot.png"))));
+    assert_eq!(app.live_flash(), Some("attached shot.png, 14 B"));
+    let (to, text, images) = sent(&app.reduce(key(KeyCode::Enter)));
+    assert_eq!(
+        (to, text.as_str(), images.len()),
+        (agent, "what is this?", 1)
+    );
+
+    // A read that failed is over too: the next message is not held for it.
+    assert_eq!(app.paste_clipboard_image().len(), 1);
+    app.reduce(AppEvent::ImageRead(Err(
+        "the clipboard holds no image".into()
+    )));
+    app.reduce(AppEvent::Paste("never mind".into()));
+    let (_, text, images) = sent(&app.reduce(key(KeyCode::Enter)));
+    assert_eq!((text.as_str(), images.len()), ("never mind", 0));
+}
+
+#[test]
 fn images_are_not_put_in_the_text_only_queue() {
     let (mut app, agent) = app_viewing(AgentStatus::Running);
-    app.reduce(AppEvent::ImageRead(Ok(png("shot.png"))));
+    attach(&mut app, png("shot.png"));
     app.reduce(AppEvent::Paste("after this turn".into()));
     assert!(app.reduce(key(KeyCode::Tab)).is_empty());
     assert_eq!(app.input.text, "after this turn", "the draft is kept");

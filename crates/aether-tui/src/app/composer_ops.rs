@@ -9,9 +9,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use aether_core::agent::AgentStatusKind;
 use aether_core::id::AgentId;
 
-use super::images::Outgoing;
 use super::transcript::{ScrollIntent, Steer};
-use super::{App, ClientError, Command, Effect, InputState, Then};
+use super::{App, ClientError, Command, Effect, InputState, Then, image_label, with_image_lines};
 use crate::commands::InputAction;
 use crate::ui::bottom::composer::{
     Killed, PASTE_PLACEHOLDER_CHARS, PastedText, paste_placeholder, paste_spans,
@@ -226,7 +225,7 @@ impl App {
 
     /// Enter: send to the viewed agent; steers while it runs (preview until consumed).
     pub(crate) fn composer_submit(&mut self) -> Vec<Effect> {
-        if self.refuse_damaged_paste() {
+        if self.refuse_damaged_paste() || self.refuse_unread_image() {
             return Vec::new();
         }
         let text = self.expanded_draft();
@@ -245,11 +244,7 @@ impl App {
             }
         };
         // The preview reads as the transcript will: the text, then a line per image.
-        let preview = Outgoing {
-            text,
-            images: self.input.images.clone(),
-        }
-        .shown_text();
+        let preview = with_image_lines(&text, self.input.images.iter().map(image_label));
         let steer = self.viewed_running().filter(|_| !preview.is_empty());
         let effects = self.submit_input();
         if let Some(agent) = steer {
@@ -269,7 +264,9 @@ impl App {
         let text = match self.parse_input(&self.input.text) {
             // A command is never "after this turn": run it now.
             InputAction::Command(_) => return self.composer_submit(),
-            InputAction::Empty | InputAction::Message(_) if self.refuse_queued_images() => {
+            InputAction::Empty | InputAction::Message(_)
+                if self.refuse_queued_images() || self.refuse_unread_image() =>
+            {
                 return Vec::new();
             }
             InputAction::Empty => return Vec::new(),

@@ -98,6 +98,7 @@ async fn run_loop(
     let mut clock = tokio::time::interval(Duration::from_millis(IDLE_PERIOD_MS));
     clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        pending = attach_images(&mut app, pending).await;
         if pending.iter().any(|e| matches!(e, Effect::Quit)) {
             out.finish_stream_line()?;
             return Ok(());
@@ -179,6 +180,21 @@ async fn run_loop(
             }),
         };
     }
+}
+
+/// Read each image a line asked for before the next line is taken: a pipe
+/// delivers the message after `/image` sooner than a file is read.
+async fn attach_images(app: &mut App, effects: Vec<Effect>) -> Vec<Effect> {
+    let mut rest = Vec::with_capacity(effects.len());
+    for effect in effects {
+        let Effect::AttachImage(source) = effect else {
+            rest.push(effect);
+            continue;
+        };
+        let image = crate::image_input::read(source).await;
+        rest.extend(app.reduce(AppEvent::ImageRead(image)));
+    }
+    rest
 }
 
 /// Whether the session still owes the person something: an agent yet to

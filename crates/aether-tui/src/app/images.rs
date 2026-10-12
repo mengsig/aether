@@ -6,7 +6,7 @@ use aether_core::attachment::{
 };
 
 use super::{App, Effect};
-use crate::commands::ImageArg;
+use crate::commands::{ImageArg, InputAction};
 use crate::image_input::ImageSource;
 use crate::workspace;
 
@@ -29,14 +29,6 @@ impl From<String> for Outgoing {
 impl From<&str> for Outgoing {
     fn from(text: &str) -> Self {
         text.to_owned().into()
-    }
-}
-
-impl Outgoing {
-    /// The message as the transcript will show it once the daemon has it.
-    pub(crate) fn shown_text(&self) -> String {
-        let labels = self.images.iter().map(image_label);
-        with_image_lines(&self.text, labels)
     }
 }
 
@@ -92,6 +84,8 @@ impl App {
 
     /// `Effect::AttachImage` finished.
     pub(crate) fn image_read(&mut self, image: Result<ImageAttachment, String>) {
+        debug_assert!(self.input.image_reads > 0, "an image nothing asked for");
+        self.input.image_reads = self.input.image_reads.saturating_sub(1);
         match image {
             Ok(image) => self.attach_image(image),
             Err(reason) => self.flash_error(format!("no image attached: {reason}")),
@@ -120,6 +114,8 @@ impl App {
             ));
             return;
         }
+        // Said as well as shown: plain mode has no chips.
+        self.flash(format!("attached {}", image.summary()));
         self.input.images.push(image);
         debug_assert!(self.input.images.len() <= MAX_IMAGES_PER_MESSAGE);
     }
@@ -139,7 +135,7 @@ impl App {
             self.flash_error(format!("no such file: {typed}"));
             return Vec::new();
         };
-        vec![Effect::AttachImage(ImageSource::File(path))]
+        self.read_image(ImageSource::File(path))
     }
 
     /// Ask for the image on the system clipboard; it arrives as `ImageRead`.
@@ -150,7 +146,24 @@ impl App {
             ));
             return Vec::new();
         }
-        vec![Effect::AttachImage(ImageSource::Clipboard)]
+        self.read_image(ImageSource::Clipboard)
+    }
+
+    fn read_image(&mut self, source: ImageSource) -> Vec<Effect> {
+        self.input.image_reads += 1;
+        vec![Effect::AttachImage(source)]
+    }
+
+    /// A message sent while an image is still being read would leave without it.
+    pub(crate) fn refuse_unread_image(&mut self) -> bool {
+        if self.input.image_reads == 0 {
+            return false;
+        }
+        if matches!(self.parse_input(&self.input.text), InputAction::Command(_)) {
+            return false;
+        }
+        self.flash("an image is still being read: send again once it is attached");
+        true
     }
 
     fn clear_images(&mut self) {
