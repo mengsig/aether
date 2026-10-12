@@ -107,7 +107,7 @@ looks like a boundary and is not one.
   by path instead.
 - The phone web app cannot attach images yet. It speaks protocol 18, so it
   shows an image sent from elsewhere as its `[image: name, size]` line.
-- A host older than protocol 19 (Aether 1.0.1 or before) takes no images: the
+- A host older than protocol 19 (Aether 1.0.2 or before) takes no images: the
   client refuses the message there and nothing is sent.
 
 ## Orchestration and visibility
