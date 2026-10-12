@@ -12,4 +12,12 @@ class GithubDispatchModeThread(TypedDict, total=False):
     terminal) a durable agent keyed by (repository, issue/PR number), so
     the watcher heals itself instead of pointing at a dead agent forever.
     """
+    approval: _protocol.ApprovalPolicy | None  # optional
+    config: _protocol.AgentConfig | None  # optional
+    fallbacks: list[_protocol.ModelRef]  # optional
     mode: Literal["thread"]
+    model: _protocol.ModelRef | None  # optional
+    name: str | None  # optional
+    objective: str
+    role: str
+    scope: _protocol.Scope | None  # optional

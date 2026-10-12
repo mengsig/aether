@@ -11,7 +11,7 @@ class TypeScriptLayoutTests(unittest.TestCase):
     def setUpClass(cls):
         cls.schema = generator.load(generator.SCHEMA_PATH)
         cls.definitions = {
-            name: generator.typescript_definition(name, value)
+            name: generator.typescript_definition(name, value, cls.schema["$defs"])
             for name, value in sorted(cls.schema["$defs"].items())
         }
         cls.commands = generator.typescript_commands(cls.schema["$defs"])
@@ -46,6 +46,16 @@ class TypeScriptLayoutTests(unittest.TestCase):
     def test_output_is_deterministic(self):
         self.assertEqual(self.output, files(
             self.schema, self.definitions, self.commands, [generator.BANNER]))
+
+    def test_an_image_reference_block_is_typed_with_its_metadata(self):
+        module = self.output["protocol/types/ContentBlock.ts"]
+        start = module.index("export interface ContentBlockImageRef {")
+        interface = module[start:module.index("}", start)]
+        for field in ('"id": AttachmentId;', '"media_type": string;',
+                      '"name"?: string | null;', '"size_bytes": number;',
+                      '"type": "image_ref";'):
+            self.assertIn(field, interface)
+        self.assertIn("AttachmentId,", module[:start])
 
 
 if __name__ == "__main__":

@@ -85,6 +85,26 @@ class PythonBuilderLayoutTests(unittest.TestCase):
                     {key: shape(value) for key, value in typing.get_type_hints(new).items()},
                 )
 
+    def test_a_union_member_carries_the_fields_of_the_struct_it_references(self):
+        defs = {"Stored": {"properties": {"id": {"type": "string"}, "name": {"type": "string"}},
+                           "required": ["id"]}}
+        variant = {"$ref": "#/$defs/Stored", "required": ["type"],
+                   "properties": {"type": {"const": "stored"}, "note": {"type": "string"}}}
+        properties, required = generator.variant_fields(defs, variant, "type", "stored")
+        self.assertEqual(set(properties), {"id", "name", "note", "type"})
+        self.assertEqual(properties["type"], {"const": "stored"})
+        self.assertEqual(required, {"id", "type"})
+        self.assertEqual(set(defs["Stored"]["properties"]), {"id", "name"})
+
+    def test_an_image_reference_block_is_typed_with_its_metadata(self):
+        hints = typing.get_type_hints(protocol.ContentBlockImageRef)
+        self.assertEqual(set(hints), {"id", "media_type", "name", "size_bytes", "type"})
+        self.assertEqual(hints["size_bytes"], int)
+        self.assertEqual(hints["type"], typing.Literal["image_ref"])
+        source = inspect.getsource(protocol.ContentBlockImageRef)
+        self.assertIn("name: str | None  # optional", source)
+        self.assertNotIn("media_type: str  # optional", source)
+
 
 if __name__ == "__main__":
     unittest.main()

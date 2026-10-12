@@ -2,6 +2,10 @@
 // Do not edit: change the Rust types and regenerate.
 
 import type {
+  AgentConfig,
+  ApprovalPolicy,
+  ModelRef,
+  Scope,
   trigger,
 } from "../../protocol.ts";
 
@@ -31,7 +35,15 @@ export interface GithubDispatchModeAutomatic {
  * the watcher heals itself instead of pointing at a dead agent forever.
  */
 export interface GithubDispatchModeThread {
+  "approval"?: ApprovalPolicy | null;
+  "config"?: AgentConfig | null;
+  "fallbacks"?: Array<ModelRef>;
   "mode": "thread";
+  "model"?: ModelRef | null;
+  "name"?: string | null;
+  "objective": string;
+  "role": string;
+  "scope"?: Scope | null;
 }
 
 export type GithubDispatchMode =

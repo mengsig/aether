@@ -12,4 +12,8 @@ class ContentBlockImageRef(TypedDict, total=False):
     state carries this reference; the bytes are read back only to build
     a model request.
     """
+    id: _protocol.AttachmentId
+    media_type: str
+    name: str | None  # optional
+    size_bytes: int
     type: Literal["image_ref"]

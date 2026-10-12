@@ -154,6 +154,16 @@ def merged_fields(defs, variant, discriminant):
     return properties, required
 
 
+def variant_fields(defs, variant, discriminant, tag):
+    """A union member's fields as a type declares them: the branch's own and
+    its `$ref` struct's, plus the discriminant pinned to this member's tag."""
+    properties, required = merged_fields(defs, variant, discriminant)
+    properties[discriminant] = {"const": tag}
+    if discriminant in variant.get("required", []):
+        required.add(discriminant)
+    return properties, required
+
+
 def describe(schema):
     """The doc text for a schema, as one line per source line."""
     text = schema.get("description") if isinstance(schema, dict) else None
@@ -300,7 +310,7 @@ def python_library(schema):
         "",
     ]
     for name in sorted(defs):
-        out.extend(python_definition(name, defs[name]))
+        out.extend(python_definition(name, defs[name], defs))
     out.extend(python_commands(defs))
     return "\n".join(out).rstrip() + "\n"
 
@@ -333,7 +343,7 @@ def python_class(name, properties, required, doc):
     return lines + [""]
 
 
-def python_definition(name, schema):
+def python_definition(name, schema, defs):
     doc = describe(schema)
     literals = string_literals(schema)
     if literals:
@@ -343,24 +353,21 @@ def python_definition(name, schema):
         return python_class(name, properties, set(schema.get("required", [])), doc)
     discriminant = discriminant_of(schema)
     if discriminant:
-        return python_variants(name, schema, discriminant, doc)
+        return python_variants(name, schema, discriminant, doc, defs)
     if schema.get("type") == "string" and schema.get("pattern"):
         return python_comment(doc + [f"Pattern: {schema['pattern']}"]) + [f"{name} = str", ""]
     return python_comment(doc) + [f"{name} = {type_of(PYTHON, schema)}", ""]
 
 
-def python_variants(name, schema, discriminant, doc):
+def python_variants(name, schema, discriminant, doc, defs):
     """A serde-tagged union: one class per variant, then the alias."""
     lines = python_comment(doc + [f"Tagged by `{discriminant}`."])
     members = []
     for tag, variant in tagged_union(schema, discriminant):
         member = member_name(name, tag)
         members.append(member)
-        properties = dict(variant.get("properties", {}))
-        properties[discriminant] = {"const": tag}
-        lines.extend(
-            python_class(member, properties, set(variant.get("required", [])), describe(variant))
-        )
+        properties, required = variant_fields(defs, variant, discriminant, tag)
+        lines.extend(python_class(member, properties, required, describe(variant)))
     lines.extend(wrapped_union(f"{name} = ", members, " | "))
     return lines + [""]
 
@@ -428,7 +435,7 @@ def typescript_library(schema):
         "",
     ]
     for name in sorted(defs):
-        out.extend(typescript_definition(name, defs[name]))
+        out.extend(typescript_definition(name, defs[name], defs))
     out.extend(typescript_commands(defs))
     return "\n".join(out).rstrip() + "\n"
 
@@ -448,7 +455,7 @@ def typescript_interface(name, properties, required, doc):
     return lines + ["}", ""]
 
 
-def typescript_definition(name, schema):
+def typescript_definition(name, schema, defs):
     doc = describe(schema)
     literals = string_literals(schema)
     if literals:
@@ -461,7 +468,7 @@ def typescript_definition(name, schema):
         return typescript_interface(name, properties, set(schema.get("required", [])), doc)
     discriminant = discriminant_of(schema)
     if discriminant:
-        return typescript_variants(name, schema, discriminant, doc)
+        return typescript_variants(name, schema, discriminant, doc, defs)
     if schema.get("type") == "string" and schema.get("pattern"):
         return typescript_documented(doc + [f"Pattern: {schema['pattern']}"]) + [
             f"export type {name} = string;",
@@ -473,19 +480,14 @@ def typescript_definition(name, schema):
     ]
 
 
-def typescript_variants(name, schema, discriminant, doc):
+def typescript_variants(name, schema, discriminant, doc, defs):
     lines = typescript_documented(doc + [f"Tagged by `{discriminant}`."])
     members = []
     for tag, variant in tagged_union(schema, discriminant):
         member = member_name(name, tag)
         members.append(member)
-        properties = dict(variant.get("properties", {}))
-        properties[discriminant] = {"const": tag}
-        lines.extend(
-            typescript_interface(
-                member, properties, set(variant.get("required", [])), describe(variant)
-            )
-        )
+        properties, required = variant_fields(defs, variant, discriminant, tag)
+        lines.extend(typescript_interface(member, properties, required, describe(variant)))
     lines.extend(wrapped_union(f"export type {name} = ", members, " | "))
     return lines + [""]
 
@@ -566,7 +568,10 @@ def main():
     wanted = {PYTHON_OUT.parent / path: text for path, text in generated_py.items()}
     generated_ts = typescript_files(
         schema,
-        {name: typescript_definition(name, value) for name, value in sorted(schema["$defs"].items())},
+        {
+            name: typescript_definition(name, value, schema["$defs"])
+            for name, value in sorted(schema["$defs"].items())
+        },
         typescript_commands(schema["$defs"]),
         [BANNER, DO_NOT_EDIT],
     )

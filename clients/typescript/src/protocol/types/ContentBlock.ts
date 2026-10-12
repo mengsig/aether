@@ -2,6 +2,7 @@
 // Do not edit: change the Rust types and regenerate.
 
 import type {
+  AttachmentId,
   ToolResultBlock,
 } from "../../protocol.ts";
 
@@ -47,6 +48,10 @@ export interface ContentBlockImage {
  * a model request.
  */
 export interface ContentBlockImageRef {
+  "id": AttachmentId;
+  "media_type": string;
+  "name"?: string | null;
+  "size_bytes": number;
   "type": "image_ref";
 }
 
