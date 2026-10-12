@@ -4,6 +4,29 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## 1.0.2
+
+A fix for sign-in on machines where `~/.config/aether` was created writable by
+its group, as it is under the `umask 002` that Ubuntu gives a user.
+
+### Fixed
+
+- **Signing in works when the credentials directory is unsafe.** Aether refuses
+  to read stored credentials from a directory that its group or anyone else can
+  write to. That refusal used to mark every provider as not connected, so the
+  TUI kept asking for `/login` although `claude auth status` said you were
+  signed in. Providers that sign in through their own CLI (Claude Code, Codex)
+  or need no credentials (Ollama) now work regardless; a stored or environment
+  key still comes first when one can be read.
+- **Aether creates its directories private.** The config directory and the ones
+  beneath it are made with mode `0700` whatever the umask. An existing unsafe
+  directory is still refused for stored credentials, and the error now names
+  the `chmod 700` that repairs it.
+- **The reason a provider is not connected is shown.** `aether auth`, the login
+  view and the TUI's header report what the daemon found, and a CLI sign-in
+  check reads as the program and its outcome. `aether doctor` warns about an
+  unsafe credentials directory.
+
 ## 1.0.1
 
 Remote control: drive Aether from a phone, and from another machine over SSH.

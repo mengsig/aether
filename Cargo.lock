@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aether"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-client",
  "aether-core",
@@ -39,7 +39,7 @@ dependencies = [
 
 [[package]]
 name = "aether-client"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-core",
  "aether-net",
@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "aether-context"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-core",
  "aether-model",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "aether-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "aether-daemon"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-client",
  "aether-core",
@@ -142,7 +142,7 @@ dependencies = [
 
 [[package]]
 name = "aether-engine"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-client",
  "aether-context",
@@ -168,7 +168,7 @@ dependencies = [
 
 [[package]]
 name = "aether-memory"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-core",
  "aether-store",
@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "aether-model"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-core",
  "async-trait",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "aether-net"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "reqwest",
  "thiserror 2.0.21",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "aether-protocol"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-core",
  "aether-store",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "aether-remote"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-core",
  "aether-net",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "aether-runtime"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-context",
  "aether-core",
@@ -305,7 +305,7 @@ dependencies = [
 
 [[package]]
 name = "aether-store"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-core",
  "chrono",
@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "aether-tools"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-core",
  "aether-net",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "aether-tui"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aether-client",
  "aether-core",
