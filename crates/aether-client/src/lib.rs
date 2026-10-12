@@ -5,6 +5,7 @@
 //! caller and pushes subscription frames to their [`Subscription`]. The TUI,
 //! the CLI and orchestration applications all sit on this crate.
 
+pub mod endpoint;
 pub mod mcp;
 pub mod serve;
 pub mod sink;
@@ -25,11 +26,19 @@ use tokio::net::UnixStream;
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 mod agents;
+mod delivery;
+mod outbox;
+mod resolution;
+pub use delivery::key_command;
+pub use outbox::{Unreadable, Unresolved};
+pub use resolution::{Settlement, Undecided};
 mod operations;
 mod records;
+mod ssh;
 mod subscription;
 pub use subscription::{Subscription, SubscriptionFrame};
 
+pub use endpoint::{Endpoint, SshRemote};
 pub use sink::{CommandSink, DaemonSink};
 pub use start::{StartingDaemon, ensure_daemon, watch_startup};
 pub use transport::{MemoryPeer, Transport};
@@ -42,6 +51,10 @@ pub enum ClientError {
     Protocol(#[from] ErrorReply),
     #[error("codec: {0}")]
     Codec(#[from] serde_json::Error),
+    #[error("SSH connection failed: {0}")]
+    Ssh(String),
+    #[error("delivery unconfirmed: {0}")]
+    DeliveryUnconfirmed(String),
     #[error("disconnected from daemon")]
     Disconnected,
     #[error("incompatible daemon: {0}")]
@@ -136,6 +149,9 @@ pub struct Client {
     /// alternative is failing a slow-to-answer approval that the operator did
     /// grant.
     request_timeout: Option<Duration>,
+    carrier: Option<Arc<ssh::Carrier>>,
+    outbox: Option<Arc<outbox::Outbox>>,
+    recovered: Vec<(Command, std::result::Result<Reply, ErrorReply>)>,
 }
 
 /// Buffered event/delta frames per subscription, excluding its terminal lag signal.
@@ -243,6 +259,9 @@ impl Client {
             sink,
             welcome: None,
             request_timeout: Some(DEFAULT_REQUEST_TIMEOUT),
+            carrier: None,
+            outbox: None,
+            recovered: Vec::new(),
         }
     }
 
@@ -251,19 +270,45 @@ impl Client {
         self.welcome.as_ref()
     }
 
+    pub fn recovered_commands(&self) -> &[(Command, std::result::Result<Reply, ErrorReply>)] {
+        &self.recovered
+    }
+
     pub fn is_connected(&self) -> bool {
         !self.shared.closed.load(Ordering::SeqCst)
+    }
+
+    /// A subscription replay ended because retained history is no longer available.
+    pub fn history_expired(&self) -> bool {
+        self.disconnect_reason()
+            .is_some_and(|reason| reason.code == ErrorCode::NotFound)
     }
 
     /// Why the daemon ended this connection, when it said. A tokened
     /// transport that drops a quiet client explains itself first, and a
     /// caller that only reports `Disconnected` throws that away.
     pub fn disconnect_reason(&self) -> Option<ErrorReply> {
-        self.shared.notice.lock().ok().and_then(|held| held.clone())
+        self.shared
+            .notice
+            .lock()
+            .ok()
+            .and_then(|held| held.clone())
+            .or_else(|| {
+                self.carrier.as_ref().map(|carrier| ErrorReply {
+                    code: ErrorCode::Unavailable,
+                    message: carrier.diagnostics(),
+                })
+            })
     }
 
     async fn handshake(&self, token: Option<String>) -> Result<Welcome> {
-        let hello = Hello::new("aether", env!("CARGO_PKG_VERSION"));
+        self.handshake_version(token, aether_protocol::PROTOCOL_VERSION)
+            .await
+    }
+
+    async fn handshake_version(&self, token: Option<String>, version: u32) -> Result<Welcome> {
+        let mut hello = Hello::new("aether", env!("CARGO_PKG_VERSION"));
+        hello.protocol_version = version;
         let hello = match token {
             Some(token) => hello.with_token(token),
             None => hello,
@@ -289,13 +334,49 @@ impl Client {
     /// that never arrives - would otherwise leave the caller waiting for
     /// ever. `aether memory forget` hanging against a daemon left running
     /// from a previous build is the common shape of that.
-    pub async fn request(&self, command: Command) -> Result<Reply> {
+    pub async fn request(&self, mut command: Command) -> Result<Reply> {
         if matches!(command, Command::Subscribe { .. }) {
             return Err(ClientError::InvalidUsage(
                 "use Client::subscribe to receive subscription frames".into(),
             ));
         }
-        Ok(self.request_inner(command).await?.reply)
+        let keyed = self.prepare_remote_command(&mut command)?;
+        let mutating = self.carrier.is_some() && delivery::is_mutating(&command);
+        let name = command.name();
+        let recorded = match (&self.outbox, keyed) {
+            (Some(outbox), true) => Some(outbox.record(&command, self.horizon()).await?),
+            _ => None,
+        };
+        let result = self.request_inner(command).await;
+        if matches!(result, Ok(_) | Err(ClientError::Protocol(_)))
+            && let (Some(outbox), Some(claim)) = (&self.outbox, &recorded)
+        {
+            outbox.acknowledge(claim).await.map_err(|error| {
+                ClientError::DeliveryUnconfirmed(format!(
+                    "{name} answered but its outbox entry could not be retired: {error}"
+                ))
+            })?;
+        }
+        match result {
+            Ok(response) => Ok(response.reply),
+            Err(error @ (ClientError::Disconnected | ClientError::TimedOut { .. }))
+                if self.carrier.is_some() =>
+            {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let diagnostics = self
+                    .disconnect_reason()
+                    .map(|reason| reason.message)
+                    .unwrap_or_else(|| "SSH has reported no diagnostic".into());
+                let message =
+                    format!("{name}: {error}; {diagnostics}; refresh host state before retrying");
+                if mutating {
+                    Err(ClientError::DeliveryUnconfirmed(message))
+                } else {
+                    Err(ClientError::Ssh(message))
+                }
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn request_inner(&self, command: Command) -> Result<PendingResponse> {
@@ -378,12 +459,19 @@ fn expect_ok(reply: Reply) -> Result<()> {
     }
 }
 
-fn unexpected(expected: &'static str, got: &Reply) -> ClientError {
-    let got = serde_json::to_value(got)
+/// A reply's wire tag, for a message about one that was not expected.
+fn reply_name(reply: &Reply) -> String {
+    serde_json::to_value(reply)
         .ok()
         .and_then(|v| v.get("reply").and_then(|r| r.as_str()).map(str::to_owned))
-        .unwrap_or_else(|| "unknown".into());
-    ClientError::Unexpected { expected, got }
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn unexpected(expected: &'static str, got: &Reply) -> ClientError {
+    ClientError::Unexpected {
+        expected,
+        got: reply_name(got),
+    }
 }
 
 /// A hello refused for its protocol version, with both sides of the skew.
@@ -511,6 +599,12 @@ async fn reader_loop(
                     },
                 )
                 .await;
+            }
+            // Only the browser carrier challenges, and this client holds no
+            // device key: it has reached something it cannot greet.
+            ServerFrame::Challenge { .. } => {
+                tracing::warn!("the daemon asked for a device proof this client cannot give");
+                break;
             }
         }
     }

@@ -1,4 +1,4 @@
-use crate::id::{AgentId, ApprovalRuleId, ToolCallId};
+use crate::id::{AgentId, ApprovalRuleId, DeviceId, ToolCallId};
 use serde::{Deserialize, Serialize};
 
 /// Server-observed connection identity, never a bearer token or client-supplied name.
@@ -10,6 +10,12 @@ pub enum OperatorOrigin {
     },
     Tcp {
         peer: std::net::SocketAddr,
+        connection: String,
+    },
+    /// A paired remote device, named as the daemon enrolled it.
+    Device {
+        device: DeviceId,
+        name: String,
         connection: String,
     },
 }
@@ -88,6 +94,14 @@ impl Actor {
                     Some(OperatorOrigin::Tcp { peer, connection }) => {
                         format!("{user}:tcp:{peer}#{connection}")
                     }
+                    Some(OperatorOrigin::Device {
+                        device,
+                        name,
+                        connection,
+                    }) => format!(
+                        "{user}:device:{}({device})#{connection}",
+                        provenance_name(name)
+                    ),
                 }
             }
             Self::Agent { id } => id.to_string(),
@@ -137,4 +151,22 @@ impl Actor {
             },
         }
     }
+}
+
+/// Encode punctuation and non-ASCII bytes so a name cannot delimit another marker.
+pub fn provenance_name(name: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'-' | b'_' | b'\'') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 15)]));
+        }
+    }
+    debug_assert!(encoded.is_ascii());
+    debug_assert!(!encoded.contains(['\n', '\r', '[', ']', '(', ')', '#', ':']));
+    encoded
 }

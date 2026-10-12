@@ -20,6 +20,10 @@ pub struct TuiOptions {
     pub auto_create_root: bool,
     /// Socket used for reconnection after the daemon restarts.
     pub socket_path: Option<PathBuf>,
+    pub endpoint: Option<aether_client::Endpoint>,
+    pub instance_id: Option<String>,
+    pub resume_seq: Option<u64>,
+    pub draft: Option<String>,
     /// Preserve an explicitly selected socket in copyable command hints.
     pub explicit_socket: bool,
     /// What the mouse does: off (native selection), or capture for scrolling and selection.
@@ -53,6 +57,8 @@ pub struct TuiOptions {
     /// Where `/theme` and `/motion` save what was chosen. `None` keeps the
     /// choice to this run.
     pub prefs_dir: Option<PathBuf>,
+    /// Shared custom themes and view modes, independent of endpoint session state.
+    pub definitions_dir: Option<PathBuf>,
     /// Spinner static and scrolling instant (§9.7).
     pub reduced_motion: bool,
     pub ascii: bool,
@@ -63,7 +69,15 @@ pub struct TuiOptions {
 }
 
 impl TuiOptions {
+    pub fn is_remote(&self) -> bool {
+        self.endpoint
+            .as_ref()
+            .is_some_and(aether_client::Endpoint::is_remote)
+    }
     pub(crate) fn command_hint(&self) -> String {
+        if let Some(endpoint) = &self.endpoint {
+            return endpoint.command_hint(self.explicit_socket);
+        }
         let socket = self
             .socket_path
             .clone()

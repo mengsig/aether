@@ -218,7 +218,11 @@ impl BottomView for SchedulesView {
 
 fn update(id: ScheduleId, action: ScheduleAction) -> ViewOutcome {
     ViewOutcome::Act(vec![ViewAction::Effect(Box::new(Effect::Request {
-        command: Command::UpdateSchedule { id, action },
+        command: Command::UpdateSchedule {
+            id,
+            action,
+            idempotency_key: None,
+        },
         then: Then::ScheduleChanged,
     }))])
 }

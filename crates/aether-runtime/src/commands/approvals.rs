@@ -21,6 +21,17 @@ impl Runtime {
         subtree: bool,
         by: Actor,
     ) -> Result<Vec<Agent>> {
+        self.set_approvals_keyed(root, policy, subtree, by, None)
+    }
+
+    pub fn set_approvals_keyed(
+        &self,
+        root: AgentId,
+        policy: ApprovalPolicy,
+        subtree: bool,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<Vec<Agent>> {
         if !policy.is_yolo() && self.config.yolo {
             return Err(RuntimeError::Invalid(
                 "the daemon runs in yolo mode; approvals are off for every agent".into(),
@@ -33,6 +44,9 @@ impl Runtime {
         // engine_session - would otherwise be reverted;
         // the hold rules that window out entirely.
         let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let targets = self.live_targets(root, subtree, "approvals target")?;
         // The root is the one the operator named, so it is the only one whose
         // parent is outside the change: a descendant's parent moves with it.
@@ -110,10 +124,7 @@ impl Runtime {
             commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
             changed.push(agent);
         }
-        if changed.is_empty() {
-            return Ok(changed);
-        }
-        self.apply_held(hold, commit)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &changed)?;
         Ok(changed)
     }
 
@@ -138,9 +149,24 @@ impl Runtime {
         note: Option<String>,
         remember: Option<Remember>,
     ) -> Result<()> {
+        self.resolve_approval_keyed(id, decision, by, note, remember, None)
+    }
+
+    pub fn resolve_approval_keyed(
+        &self,
+        id: ApprovalId,
+        decision: ApprovalDecision,
+        by: Actor,
+        note: Option<String>,
+        remember: Option<Remember>,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<()> {
         // Before the pending check: two answers racing past it would both
         // commit, and the call could be denied yet run, or run twice.
         let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let mut approval = self
             .store
             .approval(id)?
@@ -213,12 +239,13 @@ impl Runtime {
                 InboxKind::ApprovalResolved {
                     approval: id,
                     decision,
+                    by: Some(by.clone()),
                     note,
                 },
                 by,
             )?;
         }
-        self.apply_held(hold, commit)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &())?;
         Ok(())
     }
 

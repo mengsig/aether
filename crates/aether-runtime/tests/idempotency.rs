@@ -435,11 +435,23 @@ impl Store for CommitLog {
     fn submission(&self, key: &IdempotencyKey) -> StoreResult<Option<RecordedSubmission>> {
         self.inner.submission(key)
     }
+    fn submission_ledger(&self) -> StoreResult<aether_core::idempotency::SubmissionLedger> {
+        self.inner.submission_ledger()
+    }
     fn approval_rule(&self, id: ApprovalRuleId) -> StoreResult<Option<ApprovalRule>> {
         self.inner.approval_rule(id)
     }
     fn approval_rules(&self, include_revoked: bool) -> StoreResult<Vec<ApprovalRule>> {
         self.inner.approval_rules(include_revoked)
+    }
+    fn device(
+        &self,
+        id: aether_core::id::DeviceId,
+    ) -> StoreResult<Option<aether_store::DeviceRow>> {
+        self.inner.device(id)
+    }
+    fn devices(&self, include_revoked: bool) -> StoreResult<Vec<aether_store::DeviceRow>> {
+        self.inner.devices(include_revoked)
     }
     fn memory(&self, id: MemoryId) -> StoreResult<Option<MemoryRecord>> {
         self.inner.memory(id)
@@ -517,3 +529,9 @@ mod concurrency;
 
 #[path = "idempotency/atomicity.rs"]
 mod atomicity;
+
+#[path = "idempotency/state_changes.rs"]
+mod state_changes;
+
+#[path = "idempotency/resolution.rs"]
+mod resolution;

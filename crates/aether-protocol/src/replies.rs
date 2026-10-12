@@ -1,9 +1,14 @@
+use super::remote::{
+    Attention, Device, GitSummary, Pairing, PathCompletions, PushConfig, RemoteStatus, Workspace,
+    WorkspaceValidation,
+};
 use super::{
     Agent, AgentId, ApprovalDefault, ApprovalRequest, ApprovalRule, Artifact, BTreeMap,
     CapabilityProfile, Checkpoint, Deserialize, Event, ExportSummary, ImportSummary, InboxItem,
     Invocation, InvocationId, InvocationSnapshot, Lease, LowDisk, McpServerHealth, MemoryRecord,
     Message, MessageId, ModelRef, NetworkPolicy, ProviderHealth, ReplayFrame, ResourceHolding,
-    RunId, RunReport, RunSummary, Serialize, Task, TaskId, Timestamp, Usage, Welcome,
+    RunId, RunReport, RunSummary, Serialize, Task, TaskId, Timestamp, UnprovenAbsence, Usage,
+    Welcome,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -312,6 +317,39 @@ pub enum Reply {
     EngineTools {
         tools: Vec<aether_core::model::ToolSpec>,
     },
+    Attention(Attention),
+    PathCompletions(PathCompletions),
+    Workspaces(Vec<Workspace>),
+    WorkspaceValidation(WorkspaceValidation),
+    GitSummary(GitSummary),
+    Remote(RemoteStatus),
+    Pairing(Pairing),
+    Device(Device),
+    Devices(Vec<Device>),
+    PushConfig(PushConfig),
+    SubmissionResolved(SubmissionResolution),
+}
+
+/// What became of a keyed command, as far as the daemon can prove. Each
+/// carries the daemon's `horizon` now; `retained_since` is for people to read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum SubmissionResolution {
+    /// It ran. `reply` is what a duplicate under the same key is answered.
+    Executed { reply: Box<Reply>, horizon: String },
+    /// It never ran: no receipt, and no receipt recorded since the request's
+    /// horizon was ever dropped. Sending it again under the same key is safe.
+    AbsentSafe {
+        horizon: String,
+        retained_since: Timestamp,
+    },
+    /// No receipt, and nothing proves there never was one. Only a person can
+    /// decide whether to send it again.
+    Unknown {
+        reason: UnprovenAbsence,
+        horizon: String,
+        retained_since: Timestamp,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -328,6 +366,11 @@ pub enum ErrorCode {
     /// The provider or model is not configured.
     Unavailable,
     Internal,
+    /// The connection is authenticated, but its transport or role may not
+    /// run this command.
+    Forbidden,
+    /// The command is part of the protocol and this build does not serve it.
+    Unimplemented,
 }
 
 #[derive(
@@ -357,5 +400,16 @@ impl ErrorReply {
 
     pub fn invalid(msg: impl Into<String>) -> Self {
         Self::new(ErrorCode::InvalidArgument, msg)
+    }
+
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self::new(ErrorCode::Forbidden, msg)
+    }
+
+    pub fn unimplemented(what: impl std::fmt::Display) -> Self {
+        Self::new(
+            ErrorCode::Unimplemented,
+            format!("{what} is not implemented in this build"),
+        )
     }
 }

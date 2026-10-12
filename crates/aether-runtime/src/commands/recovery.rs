@@ -74,10 +74,22 @@ impl Runtime {
     /// the old one in both directions. The old agent is left as it ended;
     /// its spend stays on its own record, so nothing is counted twice.
     pub fn restart_agent(&self, id: AgentId, by: Actor) -> Result<Agent> {
+        self.restart_agent_keyed(id, by, None)
+    }
+
+    pub fn restart_agent_keyed(
+        &self,
+        id: AgentId,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<Agent> {
         // The successor link is read here and written by the commit below, so
         // the read happens under the hold: two restarts racing on one agent
         // would otherwise both see no successor and both create one.
         let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let mut old = self
             .store
             .agent(id)?
@@ -277,7 +289,7 @@ impl Runtime {
         old.restarted_as = Some(new_id);
         old.updated_at = at;
         commit.push_mutation(Mutation::UpsertAgent(old));
-        self.apply_held(hold, commit)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &agent)?;
         Ok(agent)
     }
 

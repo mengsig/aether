@@ -1,5 +1,6 @@
 use super::*;
 use aether_core::mcp::{McpServerHealth, McpServerState};
+use aether_protocol::remote::RemoteStatus;
 
 fn paths(dir: &Path) -> Paths {
     Paths {
@@ -692,4 +693,73 @@ fn log_check_requires_append_access_without_changing_permissions() {
         0o444
     );
     assert_eq!(std::fs::read_to_string(&log).unwrap(), "keep\n");
+}
+
+fn remote(enabled: bool, listening: Option<&str>, origins: &[&str], devices: u32) -> RemoteStatus {
+    RemoteStatus {
+        settings: aether_protocol::remote::RemoteSettings {
+            enabled,
+            public_origins: origins.iter().map(|o| (*o).to_owned()).collect(),
+            ..Default::default()
+        },
+        listening: listening.map(str::to_owned),
+        devices,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn remote_access_that_was_never_turned_on_is_fine_and_says_how() {
+    let check = check_remote(Some(&remote(false, None, &[], 0)), "aether");
+    assert_eq!(check.level, Level::Ok);
+    assert!(
+        check.detail.contains("aether remote setup"),
+        "{}",
+        check.detail
+    );
+    assert_eq!(check_remote(None, "aether").level, Level::Ok);
+}
+
+#[test]
+fn a_listener_that_failed_to_open_is_a_failure_with_the_reason() {
+    let mut status = remote(true, None, &[], 0);
+    status.error = Some("address already in use".into());
+    let check = check_remote(Some(&status), "aether");
+    assert_eq!(check.level, Level::Fail);
+    assert!(check.detail.contains("address already in use"));
+    assert!(check.fix.is_some());
+}
+
+#[test]
+fn a_listener_nobody_can_reach_by_name_is_a_warning() {
+    let check = check_remote(
+        Some(&remote(true, Some("127.0.0.1:8377"), &[], 0)),
+        "aether",
+    );
+    assert_eq!(check.level, Level::Warn);
+    assert!(
+        check.detail.contains("phones are refused"),
+        "{}",
+        check.detail
+    );
+    let closed = check_remote(
+        Some(&remote(true, None, &["https://a.ts.net"], 1)),
+        "aether",
+    );
+    assert_eq!(closed.level, Level::Warn);
+}
+
+#[test]
+fn a_published_listener_with_a_paired_device_is_healthy() {
+    let status = remote(true, Some("127.0.0.1:8377"), &["https://a.ts.net"], 1);
+    let check = check_remote(Some(&status), "aether");
+    assert_eq!(check.level, Level::Ok);
+    assert!(check.detail.contains("https://a.ts.net") && check.detail.contains("1 device(s)"));
+    let unpaired = remote(true, Some("127.0.0.1:8377"), &["https://a.ts.net"], 0);
+    let check = check_remote(Some(&unpaired), "aether");
+    assert_eq!(check.level, Level::Warn);
+    assert_eq!(
+        check.fix.as_deref(),
+        Some("`aether remote pair` adds a phone")
+    );
 }

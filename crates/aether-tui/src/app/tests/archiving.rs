@@ -20,7 +20,8 @@ fn clear_sweeps_finished_work_and_the_filter_is_remembered() {
         [Effect::Request {
             command: Command::Archive {
                 target: ArchiveTarget::AllFinished,
-                archived: true
+                archived: true,
+                idempotency_key: None,
             },
             ..
         }]

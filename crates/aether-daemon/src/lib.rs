@@ -1,6 +1,7 @@
 //! The daemon: owns the runtime and the store, serves the protocol over a
 //! Unix socket. Every connected client is a projection; none is privileged.
 
+mod authz;
 mod connection;
 #[cfg(test)]
 mod env_tests;
@@ -8,6 +9,8 @@ mod instance_lock;
 pub mod listen;
 mod mcp;
 mod projections;
+pub mod push;
+pub mod remote;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -105,6 +108,10 @@ pub struct Daemon {
     pub models: Arc<Models>,
     pub instance_id: String,
     pub version: String,
+    /// Web Push. `None` only where a daemon is assembled without one.
+    pub push: Option<push::Push>,
+    /// Remote control; empty until [`remote::attach`] gives the daemon one.
+    pub remote: remote::RemoteSlot,
 }
 
 /// Run until `shutdown` fires or a client asks to stop.
@@ -152,6 +159,10 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     if let Some(listen) = &tcp {
         listen::check(listen)?;
     }
+    // Nothing binds until remote control is enabled, but a stanza that
+    // could never be honoured fails the start, where the operator is looking.
+    let remote_config = remote::configured(&models.config().remote)?;
+    let push_config = push::configured(&models.config().remote, &instance_id, &config.store_path)?;
     let yolo = config.yolo || models.config().approval.yolo;
     if yolo {
         tracing::warn!(
@@ -299,12 +310,26 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         )?;
         tracing::info!(socket = %socket.display(), pid = std::process::id(), "aetherd listening");
 
+        let push = push::Push::start(
+            push_config,
+            store.clone(),
+            Arc::new(aether_remote::push::NetTransport),
+            &runtime,
+            &mut connections,
+            &shutdown,
+        )?;
         let daemon = Arc::new(Daemon {
             runtime: runtime.clone(),
             models,
             instance_id,
             version: env!("CARGO_PKG_VERSION").to_owned(),
+            push: Some(push),
+            remote: remote::RemoteSlot::default(),
         });
+        // Supervised with the connections: it opens the listener the stored
+        // settings ask for, and closes it when the daemon stops.
+        let remote_control = remote::attach(&daemon, remote_config, shutdown.clone()).await?;
+        connections.spawn(remote_control.run(shutdown.clone()));
 
         // A failure to open the second transport is a failure to start: a daemon
         // the operator asked to reach over the network must not come up without
@@ -638,6 +663,7 @@ async fn serve_tcp(
         token: Some(listen.token.as_str().into()),
         idle_timeout: Some(listen.idle_timeout),
         handshake_timeout: listen.handshake_timeout,
+        device: None,
     };
     // Two caps, not one. A peer that has authorized holds an `authenticated`
     // slot for as long as it likes; one that has not can only hold a

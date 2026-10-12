@@ -45,6 +45,10 @@ pub(crate) enum LoopEvent {
     /// Suspend the UI and run `aether <args>` attached to the terminal.
     External(Vec<String>),
     App(AppEvent),
+    AppFrom {
+        instance: String,
+        event: AppEvent,
+    },
     Mouse(crossterm::event::MouseEvent),
     Reconnected(Client),
     VoiceControl(anyhow::Result<ControlRequest>),
@@ -235,7 +239,7 @@ async fn run_inner(
     let mut title = String::new();
     let mut auto_scroll_due = None;
 
-    let mut pending = app.reduce(AppEvent::Connected);
+    let mut pending = app.reconnected(&client);
     let result: anyhow::Result<()> = async {
         loop {
             pending.extend(frames.advance_clock(&mut app, Instant::now()));
@@ -303,6 +307,11 @@ async fn run_inner(
                     }
                 },
             };
+            let event = match event {
+                LoopEvent::AppFrom { instance, event } if client.welcome().is_some_and(|welcome| welcome.instance_id == instance) => LoopEvent::App(event),
+                LoopEvent::AppFrom { .. } => continue,
+                event => event,
+            };
             #[cfg(test)]
             if let Some(observer) = observer.as_deref_mut() {
                 observer.before(&event);
@@ -311,6 +320,7 @@ async fn run_inner(
             // see the tick the event arrived at, not the one it fell asleep on.
             pending = frames.advance_clock(&mut app, Instant::now());
             match event {
+                LoopEvent::AppFrom { .. } => unreachable!("protocol events were normalized"),
                 #[cfg(unix)]
                 LoopEvent::Suspend => {
                     let replies_enabled = app.voice_replies_enabled();
@@ -333,9 +343,9 @@ async fn run_inner(
                     title.clear();
                 }
                 LoopEvent::Reconnected(new_client) => {
+                    pending.extend(app.reconnected(&new_client));
                     client = new_client;
                     reconnecting = false;
-                    pending.extend(app.reduce(AppEvent::Connected));
                 }
                 LoopEvent::VoiceControl(request) => {
                     pending.extend(handle_voice_control(&mut app, request, &mut voice_control));
@@ -389,6 +399,7 @@ async fn run_inner(
                     let disconnected = matches!(
                         ev,
                         AppEvent::Disconnected { .. }
+                            | AppEvent::HistoryExpired
                             | AppEvent::Frame(SubscriptionFrame::Lagged { .. })
                     );
                     pending.extend(dispatch_app_event(&mut app, &mut cache, ev));
@@ -577,6 +588,7 @@ pub(crate) fn execute_effects(
                 spawn_request(client.clone(), tx.clone(), command, then)
             }
             Effect::Subscribe { after } => spawn_subscription(client.clone(), tx.clone(), after),
+            Effect::Outbox { settle } => spawn_outbox(client.clone(), tx.clone(), settle),
             Effect::RunExternal { args } => {
                 let _ = tx.send(LoopEvent::External(args));
             }
@@ -632,6 +644,16 @@ fn spawn_copy(tx: mpsc::UnboundedSender<LoopEvent>, text: String, out: &mut impl
     });
 }
 
+pub(crate) fn protocol_event(client: &Client, event: AppEvent) -> LoopEvent {
+    match client.welcome() {
+        Some(welcome) => LoopEvent::AppFrom {
+            instance: welcome.instance_id.clone(),
+            event,
+        },
+        None => LoopEvent::App(event),
+    }
+}
+
 fn spawn_request(
     client: Client,
     tx: mpsc::UnboundedSender<LoopEvent>,
@@ -640,14 +662,33 @@ fn spawn_request(
 ) {
     tokio::spawn(async move {
         let result = client.request(command).await;
-        let disconnected = matches!(result, Err(ClientError::Disconnected));
+        let disconnected = matches!(result, Err(ClientError::Disconnected | ClientError::Ssh(_)));
         let because = disconnected.then(|| client.disconnect_reason()).flatten();
-        let _ = tx.send(LoopEvent::App(AppEvent::Reply { then, result }));
+        let _ = tx.send(protocol_event(&client, AppEvent::Reply { then, result }));
         if disconnected {
-            let _ = tx.send(LoopEvent::App(AppEvent::Disconnected {
-                because: because.map(|notice| notice.message),
-            }));
+            let _ = tx.send(protocol_event(
+                &client,
+                AppEvent::Disconnected {
+                    because: because.map(|notice| notice.message),
+                },
+            ));
         }
+    });
+}
+
+fn spawn_outbox(
+    client: Client,
+    tx: mpsc::UnboundedSender<LoopEvent>,
+    settle: Option<(String, aether_client::Settlement)>,
+) {
+    tokio::spawn(async move {
+        let settled = match settle {
+            Some((key, choice)) => Some((choice, client.settle(&key, choice).await)),
+            None => None,
+        };
+        let undecided = client.undecided().await;
+        let event = AppEvent::Outbox { settled, undecided };
+        let _ = tx.send(protocol_event(&client, event));
     });
 }
 
@@ -655,26 +696,50 @@ fn spawn_subscription(client: Client, tx: mpsc::UnboundedSender<LoopEvent>, afte
     tokio::spawn(async move {
         match client.subscribe(after, subscription_query(), true).await {
             Ok(mut sub) => {
-                let _ = tx.send(LoopEvent::App(AppEvent::Subscribed {
-                    id: sub.id(),
-                    last_seq: sub.last_seq(),
-                }));
+                let _ = tx.send(protocol_event(
+                    &client,
+                    AppEvent::Subscribed {
+                        id: sub.id(),
+                        last_seq: sub.last_seq(),
+                    },
+                ));
                 while let Some(frame) = sub.next().await {
                     let lagged = matches!(frame, SubscriptionFrame::Lagged { .. });
-                    if tx.send(LoopEvent::App(AppEvent::Frame(frame))).is_err() {
+                    if tx
+                        .send(protocol_event(&client, AppEvent::Frame(frame)))
+                        .is_err()
+                    {
                         return;
                     }
                     if lagged {
                         return;
                     }
                 }
-                let _ = tx.send(LoopEvent::App(AppEvent::Disconnected {
-                    because: client.disconnect_reason().map(|notice| notice.message),
-                }));
+                let _ = tx.send(protocol_event(
+                    &client,
+                    if client.history_expired() {
+                        AppEvent::HistoryExpired
+                    } else {
+                        AppEvent::Disconnected {
+                            because: client.disconnect_reason().map(|notice| notice.message),
+                        }
+                    },
+                ));
+            }
+            Err(ClientError::Protocol(error))
+                if after.is_some() && error.code == aether_protocol::ErrorCode::NotFound =>
+            {
+                let _ = tx.send(protocol_event(&client, AppEvent::HistoryExpired));
+            }
+            Err(_) if client.history_expired() => {
+                let _ = tx.send(protocol_event(&client, AppEvent::HistoryExpired));
             }
             Err(e) => {
                 tracing::warn!("subscribe failed: {e}");
-                let _ = tx.send(LoopEvent::App(AppEvent::Disconnected { because: None }));
+                let _ = tx.send(protocol_event(
+                    &client,
+                    AppEvent::Disconnected { because: None },
+                ));
             }
         }
     });
@@ -684,26 +749,46 @@ fn spawn_subscription(client: Client, tx: mpsc::UnboundedSender<LoopEvent>, afte
 /// clients use it: a person in `--plain` waits for the daemon exactly as long
 /// as a person in the TUI does (§9.8).
 pub(crate) fn spawn_reconnect(app: &App, tx: mpsc::UnboundedSender<LoopEvent>) {
-    let socket = app
-        .options
-        .socket_path
-        .clone()
-        .unwrap_or_else(aether_protocol::paths::socket_path);
+    let endpoint = app.options.endpoint.clone().unwrap_or_else(|| {
+        aether_client::Endpoint::Socket(
+            app.options
+                .socket_path
+                .clone()
+                .unwrap_or_else(aether_protocol::paths::socket_path),
+        )
+    });
     tokio::spawn(async move {
-        let mut wait = RECONNECT_FIRST;
+        let mut wait = if endpoint.is_remote() {
+            Duration::from_secs(1)
+        } else {
+            RECONNECT_FIRST
+        };
+        let maximum = if endpoint.is_remote() {
+            Duration::from_secs(30)
+        } else {
+            RECONNECT_MAX
+        };
         loop {
-            tokio::time::sleep(wait).await;
-            wait = (wait * 2).min(RECONNECT_MAX);
-            match Client::connect(&socket).await {
+            let jitter =
+                Duration::from_millis(rand::random::<u64>() % (wait.as_millis() as u64 / 2 + 1));
+            tokio::select! { _ = tx.closed() => return, _ = tokio::time::sleep((wait + jitter).min(maximum)) => {} }
+            let connected = tokio::select! { _ = tx.closed() => return, result = Client::connect_endpoint(&endpoint) => result };
+            match connected {
                 Ok(client) => {
                     let _ = tx.send(LoopEvent::Reconnected(client));
                     return;
                 }
-                Err(e) => tracing::debug!("reconnect attempt failed: {e}"),
+                Err(e) => {
+                    tracing::debug!("reconnect attempt failed: {e}");
+                    if endpoint.is_remote() {
+                        let _ = tx.send(LoopEvent::App(AppEvent::EffectFailed {
+                            action: "SSH reconnect".into(),
+                            error: e.to_string(),
+                        }));
+                    }
+                }
             }
-            if tx.is_closed() {
-                return;
-            }
+            wait = (wait * 2).min(maximum);
         }
     });
 }
@@ -901,3 +986,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "runner/history_tests.rs"]
+mod history_tests;

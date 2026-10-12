@@ -10,10 +10,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::profile::ProfileSetting;
 
+mod remote;
 mod retention;
 mod scheduler;
 mod templates;
 
+pub use remote::RemoteSection;
 pub use retention::RetentionSection;
 
 pub use scheduler::{
@@ -54,6 +56,7 @@ pub struct AetherConfig {
     pub mcp: McpSection,
     pub memory: MemorySection,
     pub listen: ListenSection,
+    pub remote: RemoteSection,
     pub serve: ServeSection,
 }
 
@@ -546,6 +549,7 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
             config.scheduler.run_budget().map_err(&bad)?;
             config.scheduler.disk_floor().map_err(&bad)?;
             config.listen.address().map_err(&bad)?;
+            config.remote.address().map_err(&bad)?;
             config.serve.address().map_err(&bad)?;
             for server in &config.mcp.servers {
                 server.validate().map_err(&bad)?;

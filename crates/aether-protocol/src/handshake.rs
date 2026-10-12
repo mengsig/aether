@@ -1,3 +1,4 @@
+use super::remote::{DeviceIdentity, DeviceProof};
 #[expect(
     unused_imports,
     reason = "preserve intra-doc links and schema descriptions"
@@ -16,6 +17,10 @@ pub struct Hello {
     /// listener. The Unix socket ignores it: its file mode is the boundary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
+    /// A paired device's answer to the challenge the remote carrier sent.
+    /// Other transports ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<DeviceProof>,
 }
 
 /// Manual, so that one `tracing::debug!(?hello)` or `?frame` added later
@@ -29,6 +34,7 @@ impl std::fmt::Debug for Hello {
             .field("client_version", &self.client_version)
             .field("features", &self.features)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("device", &self.device.as_ref().map(|proof| proof.id))
             .finish()
     }
 }
@@ -41,6 +47,7 @@ impl Hello {
             client_version: client_version.into(),
             features: vec![features::DELTAS.into(), features::ARTIFACT_BYTES.into()],
             token: None,
+            device: None,
         }
     }
 
@@ -74,4 +81,12 @@ pub struct Welcome {
     /// send [`Command::Ping`] more often than this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_timeout_secs: Option<u64>,
+    /// The paired device this connection authenticated as. Absent on the
+    /// Unix socket and the token listener.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<DeviceIdentity>,
+    /// Opaque receipt count at the handshake, kept with each keyed send for
+    /// [`Command::ResolveSubmission`]. Absent before protocol 18.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_horizon: Option<String>,
 }

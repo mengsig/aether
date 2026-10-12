@@ -214,6 +214,8 @@ async fn daemon(root: &Path, empty: bool, refuse_events: bool) -> tokio::task::J
                             schema_version: 1, pid: 1, features: vec![],
                             daemon_protocol_version: None, min_protocol_version: None,
                             idle_timeout_secs: None,
+                            device: None,
+                            submission_horizon: None,
                         })),
                         Command::Status => Ok(Reply::Status(serde_json::from_value(json!({
                             "instance_id": SECRET, "version": SECRET, "pid": 42, "started_at": AT,

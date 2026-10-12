@@ -73,8 +73,24 @@ impl Runtime {
         by: Actor,
         note: Option<String>,
     ) -> crate::Result<ApprovalRule> {
+        self.add_approval_rule_keyed(decision, matcher, scope, by, note, None)
+    }
+
+    pub fn add_approval_rule_keyed(
+        &self,
+        decision: ApprovalDecision,
+        matcher: RuleMatch,
+        scope: RuleScope,
+        by: Actor,
+        note: Option<String>,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> crate::Result<ApprovalRule> {
+        let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let (rule, commit) = self.prepare_approval_rule(decision, matcher, scope, by, note)?;
-        self.apply(commit)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &rule)?;
         Ok(rule)
     }
 

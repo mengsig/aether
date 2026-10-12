@@ -39,8 +39,11 @@ reqwest = { workspace = true }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+rand = { workspace = true }
 tempfile = { workspace = true }
 pulldown-cmark = { version = "0.13.0", default-features = false }
 
 [dev-dependencies]
+aether-daemon = { workspace = true }
+rusqlite = { workspace = true }
 aether-store = { workspace = true }

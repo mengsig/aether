@@ -27,6 +27,10 @@ pub struct MemoryPeer {
 /// A connection to a daemon, before it is split into reader and writer.
 pub enum Transport {
     Unix(UnixStream),
+    Stdio {
+        read: tokio::process::ChildStdout,
+        write: tokio::process::ChildStdin,
+    },
     Tcp(TcpStream),
     Memory {
         incoming: mpsc::Receiver<ServerFrame>,
@@ -37,6 +41,7 @@ pub enum Transport {
 impl std::fmt::Debug for Transport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Stdio { .. } => f.write_str("Transport::Stdio"),
             Self::Unix(_) => f.write_str("Transport::Unix"),
             Self::Tcp(_) => f.write_str("Transport::Tcp"),
             Self::Memory { .. } => f.write_str("Transport::Memory"),
@@ -71,6 +76,7 @@ impl Transport {
     /// task; it ends when the sink is dropped or the peer goes away.
     pub fn split(self) -> (FrameStream, FrameSink) {
         match self {
+            Transport::Stdio { read, write } => split_stream(read, write),
             Transport::Unix(stream) => {
                 let (read, write) = stream.into_split();
                 split_stream(read, write)
@@ -109,13 +115,16 @@ where
                 Ok(line) => line,
                 Err(e) => {
                     tracing::error!("failed to encode frame: {e}");
-                    continue;
+                    break;
                 }
             };
             if let Err(e) = write.write_all(line.as_bytes()).await {
                 tracing::debug!("connection write failed: {e}");
                 break;
             }
+        }
+        if let Err(error) = write.shutdown().await {
+            tracing::debug!(%error, "transport shutdown failed");
         }
     });
     (Box::pin(reader), tx)

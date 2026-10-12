@@ -58,6 +58,8 @@ pub enum SlashCommand {
     Schedules,
     /// Configured MCP servers, their health and their tools.
     Mcp,
+    /// Remote operations whose delivery the host could not confirm.
+    Outbox,
     /// Durable memories, their provenance and recent curation activity.
     Memory,
     /// `/agent` opens the board; `/agent <name>` views that agent.
@@ -210,6 +212,7 @@ pub fn parse(text: &str) -> InputAction {
         "clear" => SlashCommand::Clear,
         "approvals" | "rules" => SlashCommand::Rules,
         "mcp" => SlashCommand::Mcp,
+        "outbox" => SlashCommand::Outbox,
         "memory" | "memories" => SlashCommand::Memory,
         "agent" | "agents" => SlashCommand::Agent { name: arg_opt },
         "models" => SlashCommand::Models,

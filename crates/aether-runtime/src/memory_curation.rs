@@ -17,6 +17,20 @@ use crate::{Result, Runtime, RuntimeError};
 
 impl Runtime {
     pub fn create_memory(&self, spec: OperatorMemorySpec, by: Actor) -> Result<MemoryRecord> {
+        self.create_memory_keyed(spec, by, None)
+    }
+
+    pub fn create_memory_keyed(
+        &self,
+        spec: OperatorMemorySpec,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<MemoryRecord> {
+        if let Some(hold) = self.hold_for(submission.as_ref())
+            && let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())?
+        {
+            return Ok(receipt);
+        }
         if !matches!(by, Actor::User { .. }) {
             return Err(RuntimeError::Invalid(
                 "only an operator can create operator memories".into(),
@@ -74,6 +88,9 @@ impl Runtime {
             supersedes: spec.supersedes,
         };
         let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let (admission, commit) = self.memory.evaluate_operator(&hold, candidate, by)?;
         let record = match admission {
             Admission::Accepted { record } | Admission::Superseded { record, .. } => record,
@@ -83,7 +100,7 @@ impl Runtime {
                 )));
             }
         };
-        self.apply_held(hold, commit)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &record)?;
         self.memory.index_committed(&record)?;
         Ok(record)
     }

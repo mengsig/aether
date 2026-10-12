@@ -60,11 +60,13 @@ impl ConfirmCancel {
                 Command::Archive {
                     target: aether_protocol::ArchiveTarget::Agent(agent),
                     archived: true,
+                    idempotency_key: None,
                 }
             } else {
                 Command::Cancel {
                     agent,
                     reason: Some("stopped from the tui".into()),
+                    idempotency_key: None,
                 }
             },
             then: if finished {

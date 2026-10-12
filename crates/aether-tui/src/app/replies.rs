@@ -11,6 +11,29 @@ impl App {
         then: Then,
         result: Result<Reply, ClientError>,
     ) -> Vec<Effect> {
+        let then = if let Then::RemoteAck { key, next } = then {
+            if matches!(result, Ok(_) | Err(ClientError::Protocol(_))) {
+                self.remote_pending.remove(&key);
+            }
+            *next
+        } else {
+            then
+        };
+        if matches!(result, Err(ClientError::DeliveryUnconfirmed(_))) {
+            self.flash_error(format!(
+                "{}: {}; delivery unconfirmed; refresh host state before retrying",
+                then_operation(&then),
+                result
+                    .as_ref()
+                    .err()
+                    .map(ToString::to_string)
+                    .unwrap_or_default()
+            ));
+            return Vec::new();
+        }
+        if let Then::Host(context) = then {
+            return self.host_reply(context, result);
+        }
         let then = if then == Then::StatusPoll {
             self.status_poll_in_flight = false;
             Then::Status

@@ -24,6 +24,7 @@ impl App {
         if track_find {
             self.track_find();
         }
+        effects.extend(self.host_effects());
         self.flush_client_errors();
         self.yield_board_to_approval();
         self.track_approvals();
@@ -32,6 +33,10 @@ impl App {
         }
         if reconcile {
             effects.extend(self.voice_reconcile());
+        }
+        self.track_remote_operations(&mut effects);
+        if self.quit_requested {
+            self.save_remote_session();
         }
         effects
     }
@@ -83,6 +88,17 @@ impl App {
             }
             AppEvent::Tick { frames } => self.on_tick(frames),
             AppEvent::Connected => self.on_connected(),
+            AppEvent::HistoryExpired => {
+                self.reduce(AppEvent::Disconnected { because: None });
+                self.last_seq = None;
+                self.backfill = Default::default();
+                for transcript in self.transcripts.values_mut() {
+                    *transcript = transcript.continuing();
+                }
+                self.connected = false;
+                self.flash("remote history expired; reconnecting to reload current state");
+                Vec::new()
+            }
             AppEvent::ExternalFinished { label, error } => {
                 self.dirty = true;
                 let ok = error.is_none();
@@ -173,6 +189,10 @@ impl App {
                 if self.last_seq.is_none() {
                     self.last_seq = Some(last_seq);
                 }
+                if self.remote_snapshot_pending {
+                    self.remote_snapshot_pending = false;
+                    return self.snapshot_requests();
+                }
                 Vec::new()
             }
             AppEvent::Frame(frame) => match frame {
@@ -207,6 +227,133 @@ impl App {
                 }
             },
             AppEvent::Reply { then, result } => self.on_reply(then, result),
+            AppEvent::Outbox { settled, undecided } => {
+                self.outbox_read(settled, undecided);
+                Vec::new()
+            }
+        }
+    }
+
+    fn save_remote_session(&mut self) {
+        if !self.options.is_remote() {
+            return;
+        }
+        let last_seq = self.last_seq;
+        let draft = (!self.input.text.is_empty()).then(|| self.input.text.clone());
+        if let Err(error) = self.save_prefs(|prefs| {
+            prefs.last_seq = last_seq;
+            prefs.draft = draft;
+        }) {
+            self.flash_error(format!("remote session state not saved: {error}"));
+        }
+    }
+
+    fn track_remote_operations(&mut self, effects: &mut [Effect]) {
+        if !self.options.is_remote() {
+            return;
+        }
+        for effect in effects {
+            let Effect::Request { command, then } = effect else {
+                continue;
+            };
+            if matches!(then, Then::RemoteAck { .. }) || !aether_client::key_command(command) {
+                continue;
+            }
+            let Some(Ok(keyed)) = command.keyed_request() else {
+                continue;
+            };
+            let key = keyed.key.to_owned();
+            self.remote_pending.insert(key.clone(), then.clone());
+            *then = Then::RemoteAck {
+                key,
+                next: Box::new(then.clone()),
+            };
+        }
+    }
+
+    pub(crate) fn reconnected(&mut self, client: &aether_client::Client) -> Vec<Effect> {
+        let instance = client.welcome().map(|welcome| welcome.instance_id.clone());
+        let changed = self.options.instance_id.is_some() && self.options.instance_id != instance;
+        if changed {
+            let mut options = self.options.clone();
+            options.instance_id = instance;
+            options.focus = None;
+            options.queued.clear();
+            options.resume_seq = None;
+            options.draft = None;
+            options.recent_workspaces.clear();
+            options.pinned_workspaces.clear();
+            options.default_model = None;
+            options.default_fallbacks.clear();
+            options.recent_models.clear();
+            options.yolo = None;
+            if let (Some(endpoint), Some(instance)) = (&options.endpoint, &options.instance_id)
+                && endpoint.is_remote()
+            {
+                options.prefs_dir = Some(endpoint.state_dir(instance));
+            }
+            let size = self.size;
+            *self = App::new(options);
+            self.size = size;
+        } else {
+            self.options.instance_id = instance;
+        }
+        let mut effects = self.on_connected();
+        for (command, reply) in client.recovered_commands() {
+            if let Some(Ok(keyed)) = command.keyed_request()
+                && let Some(then) = self.remote_pending.remove(keyed.key)
+            {
+                effects.extend(self.on_reply(
+                    then,
+                    reply.clone().map_err(aether_client::ClientError::Protocol),
+                ));
+            } else {
+                self.reconcile_recovered_queue(command, reply);
+            }
+        }
+        self.track_remote_operations(&mut effects);
+        if self.options.is_remote() {
+            effects.push(Effect::Outbox { settle: None });
+        }
+        if changed {
+            self.flash(
+                "daemon identity changed; discarded old drafts, queued sends and cursor; reloading",
+            );
+        }
+        effects
+    }
+
+    fn reconcile_recovered_queue(
+        &mut self,
+        command: &Command,
+        reply: &Result<aether_protocol::Reply, aether_protocol::ErrorReply>,
+    ) {
+        let Command::SendMessage {
+            to,
+            content,
+            idempotency_key: Some(key),
+            ..
+        } = command
+        else {
+            return;
+        };
+        if !key.starts_with("tui-queue-") {
+            return;
+        }
+        let matches = self
+            .transcripts
+            .get(to)
+            .and_then(|transcript| transcript.queue.first())
+            == Some(content);
+        if matches {
+            self.queued_sent(
+                *to,
+                reply
+                    .as_ref()
+                    .err()
+                    .cloned()
+                    .map(aether_client::ClientError::Protocol),
+            );
         }
     }
 
@@ -219,12 +366,25 @@ impl App {
         // repeats for; the next disconnect gets to report itself again.
         self.disconnect_reply_noticed = false;
         self.disconnect_notice_shown = false;
-        self.flash("connected");
+        self.flash(match &self.options.endpoint {
+            Some(aether_client::Endpoint::Ssh(remote)) => {
+                format!("{} · connected · {}", remote.name(), remote.target())
+            }
+            _ => "connected".into(),
+        });
         self.report_mode_diagnostics();
+        let mut effects = vec![Effect::Subscribe {
+            after: self.last_seq,
+        }];
+        self.remote_snapshot_pending = self.options.is_remote();
+        if !self.remote_snapshot_pending {
+            effects.extend(self.snapshot_requests());
+        }
+        effects
+    }
+
+    fn snapshot_requests(&mut self) -> Vec<Effect> {
         let mut effects = vec![
-            Effect::Subscribe {
-                after: self.last_seq,
-            },
             Effect::Request {
                 command: Command::Status,
                 then: Then::Status,
@@ -326,6 +486,7 @@ impl App {
         }
         if self.connected && self.tick >= self.status_requested_at + STATUS_REFRESH_TICKS {
             self.status_requested_at = self.tick;
+            self.save_remote_session();
             self.refresh_branches();
             if !self.board.pending_removals.is_empty() {
                 self.refresh_tree(&mut effects);

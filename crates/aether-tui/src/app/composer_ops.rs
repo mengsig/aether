@@ -354,7 +354,7 @@ impl App {
         if let Some(error) = error {
             let name = self.agent_display_name(agent);
             self.flash_error(format!(
-                "queued message for {name} not sent: {error}. It stays queued"
+                "queued message for {name}: {error}. It stays queued; delivery may be unconfirmed"
             ));
             return;
         }
@@ -685,7 +685,7 @@ impl App {
     }
 
     /// Re-derive the popup's query from the draft; close it when its token is gone.
-    fn sync_popup(&mut self) {
+    pub(super) fn sync_popup(&mut self) {
         let Some(popup) = &self.bottom.popup else {
             return;
         };
@@ -869,6 +869,15 @@ impl App {
     /// Workspace files for `@`, relative to the viewed agent's workspace.
     /// Reads the disk once per popup; a failure is flashed, not hidden.
     fn mention_files(&mut self) -> Vec<String> {
+        if self.options.is_remote() {
+            return self
+                .host
+                .files
+                .as_ref()
+                .filter(|(root, _, _)| Some(root.as_path()) == self.active_workspace())
+                .map(|(_, _, files)| files.clone())
+                .unwrap_or_default();
+        }
         let root = self
             .selected
             .and_then(|id| self.tree.nodes.get(&id))

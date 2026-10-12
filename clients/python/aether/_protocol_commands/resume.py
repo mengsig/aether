@@ -7,12 +7,14 @@ from ..protocol import (
     Any,
 )
 
-def resume(*, agent: AgentId, subtree: bool | None = None) -> dict[str, Any]:
+def resume(*, agent: AgentId, idempotency_key: str | None = None, subtree: bool | None = None) -> dict[str, Any]:
     """Lift a pause, or clear a wait or an inspection the operator owns.
     With `subtree` it lifts the pause across the subtree, and only that.
     """
     frame: dict[str, Any] = {"cmd": "resume"}
     frame["agent"] = agent
+    if idempotency_key is not None:
+        frame["idempotency_key"] = idempotency_key
     if subtree is not None:
         frame["subtree"] = subtree
     return frame

@@ -805,7 +805,11 @@ fn schedules_pause_cancel_twice_history_and_refresh() {
 
     let update = |id, action| {
         request(
-            Command::UpdateSchedule { id, action },
+            Command::UpdateSchedule {
+                id,
+                action,
+                idempotency_key: None,
+            },
             Then::ScheduleChanged,
         )
     };
@@ -1820,4 +1824,110 @@ fn model_picker_shows_runtime_budget_support_without_model_name_rules() {
             assert!(text.contains(expected), "{text}");
         }
     }
+}
+
+fn lost_send(key: &str, content: &str) -> aether_client::Unresolved {
+    let command = serde_json::from_value(serde_json::json!({
+        "cmd": "send_message",
+        "to": AgentId::new(),
+        "content": content,
+        "idempotency_key": key,
+    }))
+    .expect("a keyed send");
+    aether_client::Unresolved {
+        command,
+        horizon: Some("epoch:3".into()),
+        sent_at: now(),
+        unconfirmed: Some("the host has dropped receipts recorded after it was sent".into()),
+    }
+}
+
+fn settling(action: &ViewAction) -> (&str, aether_client::Settlement) {
+    match effect(action) {
+        Effect::Outbox {
+            settle: Some((key, choice)),
+        } => (key, *choice),
+        other => panic!("expected a settlement, got {other:?}"),
+    }
+}
+
+#[test]
+fn outbox_decisions_wait_for_enter_and_name_the_highlighted_operation() {
+    use aether_client::Settlement;
+    let mut app = viewed_app();
+    app.undelivered = vec![
+        lost_send("ssh-1", "deploy now"),
+        lost_send("ssh-2", "roll back"),
+    ];
+    let mut view = open(ViewKind::Outbox, &app);
+    let text = screen_text(&draw(view.as_ref(), &app, 120));
+    assert!(
+        text.contains("deploy now") && text.contains("roll back"),
+        "{text}"
+    );
+    assert!(text.contains("dropped receipts"), "{text}");
+
+    press(view.as_mut(), &app, KeyCode::Down);
+    assert!(matches!(
+        press(view.as_mut(), &app, KeyCode::Char('r')),
+        ViewOutcome::Consumed
+    ));
+    let armed = screen_text(&draw(view.as_ref(), &app, 120));
+    assert!(armed.contains("it may run a second time"), "{armed}");
+    let actions = acted(press(view.as_mut(), &app, KeyCode::Enter));
+    assert_eq!(settling(&actions[0]), ("ssh-2", Settlement::SendAgain));
+
+    // Anything but Enter lets an armed decision go, and nothing is sent.
+    press(view.as_mut(), &app, KeyCode::Char('x'));
+    assert!(matches!(
+        press(view.as_mut(), &app, KeyCode::Esc),
+        ViewOutcome::Consumed
+    ));
+    assert!(matches!(
+        press(view.as_mut(), &app, KeyCode::Enter),
+        ViewOutcome::Consumed | ViewOutcome::Ignored
+    ));
+    press(view.as_mut(), &app, KeyCode::Char('d'));
+    let actions = acted(press(view.as_mut(), &app, KeyCode::Enter));
+    assert_eq!(settling(&actions[0]), ("ssh-2", Settlement::MarkDelivered));
+    press(view.as_mut(), &app, KeyCode::Up);
+    press(view.as_mut(), &app, KeyCode::Delete);
+    let actions = acted(press(view.as_mut(), &app, KeyCode::Enter));
+    assert_eq!(settling(&actions[0]), ("ssh-1", Settlement::Discard));
+    assert!(closed(press(view.as_mut(), &app, KeyCode::Esc)).is_empty());
+}
+
+#[test]
+fn an_unreadable_outbox_file_is_listed_and_can_only_be_discarded() {
+    use aether_client::Settlement;
+    let mut app = viewed_app();
+    app.unreadable = vec![aether_client::Unreadable {
+        key: "garbage".into(),
+        path: "/outbox/garbage.json".into(),
+        reason: "unreadable: cannot be decoded (/outbox/garbage.json)".into(),
+    }];
+    let mut view = open(ViewKind::Outbox, &app);
+    let text = screen_text(&draw(view.as_ref(), &app, 120));
+    assert!(text.contains("unreadable file garbage"), "{text}");
+    assert!(text.contains("discard only"), "{text}");
+
+    for refused in ['d', 'r'] {
+        let actions = acted(press(view.as_mut(), &app, KeyCode::Char(refused)));
+        assert!(flash(&actions[0]).contains("can only be discarded"));
+    }
+    press(view.as_mut(), &app, KeyCode::Char('x'));
+    let actions = acted(press(view.as_mut(), &app, KeyCode::Enter));
+    assert_eq!(settling(&actions[0]), ("garbage", Settlement::Discard));
+}
+
+#[test]
+fn outbox_with_nothing_waiting_offers_only_the_way_out() {
+    let mut app = viewed_app();
+    let effects = app.open_view(ViewKind::Outbox);
+    assert_eq!(effects, vec![Effect::Outbox { settle: None }]);
+    let mut view = open(ViewKind::Outbox, &app);
+    let text = screen_text(&draw(view.as_ref(), &app, 80));
+    assert!(text.contains("Nothing is waiting on a decision"), "{text}");
+    let actions = acted(press(view.as_mut(), &app, KeyCode::Char('r')));
+    assert!(flash(&actions[0]).contains("no operation"));
 }

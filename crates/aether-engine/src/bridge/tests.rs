@@ -153,6 +153,8 @@ async fn mock_connection(
                     daemon_protocol_version: None,
                     min_protocol_version: None,
                     idle_timeout_secs: None,
+                    device: None,
+                    submission_horizon: None,
                 }))
             }
             Command::EngineTools { agent, token } => {

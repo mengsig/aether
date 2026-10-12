@@ -340,4 +340,6 @@ pub struct NewApprovalRule {
     pub scope: RuleScope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }

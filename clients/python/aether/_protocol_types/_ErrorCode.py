@@ -5,4 +5,4 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 
 
-ErrorCode = Literal["not_found", "invalid_transition", "invalid_argument", "internal", "incompatible", "unauthorized", "unavailable"]
+ErrorCode = Literal["not_found", "invalid_transition", "invalid_argument", "internal", "incompatible", "unauthorized", "unavailable", "forbidden", "unimplemented"]

@@ -12,7 +12,20 @@ impl Runtime {
     /// response, so a model change read outside it is silently reverted - and
     /// the handoff it committed then names a model the agent is not running.
     pub fn update_agent(&self, id: AgentId, update: AgentUpdate, by: Actor) -> Result<Agent> {
+        self.update_agent_keyed(id, update, by, None)
+    }
+
+    pub fn update_agent_keyed(
+        &self,
+        id: AgentId,
+        update: AgentUpdate,
+        by: Actor,
+        submission: Option<aether_core::idempotency::Submission>,
+    ) -> Result<Agent> {
         let hold = self.hold();
+        if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
+            return Ok(receipt);
+        }
         let mut agent = self
             .store
             .agent(id)?
@@ -206,6 +219,21 @@ impl Runtime {
         }
         // Budget and chain can move in one patch, so check what results.
         self.check_cost_budget(&agent.model, &agent.fallbacks, agent.config.cost_budget)?;
+        if matches!(
+            by,
+            Actor::User {
+                origin: Some(aether_core::event::OperatorOrigin::Device { .. }),
+                ..
+            }
+        ) && !agent.config.approval.is_yolo()
+            && std::iter::once(&agent.model)
+                .chain(&agent.fallbacks)
+                .any(|model| !self.engine_can_gate(model))
+        {
+            return Err(RuntimeError::Invalid(
+                "remote update cannot select an engine that drops required approvals".into(),
+            ));
+        }
         agent.updated_at = now();
         let mut commit = Commit::new()
             .event(
@@ -231,7 +259,7 @@ impl Runtime {
                     .run(agent.run),
             );
         }
-        self.apply_held(hold, commit)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &agent)?;
         Ok(agent)
     }
 }

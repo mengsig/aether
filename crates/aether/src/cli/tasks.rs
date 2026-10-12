@@ -1,10 +1,9 @@
-use super::{
-    AgentId, EventKind, EventQuery, PathBuf, SubscriptionFrame, TaskQuery, connect, short,
-};
+use super::{AgentId, EventKind, EventQuery, SubscriptionFrame, TaskQuery, connect, short};
 use aether_core::model::{ContentBlock, ToolResultBlock};
 use anyhow::Context as _;
 
-pub async fn tasks(socket: PathBuf, json: bool) -> anyhow::Result<()> {
+pub async fn tasks(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let rows = client.list_tasks(TaskQuery::default()).await?;
     if json {
@@ -30,12 +29,13 @@ pub async fn tasks(socket: PathBuf, json: bool) -> anyhow::Result<()> {
 
 /// Create a task, optionally owned by an agent and gated on other tasks.
 pub async fn task_create(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     objective: String,
     owner: Option<String>,
     depends_on: Vec<String>,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     use aether_core::id::TaskId;
     use aether_protocol::CreateTask;
     let client = connect(&socket).await?;
@@ -65,12 +65,13 @@ pub async fn task_create(
 }
 
 pub async fn events(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     follow: bool,
     after: u64,
     agent: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let client = connect(&socket).await?;
     let agent = agent
         .map(|a| a.parse::<AgentId>())

@@ -64,6 +64,22 @@ fn status_line(app: &App, theme: &Theme, width: u16) -> Line<'static> {
 fn items(app: &App, theme: &Theme) -> Vec<Item> {
     let agent = app.selected_agent();
     let mut items = Vec::new();
+    if let Some(aether_client::Endpoint::Ssh(remote)) = &app.options.endpoint {
+        items.push(Item {
+            text: format!(
+                "{} · {} · {}",
+                remote.name(),
+                if app.connected {
+                    "connected"
+                } else {
+                    "reconnecting"
+                },
+                remote.target()
+            ),
+            style: theme.secondary(),
+            agent: false,
+        });
+    }
 
     let chip = match agent {
         Some(agent) => Some(match agent.config.effort {
@@ -99,6 +115,14 @@ fn items(app: &App, theme: &Theme) -> Vec<Item> {
         }
     }
 
+    let waiting = app.undelivered.len() + app.unreadable.len();
+    if waiting > 0 {
+        items.push(Item {
+            text: format!("{waiting} unconfirmed /outbox"),
+            style: theme.failure(),
+            agent: false,
+        });
+    }
     if !app.view_modes.diagnostics.is_empty() {
         items.push(Item {
             text: format!("{} mode notices /mode", app.view_modes.diagnostics.len()),

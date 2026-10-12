@@ -232,6 +232,14 @@ uploads nothing, so nothing can be published:
   `aether update --check` against the same server must exit 0 and print that
   this version is up to date.
 
+The phone web app is part of that binary: `crates/aether-remote/build.rs`
+embeds the tracked runtime files under `crates/aether-remote/web/` with
+`include_bytes!`, so a release build needs no Node or bundler and no web files
+beside the binary. The `binary` stage of `scripts/ci.sh` runs the app's type
+checks and unit tests, and its phone-viewport browser tests (including a run
+against the built daemon) wherever Chromium is installed under
+`web/node_modules/.browsers`, as the hosted workflow does.
+
 - **A pushed tag `vMAJOR.MINOR.PATCH`** must equal the workspace version in
   `Cargo.toml`, and `CHANGELOG.md` must have a `## MAJOR.MINOR.PATCH` section
   with text, or the run fails before anything is built. It then creates a

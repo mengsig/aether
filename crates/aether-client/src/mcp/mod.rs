@@ -486,6 +486,7 @@ fn command_for(name: &str, arguments: Value) -> Result<Command, String> {
             Command::Cancel {
                 agent: id(&a.agent)?,
                 reason: a.reason,
+                idempotency_key: None,
             }
         }
         "list_tasks" => {

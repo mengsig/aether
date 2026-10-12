@@ -23,6 +23,9 @@ use crate::inbox::MessageDelivery;
 use crate::time::Timestamp;
 use crate::tool::{SideEffectClass, ToolOutcome};
 
+mod ledger;
+pub use ledger::{InvalidHorizon, SubmissionHorizon, SubmissionLedger, UnprovenAbsence};
+
 /// How a class of side effect is retried, and whether its outcome is kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetryPolicy {
@@ -184,6 +187,8 @@ pub struct InvalidSubmissionKey;
 pub struct Submission {
     pub key: IdempotencyKey,
     pub fingerprint: String,
+    /// Answer from the record or not at all; see [`Self::replay_only`].
+    replay_only: bool,
 }
 
 impl Submission {
@@ -206,11 +211,28 @@ impl Submission {
         Ok(Self {
             key: IdempotencyKey(key.to_owned()),
             fingerprint: fingerprint(request),
+            replay_only: false,
         })
+    }
+
+    /// The same submission, answerable only from its record: it replays what
+    /// the key created or is refused, and never does the work.
+    pub fn replay_only(mut self) -> Self {
+        self.replay_only = true;
+        self
+    }
+
+    pub fn is_replay_only(&self) -> bool {
+        self.replay_only
     }
 
     /// The record to commit alongside whatever `outcome` names.
     pub fn record(&self, at: Timestamp, outcome: SubmissionOutcome) -> RecordedSubmission {
+        assert!(
+            !self.replay_only,
+            "a replay-only submission of `{}` reached a commit",
+            self.key
+        );
         RecordedSubmission {
             key: self.key.clone(),
             fingerprint: self.fingerprint.clone(),
@@ -246,6 +268,10 @@ fn fingerprint(request: &Value) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "created", rename_all = "snake_case")]
 pub enum SubmissionOutcome {
+    /// Immutable result committed atomically with a state-changing command.
+    Receipt {
+        value: Value,
+    },
     Message {
         message: MessageId,
     },
@@ -278,6 +304,7 @@ impl SubmissionOutcome {
     /// for something else.
     pub fn created(&self) -> &'static str {
         match self {
+            Self::Receipt { .. } => "receipt",
             Self::Message { .. } => "message",
             Self::FannedOut { .. } => "fanned_out",
             Self::Agent { .. } => "agent",

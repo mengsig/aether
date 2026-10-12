@@ -23,6 +23,13 @@ pub struct LiveWorkspace {
 }
 
 impl App {
+    pub(crate) fn workspace_path(&self, path: &Path) -> PathBuf {
+        if self.options.is_remote() {
+            path.to_owned()
+        } else {
+            workspace::canonical(path)
+        }
+    }
     /// Where the operator is working: the viewed agent's tree root's
     /// workspace, else the one last picked or started in, else the launch directory.
     pub fn active_workspace(&self) -> Option<&Path> {
@@ -54,13 +61,13 @@ impl App {
             .filter(|node| node.agent.is_live() && !node.agent.archived)
             .map(|node| {
                 let path = node.agent.scope.workspace_root.as_deref();
-                (node.agent.id, path.map(workspace::canonical))
+                (node.agent.id, path.map(|path| self.workspace_path(path)))
             })
     }
 
     /// The most recently updated live root working in `path`.
     pub(crate) fn latest_live_root_in(&self, path: &Path) -> Option<AgentId> {
-        let path = workspace::canonical(path);
+        let path = self.workspace_path(path);
         self.live_roots()
             .filter(|(_, root)| root.as_deref() == Some(path.as_path()))
             .filter_map(|(id, _)| self.tree.nodes.get(&id))
@@ -123,6 +130,12 @@ impl App {
             self.refuse_non_utf8(typed);
             return Vec::new();
         };
+        if self.options.is_remote() {
+            return vec![super::host::request(
+                super::Command::ValidateWorkspace { path: text.into() },
+                super::host::HostRequest::Validate,
+            )];
+        }
         let home = self.options.home.as_deref();
         let resolved = workspace::resolve(text, home, self.active_workspace());
         match resolved {
@@ -136,7 +149,7 @@ impl App {
 
     /// Work in `path`: view its live root, or start one there.
     pub(crate) fn use_workspace(&mut self, path: &Path) -> Vec<Effect> {
-        let path = workspace::canonical(path);
+        let path = self.workspace_path(path);
         if path.to_str().is_none() {
             self.refuse_non_utf8(&path);
             return Vec::new();
@@ -147,7 +160,7 @@ impl App {
             .selected
             .filter(|id| !self.is_terminal(*id))
             .and_then(|id| self.root_workspace(id))
-            .is_some_and(|root| workspace::canonical(root) == path);
+            .is_some_and(|root| self.workspace_path(root) == path);
         // A root the operator waits on here may already be in the tree; until
         // its reply, messages still queue behind its start. A failed start
         // gives way to a live root, saying what it held.
@@ -182,7 +195,7 @@ impl App {
 
     /// Move `path` to the front of the picker's recents, in memory and on disk.
     pub(super) fn remember_workspace(&mut self, path: &Path) {
-        let path = workspace::canonical(path);
+        let path = self.workspace_path(path);
         let Some(name) = path.to_str().map(str::to_owned) else {
             self.refuse_non_utf8(&path);
             return;
@@ -198,7 +211,7 @@ impl App {
 
     /// Pin `path` after the other pins, or unpin it, in memory and on disk.
     pub(crate) fn pin_workspace(&mut self, path: &Path, pinned: bool) {
-        let path = workspace::canonical(path);
+        let path = self.workspace_path(path);
         let Some(name) = path.to_str().map(str::to_owned) else {
             self.refuse_non_utf8(&path);
             return;

@@ -21,6 +21,7 @@ impl App {
             SlashCommand::Memory => ViewKind::Memory,
             SlashCommand::Schedules => ViewKind::Schedules,
             SlashCommand::Mcp => ViewKind::Mcp,
+            SlashCommand::Outbox => ViewKind::Outbox,
             SlashCommand::Doctor => ViewKind::Doctor,
             SlashCommand::Report => ViewKind::Report,
             SlashCommand::Artifacts => ViewKind::Artifacts,
@@ -127,20 +128,21 @@ impl App {
     /// Paint with `choice` and remember it. A theme file is read now: a
     /// missing one changes nothing, a broken one paints its base, both said.
     fn set_theme(&mut self, choice: ThemeChoice) {
-        let (scheme, problem) = match files::scheme(&choice, self.options.prefs_dir.as_deref()) {
-            Ok(scheme) => (scheme, None),
-            Err(ThemeError {
-                message,
-                fallback: Some(base),
-            }) => (base.scheme(), Some(message)),
-            Err(ThemeError {
-                message,
-                fallback: None,
-            }) => {
-                self.flash_error(message);
-                return;
-            }
-        };
+        let (scheme, problem) =
+            match files::scheme(&choice, self.options.definitions_dir.as_deref()) {
+                Ok(scheme) => (scheme, None),
+                Err(ThemeError {
+                    message,
+                    fallback: Some(base),
+                }) => (base.scheme(), Some(message)),
+                Err(ThemeError {
+                    message,
+                    fallback: None,
+                }) => {
+                    self.flash_error(message);
+                    return;
+                }
+            };
         self.refresh_ui_theme(ThemeSpec {
             mode: choice.mode,
             scheme,

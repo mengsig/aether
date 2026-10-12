@@ -564,6 +564,7 @@ listed. A few take an argument directly: `/theme nord`, `/mouse scroll`,
 | `/help` | keys and commands | `?` |
 | `/quit` | leave the client; agents keep running in the daemon | `Ctrl+C` |
 | `/mode [name\|reload]` | choose a transcript view mode |  |
+| `/outbox` | remote operations the host cannot confirm; deliver, resend or discard |  |
 <!-- END GENERATED: commands -->
 
 These tables are generated from `crates/aether-tui/src/commands/`; regenerate

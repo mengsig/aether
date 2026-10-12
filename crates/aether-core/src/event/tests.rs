@@ -33,6 +33,22 @@ fn operator_origin_preserves_legacy_users_and_import_authority() {
 }
 
 #[test]
+fn a_device_origin_names_the_device_and_keeps_user_standing() {
+    let device = crate::id::DeviceId::new();
+    let actor = super::Actor::connected_user(super::OperatorOrigin::Device {
+        device,
+        name: "phone".into(),
+        connection: "c1".into(),
+    });
+    assert!(matches!(actor, super::Actor::User { .. }));
+    assert_eq!(actor.label(), format!("user:device:phone({device})#c1"));
+    let json = serde_json::to_value(&actor).unwrap();
+    assert_eq!(json["origin"]["transport"], "device");
+    let back: super::Actor = serde_json::from_value(json).unwrap();
+    assert_eq!(back, actor);
+}
+
+#[test]
 fn type_names_are_dotted() {
     assert_eq!(EventKind::AgentReady.type_name(), "agent.ready");
     assert_eq!(EventKind::AgentReady.family(), "agent");

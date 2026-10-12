@@ -1,5 +1,5 @@
 use super::{
-    AgentId, Client, ColorDepth, ModelChain, PathBuf, TuiDisplayOptions, TuiOptions, UiPrefs,
+    AgentId, Client, ColorDepth, ModelChain, TuiDisplayOptions, TuiOptions, UiPrefs,
     connect_or_start,
 };
 use aether_tui::prefs::MouseMode;
@@ -72,13 +72,14 @@ pub(super) fn filter_known_models(
 /// `mouse` is `--mouse`/`--no-mouse` when either was typed; otherwise the
 /// TUI's own default decides.
 pub async fn tui(
-    socket: PathBuf,
+    socket: impl Into<aether_client::Endpoint>,
     explicit_socket: bool,
     agent: Option<String>,
     mouse: Option<bool>,
     yolo: Option<bool>,
     display: TuiDisplayOptions,
 ) -> anyhow::Result<()> {
+    let socket = socket.into();
     let TuiDisplayOptions {
         theme,
         view_mode,
@@ -94,7 +95,15 @@ pub async fn tui(
                 .map_err(|e| anyhow!("--theme: {e}"))
         })
         .transpose()?;
-    let prefs_dir = aether_tui::prefs::dir();
+    validate_startup_display(&socket, ascii)?;
+    let client = connect_or_start(&socket).await?;
+    let instance_id = client.welcome().map(|w| w.instance_id.clone());
+    let definitions_dir = aether_tui::prefs::dir();
+    let prefs_dir = aether_tui::prefs::session_dir(
+        &socket,
+        instance_id.as_deref().unwrap_or("unknown"),
+        &definitions_dir,
+    );
     // A broken ui.toml must not stop the TUI: say so and paint the default.
     let prefs = match UiPrefs::load(&prefs_dir) {
         Ok(prefs) => prefs,
@@ -103,7 +112,7 @@ pub async fn tui(
             UiPrefs::default()
         }
     };
-    let mut view_modes = aether_tui::view_modes::discover(&prefs_dir);
+    let mut view_modes = aether_tui::view_modes::discover(&definitions_dir);
     let (view_mode, notice) = view_modes
         .resolve(
             view_mode.as_deref(),
@@ -116,7 +125,7 @@ pub async fn tui(
     let theme_choice = prefs.theme(theme_flag, std::env::var("NO_COLOR").ok().as_deref());
     // A typed theme that does not exist stops here; a saved one paints the
     // default and says why, like a broken file does.
-    let (scheme, theme_error) = match files::scheme(&theme_choice, Some(&prefs_dir)) {
+    let (scheme, theme_error) = match files::scheme(&theme_choice, Some(&definitions_dir)) {
         Ok(scheme) => (scheme, None),
         Err(ThemeError {
             message,
@@ -128,7 +137,7 @@ pub async fn tui(
         ),
     };
     let theme_overrides =
-        aether_tui::ui::theme::overrides::Overrides::load(&prefs_dir.join("config.toml"))?;
+        aether_tui::ui::theme::overrides::Overrides::load(&definitions_dir.join("config.toml"))?;
     let theme_spec = ThemeSpec {
         mode: theme_choice.mode,
         depth: ColorDepth::detect(),
@@ -138,20 +147,13 @@ pub async fn tui(
         ..ThemeSpec::default()
     };
     let reduced_motion = prefs.reduced_motion(reduced_motion);
-    let ascii_env = match std::env::var("AETHER_ASCII") {
-        Ok(value) => Some(value),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            return Err(anyhow!("AETHER_ASCII must contain a UTF-8 boolean value"));
-        }
-    };
+    let ascii_env = ascii_environment()?;
     let ascii = prefs
         .ascii(ascii, ascii_env.as_deref())
         .map_err(anyhow::Error::msg)?;
     // A flag overrides for this run; otherwise what was saved, otherwise the
     // daemon's `[approval] default`.
     let yolo = yolo.or(prefs.yolo);
-    let client = connect_or_start(&socket).await?;
     // The session default the operator last chose wins over the daemon's
     // configured one; the daemon's is the fallback.
     let saved_chain = validated_model_chain(&client, prefs.model_chain()).await;
@@ -175,8 +177,12 @@ pub async fn tui(
         default_fallbacks: saved_chain.map(|c| c.fallbacks).unwrap_or_default(),
         recent_models: prefs.recent_models.clone(),
         show_archived: prefs.show_archived.unwrap_or(false),
-        auto_create_root: true,
-        socket_path: Some(socket),
+        auto_create_root: !socket.is_remote(),
+        socket_path: socket.local_path().map(std::path::Path::to_path_buf),
+        endpoint: Some(socket.clone()),
+        instance_id,
+        resume_seq: prefs.last_seq,
+        draft: if plain { None } else { prefs.draft.clone() },
         explicit_socket,
         mouse: match mouse {
             Some(true) => MouseMode::Scroll,
@@ -184,8 +190,16 @@ pub async fn tui(
             None => prefs.mouse.unwrap_or_default(),
         },
         yolo,
-        cwd: std::env::current_dir().ok(),
-        home: aether_tui::workspace::home_dir(),
+        cwd: if socket.is_remote() {
+            None
+        } else {
+            std::env::current_dir().ok()
+        },
+        home: if socket.is_remote() {
+            None
+        } else {
+            aether_tui::workspace::home_dir()
+        },
         recent_workspaces: prefs.recent_workspaces.clone(),
         pinned_workspaces: prefs.pinned_workspaces.clone(),
         workspace_roots: prefs.workspace_roots.clone(),
@@ -195,6 +209,7 @@ pub async fn tui(
         startup_flash: theme_overrides.ignored_notice(),
         startup_error: theme_error,
         prefs_dir: Some(prefs_dir),
+        definitions_dir: Some(definitions_dir),
         reduced_motion,
         ascii,
         board_open: prefs.board_open,
@@ -214,4 +229,35 @@ pub async fn tui(
         return aether_tui::run_plain(client, options).await;
     }
     aether_tui::run(client, options).await
+}
+
+fn ascii_environment() -> anyhow::Result<Option<String>> {
+    match std::env::var("AETHER_ASCII") {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(anyhow!("AETHER_ASCII must contain a UTF-8 boolean value"))
+        }
+    }
+}
+
+fn validate_startup_display(endpoint: &aether_client::Endpoint, ascii: bool) -> anyhow::Result<()> {
+    let prefs = if endpoint.is_remote() {
+        UiPrefs::default()
+    } else {
+        match UiPrefs::load(&aether_tui::prefs::dir()) {
+            Ok(prefs) => prefs,
+            Err(error) => {
+                eprintln!(
+                    "ignoring bad preferences: {}",
+                    super::sane(&error.to_string())
+                );
+                UiPrefs::default()
+            }
+        }
+    };
+    prefs
+        .ascii(ascii, ascii_environment()?.as_deref())
+        .map_err(anyhow::Error::msg)?;
+    Ok(())
 }

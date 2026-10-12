@@ -18,7 +18,7 @@ use args::*;
 
 /// Answer one approval, keeping the answer when `--remember` is given.
 async fn approve_with(
-    socket: PathBuf,
+    socket: aether_client::Endpoint,
     approval: String,
     approve: bool,
     args: RememberArgs,
@@ -49,6 +49,15 @@ fn yolo_flag(yolo: bool, no_yolo: bool) -> Option<bool> {
     }
 }
 
+/// A `--flag` / `--no-flag` pair as a choice, or none when neither was typed.
+fn flag_pair(on: bool, off: bool) -> Option<bool> {
+    match (on, off) {
+        (true, _) => Some(true),
+        (_, true) => Some(false),
+        _ => None,
+    }
+}
+
 /// `--mouse` / `--no-mouse` as a choice, or none when neither was typed.
 fn mouse_flag(mouse: bool, no_mouse: bool) -> Option<bool> {
     match (mouse, no_mouse) {
@@ -70,7 +79,17 @@ fn main() -> std::process::ExitCode {
         .flatten()
         .copied()
         .unwrap_or(false);
-    let args = Args::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let mut args = Args::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let json = json && !matches!(args.command, Some(Cmd::Bridge { .. }));
+    if let Err(error) = cli::remote::check_selectors(&matches) {
+        eprintln!("Error: {error}");
+        return std::process::ExitCode::from(2);
+    }
+    if matches.value_source("socket") == Some(clap::parser::ValueSource::CommandLine)
+        && matches.value_source("remote") != Some(clap::parser::ValueSource::CommandLine)
+    {
+        args.remote = None;
+    }
     let socket = args
         .socket
         .clone()
@@ -101,11 +120,38 @@ fn main() -> std::process::ExitCode {
 
 fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
     let explicit_socket = args.socket.is_some();
+    if args.remote.is_some() && !args.local {
+        check_remote_command(args.command.as_ref())?;
+    }
+    if let Some(Cmd::Bridge { stdio }) = args.command.as_ref() {
+        let stdio = *stdio;
+        return run_with_runtime(
+            async move { cli::bridge::bridge(socket, stdio).await.map(|()| 0) },
+        );
+    }
+    let profiles_only = matches!(
+        args.command.as_ref(),
+        Some(Cmd::Remote {
+            command: RemoteCmd::Add { .. } | RemoteCmd::List { .. } | RemoteCmd::Remove { .. }
+        })
+    );
+    let endpoint = if profiles_only {
+        aether_client::Endpoint::Socket(socket.clone())
+    } else {
+        cli::remote::endpoint(socket.clone(), args.remote.as_deref(), args.local)?
+    };
     let theme = args.theme.clone();
     let reduced_motion = args.reduced_motion;
     let plain = args.plain;
     let ascii = args.ascii;
-    run_with_runtime(async move {
+    let cancellable = endpoint.is_remote()
+        || matches!(
+            args.command,
+            Some(Cmd::Remote {
+                command: RemoteCmd::Add { .. }
+            })
+        );
+    run_with_runtime(remote_action(cancellable, async move {
         let result = match args.command.unwrap_or(Cmd::Tui {
             agent: None,
             no_mouse: false,
@@ -121,7 +167,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 no_yolo,
             } => {
                 cli::tui(
-                    socket,
+                    endpoint,
                     explicit_socket,
                     agent,
                     mouse_flag(mouse, no_mouse),
@@ -158,17 +204,19 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             Cmd::Serve { allow_remote } => cli::serve(socket, allow_remote).await,
             Cmd::Schema => cli::schema(),
             Cmd::Retention { command } => match command {
-                RetentionCmd::Preview { json } => cli::retention_preview(socket, json).await,
+                RetentionCmd::Preview { json } => cli::retention_preview(endpoint, json).await,
             },
-            Cmd::Status { json } => cli::status(socket, json).await,
+            Cmd::Outbox { command } => settle_outbox(endpoint, command).await,
+            Cmd::Status { json } => cli::status(endpoint, json).await,
             Cmd::Archive {
                 target,
                 all_finished,
                 undo,
                 json,
-            } => cli::archive(socket, target, all_finished, undo, json).await,
-            Cmd::Stop { json } => cli::stop(socket, json).await,
+            } => cli::archive(endpoint, target, all_finished, undo, json).await,
+            Cmd::Stop { json } => cli::stop_endpoint(endpoint, json).await,
             Cmd::Run {
+                workspace,
                 objective,
                 model,
                 role,
@@ -181,9 +229,10 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 json,
             } => {
                 return cli::run(
-                    socket,
+                    endpoint,
                     explicit_socket,
                     cli::RunOptions {
+                        workspace,
                         objective: objective.join(" "),
                         model,
                         role,
@@ -203,7 +252,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 method,
             } => cli::login(provider, api_key, method).await,
             Cmd::Logout { provider, json } => cli::logout(provider, json).await,
-            Cmd::Auth { json } => cli::auth(socket, json).await,
+            Cmd::Auth { json } => cli::auth(endpoint, json).await,
             Cmd::Diagnose {
                 out,
                 run,
@@ -229,43 +278,43 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 };
                 return cli::update(socket, explicit_socket, options).await;
             }
-            Cmd::Models { json } => cli::models(socket, json).await,
-            Cmd::Providers { json } => cli::providers(socket, json).await,
+            Cmd::Models { json } => cli::models(endpoint, json).await,
+            Cmd::Providers { json } => cli::providers(endpoint, json).await,
             Cmd::Runs { command } => match command {
-                RunsCmd::List { limit, json } => cli::runs_list(socket, limit, json).await,
+                RunsCmd::List { limit, json } => cli::runs_list(endpoint, limit, json).await,
                 RunsCmd::Report { run, json, md, out } => {
-                    cli::run_report(socket, cli::ReportOptions { run, json, md, out }).await
+                    cli::run_report(endpoint, cli::ReportOptions { run, json, md, out }).await
                 }
                 RunsCmd::Export { run, out, json } => cli::run_export(socket, run, out, json).await,
                 RunsCmd::Import { file, json } => cli::run_import(socket, file, json).await,
             },
-            Cmd::Agents { all, json } => cli::agents(socket, all, json).await,
-            Cmd::New { name, model, json } => cli::new_agent(socket, name, model, json).await,
-            Cmd::Tasks { json } => cli::tasks(socket, json).await,
+            Cmd::Agents { all, json } => cli::agents(endpoint, all, json).await,
+            Cmd::New { name, model, json } => cli::new_agent(endpoint, name, model, json).await,
+            Cmd::Tasks { json } => cli::tasks(endpoint, json).await,
             Cmd::Task {
                 objective,
                 owner,
                 depends_on,
                 json,
-            } => cli::task_create(socket, objective.join(" "), owner, depends_on, json).await,
-            Cmd::Replay { agent, json } => cli::replay(socket, agent, json).await,
+            } => cli::task_create(endpoint, objective.join(" "), owner, depends_on, json).await,
+            Cmd::Replay { agent, json } => cli::replay(endpoint, agent, json).await,
             Cmd::Events {
                 follow,
                 after,
                 agent,
                 json,
-            } => cli::events(socket, follow, after, agent, json).await,
+            } => cli::events(endpoint, follow, after, agent, json).await,
             Cmd::Send {
                 agent,
                 text,
                 subtree,
                 json,
-            } => cli::send(socket, agent, text.join(" "), subtree, json).await,
+            } => cli::send(endpoint, agent, text.join(" "), subtree, json).await,
             Cmd::Approve { approval, remember } => {
-                approve_with(socket, approval, true, remember).await
+                approve_with(endpoint, approval, true, remember).await
             }
             Cmd::Deny { approval, remember } => {
-                approve_with(socket, approval, false, remember).await
+                approve_with(endpoint, approval, false, remember).await
             }
             Cmd::Artifacts { command } => match command {
                 ArtifactsCmd::List {
@@ -274,22 +323,24 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                     with_bytes,
                     limit,
                     json,
-                } => cli::artifacts_list(socket, agent, task, with_bytes, limit, json).await,
+                } => cli::artifacts_list(endpoint, agent, task, with_bytes, limit, json).await,
                 ArtifactsCmd::Show {
                     id,
                     max_bytes,
                     json,
-                } => cli::artifact_show(socket, id, max_bytes, json).await,
+                } => cli::artifact_show(endpoint, id, max_bytes, json).await,
             },
             Cmd::Mcp { command } => match command {
-                McpCmd::List { json } => cli::mcp_list(socket, false, None, json).await,
-                McpCmd::Refresh { server, json } => cli::mcp_list(socket, true, server, json).await,
+                McpCmd::List { json } => cli::mcp_list(endpoint, false, None, json).await,
+                McpCmd::Refresh { server, json } => {
+                    cli::mcp_list(endpoint, true, server, json).await
+                }
                 McpCmd::Serve {
                     stdio: _,
                     http,
                     token_env,
                     allow_remote,
-                } => cli::mcp_serve(socket, http, token_env, allow_remote).await,
+                } => cli::mcp_serve(endpoint, http, token_env, allow_remote).await,
             },
             Cmd::Voice { command } => match command {
                 VoiceCmd::Status { json } => cli::voice::status(socket, json).await,
@@ -297,7 +348,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 VoiceCmd::Cancel { json } => cli::voice::cancel(socket, json).await,
             },
             Cmd::Rules { command } => match command {
-                RulesCmd::List { all, json } => cli::rules_list(socket, all, json).await,
+                RulesCmd::List { all, json } => cli::rules_list(endpoint, all, json).await,
                 RulesCmd::Allow {
                     matcher,
                     scope,
@@ -305,7 +356,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                     json,
                 } => {
                     cli::rules_add(
-                        socket,
+                        endpoint,
                         true,
                         matcher.tool,
                         matcher.argument,
@@ -323,7 +374,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                     json,
                 } => {
                     cli::rules_add(
-                        socket,
+                        endpoint,
                         false,
                         matcher.tool,
                         matcher.argument,
@@ -335,33 +386,33 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                     .await
                 }
                 RulesCmd::Revoke { id, reason, json } => {
-                    cli::rules_revoke(socket, id, reason, json).await
+                    cli::rules_revoke(endpoint, id, reason, json).await
                 }
             },
-            Cmd::Cancel { agent, json } => cli::cancel(socket, agent, json).await,
-            Cmd::Interrupt { agent, json } => cli::interrupt(socket, agent, json).await,
-            Cmd::Schedule { command } => cli::schedules::run(socket, command).await,
-            Cmd::GithubWatcher { command } => cli::github_watcher::run(socket, command).await,
+            Cmd::Cancel { agent, json } => cli::cancel(endpoint, agent, json).await,
+            Cmd::Interrupt { agent, json } => cli::interrupt(endpoint, agent, json).await,
+            Cmd::Schedule { command } => cli::schedules::run(endpoint, command).await,
+            Cmd::GithubWatcher { command } => cli::github_watcher::run(endpoint, command).await,
             Cmd::Trigger {
                 agent,
                 source,
                 payload,
                 json,
-            } => cli::trigger(socket, agent, source, payload, json).await,
-            Cmd::Restart { agent, json } => cli::restart(socket, agent, json).await,
-            Cmd::Wake { agent, json } => cli::wake(socket, agent, json).await,
+            } => cli::trigger(endpoint, agent, source, payload, json).await,
+            Cmd::Restart { agent, json } => cli::restart(endpoint, agent, json).await,
+            Cmd::Wake { agent, json } => cli::wake(endpoint, agent, json).await,
             Cmd::Pause {
                 agent,
                 subtree,
                 json,
-            } => cli::pause(socket, agent, subtree, json).await,
+            } => cli::pause(endpoint, agent, subtree, json).await,
             Cmd::Resume {
                 agent,
                 subtree,
                 json,
-            } => cli::resume(socket, agent, subtree, json).await,
-            Cmd::Set { agent, knobs, json } => cli::set(socket, agent, knobs, json).await,
-            Cmd::Compact { agent, json } => cli::compact(socket, agent, json).await,
+            } => cli::resume(endpoint, agent, subtree, json).await,
+            Cmd::Set { agent, knobs, json } => cli::set(endpoint, agent, knobs, json).await,
+            Cmd::Compact { agent, json } => cli::compact(endpoint, agent, json).await,
             Cmd::Memory { command } => match command {
                 MemoryCmd::List {
                     scope,
@@ -370,21 +421,82 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                     all,
                     limit,
                     json,
-                } => cli::memory_list(socket, scope, text, tag, all, limit, json).await,
-                MemoryCmd::Show { id, json } => cli::memory_show(socket, id, json).await,
+                } => cli::memory_list(endpoint, scope, text, tag, all, limit, json).await,
+                MemoryCmd::Show { id, json } => cli::memory_show(endpoint, id, json).await,
                 MemoryCmd::Forget { id, reason, json } => {
-                    cli::memory_forget(socket, id, reason, json).await
+                    cli::memory_forget(endpoint, id, reason, json).await
                 }
-                MemoryCmd::Restore { id, json } => cli::memory_restore(socket, id, json).await,
+                MemoryCmd::Restore { id, json } => cli::memory_restore(endpoint, id, json).await,
                 MemoryCmd::Pin { id, unpin, json } => {
-                    cli::memory_pin(socket, id, unpin, json).await
+                    cli::memory_pin(endpoint, id, unpin, json).await
                 }
-                MemoryCmd::Sync { root, json } => cli::memory_sync(socket, root, json).await,
+                MemoryCmd::Sync { root, json } => cli::memory_sync(endpoint, root, json).await,
             },
+            Cmd::Remote { command } => cli::remote::run(socket, command).await,
+            Cmd::Bridge { stdio } => cli::bridge::bridge(socket, stdio).await,
             Cmd::McpBridge { agent, token } => cli::mcp_bridge(socket, agent, token).await,
         };
         result.map(|()| 0)
-    })
+    }))
+}
+
+async fn remote_action(
+    cancellable: bool,
+    action: impl std::future::Future<Output = anyhow::Result<i32>>,
+) -> anyhow::Result<i32> {
+    if !cancellable {
+        return action.await;
+    }
+    tokio::select! {
+        result = action => result,
+        signal = tokio::signal::ctrl_c() => {
+            signal.context("waiting for remote command cancellation")?;
+            anyhow::bail!("remote command interrupted; delivery unconfirmed for pending actions; check host state before retrying")
+        }
+    }
+}
+
+async fn settle_outbox(
+    endpoint: aether_client::Endpoint,
+    command: Option<OutboxCmd>,
+) -> anyhow::Result<()> {
+    use aether_client::Settlement;
+    let (key, choice, json) = match command.unwrap_or(OutboxCmd::List { json: false }) {
+        OutboxCmd::List { json } => return cli::outbox_list(endpoint, json).await,
+        OutboxCmd::Delivered { key, json } => (key, Settlement::MarkDelivered, json),
+        OutboxCmd::Resend { key, json } => (key, Settlement::SendAgain, json),
+        OutboxCmd::Discard { key, json } => (key, Settlement::Discard, json),
+    };
+    cli::outbox_settle(endpoint, &key, choice, json).await
+}
+
+fn check_remote_command(command: Option<&Cmd>) -> anyhow::Result<()> {
+    let feature = match command {
+        Some(Cmd::Daemon { .. }) => Some("daemon"),
+        Some(Cmd::Serve { .. }) => Some("serve"),
+        Some(Cmd::Login { .. }) => Some("provider login"),
+        Some(Cmd::Logout { .. }) => Some("provider logout"),
+        Some(Cmd::Diagnose { .. } | Cmd::Doctor { .. }) => Some("local diagnostics"),
+        Some(Cmd::Update { .. }) => Some("update"),
+        Some(Cmd::Bridge { .. } | Cmd::McpBridge { .. }) => Some("bridge"),
+        Some(Cmd::Voice { .. }) => Some("voice"),
+        Some(Cmd::Runs {
+            command: RunsCmd::Export { .. } | RunsCmd::Import { .. },
+        }) => Some("export/import of local paths"),
+        Some(Cmd::Remote { command })
+            if !matches!(
+                command,
+                RemoteCmd::Add { .. } | RemoteCmd::List { .. } | RemoteCmd::Remove { .. }
+            ) =>
+        {
+            Some("remote administration")
+        }
+        _ => None,
+    };
+    if let Some(feature) = feature {
+        anyhow::bail!("{feature} is local-only; run `aether --local` on the host to use it");
+    }
+    Ok(())
 }
 
 fn run_with_runtime(

@@ -23,6 +23,7 @@ async fn unsubscribe_stops_replay_with_a_full_output_queue() {
         Default::default(),
         false,
         SubscriptionControl {
+            auth: AuthContext::Local,
             cancel: cancel.clone(),
             failure,
         },
@@ -47,5 +48,49 @@ async fn unsubscribe_stops_replay_with_a_full_output_queue() {
         ended <= 1,
         "replay delivered {ended} frames after cancellation"
     );
+    daemon.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn subscription_accounting_is_released_when_a_task_ends_itself() {
+    let (daemon, _config) = daemon().await;
+    let daemon = Arc::new(daemon);
+    let (out, received) = mpsc::channel(1);
+    let (failure, _failures) = mpsc::channel(1);
+    let cancel = CancellationToken::new();
+    let (_, task) = spawn_subscription(
+        daemon.clone(),
+        out,
+        1,
+        Some(0),
+        Default::default(),
+        false,
+        SubscriptionControl {
+            auth: AuthContext::Local,
+            cancel: cancel.clone(),
+            failure,
+        },
+    )
+    .unwrap();
+    let mut subscriptions = HashMap::from([(1, (cancel.clone(), task))]);
+    assert_eq!(subscriptions.len(), 1);
+    drop(received);
+    daemon
+        .runtime
+        .apply(
+            aether_store::Commit::new()
+                .event(EventDraft::new(Actor::System, EventKind::AgentReady)),
+        )
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while !subscriptions[&1].1.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("closed receiver ends the task without unsubscribe");
+    assert!(!cancel.is_cancelled());
+    reap_subscriptions(&mut subscriptions).await.unwrap();
+    assert!(subscriptions.is_empty());
     daemon.runtime.shutdown().await;
 }

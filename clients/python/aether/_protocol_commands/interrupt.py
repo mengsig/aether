@@ -7,10 +7,12 @@ from ..protocol import (
     Any,
 )
 
-def interrupt(*, agent: AgentId) -> dict[str, Any]:
+def interrupt(*, agent: AgentId, idempotency_key: str | None = None) -> dict[str, Any]:
     """Stop the running turn only; the agent keeps its transcript and waits
     for the next message.
     """
     frame: dict[str, Any] = {"cmd": "interrupt"}
     frame["agent"] = agent
+    if idempotency_key is not None:
+        frame["idempotency_key"] = idempotency_key
     return frame

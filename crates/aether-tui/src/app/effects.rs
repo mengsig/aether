@@ -30,6 +30,11 @@ impl std::fmt::Display for MemoryAction {
 /// What handler a reply should go to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Then {
+    Host(super::host::HostRequest),
+    RemoteAck {
+        key: String,
+        next: Box<Then>,
+    },
     VoiceReply(u64),
     /// The daemon's defaults, fetched to start this root.
     RootDefaults(StartId),
@@ -132,6 +137,11 @@ pub enum Effect {
     Subscribe {
         after: Option<u64>,
     },
+    /// Read the remote operations the host could not account for, after
+    /// carrying out a person's decision about one of them when there is one.
+    Outbox {
+        settle: Option<(String, aether_client::Settlement)>,
+    },
     /// Leave the terminal to `aether <args>` (login flows), then come back.
     RunExternal {
         args: Vec<String>,
@@ -171,6 +181,7 @@ pub enum AppEvent {
         frames: u64,
     },
     Connected,
+    HistoryExpired,
     /// The connection to the daemon ended. `because` is what the daemon said
     /// before closing, when it said anything - a tokened transport explains an
     /// idle drop, and reporting only "lost the daemon" throws that away.
@@ -198,6 +209,14 @@ pub enum AppEvent {
         last_seq: u64,
     },
     Frame(SubscriptionFrame),
+    /// `Effect::Outbox` finished: how the decision went, and what still waits.
+    Outbox {
+        settled: Option<(
+            aether_client::Settlement,
+            Result<Option<Reply>, ClientError>,
+        )>,
+        undecided: Result<aether_client::Undecided, ClientError>,
+    },
     Reply {
         then: Then,
         result: Result<Reply, ClientError>,

@@ -253,6 +253,18 @@ pub async fn stop(socket: PathBuf, json: bool) -> anyhow::Result<()> {
     }
 }
 
+pub async fn stop_endpoint(endpoint: aether_client::Endpoint, json: bool) -> anyhow::Result<()> {
+    if let Some(path) = endpoint.local_path() {
+        return stop(path.to_path_buf(), json).await;
+    }
+    connect(&endpoint).await?.shutdown().await?;
+    acted(
+        json,
+        "remote daemon stopping",
+        serde_json::json!({"stopping": true}),
+    )
+}
+
 /// True when the daemon answered and refused this build's protocol. `connect`
 /// adds context, so the client's own error is found through the chain.
 pub(super) fn is_version_skew(error: &anyhow::Error) -> bool {

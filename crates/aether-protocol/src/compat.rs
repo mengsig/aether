@@ -1,52 +1,7 @@
-//! Serving the previous protocol version.
-//!
-//! This build speaks [`PROTOCOL_VERSION`] and also serves
-//! [`MIN_PROTOCOL_VERSION`], one back, by rewriting the frames whose shape
-//! changed. A client inside that window is translated at the edge, never
-//! refused; one outside it is refused at hello with both bounds named.
-//!
-//! Only the daemon's answers need rewriting. Every field a newer version
-//! added to a command carries `#[serde(default)]`, so an older client's
-//! request is a strict subset of the current one and decodes unchanged -
-//! `no_command_requires_a_field_an_older_client_would_not_send` holds that
-//! true against the live schema.
-//!
-//! v17 adds the watcher's `operator_users`. A v16 client cannot represent
-//! the list, and saving a configuration without it would silently take
-//! operator standing away from every listed login, so a watcher reply
-//! carrying it becomes an explicit compatibility error. Existing v16 replies
-//! and events remain unchanged; the `operator` flag on an external trigger is
-//! absent unless set, and a v16 client ignores it.
-//!
-//! v16 adds retention preview requests. v15 replies need no rewriting.
-//! Previously, v15 added per-repository watcher allowlists. A v14 client cannot represent
-//! one, and saving a configuration without it would silently widen who may
-//! dispatch, so a watcher reply carrying one becomes an explicit
-//! compatibility error. Existing v14 replies and events remain unchanged.
+//! Serving the previous protocol version: replies are rewritten for a client one
+//! version back, and its requests decode unchanged (docs/protocol.md).
 
-use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame};
-use aether_core::github::GithubWatcherConfig;
-
-pub const ALLOWLIST_WATCHER_VERSION_ERROR: &str =
-    "GitHub watcher allowed_users requires protocol 15; upgrade the Aether client";
-
-pub const OPERATOR_USERS_WATCHER_VERSION_ERROR: &str =
-    "GitHub watcher operator_users requires protocol 17; upgrade the Aether client";
-
-/// Whether any repository narrows its requesters: the shape a v14 peer
-/// cannot read or preserve.
-pub fn has_watcher_allowlist(config: &GithubWatcherConfig) -> bool {
-    config
-        .repositories
-        .iter()
-        .any(|repo| repo.allowed_users.is_some())
-}
-
-/// Whether the watcher names operator logins: the shape a v16 peer cannot
-/// read or preserve.
-pub fn has_watcher_operator_users(config: &GithubWatcherConfig) -> bool {
-    config.operator_users.is_some()
-}
+use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, ServerFrame};
 
 /// Oldest protocol version this build still serves. Saturating, and never
 /// below 1: version 0 was never a thing to serve.
@@ -73,43 +28,69 @@ pub fn negotiate(hello: &Hello) -> Result<u32, ErrorReply> {
 /// Encode one server frame as a client speaking `version` reads it. Every
 /// shape this build changed for an older client in the window is rewritten
 /// here, keyed on `version`, so the daemon's writer never has to know which.
-///
 pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_json::Error> {
     debug_assert!(
         (MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&version),
         "a connection only ever speaks a negotiated version, got {version}"
     );
-    if version < 15
-        && let ServerFrame::Reply {
-            id,
-            result: Ok(Reply::GithubWatcher(status)),
-        } = frame
-        && has_watcher_allowlist(&status.config)
-    {
-        return crate::encode(&ServerFrame::Reply {
-            id: *id,
-            result: Err(ErrorReply::new(
-                ErrorCode::Incompatible,
-                ALLOWLIST_WATCHER_VERSION_ERROR,
-            )),
-        });
-    }
-    if version < 17
-        && let ServerFrame::Reply {
-            id,
-            result: Ok(Reply::GithubWatcher(status)),
-        } = frame
-        && has_watcher_operator_users(&status.config)
-    {
-        return crate::encode(&ServerFrame::Reply {
-            id: *id,
-            result: Err(ErrorReply::new(
-                ErrorCode::Incompatible,
-                OPERATOR_USERS_WATCHER_VERSION_ERROR,
-            )),
-        });
+    if version < 18 {
+        return encode_for_v17(frame);
     }
     crate::encode(frame)
+}
+
+/// What marks a device origin in an encoded frame. Quotes inside a JSON
+/// string are escaped, so this only ever matches structure.
+const DEVICE_ORIGIN: &str = r#""transport":"device""#;
+
+fn encode_for_v17(frame: &ServerFrame) -> Result<String, serde_json::Error> {
+    if let ServerFrame::Reply {
+        id,
+        result: Err(error),
+    } = frame
+        && let Some(code) = v17_error_code(error.code)
+    {
+        return crate::encode(&ServerFrame::Reply {
+            id: *id,
+            result: Err(ErrorReply::new(code, error.message.clone())),
+        });
+    }
+    let line = crate::encode(frame)?;
+    if !line.contains(DEVICE_ORIGIN) {
+        return Ok(line);
+    }
+    let mut value: serde_json::Value = serde_json::from_str(&line)?;
+    hide_device_origins(&mut value);
+    crate::encode(&value)
+}
+
+/// The code a v17 client reads in place of one it cannot decode.
+fn v17_error_code(code: ErrorCode) -> Option<ErrorCode> {
+    match code {
+        ErrorCode::Forbidden => Some(ErrorCode::Unauthorized),
+        ErrorCode::Unimplemented => Some(ErrorCode::Unavailable),
+        _ => None,
+    }
+}
+
+/// Rewrite every `user` actor with a device origin into a named user with no
+/// origin. Depth is bounded by the parser's own nesting limit.
+fn hide_device_origins(value: &mut serde_json::Value) {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            let is_device = map.get("actor").and_then(Value::as_str) == Some("user")
+                && map.get("origin").and_then(|o| o.get("transport")) == Some(&"device".into());
+            if is_device && let Some(origin) = map.remove("origin") {
+                let device = origin.get("name").and_then(Value::as_str).unwrap_or("?");
+                map.entry("name")
+                    .or_insert_with(|| format!("device:{device}").into());
+            }
+            map.values_mut().for_each(hide_device_origins);
+        }
+        Value::Array(items) => items.iter_mut().for_each(hide_device_origins),
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -143,43 +124,86 @@ mod tests {
     }
 
     #[test]
-    fn v16_watcher_reply_with_operator_users_is_a_clear_error() {
+    fn v17_watcher_operator_users_are_preserved_in_the_served_window() {
         let mut status = GithubWatcherStatus::default();
         status.config.operator_users = Some(vec!["mengsig".into()]);
         let frame = ServerFrame::Reply {
             id: 7,
-            result: Ok(Reply::GithubWatcher(status.clone())),
-        };
-        let old: ServerFrame = crate::decode(&encode_for(16, &frame).unwrap()).unwrap();
-        let ServerFrame::Reply {
-            id,
-            result: Err(error),
-        } = old
-        else {
-            panic!("v16 receives an incompatible error");
-        };
-        assert_eq!(id, 7);
-        assert_eq!(error.code, ErrorCode::Incompatible);
-        assert_eq!(error.message, OPERATOR_USERS_WATCHER_VERSION_ERROR);
-        assert!(error.message.contains("protocol 17"), "{}", error.message);
-        assert_eq!(
-            crate::decode::<ServerFrame>(&encode_for(17, &frame).unwrap()).unwrap(),
-            frame
-        );
-        // Without the list a v16 client reads the same reply it always did,
-        // allowlists included: v15 already carries those.
-        status.config.operator_users = None;
-        let mut repository = GithubRepositoryConfig::automatic("o/r".into());
-        repository.allowed_users = Some(vec!["octocat".into()]);
-        status.config.repositories.push(repository);
-        let unset = ServerFrame::Reply {
-            id: 8,
             result: Ok(Reply::GithubWatcher(status)),
         };
-        let encoded = encode_for(16, &unset).unwrap();
-        assert_eq!(encoded, crate::encode(&unset).unwrap());
-        assert!(!encoded.contains("operator_users"));
-        assert!(encoded.contains("allowed_users"));
+        for version in [MIN_PROTOCOL_VERSION, PROTOCOL_VERSION] {
+            assert_eq!(
+                crate::decode::<ServerFrame>(&encode_for(version, &frame).unwrap()).unwrap(),
+                frame
+            );
+        }
+        let mut old = Hello::new("v16", "test");
+        old.protocol_version = 16;
+        assert!(negotiate(&old).is_err());
+    }
+
+    /// A v17 client cannot decode a device origin, so it reads the device as
+    /// a named user; a v18 client reads the origin itself.
+    #[test]
+    fn a_device_origin_becomes_a_named_user_for_v17() {
+        use aether_core::event::{Actor, OperatorOrigin};
+        let device = aether_core::id::DeviceId::new();
+        let item = InboxItem {
+            id: aether_core::id::InboxItemId::new(),
+            agent_id: aether_core::id::AgentId::new(),
+            seq: 1,
+            kind: InboxKind::Message {
+                message_id: aether_core::id::MessageId::new(),
+                from: Actor::connected_user(OperatorOrigin::Device {
+                    device,
+                    name: "phone".into(),
+                    connection: "c1".into(),
+                }),
+                content: vec![],
+            },
+            delivered_at: "2026-09-09T11:00:00Z".parse().expect("timestamp"),
+        };
+        let frame = reply(Reply::Inbox(vec![item]));
+        let current = encode_for(PROTOCOL_VERSION, &frame).unwrap();
+        assert_eq!(crate::decode::<ServerFrame>(&current).unwrap(), frame);
+        let old = encode_for(17, &frame).unwrap();
+        assert!(!old.contains("\"transport\""), "{old}");
+        let decoded: ServerFrame = crate::decode(&old).expect("a v17 client decodes it");
+        let ServerFrame::Reply {
+            result: Ok(Reply::Inbox(items)),
+            ..
+        } = decoded
+        else {
+            panic!("an inbox reply");
+        };
+        let InboxKind::Message { from, .. } = &items[0].kind else {
+            panic!("a message");
+        };
+        assert_eq!(from.label(), "user:device:phone");
+    }
+
+    #[test]
+    fn the_v18_error_codes_fold_into_ones_v17_knows() {
+        for (code, folded) in [
+            (ErrorCode::Forbidden, ErrorCode::Unauthorized),
+            (ErrorCode::Unimplemented, ErrorCode::Unavailable),
+            (ErrorCode::NotFound, ErrorCode::NotFound),
+        ] {
+            let frame = ServerFrame::Reply {
+                id: 3,
+                result: Err(ErrorReply::new(code, "why")),
+            };
+            let old: ServerFrame = crate::decode(&encode_for(17, &frame).unwrap()).unwrap();
+            let ServerFrame::Reply {
+                result: Err(error), ..
+            } = old
+            else {
+                panic!("an error reply");
+            };
+            assert_eq!((error.code, error.message.as_str()), (folded, "why"));
+            let new = encode_for(PROTOCOL_VERSION, &frame).unwrap();
+            assert_eq!(crate::decode::<ServerFrame>(&new).unwrap(), frame);
+        }
     }
 
     /// The trigger's `operator` flag is additive: unset it is not written, so
@@ -229,8 +253,12 @@ mod tests {
             ("archive", &["target"]),
             ("auth_status", &[]),
             ("cancel", &["agent"]),
+            ("cancel_pairing", &["id"]),
             ("compact", &["agent"]),
+            ("complete_path", &["kind", "prefix"]),
             ("configure_github_watcher", &["config", "expected_revision"]),
+            ("configure_remote", &["expected_revision", "settings"]),
+            ("confirm_pairing", &["accept", "id"]),
             ("create_agent", &["role"]),
             ("create_memory", &["spec"]),
             ("create_schedule", &["spec"]),
@@ -241,11 +269,16 @@ mod tests {
             ("forget_memory", &["id"]),
             ("get_agent", &["id"]),
             ("get_artifact", &["id"]),
+            ("get_attention", &[]),
             ("get_checkpoint", &["id"]),
             ("get_events", &["after", "limit", "query"]),
+            ("get_git_summary", &["workspace"]),
             ("get_github_watcher", &[]),
             ("get_inbox", &["after", "agent"]),
             ("get_invocation", &["id"]),
+            ("get_pairing", &["id"]),
+            ("get_push_config", &[]),
+            ("get_remote", &[]),
             ("get_run_report", &["run"]),
             ("get_schedule", &["id"]),
             ("get_snapshot", &["id"]),
@@ -263,11 +296,13 @@ mod tests {
             ("list_approval_rules", &[]),
             ("list_approvals", &[]),
             ("list_artifacts", &["query"]),
+            ("list_devices", &[]),
             ("list_invocations", &["agent"]),
             ("list_models", &[]),
             ("list_runs", &["limit"]),
             ("list_schedules", &[]),
             ("list_tasks", &["query"]),
+            ("list_workspaces", &[]),
             ("mcp_servers", &[]),
             ("memories", &["query"]),
             ("pause", &["agent"]),
@@ -283,21 +318,29 @@ mod tests {
             ("replay", &["agent"]),
             ("reply_to_question", &["content", "question_seq", "to"]),
             ("resolve_approval", &["decision", "id"]),
+            ("resolve_submission", &["command"]),
             ("restart", &["agent"]),
             ("restore_memory", &["id"]),
             ("resume", &["agent"]),
             ("revoke_approval_rule", &["id"]),
+            ("revoke_device", &["id"]),
             ("schedule_history", &["id", "limit"]),
             ("send_message", &["content", "to"]),
             ("set_approvals", &["agent", "policy"]),
             ("shutdown", &[]),
+            ("start_pairing", &[]),
             ("status", &[]),
             ("subscribe", &["deltas", "query"]),
+            ("subscribe_push", &["subscription"]),
             ("sync_repository_knowledge", &[]),
+            ("test_push", &[]),
             ("trigger", &["agent", "source"]),
             ("unsubscribe", &["id"]),
+            ("unsubscribe_push", &[]),
             ("update_agent", &["id", "patch"]),
+            ("update_device", &["id"]),
             ("update_schedule", &["action", "id"]),
+            ("validate_workspace", &["path"]),
             ("wake", &["agent"]),
         ];
 
@@ -533,6 +576,8 @@ mod tests {
             daemon_protocol_version: Some(PROTOCOL_VERSION),
             min_protocol_version: Some(MIN_PROTOCOL_VERSION),
             idle_timeout_secs: None,
+            device: None,
+            submission_horizon: None,
         };
         let json = serde_json::to_value(&welcome).expect("ser");
         assert_eq!(json["protocol_version"], MIN_PROTOCOL_VERSION);
@@ -612,7 +657,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (16, 17));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 18));
     }
 
     #[test]
@@ -628,9 +673,9 @@ mod tests {
                 assert_eq!(decoded, frame);
             }
         }
-        assert_eq!(MIN_PROTOCOL_VERSION, 16);
-        let mut hello = Hello::new("v15", "test");
-        hello.protocol_version = 15;
+        assert_eq!(MIN_PROTOCOL_VERSION, 17);
+        let mut hello = Hello::new("v16", "test");
+        hello.protocol_version = 16;
         assert!(negotiate(&hello).is_err());
     }
 }
