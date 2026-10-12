@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 18;
+pub const SCHEMA_VERSION: u32 = 19;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -377,8 +377,12 @@ const V18: &str = r#"
 ALTER TABLE submissions ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0;
 "#;
 
+// No table changes. Record bodies may now hold `image_ref` content blocks,
+// which a binary before this cannot read: the version alone keeps it out.
+const V19: &str = "";
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the
@@ -489,21 +493,23 @@ pub(crate) fn current_version(conn: &Connection) -> Result<Option<u32>> {
     Ok(found)
 }
 
+/// A binary cannot trust itself to read records a newer one wrote.
+fn refuse_newer_store(found: Option<u32>, supported: u32) -> Result<()> {
+    match found {
+        Some(found) if found > supported => Err(StoreError::SchemaTooNew { found, supported }),
+        _ => Ok(()),
+    }
+}
+
 /// Create or upgrade the schema. Refuses a store written by a newer version.
 pub fn migrate(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
     )?;
     let found = current_version(conn)?;
-    match found {
-        Some(v) if v > SCHEMA_VERSION => {
-            return Err(StoreError::SchemaTooNew {
-                found: v,
-                supported: SCHEMA_VERSION,
-            });
-        }
-        Some(v) if v == SCHEMA_VERSION => return Ok(()),
-        _ => {}
+    refuse_newer_store(found, SCHEMA_VERSION)?;
+    if found == Some(SCHEMA_VERSION) {
+        return Ok(());
     }
     // One transaction: the statements and the version stamp commit together,
     // so an interrupted upgrade leaves the store at the version it was, ready

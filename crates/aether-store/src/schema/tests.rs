@@ -582,3 +582,57 @@ fn artifact_cleanup_migration_tracks_pending_unlinks_and_indexes_live_paths() {
         assert!(plans.iter().any(|plan| plan.contains(index)), "{plans:?}");
     }
 }
+
+/// The last schema of a binary whose content blocks have no `image_ref`.
+const LAST_SCHEMA_WITHOUT_IMAGE_REFS: u32 = 18;
+
+#[test]
+fn v19_backs_up_a_v18_store_and_keeps_binaries_without_image_refs_out() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let v18 = Connection::open(&path).expect("database");
+    for statements in &MIGRATIONS[..LAST_SCHEMA_WITHOUT_IMAGE_REFS as usize] {
+        v18.execute_batch(statements).expect("v18 schema");
+    }
+    v18.execute_batch(
+        "INSERT INTO meta(key,value) VALUES ('schema_version','18');
+         INSERT INTO inbox(id,agent_id,seq,kind,delivered_at,body)
+             VALUES ('inb_a','agt_a',1,'message','2026-10-12T00:00:00Z','{\"text\":\"kept\"}');",
+    )
+    .expect("v18 rows");
+    drop(v18);
+
+    let upgraded = crate::SqliteStore::open(&path).expect("upgrade");
+    let stamp = crate::Store::meta(&upgraded, "schema_version").expect("version");
+    assert_eq!(stamp, Some("19".to_string()));
+    drop(upgraded);
+
+    let backups: Vec<_> = std::fs::read_dir(directory.path().join("migration-backups"))
+        .expect("backups")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
+    assert_eq!(backups.len(), 1, "one snapshot of the version 18 store");
+    let name = backups[0].file_name().expect("name").to_string_lossy();
+    assert!(name.starts_with("schema-18-before-19-"), "{name}");
+    let backup =
+        Connection::open_with_flags(&backups[0], rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("backup");
+    assert_eq!(version(&backup), LAST_SCHEMA_WITHOUT_IMAGE_REFS);
+
+    let conn = Connection::open(&path).expect("reopen");
+    let body: String = conn
+        .query_row("SELECT body FROM inbox WHERE id = 'inb_a'", [], |row| {
+            row.get(0)
+        })
+        .expect("the message survives the upgrade");
+    assert_eq!(body, r#"{"text":"kept"}"#);
+    // The check `migrate` makes, with the older binary's own supported version.
+    let refusal = refuse_newer_store(Some(version(&conn)), LAST_SCHEMA_WITHOUT_IMAGE_REFS);
+    assert!(matches!(
+        refusal,
+        Err(StoreError::SchemaTooNew {
+            found: 19,
+            supported: 18
+        })
+    ));
+}
