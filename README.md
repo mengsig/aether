@@ -32,8 +32,8 @@ The binary goes into `~/.cargo/bin` by default; update a source build by pulling
   not consumer subscriptions; see [providers and checks](docs/configuration.md#providers).
 - Delegate tracked tasks to agents with explicit models and effort levels;
   choose separate Git worktrees for concurrent edits.
-- Follow agents in the terminal UI, send messages, pause work, and inspect
-  tool calls, results, token usage, and estimated costs.
+- Follow agents in the terminal UI, send messages with screenshots attached,
+  pause work, and inspect tool calls, results, token usage, and estimated costs.
 - Keep task history, reusable memory, and artifacts across client sessions.
 - Wake agents through messages, timers, recurring schedules, signed webhooks,
   or authorized GitHub requests.
@@ -117,6 +117,7 @@ Replace `AGENT_ID` with an ID from `aether agents`.
 | `aether models` | List models and provider readiness. |
 | `aether agents` / `aether tasks` | List workers and tracked objectives. |
 | `aether send AGENT_ID "What is blocking you?"` | Talk to an agent. |
+| `aether send AGENT_ID --image shot.png "What is wrong here?"` | Send a screenshot with the message. |
 | `aether pause AGENT_ID` / `aether resume AGENT_ID` | Pause or resume scheduling. |
 | `aether interrupt AGENT_ID` | Stop the current turn, keeping the conversation. |
 | `aether cancel AGENT_ID` | Cancel an agent and its descendants. |

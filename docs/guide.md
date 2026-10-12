@@ -139,6 +139,7 @@ chat to another available agent.
 | --- | --- |
 | Send; while the agent runs, steer it | Enter |
 | Queue for after this turn / newline | Tab / Shift+Enter, Alt+Enter or Ctrl+J |
+| Attach an image: a file / the clipboard | paste its path or `/image PATH` / Alt+V |
 | Go to the agents / show or hide them | Ctrl+G / Ctrl+B |
 | View the parent agent | Alt+↑ |
 | Interrupt the current turn | Esc |
@@ -154,6 +155,12 @@ Mouse capture is on by default: wheel scrolls the pane under the pointer;
 drag to select & copy within one pane. Shift+drag uses terminal selection;
 `/mouse off` disables capture. See the [TUI guide](tui.md) for every key and
 command.
+
+A message can carry screenshots and other images next to its text: paste or
+drop the file's path into the composer, type `/image PATH`, or press Alt+V for
+the image on the clipboard. Each shows as a chip above the draft until you
+send. PNG, JPEG, GIF and WebP are accepted, up to 10 images of 3.75 MiB each
+and 10 MiB per message. See [images in the TUI guide](tui.md#images).
 
 Optional [local voice](voice.md) supports dictation and spoken questions;
 recording and speech are off by default.
@@ -235,6 +242,7 @@ aether agents
 aether tasks --json
 aether events -f
 aether send AGENT_ID "Please explain the current blocker."
+aether send AGENT_ID --image shot.png --image log.png "What is wrong here?"
 aether pause AGENT_ID
 aether resume AGENT_ID
 aether replay AGENT_ID --json
@@ -245,6 +253,11 @@ aether runs export RUN_ID --out run.aether
 
 Plain `aether events` shows tool-result text and error markers, plus custom
 event names and brief payloads. Use `--json` for complete event records.
+
+`aether send --image FILE` attaches an image and may be repeated; with images
+the text is optional. The same limits apply as in the TUI, and a file that is
+not a PNG, JPEG, GIF or WebP, or is too large, is refused before anything is
+sent.
 
 For a parsed command with `--json`, command errors print one JSON object on
 stdout and a human `Error: …` on stderr, with the existing exit code:

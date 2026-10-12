@@ -331,7 +331,7 @@ pub trait Engine: Send + Sync {
   `false` if it cannot, and the runtime refuses to pretend otherwise — agents
   on that engine run without an approval policy rather than with a fake one.
 
-`run` takes an `EngineTurn` — the user prompt, `system_prompt` replacing the engine's
+`run` takes an `EngineTurn` — the user prompt and [the images sent with it](#images-on-a-message), `system_prompt` replacing the engine's
 built-in base instructions, the session to resume (or a fresh id), model and effort,
 the working directory and extra readable directories, the scope's network-access
 setting, whether to bypass permissions, the environment variables to strip, and the MCP bridge to
@@ -596,6 +596,48 @@ within one year, and use the existing durable wait scheduler. Inbox messages
 can wake an agent earlier. Recurring interval/cron jobs use `create_schedule`,
 `list_schedules` and `update_schedule`. See [the coordination tool inventory](harness-tools.md)
 for the current surface and remaining state-retrieval gap.
+
+## Images on a message
+
+A person can attach images to a message (see [the TUI guide](tui.md#images)
+and `aether send --image`). The daemon stores each one as a file and the
+message carries a reference; the bytes are read back only to hand a model or
+an engine the picture.
+
+One rule holds for every engine and model: **the text of the user turn always
+names the stored file**, one line per image after the message's own text:
+
+```text
+[image: shot.png, 47.1 KB, stored at /home/user/.local/share/aether/aether.attachments/<sha256>.png]
+```
+
+So an image is never lost silently. Where the model can see images it gets
+the picture as well; where it cannot, the agent still has a path it can open
+with its own tools, and the turn does not fail.
+
+| Runs on | What it receives besides the text |
+| --- | --- |
+| Claude Code | `image` content blocks (base64) after the text block of the stream-json user line, on the first message and on a message steered into a running turn |
+| Codex app server | a `localImage` input item per image, naming the stored file, on turn start and on a steer |
+| Codex exec | `--image <file>` per image, on a fresh run and on `resume` |
+| API model with `vision = true` | `ContentBlock::Image`, which each adapter writes in its provider's shape |
+| API model without vision | a text line in place of the image: `[image: shot.png, 47.1 KB] (this model takes no images; open the stored file named above)` |
+
+A message without images is byte for byte what it was before: the same
+stream-json line, the same arguments, the same request body.
+
+If a stored file has been removed, the engine or model gets the text only and
+the daemon logs a warning; a resumed or compacted agent never fails on an old
+message. Stored references survive a daemon restart, and a turn retried after
+one reads the same files again.
+
+A third-party engine reads `EngineTurn::images` for the turn's message and
+`EngineInput::images` for a steered one. Each `EngineImage` is a `path` and a
+`media_type`. An engine that ignores them loses nothing: the prompt already
+names every file.
+
+Images go from a person to an agent. Agent-to-agent `send_message`, agent
+replies and tool results stay text.
 
 ## Provider exhaustion
 

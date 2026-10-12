@@ -144,7 +144,8 @@ checked locally; inference still depends on your server and model.
 ## State and connections
 
 `AETHER_DATA_DIR` overrides the platform data directory, which holds
-`aether.db`, logs, and artifact payloads. `AETHER_SOCKET` selects a daemon
+`aether.db`, logs, artifact payloads, and the images sent with messages
+(`aether.attachments/`). `AETHER_SOCKET` selects a daemon
 socket; `--socket` overrides it for a CLI invocation. The default is
 `$XDG_RUNTIME_DIR/aether/aetherd.sock` where a runtime directory is available,
 otherwise `aetherd.sock` in the data directory.

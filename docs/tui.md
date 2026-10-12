@@ -184,6 +184,42 @@ Everything you send goes to the viewed agent.
   token caps only or token and dollar caps. Native Codex supports token caps;
   its list-price estimates cannot enforce dollar caps.
 
+### Images
+
+A message can carry images (a screenshot, a diagram) next to its text. There
+are three ways to attach one, and each adds a chip above the draft,
+`[image: shot.png, 1.2 MB]`:
+
+- **Paste or drop the file.** A paste that is exactly the path of one existing
+  PNG, JPEG, GIF or WebP file becomes an image instead of text. Dragging a
+  file onto the terminal pastes its path, so that works too; quoted paths,
+  backslash-escaped spaces, `~/` and `file://` URLs are all read. Anything
+  else, such as a path inside a sentence or a file that does not exist, stays
+  text.
+- **`/image <path>`** attaches a file by name; `~` and paths relative to the
+  workspace resolve as they do elsewhere.
+- **Alt+V**, or `/image` with no path, attaches the image on the clipboard.
+  This runs `wl-paste` on Wayland, `xclip` on X11 and `osascript` on macOS. If
+  the helper is not installed, or the clipboard holds no image, the status row
+  says so in one line and the draft is untouched. Over SSH the clipboard is on
+  the other machine: copy the file across and use `/image <path>`.
+
+Chips stay through slash commands and leave with the next message. Backspace
+at the very start of the draft removes the last chip, and `/image --clear`
+removes them all. An image needs no words: Enter sends it on its own. Enter
+while an image is still being read keeps the draft and says so. The queue
+(Tab) holds text only, so a draft with images is not queued; send it with
+Enter.
+
+A sent image is one line of the transcript under the message's text,
+`[image: shot.png, 1.2 MB]`, in every view mode. The picture itself is not
+drawn in the terminal.
+
+A message takes at most 10 images, each at most 3.75 MiB and 10 MiB together,
+and a file is checked by its bytes, not its name. A screenshot over the limit
+is refused with the size in the message; it is not shrunk for you. What each
+engine does with an image is in [the engine guide](engines.md#images-on-a-message).
+
 ## Approvals
 
 When an agent asks permission, the approval replaces the composer (your draft
@@ -343,6 +379,8 @@ confirmation: type `yes` to end the named agent, or `no` to decline. Other text
 abandons that confirmation and is processed normally. Slash commands also
 abandon it. `/usage` and `/help` print text; interactive lists and pagers require
 the TUI. Use `aether agents --all` to browse archived agents in plain workflows.
+`/image <path>` prints `attached shot.png, 1.2 MB` and the image leaves with the
+next message line; a line that is only a path is text here, never an image.
 
 Plain logs now use `> message` and `* reply` cell text plus session summaries.
 The earlier timestamped records and per-reply duration/cost/thinking headers

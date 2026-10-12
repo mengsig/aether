@@ -80,6 +80,23 @@ looks like a boundary and is not one.
   complete hostile-filesystem sandbox. An existing export `.partial` is
   refused; inspect and remove it to retry.
 
+- Images sent with a message are stored under `aether.attachments/` in the
+  data directory and are never removed automatically, including when their
+  agent is archived; delete old files by hand once no live agent needs them.
+  An agent whose stored image is gone gets the message's text only. A send the
+  daemon refuses after its images were stored (an unknown agent, say) leaves
+  those files behind.
+- `aether runs export` does not include image files: an imported run shows
+  each image as its `[image: name, size]` line.
+- An image over 3.75 MiB is refused, not shrunk; a full-screen capture of a
+  4K display can exceed that as PNG. Crop it or save it as JPEG.
+- Only people attach images. Agents cannot send images to each other or in
+  replies, the terminal does not draw them, and the picker for other file
+  types is not shipped.
+- Pasting an image from the clipboard needs `wl-paste` (Wayland), `xclip`
+  (X11) or `osascript` (macOS) and a local session; over SSH, attach a file
+  by path instead.
+
 ## Orchestration and visibility
 
 - `wait_for` keeps reported native background jobs attached, but occupies an

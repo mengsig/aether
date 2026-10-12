@@ -4,6 +4,22 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Images on a message
+
+- Attach screenshots and other images to a message. In the terminal UI,
+  paste or drop an image file's path, type `/image PATH`, or press Alt+V for
+  the image on the clipboard; each shows as a chip above the draft until the
+  message is sent. From a script, `aether send --image FILE` (repeatable).
+- Claude Code and Codex agents receive the image itself, as do API models
+  that take images. The message text always names the stored file, so an
+  agent on a model without vision can still open it.
+- PNG, JPEG, GIF and WebP; up to 10 images of 3.75 MiB each and 10 MiB per
+  message, checked by the daemon with a clear error.
+- Protocol 18: `send_message` takes `attachments`. A text-only message is
+  unchanged on the wire, and protocol 17 clients keep working.
+
 ## 1.0.0
 
 First public release.
