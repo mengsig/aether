@@ -260,8 +260,53 @@ fn args_shape() {
     assert_eq!(engine.adapter(), "codex/0.153.2");
 }
 
+/// `--image` takes every value up to the next flag: on a fresh run it must
+/// sit before one, and on a resumed run it belongs to `resume`.
+#[test]
+fn images_are_passed_as_files_where_the_cli_reads_them() {
+    let engine = CodexEngine::new("codex", "0.162.1");
+    let images = vec![
+        crate::EngineImage {
+            path: PathBuf::from("/data/a.png"),
+            media_type: "image/png".into(),
+        },
+        crate::EngineImage {
+            path: PathBuf::from("/data/b.jpg"),
+            media_type: "image/jpeg".into(),
+        },
+    ];
+    let fresh = EngineTurn {
+        images: images.clone(),
+        ..turn_with_effort(None)
+    };
+    let joined = engine.args(&fresh).join(" ");
+    assert!(
+        joined.starts_with("exec --image /data/a.png --image /data/b.jpg --json "),
+        "{joined}"
+    );
+    assert!(joined.ends_with(" -"), "the prompt still arrives on stdin");
+
+    let resumed = EngineTurn {
+        images,
+        session: Some("thread-1".into()),
+        ..turn_with_effort(None)
+    };
+    let joined = engine.args(&resumed).join(" ");
+    assert!(joined.starts_with("exec --json "), "{joined}");
+    assert!(
+        joined.ends_with("resume --image /data/a.png --image /data/b.jpg thread-1 -"),
+        "{joined}"
+    );
+
+    // Without images the arguments are exactly what they were.
+    let plain = engine.args(&turn_with_effort(None)).join(" ");
+    assert!(!plain.contains("--image"), "{plain}");
+    assert!(plain.starts_with("exec --json -c features.multi_agent=false"));
+}
+
 fn turn_with_effort(effort: Option<Effort>) -> EngineTurn {
     EngineTurn {
+        images: Vec::new(),
         prompt: "hi".into(),
         system_prompt: "contract".into(),
         session: None,

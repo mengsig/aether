@@ -154,7 +154,7 @@ impl Driver {
         &mut self,
         mut child: tokio::process::Child,
         stdout: tokio::process::ChildStdout,
-        mut input_rx: mpsc::Receiver<String>,
+        mut input_rx: mpsc::Receiver<crate::EngineInput>,
         mut decision_rx: mpsc::Receiver<PermissionDecision>,
         mut stop_rx: mpsc::Receiver<Duration>,
         cancel: CancellationToken,
@@ -199,11 +199,11 @@ impl Driver {
                         break;
                     }
                 },
-                Some(text) = input_rx.recv() => {
+                Some(message) = input_rx.recv() => {
                     if self.state.turn_id.is_none() {
                         // Sent before the turn started: steer as soon as it has.
-                        self.state.queued_input.push(text);
-                    } else if !self.steer(text).await {
+                        self.state.queued_input.push(message);
+                    } else if !self.steer(message).await {
                         break;
                     }
                 }
@@ -469,8 +469,8 @@ impl Driver {
                 {
                     return false;
                 }
-                for text in std::mem::take(&mut self.state.queued_input) {
-                    if !self.steer(text).await {
+                for message in std::mem::take(&mut self.state.queued_input) {
+                    if !self.steer(message).await {
                         return false;
                     }
                 }
@@ -566,16 +566,12 @@ impl Driver {
     }
 
     /// Hand a user message to the running turn; the response acknowledges it.
-    async fn steer(&mut self, text: String) -> bool {
+    async fn steer(&mut self, message: crate::EngineInput) -> bool {
         let (Some(thread), Some(turn)) = (self.state.thread_id.clone(), self.state.turn_id.clone())
         else {
             return true;
         };
-        let params = json!({
-            "threadId": thread,
-            "expectedTurnId": turn,
-            "input": [{ "type": "text", "text": text.trim_end() }],
-        });
+        let params = super::steer_params(&thread, &turn, &message);
         self.request(Sent::Steer, "turn/steer", params).await
     }
 

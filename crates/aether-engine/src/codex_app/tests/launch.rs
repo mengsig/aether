@@ -921,3 +921,42 @@ fn the_multi_agent_feature_is_always_disabled() {
             .contains(&"agents.enabled=false".into())
     );
 }
+
+/// A message's images reach the app server as files, after the text, both
+/// when the turn starts and when a message is steered into it.
+#[test]
+fn images_are_local_image_items_after_the_text() {
+    let image = crate::EngineImage {
+        path: PathBuf::from("/data/aether.attachments/abc.png"),
+        media_type: "image/png".into(),
+    };
+    let mut t = turn(None, true);
+    assert_eq!(
+        turn_params(&t, "th1", false)["input"],
+        json!([{"type": "text", "text": "do it"}]),
+        "a message without images is what it always was"
+    );
+    t.images = vec![image.clone()];
+    let item = json!({"type": "localImage", "path": "/data/aether.attachments/abc.png"});
+    assert_eq!(
+        turn_params(&t, "th1", false)["input"],
+        json!([{"type": "text", "text": "do it"}, item])
+    );
+
+    let steered = crate::EngineInput {
+        text: "and this\n".into(),
+        images: vec![image],
+    };
+    assert_eq!(
+        super::super::steer_params("th1", "turn1", &steered),
+        json!({
+            "threadId": "th1",
+            "expectedTurnId": "turn1",
+            "input": [{"type": "text", "text": "and this"}, item],
+        })
+    );
+    assert_eq!(
+        super::super::steer_params("th1", "turn1", &"plain".into())["input"],
+        json!([{"type": "text", "text": "plain"}])
+    );
+}

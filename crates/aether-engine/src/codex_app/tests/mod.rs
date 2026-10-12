@@ -39,6 +39,7 @@ fn billed(events: &[EngineEvent]) -> Vec<Usage> {
 
 pub(super) fn turn(session: Option<&str>, bypass: bool) -> EngineTurn {
     EngineTurn {
+        images: Vec::new(),
         prompt: "do it".into(),
         system_prompt: "# Aether".into(),
         session: session.map(str::to_owned),

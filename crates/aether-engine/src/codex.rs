@@ -56,8 +56,13 @@ impl CodexEngine {
     }
 
     pub fn args(&self, turn: &EngineTurn) -> Vec<String> {
-        let mut args: Vec<String> = vec![
-            "exec".into(),
+        let mut args: Vec<String> = vec!["exec".into()];
+        // `--image` takes every value up to the next flag, so on a fresh run
+        // it sits before one; a resumed run takes it on `resume` instead.
+        if turn.session.is_none() {
+            args.extend(image_args(turn));
+        }
+        args.extend([
             "--json".into(),
             "-c".into(),
             "features.multi_agent=false".into(),
@@ -66,7 +71,7 @@ impl CodexEngine {
             "--skip-git-repo-check".into(),
             "-C".into(),
             turn.cwd.to_string_lossy().into_owned(),
-        ];
+        ]);
         if let Some(model) = turn.model.as_deref().filter(|m| *m != "default") {
             args.push("-m".into());
             args.push(model.to_owned());
@@ -130,6 +135,7 @@ impl CodexEngine {
         }
         if let Some(session) = &turn.session {
             args.push("resume".into());
+            args.extend(image_args(turn));
             args.push(session.clone());
         }
         // Prompt arrives on stdin.
@@ -178,6 +184,16 @@ impl CodexEngine {
         });
         run
     }
+}
+
+/// One `--image <file>` pair per image of the turn's message.
+fn image_args(turn: &EngineTurn) -> impl Iterator<Item = String> + '_ {
+    turn.images.iter().flat_map(|image| {
+        [
+            "--image".to_owned(),
+            image.path.to_string_lossy().into_owned(),
+        ]
+    })
 }
 
 #[async_trait::async_trait]
@@ -263,7 +279,8 @@ impl Engine for CodexEngine {
                 parse_line(line, &mut state)
             },
         )
-        .await?;
+        .await?
+        .into_run();
         // Adding filters without raw layers can discard an operator's legacy exclusions.
         if !turn.summary_only
             && turn

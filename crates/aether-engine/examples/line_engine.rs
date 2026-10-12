@@ -259,6 +259,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = LineEngine::new(&program, "0.1.0");
     let turn = EngineTurn {
         prompt: "say hello".into(),
+        images: Vec::new(),
         system_prompt: "You are inside Aether.".into(),
         session: None,
         session_usage: Usage::default(),

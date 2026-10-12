@@ -238,6 +238,23 @@ fn command_hidden_env(turn: &EngineTurn) -> Vec<&str> {
         .collect()
 }
 
+/// An image of a user message as the app server reads it: a file on disk.
+fn local_image_item(image: &crate::EngineImage) -> Value {
+    json!({ "type": "localImage", "path": image.path })
+}
+
+/// `turn/steer` parameters: a user message, with its images, for the turn
+/// that is running.
+pub fn steer_params(thread_id: &str, turn_id: &str, message: &crate::EngineInput) -> Value {
+    let mut input = vec![json!({ "type": "text", "text": message.text.trim_end() })];
+    input.extend(message.images.iter().map(local_image_item));
+    json!({
+        "threadId": thread_id,
+        "expectedTurnId": turn_id,
+        "input": input,
+    })
+}
+
 /// `turn/start` parameters: the prompt, model, effort, and the sandbox with
 /// every extra directory writable and network access matching the agent scope.
 ///
@@ -251,6 +268,7 @@ pub fn turn_params(turn: &EngineTurn, thread_id: &str, loopback_note_in_effect: 
         input.push(json!({ "type": "text", "text": NETWORK_RESTORED_INSTRUCTIONS }));
     }
     input.push(json!({ "type": "text", "text": turn.prompt }));
+    input.extend(turn.images.iter().map(local_image_item));
     let mut params = json!({
         "threadId": thread_id,
         "input": input,
@@ -392,7 +410,7 @@ impl Engine for CodexAppEngine {
             .take()
             .ok_or_else(|| EngineError::Exited("no stderr".into()))?;
         let (events_tx, events_rx) = mpsc::channel(256);
-        let (input_tx, input_rx) = mpsc::channel::<String>(16);
+        let (input_tx, input_rx) = mpsc::channel::<crate::EngineInput>(16);
         let (decision_tx, decision_rx) = mpsc::channel::<PermissionDecision>(16);
         let (stop_tx, stop_rx) = mpsc::channel::<Duration>(1);
         let stderr_task = tokio::spawn(crate::output::drain_stderr(stderr));

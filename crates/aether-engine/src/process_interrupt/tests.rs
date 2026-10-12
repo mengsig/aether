@@ -2,7 +2,7 @@ use crate::{EngineEvent, EngineOutcome, GROUP_TERM_GRACE, run_process};
 use std::{path::PathBuf, time::Duration};
 use tokio_util::sync::CancellationToken;
 
-async fn fixture(script: &str) -> (CancellationToken, crate::EngineRun) {
+async fn fixture(script: &str) -> (CancellationToken, crate::ProcessRun) {
     let cancel = CancellationToken::new();
     let run = run_process(
         "sh",
@@ -114,7 +114,7 @@ async fn cancellation_drains_the_receipt_after_steering_resumes_work() {
     let (cancel, mut run) = fixture(
         "read -r prompt; echo initial_receipt; read -r steering; echo accepted; read -r control; [ \"$control\" = interrupt ] && echo receipt; exec sleep 30",
     ).await;
-    run.input
+    run.stdin
         .as_ref()
         .expect("stdin open")
         .send("steering\n".into())
@@ -326,7 +326,7 @@ async fn cancellation_while_a_receipt_waits_for_channel_capacity_is_terminal() {
     .await
     .expect("spawn fixture");
     let capacity = run.events.max_capacity();
-    run.input
+    run.stdin
         .as_ref()
         .expect("stdin open")
         .send(format!("{capacity}\n"))
@@ -390,7 +390,7 @@ async fn cancellation_reaps_the_process_when_the_drain_fills_an_unread_channel()
     .await
     .expect("spawn fixture");
     let capacity = run.events.max_capacity();
-    run.input
+    run.stdin
         .as_ref()
         .expect("stdin open")
         .send(format!("{capacity}\n"))
@@ -436,7 +436,7 @@ async fn cancellation_reaps_the_process_when_the_drain_fills_an_unread_channel()
 #[tokio::test]
 async fn interrupt_support_does_not_keep_stdin_open() {
     let (_cancel, mut run) = fixture("while read -r line; do :; done; echo receipt").await;
-    drop(run.input.take());
+    drop(run.stdin.take());
     let event = tokio::time::timeout(Duration::from_secs(5), run.events.recv())
         .await
         .expect("stdin EOF reached fixture")

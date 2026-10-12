@@ -105,6 +105,9 @@ pub struct McpBridge {
 pub struct EngineTurn {
     /// The user message for this turn.
     pub prompt: String,
+    /// Images sent with that message. `prompt` names each stored file too,
+    /// so an engine that cannot take an image leaves the agent a path.
+    pub images: Vec<EngineImage>,
     /// Explicit additional instructions. Ordinary runtime turns carry Aether
     /// state in `prompt` and leave this empty to preserve native instructions.
     /// Isolated summary turns may use this as a replacement prompt.
@@ -134,6 +137,36 @@ pub struct EngineTurn {
     /// Variables hidden from separately spawned command runners, including provider auth.
     pub tool_hidden_env: Vec<String>,
     pub mcp: Option<McpBridge>,
+}
+
+/// One image a person sent, as the daemon stores it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineImage {
+    pub path: PathBuf,
+    /// `image/png`, `image/jpeg`, `image/gif` or `image/webp`.
+    pub media_type: String,
+}
+
+/// A user message handed to a running engine: its text and its images.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EngineInput {
+    pub text: String,
+    pub images: Vec<EngineImage>,
+}
+
+impl From<String> for EngineInput {
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            images: Vec::new(),
+        }
+    }
+}
+
+impl From<&str> for EngineInput {
+    fn from(text: &str) -> Self {
+        Self::from(text.to_owned())
+    }
 }
 
 /// What an engine reports while it runs, already normalized.
@@ -248,10 +281,10 @@ pub struct EngineRun {
     /// The sender must remain alive until native process cleanup completes.
     /// Stream closure fences retries after the final outcome.
     pub events: mpsc::Receiver<EngineEvent>,
-    /// User message texts to hand the engine while it runs, for engines that
+    /// User messages to hand the engine while it runs, for engines that
     /// accept further input; each is answered by [`EngineEvent::InputAccepted`]
     /// or [`EngineEvent::InputRejected`]. Dropping it closes the channel.
-    pub input: Option<mpsc::Sender<String>>,
+    pub input: Option<mpsc::Sender<EngineInput>>,
     /// Answers to the engine's permission prompts, for engines that ask
     /// through their own protocol rather than the MCP bridge.
     pub decisions: Option<mpsc::Sender<PermissionDecision>>,
@@ -292,9 +325,29 @@ pub(crate) fn strip_hidden(command: &mut tokio::process::Command, hidden_env: &[
     }
 }
 
+/// A spawned CLI: its normalized events and, when kept open, its raw stdin.
+#[derive(Debug)]
+pub(crate) struct ProcessRun {
+    pub events: mpsc::Receiver<EngineEvent>,
+    /// Raw stdin lines; dropping it closes the CLI's stdin.
+    pub stdin: Option<mpsc::Sender<String>>,
+}
+
+impl ProcessRun {
+    /// The run of a CLI that takes nothing more once it has its first input.
+    pub(crate) fn into_run(self) -> EngineRun {
+        EngineRun {
+            events: self.events,
+            input: None,
+            decisions: None,
+            stop: None,
+        }
+    }
+}
+
 /// Spawn a CLI, feed `first_input` on stdin, and stream stdout lines through
 /// a parser. With `keep_stdin_open`, further raw stdin lines can be sent
-/// through the returned `input` until it is dropped. Shared by both engines.
+/// through the returned `stdin` until it is dropped. Shared by both engines.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_process<P>(
     program: &str,
@@ -306,7 +359,7 @@ pub(crate) async fn run_process<P>(
     cancel_input: Option<String>,
     cancel: CancellationToken,
     mut parser: P,
-) -> Result<EngineRun, EngineError>
+) -> Result<ProcessRun, EngineError>
 where
     P: FnMut(&str) -> Vec<EngineEvent> + Send + 'static,
 {
@@ -503,11 +556,9 @@ where
                 .await;
         }
     });
-    Ok(EngineRun {
+    Ok(ProcessRun {
         events: rx,
-        input: keep_stdin_open.then_some(input_tx),
-        decisions: None,
-        stop: None,
+        stdin: keep_stdin_open.then_some(input_tx),
     })
 }
 

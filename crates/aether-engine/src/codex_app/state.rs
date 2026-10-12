@@ -51,7 +51,7 @@ pub struct TurnState {
     /// Open server requests by JSON-RPC id (as text), awaiting decisions.
     pub requests: HashMap<String, (Value, ServerRequest)>,
     /// Messages to steer with once the turn has an id.
-    pub queued_input: Vec<String>,
+    pub queued_input: Vec<crate::EngineInput>,
     pub done: bool,
     pub(super) cancelling: bool,
 }

@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::detect::{self, DetectError, EngineVersion};
 use crate::offline::{self, executable_on_path};
-use crate::{Engine, EngineError, EngineKind, EngineRun, EngineTurn, run_process};
+use crate::{Engine, EngineError, EngineImage, EngineKind, EngineRun, EngineTurn, run_process};
 
 // Native coordination would create state outside Aether's tracked tree and
 // durable scheduler. Keep native workspace/research tools, including background
@@ -220,13 +220,36 @@ impl ClaudeCodeEngine {
     }
 }
 
-/// A user message in Claude Code's stream-json input format.
-pub fn user_message_line(text: &str) -> String {
+/// A user message in Claude Code's stream-json input format: its text, then
+/// one image block per image. Without images it is the line it always was.
+pub fn user_message_line(text: &str, images: &[EngineImage]) -> String {
+    let mut content = vec![serde_json::json!({"type": "text", "text": text})];
+    content.extend(images.iter().filter_map(image_block));
     let line = serde_json::json!({
         "type": "user",
-        "message": {"role": "user", "content": [{"type": "text", "text": text}]}
+        "message": {"role": "user", "content": content}
     });
     format!("{line}\n")
+}
+
+/// An image as an Anthropic content block. One whose file cannot be read is
+/// left out: the message text names the stored file either way.
+fn image_block(image: &EngineImage) -> Option<serde_json::Value> {
+    use base64::Engine as _;
+    match std::fs::read(&image.path) {
+        Ok(bytes) => Some(serde_json::json!({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.media_type,
+                "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+            }
+        })),
+        Err(error) => {
+            tracing::warn!(path = %image.path.display(), %error, "image left out of a Claude Code message");
+            None
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -260,27 +283,30 @@ impl Engine for ClaudeCodeEngine {
         let mut state = ParseState::awaiting_prompt(&turn.prompt)
             .with_session_cost(turn.session.clone(), turn.session_usage);
         let outstanding = state.outstanding.clone();
-        let mut run = run_process(
+        let process = run_process(
             &self.program,
             args,
             cwd,
             &turn.hidden_env,
-            user_message_line(&turn.prompt),
+            user_message_line(&turn.prompt, &turn.images),
             true,
             Some(input::interrupt_line()),
             cancel,
             move |line| parse_line(line, &mut state),
         )
         .await?;
-        // Texts become stream-json lines; each is remembered until the CLI
-        // echoes it back, which is when it reached the model.
-        let Some(stdin) = run.input.take() else {
-            return Ok(run);
+        let Some(stdin) = process.stdin else {
+            return Err(EngineError::Exited("stdin was not kept open".into()));
         };
+        // Messages become stream-json lines; each text is remembered until
+        // the CLI echoes it back, which is when it reached the model.
         let (input_tx, stop_tx) = input::spawn(stdin, outstanding);
-        run.input = Some(input_tx);
-        run.stop = Some(stop_tx);
-        Ok(run)
+        Ok(EngineRun {
+            events: process.events,
+            input: Some(input_tx),
+            decisions: None,
+            stop: Some(stop_tx),
+        })
     }
 }
 

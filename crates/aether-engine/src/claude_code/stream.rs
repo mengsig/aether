@@ -354,12 +354,14 @@ fn is_queued_work_result(v: &Value) -> bool {
 }
 
 /// The text of an echoed user message; `None` for tool-result messages.
+/// The images a message was sent with are echoed too, and are not its text.
 fn replayed_text(message: &Value) -> Option<String> {
     let items = message.get("content").and_then(Value::as_array)?;
     let mut text = String::new();
     for item in items {
         match item.get("type").and_then(Value::as_str) {
             Some("text") => text.push_str(item.get("text").and_then(Value::as_str).unwrap_or("")),
+            Some("image") => {}
             _ => return None,
         }
     }

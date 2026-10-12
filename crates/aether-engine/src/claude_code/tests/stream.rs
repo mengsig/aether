@@ -184,11 +184,67 @@ fn only_queued_work_before_the_prompt_echo_is_skipped() {
 
 #[test]
 fn user_message_lines_are_stream_json() {
-    let line = user_message_line("hi\nthere");
+    let line = user_message_line("hi\nthere", &[]);
     assert!(line.ends_with('\n'));
     let v: serde_json::Value = serde_json::from_str(line.trim()).expect("json");
     assert_eq!(v["type"], "user");
     assert_eq!(v["message"]["content"][0]["text"], "hi\nthere");
+}
+
+/// A message without images is, byte for byte, the line it was before a
+/// message could carry any.
+#[test]
+fn a_text_only_user_message_line_is_unchanged() {
+    assert_eq!(
+        user_message_line("hi", &[]),
+        "{\"message\":{\"content\":[{\"text\":\"hi\",\"type\":\"text\"}],\"role\":\"user\"},\"type\":\"user\"}\n"
+    );
+}
+
+#[test]
+fn a_user_message_line_carries_its_images_after_the_text() {
+    use base64::Engine as _;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("shot.png");
+    let bytes = b"\x89PNG\r\n\x1a\npixels";
+    std::fs::write(&path, bytes).expect("write image");
+    let stored = crate::EngineImage {
+        path,
+        media_type: "image/png".into(),
+    };
+    let gone = crate::EngineImage {
+        path: dir.path().join("removed.png"),
+        media_type: "image/png".into(),
+    };
+
+    let line = user_message_line("what is this?", &[stored, gone]);
+    let v: serde_json::Value = serde_json::from_str(line.trim()).expect("json");
+    assert_eq!(
+        v["message"]["content"],
+        json!([
+            {"type": "text", "text": "what is this?"},
+            {"type": "image", "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+            }},
+        ]),
+        "the text, then the readable image; the removed one is left out"
+    );
+}
+
+/// The CLI echoes a steered message with its images; that echo is still the
+/// acknowledgement of its text.
+#[test]
+fn an_echo_with_images_acknowledges_its_message() {
+    let mut st = ParseState::default();
+    st.expect_echo("look at this");
+    let echo = json!({"type": "user", "isReplay": true, "message": {"role": "user", "content": [
+        {"type": "text", "text": "look at this"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},
+    ]}})
+    .to_string();
+    assert_eq!(parse_line(&echo, &mut st), vec![EngineEvent::InputAccepted]);
 }
 
 #[test]

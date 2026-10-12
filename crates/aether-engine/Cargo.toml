@@ -18,6 +18,7 @@ aether-client = { workspace = true }
 aether-tools = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+base64 = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
 nix = { workspace = true }

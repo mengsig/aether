@@ -7,6 +7,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+use crate::EngineInput;
+
 pub(super) fn interrupt_line() -> String {
     format!(
         "{}\n",
@@ -21,8 +23,8 @@ pub(super) fn interrupt_line() -> String {
 pub(super) fn spawn(
     stdin: mpsc::Sender<String>,
     outstanding: Arc<Mutex<VecDeque<String>>>,
-) -> (mpsc::Sender<String>, mpsc::Sender<Duration>) {
-    let (input_tx, mut input_rx) = mpsc::channel::<String>(16);
+) -> (mpsc::Sender<EngineInput>, mpsc::Sender<Duration>) {
+    let (input_tx, mut input_rx) = mpsc::channel::<EngineInput>(16);
     let (stop_tx, mut stop_rx) = mpsc::channel::<Duration>(1);
     tokio::spawn(async move {
         let mut stop_open = true;
@@ -45,10 +47,11 @@ pub(super) fn spawn(
                     }
                     break;
                 }
-                text = input_rx.recv() => {
-                    let Some(text) = text else { break; };
-                    outstanding.lock().unwrap_or_else(|e| e.into_inner()).push_back(text.clone());
-                    if stdin.send(super::user_message_line(&text)).await.is_err() {
+                message = input_rx.recv() => {
+                    let Some(message) = message else { break; };
+                    let line = super::user_message_line(&message.text, &message.images);
+                    outstanding.lock().unwrap_or_else(|e| e.into_inner()).push_back(message.text);
+                    if stdin.send(line).await.is_err() {
                         break;
                     }
                 }
@@ -113,7 +116,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(line, super::super::user_message_line("new direction"));
+        assert_eq!(line, super::super::user_message_line("new direction", &[]));
         assert_eq!(
             outstanding.lock().unwrap().front().unwrap(),
             "new direction"
