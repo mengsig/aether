@@ -8,6 +8,9 @@ release is also the text of its GitHub release.
 
 Remote control: drive Aether from a phone, and from another machine over SSH.
 See [Remote control](https://github.com/mengsig/aether/blob/v1.0.1/docs/remote.md) and [phone setup](https://github.com/mengsig/aether/blob/v1.0.1/docs/remote-setup.md).
+Also a fix for failed tool calls in view modes that hide tools.
+
+### New
 
 - **Phone web app.** The daemon serves an installable web app from a loopback
   listener that is off until `aether remote enable`. `tailscale serve` (or your
@@ -41,17 +44,34 @@ See [Remote control](https://github.com/mengsig/aether/blob/v1.0.1/docs/remote.m
   outbox` and the TUI's `/outbox` let you mark delivered, send again or
   discard what the host cannot confirm. See
   [resolving a lost acknowledgement](https://github.com/mengsig/aether/blob/v1.0.1/docs/remote.md#resolving-a-lost-acknowledgement).
+- **Configuration.** A `[remote]` section in `config.toml` with `address`,
+  `allow_remote`, `max_connections`, `idle_timeout_secs`, `push_previews`,
+  `push_subject` and `push_hosts`; defaults are loopback only and no previews.
+  See [configuration](https://github.com/mengsig/aether/blob/v1.0.1/docs/configuration.md#remote-control).
+- `aether doctor` also checks remote access.
+
+### Fixed
+
+- **A failed tool call no longer floods a view that hides tools.** In a view
+  mode whose `show` omits `tool`, such as the built-in `focus`, a failed call
+  printed its whole command and output. It is now one row: the tool's name
+  (`Command` for a shell call), `failed` and the first line of the error.
+  Failed calls with nothing shown between them share the row of the first.
+  Modes that list `tool`, the standard mode and Ctrl+T draw failed calls whole,
+  as before. See [view modes](https://github.com/mengsig/aether/blob/v1.0.1/docs/tui.md#view-modes).
+
+### Before updating
+
 - **Store schema 18.** Adds the paired devices and push subscriptions, and
   numbers idempotency receipts for the ledger that resolution reads. The
   migration is one way: Aether saves the old database first (see
   [migration backups](https://github.com/mengsig/aether/blob/v1.0.1/docs/migration-backups.md)), and a binary that predates
   schema 18 refuses to open a migrated database. To go back, stop the daemon
   and restore that backup with the older binary; changes made since are lost.
-- **Configuration.** A `[remote]` section in `config.toml` with `address`,
-  `allow_remote`, `max_connections`, `idle_timeout_secs`, `push_previews`,
-  `push_subject` and `push_hosts`; defaults are loopback only and no previews.
-  See [configuration](https://github.com/mengsig/aether/blob/v1.0.1/docs/configuration.md#remote-control).
-- `aether doctor` also checks remote access.
+- **Protocol 17 clients keep working.** The daemon serves protocol 17 and 18,
+  so a client built against 1.0.0 still connects.
+- **Nothing is exposed until you ask.** The remote listener stays off until
+  `aether remote enable` or `aether remote setup`.
 
 ## 1.0.0
 
