@@ -17,7 +17,7 @@ use super::report::{Mode, Step, StepId, StepState};
 use super::runner::CommandRunner;
 use super::ui::{Ui, Wait};
 use super::wizard::{Access, Wizard};
-use crate::cli::remote::qr;
+use crate::cli::remote::{IPHONE_FIRST, qr};
 
 const POLL: Duration = Duration::from_millis(500);
 /// A pairing lives two minutes before and two after a claim; this is a
@@ -163,7 +163,7 @@ impl<R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'_, R, D, E, U> 
             );
         }
         self.say(&format!(
-            "\nOn your phone, scan this with the camera and open the link. It works once and runs out in two minutes.\n\n{}\n  {url}\n  or type this code at that page: {code}\n\nWaiting for your phone...",
+            "\nOn your phone, scan this with the camera and open the link. It works once and runs out in two minutes.\n\n{}\n  {url}\n  or type this code at that page: {code}\n\n{IPHONE_FIRST}\n\nWaiting for your phone...",
             qr::render(url)?
         ));
         let claimed = tokio::select! {

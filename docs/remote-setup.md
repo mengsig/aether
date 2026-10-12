@@ -110,6 +110,12 @@ run it.
 3. **Scan the pairing QR code** the guide prints with the phone's camera and
    open the link. If it will not scan, open the address in the guide and type
    the short code.
+
+   **On an iPhone or iPad, add Aether to the Home Screen before you pair.** The
+   page that opens shows how: tap Share, then **Add to Home Screen**, open
+   Aether from the new icon, and type the code there. iOS gives a Home Screen
+   app its own storage, so a pairing made in Safari stays in Safari and the app
+   would ask you to pair again.
 4. **Compare the three words.** Your phone and your terminal both show three
    words, for example `amber-otter-canyon`, along with the phone's name. If they
    match and it is your phone, answer yes. If they do not match, or you did not
@@ -120,10 +126,11 @@ offers a new one.
 
 Last, on the phone:
 
-- **iPhone or iPad (Safari):** tap Share, then **Add to Home Screen**. Open
-  Aether from the new icon, not from Safari. iPhones deliver notifications only
-  to apps on the home screen, so turn notifications on in Aether's settings
-  and tap **Allow** there.
+- **iPhone or iPad:** in the Home Screen app, turn notifications on in
+  Aether's settings and tap **Allow**. iPhones deliver notifications only to
+  apps on the Home Screen. If you paired in Safari instead, tap Share, then
+  **Add to Home Screen**, open Aether from the new icon, and pair the app too
+  with `aether remote pair`.
 - **Android (Chrome):** tap the ⋮ menu, then **Install app** (or **Add to Home
   screen**), open Aether from the new icon, and turn on notifications in
   Aether's settings.
@@ -276,6 +283,10 @@ terminal will not match your phone, and you should answer no.
 
 **The three words do not match.** Answer no. Nothing is saved for a device you
 reject. Start again with `aether remote pair`.
+
+**The Home Screen app on an iPhone asks to pair again.** That is expected if you
+paired in Safari: iOS keeps the app's storage apart from Safari's. Run
+`aether remote pair` and type the new code into the app.
 
 **Notifications do not arrive on an iPhone.** They only work for Aether opened
 from the home-screen icon, with notifications allowed in Aether's settings and

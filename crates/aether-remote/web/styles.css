@@ -115,6 +115,7 @@
   .pair-intro h1 { font-size: 2.65rem; max-width: 300px; }
   .pair-intro p { margin-top: 18px; max-width: 32rem; }
   .pair-steps { list-style: none; padding: 0; margin: 0; counter-reset: step; }
+  .pair-code { display: block; margin-top: 8px; font: 600 1.5rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; color: var(--text); user-select: all; -webkit-user-select: all; }
   .pair-steps li { counter-increment: step; padding: 18px 0 18px 42px; position: relative; border-top: 1px solid var(--border); }
   .pair-steps li::before { content: counter(step); position: absolute; left: 0; top: 20px; font-size: .8125rem; color: var(--accent); background: var(--accent-soft); width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; }
   .workspace-choice { text-align: left; justify-content: space-between; width: 100%; }

@@ -688,6 +688,23 @@ async fn an_address_that_never_answers_blocks_but_a_person_may_carry_on() {
 }
 
 #[tokio::test]
+async fn a_foreign_certificate_is_explained_as_a_program_on_this_computer() {
+    let reason = "invalid peer certificate: UnknownIssuer";
+    let mut fx = Fixture::fresh();
+    fx.env.health = std::cell::RefCell::new(VecDeque::from([Err(ProbeError::Unreachable(
+        reason.to_owned(),
+    ))]));
+    let report = fx.run(&yes(), Mode::Yes).await.expect("runs");
+    let step = report.step(StepId::Verify).expect("verified");
+    assert!(step.detail.contains(reason), "{}", step.detail);
+    assert!(
+        step.fix.iter().any(|l| l.contains("not your phone")),
+        "{:?}",
+        step.fix
+    );
+}
+
+#[tokio::test]
 async fn an_address_that_comes_up_on_a_later_attempt_is_verified() {
     let mut fx = Fixture::fresh();
     fx.env.health = std::cell::RefCell::new(VecDeque::from([

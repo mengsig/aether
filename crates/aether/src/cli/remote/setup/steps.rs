@@ -413,6 +413,11 @@ impl<R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'_, R, D, E, U> 
 /// What to try for a published address that did not answer.
 fn probe_advice(origin: &str, error: &ProbeError) -> Vec<String> {
     match error {
+        ProbeError::Unreachable(reason) if reason.contains("certificate") => vec![
+            "Something on this computer answered that name with a certificate that is not Tailscale's.".to_owned(),
+            "Another program listening on the same port here does that. It affects this computer only, not your phone.".to_owned(),
+            format!("From your phone, once Tailscale is on, open {origin}/api/health. It should say \"status\":\"ok\"."),
+        ],
         ProbeError::Unreachable(_) => vec![
             "Wait a minute and run `aether remote setup` again: the first certificate can be slow.".to_owned(),
             "Check that this computer can look up tailnet names (Tailscale's DNS may be switched off here).".to_owned(),

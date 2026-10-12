@@ -157,8 +157,10 @@ pub(super) fn tailscale_intro() -> &'static str {
 pub(super) fn home_screen_steps() -> Vec<String> {
     vec![
         "iPhone or iPad (use Safari):".to_owned(),
-        "  1. Open the Aether address, tap the Share button, then \"Add to Home Screen\".".to_owned(),
-        "  2. Open Aether from the new home-screen icon, not from Safari.".to_owned(),
+        "  1. Paired inside the Aether home-screen app? Go to step 3.".to_owned(),
+        "  2. Paired in Safari? Tap the Share button, then \"Add to Home Screen\", open Aether from \
+         the new icon and pair it too with `aether remote pair`: the app keeps its own pairing."
+            .to_owned(),
         "  3. In Aether's settings turn on notifications and tap Allow. iPhones can only \
          notify home-screen apps."
             .to_owned(),

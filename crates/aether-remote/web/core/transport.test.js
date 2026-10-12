@@ -131,3 +131,15 @@ test('full session sets preserve the pairing and capacity reason while backing o
     assert.equal(notices.at(-1).status,'reconnecting');assert.match(notices.at(-1).detail,/All device connections/);
   } finally {transport.disconnect();}
 });
+test('pairing stays unpaired, never offline, and ignores reconnect attempts until it settles',async()=>{
+  const statuses=[]; let loads=0; let approve=()=>{}; let refuse=()=>{};
+  const transport = createTransport({socket:()=>{throw new Error('pairing must not open a socket');},
+    adapter:{...contract,pairDevice:()=>new Promise((resolve,reject)=>{approve=resolve;refuse=reject;})},
+    identity:{...identity,newIdentity:async()=>({keys:{}}),saveIdentity:async()=>{},loadIdentity:async()=>{loads+=1;return undefined;}}});
+  transport.onConnection(status=>statuses.push(status));
+  const pairing = transport.pair('ABCD-1234','Phone');
+  await transport.connect(); assert.equal(loads,0); assert.deepEqual(statuses,['unpaired']);
+  refuse(new Error('Pairing rejected')); await assert.rejects(pairing,/rejected/);
+  assert.deepEqual(statuses,['unpaired','unpaired']);
+  await transport.connect(); assert.equal(loads,1); assert.equal(statuses.at(-1),'unpaired');
+});

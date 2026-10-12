@@ -29,13 +29,18 @@ const context = {store,transport,preferences,toast,confirm:createConfirm(feedbac
 };
 const shell = createShell(host, context);
 syncNotifications(context);
+const SCREENS = new Set(['pair','fleet','attention','activity','settings','new','agent','controls']);
 let cleanup = () => {};
 let route = '';
 
 function renderRoute() {
   const incomingSecret = takePairingSecret();
   if (incomingSecret) { secret = incomingSecret; route = ''; }
-  const requested = location.hash.slice(1) || 'fleet';
+  // An address this app does not know opens the fleet instead of a dead end.
+  const hash = location.hash.slice(1);
+  const known = SCREENS.has(hash.split(/[/?]/)[0]);
+  if (hash && !known) history.replaceState(null,'',`${location.pathname}${location.search}#fleet`);
+  const requested = known ? hash : 'fleet';
   const state = store.get();
   const next = secret || state.connection === 'unpaired' ? 'pair' : requested;
   if (next === route) return;
@@ -70,7 +75,7 @@ function mountScreen(screen,id) {
     case 'new': return mountNew(shell.main,context);
     case 'agent': invariant(id, 'Agent id is required'); return mountConversation(shell.main,context,id);
     case 'controls': invariant(id, 'Agent id is required'); return mountControls(shell.main,context,id);
-    default: shell.main.append(el('h1','','Page not found')); return () => {};
+    default: throw new Error(`Unknown screen: ${screen}`);
   }
 }
 

@@ -10,7 +10,7 @@ use aether_protocol::remote::{DeviceRole, Pairing, PairingCandidate, PairingStat
 use anyhow::{Context as _, bail};
 
 use super::role_label;
-use crate::cli::remote::{qr, requests};
+use crate::cli::remote::{IPHONE_FIRST, qr, requests};
 use crate::cli::{connect, sane};
 
 /// How often the daemon is asked whether the code was claimed.
@@ -72,6 +72,7 @@ fn invitation(opened: &Pairing) -> anyhow::Result<String> {
              `aether remote enable --origin https://<an address the phone reaches>`.\n",
         );
     }
+    out.push_str(&format!("\n{IPHONE_FIRST}\n"));
     out.push_str("\nWaiting for a device to claim the code. Ctrl+C cancels.\n");
     Ok(out)
 }

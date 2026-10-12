@@ -25,7 +25,7 @@ export class RemoteTransport {
     /** @type {'operator'|'observer'} */ this.role = 'observer';
     /** @type {ReturnType<typeof setTimeout>|undefined} */ this.retry = undefined;
     /** @type {Promise<void>|null} */ this.connecting = null;
-    this.pairingAbort = new AbortController();
+    this.pairingAbort = new AbortController(); this.pairing = false;
     /** @type {ReturnType<typeof setInterval>|undefined} */ this.heartbeat = undefined;
     this.submissionScope = {daemonId:'',deviceId:''}; this.submissionAbort = new AbortController();
     this.stopped = true; this.generation = 0; this.attempt = 0; this.nextId = 0;
@@ -43,7 +43,7 @@ export class RemoteTransport {
   }
   connect() {
     if (this.connecting) return this.connecting;
-    if (this.status === 'online') return Promise.resolve();
+    if (this.status === 'online' || this.pairing) return Promise.resolve();
     this.stopped = false; clearTimeout(this.retry); this.retry = undefined;
     const generation = ++this.generation;
     this.connecting = this.open(generation).finally(() => { this.connecting = null; });
@@ -276,20 +276,28 @@ export class RemoteTransport {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(deliveryError(message, pending.mutation)); }
     this.pending.clear(); this.lateMutations.clear();
   }
-  disconnect() {
+  disconnect() { this.halt(); this.connection('offline', 'Disconnected'); }
+  halt() {
     this.pairingAbort.abort(new Error('Pairing cancelled')); clearInterval(this.heartbeat);
     this.stopped = true; ++this.generation; clearTimeout(this.retry); this.retry = undefined;
     this.rejectPending('Disconnected before a receipt arrived'); this.socket?.close(); this.socket = null;
-    this.connection('offline', 'Disconnected');
   }
   /** @param {string} secret @param {string} name @param {(progress:contract.PairProgress)=>void} [progress] */
   async pair(secret, name, progress) {
-    this.disconnect(); this.pairingAbort = new AbortController();
+    this.halt(); this.pairingAbort = new AbortController();
     const signal = this.pairingAbort.signal;
-    const identity = await this.device.newIdentity();
-    const paired = await this.adapter.pairDevice(identity, secret, name, progress, signal);
-    checkAbort(signal);
-    await this.device.saveIdentity(paired); await this.connect();
+    // Pairing reads as unpaired, never offline, so the screen showing the approval words stays up.
+    this.pairing = true; this.connection('unpaired', 'Waiting for approval on your host');
+    try {
+      const identity = await this.device.newIdentity();
+      const paired = await this.adapter.pairDevice(identity, secret, name, progress, signal);
+      checkAbort(signal);
+      await this.device.saveIdentity(paired);
+    } catch (error) {
+      if (!signal.aborted) this.connection('unpaired', 'Pairing did not finish');
+      throw error;
+    } finally { if (this.pairingAbort.signal === signal) this.pairing = false; }
+    await this.connect();
   }
   async forget() { this.disconnect(); await this.device.deleteIdentity(); for (const listener of this.frames) listener({frame:'forget'}); this.connection('unpaired', 'This browser has been unpaired'); }
 }

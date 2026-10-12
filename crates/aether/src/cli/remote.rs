@@ -4,6 +4,10 @@ use std::path::PathBuf;
 
 use crate::args::RemoteCmd;
 
+/// iOS gives a home-screen app its own storage, so it must be the one that pairs.
+const IPHONE_FIRST: &str = "iPhone or iPad: add Aether to the Home Screen first (the page shows how) \
+and type the code in that app.\nIt keeps its own pairing, so one made in Safari does not carry over.";
+
 mod admin;
 mod qr;
 mod requests;
