@@ -1571,6 +1571,40 @@
       },
       "type": "object"
     },
+    "AttachmentId": {
+      "description": "The SHA-256 of the stored bytes, in lowercase hex.",
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "AttachmentRef": {
+      "description": "A stored image, as inboxes, events and transcripts carry it.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/AttachmentId"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "name": {
+          "description": "The file name the image was sent under, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "media_type",
+        "size_bytes"
+      ],
+      "type": "object"
+    },
     "Attention": {
       "description": "Everything waiting on the operator, read at one sequence number.",
       "properties": {
@@ -2255,6 +2289,13 @@
         {
           "description": "Deliver a user message to an agent's inbox; wakes it if waiting.\nWith `subtree`, the message is fanned out to every live agent beneath\nit too, each with its own inbox item and events (§3.5).",
           "properties": {
+            "attachments": {
+              "description": "Images sent with the text: PNG, JPEG, GIF or WebP, base64. The\ndaemon checks each (type by its bytes, size, count), stores it\nonce, and the message then carries a reference to it.",
+              "items": {
+                "$ref": "#/$defs/ImageAttachment"
+              },
+              "type": "array"
+            },
             "cmd": {
               "const": "send_message",
               "type": "string"
@@ -4043,6 +4084,20 @@
             "type",
             "media_type",
             "data"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/AttachmentRef",
+          "description": "An image a person sent with a message, kept by the daemon. Durable\nstate carries this reference; the bytes are read back only to build\na model request.",
+          "properties": {
+            "type": {
+              "const": "image_ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
           ],
           "type": "object"
         }
@@ -7670,6 +7725,31 @@
     "IdempotencyKey": {
       "description": "What makes two calls the same effect.",
       "type": "string"
+    },
+    "ImageAttachment": {
+      "description": "One image as a client sends it with a `send_message` command.",
+      "properties": {
+        "data": {
+          "description": "The image bytes, base64 (standard alphabet, padded).",
+          "type": "string"
+        },
+        "media_type": {
+          "description": "`image/png`, `image/jpeg`, `image/gif` or `image/webp`. The daemon\nchecks it against the bytes.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The file name the image had, when the client knows one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "media_type",
+        "data"
+      ],
+      "type": "object"
     },
     "ImportSummary": {
       "description": "What an import recreated.",
@@ -14452,7 +14532,7 @@
     "$ref": "#/$defs/ClientFrame"
   },
   "min_protocol_version": 17,
-  "protocol_version": 18,
+  "protocol_version": 19,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },

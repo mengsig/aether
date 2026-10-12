@@ -50,8 +50,9 @@ def type_files(source, banner):
         exports.append(name)
         previous_end = node.end_lineno
     index.extend(["", "__all__ = ["])
-    for offset in range(0, len(exports), 5):
-        index.append("    " + ", ".join(repr(name) for name in exports[offset:offset + 5]) + ",")
+    # One import line per type is fixed; ten names a row keeps the index under 600 lines.
+    for offset in range(0, len(exports), 10):
+        index.append("    " + ", ".join(repr(name) for name in exports[offset:offset + 10]) + ",")
     index.append("]")
     output["_protocol_types/__init__.py"] = "\n".join(index) + "\n"
     return output, root

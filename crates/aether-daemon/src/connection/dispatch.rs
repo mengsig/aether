@@ -252,7 +252,13 @@ pub(super) async fn dispatch_authorized(
             ..
         } => {
             // Checked and stored before delivery: a refused image refuses the message.
-            let images = rt.store_attachments(&attachments).map_err(map_err)?;
+            let images = if attachments.is_empty() {
+                Vec::new()
+            } else {
+                // Megabytes are decoded and written: not on an async worker.
+                let storing = rt.clone();
+                blocking(move || storing.store_attachments(&attachments).map_err(map_err)).await??
+            };
             let content = aether_runtime::attachments::message_content(content, images);
             if !subtree {
                 let id = rt

@@ -165,11 +165,11 @@ aether
 Agents resume when the daemon starts again.
 
 A client and a daemon from different builds talk only when their protocol
-versions allow it: a daemon serves its own protocol version and the one before
-it, and refuses any other client ([Protocol](protocol.md)). So when a release
-changes the protocol version, the new `aether` cannot ask the old daemon to shut
-down. `aether stop` then signals that daemon instead, which needs Linux 6.5 or
-newer.
+versions allow it: a daemon serves its own protocol version and a few before
+it, never a newer one, and refuses any other client ([Protocol](protocol.md)).
+So when a release changes the protocol version, the new `aether` cannot ask
+the old daemon to shut down. `aether stop` then signals that daemon instead,
+which needs Linux 6.5 or newer.
 
 On macOS and on older Linux kernels there is no such signal, so `aether update`
 looks at the daemon's socket before it downloads anything. If a daemon is

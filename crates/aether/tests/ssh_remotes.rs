@@ -320,24 +320,25 @@ async fn previous_protocol_is_negotiated_on_a_fresh_carrier() {
     let fixture = Fixture::new();
     let listener = tokio::net::UnixListener::bind(&fixture.socket).expect("listener");
     let host = tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.expect("first carrier");
-        let (read, mut write) = stream.into_split();
-        let mut lines = BufReader::new(read).lines();
-        let frame = next_frame(&mut lines).await;
-        assert!(
-            matches!(frame.command, WireCommand::Hello(ref hello) if hello.protocol_version == 18)
-        );
-        send_reply(
-            &mut write,
-            frame.id,
-            Err(ErrorReply {
-                code: ErrorCode::Incompatible,
-                message: "daemon serves protocols 16..=17".into(),
-            }),
-        )
-        .await;
-        drop(lines);
-        drop(write);
+        // Each newer version is refused on a carrier of its own, newest first.
+        for version in (18..=aether_protocol::PROTOCOL_VERSION).rev() {
+            let (stream, _) = listener.accept().await.expect("a fresh carrier");
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let frame = next_frame(&mut lines).await;
+            assert!(
+                matches!(frame.command, WireCommand::Hello(ref hello) if hello.protocol_version == version)
+            );
+            send_reply(
+                &mut write,
+                frame.id,
+                Err(ErrorReply {
+                    code: ErrorCode::Incompatible,
+                    message: "daemon serves protocols 16..=17".into(),
+                }),
+            )
+            .await;
+        }
         hello(&listener, 17).await;
     });
     let add = fixture.add("fake-host");

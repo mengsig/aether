@@ -333,7 +333,7 @@ impl Installed<'_> {
 }
 
 /// The one thing left to do after the binary changed: a running daemon is
-/// still the old build, and serves only its own protocol version and one back.
+/// still the old build, and serves only its own protocol version and older.
 /// `before` is what held the socket when the update began, `now` what holds it.
 fn restart_notice(
     before: &Daemon,

@@ -1,7 +1,7 @@
 // Generated from clients/protocol.schema.json by scripts/generate_clients.py.
 // Do not edit: change the Rust types and regenerate.
 
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 export const MIN_PROTOCOL_VERSION = 17;
 
 export * from "./protocol/commands/add.ts";
@@ -105,6 +105,8 @@ export * from "./protocol/types/ArtifactKind.ts";
 export * from "./protocol/types/ArtifactLine.ts";
 export * from "./protocol/types/ArtifactNote.ts";
 export * from "./protocol/types/ArtifactQuery.ts";
+export * from "./protocol/types/AttachmentId.ts";
+export * from "./protocol/types/AttachmentRef.ts";
 export * from "./protocol/types/Attention.ts";
 export * from "./protocol/types/AttentionKind.ts";
 export * from "./protocol/types/AuthInfo.ts";
@@ -159,6 +161,7 @@ export * from "./protocol/types/HttpError.ts";
 export * from "./protocol/types/HttpErrorBody.ts";
 export * from "./protocol/types/HttpErrorCode.ts";
 export * from "./protocol/types/IdempotencyKey.ts";
+export * from "./protocol/types/ImageAttachment.ts";
 export * from "./protocol/types/ImportSummary.ts";
 export * from "./protocol/types/InboxItem.ts";
 export * from "./protocol/types/InboxItemId.ts";
