@@ -334,3 +334,174 @@ async fn queued_image_messages_reach_a_native_model_one_turn_each() {
         "both messages are consumed"
     );
 }
+
+/// A PNG by its leading bytes, `len` bytes long, unlike any other `fill`.
+fn png_of(len: usize, fill: u8) -> ImageAttachment {
+    let mut bytes = PNG.to_vec();
+    bytes.resize(len, fill);
+    ImageAttachment {
+        media_type: "image/png".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        name: Some(format!("shot-{fill}.png")),
+    }
+}
+
+/// Send `text` with `images` and wait until the model answered that turn.
+async fn send_and_wait(h: &Harness, agent: AgentId, text: &str, images: &[ImageAttachment]) {
+    let before = h.client.remaining();
+    assert!(before > 0, "a scripted answer is left for this turn");
+    let stored = h.runtime.store_attachments(images).expect("store");
+    h.runtime
+        .send_message(agent, message_content(text.into(), stored), Actor::user())
+        .expect("send");
+    h.wait_for("the model to be asked", || {
+        h.client.remaining() == before - 1
+    })
+    .await;
+    h.wait_until(agent, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+}
+
+/// The whole request as Anthropic receives it, in bytes.
+fn anthropic_body_len(request: &aether_core::model::ModelRequest) -> usize {
+    let profile = aether_core::model::CapabilityProfile::default();
+    let built =
+        aether_model::adapters::anthropic::request::build(request, &profile).expect("a body");
+    serde_json::to_vec(&built.body).expect("json").len()
+}
+
+/// One scripted answer per expected turn.
+fn answers(count: usize) -> Vec<aether_model::testing::ScriptedResponse> {
+    (0..count).map(|_| ScriptedClient::text("seen")).collect()
+}
+
+/// What every complete request must hold to, whatever its history.
+fn assert_images_bounded(request: &aether_core::model::ModelRequest) {
+    use aether_core::attachment::{MAX_REQUEST_IMAGE_BYTES, MAX_REQUEST_IMAGES};
+    let images = images_in(request);
+    let decoded: usize = images.iter().map(|(_, data)| data.len() / 4 * 3).sum();
+    assert!(
+        images.len() <= MAX_REQUEST_IMAGES,
+        "{} images",
+        images.len()
+    );
+    assert!(decoded <= MAX_REQUEST_IMAGE_BYTES, "{decoded} image bytes");
+    assert!(!has_reference(request), "a reference never reaches a model");
+    let body = anthropic_body_len(request);
+    assert!(
+        body < 32_000_000,
+        "a {body}-byte request passes no 32 MB cap"
+    );
+}
+
+const LEFT_OUT: &str = "an earlier image, left out to keep this request in its limits";
+
+/// Messages that each pass every limit must not add up to a request the
+/// provider refuses: the newest images are sent, older ones named in text.
+#[tokio::test]
+async fn images_across_a_whole_request_stay_bounded_turn_after_turn_and_after_a_restart() {
+    const IMAGE_BYTES: usize = 3_688_788;
+    let state = tempfile::tempdir().expect("state dir");
+    let dir = state.path().join("images");
+    let database = state.path().join("aether.db");
+    let open = || -> Arc<dyn Store> { Arc::new(SqliteStore::open(&database).expect("store")) };
+    let first = harness_full(
+        answers(4),
+        |_| {},
+        |config| config.attachment_dir = Some(dir.clone()),
+        None,
+        None,
+        Some(open()),
+        |_| {},
+    )
+    .await;
+    let (agent, _) = first
+        .runtime
+        .create_agent(chat_spec(None), Actor::user())
+        .expect("create");
+    first
+        .wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    let pairs: Vec<[ImageAttachment; 2]> = (0..4u8)
+        .map(|n| [png_of(IMAGE_BYTES, 2 * n), png_of(IMAGE_BYTES, 2 * n + 1)])
+        .collect();
+    for (n, pair) in pairs.iter().enumerate() {
+        send_and_wait(&first, agent.id, &format!("pair {n}"), pair).await;
+    }
+    let mut requests = first.client.requests();
+    first.runtime.shutdown().await;
+    drop(first);
+
+    let second = harness_full(
+        answers(1),
+        |_| {},
+        |config| config.attachment_dir = Some(dir.clone()),
+        None,
+        None,
+        Some(open()),
+        |_| {},
+    )
+    .await;
+    send_and_wait(&second, agent.id, "and now?", &[]).await;
+    requests.extend(second.client.requests());
+
+    assert_eq!(requests.len(), 5, "one request per message");
+    // 15 MiB takes four of these images, so each later request drops a pair.
+    let expected = [(2, 0), (4, 0), (4, 2), (4, 4), (4, 4)];
+    for (n, request) in requests.iter().enumerate() {
+        assert_images_bounded(request);
+        let (sent, left_out) = expected[n];
+        let images = images_in(request);
+        let text = text_in(request);
+        assert_eq!(images.len(), sent, "request {n}");
+        assert_eq!(text.matches(LEFT_OUT).count(), left_out, "request {n}");
+        // The newest pair is the one the model sees last, whole.
+        let newest = &pairs[n.min(3)];
+        let tail: Vec<&str> = images[sent - 2..].iter().map(|(_, d)| d.as_str()).collect();
+        assert_eq!(tail, [newest[0].data.as_str(), newest[1].data.as_str()]);
+    }
+    // A left-out image is still named with the file an agent can open.
+    let oldest = second
+        .runtime
+        .store_attachments(&pairs[0][..1])
+        .expect("already stored");
+    let path = second.runtime.attachment_path(&oldest[0]).expect("path");
+    let last = text_in(&requests[4]);
+    assert!(path.is_file(), "the stored image outlives the request");
+    assert!(
+        last.contains(&format!("stored at {}]", path.display())),
+        "{}",
+        last.chars().take(2000).collect::<String>()
+    );
+}
+
+/// Small images are bounded by their number alone.
+#[tokio::test]
+async fn a_request_carries_at_most_the_newest_twenty_images() {
+    use aether_core::attachment::{MAX_IMAGES_PER_MESSAGE, MAX_REQUEST_IMAGES};
+    let attachments = tempfile::tempdir().expect("attachment dir");
+    let dir = attachments.path().join("images");
+    let h = harness_configured(
+        answers(3),
+        |_| {},
+        |config| config.attachment_dir = Some(dir.clone()),
+    )
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(chat_spec(None), Actor::user())
+        .expect("create");
+    h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    let ten = vec![screenshot(); MAX_IMAGES_PER_MESSAGE];
+    for text in ["one", "two", "three"] {
+        send_and_wait(&h, agent.id, text, &ten).await;
+    }
+
+    let requests = h.client.requests();
+    let counts: Vec<usize> = requests.iter().map(|r| images_in(r).len()).collect();
+    assert_eq!(counts, [10, MAX_REQUEST_IMAGES, MAX_REQUEST_IMAGES]);
+    requests.iter().for_each(assert_images_bounded);
+    let last = text_in(&requests[2]);
+    assert_eq!(last.matches(LEFT_OUT).count(), MAX_IMAGES_PER_MESSAGE);
+}

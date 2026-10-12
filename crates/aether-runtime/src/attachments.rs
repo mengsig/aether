@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 
 use aether_core::attachment::{
     AttachmentError, AttachmentRef, ImageAttachment, MAX_IMAGE_BYTES, MAX_IMAGES_PER_MESSAGE,
-    MAX_MESSAGE_IMAGE_BYTES, check_image,
+    MAX_MESSAGE_IMAGE_BYTES, MAX_REQUEST_IMAGE_BYTES, MAX_REQUEST_IMAGES, check_image,
 };
-use aether_core::model::{ContentBlock, Message};
+use aether_core::model::{ContentBlock, Message, ToolResultBlock};
 use aether_engine::EngineImage;
 use base64::Engine as _;
 
@@ -109,6 +109,55 @@ pub(crate) fn check_attachment_dir(dir: Option<&Path>) -> Result<()> {
     }
 }
 
+/// What the images of one model request may still add. The newest are sent;
+/// once one does not fit, it and every older one are named in text instead.
+#[derive(Debug)]
+struct RequestImageBudget {
+    images: usize,
+    bytes: u64,
+    spent: bool,
+}
+
+impl RequestImageBudget {
+    /// The budget left beside the images a request already carries inline.
+    fn beside_inline(messages: &[Message]) -> Self {
+        let (mut images, mut bytes) = (0usize, 0u64);
+        let mut count = |data: &str| {
+            images += 1;
+            bytes += data.len() as u64 / 4 * 3;
+        };
+        for block in messages.iter().flat_map(|message| &message.content) {
+            match block {
+                ContentBlock::Image { data, .. } => count(data),
+                ContentBlock::ToolResult { content, .. } => {
+                    for part in content {
+                        if let ToolResultBlock::Image { data, .. } = part {
+                            count(data);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Self {
+            images: MAX_REQUEST_IMAGES.saturating_sub(images),
+            bytes: (MAX_REQUEST_IMAGE_BYTES as u64).saturating_sub(bytes),
+            spent: false,
+        }
+    }
+
+    /// Whether the next older image still fits; it is charged when it does.
+    fn admit(&mut self, size_bytes: u64) -> bool {
+        if self.spent || self.images == 0 || size_bytes > self.bytes {
+            self.spent = true;
+            return false;
+        }
+        self.images -= 1;
+        self.bytes -= size_bytes;
+        true
+    }
+}
+
 impl Runtime {
     /// Where this daemon stores message images, when it stores any.
     pub fn attachment_dir(&self) -> Option<&Path> {
@@ -169,31 +218,54 @@ impl Runtime {
         images
     }
 
-    /// Replace every stored-image reference in a model request with the image
-    /// itself. A model without vision, or an image whose file is gone, gets a
-    /// line of text in its place: the turn must not fail on an old message.
+    /// Replace every stored-image reference in a model request: the newest
+    /// become the image itself, within what one request may carry in all;
+    /// older ones, and all of them for a model without vision, become text.
     pub(crate) fn inline_images(&self, messages: &mut [Message], vision: bool) {
-        for message in messages {
-            for block in &mut message.content {
+        let mut budget = RequestImageBudget::beside_inline(messages);
+        for message in messages.iter_mut().rev() {
+            for block in message.content.iter_mut().rev() {
                 let ContentBlock::ImageRef(image) = block else {
                     continue;
                 };
-                *block = self.inlined(image, vision);
+                *block = if !vision {
+                    stand_in(image, "this model takes no images")
+                } else if budget.admit(image.size_bytes) {
+                    self.inlined(image)
+                } else {
+                    stand_in(
+                        image,
+                        "an earlier image, left out to keep this request in its limits",
+                    )
+                };
             }
         }
+        debug_assert!(
+            !messages
+                .iter()
+                .flat_map(|message| &message.content)
+                .any(|block| matches!(block, ContentBlock::ImageRef(_))),
+            "a reference never reaches a model"
+        );
     }
 
-    fn inlined(&self, image: &AttachmentRef, vision: bool) -> ContentBlock {
-        if !vision {
-            return ContentBlock::text(format!(
-                "{} (this model takes no images; open the stored file named above)",
-                image.label()
-            ));
-        }
+    /// The stored image itself. One whose file is gone or is not the bytes
+    /// its reference names becomes text: the turn must not fail on it.
+    fn inlined(&self, image: &AttachmentRef) -> ContentBlock {
         let read = self
             .attachment_path(image)
             .ok_or_else(|| "this daemon has no attachment directory".to_owned())
-            .and_then(|path| std::fs::read(path).map_err(|error| error.to_string()));
+            .and_then(|path| std::fs::read(path).map_err(|error| error.to_string()))
+            .and_then(|bytes| {
+                if bytes.len() as u64 == image.size_bytes {
+                    return Ok(bytes);
+                }
+                Err(format!(
+                    "its file holds {} bytes, not {}",
+                    bytes.len(),
+                    image.size_bytes
+                ))
+            });
         match read {
             Ok(bytes) => ContentBlock::Image {
                 media_type: image.media_type.clone(),
@@ -205,6 +277,15 @@ impl Runtime {
             }
         }
     }
+}
+
+/// The text that takes an image's place in a request. The user turn names
+/// the stored file just before it, so the agent can still open the image.
+fn stand_in(image: &AttachmentRef, reason: &str) -> ContentBlock {
+    ContentBlock::text(format!(
+        "{} ({reason}; open the stored file named above)",
+        image.label()
+    ))
 }
 
 /// A message's content: its text, then one reference per stored image.
@@ -318,6 +399,49 @@ mod tests {
         assert!(error.to_string().contains("data/aether.attachments"));
         assert!(check_attachment_dir(Some(Path::new("/var/lib/aether.attachments"))).is_ok());
         assert!(check_attachment_dir(None).is_ok());
+    }
+
+    #[test]
+    fn a_request_takes_the_newest_images_and_nothing_older_once_one_is_refused() {
+        let mut by_count = RequestImageBudget::beside_inline(&[]);
+        let admitted = (0..MAX_REQUEST_IMAGES + 5)
+            .filter(|_| by_count.admit(1))
+            .count();
+        assert_eq!(admitted, MAX_REQUEST_IMAGES);
+
+        let mut by_size = RequestImageBudget::beside_inline(&[]);
+        let half = MAX_REQUEST_IMAGE_BYTES as u64 / 2;
+        assert!(by_size.admit(half));
+        assert!(
+            !by_size.admit(half + 1),
+            "one byte over the request's total"
+        );
+        // Smaller, but older than a refused one: the cut is a single point.
+        assert!(!by_size.admit(1));
+    }
+
+    #[test]
+    fn images_already_inline_in_a_request_count_against_its_budget() {
+        let data = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 3000]);
+        let inline = ContentBlock::Image {
+            media_type: "image/png".into(),
+            data: data.clone(),
+        };
+        let from_a_tool = ContentBlock::ToolResult {
+            tool_use_id: "call".into(),
+            content: vec![ToolResultBlock::Image {
+                media_type: "image/png".into(),
+                data,
+            }],
+            is_error: false,
+        };
+        let messages = [
+            Message::user_blocks(vec![inline]),
+            Message::user_blocks(vec![from_a_tool]),
+        ];
+        let budget = RequestImageBudget::beside_inline(&messages);
+        assert_eq!(budget.images, MAX_REQUEST_IMAGES - 2);
+        assert_eq!(budget.bytes, MAX_REQUEST_IMAGE_BYTES as u64 - 6000);
     }
 
     #[test]

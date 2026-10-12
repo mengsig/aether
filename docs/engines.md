@@ -633,6 +633,17 @@ takes input, and otherwise they open the next turn. An input line therefore
 never carries more than one message may, which keeps Claude Code's echo of it
 under the 16 MiB line the reader accepts.
 
+An API model is sent its whole history with every request, so the images of
+earlier messages are bounded across the request, not only per message: the
+newest 20 images and 15 MiB of them go as images, and every older one becomes
+a text line, `[image: shot.png, 47.1 KB] (an earlier image, left out to keep
+this request in its limits; open the stored file named above)`. The newest
+message always fits whole, and the transcript keeps every reference, so
+nothing is forgotten: the request stays inside the 32 MB a provider accepts,
+however many screenshots a long conversation collects. Images a tool returned
+count against the same budget. Claude Code and Codex keep their own history
+and are handed only the new message's images.
+
 The attachment directory is always an absolute path, also when
 `AETHER_DATA_DIR` is relative: an engine opens the file from its agent's
 workspace, not from the daemon's working directory.

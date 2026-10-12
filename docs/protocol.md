@@ -120,7 +120,10 @@ image and the rule:
 | `data` | valid standard base64, not empty |
 
 The limits are `MAX_IMAGES_PER_MESSAGE`, `MAX_IMAGE_BYTES` and
-`MAX_MESSAGE_IMAGE_BYTES` in `aether-core`'s `attachment` module. Of a
+`MAX_MESSAGE_IMAGE_BYTES` in `aether-core`'s `attachment` module. Two more,
+`MAX_REQUEST_IMAGES` (20) and `MAX_REQUEST_IMAGE_BYTES` (15 MiB), are not
+checked on a command: they bound the images one request to an API model
+carries across its whole history, see [engines](engines.md#images-on-a-message). Of a
 `name`, only the last path component is kept, without control characters and
 cut at 120 characters.
 

@@ -97,6 +97,9 @@ looks like a boundary and is not one.
   those files behind.
 - `aether runs export` does not include image files: an imported run shows
   each image as its `[image: name, size]` line.
+- An agent on an API model sees the newest 20 images and 15 MiB of them as
+  images; older ones in its history become a line naming the stored file,
+  which it can open with a tool but no longer sees.
 - An image over 3.75 MiB is refused, not shrunk; a full-screen capture of a
   4K display can exceed that as PNG. Crop it or save it as JPEG.
 - Only people attach images. Agents cannot send images to each other or in

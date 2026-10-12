@@ -21,6 +21,20 @@ pub const MAX_IMAGES_PER_MESSAGE: usize = 10;
 /// form stays inside one protocol frame and one engine input line.
 pub const MAX_MESSAGE_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 
+/// Most images one model request may carry, history included. Past 20, the
+/// model APIs hold every image of a request to a smaller pixel size.
+pub const MAX_REQUEST_IMAGES: usize = 20;
+
+/// Most image bytes one model request may carry, history included (15 MiB,
+/// 20 MiB as base64): well inside the 32 MB the model APIs take per request.
+pub const MAX_REQUEST_IMAGE_BYTES: usize = 15 * 1024 * 1024;
+
+// The newest message is always sent whole.
+const _: () = assert!(
+    MAX_REQUEST_IMAGES >= MAX_IMAGES_PER_MESSAGE
+        && MAX_REQUEST_IMAGE_BYTES >= MAX_MESSAGE_IMAGE_BYTES
+);
+
 /// Longest file name kept with an image; a longer one is cut.
 pub const MAX_ATTACHMENT_NAME_CHARS: usize = 120;
 

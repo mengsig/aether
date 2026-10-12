@@ -25,6 +25,10 @@ release is also the text of its GitHub release.
   message's worth of images at a time (10 images, 10 MiB), so several
   screenshots sent in a row cannot outgrow one engine input line. The rest
   follow as soon as the engine takes input, or open the next turn.
+- An API model's request carries the newest 20 images and 15 MiB of them,
+  counted across the whole history; older images become a line naming the
+  stored file. A long conversation with many screenshots therefore stays
+  inside the provider's request size.
 - The generated Python and TypeScript types of an `image_ref` content block
   carry its `id`, `media_type`, `size_bytes` and `name`.
 
