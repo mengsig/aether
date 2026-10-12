@@ -258,9 +258,10 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             Cmd::Send {
                 agent,
                 text,
+                images,
                 subtree,
                 json,
-            } => cli::send(socket, agent, text.join(" "), subtree, json).await,
+            } => cli::send(socket, agent, text.join(" "), images, subtree, json).await,
             Cmd::Approve { approval, remember } => {
                 approve_with(socket, approval, true, remember).await
             }

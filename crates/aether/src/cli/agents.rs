@@ -131,20 +131,30 @@ pub async fn send(
     socket: PathBuf,
     agent: String,
     text: String,
+    images: Vec<PathBuf>,
     subtree: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = connect(&socket).await?;
     let id: AgentId = agent.parse().context("invalid agent id")?;
+    // Read before connecting: a bad file is refused without a daemon.
+    let attachments = images
+        .iter()
+        .map(|path| aether_client::images::read_image_file(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let client = connect(&socket).await?;
     if !subtree {
-        let message = client.send_message(id, text).await?;
+        let message = client
+            .send_message_with_images(id, text, attachments)
+            .await?;
         return acted(
             json,
             &format!("sent {message}"),
             serde_json::json!({"message": message, "to": id}),
         );
     }
-    let deliveries = client.send_message_subtree(id, text).await?;
+    let deliveries = client
+        .send_message_subtree_with_images(id, text, attachments)
+        .await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&deliveries)?);
         return Ok(());

@@ -39,6 +39,7 @@ async fn a_client_discovers_the_surface_and_a_call_becomes_a_protocol_command() 
             to: agent,
             content: "go".into(),
             subtree: false,
+            attachments: Vec::new(),
             idempotency_key: None,
         }
     );

@@ -254,6 +254,7 @@ fn blocks(content: &[aether_core::model::ContentBlock]) -> String {
             B::ToolUse { name, .. } => format!("[call {name}]"),
             B::ToolResult { tool_use_id, .. } => format!("[result {tool_use_id}]"),
             B::Image { media_type, .. } => format!("[image {media_type}]"),
+            B::ImageRef(image) => image.label(),
         })
         .collect::<Vec<_>>()
         .join(" ")

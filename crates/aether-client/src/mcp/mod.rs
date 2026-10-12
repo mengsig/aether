@@ -478,6 +478,7 @@ fn command_for(name: &str, arguments: Value) -> Result<Command, String> {
                 content: a.content,
                 // The MCP tool addresses one agent; fan-out is not in its schema.
                 subtree: false,
+                attachments: Vec::new(),
                 idempotency_key: None,
             }
         }

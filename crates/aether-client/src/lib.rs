@@ -5,6 +5,7 @@
 //! caller and pushes subscription frames to their [`Subscription`]. The TUI,
 //! the CLI and orchestration applications all sit on this crate.
 
+pub mod images;
 pub mod mcp;
 pub mod serve;
 pub mod sink;

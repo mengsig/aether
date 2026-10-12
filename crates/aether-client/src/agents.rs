@@ -2,7 +2,8 @@ use crate::{Client, Result, expect_ok, unexpected};
 use aether_core::agent::Agent;
 use aether_core::id::{AgentId, MessageId, RunId};
 use aether_protocol::{
-    AgentPatch, AgentQuery, AgentTree, Command, CreateAgent, MessageDelivery, Reply,
+    AgentPatch, AgentQuery, AgentTree, Command, CreateAgent, ImageAttachment, MessageDelivery,
+    Reply,
 };
 
 impl Client {
@@ -61,11 +62,24 @@ impl Client {
     }
 
     pub async fn send_message(&self, to: AgentId, content: impl Into<String>) -> Result<MessageId> {
+        self.send_message_with_images(to, content, Vec::new()).await
+    }
+
+    /// Send a message with images attached; see [`crate::images`] for
+    /// building them from files. The daemon refuses the whole message when
+    /// it refuses any image.
+    pub async fn send_message_with_images(
+        &self,
+        to: AgentId,
+        content: impl Into<String>,
+        attachments: Vec<ImageAttachment>,
+    ) -> Result<MessageId> {
         match self
             .request(Command::SendMessage {
                 to,
                 content: content.into(),
                 subtree: false,
+                attachments,
                 idempotency_key: None,
             })
             .await?
@@ -82,11 +96,23 @@ impl Client {
         root: AgentId,
         content: impl Into<String>,
     ) -> Result<Vec<MessageDelivery>> {
+        self.send_message_subtree_with_images(root, content, Vec::new())
+            .await
+    }
+
+    /// [`Self::send_message_subtree`] with images attached to every copy.
+    pub async fn send_message_subtree_with_images(
+        &self,
+        root: AgentId,
+        content: impl Into<String>,
+        attachments: Vec<ImageAttachment>,
+    ) -> Result<Vec<MessageDelivery>> {
         match self
             .request(Command::SendMessage {
                 to: root,
                 content: content.into(),
                 subtree: true,
+                attachments,
                 idempotency_key: None,
             })
             .await?

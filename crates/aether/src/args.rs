@@ -314,6 +314,9 @@ pub(crate) enum Cmd {
     Send {
         agent: String,
         text: Vec<String>,
+        /// Attach an image file (PNG, JPEG, GIF or WebP); repeat for more.
+        #[arg(long = "image", value_name = "FILE")]
+        images: Vec<PathBuf>,
         /// Deliver to every live agent beneath it as well, each its own item.
         #[arg(long)]
         subtree: bool,
