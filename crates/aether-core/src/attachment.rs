@@ -46,6 +46,21 @@ pub struct ImageAttachment {
     pub name: Option<String>,
 }
 
+impl ImageAttachment {
+    /// Its size once decoded, read off the base64 length.
+    pub fn size_bytes(&self) -> u64 {
+        let symbols = self.data.trim_end_matches('=').len() as u64;
+        symbols * 3 / 4
+    }
+
+    /// The image as its stored reference will name it: `shot.png, 1.2 MB`.
+    pub fn summary(&self) -> String {
+        let name = self.name.as_deref().and_then(clean_name);
+        let name = name.as_deref().unwrap_or(&self.media_type);
+        format!("{name}, {}", human_size(self.size_bytes()))
+    }
+}
+
 // The payload is megabytes of base64; a debug print names it instead.
 impl fmt::Debug for ImageAttachment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -403,5 +418,24 @@ mod tests {
         assert_eq!(human_size(1024), "1.0 KB");
         assert_eq!(human_size(34_918), "34.1 KB");
         assert_eq!(human_size(1_258_291), "1.2 MB");
+    }
+
+    /// "pixels" in base64 at each padding: 6, 5 and 4 bytes.
+    #[test]
+    fn an_unsent_image_reads_like_its_stored_reference() {
+        let image = |data: &str, name: Option<&str>| ImageAttachment {
+            media_type: "image/png".into(),
+            data: data.into(),
+            name: name.map(str::to_owned),
+        };
+        assert_eq!(image("cGl4ZWxz", None).size_bytes(), 6);
+        assert_eq!(image("cGl4ZWw=", None).size_bytes(), 5);
+        assert_eq!(image("cGl4ZQ==", None).size_bytes(), 4);
+        assert_eq!(image("", None).size_bytes(), 0);
+        assert_eq!(
+            image("cGl4ZWxz", Some("/home/user/shot.png")).summary(),
+            "shot.png, 6 B"
+        );
+        assert_eq!(image("cGl4ZWxz", None).summary(), "image/png, 6 B");
     }
 }

@@ -195,9 +195,12 @@ impl Runtime {
 }
 
 /// A message's content: its text, then one reference per stored image.
+/// An image sent without words carries no empty text block.
 pub fn message_content(text: String, images: Vec<AttachmentRef>) -> Vec<ContentBlock> {
     let mut content = Vec::with_capacity(1 + images.len());
-    content.push(ContentBlock::text(text));
+    if !text.is_empty() || images.is_empty() {
+        content.push(ContentBlock::text(text));
+    }
     content.extend(images.into_iter().map(ContentBlock::ImageRef));
     content
 }
@@ -319,5 +322,26 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn an_image_sent_without_words_has_no_empty_text_block() {
+        let checked = check_images(&[attachment("image/png", PNG, None)]).expect("checked");
+        let reference = checked[0].reference.clone();
+        let alone = message_content(String::new(), vec![reference.clone()]);
+        assert_eq!(alone, vec![ContentBlock::ImageRef(reference.clone())]);
+        let with_words = message_content("look".into(), vec![reference.clone()]);
+        assert_eq!(
+            with_words,
+            vec![
+                ContentBlock::text("look"),
+                ContentBlock::ImageRef(reference)
+            ]
+        );
+        // A message with neither is what it always was: one text block.
+        assert_eq!(
+            message_content(String::new(), Vec::new()),
+            vec![ContentBlock::text("")]
+        );
     }
 }
