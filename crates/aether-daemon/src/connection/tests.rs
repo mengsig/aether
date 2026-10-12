@@ -3,6 +3,8 @@ use aether_core::agent::DeadlineUpdate;
 use aether_runtime::CreateAgentSpec;
 use std::sync::Arc;
 
+#[cfg(unix)]
+mod credential_directory;
 mod device_gate;
 mod history_expiry;
 mod resolution;

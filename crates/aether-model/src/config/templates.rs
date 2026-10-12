@@ -269,7 +269,7 @@ fn push_commented_out(out: &mut String, example: &str) {
 /// Write `config.toml` and `providers.toml` templates where they do not
 /// exist yet. Existing files are never touched. Returns the paths written.
 pub fn ensure_templates(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
-    std::fs::create_dir_all(dir)?;
+    super::create_config_dir(dir)?;
     let mut written = Vec::new();
     for (name, text) in [
         ("config.toml", CONFIG_TEMPLATE.to_owned()),

@@ -763,3 +763,33 @@ fn a_published_listener_with_a_paired_device_is_healthy() {
         Some("`aether remote pair` adds a phone")
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn unsafe_credential_directory_warns_with_exact_repair() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let paths = paths(dir.path());
+    aether_model::config::create_config_dir(&paths.config_dir).unwrap();
+    assert_eq!(check_credentials_dir(&paths).level, Level::Ok);
+    std::fs::set_permissions(&paths.config_dir, std::fs::Permissions::from_mode(0o775)).unwrap();
+    let check = check_credentials_dir(&paths);
+    assert_eq!(check.level, Level::Warn);
+    assert!(check.detail.contains("group- or world-writable"));
+    assert!(
+        check
+            .fix
+            .unwrap()
+            .contains(&aether_model::auth::store::credentials_dir_fix(
+                &paths.config_dir
+            ))
+    );
+    assert_eq!(
+        std::fs::metadata(&paths.config_dir)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o775
+    );
+}

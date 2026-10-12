@@ -761,3 +761,45 @@ fn root_typos_name_the_key_and_valid_sections_while_theme_is_allowed() {
     std::fs::write(&path, "[theme.text]\nfg = '#ffffff'\n").unwrap();
     assert!(super::load_config(dir.path()).is_ok());
 }
+
+#[cfg(unix)]
+#[test]
+fn config_directory_creation_is_private_under_shared_umask() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = dir.path().join("aether");
+    assert!(!config.exists());
+    let status = std::process::Command::new("/bin/sh")
+        .args(["-c", "umask 002; exec \"$1\" --exact config::tests::config_directory_umask_child --nocapture", "test"])
+        .arg(std::env::current_exe().expect("test binary"))
+        .env("AETHER_TEST_PRIVATE_CONFIG", &config)
+        .status().expect("child test");
+    assert!(status.success());
+    assert!(config.join("config.toml").is_file());
+    assert_eq!(
+        std::fs::metadata(&config).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o775)).unwrap();
+    super::create_config_dir(&config).expect("existing config");
+    assert_eq!(
+        std::fs::metadata(&config).unwrap().permissions().mode() & 0o777,
+        0o775
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn config_directory_umask_child() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(path) = std::env::var_os("AETHER_TEST_PRIVATE_CONFIG") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    let written = super::ensure_templates(&path).expect("templates");
+    assert_eq!(written.len(), 2);
+    assert_eq!(
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+}

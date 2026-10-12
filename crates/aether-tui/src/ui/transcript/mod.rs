@@ -232,6 +232,16 @@ fn session_header(app: &App) -> CellModel {
             .map(|cwd| cwd.display().to_string())
             .unwrap_or_default(),
         needs_sign_in: !app.auth.is_empty() && !app.auth.iter().any(|a| a.configured),
+        sign_in_details: app
+            .auth
+            .iter()
+            .filter(|a| !a.configured)
+            .filter_map(|a| {
+                a.detail
+                    .as_ref()
+                    .map(|detail| format!("{}: {detail}", a.provider))
+            })
+            .collect(),
     }
 }
 
@@ -279,17 +289,20 @@ fn rows_for<'a>(
         .is_some_and(|node| node.agent.parent.is_none());
     let header = is_root.then(|| {
         let model = session_header(app);
-        // Version and cwd are fixed for the process; only the sign-in hint changes.
-        let signing_in = matches!(
-            model,
-            CellModel::Header {
-                needs_sign_in: true,
-                ..
-            }
-        );
+        use std::hash::{Hash, Hasher};
+        let CellModel::Header {
+            needs_sign_in,
+            sign_in_details,
+            ..
+        } = &model
+        else {
+            unreachable!("session_header must return a header");
+        };
+        let mut revision = std::collections::hash_map::DefaultHasher::new();
+        (needs_sign_in, sign_in_details).hash(&mut revision);
         Cell {
             id: window::HEADER_ID,
-            revision: CellRevision(u32::from(signing_in)),
+            revision: CellRevision(revision.finish() as u32),
             at: app.now,
             model,
         }

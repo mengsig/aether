@@ -78,9 +78,37 @@ impl AuthResolver {
     }
 
     pub async fn resolve(&self, provider: &ProviderDef) -> Result<Option<ResolvedAuth>, AuthError> {
+        let methods = &provider.auth;
+        if let Some(cli) = &methods.cli {
+            let status = cli.status().await;
+            if !status.available {
+                return Err(AuthError::Flow(status.detail));
+            }
+            return Ok(status.logged_in.then(|| ResolvedAuth {
+                auth: RequestAuth::None,
+                headers: BTreeMap::new(),
+                source: format!("{} login", cli.program),
+                kind: AuthKind::Cli,
+            }));
+        }
+        if methods.none {
+            return Ok(Some(ResolvedAuth {
+                auth: RequestAuth::None,
+                headers: BTreeMap::new(),
+                source: "no auth required".into(),
+                kind: AuthKind::None,
+            }));
+        }
         if let Some(stored) = self.store.read(&provider.id).await? {
             return self.resolve_stored(provider, stored).await.map(Some);
         }
+        self.resolve_ambient(provider).await
+    }
+
+    async fn resolve_ambient(
+        &self,
+        provider: &ProviderDef,
+    ) -> Result<Option<ResolvedAuth>, AuthError> {
         let methods = &provider.auth;
         if let Some(helper) = &methods.helper {
             let token = self.helpers.token(helper).await?;
@@ -120,26 +148,6 @@ impl AuthResolver {
                     kind: AuthKind::ApiKey,
                 }));
             }
-        }
-        if let Some(cli) = &methods.cli {
-            let status = cli.status().await;
-            if !status.available {
-                return Err(AuthError::Flow(status.detail));
-            }
-            return Ok(status.logged_in.then(|| ResolvedAuth {
-                auth: RequestAuth::None,
-                headers: BTreeMap::new(),
-                source: format!("{} login", cli.program),
-                kind: AuthKind::Cli,
-            }));
-        }
-        if methods.none {
-            return Ok(Some(ResolvedAuth {
-                auth: RequestAuth::None,
-                headers: BTreeMap::new(),
-                source: "no auth required".into(),
-                kind: AuthKind::None,
-            }));
         }
         Ok(None)
     }
@@ -336,6 +344,77 @@ mod tests {
                 .find(|(name, _)| *name == k)
                 .map(|(_, v)| v.to_string())
         })
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unsafe_store_does_not_block_cli_or_no_auth_providers() {
+        use crate::auth::FileCredentialStore;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("config");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o775))
+            .expect("shared directory");
+        let store = Arc::new(FileCredentialStore::in_config_dir(dir.path()));
+        assert!(store.read("anthropic").await.is_err());
+        let resolver = AuthResolver::new(store, reqwest::Client::new()).with_env(|_| None);
+        let registry = crate::Registry::builtin();
+        for id in ["claude-code", "codex"] {
+            let mut provider = registry.provider(id).expect("CLI provider").clone();
+            let cli = provider.auth.cli.as_mut().expect("CLI auth");
+            cli.program = "/bin/sh".into();
+            cli.status = vec![
+                "-c".into(),
+                format!("printf '%s' '{}'", cli.logged_in_markers[0]),
+            ];
+            let auth = resolver
+                .resolve(&provider)
+                .await
+                .expect("resolve")
+                .expect("ready");
+            assert_eq!(auth.kind, AuthKind::Cli);
+            assert_eq!(auth.auth, RequestAuth::None);
+        }
+        let ollama = registry.provider("ollama").expect("ollama");
+        let auth = resolver
+            .resolve(ollama)
+            .await
+            .expect("resolve")
+            .expect("ready");
+        assert_eq!(auth.kind, AuthKind::None);
+        assert_eq!(auth.source, "no auth required");
+        assert!(!dir.path().join("credentials.json.lock").exists());
+        assert_eq!(
+            std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777,
+            0o775
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn api_key_provider_preserves_unsafe_store_error_with_repair_command() {
+        use crate::auth::FileCredentialStore;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("config");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o775)).unwrap();
+        let resolver = AuthResolver::new(
+            Arc::new(FileCredentialStore::in_config_dir(dir.path())),
+            reqwest::Client::new(),
+        )
+        .with_env(|_| Some("env-key".into()));
+        let error = resolver
+            .resolve(&provider(AuthMethods::api_key(["P_KEY"])))
+            .await
+            .expect_err("unsafe store must fail");
+        assert!(matches!(error, AuthError::Store(_)));
+        let detail = error.to_string();
+        assert!(detail.contains("group- or world-writable"), "{detail}");
+        assert!(
+            detail.contains(&super::super::store::credentials_dir_fix(dir.path())),
+            "{detail}"
+        );
+        assert!(!dir.path().join("credentials.json.lock").exists());
     }
 
     #[tokio::test]

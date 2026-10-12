@@ -87,38 +87,43 @@ impl CliAuth {
         )
         .await;
         match output {
-            Ok(Ok(out)) => {
-                let text = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                let logged_in =
-                    out.status.success() && self.logged_in_markers.iter().any(|m| text.contains(m));
-                let detail = text
-                    .lines()
-                    .map(str::trim)
-                    .find(|l| !l.is_empty())
-                    .unwrap_or("")
-                    .chars()
-                    .take(120)
-                    .collect();
-                CliStatus {
-                    available: true,
-                    logged_in,
-                    detail,
-                }
-            }
+            Ok(Ok(out)) => self.output_status(out),
             Ok(Err(e)) => CliStatus {
                 available: false,
                 logged_in: false,
-                detail: format!("{} not found ({e})", self.program),
+                detail: if e.kind() == std::io::ErrorKind::NotFound {
+                    format!("{} not found ({e})", self.program)
+                } else {
+                    format!("{} could not run ({e})", self.program)
+                },
             },
             Err(_) => CliStatus {
                 available: true,
                 logged_in: false,
                 detail: format!("{} status timed out", self.program),
             },
+        }
+    }
+
+    fn output_status(&self, out: std::process::Output) -> CliStatus {
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let logged_in =
+            out.status.success() && self.logged_in_markers.iter().any(|m| text.contains(m));
+        let reason = if !out.status.success() {
+            format!("status returned non-zero exit ({})", out.status)
+        } else if logged_in {
+            "logged in".into()
+        } else {
+            "not logged in".into()
+        };
+        CliStatus {
+            available: true,
+            logged_in,
+            detail: format!("{}: {reason}", self.program),
         }
     }
 
@@ -195,6 +200,33 @@ mod tests {
             !failing.status().await.logged_in,
             "exit code must fail the check"
         );
+    }
+
+    #[tokio::test]
+    async fn json_status_details_explain_outcome_instead_of_showing_a_brace() {
+        let logged_out = fake("printf '{\n  \"loggedIn\": false\n}\n'")
+            .status()
+            .await;
+        assert!(logged_out.available);
+        assert!(!logged_out.logged_in);
+        assert_eq!(logged_out.detail, "sh: not logged in");
+        let failing = fake("printf '{\n  \"loggedIn\": true\n}\n'; exit 7")
+            .status()
+            .await;
+        assert!(!failing.logged_in);
+        assert!(failing.detail.contains("non-zero exit"), "{failing:?}");
+        let ready = fake("printf '{\n  \"loggedIn\": true\n}\n'").status().await;
+        assert!(ready.logged_in);
+        assert_eq!(ready.detail, "sh: logged in");
+    }
+
+    #[tokio::test]
+    async fn status_timeout_reports_the_program_and_reason() {
+        let auth = fake("exec sleep 30");
+        let status = auth.status_uncached().await;
+        assert!(status.available);
+        assert!(!status.logged_in);
+        assert_eq!(status.detail, "sh status timed out");
     }
 
     #[tokio::test]

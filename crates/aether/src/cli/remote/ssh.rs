@@ -71,7 +71,7 @@ fn parse(text: &str) -> anyhow::Result<Profiles> {
 
 fn profile_lock() -> anyhow::Result<std::fs::File> {
     let dir = aether_protocol::paths::config_dir();
-    std::fs::create_dir_all(&dir)?;
+    aether_model::config::create_config_dir(&dir)?;
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -97,7 +97,7 @@ fn profile_lock() -> anyhow::Result<std::fs::File> {
 fn save(profiles: &Profiles) -> anyhow::Result<()> {
     use std::io::Write as _;
     let dir = aether_protocol::paths::config_dir();
-    std::fs::create_dir_all(&dir)?;
+    aether_model::config::create_config_dir(&dir)?;
     let mut temporary = tempfile::NamedTempFile::new_in(&dir)?;
     temporary.write_all(toml::to_string(profiles)?.as_bytes())?;
     temporary.as_file().sync_all()?;

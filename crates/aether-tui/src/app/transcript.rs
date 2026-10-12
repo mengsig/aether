@@ -256,6 +256,7 @@ pub enum CellModel {
         version: String,
         cwd: String,
         needs_sign_in: bool,
+        sign_in_details: Vec<String>,
     },
     User {
         from: UserFrom,

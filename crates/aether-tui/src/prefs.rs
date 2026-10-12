@@ -121,7 +121,8 @@ impl UiPrefs {
     /// Serialize read-modify-write updates across TUI processes.
     pub(crate) fn update(dir: &Path, change: impl FnOnce(&mut Self)) -> Result<(), PrefsError> {
         let path = dir.join("ui.lock");
-        std::fs::create_dir_all(dir).map_err(|e| PrefsError::new(&path, e.to_string()))?;
+        aether_model::config::create_config_dir(dir)
+            .map_err(|e| PrefsError::new(&path, e.to_string()))?;
         let lock = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -171,7 +172,8 @@ impl UiPrefs {
         let path = dir.join(FILE);
         let body =
             toml::to_string_pretty(self).map_err(|e| PrefsError::new(&path, e.to_string()))?;
-        std::fs::create_dir_all(dir).map_err(|e| PrefsError::new(&path, e.to_string()))?;
+        aether_model::config::create_config_dir(dir)
+            .map_err(|e| PrefsError::new(&path, e.to_string()))?;
         // Same directory, so the rename is on one filesystem and is atomic.
         let temp = dir.join(format!(".{FILE}.{}.tmp", std::process::id()));
         let write = std::fs::write(&temp, format!("{HEADER}{body}"))

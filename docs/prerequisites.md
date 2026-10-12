@@ -66,7 +66,8 @@ HTTP to local model services; it does not install or start Ollama, vLLM,
 LM Studio, or llama.cpp for you.
 
 `aether doctor` checks configuration, daemon/protocol connectivity, SQLite,
-free disk space, logs, provider credentials, engine detection, and configured
+free disk space, logs, credential directory permissions, provider credentials,
+engine detection, and configured
 MCP server health. A missing unused engine can produce a warning even when
 your chosen engine works. Exit codes are 0 (healthy), 1 (warning), and 2 (broken).
 It does not certify provider account access or test every optional program.

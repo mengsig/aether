@@ -161,6 +161,21 @@ fn without_source_span(error: &str) -> String {
         .join("; ")
 }
 
+pub fn check_credentials_dir(paths: &Paths) -> Check {
+    use aether_model::auth::store::{credentials_dir_fix, validate_credentials_dir};
+    match validate_credentials_dir(&paths.config_dir) {
+        Ok(()) => Check::ok("credentials", "no unsafe credential directory found"),
+        Err(error) => Check::warn(
+            "credentials",
+            error.to_string(),
+            format!(
+                "for a real directory you own, run `{}`; replace a symlink with a private directory",
+                credentials_dir_fix(&paths.config_dir)
+            ),
+        ),
+    }
+}
+
 pub fn check_config(paths: &Paths) -> Check {
     if !paths.config_dir.exists() {
         return Check::ok(

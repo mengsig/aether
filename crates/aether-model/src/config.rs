@@ -40,6 +40,38 @@ pub fn config_dir(explicit: Option<PathBuf>) -> PathBuf {
         .join("aether")
 }
 
+/// Create missing configuration directories private to their owner on Unix.
+/// Existing directories keep their permissions; the credential store validates them.
+pub fn create_config_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    if let Some(parent) = dir.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        builder.recursive(true).create(parent)?;
+    }
+    match builder.recursive(false).create(dir) {
+        Ok(()) => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if std::fs::metadata(dir)?.is_dir() {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
 // The TUI reads only [theme] from this file; ui.toml and voice.toml are separate.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]

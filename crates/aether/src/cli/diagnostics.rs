@@ -80,6 +80,7 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
     // as nobody reordered the list.
     Report::new(vec![
         doctor::check_config(&paths),
+        doctor::check_credentials_dir(&paths),
         doctor::check_socket(&paths, daemon, &command),
         doctor::check_store(&paths),
         doctor::check_disk(
