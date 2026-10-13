@@ -254,7 +254,7 @@ tokio 1.53.2: MIT (https://github.com/tokio-rs/tokio)
 tokio-macros 2.7.2: MIT (https://github.com/tokio-rs/tokio)
 tokio-rustls 0.26.5: MIT OR Apache-2.0 (https://github.com/rustls/tokio-rustls)
 tokio-tungstenite 0.30.0: MIT (https://github.com/snapview/tokio-tungstenite)
-tokio-util 0.7.19: MIT (https://github.com/tokio-rs/tokio)
+tokio-util 0.7.20: MIT (https://github.com/tokio-rs/tokio)
 toml 1.1.8+spec-1.1.0: MIT OR Apache-2.0 (https://github.com/toml-rs/toml)
 toml_datetime 1.1.2+spec-1.1.0: MIT OR Apache-2.0 (https://github.com/toml-rs/toml)
 toml_parser 1.1.5+spec-1.1.0: MIT OR Apache-2.0 (https://github.com/toml-rs/toml)
@@ -10127,7 +10127,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 tokio 1.53.2 (LICENSE)
-tokio-util 0.7.19 (LICENSE)
+tokio-util 0.7.20 (LICENSE)
 ------------------------------------------------------------------------------
 
 MIT License
