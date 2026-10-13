@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WebSocket } from 'ws';
 import { once } from 'node:events';
+import { connect } from 'node:net';
 import { createMockServer } from '../dev/server.js';
 import { newIdentity, base64url } from './identity.js';
 import { authenticate, assertAllowed } from './contract.js';
@@ -57,6 +58,15 @@ test('mock HTTP restricts private files, origin, and serves strict CSP',async()=
     assert.equal((await fetch(`${base}/api/pair/claim`,{method:'POST',headers:{'Content-Type':'application/json','Origin':'https://evil.example'},body:'{}'})).status,403);
     assert.equal((await (await fetch(`${base}/api/health`)).json()).protocol_version,18);
   } finally { await server.close(); }
+});
+test('closing the mock drops a connection that never sent a request',async()=>{
+  const server=createMockServer(); server.http.listen(0,'127.0.0.1'); await once(server.http,'listening');
+  const accepted=once(server.http,'connection'); const socket=connect(server.http.address().port,'127.0.0.1');
+  await accepted; const closing=server.close();
+  try {
+    await assert.doesNotReject(once(socket,'close',{signal:AbortSignal.timeout(2000)}),'the mock left an unused connection open');
+    assert.equal(socket.bytesWritten,0);
+  } finally { socket.destroy(); await closing; }
 });
 test('authenticated mock socket challenges first and uses daemon envelope and replay cursor',async()=>{
   const server=createMockServer(); server.http.listen(0,'127.0.0.1'); await once(server.http,'listening');

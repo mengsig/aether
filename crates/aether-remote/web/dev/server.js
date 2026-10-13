@@ -132,7 +132,11 @@ export class MockServer {
   async close() {
     for (const ws of this.clients.keys()) ws.terminate();
     await new Promise((resolve,reject) => this.wss.close(error => error ? reject(error) : resolve(undefined)));
-    if (this.http.listening) await new Promise((resolve,reject) => this.http.close(error => error ? reject(error) : resolve(undefined)));
+    if (!this.http.listening) return;
+    const closed = new Promise((resolve,reject) => this.http.close(error => error ? reject(error) : resolve(undefined)));
+    // close() waits for ever on a connection that never sent a request, and a browser keeps a spare one.
+    this.http.closeAllConnections();
+    await closed;
   }
 }
 /** @param {Session|undefined} session */

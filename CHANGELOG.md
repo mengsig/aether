@@ -39,6 +39,9 @@ release is also the text of its GitHub release.
   `resolve_submission` for it are answered before any image is decoded or
   stored. A retry no longer needs the attachment directory, a resolution never
   writes to it, and a send the daemon refuses leaves no image file behind.
+- **The phone web app's layout test no longer times out on CI.** The mock
+  daemon's shutdown waited on a connection the browser had opened and never
+  used. It now closes every connection.
 
 ### Before updating
 
