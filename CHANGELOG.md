@@ -4,9 +4,13 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
-## Unreleased
+## 1.0.3
 
-### Images on a message
+Images on a message: attach screenshots and other images in the terminal UI
+or with `aether send --image`. Also a fix for retried image sends and a
+steadier browser test.
+
+### New
 
 - Attach screenshots and other images to a message. In the terminal UI,
   paste or drop an image file's path, type `/image PATH`, or press Alt+V for
