@@ -151,7 +151,9 @@ is only images has no text block. The file is named `<id>.<ext>`.
 
 The images are part of an idempotency key's fingerprint: a retry with the
 same key and the same images is the same send, and the same key with
-different images is refused like any other reuse.
+different images is refused like any other reuse. Either is answered before
+an image is decoded or stored, so a retry of a delivered send does not need
+the attachment directory.
 
 A client that negotiated protocol 17 or 18 receives each `image_ref` block
 as a text block reading `[image: shot.png, 47.1 KB]`, since it has no such

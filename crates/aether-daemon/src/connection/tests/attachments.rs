@@ -7,9 +7,9 @@ use aether_core::inbox::InboxKind;
 use aether_core::model::ContentBlock;
 use base64::Engine as _;
 
-const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot a real picture";
+pub(super) const PNG: &[u8] = b"\x89PNG\r\n\x1a\nnot a real picture";
 
-fn image(media_type: &str, bytes: &[u8], name: &str) -> ImageAttachment {
+pub(super) fn image(media_type: &str, bytes: &[u8], name: &str) -> ImageAttachment {
     ImageAttachment {
         media_type: media_type.into(),
         data: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -27,7 +27,7 @@ fn send(to: AgentId, attachments: Vec<ImageAttachment>, key: Option<&str>) -> Co
     }
 }
 
-fn root(daemon: &Daemon) -> AgentId {
+pub(super) fn root(daemon: &Daemon) -> AgentId {
     let (agent, _) = daemon
         .runtime
         .create_agent(
@@ -43,7 +43,7 @@ fn root(daemon: &Daemon) -> AgentId {
 }
 
 /// The files the daemon has stored, by name.
-fn stored(daemon: &Daemon) -> Vec<String> {
+pub(super) fn stored(daemon: &Daemon) -> Vec<String> {
     let dir = daemon.runtime.attachment_dir().expect("attachment dir");
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -186,7 +186,11 @@ fn device(role: aether_protocol::remote::DeviceRole) -> AuthContext {
     })
 }
 
-async fn run(daemon: &Daemon, auth: &AuthContext, command: Command) -> Result<Reply, ErrorReply> {
+pub(super) async fn run(
+    daemon: &Daemon,
+    auth: &AuthContext,
+    command: Command,
+) -> Result<Reply, ErrorReply> {
     let by = auth.actor(None, "test".into());
     dispatch_version(daemon, command, by, auth).await
 }

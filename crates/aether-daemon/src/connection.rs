@@ -22,6 +22,7 @@ use futures::StreamExt as _;
 
 mod dispatch;
 mod host_services;
+mod messages;
 mod providers;
 mod push;
 mod remote_admin;

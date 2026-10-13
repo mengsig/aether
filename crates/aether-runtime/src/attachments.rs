@@ -15,7 +15,7 @@ use aether_core::model::{ContentBlock, Message, ToolResultBlock};
 use aether_engine::EngineImage;
 use base64::Engine as _;
 
-use crate::{Result, Runtime, RuntimeError};
+use crate::{CommitHold, Result, Runtime, RuntimeError};
 
 /// One image that passed every check, with the bytes to store.
 #[derive(Debug, PartialEq, Eq)]
@@ -173,16 +173,36 @@ impl Runtime {
     /// the message carries instead of the bytes; refuses the whole message
     /// when any image is not acceptable.
     pub fn store_attachments(&self, images: &[ImageAttachment]) -> Result<Vec<AttachmentRef>> {
-        if images.is_empty() {
-            return Ok(Vec::new());
-        }
+        let checked = self.check_attachments(images)?;
+        self.store_images(&self.hold(), &checked)?;
+        Ok(checked.into_iter().map(|image| image.reference).collect())
+    }
+
+    /// Decode and check a message's images against every limit. Storage is
+    /// neither read nor written: only a daemon with a directory accepts any.
+    pub(crate) fn check_attachments(
+        &self,
+        images: &[ImageAttachment],
+    ) -> Result<Vec<CheckedImage>> {
         let checked =
             check_images(images).map_err(|error| RuntimeError::Invalid(error.to_string()))?;
-        let Some(dir) = self.attachment_dir() else {
-            return Err(RuntimeError::Invalid(
-                "this daemon has no attachment directory, so a message cannot carry images".into(),
-            ));
-        };
+        if !checked.is_empty() {
+            self.configured_attachment_dir()?;
+        }
+        Ok(checked)
+    }
+
+    /// Write each checked image once. Under the commit hold, so a delivery
+    /// stores after its duplicate check: a replay or a refusal writes nothing.
+    pub(crate) fn store_images(
+        &self,
+        _hold: &CommitHold<'_>,
+        images: &[CheckedImage],
+    ) -> Result<()> {
+        if images.is_empty() {
+            return Ok(());
+        }
+        let dir = self.configured_attachment_dir()?;
         let failed = |error: std::io::Error| {
             RuntimeError::Internal(format!(
                 "could not store an image under {}: {error}",
@@ -190,10 +210,18 @@ impl Runtime {
             ))
         };
         create_private_dir(dir).map_err(failed)?;
-        for image in &checked {
+        for image in images {
             store_image(dir, image).map_err(failed)?;
         }
-        Ok(checked.into_iter().map(|image| image.reference).collect())
+        Ok(())
+    }
+
+    fn configured_attachment_dir(&self) -> Result<&Path> {
+        self.attachment_dir().ok_or_else(|| {
+            RuntimeError::Invalid(
+                "this daemon has no attachment directory, so a message cannot carry images".into(),
+            )
+        })
     }
 
     /// The stored images of one user message as an engine takes them: files.

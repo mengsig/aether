@@ -1,7 +1,9 @@
 use super::MessageDelivery;
+use crate::attachments::{CheckedImage, message_content};
 use crate::submission::wrong_shape;
 use crate::{CommitHold, Result, Runtime, RuntimeError};
 use aether_core::agent::Agent;
+use aether_core::attachment::{AttachmentRef, ImageAttachment};
 use aether_core::event::{Actor, Event, EventDraft, EventKind};
 use aether_core::id::{AgentId, InboxItemId, MessageId};
 use aether_core::idempotency::{Submission, SubmissionOutcome};
@@ -41,6 +43,36 @@ pub fn pending_question(store: &dyn Store, agent: AgentId) -> Result<Option<Even
     }
 }
 
+/// The message a recorded delivery created, as its retry is answered.
+fn sent_message(outcome: SubmissionOutcome) -> Result<MessageId> {
+    let SubmissionOutcome::Message { message } = outcome else {
+        return Err(wrong_shape(&outcome, "message"));
+    };
+    Ok(message)
+}
+
+/// The deliveries a recorded fan-out created, as its retry is answered.
+fn fanned_out(outcome: SubmissionOutcome) -> Result<Vec<MessageDelivery>> {
+    let SubmissionOutcome::FannedOut { deliveries } = outcome else {
+        return Err(wrong_shape(&outcome, "fanned-out message"));
+    };
+    Ok(deliveries)
+}
+
+/// The references a message carries for its checked images, in their order.
+fn references(images: &[CheckedImage]) -> Vec<AttachmentRef> {
+    images.iter().map(|image| image.reference.clone()).collect()
+}
+
+/// Whether `content` refers to each of `images`: a delivery stores no other.
+fn refers_to_each(content: &[ContentBlock], images: &[CheckedImage]) -> bool {
+    images.iter().all(|image| {
+        content.iter().any(
+            |block| matches!(block, ContentBlock::ImageRef(carried) if *carried == image.reference),
+        )
+    })
+}
+
 impl Runtime {
     /// Deliver a message to an agent's inbox. Waking is the scheduler's job.
     pub fn send_message(
@@ -62,16 +94,45 @@ impl Runtime {
         from: Actor,
         submission: Option<Submission>,
     ) -> Result<MessageId> {
+        self.send_message_storing(to, content, &[], from, submission)
+    }
+
+    /// A client's message with its images, retried like any keyed delivery.
+    /// A held receipt answers before an image is decoded, and a new delivery
+    /// writes its images just before it commits: nothing else stores any.
+    pub fn send_message_with_images(
+        &self,
+        to: AgentId,
+        text: String,
+        images: &[ImageAttachment],
+        from: Actor,
+        submission: Option<Submission>,
+    ) -> Result<MessageId> {
+        // Unheld, ahead of megabytes to decode; the held check is the guarantee.
+        if let Some(outcome) = self.recorded_submission(submission.as_ref())? {
+            return sent_message(outcome);
+        }
+        let images = self.check_attachments(images)?;
+        let content = message_content(text, references(&images));
+        self.send_message_storing(to, content, &images, from, submission)
+    }
+
+    fn send_message_storing(
+        &self,
+        to: AgentId,
+        content: Vec<ContentBlock>,
+        images: &[CheckedImage],
+        from: Actor,
+        submission: Option<Submission>,
+    ) -> Result<MessageId> {
+        debug_assert!(refers_to_each(&content, images), "an image nobody is sent");
         // Before the liveness read, keyed or not: a recipient ending in
         // between would otherwise get a delivery committed after its end.
         let hold = self.hold();
         // Before the liveness check, not after: an agent that has finished
         // since the first delivery must not turn a retry into a refusal.
         if let Some(outcome) = self.replayed_submission(&hold, submission.as_ref())? {
-            let SubmissionOutcome::Message { message } = outcome else {
-                return Err(wrong_shape(&outcome, "message"));
-            };
-            return Ok(message);
+            return sent_message(outcome);
         }
         let agent = self
             .store
@@ -83,7 +144,7 @@ impl Runtime {
                 agent.status.kind()
             )));
         }
-        self.deliver_message_held(hold, &agent, content, from, submission)
+        self.deliver_message_held(hold, &agent, content, images, from, submission)
     }
 
     /// Answer exactly this agent's latest pending question, never a newer one.
@@ -103,10 +164,7 @@ impl Runtime {
         }
         let hold = self.hold();
         if let Some(outcome) = self.replayed_submission(&hold, submission.as_ref())? {
-            let SubmissionOutcome::Message { message } = outcome else {
-                return Err(wrong_shape(&outcome, "message"));
-            };
-            return Ok(message);
+            return sent_message(outcome);
         }
         let agent = self
             .store
@@ -124,7 +182,7 @@ impl Runtime {
         }
         crate::cancellation::check_parent(self, &hold, to)?;
         self.check_pending_question(&hold, to, question_seq)?;
-        self.deliver_message_held(hold, &agent, content, from, submission)
+        self.deliver_message_held(hold, &agent, content, &[], from, submission)
     }
 
     fn check_pending_question(
@@ -146,6 +204,7 @@ impl Runtime {
         hold: CommitHold<'_>,
         agent: &Agent,
         content: Vec<ContentBlock>,
+        images: &[CheckedImage],
         from: Actor,
         submission: Option<Submission>,
     ) -> Result<MessageId> {
@@ -182,6 +241,7 @@ impl Runtime {
                 submission.record(at, SubmissionOutcome::Message { message }),
             ));
         }
+        self.store_images(&hold, images)?;
         self.apply_held(hold, commit)?;
         Ok(message)
     }
@@ -210,16 +270,45 @@ impl Runtime {
         from: Actor,
         submission: Option<Submission>,
     ) -> Result<Vec<MessageDelivery>> {
+        self.fan_out_message_storing(root, content, &[], from, submission)
+    }
+
+    /// The fan-out of a client's message with its images: answered from a
+    /// held receipt and stored as [`Self::send_message_with_images`] is,
+    /// once for the whole subtree.
+    pub fn fan_out_message_with_images(
+        &self,
+        root: AgentId,
+        text: String,
+        images: &[ImageAttachment],
+        from: Actor,
+        submission: Option<Submission>,
+    ) -> Result<Vec<MessageDelivery>> {
+        // Unheld, ahead of megabytes to decode; the held check is the guarantee.
+        if let Some(outcome) = self.recorded_submission(submission.as_ref())? {
+            return fanned_out(outcome);
+        }
+        let images = self.check_attachments(images)?;
+        let content = message_content(text, references(&images));
+        self.fan_out_message_storing(root, content, &images, from, submission)
+    }
+
+    fn fan_out_message_storing(
+        &self,
+        root: AgentId,
+        content: Vec<ContentBlock>,
+        images: &[CheckedImage],
+        from: Actor,
+        submission: Option<Submission>,
+    ) -> Result<Vec<MessageDelivery>> {
+        debug_assert!(refers_to_each(&content, images), "an image nobody is sent");
         let at = now();
         // One hold over every read and the commit they feed: a delivery
         // batch is all-or-nothing, so a seq claimed underneath it would drop
         // the whole message rather than one copy of it.
         let hold = self.hold();
         if let Some(outcome) = self.replayed_submission(&hold, submission.as_ref())? {
-            let SubmissionOutcome::FannedOut { deliveries } = outcome else {
-                return Err(wrong_shape(&outcome, "fanned-out message"));
-            };
-            return Ok(deliveries);
+            return fanned_out(outcome);
         }
         let agent = self
             .store
@@ -234,8 +323,31 @@ impl Runtime {
         // Completed intermediates still connect live descendants to the root.
         let targets = self.live_targets(root, true, "message recipient")?;
         let mut commit = Commit::new();
+        let deliveries = self.push_fan_out(&hold, &mut commit, &targets, &content, &from)?;
+        if let Some(submission) = &submission {
+            commit.push_mutation(Mutation::RecordSubmission(submission.record(
+                at,
+                SubmissionOutcome::FannedOut {
+                    deliveries: deliveries.clone(),
+                },
+            )));
+        }
+        self.store_images(&hold, images)?;
+        self.apply_held(hold, commit)?;
+        Ok(deliveries)
+    }
+
+    /// Give each target its own message, inbox item and event in `commit`.
+    fn push_fan_out(
+        &self,
+        hold: &CommitHold<'_>,
+        commit: &mut Commit,
+        targets: &[Agent],
+        content: &[ContentBlock],
+        from: &Actor,
+    ) -> Result<Vec<MessageDelivery>> {
         let mut deliveries = Vec::with_capacity(targets.len());
-        for target in &targets {
+        for target in targets {
             let id = target.id;
             let message = MessageId::new();
             commit.push_event(
@@ -245,34 +357,25 @@ impl Runtime {
                         message,
                         from: from.clone(),
                         to: id,
-                        content: content.clone(),
+                        content: content.to_vec(),
                     },
                 )
                 .agent(id)
                 .run(target.run),
             );
             self.push_inbox(
-                &hold,
-                &mut commit,
+                hold,
+                commit,
                 target,
                 InboxKind::Message {
                     message_id: message,
                     from: from.clone(),
-                    content: content.clone(),
+                    content: content.to_vec(),
                 },
                 from.clone(),
             )?;
             deliveries.push(MessageDelivery { agent: id, message });
         }
-        if let Some(submission) = &submission {
-            commit.push_mutation(Mutation::RecordSubmission(submission.record(
-                at,
-                SubmissionOutcome::FannedOut {
-                    deliveries: deliveries.clone(),
-                },
-            )));
-        }
-        self.apply_held(hold, commit)?;
         Ok(deliveries)
     }
 

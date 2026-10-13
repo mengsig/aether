@@ -7,7 +7,9 @@ use aether_core::schedule::ScheduleTarget;
 use aether_protocol::{Command, DaemonStatus, ErrorCode, ErrorReply, Reply};
 use aether_runtime::{AgentUpdate, CreateAgentSpec, CreateTaskSpec, Remember};
 
-use super::{host_services, map_err, providers, push, remote_admin, resolution, store_err};
+use super::{
+    host_services, map_err, messages, providers, push, remote_admin, resolution, store_err,
+};
 use base64::Engine as _;
 
 /// Where to cut `bytes` at about `max` so that text stays text. Slicing at a
@@ -244,38 +246,8 @@ pub(super) async fn dispatch_authorized(
                 .map_err(map_err)?;
             Ok(Reply::MessageSent { message })
         }
-        Command::SendMessage {
-            to,
-            content,
-            subtree,
-            attachments,
-            ..
-        } => {
-            // Checked and stored before delivery: a refused image refuses the message.
-            let images = if attachments.is_empty() {
-                Vec::new()
-            } else {
-                // Megabytes are decoded and written: not on an async worker.
-                let storing = rt.clone();
-                blocking(move || storing.store_attachments(&attachments).map_err(map_err)).await??
-            };
-            let content = aether_runtime::attachments::message_content(content, images);
-            if !subtree {
-                let id = rt
-                    .send_message_keyed(to, content, by, submission)
-                    .map_err(map_err)?;
-                return Ok(Reply::MessageSent { message: id });
-            }
-            let deliveries = rt
-                .fan_out_message_keyed(to, content, by, submission)
-                .map_err(map_err)?
-                .into_iter()
-                .map(|d| aether_protocol::MessageDelivery {
-                    agent: d.agent,
-                    message: d.message,
-                })
-                .collect();
-            Ok(Reply::MessagesSent { deliveries })
+        command @ Command::SendMessage { .. } => {
+            messages::dispatch(daemon, command, by, submission).await
         }
         Command::Cancel { agent, reason, .. } => {
             rt.cancel_agent_keyed(agent, reason, by, submission)

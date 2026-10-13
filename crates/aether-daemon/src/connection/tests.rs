@@ -3,6 +3,7 @@ use aether_core::agent::DeadlineUpdate;
 use aether_runtime::CreateAgentSpec;
 use std::sync::Arc;
 
+mod attachment_replay;
 mod attachments;
 #[cfg(unix)]
 mod credential_directory;

@@ -93,8 +93,8 @@ looks like a boundary and is not one.
   data directory and are never removed automatically, including when their
   agent is archived; delete old files by hand once no live agent needs them.
   An agent whose stored image is gone gets the message's text only. A send the
-  daemon refuses after its images were stored (an unknown agent, say) leaves
-  those files behind.
+  daemon refuses stores nothing; a delivery whose images were written and whose
+  commit then fails leaves those files behind.
 - `aether runs export` does not include image files: an imported run shows
   each image as its `[image: name, size]` line.
 - An agent on an API model sees the newest 20 images and 15 MiB of them as
