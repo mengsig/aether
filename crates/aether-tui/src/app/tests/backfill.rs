@@ -802,6 +802,94 @@ fn reading_history_keeps_new_questions_in_the_needs_you_strip() {
 }
 
 #[test]
+fn sending_a_message_returns_from_older_history_to_the_reply() {
+    let (mut app, id) = app_with_agent();
+    start(&mut app, id);
+    finish(
+        &mut app,
+        id,
+        vec![answer(10, id, InvocationId::new(), "recent")],
+    );
+    app.transcripts.get_mut(&id).unwrap().older_available = true;
+    app.older_history_request(id).unwrap();
+    finish(
+        &mut app,
+        id,
+        vec![answer(1, id, InvocationId::new(), "old")],
+    );
+    assert!(app.reading_history());
+    app.input.set_text("can you see this?");
+    let effects = app.reduce(key(KeyCode::Enter));
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::Request {
+            command: Command::SendMessage { to, .. },
+            ..
+        } if *to == id
+    )));
+    assert!(!app.reading_history());
+    let last = app.scroll_log.since(0).last().unwrap();
+    assert_eq!(
+        (last.agent, last.intent),
+        (id, crate::app::transcript::ScrollIntent::Latest)
+    );
+    deliver(&mut app, answer(11, id, InvocationId::new(), "yes"));
+    let shown = &app.transcripts[&id];
+    assert!(shown.live.is_none());
+    assert!(
+        shown
+            .all_cells()
+            .any(|c| matches!(&c.model, CellModel::Assistant { text } if text == "yes"))
+    );
+}
+
+#[test]
+fn a_busy_childs_events_do_not_trim_the_parents_own_replies() {
+    let (mut app, parent) = app_with_agent();
+    let child = AgentId::new();
+    let of_child = |seq, kind| {
+        let mut event = event(seq, child, kind);
+        event.parent_agent_id = Some(parent);
+        event
+    };
+    deliver(
+        &mut app,
+        answer(1, parent, InvocationId::new(), "parent reply"),
+    );
+    let spawned = of_child(
+        2,
+        EventKind::AgentCreated {
+            name: "child".into(),
+            role: Role::new("worker"),
+            parent: Some(parent),
+            model: ModelRef::new("mock", "m"),
+            scope: Scope::default(),
+            fallbacks: vec![],
+        },
+    );
+    deliver(&mut app, spawned);
+    let invocation = InvocationId::new();
+    for seq in 3..=6_002 {
+        let chatter = EventKind::AgentMessage {
+            role: MessageRole::Assistant,
+            content: vec![ContentBlock::text("child progress")],
+            invocation: Some(invocation),
+        };
+        deliver(&mut app, of_child(seq, chatter));
+    }
+    let t = &app.transcripts[&parent];
+    // The reply and the spawn cell mark the window; the chatter does not.
+    assert_eq!(t.history.len(), 2);
+    assert!(!t.older_available);
+    assert!(
+        t.all_cells()
+            .any(|c| matches!(&c.model, CellModel::Assistant { text } if text == "parent reply"))
+    );
+    assert!(!crate::ui::bottom::footer::hints(&app).contains("earlier history trimmed"));
+    assert!(app.transcripts[&child].older_available);
+}
+
+#[test]
 fn old_daemon_ascending_cap_is_reported_instead_of_presented_as_recent_history() {
     let (mut app, id) = app_with_agent();
     start(&mut app, id);

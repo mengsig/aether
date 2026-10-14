@@ -757,19 +757,19 @@ fn remember_event(transcripts: &mut Transcripts, event: &Event) {
                 | EventKind::ApprovalRuleAdded { .. }
         );
     for (id, transcript) in transcripts.iter_mut() {
-        if (global
-            || event.agent_id == Some(*id)
-            || event.parent_agent_id == Some(*id)
-            || sender == Some(*id))
-            && (event.seq == 0
-                || transcript
-                    .history
-                    .back()
-                    .is_none_or(|last| last.seq < event.seq))
+        let next = CellId(transcript.next_id);
+        let last = transcript.history.back();
+        debug_assert!(last.is_none_or(|last| last.last_cell <= next));
+        // A child's event counts toward its parent's window only when it added a
+        // cell there, so a busy child cannot trim the parent's own replies away.
+        let child_cell =
+            event.parent_agent_id == Some(*id) && last.is_none_or(|last| last.last_cell != next);
+        if (global || event.agent_id == Some(*id) || child_cell || sender == Some(*id))
+            && (event.seq == 0 || last.is_none_or(|last| last.seq < event.seq))
         {
             transcript.history.push_back(super::HistoryPoint {
                 seq: event.seq,
-                last_cell: CellId(transcript.next_id),
+                last_cell: next,
             });
         }
     }

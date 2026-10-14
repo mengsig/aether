@@ -4,6 +4,20 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Fixed
+
+- **An agent's replies stay in the terminal UI while its children are busy.**
+  Every event of a child counted toward its parent's 5,000-event window, so a
+  busy child trimmed the parent's own replies out of the transcript and left
+  only "earlier history trimmed". A child's events now count only when they add
+  a cell to the parent's transcript, such as its spawn or its result.
+- **Sending a message returns to the latest output.** In an older history
+  window, new replies, including the answer to the message just sent, were
+  held off screen until Ctrl+End. Sending a message to the viewed agent now
+  leaves the older window and follows the conversation, as Ctrl+End does.
+
 ## 1.0.3
 
 Images on a message: attach screenshots and other images in the terminal UI

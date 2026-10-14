@@ -304,7 +304,7 @@ impl App {
         self.use_effort(next)
     }
 
-    fn scroll(&mut self, intent: ScrollIntent) -> Vec<Effect> {
+    pub(in crate::app) fn scroll(&mut self, intent: ScrollIntent) -> Vec<Effect> {
         if let Some(agent) = self.selected {
             self.scroll_log.push(agent, intent);
             if intent == ScrollIntent::Latest {

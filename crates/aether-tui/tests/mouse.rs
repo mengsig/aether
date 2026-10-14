@@ -95,6 +95,12 @@ fn wheel_routes_to_the_pointer_and_never_changes_composer_history() {
         crossterm::event::KeyCode::Enter,
         KeyModifiers::NONE,
     )));
+    // Sending follows the latest output; only the wheel's requests count below.
+    let sent = app
+        .scroll_log
+        .since(0)
+        .last()
+        .map_or(0, |request| request.seq);
     let mut cache = ViewCache::default();
     paint(&app, &mut cache);
     let composer = cache.regions.composer;
@@ -103,26 +109,26 @@ fn wheel_routes_to_the_pointer_and_never_changes_composer_history() {
         &mut cache,
     );
     assert!(app.input.text.is_empty());
-    assert!(app.scroll_log.since(0).next().is_none());
+    assert!(app.scroll_log.since(sent).next().is_none());
     let board = cache.regions.board;
     app.dispatch_mouse(
         event(MouseEventKind::ScrollDown, board.x, board.y),
         &mut cache,
     );
     assert_eq!(cache.board.wheel_delta, 3);
-    assert!(app.scroll_log.since(0).next().is_none());
+    assert!(app.scroll_log.since(sent).next().is_none());
     let transcript = cache.regions.transcript;
     app.dispatch_mouse(
         event(MouseEventKind::ScrollUp, transcript.x, transcript.y),
         &mut cache,
     );
-    assert_eq!(app.scroll_log.since(0).count(), 1);
+    assert_eq!(app.scroll_log.since(sent).count(), 1);
     app.mouse = MouseMode::Off;
     app.dispatch_mouse(
         event(MouseEventKind::ScrollDown, transcript.x, transcript.y),
         &mut cache,
     );
-    assert_eq!(app.scroll_log.since(0).count(), 1);
+    assert_eq!(app.scroll_log.since(sent).count(), 1);
 }
 
 #[test]

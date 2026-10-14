@@ -249,7 +249,8 @@ auto-approve toggle.
   summaries.
 - **PgUp / PgDn** scroll by a page and **Shift+↑ / Shift+↓** by a line.
   **Ctrl+Home** goes to the top; **Ctrl+End** returns to the latest output and
-  follows it again.
+  follows it again. Sending a message to the viewed agent does the same, also
+  from an older history window, so its reply is on screen.
 
 ## Views
 

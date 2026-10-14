@@ -2,6 +2,7 @@
 use std::path::Path;
 
 use super::images::Outgoing;
+use super::transcript::ScrollIntent;
 use super::{
     AgentId, AgentPatch, AgentTree, App, ApprovalDefault, ApprovalPolicy, Command, Effect, Effort,
     InputAction, ModelChain, ShowFilter, Then, commands,
@@ -366,7 +367,12 @@ impl App {
         // a second message typed before the agent arrives (a pipe does
         // this every time) must not start a second agent.
         match self.selected.filter(|id| !self.is_terminal(*id)) {
-            Some(agent) => self.send_message(agent, message),
+            Some(agent) => {
+                // The reply lands at the bottom: follow it, leaving any older window.
+                let mut effects = self.scroll(ScrollIntent::Latest);
+                effects.extend(self.send_message(agent, message));
+                effects
+            }
             None => {
                 let here = self.active_workspace().map(Path::to_path_buf);
                 self.await_root_in(here, Some(message))
