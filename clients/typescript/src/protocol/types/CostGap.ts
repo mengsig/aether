@@ -3,6 +3,6 @@
 
 
 /**
- * Why an invocation is absent from the dollar total.
+ * Why the dollar total may omit work.
  */
-export type CostGap = "unknown" | "unpriced" | "interrupted" | "mixed";
+export type CostGap = "unreported" | "unpriced" | "interrupted" | "mixed" | "unknown";

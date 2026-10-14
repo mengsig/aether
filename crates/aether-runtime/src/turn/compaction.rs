@@ -596,7 +596,7 @@ pub(super) fn record_compaction_usage(
         usage.mark_cost_gap(if attempt.error.is_some() {
             aether_core::model::CostGap::Interrupted
         } else {
-            aether_core::model::CostGap::Unknown
+            aether_core::model::CostGap::Unreported
         });
     } else if !resolved.provider.protocol.is_engine() {
         usage.price_from(resolved.model.capabilities.cost, None);

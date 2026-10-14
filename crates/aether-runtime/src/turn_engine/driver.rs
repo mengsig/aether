@@ -18,6 +18,8 @@ pub(super) struct DriveResult {
     pub(super) outcome: EngineOutcome,
     /// Later activity invalidates an earlier closing outcome.
     pub(super) receipt_seen: bool,
+    /// The caller's token was cancelled; local harness stops use the engine child.
+    pub(super) user_cancelled: bool,
     /// Streamed content, tool/bridge activity or steering prevents replay.
     pub(super) activity_seen: bool,
     /// Present when a harness action ended the turn while the engine was
@@ -67,6 +69,64 @@ fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
             *total != baseline
         }
         _ => true,
+    }
+}
+
+/// Only evidence of a possible new model request invalidates closing accounting.
+fn event_may_start_request(event: &EngineEvent) -> bool {
+    matches!(
+        event,
+        EngineEvent::Assistant { .. }
+            | EngineEvent::Delta(
+                aether_core::model::StreamEvent::MessageStart { .. }
+                    | aether_core::model::StreamEvent::TextDelta { .. }
+                    | aether_core::model::StreamEvent::ThinkingDelta { .. }
+                    | aether_core::model::StreamEvent::BlockStart { .. }
+                    | aether_core::model::StreamEvent::ToolInputDelta { .. }
+            )
+            | EngineEvent::ToolResult { .. }
+            | EngineEvent::Permission { .. }
+            | EngineEvent::Question { .. }
+            | EngineEvent::BackgroundTask { running: false, .. }
+            | EngineEvent::InputAccepted
+    )
+}
+
+fn failed_launch(
+    error: aether_engine::EngineError,
+    pricing: TurnPricing,
+    user_cancelled: bool,
+) -> DriveResult {
+    debug_assert!(pricing.billed.is_none() || pricing.estimate.is_none());
+    let prompt_not_submitted = error.proves_no_submission();
+    debug_assert!(
+        pricing
+            .billed
+            .into_iter()
+            .chain(pricing.estimate)
+            .all(|cost| cost.rates().all(|rate| rate.is_finite() && rate >= 0.0))
+    );
+    DriveResult {
+        outcome: EngineOutcome {
+            is_error: true,
+            error: Some(error.to_string()),
+            prompt_not_submitted,
+            ..Default::default()
+        },
+        receipt_seen: false,
+        user_cancelled,
+        activity_seen: false,
+        park: None,
+        priced: false,
+        usage_seen: false,
+        invoked: false,
+        ran_tools: false,
+        usage_before: None,
+        stream_usage: Usage::default(),
+        request_usage_seen: false,
+        budget_stop: None,
+        pricing,
+        cleaned_up: true,
     }
 }
 
@@ -128,31 +188,7 @@ pub(super) async fn drive(
     let mut run = match engine.run(turn, engine_cancel.clone()).await {
         Ok(r) => r,
         Err(e) => {
-            return Ok(DriveResult {
-                outcome: EngineOutcome {
-                    is_error: true,
-                    error: Some(e.to_string()),
-                    prompt_not_submitted: matches!(
-                        e,
-                        aether_engine::EngineError::NotInstalled { .. }
-                            | aether_engine::EngineError::Spawn { .. }
-                    ),
-                    ..Default::default()
-                },
-                receipt_seen: false,
-                activity_seen: false,
-                park: None,
-                priced: false,
-                usage_seen: false,
-                invoked: false,
-                ran_tools: false,
-                usage_before: None,
-                stream_usage: Usage::default(),
-                request_usage_seen: false,
-                budget_stop: None,
-                pricing,
-                cleaned_up: true,
-            });
+            return Ok(failed_launch(e, pricing, cancel.is_cancelled()));
         }
     };
     let mut input = run.input.take();
@@ -161,6 +197,7 @@ pub(super) async fn drive(
     let inbox_before = ctx.agent.inbox_cursor;
     let mut activity_seen = false;
     let mut receipt_seen = false;
+    let mut receipt_input_cursor = inbox_before;
     let mut steering = Steering::new(inbox_before);
     // Delivered between context assembly and now: hand it over straight away.
     steer(runtime, ctx, &mut steering, &mut input).await?;
@@ -224,8 +261,11 @@ pub(super) async fn drive(
             }
             ev = run.events.recv() => {
                 let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
-                if active || matches!(&ev, Some(EngineEvent::Done(_))) {
-                    receipt_seen = !active;
+                if matches!(&ev, Some(EngineEvent::Done(_))) {
+                    receipt_seen = true;
+                    receipt_input_cursor = steering.sent_up_to;
+                } else if ev.as_ref().is_some_and(event_may_start_request) {
+                    receipt_seen = false;
                 }
                 activity_seen |= active;
                 match ev {
@@ -655,6 +695,7 @@ pub(super) async fn drive(
                     break;
                 }
                 request = req_rx.recv() => if let Some(request) = request {
+                    receipt_seen = false;
                     activity_seen = true;
                     let _ = request.reply.send((TURN_IS_OVER.to_owned(), true));
                 },
@@ -665,6 +706,7 @@ pub(super) async fn drive(
                     }
                     Some(EngineEvent::Done(receipt)) => {
                         receipt_seen = true;
+                        receipt_input_cursor = steering.sent_up_to;
                         activity_seen = true;
                         raise_to(&mut outcome.usage, receipt.usage);
                         outcome.usage.cost_usd = outcome.usage.cost_usd.max(receipt.usage.cost_usd);
@@ -690,7 +732,7 @@ pub(super) async fn drive(
                     }
                     Some(event) => {
                         let active = event_has_activity(&event, ctx);
-                        receipt_seen &= !active;
+                        receipt_seen &= !event_may_start_request(&event);
                         activity_seen |= active;
                         let usage_before = ctx.agent.stats.usage;
                         handle_event(runtime, ctx, snapshot, event, &mut state)?;
@@ -719,7 +761,8 @@ pub(super) async fn drive(
     );
     Ok(DriveResult {
         outcome,
-        receipt_seen,
+        receipt_seen: receipt_seen && steering.sent_up_to <= receipt_input_cursor,
+        user_cancelled: cancel.is_cancelled(),
         activity_seen: activity_seen || steering.sent_up_to > inbox_before,
         park,
         priced: state.priced,

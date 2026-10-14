@@ -5,5 +5,5 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 
 
-# Why an invocation is absent from the dollar total.
-CostGap = Literal["unknown", "unpriced", "interrupted", "mixed"]
+# Why the dollar total may omit work.
+CostGap = Literal["unreported", "unpriced", "interrupted", "mixed", "unknown"]

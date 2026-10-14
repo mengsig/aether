@@ -194,3 +194,20 @@ fn a_tool_call_the_engine_never_answered_counts_as_lost() {
     ];
     assert_eq!(unanswered_tool_calls(&answered), 0);
 }
+
+#[tokio::test]
+async fn compaction_without_usage_reports_a_live_gap() {
+    let (mut h, _dir) = ComposeHarness::new().await;
+    let attempt = aether_context::CompactionAttempt {
+        model: ModelRef::new("claude-code", "haiku"),
+        usage: None,
+        error: None,
+    };
+    record_compaction_usage(&h.runtime, &mut h.ctx, &attempt).unwrap();
+    assert!(!h.ctx.turn_usage.cost_complete);
+    assert_eq!(
+        h.ctx.turn_usage.cost_gap,
+        Some(aether_core::model::CostGap::Unreported)
+    );
+    h.runtime.shutdown().await;
+}

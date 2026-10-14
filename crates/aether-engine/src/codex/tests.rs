@@ -572,6 +572,10 @@ fn a_missing_counter_is_not_a_restart() {
             assert_eq!(usage.cache_read_tokens, 0, "the cached counter held");
             assert_eq!((usage.input_tokens, usage.output_tokens), (200, 10));
             assert!(!usage.cost_complete, "an inexact split is not a price");
+            assert_eq!(
+                serde_json::to_value(usage).unwrap()["cost_gap"],
+                "unreported"
+            );
             assert_eq!(o.usage.total_tokens(), 1_200 + 20);
         }
         other => panic!("{other:?}"),

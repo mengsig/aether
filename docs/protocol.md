@@ -277,16 +277,37 @@ each other is text only.
 `Usage.cost_usd` is the sum of known costs; `cost_complete: false` makes it a
 lower bound. `cost_basis` identifies list prices, provider receipts, or a mix.
 The optional `cost_gap` explains incomplete coverage: `unpriced` means reported
-usage had neither a price nor a provider cost; `interrupted` means a run ended
-without closing accounting; `mixed` combines those two; `unknown` preserves
-legacy incomplete accounting whose cause was never recorded.
+usage had neither a price nor a provider cost; `unreported` means the engine
+did not fully report usage; `interrupted` means possibly billed work lacks
+closing accounting, including caller cancellation after submission. Any two
+different reasons combine as `mixed`. `unknown` is reserved for legacy
+incomplete records and unrecognized future reasons in Rust readers.
 
 Complete totals omit `cost_gap`. Missing reasons on older incomplete records
-read as `unknown`; combining any unknown gap keeps the reason unknown. Adding
-complete usage cannot repair a gap or lower known costs or token counters.
-Cancelled runs remain complete only when the prompt is provably unsubmitted
-(for example, cancellation before launch, or Codex's pre-submission outcome).
+read as `unknown`. Adding complete usage cannot repair a gap or lower known
+costs or token counters. Engine failures with closing accounting keep their
+reported coverage; a missing dollar figure alone is not an interruption.
+Caller cancellation after submission contributes an `interrupted` gap even if
+the engine reports a final cost: an aborted stream can omit output. Proven pre-launch
+failures, including unsupported engine configuration, remain complete zero.
 An absent start acknowledgement or usage receipt is not proof of zero spend.
 
+An API request becomes possibly billed once its stream starts. A stream
+failure without closing accounting keeps observed tokens and priced dollars
+as a floor with an `interrupted` gap. An error response before stream start adds no spend.
+
+Only possible new model work invalidates an engine's closing receipt: assistant
+content, tool activity, or background results and steered messages handed to
+the engine. Rejected input and bookkeeping events add no spend. A background
+result delivered after a receipt is possibly billed; without another answer
+within the grace period, coverage includes an `interrupted` gap.
+
+Known limits: if streamed usage crosses a budget before the runtime reads the
+closing receipt, the run remains an incomplete floor. A receipt alone cannot
+prove that a cancelled request reported every output token. Usage and prices
+remain dependent on what engines and providers report; list prices are estimates.
+
 No Welcome feature flag is needed: this is optional response metadata. Older
-daemons omit it, and clients must keep an absent reason unknown.
+daemons omit it, and clients must keep an absent reason unknown. Generated
+Python and TypeScript clients list the known reason strings; Rust readers map
+unrecognized strings to `unknown`.

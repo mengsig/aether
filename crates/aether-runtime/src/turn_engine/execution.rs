@@ -648,10 +648,9 @@ pub(super) fn settle_usage(
     Ok(())
 }
 
-/// A failed run without a bill may have spent beyond its observed counters.
+/// Closing receipts cover failures, but caller cancellation can abort unreported output.
 fn interrupted_accounting(run: &DriveResult) -> bool {
-    (!run.receipt_seen
-        || ((run.outcome.is_error || run.outcome.interrupted) && run.outcome.cost_usd.is_none()))
+    (!run.receipt_seen || run.user_cancelled)
         && !(run.outcome.prompt_not_submitted && run.unanswered())
 }
 
@@ -661,26 +660,49 @@ fn fallback_usage(run: &DriveResult) -> Usage {
         "fallback has no streamed baseline"
     );
     debug_assert!(run.outcome.cost_usd.is_none_or(|cost| cost >= 0.0));
+    let unsubmitted = run.outcome.prompt_not_submitted && run.unanswered();
     let mut usage = Usage::default();
     if !run.usage_seen && run.outcome.usage.total_tokens() > 0 {
         usage = run.outcome.usage;
-        if run.outcome.cost_usd.is_none() {
-            usage.estimated_cost_usd = run.pricing.estimate_of(&usage);
-            if usage.estimated_cost_usd.is_some() {
-                usage.cost_basis = aether_core::model::CostBasis::ListPrice;
-            }
+        let coverage = usage;
+        run.pricing.apply(&mut usage);
+        if !coverage.cost_complete {
+            usage.set_cost(None);
+            usage.cost_gap = coverage
+                .cost_gap
+                .or(Some(aether_core::model::CostGap::Unreported));
         }
-    }
-    let unsubmitted = run.outcome.prompt_not_submitted && run.unanswered();
-    if !run.priced && !unsubmitted && run.outcome.cost_usd.is_some() {
-        usage += Usage::cost_only(run.outcome.cost_usd);
+        if let Some(cost) = run.outcome.cost_usd {
+            usage.estimated_cost_usd = None;
+            usage.set_cost(Some(cost));
+        }
+    } else if !run.priced && !unsubmitted {
+        if run.outcome.cost_usd.is_some() {
+            usage += Usage::cost_only(run.outcome.cost_usd);
+        } else if !run.usage_seen && fallback_has_work(run) {
+            usage.mark_cost_gap(aether_core::model::CostGap::Unreported);
+        }
     }
     if interrupted_accounting(run) {
         usage.mark_cost_gap(aether_core::model::CostGap::Interrupted);
-    } else if !run.priced && !unsubmitted && run.outcome.cost_usd.is_none() {
-        usage += Usage::cost_only(None);
     }
     usage
+}
+
+fn fallback_has_work(run: &DriveResult) -> bool {
+    run.invoked
+        || !run.outcome.usage.cost_complete
+        || run.ran_tools
+        || run
+            .outcome
+            .text
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty())
+        || run
+            .outcome
+            .usage
+            .reasoning_tokens
+            .is_some_and(|tokens| tokens > 0)
 }
 
 /// Reconcile closing counters and cost against this run's streamed accounting.
@@ -707,7 +729,10 @@ fn closing_usage(runtime: &Arc<Runtime>, ctx: &TurnCtx, run: &DriveResult) -> Re
     usage.set_cost(billed);
     if billed.is_none() {
         usage.cost_usd = run.stream_usage.cost_usd;
-        usage.merge_cost_coverage(run.stream_usage);
+        usage.cost_gap = run
+            .stream_usage
+            .cost_gap
+            .or(Some(aether_core::model::CostGap::Unreported));
     }
     // Preserve request estimates; merged counters cannot select prompt tiers.
     usage.estimated_cost_usd = match billed {
@@ -777,17 +802,7 @@ mod tests {
             },
             receipt_seen: false,
             activity_seen: true,
-            park: None,
-            priced: false,
-            usage_seen: false,
-            invoked: false,
-            ran_tools: false,
-            usage_before: None,
-            stream_usage: Usage::default(),
-            request_usage_seen: false,
-            budget_stop: None,
-            pricing: super::super::TurnPricing::default(),
-            cleaned_up: true,
+            ..test_run()
         };
         let partial = fallback_usage(&run);
         assert_eq!(partial.cost_usd, 2.0);
@@ -818,20 +833,13 @@ mod tests {
         stream.mark_cost_gap(aether_core::model::CostGap::Unpriced);
         ctx.add_usage(stream);
         let run = DriveResult {
-            outcome: aether_engine::EngineOutcome::default(),
             receipt_seen: false,
             activity_seen: true,
-            park: None,
             priced: true,
             usage_seen: true,
-            invoked: false,
-            ran_tools: false,
             usage_before: Some(before),
             stream_usage: stream,
-            request_usage_seen: false,
-            budget_stop: None,
-            pricing: super::super::TurnPricing::default(),
-            cleaned_up: true,
+            ..test_run()
         };
         settle_usage(&runtime, &mut ctx, &run).unwrap();
         assert_eq!(ctx.turn_usage.cost_usd, 2.0);
@@ -843,5 +851,97 @@ mod tests {
         assert!(ctx.agent.stats.usage.cost_usd >= before.0.cost_usd + 2.0);
         assert!(ctx.agent.stats.usage.total_tokens() >= before.0.total_tokens() + 17);
         runtime.shutdown().await;
+    }
+}
+
+#[cfg(test)]
+mod fallback_regressions {
+    use super::*;
+
+    #[test]
+    fn never_invoked_empty_run_stays_complete() {
+        let usage = fallback_usage(&test_run());
+        assert!(usage.cost_complete);
+        assert_eq!(usage, Usage::default());
+    }
+
+    #[test]
+    fn done_only_tokens_use_the_billed_rate() {
+        let mut run = test_run();
+        run.outcome.usage.input_tokens = 100;
+        run.pricing.billed = Some(aether_core::model::ModelCost {
+            input_per_mtok: 2.0,
+            output_per_mtok: 4.0,
+            cache_read_per_mtok: 0.0,
+            cache_write_per_mtok: 0.0,
+            above_threshold: None,
+        });
+        let usage = fallback_usage(&run);
+        assert!(usage.cost_complete);
+        assert_eq!(usage.cost_usd, 0.0002);
+        assert_eq!(usage.estimated_cost_usd, None);
+    }
+
+    #[test]
+    fn done_only_text_without_usage_is_unreported() {
+        let mut run = test_run();
+        run.outcome.text = Some("answer".into());
+        let usage = fallback_usage(&run);
+        assert_eq!(
+            usage.cost_gap,
+            Some(aether_core::model::CostGap::Unreported)
+        );
+        assert!(!usage.cost_complete);
+        assert_eq!(usage.total_tokens(), 0);
+    }
+
+    #[test]
+    fn inexact_done_only_counters_stay_unreported() {
+        let mut run = test_run();
+        run.outcome.usage.input_tokens = 100;
+        run.outcome.usage.cost_complete = false;
+        run.pricing.billed = Some(aether_core::model::ModelCost {
+            input_per_mtok: 2.0,
+            ..Default::default()
+        });
+        let usage = fallback_usage(&run);
+        assert_eq!(
+            usage.cost_gap,
+            Some(aether_core::model::CostGap::Unreported)
+        );
+        assert!(!usage.cost_complete);
+        assert_eq!(usage.cost_usd, 0.0);
+    }
+
+    #[test]
+    fn interrupted_unpriced_fallback_combines_both_gaps() {
+        let mut run = test_run();
+        run.receipt_seen = false;
+        run.invoked = true;
+        run.outcome.usage.input_tokens = 100;
+        let usage = fallback_usage(&run);
+        assert_eq!(usage.cost_gap, Some(aether_core::model::CostGap::Mixed));
+        assert_eq!(usage.total_tokens(), 100);
+    }
+}
+
+#[cfg(test)]
+pub(super) fn test_run() -> DriveResult {
+    DriveResult {
+        outcome: aether_engine::EngineOutcome::default(),
+        receipt_seen: true,
+        user_cancelled: false,
+        activity_seen: false,
+        park: None,
+        priced: false,
+        usage_seen: false,
+        invoked: false,
+        ran_tools: false,
+        usage_before: None,
+        stream_usage: Usage::default(),
+        request_usage_seen: false,
+        budget_stop: None,
+        pricing: super::TurnPricing::default(),
+        cleaned_up: true,
     }
 }

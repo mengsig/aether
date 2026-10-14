@@ -671,16 +671,17 @@ fn context_tokens_include_caches_exclude_output_and_saturate() {
 }
 
 #[test]
-fn cost_gaps_combine_without_losing_unknown_legacy_coverage() {
-    use CostGap::{Interrupted, Mixed, Unknown, Unpriced};
-    for gap in [Unknown, Unpriced, Interrupted, Mixed] {
-        assert_eq!(gap.combine(gap), gap);
-        assert_eq!(gap.combine(Unknown), Unknown);
-        assert_eq!(Unknown.combine(gap), Unknown);
+fn cost_gaps_combine_all_distinct_reasons_as_mixed() {
+    use CostGap::{Interrupted, Mixed, Unknown, Unpriced, Unreported};
+    for left in [Unknown, Unpriced, Interrupted, Unreported, Mixed] {
+        for right in [Unknown, Unpriced, Interrupted, Unreported, Mixed] {
+            assert_eq!(
+                left.combine(right),
+                if left == right { left } else { Mixed }
+            );
+            assert_eq!(left.combine(right), right.combine(left));
+        }
     }
-    assert_eq!(Unpriced.combine(Interrupted), Mixed);
-    assert_eq!(Interrupted.combine(Unpriced), Mixed);
-    assert_eq!(Mixed.combine(Interrupted), Mixed);
 }
 
 #[test]
@@ -694,6 +695,7 @@ fn legacy_cost_gaps_read_as_unknown_and_complete_records_drop_the_gap() {
     for gap in [
         CostGap::Unknown,
         CostGap::Unpriced,
+        CostGap::Unreported,
         CostGap::Interrupted,
         CostGap::Mixed,
     ] {
@@ -742,6 +744,16 @@ fn cost_gap_rollups_preserve_all_counters_and_known_dollars() {
         cost_complete: false,
         ..Default::default()
     };
-    assert_eq!(total.cost_gap, Some(CostGap::Unknown));
+    assert_eq!(total.cost_gap, Some(CostGap::Mixed));
     assert_eq!(total.cost_usd, 2.0);
+}
+
+#[test]
+fn future_cost_gap_values_read_as_unknown() {
+    let wire = serde_json::json!({"input_tokens": 1, "output_tokens": 2,
+        "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": 0.5,
+        "cost_complete": false, "cost_gap": "future_reason"});
+    let usage: Usage = serde_json::from_value(wire).unwrap();
+    assert_eq!(usage.cost_gap, Some(CostGap::Unknown));
+    assert_eq!(usage.cost_usd, 0.5);
 }

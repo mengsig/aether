@@ -35,24 +35,26 @@ impl CostBasis {
     }
 }
 
-/// Why an invocation is absent from the dollar total.
+/// Why the dollar total may omit work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CostGap {
-    /// Legacy incomplete accounting did not record a reason.
-    Unknown,
+    /// The engine did not fully report usage for work it performed.
+    Unreported,
     /// Usage was reported without a price or provider cost.
     Unpriced,
-    /// A run ended without its closing accounting receipt.
+    /// Possibly billed work lacks closing accounting, including cancellation after submission.
     Interrupted,
-    /// Both unpriced and interrupted work contributed.
+    /// Two or more different missing-cost reasons contributed.
     Mixed,
+    /// Legacy records lack a reason; unrecognized future reasons also read as unknown.
+    #[serde(other)]
+    Unknown,
 }
 
 impl CostGap {
     pub fn combine(self, other: Self) -> Self {
         match (self, other) {
-            (Self::Unknown, _) | (_, Self::Unknown) => Self::Unknown,
             (a, b) if a == b => a,
             _ => Self::Mixed,
         }
@@ -62,8 +64,9 @@ impl CostGap {
         match self {
             Self::Unknown => "some cost unknown",
             Self::Unpriced => Usage::COST_PARTIAL,
+            Self::Unreported => "usage not fully reported",
             Self::Interrupted => "interrupted run, cost unknown",
-            Self::Mixed => "unpriced and interrupted",
+            Self::Mixed => "multiple cost gaps",
         }
     }
 }
@@ -91,10 +94,11 @@ pub struct Usage {
     /// Dollars over the invocations that could be priced. A floor when
     /// `cost_complete` is false.
     pub cost_usd: f64,
-    /// Every invocation folded in here could be priced. Once false it never
-    /// returns to true: an unknown cannot be recovered by adding to it.
+    /// Every contribution's cost is accounted for. Adding usage cannot repair a gap;
+    /// closing accounting may replace provisional usage for the same run.
     pub cost_complete: bool,
-    /// Missing-cost reason; absent for complete totals. Legacy gaps are unknown.
+    /// Missing-cost reason; absent for complete totals. Live missing usage is unreported;
+    /// legacy or unrecognized reasons read as unknown. Distinct reasons combine as mixed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_gap: Option<CostGap>,
     /// Source of the dollar figures, including `estimated_cost_usd` where present.
@@ -158,8 +162,6 @@ impl From<UsageWire> for Usage {
     fn from(w: UsageWire) -> Self {
         let complete = w.cost_complete.unwrap_or(w.cost_usd.is_some());
         let gap = (!complete).then_some(w.cost_gap.unwrap_or(CostGap::Unknown));
-        debug_assert!(complete || gap.is_some());
-        debug_assert!(!complete || gap.is_none());
         Self {
             input_tokens: w.input_tokens,
             output_tokens: w.output_tokens,

@@ -304,7 +304,17 @@ async fn a_priced_engine_turn_ignores_the_engine_s_own_total() {
 /// figure is what every surface above then renders as the whole.
 #[tokio::test]
 async fn a_turn_the_engine_did_not_price_makes_the_agent_total_a_floor() {
-    let h = harness_priced(Reply::OneTurn, vec![Some(0.25), None]).await;
+    let h = harness_with_engine_config(
+        Arc::new(ScriptedEngine {
+            reply: Reply::OneTurn,
+            prompts: Arc::default(),
+            systems: Arc::default(),
+            costs: Arc::new(Mutex::new(vec![Some(0.25), None].into())),
+            tool_gate: None,
+        }),
+        |config| config.default_model = Some(ModelRef::new("claude-code", "default")),
+    )
+    .await;
     let id = chat_agent(&h);
     wait_for(h.store.as_ref(), id, |a| {
         a.status.kind() == AgentStatusKind::Waiting

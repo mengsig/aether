@@ -92,6 +92,16 @@ pub enum EngineError {
     Exited(String),
 }
 
+impl EngineError {
+    /// These failures occur before any model request can be submitted.
+    pub fn proves_no_submission(&self) -> bool {
+        match self {
+            Self::Unsupported(_) | Self::NotInstalled { .. } | Self::Spawn { .. } => true,
+            Self::Exited(_) => false,
+        }
+    }
+}
+
 /// How the engine reaches Aether's harness tools.
 #[derive(Debug, Clone)]
 pub struct McpBridge {

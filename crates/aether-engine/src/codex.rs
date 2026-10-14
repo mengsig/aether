@@ -526,7 +526,7 @@ fn account(usage: &Value, state: &mut ParseState) -> Vec<EngineEvent> {
     // dips is billed twice when it climbs back.
     let mut delta = consumed_since(state.billed.into_usage(), state.usage);
     if state.inexact {
-        delta.mark_cost_gap(aether_core::model::CostGap::Unknown);
+        delta.mark_cost_gap(aether_core::model::CostGap::Unreported);
     }
     state.usage += delta;
     if let Some(session) = state.thread_id.clone() {

@@ -458,11 +458,11 @@ mod tests {
         let request = aether_engine::RequestUsage {
             id: aether_engine::UsageRequestId::Engine("legacy".into()),
             previous: Usage::default(),
-            total: Usage {
-                input_tokens: 10,
-                cost_complete: false,
-                ..Usage::default()
-            },
+            total: serde_json::from_value(serde_json::json!({
+                "input_tokens": 10, "output_tokens": 0, "cache_read_tokens": 0,
+                "cache_write_tokens": 0, "cost_complete": false
+            }))
+            .unwrap(),
         };
         let usage = pricing.request_delta(&request);
         assert_eq!(usage.cost_gap, Some(aether_core::model::CostGap::Unknown));

@@ -236,5 +236,5 @@ fn cost_gap_reasons_survive_report_rollups_and_rendering() {
         .find(|agent| agent.id == root)
         .unwrap();
     assert_eq!(root_line.subtree_usage.cost_gap, Some(CostGap::Mixed));
-    assert!(report.digest().contains("unpriced and interrupted"));
+    assert!(report.digest().contains("multiple cost gaps"));
 }

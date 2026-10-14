@@ -26,12 +26,12 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
-- **Incomplete costs now say why.** A usage total that leaves something out
-  carries `cost_gap`: `unpriced` when a model had no price, `interrupted` when
-  a run was stopped before its closing receipt, `mixed` for both, and
-  `unknown` for records stored before this. A cancelled turn keeps a complete
-  total only when the engine provably never received the prompt; anything
-  possibly billed stays a lower bound.
+- **Incomplete costs now say why.** Usage totals distinguish missing prices,
+  missing usage, interrupted work, and mixed gaps; older records keep an
+  unknown reason. Cancelling a submitted engine turn keeps its cost a lower
+  bound even when a receipt arrives. Failed turns with closing accounting
+  keep their coverage, and failures before launch add no spend. API streams
+  that fail before closing accounting retain their observed cost as a floor.
 - **A parent's terminal history is no longer crowded out by its children's
   tool activity.** Opening an agent fetched its newest 5,000 events together
   with its children's, though a child's tool calls draw nothing in the parent.
