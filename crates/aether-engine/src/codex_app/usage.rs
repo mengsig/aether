@@ -21,6 +21,7 @@ pub(crate) fn consumed_since(now: Usage, earlier: Usage) -> Usage {
         reasoning_tokens: reasoning,
         cost_usd: 0.0,
         cost_complete: true,
+        cost_gap: None,
         cost_basis: Default::default(),
         estimated_cost_usd: None,
     }
@@ -65,6 +66,7 @@ impl RawTotals {
             // it comes from the registry, in the runtime.
             cost_usd: 0.0,
             cost_complete: true,
+            cost_gap: None,
             cost_basis: Default::default(),
             estimated_cost_usd: None,
         }
@@ -168,6 +170,7 @@ pub(super) fn usage_of(v: &Value) -> Usage {
         // Tokens only; the price is on the outcome and is folded once there.
         cost_usd: 0.0,
         cost_complete: true,
+        cost_gap: None,
         cost_basis: Default::default(),
         estimated_cost_usd: None,
     }

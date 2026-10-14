@@ -417,7 +417,7 @@ fn an_argument_is_taken_from_whatever_field_the_call_is_keyed_on() {
 }
 
 /// A started agent's turn context, as `execute` holds one.
-async fn started_agent_ctx(runtime: &Arc<Runtime>) -> TurnCtx {
+pub(super) async fn started_agent_ctx(runtime: &Arc<Runtime>) -> TurnCtx {
     let (agent, _task) = runtime
         .create_agent(
             CreateAgentSpec {

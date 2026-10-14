@@ -16,6 +16,8 @@ use super::{
 /// run's provisional accounting.
 pub(super) struct DriveResult {
     pub(super) outcome: EngineOutcome,
+    /// Later activity invalidates an earlier closing outcome.
+    pub(super) receipt_seen: bool,
     /// Streamed content, tool/bridge activity or steering prevents replay.
     pub(super) activity_seen: bool,
     /// Present when a harness action ended the turn while the engine was
@@ -130,8 +132,14 @@ pub(super) async fn drive(
                 outcome: EngineOutcome {
                     is_error: true,
                     error: Some(e.to_string()),
+                    prompt_not_submitted: matches!(
+                        e,
+                        aether_engine::EngineError::NotInstalled { .. }
+                            | aether_engine::EngineError::Spawn { .. }
+                    ),
                     ..Default::default()
                 },
+                receipt_seen: false,
                 activity_seen: false,
                 park: None,
                 priced: false,
@@ -152,6 +160,7 @@ pub(super) async fn drive(
     let stop = run.stop.take();
     let inbox_before = ctx.agent.inbox_cursor;
     let mut activity_seen = false;
+    let mut receipt_seen = false;
     let mut steering = Steering::new(inbox_before);
     // Delivered between context assembly and now: hand it over straight away.
     steer(runtime, ctx, &mut steering, &mut input).await?;
@@ -214,7 +223,11 @@ pub(super) async fn drive(
                 }
             }
             ev = run.events.recv() => {
-                activity_seen |= ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
+                let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
+                if active || matches!(&ev, Some(EngineEvent::Done(_))) {
+                    receipt_seen = !active;
+                }
+                activity_seen |= active;
                 match ev {
                 None => break settled.take().unwrap_or_else(|| EngineOutcome {
                     is_error: true,
@@ -481,6 +494,7 @@ pub(super) async fn drive(
             }
             req = req_rx.recv() => {
                 if let Some(req) = req {
+                    receipt_seen = false;
                     activity_seen = true;
                     if native_wait.is_some() && req.name == "wait_for" {
                         let _ = req.reply.send(("A native background wait is already pending in this session.".into(), true));
@@ -650,10 +664,11 @@ pub(super) async fn drive(
                         break;
                     }
                     Some(EngineEvent::Done(receipt)) => {
+                        receipt_seen = true;
                         activity_seen = true;
                         raise_to(&mut outcome.usage, receipt.usage);
                         outcome.usage.cost_usd = outcome.usage.cost_usd.max(receipt.usage.cost_usd);
-                        outcome.usage.cost_complete &= receipt.usage.cost_complete;
+                        outcome.usage.merge_cost_coverage(receipt.usage);
                         outcome.usage.estimated_cost_usd = match (outcome.usage.estimated_cost_usd, receipt.usage.estimated_cost_usd) {
                             (Some(before), Some(after)) => Some(before.max(after)),
                             (before, after) => before.or(after),
@@ -674,7 +689,9 @@ pub(super) async fn drive(
                         outcome.forced |= receipt.forced;
                     }
                     Some(event) => {
-                        activity_seen |= event_has_activity(&event, ctx);
+                        let active = event_has_activity(&event, ctx);
+                        receipt_seen &= !active;
+                        activity_seen |= active;
                         let usage_before = ctx.agent.stats.usage;
                         handle_event(runtime, ctx, snapshot, event, &mut state)?;
                         if ctx.agent.stats.usage != usage_before
@@ -702,6 +719,7 @@ pub(super) async fn drive(
     );
     Ok(DriveResult {
         outcome,
+        receipt_seen,
         activity_seen: activity_seen || steering.sent_up_to > inbox_before,
         park,
         priced: state.priced,

@@ -29,6 +29,8 @@ fn adds_nothing(subtree: &crate::model::Usage, own: &crate::model::Usage) -> boo
     };
     subtree.total_tokens() == own.total_tokens()
         && subtree.cost_complete == own.cost_complete
+        && subtree.cost_gap.unwrap_or(crate::model::CostGap::Unknown)
+            == own.cost_gap.unwrap_or(crate::model::CostGap::Unknown)
         && (subtree.cost_usd - own.cost_usd).abs() < 0.000_05
         && estimates_agree
 }

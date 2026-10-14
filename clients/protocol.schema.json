@@ -4162,6 +4162,31 @@
         }
       ]
     },
+    "CostGap": {
+      "description": "Why an invocation is absent from the dollar total.",
+      "oneOf": [
+        {
+          "const": "unknown",
+          "description": "Legacy incomplete accounting did not record a reason.",
+          "type": "string"
+        },
+        {
+          "const": "unpriced",
+          "description": "Usage was reported without a price or provider cost.",
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "A run ended without its closing accounting receipt.",
+          "type": "string"
+        },
+        {
+          "const": "mixed",
+          "description": "Both unpriced and interrupted work contributed.",
+          "type": "string"
+        }
+      ]
+    },
     "CreateAgent": {
       "description": "Request to create an agent, optionally with an initial task.\nA child requires explicit `config.effort`: low, medium, high, xhigh or max.",
       "properties": {
@@ -14243,6 +14268,17 @@
         "cost_complete": {
           "description": "Every invocation folded in here could be priced. Once false it never\nreturns to true: an unknown cannot be recovered by adding to it.",
           "type": "boolean"
+        },
+        "cost_gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostGap"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Missing-cost reason; absent for complete totals. Legacy gaps are unknown."
         },
         "cost_usd": {
           "description": "Dollars over the invocations that could be priced. A floor when\n`cost_complete` is false.",

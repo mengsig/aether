@@ -810,6 +810,7 @@ async fn settle_test_receipt(
     ctx.agent.stats.usage = before;
     let state = stream_closing_test_requests(runtime, &mut ctx, pricing);
     let run = DriveResult {
+        receipt_seen: true,
         outcome: EngineOutcome {
             usage: closing,
             cost_usd: cost,

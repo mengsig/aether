@@ -2,7 +2,7 @@
 use super::*;
 /// One turn, one assistant message with usage the engine reported, no cost:
 /// exactly what Claude Code's stream looks like per inner model call.
-struct UsageEngine;
+pub(super) struct UsageEngine;
 
 #[async_trait::async_trait]
 impl Engine for UsageEngine {

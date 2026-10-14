@@ -593,7 +593,11 @@ pub(super) fn record_compaction_usage(
     let resolved = runtime.models.resolve(&attempt.model)?;
     let mut usage = attempt.usage.unwrap_or_default();
     if attempt.usage.is_none() {
-        usage.set_cost(None);
+        usage.mark_cost_gap(if attempt.error.is_some() {
+            aether_core::model::CostGap::Interrupted
+        } else {
+            aether_core::model::CostGap::Unknown
+        });
     } else if !resolved.provider.protocol.is_engine() {
         usage.price_from(resolved.model.capabilities.cost, None);
     }

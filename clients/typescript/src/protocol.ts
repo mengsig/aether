@@ -122,6 +122,7 @@ export * from "./protocol/types/CompactionTrigger.ts";
 export * from "./protocol/types/ContentBlock.ts";
 export * from "./protocol/types/ContextLayer.ts";
 export * from "./protocol/types/CostBasis.ts";
+export * from "./protocol/types/CostGap.ts";
 export * from "./protocol/types/CreateAgent.ts";
 export * from "./protocol/types/CreateScheduleSpec.ts";
 export * from "./protocol/types/CreateTask.ts";

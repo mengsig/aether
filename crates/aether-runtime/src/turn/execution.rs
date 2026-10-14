@@ -483,6 +483,10 @@ pub(super) async fn run_link(
         runtime.apply_held(hold, commit)?;
     }
 
+    if cancel.is_cancelled() {
+        return Ok(LinkOutcome::Done(Next::Cancelled(Some("cancelled".into()))));
+    }
+
     // ---- 4. invoke the model -------------------------------------------------
     let invocation_id = InvocationId::new();
     let started_at = now();

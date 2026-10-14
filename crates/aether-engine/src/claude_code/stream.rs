@@ -531,6 +531,7 @@ fn parse_usage(u: &Value) -> Usage {
         // engine did report a price for as a floor.
         cost_usd: 0.0,
         cost_complete: true,
+        cost_gap: None,
         cost_basis: Default::default(),
         // Any estimate for these tokens comes from the registry, in the runtime.
         estimated_cost_usd: None,

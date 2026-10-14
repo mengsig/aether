@@ -461,7 +461,7 @@ mod tests {
     fn an_incomplete_cost_reads_as_a_floor() {
         let mut floor = priced(0.4213);
         floor.cost_complete = false;
-        assert_eq!(cost(&floor), "≥ $0.42 (some unpriced)");
+        assert_eq!(cost(&floor), "≥ $0.42 (some cost unknown)");
 
         let mut nothing = priced(0.0);
         nothing.cost_complete = false;

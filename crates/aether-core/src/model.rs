@@ -25,7 +25,7 @@ pub use request::{
 pub use stream::{
     AccumulateError, BlockStart, ModelResponse, StopReason, StreamAccumulator, StreamEvent,
 };
-pub use usage::{CostBasis, ModelCost, ModelCostTier, Usage};
+pub use usage::{CostBasis, CostGap, ModelCost, ModelCostTier, Usage};
 
 /// A provider-qualified model name, rendered as `provider/model`.
 #[derive(

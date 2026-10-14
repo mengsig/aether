@@ -3,6 +3,7 @@
 
 import type {
   CostBasis,
+  CostGap,
 } from "../../protocol.ts";
 
 /**
@@ -21,6 +22,7 @@ export interface Usage {
   "cache_write_tokens": number;
   "cost_basis"?: CostBasis;
   "cost_complete": boolean;
+  "cost_gap"?: CostGap | null;
   "cost_usd": number;
   "estimated_cost_usd"?: number | null;
   "input_tokens": number;

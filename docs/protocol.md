@@ -271,3 +271,22 @@ whole command, images included, and stores nothing.
 `subtree: true` delivers the same references to every recipient; the bytes
 are still stored once. The `send_message` tool that agents use to write to
 each other is text only.
+
+## Usage and cost coverage
+
+`Usage.cost_usd` is the sum of known costs; `cost_complete: false` makes it a
+lower bound. `cost_basis` identifies list prices, provider receipts, or a mix.
+The optional `cost_gap` explains incomplete coverage: `unpriced` means reported
+usage had neither a price nor a provider cost; `interrupted` means a run ended
+without closing accounting; `mixed` combines those two; `unknown` preserves
+legacy incomplete accounting whose cause was never recorded.
+
+Complete totals omit `cost_gap`. Missing reasons on older incomplete records
+read as `unknown`; combining any unknown gap keeps the reason unknown. Adding
+complete usage cannot repair a gap or lower known costs or token counters.
+Cancelled runs remain complete only when the prompt is provably unsubmitted
+(for example, cancellation before launch, or Codex's pre-submission outcome).
+An absent start acknowledgement or usage receipt is not proof of zero spend.
+
+No Welcome feature flag is needed: this is optional response metadata. Older
+daemons omit it, and clients must keep an absent reason unknown.

@@ -525,7 +525,9 @@ fn account(usage: &Value, state: &mut ParseState) -> Vec<EngineEvent> {
     // Never lowered: the cached-inside-input split can dip, and a bill that
     // dips is billed twice when it climbs back.
     let mut delta = consumed_since(state.billed.into_usage(), state.usage);
-    delta.cost_complete = !state.inexact;
+    if state.inexact {
+        delta.mark_cost_gap(aether_core::model::CostGap::Unknown);
+    }
     state.usage += delta;
     if let Some(session) = state.thread_id.clone() {
         // Ahead of the delta: whatever persists the spend persists the

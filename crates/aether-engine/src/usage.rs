@@ -21,6 +21,13 @@ pub struct RequestUsage {
 impl RequestUsage {
     /// Newly observed tokens between the adapter's per-request high-water marks.
     pub fn delta(&self) -> Usage {
+        let mut coverage = self.previous;
+        coverage.merge_cost_coverage(self.total);
+        debug_assert_eq!(
+            coverage.cost_complete,
+            self.previous.cost_complete && self.total.cost_complete
+        );
+        debug_assert!(coverage.cost_complete || coverage.cost_gap.is_some());
         Usage {
             input_tokens: self
                 .total
@@ -42,7 +49,8 @@ impl RequestUsage {
                 .total
                 .reasoning_tokens
                 .map(|total| total.saturating_sub(self.previous.reasoning_tokens.unwrap_or(0))),
-            cost_complete: self.previous.cost_complete && self.total.cost_complete,
+            cost_complete: coverage.cost_complete,
+            cost_gap: coverage.cost_gap,
             ..Usage::default()
         }
     }

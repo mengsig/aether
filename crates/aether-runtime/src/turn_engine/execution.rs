@@ -619,42 +619,25 @@ pub(super) fn settle_usage(
 ) -> Result<()> {
     ctx.agent.stats.turns = ctx.agent.stats.turns.max(ctx.turn);
     ctx.agent.stats.last_turn_at = Some(now());
-    let mut reconciled = None;
+    let reconciled;
     if let Some((before, turn_before)) = run.usage_before {
         let final_usage = closing_usage(runtime, ctx, run)?;
-        reconciled = Some(final_usage);
+        reconciled = true;
         ctx.agent.stats.usage = before;
         ctx.turn_usage = turn_before;
         ctx.add_usage(final_usage);
         debug_assert!(ctx.agent.stats.usage.total_tokens() >= before.total_tokens());
         debug_assert!(ctx.agent.stats.usage.cost_usd >= before.cost_usd);
     } else {
-        // The engine's own turn total stands in only when nothing this turn was
-        // priced; adding it on top of priced invocations would count the turn
-        // twice. Through the same operator every other roll-up uses: a turn the
-        // engine never priced makes the agent's total a floor, not a confident sum.
-        if !run.priced {
-            ctx.add_usage(Usage::cost_only(run.outcome.cost_usd));
-        }
-        // Same rule for tokens: the turn total is a fallback for a stream that
-        // reported none per message, never an addition to what it did report.
-        // It carries the estimate for its own counters, for the same reason.
-        if !run.usage_seen && run.outcome.usage.total_tokens() > 0 {
-            let mut total = run.outcome.usage;
-            if run.outcome.cost_usd.is_none() {
-                total.estimated_cost_usd = run.pricing.estimate_of(&total);
-                if total.estimated_cost_usd.is_some() {
-                    total.cost_basis = aether_core::model::CostBasis::ListPrice;
-                }
-            }
-            ctx.add_usage(total);
-        }
+        let fallback = fallback_usage(run);
+        reconciled = fallback != Usage::default();
+        ctx.add_usage(fallback);
     }
     ctx.agent.updated_at = now();
     let hold = runtime.hold();
     let row = crate::turn::agent_row(runtime, ctx, &hold)?;
     let mut commit = Commit::new().mutate(Mutation::UpsertAgent(row));
-    if reconciled.is_some() {
+    if reconciled {
         commit.push_event(ctx.draft(EventKind::AgentUsageUpdated {
             total: ctx.agent.stats.usage,
             turn_usage: ctx.turn_usage,
@@ -663,6 +646,41 @@ pub(super) fn settle_usage(
     runtime.apply_held(hold, commit)?;
 
     Ok(())
+}
+
+/// A failed run without a bill may have spent beyond its observed counters.
+fn interrupted_accounting(run: &DriveResult) -> bool {
+    (!run.receipt_seen
+        || ((run.outcome.is_error || run.outcome.interrupted) && run.outcome.cost_usd.is_none()))
+        && !(run.outcome.prompt_not_submitted && run.unanswered())
+}
+
+fn fallback_usage(run: &DriveResult) -> Usage {
+    debug_assert!(
+        run.usage_before.is_none(),
+        "fallback has no streamed baseline"
+    );
+    debug_assert!(run.outcome.cost_usd.is_none_or(|cost| cost >= 0.0));
+    let mut usage = Usage::default();
+    if !run.usage_seen && run.outcome.usage.total_tokens() > 0 {
+        usage = run.outcome.usage;
+        if run.outcome.cost_usd.is_none() {
+            usage.estimated_cost_usd = run.pricing.estimate_of(&usage);
+            if usage.estimated_cost_usd.is_some() {
+                usage.cost_basis = aether_core::model::CostBasis::ListPrice;
+            }
+        }
+    }
+    let unsubmitted = run.outcome.prompt_not_submitted && run.unanswered();
+    if !run.priced && !unsubmitted && run.outcome.cost_usd.is_some() {
+        usage += Usage::cost_only(run.outcome.cost_usd);
+    }
+    if interrupted_accounting(run) {
+        usage.mark_cost_gap(aether_core::model::CostGap::Interrupted);
+    } else if !run.priced && !unsubmitted && run.outcome.cost_usd.is_none() {
+        usage += Usage::cost_only(None);
+    }
+    usage
 }
 
 /// Reconcile closing counters and cost against this run's streamed accounting.
@@ -687,6 +705,10 @@ fn closing_usage(runtime: &Arc<Runtime>, ctx: &TurnCtx, run: &DriveResult) -> Re
             .then_some(run.stream_usage.cost_usd)
     });
     usage.set_cost(billed);
+    if billed.is_none() {
+        usage.cost_usd = run.stream_usage.cost_usd;
+        usage.merge_cost_coverage(run.stream_usage);
+    }
     // Preserve request estimates; merged counters cannot select prompt tiers.
     usage.estimated_cost_usd = match billed {
         Some(_) => None,
@@ -705,20 +727,121 @@ fn closing_usage(runtime: &Arc<Runtime>, ctx: &TurnCtx, run: &DriveResult) -> Re
         run.pricing
             .price_closing_shortfall(&mut usage, &run.outcome.usage);
     }
+    if interrupted_accounting(run) {
+        usage.mark_cost_gap(aether_core::model::CostGap::Interrupted);
+    }
     if raised {
-        let missing = if usage.total_tokens() == closing_tokens {
-            "only reasoning detail was missing, the cost is unaffected"
-        } else if usage.cost_complete {
-            "the missing part is priced from the stream"
-        } else {
-            "the missing part is left out of the billed cost"
-        };
-        let note = format!("{SHRUNK_CLOSING_USAGE}; {missing}");
-        tracing::warn!(agent = %ctx.agent.id, "{note}");
-        runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
-            name: PROTOCOL_NOTE_EVENT.into(),
-            payload: json!({ "note": note }),
-        })))?;
+        record_closing_shortfall(runtime, ctx, usage, closing_tokens)?;
     }
     Ok(usage)
+}
+
+fn record_closing_shortfall(
+    runtime: &Arc<Runtime>,
+    ctx: &TurnCtx,
+    usage: Usage,
+    closing_tokens: u64,
+) -> Result<()> {
+    debug_assert!(usage.total_tokens() >= closing_tokens);
+    debug_assert!(usage.cost_complete || usage.cost_gap.is_some());
+    let missing = if usage.total_tokens() == closing_tokens {
+        "only reasoning detail was missing, the cost is unaffected"
+    } else if usage.cost_complete {
+        "the missing part is priced from the stream"
+    } else {
+        "the missing part is left out of the billed cost"
+    };
+    let note = format!("{SHRUNK_CLOSING_USAGE}; {missing}");
+    tracing::warn!(agent = %ctx.agent.id, "{note}");
+    runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
+        name: PROTOCOL_NOTE_EVENT.into(),
+        payload: json!({ "note": note }),
+    })))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_previous_receipt_keeps_its_dollars_without_covering_later_activity() {
+        let mut run = DriveResult {
+            outcome: aether_engine::EngineOutcome {
+                cost_usd: Some(2.0),
+                usage: Usage {
+                    input_tokens: 17,
+                    ..Usage::default()
+                },
+                ..Default::default()
+            },
+            receipt_seen: false,
+            activity_seen: true,
+            park: None,
+            priced: false,
+            usage_seen: false,
+            invoked: false,
+            ran_tools: false,
+            usage_before: None,
+            stream_usage: Usage::default(),
+            request_usage_seen: false,
+            budget_stop: None,
+            pricing: super::super::TurnPricing::default(),
+            cleaned_up: true,
+        };
+        let partial = fallback_usage(&run);
+        assert_eq!(partial.cost_usd, 2.0);
+        assert_eq!(partial.total_tokens(), 17);
+        assert_eq!(
+            partial.cost_gap,
+            Some(aether_core::model::CostGap::Interrupted)
+        );
+        assert!(!partial.cost_complete);
+        run.receipt_seen = true;
+        let complete = fallback_usage(&run);
+        assert_eq!(complete.cost_usd, partial.cost_usd);
+        assert_eq!(complete.total_tokens(), partial.total_tokens());
+        assert!(complete.cost_complete);
+        assert_eq!(complete.cost_gap, None);
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_mixed_stream_keeps_its_known_dollars() {
+        let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+        let mut ctx = super::super::tests::started_agent_ctx(&runtime).await;
+        let before = (ctx.agent.stats.usage, ctx.turn_usage);
+        let mut stream = Usage {
+            input_tokens: 17,
+            cost_usd: 2.0,
+            ..Usage::default()
+        };
+        stream.mark_cost_gap(aether_core::model::CostGap::Unpriced);
+        ctx.add_usage(stream);
+        let run = DriveResult {
+            outcome: aether_engine::EngineOutcome::default(),
+            receipt_seen: false,
+            activity_seen: true,
+            park: None,
+            priced: true,
+            usage_seen: true,
+            invoked: false,
+            ran_tools: false,
+            usage_before: Some(before),
+            stream_usage: stream,
+            request_usage_seen: false,
+            budget_stop: None,
+            pricing: super::super::TurnPricing::default(),
+            cleaned_up: true,
+        };
+        settle_usage(&runtime, &mut ctx, &run).unwrap();
+        assert_eq!(ctx.turn_usage.cost_usd, 2.0);
+        assert_eq!(ctx.turn_usage.total_tokens(), 17);
+        assert_eq!(
+            ctx.turn_usage.cost_gap,
+            Some(aether_core::model::CostGap::Mixed)
+        );
+        assert!(ctx.agent.stats.usage.cost_usd >= before.0.cost_usd + 2.0);
+        assert!(ctx.agent.stats.usage.total_tokens() >= before.0.total_tokens() + 17);
+        runtime.shutdown().await;
+    }
 }

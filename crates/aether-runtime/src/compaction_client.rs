@@ -42,6 +42,7 @@ impl ModelClient for CompactionClient {
         let child = cancel.child_token();
         let _cleanup = child.clone().drop_guard();
         let mut usage: Option<Usage> = None;
+        let mut closing_received = false;
         let run = tokio::time::timeout(std::time::Duration::from_secs(180), async {
             let mut run = self
                 .engine
@@ -96,6 +97,7 @@ impl ModelClient for CompactionClient {
                         }
                     }
                     EngineEvent::Done(outcome) => {
+                        closing_received = true;
                         let mut total = if outcome.usage.total_tokens() > 0 {
                             outcome.usage
                         } else {
@@ -105,6 +107,14 @@ impl ModelClient for CompactionClient {
                             .reasoning_tokens
                             .or(usage.and_then(|u| u.reasoning_tokens));
                         total.set_cost(outcome.cost_usd);
+                        if outcome.prompt_not_submitted
+                            && total.total_tokens() == 0
+                            && outcome.cost_usd.is_none()
+                        {
+                            total = Usage::default();
+                        } else if outcome.is_error && outcome.cost_usd.is_none() {
+                            total.mark_cost_gap(aether_core::model::CostGap::Interrupted);
+                        }
                         usage = Some(total);
                         if outcome.is_error {
                             return Err(failure(
@@ -138,6 +148,11 @@ impl ModelClient for CompactionClient {
             _ = cancel.cancelled() => Err(ModelError::new(ModelErrorClass::Cancelled, "Checkpoint generation cancelled")),
         };
         child.cancel();
+        if result.is_err() && !closing_received {
+            usage
+                .get_or_insert_default()
+                .mark_cost_gap(aether_core::model::CostGap::Interrupted);
+        }
         let mut events = vec![Ok(StreamEvent::MessageStart {
             provider_message_id: None,
             model: None,

@@ -100,6 +100,7 @@ impl TurnPricing {
 
     /// Charge the change in complete-request prices, preserving their cost provenance.
     pub(super) fn request_delta(&self, request: &aether_engine::RequestUsage) -> Usage {
+        let coverage = request.delta();
         let mut previous = request.previous;
         let mut total = request.total;
         self.apply(&mut previous);
@@ -107,15 +108,17 @@ impl TurnPricing {
         let mut usage = Usage {
             cost_usd: total.cost_usd - previous.cost_usd,
             cost_complete: total.cost_complete,
+            cost_gap: total.cost_gap,
             cost_basis: total.cost_basis,
             estimated_cost_usd: total
                 .estimated_cost_usd
                 .zip(previous.estimated_cost_usd)
                 .map(|(total, previous)| total - previous),
-            ..request.delta()
+            ..coverage
         };
-        if !request.previous.cost_complete || !request.total.cost_complete {
+        if !coverage.cost_complete {
             usage.set_cost(None);
+            usage.cost_gap = coverage.cost_gap;
         }
         usage
     }
@@ -182,7 +185,7 @@ impl TurnPricing {
         };
         shortfall.price_from(self.billed.map(base_rate), self.estimate.map(base_rate));
         total.cost_usd += shortfall.cost_usd;
-        total.cost_complete &= shortfall.cost_complete;
+        total.merge_cost_coverage(shortfall);
         total.estimated_cost_usd = shortfall.estimated_cost_usd;
         if self.billed.is_some() || self.estimate.is_some() {
             total.cost_basis = total.cost_basis.combine(shortfall.cost_basis);
@@ -384,6 +387,7 @@ mod tests {
             raised,
             Usage {
                 cost_complete: false,
+                cost_gap: Some(aether_core::model::CostGap::Unpriced),
                 cost_basis: CostBasis::Mixed,
                 estimated_cost_usd: Some(98.0),
                 ..original
@@ -404,6 +408,7 @@ mod tests {
             raised,
             Usage {
                 cost_complete: false,
+                cost_gap: Some(aether_core::model::CostGap::Unpriced),
                 ..original
             }
         );
@@ -442,5 +447,27 @@ mod tests {
             assert_eq!(total.estimated_cost_usd, None);
             assert_eq!(total, raised);
         }
+    }
+
+    #[test]
+    fn pricing_cannot_invent_a_reason_for_legacy_incomplete_counters() {
+        let pricing = TurnPricing {
+            billed: Some(shortfall_rate()),
+            estimate: None,
+        };
+        let request = aether_engine::RequestUsage {
+            id: aether_engine::UsageRequestId::Engine("legacy".into()),
+            previous: Usage::default(),
+            total: Usage {
+                input_tokens: 10,
+                cost_complete: false,
+                ..Usage::default()
+            },
+        };
+        let usage = pricing.request_delta(&request);
+        assert_eq!(usage.cost_gap, Some(aether_core::model::CostGap::Unknown));
+        assert!(!usage.cost_complete);
+        assert_eq!(usage.cost_usd, 0.0);
+        assert_eq!(usage.input_tokens, 10);
     }
 }

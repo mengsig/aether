@@ -22,6 +22,7 @@ class Usage(TypedDict, total=False):
     cache_write_tokens: int
     cost_basis: _protocol.CostBasis  # optional
     cost_complete: bool
+    cost_gap: _protocol.CostGap | None  # optional
     cost_usd: float
     estimated_cost_usd: float | None  # optional
     input_tokens: int

@@ -37,6 +37,8 @@ mod compaction;
 mod completion_recovery;
 #[path = "engine/completion_waits.rs"]
 mod completion_waits;
+#[path = "engine/cost_gap.rs"]
+mod cost_gap;
 #[path = "engine/effort.rs"]
 mod effort;
 #[path = "engine/exhaustion.rs"]

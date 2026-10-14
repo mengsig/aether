@@ -32,7 +32,10 @@ async fn a_spent_run_budget_refuses_new_delegations() {
     // The run is already past its budget when the delegation is attempted.
     let mut spent = h.store.agent(parent.id).expect("read").expect("exists");
     spent.stats.usage.cost_usd = 2.5;
-    spent.stats.usage.cost_complete = false;
+    spent
+        .stats
+        .usage
+        .mark_cost_gap(aether_core::model::CostGap::Unpriced);
     h.store
         .commit(Commit::new().mutate(Mutation::UpsertAgent(spent)))
         .expect("seed spend");
