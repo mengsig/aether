@@ -6,10 +6,14 @@ from typing import Any, Literal, TypedDict
 from ._OperatorMemoryScopeAgent import OperatorMemoryScopeAgent
 from ._OperatorMemoryScopeGlobal import OperatorMemoryScopeGlobal
 from ._OperatorMemoryScopeRepository import OperatorMemoryScopeRepository
+from ._OperatorMemoryScopeRepositoryRole import OperatorMemoryScopeRepositoryRole
+from ._OperatorMemoryScopeRole import OperatorMemoryScopeRole
 
 
 OperatorMemoryScope = (
     OperatorMemoryScopeAgent |
     OperatorMemoryScopeGlobal |
-    OperatorMemoryScopeRepository
+    OperatorMemoryScopeRepository |
+    OperatorMemoryScopeRole |
+    OperatorMemoryScopeRepositoryRole
 )

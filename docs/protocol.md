@@ -103,6 +103,35 @@ A client must check that the `Welcome` lists `host_context` before sending
 `config.host_context`: an older daemon silently ignores the field and creates
 a full agent.
 
+`operator_memory_roles` means `create_memory` accepts the `role` and
+`repository_role` operator scopes. Check this feature before sending either
+scope. An older daemon rejects the unknown scope with a decode error; it
+cannot file the memory under a different scope. The protocol version is
+unchanged.
+
+## Operator memory scopes
+
+`create_memory` is operator-only. Its `spec.scope` describes which agents
+recall the memory; the runtime records the authenticated user as its author.
+The scopes are `{"scope": "global"}`, `{"scope": "agent", "id": "agt_..."}`,
+`{"scope": "repository", "root": "/workspace"}`,
+`{"scope": "role", "role": "reviewer"}` and
+`{"scope": "repository_role", "root": "/workspace", "role": "reviewer"}`.
+
+A `role` memory reaches agents with that exact role in any repository.
+A `repository_role` memory reaches agents in the resolved repository whose
+role equals the family or extends it at a dot: `reviewer.security` recalls
+`reviewer`, while `reviewers` does not. Roles are trimmed, must be nonempty
+and control-free, and are limited to 64 characters after trimming. A repository
+role family also requires one to eight dot-separated, nonempty segments of
+ASCII letters, digits, `-` or `_`.
+
+For both repository scopes, `root` is optional and defaults to the daemon's
+workspace. An explicit root must be the daemon's workspace, a live agent's
+workspace, or a directory within one. The runtime derives the repository id;
+clients cannot supply one. Unknown scope fields and invalid roles or roots
+are refused before a memory is written.
+
 ## Images on a message
 
 Protocol 19 lets `send_message` carry images next to its text:

@@ -4,6 +4,16 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### New
+
+- **Operators can file memories by role.** The `role` scope reaches agents
+  with that exact role across repositories. The `repository_role` scope
+  reaches one role family in a repository, including dotted subroles such
+  as `reviewer.security`. Daemons advertise `operator_memory_roles` so
+  clients can check support before sending either scope.
+
 ## 1.0.5
 
 Claude Code agents can opt into a leaner start that skips the operator's

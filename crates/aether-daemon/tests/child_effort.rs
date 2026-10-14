@@ -65,6 +65,10 @@ async fn protocol_create_agent_keeps_a_lean_host_context_and_omits_full() {
     let welcome = oldest.hello(MIN_PROTOCOL_VERSION).await.unwrap();
     let features = welcome["features"].as_array().unwrap();
     assert!(features.contains(&json!("host_context")), "{welcome}");
+    assert!(
+        features.contains(&json!("operator_memory_roles")),
+        "{welcome}"
+    );
     let created = oldest
         .call(json!({
             "cmd": "create_agent", "role": "root", "start": false,
@@ -78,6 +82,10 @@ async fn protocol_create_agent_keeps_a_lean_host_context_and_omits_full() {
     let welcome = conn.hello(PROTOCOL_VERSION).await.unwrap();
     let features = welcome["features"].as_array().unwrap();
     assert!(features.contains(&json!("host_context")), "{welcome}");
+    assert!(
+        features.contains(&json!("operator_memory_roles")),
+        "{welcome}"
+    );
     for (config, expected) in [
         (json!({"host_context": "lean"}), json!("lean")),
         (json!({"host_context": "full"}), Value::Null),

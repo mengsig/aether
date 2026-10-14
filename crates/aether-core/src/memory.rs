@@ -138,6 +138,14 @@ pub enum OperatorMemoryScope {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         root: Option<std::path::PathBuf>,
     },
+    Role {
+        role: String,
+    },
+    RepositoryRole {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root: Option<std::path::PathBuf>,
+        role: String,
+    },
 }
 
 /// A person supplies content and applicability, never fabricated provenance.
@@ -287,6 +295,52 @@ impl MemoryRecord {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn operator_role_scopes_round_trip_and_refuse_unknown_fields() {
+        let cases = [
+            (
+                OperatorMemoryScope::Role {
+                    role: "reviewer".into(),
+                },
+                json!({"scope": "role", "role": "reviewer"}),
+            ),
+            (
+                OperatorMemoryScope::RepositoryRole {
+                    root: None,
+                    role: "reviewer".into(),
+                },
+                json!({"scope": "repository_role", "role": "reviewer"}),
+            ),
+            (
+                OperatorMemoryScope::RepositoryRole {
+                    root: Some("/workspace".into()),
+                    role: "reviewer.security".into(),
+                },
+                json!({"scope": "repository_role", "root": "/workspace", "role": "reviewer.security"}),
+            ),
+        ];
+        for (scope, mut wire) in cases {
+            assert_eq!(serde_json::to_value(&scope).expect("serialize"), wire);
+            assert_eq!(
+                serde_json::from_value::<OperatorMemoryScope>(wire.clone()).expect("deserialize"),
+                scope
+            );
+            wire["id"] = json!("fabricated-repository");
+            assert!(serde_json::from_value::<OperatorMemoryScope>(wire).is_err());
+        }
+        assert_eq!(
+            serde_json::from_value::<OperatorMemoryScope>(json!({
+                "scope": "repository_role", "root": null, "role": "reviewer"
+            }))
+            .expect("null root"),
+            OperatorMemoryScope::RepositoryRole {
+                root: None,
+                role: "reviewer".into()
+            }
+        );
+        assert!(serde_json::from_value::<OperatorMemoryScope>(json!({"scope": "role"})).is_err());
+    }
 
     #[test]
     fn global_visible_everywhere_others_exact() {

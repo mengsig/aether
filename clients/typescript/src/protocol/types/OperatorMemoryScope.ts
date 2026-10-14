@@ -23,8 +23,21 @@ export interface OperatorMemoryScopeRepository {
   "scope": "repository";
 }
 
+export interface OperatorMemoryScopeRole {
+  "role": string;
+  "scope": "role";
+}
+
+export interface OperatorMemoryScopeRepositoryRole {
+  "role": string;
+  "root"?: string | null;
+  "scope": "repository_role";
+}
+
 export type OperatorMemoryScope =
     OperatorMemoryScopeAgent |
     OperatorMemoryScopeGlobal |
-    OperatorMemoryScopeRepository
+    OperatorMemoryScopeRepository |
+    OperatorMemoryScopeRole |
+    OperatorMemoryScopeRepositoryRole
 ;
