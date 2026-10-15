@@ -79,6 +79,7 @@ pub struct AetherConfig {
     #[serde(skip_serializing)]
     pub theme: toml::Table,
     pub model: ModelSection,
+    pub models: ModelsSection,
     pub approval: ApprovalSection,
     pub network: NetworkSection,
     pub scheduler: SchedulerSection,
@@ -545,6 +546,28 @@ pub struct ModelSection {
     pub prompt_cache_ttl: Option<aether_core::model::PromptCacheTtl>,
 }
 
+/// `[models]`: per-model catalog overrides.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ModelsSection {
+    /// `"provider/model" = "fast" | "balanced" | "strongest"`; beats the
+    /// catalog's own tier.
+    pub tiers: BTreeMap<String, crate::tier::ModelTier>,
+}
+
+impl ModelsSection {
+    fn validate(&self) -> Result<(), String> {
+        match self
+            .tiers
+            .keys()
+            .find(|key| aether_core::model::ModelRef::parse(key).is_none())
+        {
+            Some(key) => Err(format!("models.tiers key `{key}` must be provider/model")),
+            None => Ok(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{path}: {reason}")]
 pub struct ConfigError {
@@ -573,6 +596,7 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
             {
                 return Err(bad("model.compactor must be provider/model".into()));
             }
+            config.models.validate().map_err(&bad)?;
             config.scheduler.wait_timeout().map_err(&bad)?;
             config.scheduler.engine_park_grace().map_err(&bad)?;
             config.scheduler.engine_transient_retry().map_err(&bad)?;
