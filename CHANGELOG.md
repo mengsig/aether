@@ -41,6 +41,10 @@ release is also the text of its GitHub release.
   `cache_write_tokens`, and model prices carry `cache_write_1h_per_mtok`.
   Claude Code's own reported cost was already right and is unchanged. Older
   records, and engines that do not report the split, are priced as before.
+- **Claude Sonnet 5.5 cache reads cost half what Aether charged.** Anthropic
+  bills them at $0.10 per million tokens (0.05x input), as for Opus 5.5, but
+  Aether used $0.20. A turn reading 200,000 cached tokens is now priced at
+  $0.02 for those reads instead of $0.04.
 
 ## 1.0.6
 

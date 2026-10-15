@@ -47,6 +47,14 @@ fn opus_cost() -> ModelCost {
     }
 }
 
+// Like Opus 5.5, cache reads are 5% of input, not 10%.
+fn sonnet_cost() -> ModelCost {
+    ModelCost {
+        cache_read_per_mtok: 0.10,
+        ..claude_cost(2.0, 10.0)
+    }
+}
+
 // https://www.anthropic.com/claude-haiku-5-5 — over 100K prompt tokens,
 // every token in the request bills at 5x.
 fn haiku_cost() -> ModelCost {
@@ -108,7 +116,7 @@ fn anthropic() -> ProviderDef {
             ModelDef::new(
                 "claude-sonnet-5-5",
                 "Claude Sonnet 5.5",
-                adaptive(1_000_000, 128_000, claude_cost(2.0, 10.0)),
+                adaptive(1_000_000, 128_000, sonnet_cost()),
             )
             .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"]),
             ModelDef::new(
@@ -423,7 +431,7 @@ fn claude_code() -> ProviderDef {
             priced(
                 engine_model("claude-sonnet-5-5", "Claude Sonnet 5.5", 200_000, 128_000)
                     .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"]),
-                claude_cost(2.0, 10.0),
+                sonnet_cost(),
             ),
             priced(
                 engine_model("claude-haiku-5-5", "Claude Haiku 5.5", 200_000, 128_000)

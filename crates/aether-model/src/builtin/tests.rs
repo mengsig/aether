@@ -455,9 +455,11 @@ fn sonnet_55_owns_the_sonnet_alias() {
                     price.input_per_mtok,
                     price.output_per_mtok,
                     price.cache_read_per_mtok,
-                    price.cache_write_per_mtok
+                    price.cache_write_per_mtok,
+                    price.cache_write_1h_per_mtok
                 ),
-                (2.0, 10.0, 0.2, 2.5),
+                // Cache reads at 0.05x input, as on the Anthropic price sheet.
+                (2.0, 10.0, 0.10, 2.5, Some(4.0)),
                 "{id}/{alias}"
             );
         }
