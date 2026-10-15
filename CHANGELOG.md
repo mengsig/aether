@@ -8,6 +8,15 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Codex usage now carries a dollar estimate that says it is one.** A Codex
+  (ChatGPT subscription) turn used to be booked as billed dollars at the
+  OpenAI list price, so a run with any unreported part, such as an interrupted
+  one, left a total with no complete cost and no estimate; tools that enforce
+  dollar budgets, like Archon, then stopped the work. Codex turns are now
+  estimated from the API model behind the slug, the way a subscription model
+  without a price already was, and show as `≈ $X API-equivalent` next to a
+  cost of `not reported`. Dollar caps on Codex agents are still refused. Older
+  records keep the figures they were stored with.
 - **The daemon no longer churns the disk while agents work.** Reading a long
   agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
   of MB per read. With several agents running, that held host IO pressure
@@ -30,6 +39,13 @@ release is also the text of its GitHub release.
 
 ### Before updating
 
+- **Codex spend is an estimate, not billed dollars.** A Codex turn now
+  records `cost_usd` of 0 and the list-price figure as `estimated_cost_usd`.
+  Limits that read only billed dollars, a parent's `cost_budget` over Codex
+  children and `[scheduler] run_budget_usd`, no longer count Codex turns; a
+  `cost_budget` warns once that its cost is a lower bound, `run_budget_usd`
+  stays silent. Use token budgets for Codex work. An
+  Archon with `count_estimated_cost` off sees $0 for Codex.
 - **Store schema 23.** Adds indexes that list agents and tasks in creation
   order, across the store and within one run. The per-run agents index
   replaces the old run index. The migration is one way: Aether saves the old
@@ -46,16 +62,6 @@ recall, and you can see which memories each model call was given. The
 terminal no longer shows older state after it reconnects to the daemon.
 
 ### New
-
-- **Codex usage now carries a dollar estimate that says it is one.** A Codex
-  (ChatGPT subscription) turn used to be booked as billed dollars at the
-  OpenAI list price, so a run with any unreported part, such as an interrupted
-  one, left a total with no complete cost and no estimate; tools that enforce
-  dollar budgets, like Archon, then stopped the work. Codex turns are now
-  estimated from the API model behind the slug, the way a subscription model
-  without a price already was, and show as `≈ $X API-equivalent` next to a
-  cost of `not reported`. Dollar caps on Codex agents are still refused. Older
-  records keep the figures they were stored with.
 
 - **You can record whether a memory helped or hurt a task.**
   `aether memory feedback record` keeps a verdict, where the evidence came
@@ -88,14 +94,6 @@ terminal no longer shows older state after it reconnects to the daemon.
   nothing from before the switch is applied.
 
 ### Before updating
-
-- **Codex spend is an estimate, not billed dollars.** A Codex turn now
-  records `cost_usd` of 0 and the list-price figure as `estimated_cost_usd`.
-  Limits that read only billed dollars, a parent's `cost_budget` over Codex
-  children and `[scheduler] run_budget_usd`, no longer count Codex turns; a
-  `cost_budget` warns once that its cost is a lower bound, `run_budget_usd`
-  stays silent. Use token budgets for Codex work. An
-  Archon with `count_estimated_cost` off sees $0 for Codex.
 
 - **Store schema 22.** Adds the table that keeps memory feedback. The
   migration is one way: Aether saves the old database first (see
