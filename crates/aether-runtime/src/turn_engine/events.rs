@@ -132,7 +132,9 @@ impl StreamState {
     /// a failed invocation records. Leaves the stream empty.
     pub(super) fn take_partial(&mut self) -> Vec<ContentBlock> {
         debug_assert!(self.text.len() <= MAX_STREAMED_BYTES);
+        debug_assert!(!self.text_truncated || self.text.len() + 4 > MAX_STREAMED_BYTES);
         let text = std::mem::take(&mut self.text);
+        self.text_truncated = false;
         let thinking = self.take_for_commit();
         debug_assert!(self.text.is_empty() && self.thinking.is_empty());
         let mut partial = Vec::new();
