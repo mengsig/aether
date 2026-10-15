@@ -30,6 +30,12 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # fg = "75"
 # modifiers = ["bold"]
 
+[models.tiers]
+# Capability band per model, shown as `tier` by list_models and used to pick
+# models without naming them: "fast", "balanced", "strong" or "frontier". Built-in
+# models ship with one; set it here to rank others or to disagree.
+# "openrouter/openai/gpt-5" = "strong"
+
 [approval]
 # What a new agent gets when it inherits nothing: "yolo" (the shipped
 # default) auto-approves every tool call, "ask" gates external side effects -

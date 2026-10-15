@@ -12,7 +12,7 @@ native tool discovery. The schemas in `aether-tools/src/builtin/harness.rs`
 
 | Workflow | Tools | Behavior |
 |---|---|---|
-| Discover models | `list_models` | Configured provider/model IDs, supported effort and availability information. |
+| Discover models | `list_models` | Configured provider/model IDs, supported effort, availability and a `tier` (`fast`, `balanced`, `strong`, `frontier`, or null) per model. Pick by tier, not name; see the model tiers note in [configuration](configuration.md). |
 | Inspect current state | `inspect_state` | Own agent/task, model, effort, context, budgets, concurrency and compaction policy. |
 | Retrieve stored output | `read_artifact` | Scoped UTF-8 text pages with byte offsets and continuation cursors; available to API agents and CLI engines. |
 | Inspect delegated work | `list_agents`, `list_tasks`, `read_task` | Scoped metadata pages and bounded task/result reads, including completed descendants. |

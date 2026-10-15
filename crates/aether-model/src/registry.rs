@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthMethods;
 use crate::profile::ModelFamily;
+use crate::tier::{ModelTier, tier_by_price};
 
 /// Declares the protocol list once: the enum, `ALL` and `as_str` are all
 /// generated from it, so a new variant reaches every one of them or none.
@@ -110,6 +111,10 @@ pub struct ModelDef {
     /// leaves it to the provider (or native harness) default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_effort: Option<Effort>,
+    /// Capability band within the provider; `None` leaves it to the price
+    /// fallback in [`Registry::catalog_tier`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<ModelTier>,
 }
 
 impl ModelDef {
@@ -125,7 +130,13 @@ impl ModelDef {
             capabilities,
             family: None,
             default_effort: None,
+            tier: None,
         }
+    }
+
+    pub fn with_tier(mut self, tier: ModelTier) -> Self {
+        self.tier = Some(tier);
+        self
     }
 
     /// Declare this model's family when it differs from its provider's.
@@ -213,6 +224,7 @@ impl ProviderDef {
                 // that serves several declares none, so it gets no profile.
                 family: None,
                 default_effort: None,
+                tier: None,
             });
         }
         None
@@ -345,6 +357,8 @@ pub struct AddedModel {
     pub family: Option<ModelFamily>,
     #[serde(default)]
     pub default_effort: Option<Effort>,
+    #[serde(default)]
+    pub tier: Option<ModelTier>,
 }
 
 /// A family override, or the word `none` to clear an inherited one.
@@ -479,6 +493,33 @@ impl Registry {
             return None;
         }
         self.api_equivalent(subscription)?.capabilities.cost
+    }
+
+    /// The capability band of a model: its declared tier, else its output
+    /// price (own, or its API equivalent's) matched to the nearest tiered model
+    /// of the same provider. `None` when neither says. Operator
+    /// overrides sit above this, in `Models::tier`.
+    pub fn catalog_tier(&self, provider: &str, model: &str) -> Option<ModelTier> {
+        let provider = self.provider(provider)?;
+        let def = provider.resolve_model(model)?;
+        if def.tier.is_some() {
+            return def.tier;
+        }
+        let output = self.output_price(provider, &def)?;
+        let references: Vec<_> = provider
+            .models
+            .iter()
+            .filter_map(|m| Some((self.output_price(provider, m)?, m.tier?)))
+            .collect();
+        tier_by_price(output, &references)
+    }
+
+    fn output_price(&self, provider: &ProviderDef, model: &ModelDef) -> Option<f64> {
+        let cost = model
+            .capabilities
+            .cost
+            .or_else(|| self.api_twin(provider, &model.id)?.capabilities.cost)?;
+        Some(cost.output_per_mtok)
     }
 
     /// The price for the model an engine session reported it is really running.
@@ -697,6 +738,7 @@ fn added_model(def: &ProviderDef, added: AddedModel) -> Result<ModelDef, Registr
         capabilities: stated,
         family,
         default_effort,
+        tier,
     } = added;
     let capabilities = match (capabilities_from, stated) {
         (None, None) => Ok(CapabilityProfile::default()),
@@ -716,6 +758,7 @@ fn added_model(def: &ProviderDef, added: AddedModel) -> Result<ModelDef, Registr
         capabilities,
         family,
         default_effort,
+        tier,
     })
 }
 

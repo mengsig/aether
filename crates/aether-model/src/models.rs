@@ -20,6 +20,7 @@ use crate::auth::{
 use crate::client::ModelClient;
 use crate::config::{AetherConfig, ConfigError, ModelSection, config_dir, load_config};
 use crate::registry::{Protocol, Registry, RegistryError, load_providers_file};
+use crate::tier::ModelTier;
 
 pub use crate::auth::LoginMethod;
 pub use crate::registry::ResolvedModel;
@@ -138,6 +139,24 @@ impl Models {
 
     pub fn resolve(&self, r: &ModelRef) -> Result<ResolvedModel, ModelsError> {
         Ok(self.registry.resolve(r)?)
+    }
+
+    /// The capability band of a model: the operator's `[models.tiers]`
+    /// override (by canonical id or alias), else the catalog's.
+    pub fn tier(&self, r: &ModelRef) -> Option<ModelTier> {
+        let canonical = self.canonical(r);
+        self.config
+            .models
+            .tiers
+            .iter()
+            .find(|(key, _)| {
+                ModelRef::parse(key).is_some_and(|key| self.canonical(&key) == canonical)
+            })
+            .map(|(_, tier)| *tier)
+            .or_else(|| {
+                self.registry
+                    .catalog_tier(&canonical.provider, &canonical.model)
+            })
     }
 
     /// Every model of every enabled provider, with canonical ids and aliases.
@@ -504,6 +523,7 @@ mod tests {
                 default: default.map(str::to_owned),
                 ..Default::default()
             },
+            models: Default::default(),
             approval: Default::default(),
             network: Default::default(),
             scheduler: Default::default(),
