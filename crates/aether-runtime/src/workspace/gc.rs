@@ -169,6 +169,9 @@ impl Candidate {
             &self.directory.join(WORKSPACE),
             Duration::from_secs(2),
         )?;
+        if manifest.workspace != self.directory.join(WORKSPACE) {
+            return Err(invalid("workspace manifest names a different GC candidate"));
+        }
         verify_saved_files(&manifest.workspace)?;
         check_status(&manifest.workspace)?;
         let state = git_state(&manifest)?;
@@ -199,6 +202,13 @@ impl Candidate {
                 "workspace manifest is unsafe or exceeds the GC size limit",
             ));
         }
+        let workspace = self.directory.join(WORKSPACE);
+        if !fs::symlink_metadata(&workspace)
+            .map_err(|error| io_error("inspect GC worktree", &workspace, error))?
+            .is_dir()
+        {
+            return Err(invalid("workspace GC worktree must be a real directory"));
+        }
         Ok(())
     }
 
@@ -216,10 +226,16 @@ impl Candidate {
     pub fn remove(&mut self, manifest: &WorkspaceManifest) -> crate::Result<()> {
         // Git performs its own final dirty-worktree check. Never use --force:
         // an edit made after our inspection must still prevent removal.
-        run(
-            git(&manifest.source)
-                .args(["worktree", "remove", "--"])
-                .arg(&manifest.workspace),
+        successful(
+            run_reader_timeout(
+                git(&manifest.source)
+                    .args(["worktree", "remove", "--"])
+                    .arg(&manifest.workspace),
+                None,
+                256 * 1024,
+                GIT_TIMEOUT,
+                "remove collected workspace",
+            )?,
             "remove collected workspace",
         )?;
         // Retain snapshot/integration refs: deleting them could destroy the
@@ -279,6 +295,21 @@ fn set_pinned_permissions(handle: &File, permissions: fs::Permissions) -> crate:
 }
 
 fn check_status(workspace: &Path) -> crate::Result<()> {
+    // Git's final worktree removal check honors these flags too, so saved
+    // bytes at inspection time cannot make their later deletion safe.
+    let entries = run(
+        git(workspace).args(["ls-files", "-v", "-z"]),
+        "check GC workspace index flags",
+    )?;
+    if entries.split(|byte| *byte == 0).any(|entry| {
+        entry
+            .first()
+            .is_some_and(|tag| tag.is_ascii_lowercase() || *tag == b'S')
+    }) {
+        return Err(invalid(
+            "workspace index has assume-unchanged or skip-worktree entries",
+        ));
+    }
     let status = run(
         git(workspace).args([
             "--no-optional-locks",

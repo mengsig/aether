@@ -179,6 +179,42 @@ async fn assume_unchanged_cannot_hide_unsaved_bytes() {
 }
 
 #[tokio::test]
+async fn clean_index_flags_keep_workspaces_in_preview_and_collection() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let f = fixture().await;
+        git(&f.manifest.workspace, &["update-index", flag, "tracked"]);
+        let preview = f.collect(true);
+        assert_eq!(preview.workspaces[0].action, WorkspaceGcAction::Kept);
+        assert!(preview.workspaces[0].reason.contains("workspace index"));
+        f.assert_kept("workspace index");
+        assert_eq!(
+            fs::read_to_string(f.manifest.workspace.join("tracked")).unwrap(),
+            "saved\n"
+        );
+    }
+}
+
+#[tokio::test]
+async fn recheck_preserves_edits_hidden_by_new_index_flags() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let f = fixture().await;
+        let mut candidate =
+            workspace::gc::Candidate::new(f.manifest.workspace.parent().unwrap().to_owned());
+        let manifest = candidate.inspect(&f.managed).unwrap();
+        git(&manifest.workspace, &["update-index", flag, "tracked"]);
+        fs::write(manifest.workspace.join("tracked"), "concurrent edit\n").unwrap();
+        assert!(git(&manifest.workspace, &["status", "--porcelain"]).is_empty());
+        let error = candidate.recheck(&manifest).unwrap_err();
+        assert!(error.to_string().contains("workspace index"), "{error}");
+        assert_eq!(
+            fs::read_to_string(manifest.workspace.join("tracked")).unwrap(),
+            "concurrent edit\n"
+        );
+        f.assert_kept("unsaved file bytes");
+    }
+}
+
+#[tokio::test]
 async fn live_paused_waiting_and_restartable_owners_are_preserved() {
     let f = fixture().await;
     let mut agent = f.owner(AgentStatus::Created);
@@ -353,6 +389,46 @@ async fn permission_repair_is_restored_when_dirty_candidate_is_kept() {
         fs::metadata(tracked).unwrap().permissions().mode() & 0o777,
         0
     );
+}
+
+#[tokio::test]
+async fn copied_manifest_cannot_redirect_collection_to_a_live_worktree() {
+    let f = fixture().await;
+    f.store(f.owner(AgentStatus::Created));
+    let alias = f.managed.join(ulid::Ulid::generate().to_string());
+    fs::create_dir(&alias).unwrap();
+    fs::write(
+        alias.join("manifest.json"),
+        serde_json::to_vec(&f.manifest).unwrap(),
+    )
+    .unwrap();
+    symlink(&f.manifest.workspace, alias.join("workspace")).unwrap();
+    let before_worktrees = git(&f.source, &["worktree", "list", "--porcelain"]);
+    for dry_run in [true, false] {
+        let report = f.collect(dry_run);
+        assert_eq!(report.workspaces.len(), 2);
+        assert!(
+            report
+                .workspaces
+                .iter()
+                .all(|entry| entry.action == WorkspaceGcAction::Kept)
+        );
+        let redirected = report
+            .workspaces
+            .iter()
+            .find(|entry| entry.workspace == alias.join("workspace"))
+            .unwrap();
+        assert!(
+            redirected.reason.contains("real directory"),
+            "{redirected:?}"
+        );
+        assert_eq!(report.bytes_removed, 0);
+        assert!(f.manifest.workspace.exists());
+        assert_eq!(
+            git(&f.source, &["worktree", "list", "--porcelain"]),
+            before_worktrees
+        );
+    }
 }
 
 #[tokio::test]
