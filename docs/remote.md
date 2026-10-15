@@ -1602,6 +1602,7 @@ gone while the ledger still vouches for it.
 | `set_approvals` | `idempotency_key` | can overwrite a later policy |
 | `update_schedule` | `idempotency_key` | can overwrite a later transition |
 | `create_memory` | `idempotency_key` | can create a duplicate |
+| `record_memory_feedback` | `idempotency_key` | records a second verdict |
 | `add_approval_rule` | `idempotency_key` | creates a duplicate where remotely allowed |
 
 Keys from device connections are scoped to the enrolled device id, surviving
