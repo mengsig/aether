@@ -4,10 +4,26 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
-## Unreleased
+## 1.0.9
+
+Cost figures are more accurate. A Claude Code agent that pauses and resumes
+is no longer charged twice for the same tokens, and Codex spend is shown as
+an estimate. Every model now reports a capability tier. The daemon no longer
+churns the disk, writes far fewer commits while agents stream, and by default
+it now cleans up finished workspaces, old backups and old logs. An
+interrupted tool call no longer reads as a denial, and clipboard images paste
+into the terminal with Ctrl+V.
 
 ### New
 
+- **Every model reports its capability tier.** `list_models`, the daemon
+  catalog and the generated clients now give each model a `tier`: `fast`,
+  `balanced`, `strong` or `frontier`, or null when it can't be ranked. The
+  tier is set by `[models.tiers]` in `config.toml`, then by the catalog
+  entry, and otherwise by the price of the provider's nearest tiered model.
+  The legacy name `strongest` is read as `strong`, and an unknown tier is a
+  config error. The model guidance the agent tool returns no longer names
+  specific models, so a new model release needs no prompt changes.
 - **Storage maintenance has a single configurable policy and visible decisions.**
   `[storage]` defaults to fourteen-day filesystem retention, with per-kind
   overrides, a one-hour grace for safely saved final delegated workspaces,
@@ -16,16 +32,21 @@ release is also the text of its GitHub release.
   startup and periodically. Dirty, live, resumable and journal-referenced
   workspaces are protected. Logs gain age rotation and pause optional writes
   below the configured disk floor. New engine sessions have durable ownership
-  records; deletion of Claude/Codex session logs is deferred, so these logs
-  remain a known source of growth.
+  records. A Claude Code or Codex session log that Aether started is removed
+  once its agent has completed or been cancelled and the retention window
+  has passed. Your own sessions, sessions from before the update, unknown or
+  shared paths, and sessions of failed agents, which can still resume, are
+  kept.
 
 ### Fixed
 
-- Interrupted native tool calls now carry their cause in transcripts and on resume.
-  Stopping or restarting the daemon, interrupting or cancelling an agent, and
-  ending a stage no longer leave a synthetic operator denial uncorrected.
-  Genuine approval denials retain their denial status.
-
+- **An interrupted tool call no longer reads as a denial.** When the daemon
+  stopped or restarted, an agent was interrupted or cancelled, or a stage
+  ended, a Claude Code or Codex tool call could look as if the operator had
+  denied it. The agent was never told otherwise. Transcripts now show it as
+  interrupted, with the cause. On resume, the agent is told the call was
+  interrupted rather than denied and may be retried. Genuine approval
+  denials stay denied.
 - **Clipboard images paste into the terminal UI with Ctrl+V.** Ctrl+V prefers
   offered plain text, otherwise attaches a supported image; Alt+V and `/image`
   force an image. Text keeps the usual long-text placeholders and image-path
@@ -103,14 +124,28 @@ release is also the text of its GitHub release.
   `cost_budget` warns once that its cost is a lower bound, `run_budget_usd`
   stays silent. Use token budgets for Codex work. An
   Archon with `count_estimated_cost` off sees $0 for Codex.
-- **Store schema 23.** Adds indexes that list agents and tasks in creation
-  order, across the store and within one run. The per-run agents index
-  replaces the old run index. The migration is one way: Aether saves the old
-  database first (see
+- **Storage cleanup is on by default.** Without a `[storage]` section, the
+  daemon now cleans up at startup and every hour. A delegated workspace that
+  is clean, whose agents are finished and whose commits are saved on another
+  ref is removed one hour after it qualifies. Migration backups beyond the
+  newest three and older than fourteen days are removed, and logs are pruned
+  after fourteen days. Workspaces with live or resumable agents, dirty files
+  or unsaved commits are always kept. Claude Code and Codex session logs
+  that Aether starts after the update are removed fourteen days after their
+  agent completed or was cancelled. Your own sessions, and sessions from
+  before the update, are kept. To see what would go, run
+  `aether storage gc --dry-run` after updating. To keep a kind, set its
+  `*_days` to 0 (see
+  [Storage](https://github.com/mengsig/aether/blob/main/docs/configuration.md#storage)).
+- **Store schema 24.** Schema 23 adds indexes that list agents and tasks in
+  creation order, both across the store and within one run. Its per-run
+  agents index replaces the old run index. Schema 24 adds a table that
+  records which agent owns each new engine session. The migration is one
+  way. Aether saves the old database first (see
   [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)),
-  and a binary that predates schema 23 refuses to open a migrated database.
-  To go back, stop the daemon and restore that backup with the older binary;
-  changes made since are lost.
+  and a binary that predates schema 24 refuses to open a migrated database.
+  To go back, stop the daemon and restore that backup with the older
+  binary. Changes made since the update are lost.
 
 ## 1.0.8
 
