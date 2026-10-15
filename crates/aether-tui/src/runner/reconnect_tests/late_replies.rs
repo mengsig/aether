@@ -410,3 +410,52 @@ fn reconnect_old_artifact_read_must_not_hide_a_new_eviction_reply() {
             .is_some_and(|notice| notice.contains("dropped"))
     );
 }
+
+/// Over A, then B, then A again: the view was rebuilt for B, so a reply to
+/// what A was asked first must not settle what A is asked now.
+#[tokio::test]
+async fn reconnect_identity_round_trip_drops_replies_from_before_the_rebuild() {
+    use crate::ui::views::ViewKind;
+    let mut original = Fixture::new().await;
+    let mut replacement = Fixture::new().await;
+    let mut app = App::new(TuiOptions {
+        auto_create_root: false,
+        ..Default::default()
+    });
+    let old_link = original.reconnect(&mut app).await;
+    let original_instance = app.options.instance_id.clone();
+    let record = retained_artifact();
+    let first = bytes_route(app.open_view(ViewKind::ArtifactPager(record.id)), record.id);
+    app.reduce(AppEvent::Disconnected { because: None });
+    let middle_link = replacement.reconnect_after(&mut app, &old_link).await;
+    assert_ne!(
+        app.options.instance_id, original_instance,
+        "another database"
+    );
+    app.reduce(AppEvent::Disconnected { because: None });
+    let current_link = original.reconnect_after(&mut app, &middle_link).await;
+    assert_eq!(
+        app.options.instance_id, original_instance,
+        "the first again"
+    );
+    let second = bytes_route(app.open_view(ViewKind::ArtifactPager(record.id)), record.id);
+    let mut admitted = Vec::new();
+    for (link, then) in [(&old_link, first), (&current_link, second)] {
+        let LoopEvent::AppFrom {
+            instance,
+            generation,
+            event,
+        } = protocol_event(link, bytes_reply(then, &record, "retained"))
+        else {
+            panic!("a scoped reply");
+        };
+        admitted.push(current_link.admit(&instance, generation, event).is_some());
+    }
+    original.stop().await;
+    replacement.stop().await;
+    assert_eq!(
+        admitted,
+        [false, true],
+        "only the current read's reply reaches the view"
+    );
+}
