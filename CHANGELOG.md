@@ -13,6 +13,13 @@ release is also the text of its GitHub release.
   of MB per read. With several agents running, that held host IO pressure
   high enough to stall other programs' syncs. Those sorts now stay in memory,
   and what the store keeps, and when it syncs, is unchanged.
+- **Native engine turns write far fewer commits.** Claude Code and Codex
+  report token usage and context size several times per message, and each
+  report was its own synced commit. The daemon now keeps the latest figures
+  in memory, where budgets read them, and writes them with the next record
+  the turn makes anyway, or after at most 2 seconds. A turn's final usage is
+  written exactly as before; a crash can lose at most the last 2 seconds of
+  streamed usage, and nothing is counted twice.
 
 ## 1.0.8
 

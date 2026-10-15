@@ -6,9 +6,10 @@ use super::{
     PermissionDecision, REFUSAL_GRACE, ReapGrace, ResolvedModel, Result, Runtime, STEER_GRACE,
     Served, Steering, StreamState, SubtreeUsage, TURN_IS_OVER, ToolContext, ToolEffects, TurnCtx,
     TurnPricing, Uncommitted, Usage, Verdict, answer_question, budget_crossed, budget_outcome,
-    clamp, disallowed_native_spawn_tool, gated_call, handle_event, handle_request, json, mpsc,
-    names_exhaustion, park_grace, permission_verdict, raise_to, record_consumed,
-    record_refused_call, refusal, side_effect_of, start_park, steer, stop_for_crossing, stopping,
+    clamp, disallowed_native_spawn_tool, flush_accounting, gated_call, handle_event,
+    handle_request, json, mpsc, names_exhaustion, park_grace, permission_verdict, raise_to,
+    record_consumed, record_refused_call, refusal, side_effect_of, start_park, steer,
+    stop_for_crossing, stopping,
 };
 
 /// Legacy per-message streams use turn totals as a fallback. Incremental
@@ -244,6 +245,7 @@ pub(super) async fn drive(
             wait.finish("a message arrived or the requested condition was satisfied");
         }
         let native_deadline = native_wait.as_ref().and_then(|wait| wait.deadline());
+        let accounting_deadline = state.accounting.deadline();
         tokio::select! {
             ready = async {
                 match input.as_ref() {
@@ -262,6 +264,11 @@ pub(super) async fn drive(
                 if let Some(wait) = native_wait.take() {
                     wait.finish("the requested deadline was reached");
                 }
+            }
+            () = tokio::time::sleep_until(accounting_deadline.unwrap_or_else(tokio::time::Instant::now)), if accounting_deadline.is_some() => {
+                let commits_before = runtime.store.commits();
+                flush_accounting(runtime, ctx, &mut state.accounting)?;
+                subtree.note_own_commits(runtime.store.commits().saturating_sub(commits_before));
             }
             ev = run.events.recv() => {
                 let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
@@ -520,6 +527,9 @@ pub(super) async fn drive(
                 if let Some(req) = req {
                     receipt_seen = false;
                     activity_seen = true;
+                    // What the engine spent before it asked is on the record
+                    // before whatever the request commits.
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
                     if native_wait.is_some() && req.name == "wait_for" {
                         let _ = req.reply.send(("A native background wait is already pending in this session.".into(), true));
                         continue;
@@ -715,6 +725,7 @@ pub(super) async fn drive(
     if let Some(park) = park.as_mut() {
         park.disarm();
     }
+    flush_accounting(runtime, ctx, &mut state.accounting)?;
     let uncommitted = Uncommitted {
         invocation: Some(state.message_invocation),
         content: state.take_partial(),

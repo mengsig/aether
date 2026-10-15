@@ -2,9 +2,9 @@
 use super::{
     Arc, BTreeMap, Commit, ContentBlock, DeltaKind, EngineEvent, EngineKind, EventKind,
     IdempotencyKey, Instant, Invocation, InvocationId, InvocationSnapshot, MAX_ENGINE_ERROR,
-    MessageRole, Mutation, ResolvedModel, Result, Runtime, StreamEvent, ToolCall, ToolCallId,
-    ToolOutcome, TurnCtx, TurnPricing, Usage, clamp, engine_call_class, json, now,
-    record_context_usage,
+    MessageRole, Mutation, PendingAccounting, ResolvedModel, Result, Runtime, StreamEvent,
+    ToolCall, ToolCallId, ToolOutcome, TurnCtx, TurnPricing, Usage, clamp, engine_call_class,
+    flush_accounting, json, now,
 };
 
 /// The native spawn tool an engine's own `Session` init advertises despite
@@ -73,6 +73,8 @@ pub(super) struct StreamState {
     /// if the engine never commits it.
     pub(super) text: String,
     text_truncated: bool,
+    /// Usage and context readings the store has not seen yet.
+    pub(super) accounting: PendingAccounting,
 }
 
 impl StreamState {
@@ -102,6 +104,7 @@ impl StreamState {
             thinking_truncated: false,
             text: String::new(),
             text_truncated: false,
+            accounting: PendingAccounting::default(),
         }
     }
 
@@ -217,6 +220,10 @@ pub(super) fn handle_event(
     event: EngineEvent,
     state: &mut StreamState,
 ) -> Result<()> {
+    if writes_record(&event) {
+        // Readings land before what followed them, as when each committed alone.
+        flush_accounting(runtime, ctx, &mut state.accounting)?;
+    }
     match event {
         EngineEvent::Session { id, model, tools } => {
             // For a `default` model the CLI picks what answers, so this report
@@ -353,7 +360,7 @@ pub(super) fn handle_event(
             // cost unset rather than claim $0, so the turn total can stand in.
             let reported = usage.filter(|u| u.total_tokens() > 0);
             if let Some(usage) = reported {
-                record_context_usage(runtime, ctx, usage.context_tokens())?;
+                note_context_usage(ctx, state, usage.context_tokens());
             }
             let mut usage = reported.unwrap_or_default();
             if reported.is_some() {
@@ -461,6 +468,8 @@ pub(super) fn handle_event(
             commit.push_mutation(Mutation::UpsertAgent(crate::turn::agent_row(
                 runtime, ctx, &hold,
             )?));
+            // Last, so their absolute figures include this message's usage.
+            state.accounting.drain_into(ctx, &mut commit);
             let answered = snapshot.model.clone();
             crate::turn::close_exhaustion_episode(runtime, ctx, &hold, &mut commit, &answered)?;
             runtime.apply_held(hold, commit)?;
@@ -478,12 +487,12 @@ pub(super) fn handle_event(
                         .unwrap_or(aether_core::model::CostGap::Unreported),
                 );
             }
-            record_usage(runtime, ctx, state, usage)?;
+            record_usage(ctx, state, usage);
         }
         EngineEvent::UsageRequest { request } => {
             let usage = state.pricing.request_delta(&request);
             state.request_usage_seen = true;
-            record_usage(runtime, ctx, state, usage)?;
+            record_usage(ctx, state, usage);
         }
         EngineEvent::ToolResult {
             tool_use_id,
@@ -548,7 +557,7 @@ pub(super) fn handle_event(
                 Some(aether_core::agent::EngineSessionUsage { session, total });
         }
         EngineEvent::ContextUsage { tokens } => {
-            record_context_usage(runtime, ctx, tokens)?;
+            note_context_usage(ctx, state, tokens);
         }
         EngineEvent::Note(text) => {
             tracing::debug!(agent = %ctx.agent.id, "{}", clamp(&text, MAX_ENGINE_ERROR))
@@ -565,12 +574,7 @@ pub(super) fn handle_event(
     Ok(())
 }
 
-fn record_usage(
-    runtime: &Arc<Runtime>,
-    ctx: &mut TurnCtx,
-    state: &mut StreamState,
-    usage: Usage,
-) -> Result<()> {
+fn record_usage(ctx: &mut TurnCtx, state: &mut StreamState, usage: Usage) {
     state.priced |= usage.cost_complete;
     state.usage_seen = true;
     state
@@ -579,13 +583,26 @@ fn record_usage(
     state.stream_usage += usage;
     ctx.add_usage(usage);
     ctx.agent.updated_at = now();
-    // Billing updates publish absolute totals without creating another invocation.
-    let commit = Commit::new().event(ctx.draft(EventKind::AgentUsageUpdated {
-        total: ctx.agent.stats.usage,
-        turn_usage: ctx.turn_usage,
-    }));
-    let hold = runtime.hold();
-    let row = crate::turn::agent_row(runtime, ctx, &hold)?;
-    runtime.apply_held(hold, commit.mutate(Mutation::UpsertAgent(row)))?;
-    Ok(())
+    state.accounting.usage();
+}
+
+fn note_context_usage(ctx: &mut TurnCtx, state: &mut StreamState, tokens: u64) {
+    ctx.agent.stats.context_tokens = Some(tokens);
+    state.accounting.context(tokens);
+}
+
+/// Whether handling `event` may commit anything, which pending readings must
+/// then precede. Usage, context and stream deltas only update memory.
+fn writes_record(event: &EngineEvent) -> bool {
+    !matches!(
+        event,
+        EngineEvent::Delta(_)
+            | EngineEvent::UsageDelta { .. }
+            | EngineEvent::UsageRequest { .. }
+            | EngineEvent::ContextUsage { .. }
+            | EngineEvent::SessionUsage { .. }
+            | EngineEvent::Note(_)
+            // Folds what is pending into its own commit.
+            | EngineEvent::Assistant { .. }
+    )
 }

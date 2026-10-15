@@ -132,7 +132,8 @@ fn _usage(_: Usage) {}
 mod accounting;
 pub(crate) use accounting::TurnPricing;
 use accounting::{
-    SubtreeUsage, budget_crossed, raise_to, recompute_snapshot_accounting, record_context_usage,
+    PendingAccounting, SubtreeUsage, budget_crossed, flush_accounting, raise_to,
+    recompute_snapshot_accounting,
 };
 mod execution;
 pub(crate) use execution::execute;

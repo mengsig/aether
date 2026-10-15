@@ -89,6 +89,8 @@ mod tool_surface;
 mod transient_retry;
 #[path = "engine/usage.rs"]
 mod usage;
+#[path = "engine/usage_coalescing.rs"]
+mod usage_coalescing;
 #[path = "engine/usage_replay.rs"]
 mod usage_replay;
 
