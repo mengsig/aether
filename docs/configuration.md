@@ -325,12 +325,13 @@ creates the root with mode 0700. It refuses a root that belongs to another
 user, that is writable by group or others, or that its owner cannot read, write
 and search. It also refuses a root with a parent directory on its real path
 that belongs to a user other than you or root, or that others can write without
-the sticky bit. A `.aether-instance` file
-in the root records the instance that owns it. A root claimed by another
-instance is refused, so give each daemon its own `temp_root`. These checks run
-again before each agent process starts. At startup the daemon also removes
-staging files named `.aether-instance.<id>` that an interrupted claim left in
-the root.
+the sticky bit. A `.aether-instance` file in the root records the instance that
+owns it. A root claimed by another instance is refused, so give each daemon its
+own `temp_root`. Before each agent process starts, the daemon checks the root
+and its claim again. It checks the parent directories only at startup and when
+it has to create the root again, so keep their ownership and permissions as
+they are. At startup the daemon also removes staging files named
+`.aether-instance.<id>` that an interrupted claim left in the root.
 
 A configured `temp_root` that fails these checks stops the daemon from
 starting. The default root does not: if it cannot be created or fails a check,
