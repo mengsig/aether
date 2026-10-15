@@ -4,6 +4,35 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Fixed
+
+- **The daemon no longer writes megabytes to disk for every agent list.**
+  Listing agents or tasks sorted every stored record each time, and once the
+  list passed about 2 MB SQLite did that sort in a temporary file on disk.
+  The terminal's status poll every 2 seconds, each tree refresh, and
+  orchestrators listing agents all paid it: on a store with long history,
+  one status poll wrote about 5.8 MB. Listings now read in creation order
+  from an index and write nothing. Pages of an agent's events together with
+  its children's no longer sort the events' contents either: in a test store
+  of 800,000 events, opening a busy supervisor's transcript wrote 20 MB, and
+  now writes nothing.
+- **One run's agent tree no longer reads every task in the store.** Listing a
+  run's tasks walked the whole tasks table. In a test store of 20,000 tasks
+  that took 22 ms per tree; it now reads only that run's tasks, in 0.06 ms.
+
+### Before updating
+
+- **Store schema 23.** Adds indexes that list agents and tasks in creation
+  order, across the store and within one run. The per-run agents index
+  replaces the old run index. The migration is one way: Aether saves the old
+  database first (see
+  [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)),
+  and a binary that predates schema 23 refuses to open a migrated database.
+  To go back, stop the daemon and restore that backup with the older binary;
+  changes made since are lost.
+
 ## 1.0.8
 
 Saying whether a memory helped or hurt a task now changes how it ranks in

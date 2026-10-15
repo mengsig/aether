@@ -18,19 +18,12 @@ impl SqliteStore {
         let predicate = filter_predicate(filter, &mut args);
         let filter_len = args.len();
         let after = after.unwrap_or(0);
-        let sql = if !ascending && filter.agent.is_some() && !filter.exclude_children {
-            // Bound each indexed branch before merging; OR would sort all matching history.
-            let own = filter_predicate_with_agent(filter, &mut args, Some("agent_id"));
-            let child = filter_predicate_with_agent(filter, &mut args, Some("parent_agent_id"));
-            let own = page_sql(&own, after, before, limit, false, &mut args);
-            let child = page_sql(&child, after, before, limit, false, &mut args);
-            args.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
-            format!(
-                "SELECT body FROM (SELECT * FROM ({own}) UNION SELECT * FROM ({child})) ORDER BY seq DESC LIMIT ?{}",
-                args.len()
-            )
+        let sql = if filter.agent.is_some() && !filter.exclude_children {
+            family_page_sql(filter, after, before, limit, ascending, &mut args)
         } else {
-            page_sql(&predicate, after, before, limit, ascending, &mut args)
+            page_sql(
+                "body", &predicate, after, before, limit, ascending, &mut args,
+            )
         };
         let mut conn = self.read_conn();
         // Both reads must see the same history, even if another connection is
@@ -71,9 +64,38 @@ impl SqliteStore {
     }
 }
 
-/// One page of events matching `predicate`, newest or oldest first. Pushes
-/// its bounds after the filter's arguments.
+/// One page of an agent's events and its children's. Each indexed branch is
+/// bounded first and merged on `seq` alone: OR, or a UNION of bodies, sorts them all.
+pub(super) fn family_page_sql(
+    filter: &EventFilter,
+    after: u64,
+    before: Option<u64>,
+    limit: usize,
+    ascending: bool,
+    args: &mut Arguments,
+) -> String {
+    debug_assert!(filter.agent.is_some() && !filter.exclude_children);
+    let first = args.len();
+    let own = filter_predicate_with_agent(filter, args, Some("agent_id"));
+    let child = filter_predicate_with_agent(filter, args, Some("parent_agent_id"));
+    let own = page_sql("seq", &own, after, before, limit, ascending, args);
+    let child = page_sql("seq", &child, after, before, limit, ascending, args);
+    args.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
+    debug_assert!(
+        args.len() > first + 4,
+        "both branches bind an agent and bounds"
+    );
+    let order = if ascending { "ASC" } else { "DESC" };
+    format!(
+        "SELECT body FROM events WHERE seq IN (SELECT seq FROM ({own}) UNION SELECT seq FROM ({child})) ORDER BY seq {order} LIMIT ?{}",
+        args.len()
+    )
+}
+
+/// One page of `columns` from events matching `predicate`, newest or oldest
+/// first. Pushes its bounds after the filter's arguments.
 pub(super) fn page_sql(
+    columns: &str,
     predicate: &str,
     after: u64,
     before: Option<u64>,
@@ -92,7 +114,7 @@ pub(super) fn page_sql(
     args.push(Box::new(i64::try_from(limit).unwrap_or(i64::MAX)));
     let order = if ascending { "ASC" } else { "DESC" };
     format!(
-        "SELECT body, seq FROM events WHERE {predicate} AND seq > ?{after_arg}{upper} ORDER BY seq {order} LIMIT ?{}",
+        "SELECT {columns} FROM events WHERE {predicate} AND seq > ?{after_arg}{upper} ORDER BY seq {order} LIMIT ?{}",
         args.len()
     )
 }
