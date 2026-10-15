@@ -11,6 +11,7 @@ import type {
 export interface ModelCost {
   "above_threshold"?: ModelCostTier | null;
   "cache_read_per_mtok"?: number;
+  "cache_write_1h_per_mtok"?: number | null;
   "cache_write_per_mtok"?: number;
   "input_per_mtok": number;
   "output_per_mtok": number;

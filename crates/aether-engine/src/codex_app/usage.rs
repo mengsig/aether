@@ -18,6 +18,7 @@ pub(crate) fn consumed_since(now: Usage, earlier: Usage) -> Usage {
         cache_write_tokens: now
             .cache_write_tokens
             .saturating_sub(earlier.cache_write_tokens),
+        cache_write_1h_tokens: now.cache_write_1h_since(&earlier),
         reasoning_tokens: reasoning,
         cost_usd: 0.0,
         cost_complete: true,
@@ -61,6 +62,7 @@ impl RawTotals {
             output_tokens: self.output,
             cache_read_tokens: self.cached,
             cache_write_tokens: self.cache_write,
+            cache_write_1h_tokens: 0,
             reasoning_tokens: (self.reasoning > 0).then_some(self.reasoning),
             // Tokens only: the price is on the outcome, and any estimate for
             // it comes from the registry, in the runtime.
@@ -166,6 +168,8 @@ pub(super) fn usage_of(v: &Value) -> Usage {
         output_tokens: get("outputTokens"),
         cache_read_tokens: cached,
         cache_write_tokens: get("cacheWriteInputTokens"),
+        // Codex reports no cache-write tier, so its writes price at the single write rate.
+        cache_write_1h_tokens: 0,
         reasoning_tokens: (reasoning > 0).then_some(reasoning),
         // Tokens only; the price is on the outcome and is folded once there.
         cost_usd: 0.0,

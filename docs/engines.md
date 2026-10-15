@@ -295,6 +295,11 @@ Claude Code keeps its native cache settings unless `[model] prompt_cache_ttl`
 explicitly selects `"5m"` or `"1h"`. An explicit setting passes through as
 `CLAUDE_CODE_PROMPT_CACHE_TTL`; omission adds no environment override.
 
+Anthropic bills a 1-hour cache write at twice the input price, against 1.25x
+for a 5-minute one. Claude Code reports the split per request, and Aether prices
+each tier at its own rate wherever it prices tokens itself: list-price costs,
+API-equivalent estimates, and tokens a closing receipt left out.
+
 ## How many engine turns run at once
 
 `[scheduler] max_concurrent_engine_turns = N` caps simultaneous engine turns

@@ -19,6 +19,7 @@ class Usage(TypedDict, total=False):
     firing when a model or engine reports no price.
     """
     cache_read_tokens: int
+    cache_write_1h_tokens: int  # optional
     cache_write_tokens: int
     cost_basis: _protocol.CostBasis  # optional
     cost_complete: bool

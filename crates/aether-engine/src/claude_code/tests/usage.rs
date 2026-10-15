@@ -344,3 +344,94 @@ fn native_request_totals_retain_the_prompt_for_late_output() {
     assert_eq!(requests[1].total.output_tokens, 2_000);
     assert_eq!(requests[1].delta().context_tokens(), 0);
 }
+
+fn streamed_total(lines: &[Value]) -> Usage {
+    let mut state = ParseState::default();
+    let mut total = Usage::default();
+    for line in lines {
+        for event in parse_line(&line.to_string(), &mut state) {
+            if let EngineEvent::UsageRequest { request } = event {
+                total += request.delta();
+            }
+        }
+    }
+    total
+}
+
+fn split_usage(writes: u64, one_hour: Option<u64>) -> Value {
+    let mut usage = json!({"input_tokens":2,"cache_creation_input_tokens":writes,
+        "cache_read_input_tokens":10,"output_tokens":1});
+    if let Some(one_hour) = one_hour {
+        usage["cache_creation"] = json!({"ephemeral_5m_input_tokens": writes.saturating_sub(one_hour),
+            "ephemeral_1h_input_tokens": one_hour});
+    }
+    usage
+}
+
+#[test]
+fn one_hour_cache_writes_are_read_once_per_request() {
+    let block = |id: &str, usage: Value| {
+        json!({"type":"assistant","message":{"id":id,
+            "content":[{"type":"text","text":"x"}],"usage":usage}})
+    };
+    let total = streamed_total(&[
+        json!({"type":"stream_event","event":{"type":"message_start",
+            "message":{"id":"msg_a","usage":split_usage(100, Some(60))}}}),
+        block("msg_a", split_usage(100, Some(60))),
+        block("msg_a", split_usage(100, Some(60))),
+        block("msg_b", split_usage(40, Some(40))),
+    ]);
+    assert_eq!(total.cache_write_tokens, 140);
+    assert_eq!(total.cache_write_1h_tokens, 100);
+}
+
+#[test]
+fn writes_without_a_split_are_not_guessed_one_hour() {
+    let total = streamed_total(&[json!({"type":"assistant","message":{"id":"msg_a",
+        "content":[],"usage":split_usage(100, None)}})]);
+    assert_eq!(total.cache_write_tokens, 100);
+    assert_eq!(total.cache_write_1h_tokens, 0);
+}
+
+#[test]
+fn a_split_beyond_its_total_is_bounded_by_the_total() {
+    let mut usage = split_usage(100, Some(60));
+    usage["cache_creation"]["ephemeral_1h_input_tokens"] = json!(500);
+    let parsed = parse_usage(&usage);
+    assert_eq!(parsed.cache_write_tokens, 100);
+    assert_eq!(parsed.cache_write_1h_tokens, 100);
+}
+
+/// Writes first reported without a split, then split on an otherwise identical
+/// line, must still reach pricing: the request is repriced at the 1-hour rate.
+#[test]
+fn a_split_reported_after_its_writes_still_reprices_the_request() {
+    let block = |usage: Value| {
+        json!({"type":"assistant","message":{"id":"msg_a",
+            "content":[{"type":"text","text":"x"}],"usage":usage}})
+    };
+    let mut state = ParseState::default();
+    let mut requests = Vec::new();
+    for line in [
+        block(split_usage(100, None)),
+        block(split_usage(100, Some(100))),
+    ] {
+        for event in parse_line(&line.to_string(), &mut state) {
+            if let EngineEvent::UsageRequest { request } = event {
+                requests.push(request);
+            }
+        }
+    }
+    assert_eq!(
+        requests.len(),
+        2,
+        "the late split was never sent for pricing"
+    );
+    assert_eq!(requests[1].previous.cache_write_1h_tokens, 0);
+    assert_eq!(requests[1].total.cache_write_1h_tokens, 100);
+    assert_eq!(
+        requests[1].delta().total_tokens(),
+        0,
+        "no token is counted twice"
+    );
+}

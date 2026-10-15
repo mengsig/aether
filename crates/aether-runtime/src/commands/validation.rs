@@ -561,6 +561,7 @@ mod tests {
                 output_per_mtok: 2.50,
                 cache_read_per_mtok: 0.05,
                 cache_write_per_mtok: 0.625,
+                cache_write_1h_per_mtok: None,
             }),
             ..Default::default()
         });

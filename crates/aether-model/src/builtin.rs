@@ -10,13 +10,23 @@ use crate::profile::ModelFamily;
 use crate::registry::{ModelDef, Protocol, ProviderDef, ProviderFlags};
 
 fn cost(input: f64, output: f64) -> ModelCost {
-    // Anthropic pricing: cache writes 1.25x input, cache reads 0.1x input.
+    // Cache writes 1.25x input, cache reads 0.1x input.
     ModelCost {
         input_per_mtok: input,
         output_per_mtok: output,
         cache_read_per_mtok: input * 0.1,
         cache_write_per_mtok: input * 1.25,
+        cache_write_1h_per_mtok: None,
         above_threshold: None,
+    }
+}
+
+// https://platform.claude.com/docs/en/about-claude/pricing#prompt-caching:
+// 5-minute writes 1.25x input, 1-hour writes 2x.
+fn claude_cost(input: f64, output: f64) -> ModelCost {
+    ModelCost {
+        cache_write_1h_per_mtok: Some(input * 2.0),
+        ..cost(input, output)
     }
 }
 
@@ -25,7 +35,7 @@ fn cost(input: f64, output: f64) -> ModelCost {
 fn fable_cost() -> ModelCost {
     ModelCost {
         cache_read_per_mtok: 0.25,
-        ..cost(10.0, 50.0)
+        ..claude_cost(10.0, 50.0)
     }
 }
 
@@ -33,7 +43,7 @@ fn fable_cost() -> ModelCost {
 fn opus_cost() -> ModelCost {
     ModelCost {
         cache_read_per_mtok: 0.20,
-        ..cost(4.0, 20.0)
+        ..claude_cost(4.0, 20.0)
     }
 }
 
@@ -47,8 +57,9 @@ fn haiku_cost() -> ModelCost {
             output_per_mtok: 2.50,
             cache_read_per_mtok: 0.05,
             cache_write_per_mtok: 0.625,
+            cache_write_1h_per_mtok: Some(1.0),
         }),
-        ..cost(0.10, 0.50)
+        ..claude_cost(0.10, 0.50)
     }
 }
 
@@ -97,7 +108,7 @@ fn anthropic() -> ProviderDef {
             ModelDef::new(
                 "claude-sonnet-5-5",
                 "Claude Sonnet 5.5",
-                adaptive(1_000_000, 128_000, cost(2.0, 10.0)),
+                adaptive(1_000_000, 128_000, claude_cost(2.0, 10.0)),
             )
             .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"]),
             ModelDef::new(
@@ -118,7 +129,7 @@ fn anthropic() -> ProviderDef {
             32_000,
             ThinkingSupport::None,
             false,
-            cost(3.0, 15.0),
+            claude_cost(3.0, 15.0),
         )),
         flags: ProviderFlags {
             open_model_list: true,
@@ -412,7 +423,7 @@ fn claude_code() -> ProviderDef {
             priced(
                 engine_model("claude-sonnet-5-5", "Claude Sonnet 5.5", 200_000, 128_000)
                     .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"]),
-                cost(2.0, 10.0),
+                claude_cost(2.0, 10.0),
             ),
             priced(
                 engine_model("claude-haiku-5-5", "Claude Haiku 5.5", 200_000, 128_000)

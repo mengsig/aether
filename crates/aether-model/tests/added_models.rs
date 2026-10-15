@@ -129,6 +129,7 @@ fn the_documented_edit_adds_claude_opus_with_a_1m_window() {
             output_per_mtok: 20.0,
             cache_read_per_mtok: 0.20,
             cache_write_per_mtok: 5.0,
+            cache_write_1h_per_mtok: Some(8.0),
             above_threshold: None,
         })
     );

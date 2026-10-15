@@ -215,6 +215,7 @@ mod tests {
             output_per_mtok: 2.5,
             cache_read_per_mtok: 0.05,
             cache_write_per_mtok: 0.625,
+            cache_write_1h_per_mtok: None,
         });
         assert_eq!(model_cost_label(Some(cost)), "$0.1/$0.5 (>100K: $0.5/$2.5)");
         cost.above_threshold.as_mut().unwrap().prompt_tokens = 100_001;

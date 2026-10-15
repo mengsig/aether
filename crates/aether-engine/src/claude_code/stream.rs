@@ -120,6 +120,8 @@ impl ParseState {
         advance!(output_tokens);
         advance!(cache_read_tokens);
         advance!(cache_write_tokens);
+        advance!(cache_write_1h_tokens);
+        debug_assert!(total.cache_write_1h_tokens <= total.cache_write_tokens);
         if let Some(reasoning) = reported.reasoning_tokens {
             total.reasoning_tokens = Some(total.reasoning_tokens.unwrap_or(0).max(reasoning));
         }
@@ -129,8 +131,11 @@ impl ParseState {
             total: *total,
         };
         let delta = request.delta();
+        // A split reported after its writes adds no tokens, but reprices the request.
+        let reclassified = total.cache_write_1h_tokens > previous.cache_write_1h_tokens;
         let mut events = Vec::new();
-        if delta.total_tokens() > 0 || delta.reasoning_tokens.is_some_and(|n| n > 0) {
+        if delta.total_tokens() > 0 || delta.reasoning_tokens.is_some_and(|n| n > 0) || reclassified
+        {
             events.push(EngineEvent::UsageRequest { request });
         }
         events.push(EngineEvent::ContextUsage {
@@ -518,11 +523,13 @@ fn parse_content(content: Option<&Value>) -> Vec<ContentBlock> {
 
 fn parse_usage(u: &Value) -> Usage {
     let get = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let cache_write_tokens = get("cache_creation_input_tokens");
     Usage {
         input_tokens: get("input_tokens"),
         output_tokens: get("output_tokens"),
         cache_read_tokens: get("cache_read_input_tokens"),
-        cache_write_tokens: get("cache_creation_input_tokens"),
+        cache_write_tokens,
+        cache_write_1h_tokens: one_hour_writes(u, cache_write_tokens),
         reasoning_tokens: u
             .get("output_tokens_details")
             .and_then(|d| d.get("thinking_tokens"))
@@ -537,6 +544,25 @@ fn parse_usage(u: &Value) -> Usage {
         // Any estimate for these tokens comes from the registry, in the runtime.
         estimated_cost_usd: None,
     }
+}
+
+/// The 1-hour share of `cache_creation_input_tokens`, from `cache_creation`. Zero when
+/// unreported, and never more than the total: a split beyond it cannot be trusted.
+fn one_hour_writes(u: &Value, cache_write_tokens: u64) -> u64 {
+    let one_hour = u
+        .get("cache_creation")
+        .and_then(|split| split.get("ephemeral_1h_input_tokens"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if one_hour > cache_write_tokens {
+        tracing::warn!(
+            one_hour,
+            cache_write_tokens,
+            "Claude reported more 1-hour cache writes than cache writes; pricing the total as 1-hour"
+        );
+        return cache_write_tokens;
+    }
+    one_hour
 }
 
 #[cfg(test)]

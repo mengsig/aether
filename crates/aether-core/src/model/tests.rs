@@ -387,6 +387,7 @@ fn list_price() -> ModelCost {
         output_per_mtok: 50.0,
         cache_read_per_mtok: 1.0,
         cache_write_per_mtok: 10.0,
+        cache_write_1h_per_mtok: None,
         above_threshold: None,
     }
 }
@@ -542,12 +543,14 @@ fn tiered_price() -> ModelCost {
         output_per_mtok: 0.50,
         cache_read_per_mtok: 0.01,
         cache_write_per_mtok: 0.125,
+        cache_write_1h_per_mtok: None,
         above_threshold: Some(ModelCostTier {
             prompt_tokens: 100_000,
             input_per_mtok: 0.50,
             output_per_mtok: 2.50,
             cache_read_per_mtok: 0.05,
             cache_write_per_mtok: 0.625,
+            cache_write_1h_per_mtok: None,
         }),
     }
 }

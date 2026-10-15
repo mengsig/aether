@@ -81,14 +81,18 @@ impl CostGap {
 /// cannot make what was already spent smaller - so nothing silently stops
 /// firing when a model or engine reports no price.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(from = "UsageWire")]
+#[serde(try_from = "UsageWire")]
 // UsageWire is a lenient reader for old stores; the wire shape is Usage itself.
-#[schemars(!from)]
+#[schemars(!try_from)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
+    /// The part of `cache_write_tokens` written to the 1-hour cache tier. Zero
+    /// where the engine did not report the split; those writes price as 5-minute ones.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cache_write_1h_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_tokens: Option<u64>,
     /// Dollars over the invocations that could be priced. A floor when
@@ -124,6 +128,7 @@ impl Default for Usage {
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
+            cache_write_1h_tokens: 0,
             reasoning_tokens: None,
             cost_usd: 0.0,
             cost_complete: true,
@@ -134,6 +139,10 @@ impl Default for Usage {
     }
 }
 
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
 /// Reads a store written before `cost_complete` existed, where an absent
 /// `cost_usd` was the only way to say nobody priced the invocation.
 #[derive(Deserialize)]
@@ -142,6 +151,8 @@ struct UsageWire {
     output_tokens: u64,
     cache_read_tokens: u64,
     cache_write_tokens: u64,
+    #[serde(default)]
+    cache_write_1h_tokens: u64,
     #[serde(default)]
     reasoning_tokens: Option<u64>,
     #[serde(default)]
@@ -158,22 +169,31 @@ struct UsageWire {
     estimated_cost_usd: Option<f64>,
 }
 
-impl From<UsageWire> for Usage {
-    fn from(w: UsageWire) -> Self {
+impl TryFrom<UsageWire> for Usage {
+    type Error = String;
+
+    fn try_from(w: UsageWire) -> Result<Self, Self::Error> {
+        if w.cache_write_1h_tokens > w.cache_write_tokens {
+            return Err(format!(
+                "cache_write_1h_tokens ({}) exceeds cache_write_tokens ({})",
+                w.cache_write_1h_tokens, w.cache_write_tokens
+            ));
+        }
         let complete = w.cost_complete.unwrap_or(w.cost_usd.is_some());
         let gap = (!complete).then_some(w.cost_gap.unwrap_or(CostGap::Unknown));
-        Self {
+        Ok(Self {
             input_tokens: w.input_tokens,
             output_tokens: w.output_tokens,
             cache_read_tokens: w.cache_read_tokens,
             cache_write_tokens: w.cache_write_tokens,
+            cache_write_1h_tokens: w.cache_write_1h_tokens,
             reasoning_tokens: w.reasoning_tokens,
             cost_usd: w.cost_usd.unwrap_or(0.0),
             cost_complete: complete,
             cost_gap: gap,
             cost_basis: w.cost_basis,
             estimated_cost_usd: w.estimated_cost_usd,
-        }
+        })
     }
 }
 
@@ -345,6 +365,19 @@ impl Usage {
             .saturating_add(self.cache_read_tokens)
             .saturating_add(self.cache_write_tokens)
     }
+
+    /// The 1-hour writes in `self` beyond `earlier`, never more than the new writes.
+    /// Independent high-water marks can grow the split faster than its total.
+    pub fn cache_write_1h_since(&self, earlier: &Self) -> u64 {
+        debug_assert!(self.cache_write_1h_tokens <= self.cache_write_tokens);
+        debug_assert!(earlier.cache_write_1h_tokens <= earlier.cache_write_tokens);
+        let writes = self
+            .cache_write_tokens
+            .saturating_sub(earlier.cache_write_tokens);
+        self.cache_write_1h_tokens
+            .saturating_sub(earlier.cache_write_1h_tokens)
+            .min(writes)
+    }
 }
 
 impl AddAssign for Usage {
@@ -369,6 +402,13 @@ impl AddAssign for Usage {
         self.cache_write_tokens = self
             .cache_write_tokens
             .saturating_add(rhs.cache_write_tokens);
+        self.cache_write_1h_tokens = self
+            .cache_write_1h_tokens
+            .saturating_add(rhs.cache_write_1h_tokens);
+        debug_assert!(
+            self.cache_write_1h_tokens <= self.cache_write_tokens,
+            "1-hour writes are a subset of cache writes"
+        );
         self.reasoning_tokens = match (self.reasoning_tokens, rhs.reasoning_tokens) {
             (None, None) => None,
             (a, b) => Some(a.unwrap_or(0).saturating_add(b.unwrap_or(0))),
@@ -393,6 +433,9 @@ pub struct ModelCost {
     pub cache_read_per_mtok: f64,
     #[serde(default)]
     pub cache_write_per_mtok: f64,
+    /// Rate for 1-hour cache writes; absent prices them at `cache_write_per_mtok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_1h_per_mtok: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub above_threshold: Option<ModelCostTier>,
 }
@@ -408,6 +451,8 @@ pub struct ModelCostTier {
     pub cache_read_per_mtok: f64,
     #[serde(default)]
     pub cache_write_per_mtok: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_1h_per_mtok: Option<f64>,
 }
 
 impl ModelCost {
@@ -420,6 +465,7 @@ impl ModelCost {
             self.cache_write_per_mtok,
         ]
         .into_iter()
+        .chain(self.cache_write_1h_per_mtok)
         .chain(self.above_threshold.into_iter().flat_map(|tier| {
             [
                 tier.input_per_mtok,
@@ -427,30 +473,44 @@ impl ModelCost {
                 tier.cache_read_per_mtok,
                 tier.cache_write_per_mtok,
             ]
+            .into_iter()
+            .chain(tier.cache_write_1h_per_mtok)
         }))
     }
 
     /// Price one request before its usage is folded into an accumulator.
     pub fn cost_of(&self, usage: &Usage) -> f64 {
+        debug_assert!(
+            usage.cache_write_1h_tokens <= usage.cache_write_tokens,
+            "1-hour writes are a subset of cache writes"
+        );
         let prompt_tokens = usage.context_tokens();
-        let (input, output, read, write) = match self.above_threshold {
+        let (input, output, read, write, write_1h) = match self.above_threshold {
             Some(tier) if prompt_tokens > tier.prompt_tokens => (
                 tier.input_per_mtok,
                 tier.output_per_mtok,
                 tier.cache_read_per_mtok,
                 tier.cache_write_per_mtok,
+                tier.cache_write_1h_per_mtok,
             ),
             _ => (
                 self.input_per_mtok,
                 self.output_per_mtok,
                 self.cache_read_per_mtok,
                 self.cache_write_per_mtok,
+                self.cache_write_1h_per_mtok,
             ),
         };
+        let five_minute = usage
+            .cache_write_tokens
+            .saturating_sub(usage.cache_write_1h_tokens);
         let per = |tokens: u64, price: f64| tokens as f64 / 1_000_000.0 * price;
-        per(usage.input_tokens, input)
+        let cost = per(usage.input_tokens, input)
             + per(usage.output_tokens, output)
             + per(usage.cache_read_tokens, read)
-            + per(usage.cache_write_tokens, write)
+            + per(five_minute, write)
+            + per(usage.cache_write_1h_tokens, write_1h.unwrap_or(write));
+        debug_assert!(!cost.is_nan(), "a finite rate table prices to a number");
+        cost
     }
 }

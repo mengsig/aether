@@ -19,6 +19,7 @@ import type {
  */
 export interface Usage {
   "cache_read_tokens": number;
+  "cache_write_1h_tokens"?: number;
   "cache_write_tokens": number;
   "cost_basis"?: CostBasis;
   "cost_complete": boolean;

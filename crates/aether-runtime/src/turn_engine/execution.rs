@@ -893,6 +893,7 @@ mod fallback_regressions {
             output_per_mtok: 4.0,
             cache_read_per_mtok: 0.0,
             cache_write_per_mtok: 0.0,
+            cache_write_1h_per_mtok: None,
             above_threshold: None,
         });
         let usage = fallback_usage(&run);

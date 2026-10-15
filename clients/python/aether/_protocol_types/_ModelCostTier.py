@@ -11,6 +11,7 @@ class ModelCostTier(TypedDict, total=False):
     Rates for an entire request whose prompt exceeds `prompt_tokens`.
     """
     cache_read_per_mtok: float  # optional
+    cache_write_1h_per_mtok: float | None  # optional
     cache_write_per_mtok: float  # optional
     input_per_mtok: float
     output_per_mtok: float
