@@ -6,6 +6,8 @@ use aether_store::{Commit, EventFilter};
 
 use crate::{Result, Runtime};
 
+pub(crate) const NATIVE_DENIED: &str = "tool.native_denied";
+
 pub(crate) const EVENT: &str = "tool.interrupted";
 
 pub(crate) fn record(
@@ -158,4 +160,50 @@ pub(crate) fn denial_reason(
             EventKind::ToolDenied { reason, .. } => Some(reason),
             _ => None,
         }))
+}
+
+/// A bridge denial may precede the native tool announcement on stdout.
+pub(crate) fn pending_native_denial(
+    runtime: &Runtime,
+    agent: aether_core::id::AgentId,
+    provider_id: &str,
+) -> Result<Option<String>> {
+    let mut after = runtime
+        .store
+        .latest_events(
+            1,
+            &EventFilter {
+                types: vec!["agent.started".into()],
+                ..EventFilter::own_events(agent)
+            },
+        )?
+        .first()
+        .map_or(0, |event| event.seq);
+    loop {
+        let events = runtime.store.events(
+            after,
+            500,
+            &EventFilter {
+                types: vec!["custom".into()],
+                ..EventFilter::own_events(agent)
+            },
+        )?;
+        let Some(last) = events.last() else {
+            return Ok(None);
+        };
+        after = last.seq;
+        if let Some(reason) = events.iter().find_map(|event| match &event.kind {
+            EventKind::Custom { name, payload }
+                if name == NATIVE_DENIED && payload["provider_call_id"] == provider_id =>
+            {
+                payload["reason"].as_str().map(str::to_owned)
+            }
+            _ => None,
+        }) {
+            return Ok(Some(reason));
+        }
+        if events.len() < 500 {
+            return Ok(None);
+        }
+    }
 }

@@ -450,6 +450,14 @@ pub(super) fn handle_event(
                         side_effect: class,
                     }));
                     commit.push_event(ctx.draft(EventKind::ToolStarted { call: call.id }));
+                    if let Some(reason) =
+                        crate::tool_interruption::pending_native_denial(runtime, ctx.agent.id, id)?
+                    {
+                        commit.push_event(ctx.draft(EventKind::ToolDenied {
+                            call: call.id,
+                            reason,
+                        }));
+                    }
                     ctx.agent.stats.tool_calls += 1;
                     state.ran_tools = true;
                 }

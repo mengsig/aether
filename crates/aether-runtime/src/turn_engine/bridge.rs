@@ -66,6 +66,7 @@ pub(super) async fn handle_request(
                 let class = tool.descriptor().side_effect;
                 let gate = GateSubject {
                     native_call: None,
+                    provider_call_id: None,
                     tool: &req.name,
                     input: &req.input,
                     class,
@@ -221,6 +222,7 @@ pub(super) struct Verdict {
 /// path; a call the engine ran itself can only offer what the prompt carried.
 pub(super) struct GateSubject<'a> {
     pub(super) native_call: Option<ToolCallId>,
+    provider_call_id: Option<&'a str>,
     pub(super) tool: &'a str,
     pub(super) input: &'a Value,
     pub(super) class: SideEffectClass,
@@ -239,7 +241,7 @@ impl<'a> GateSubject<'a> {
         tool: &'a str,
         input: &'a Value,
         class: SideEffectClass,
-        provider_call_id: Option<&str>,
+        provider_call_id: Option<&'a str>,
     ) -> Result<Self> {
         // Derived through the very functions the built-in tools use, so a
         // rule matches the same call on either path. `None` means nothing
@@ -251,6 +253,7 @@ impl<'a> GateSubject<'a> {
                 ctx.agent.id,
                 provider_call_id,
             )?,
+            provider_call_id,
             tool,
             input,
             class,
@@ -292,6 +295,7 @@ pub(super) async fn permission_verdict(
 ) -> Result<Verdict> {
     let GateSubject {
         native_call,
+        provider_call_id,
         tool: tool_name,
         input: tool_input,
         class,
@@ -312,6 +316,13 @@ pub(super) async fn permission_verdict(
             runtime.apply(Commit::new().event(ctx.draft(EventKind::ToolDenied {
                 call,
                 reason: msg.to_owned(),
+            })))?;
+        } else if let Some(provider_call_id) = provider_call_id {
+            // Claude's bridge can beat its stdout tool announcement. Keep the
+            // exact identity until that announcement can close the denied call.
+            runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
+                name: crate::tool_interruption::NATIVE_DENIED.into(),
+                payload: json!({"provider_call_id": provider_call_id, "reason": msg}),
             })))?;
         }
         Ok(refuse(msg))

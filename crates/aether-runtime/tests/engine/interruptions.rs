@@ -444,6 +444,8 @@ struct DenyThenInterruptEngine {
     denied: Arc<tokio::sync::Notify>,
     emit_result: bool,
     sibling: bool,
+    bridge: Mutex<Option<BridgeHandover>>,
+    announce: Arc<tokio::sync::Notify>,
 }
 
 #[async_trait::async_trait]
@@ -456,7 +458,7 @@ impl Engine for DenyThenInterruptEngine {
     }
     async fn run(
         &self,
-        _turn: EngineTurn,
+        turn: EngineTurn,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
         let (tx, rx) = mpsc::channel(8);
@@ -483,8 +485,26 @@ impl Engine for DenyThenInterruptEngine {
         }
         let (decisions, mut answers) = mpsc::channel::<aether_engine::PermissionDecision>(1);
         let denied = self.denied.clone();
+        let bridge = self.bridge.lock().unwrap().take();
+        let credentials = bridge.as_ref().map(|_| {
+            let args = &turn.mcp.as_ref().unwrap().args;
+            let after = |flag: &str| {
+                let at = args.iter().position(|arg| arg == flag).unwrap();
+                args[at + 1].clone()
+            };
+            (
+                after("--agent").parse::<AgentId>().unwrap(),
+                after("--token"),
+            )
+        });
+        let announce = self.announce.clone();
         let (emit_result, sibling) = (self.emit_result, self.sibling);
         tokio::spawn(async move {
+            let via_bridge = bridge.is_some();
+            if let Some(bridge) = bridge {
+                bridge.send(credentials.unwrap()).unwrap();
+                announce.notified().await;
+            }
             let mut content = vec![ContentBlock::ToolUse {
                 id: "denied-call".into(),
                 name: "Bash".into(),
@@ -504,16 +524,18 @@ impl Engine for DenyThenInterruptEngine {
             })
             .await
             .unwrap();
-            tx.send(EngineEvent::Permission {
-                request_id: "approval".into(),
-                tool: "Bash".into(),
-                input: serde_json::json!({"command":"make ci", "tool_use_id":"denied-call"}),
-                side_effect: Some(aether_core::tool::SideEffectClass::External),
-            })
-            .await
-            .unwrap();
-            let answer = answers.recv().await.unwrap();
-            assert!(!answer.allow);
+            if !via_bridge {
+                tx.send(EngineEvent::Permission {
+                    request_id: "approval".into(),
+                    tool: "Bash".into(),
+                    input: serde_json::json!({"command":"make ci", "tool_use_id":"denied-call"}),
+                    side_effect: Some(aether_core::tool::SideEffectClass::External),
+                })
+                .await
+                .unwrap();
+                let answer = answers.recv().await.unwrap();
+                assert!(!answer.allow);
+            }
             denied.notify_one();
             cancel.cancelled().await;
             if emit_result {
@@ -545,94 +567,147 @@ impl Engine for DenyThenInterruptEngine {
 async fn actual_denial_wins_over_later_interrupt_for_only_that_call() {
     for emit_result in [false, true] {
         for sibling in [false, true] {
-            let denied = Arc::new(tokio::sync::Notify::new());
-            let h = harness_with_engine(
-                Arc::new(DenyThenInterruptEngine {
-                    first: std::sync::atomic::AtomicBool::new(true),
-                    denied: denied.clone(),
-                    emit_result,
-                    sibling,
-                }),
-                Arc::default(),
-                Arc::default(),
-            )
-            .await;
-            let id = chat_agent(&h);
-            h.runtime
-                .update_agent(
-                    id,
-                    aether_runtime::AgentUpdate {
-                        approval: Some(ApprovalPolicy::default()),
-                        ..Default::default()
-                    },
-                    Actor::user(),
+            for via_bridge in [false, true] {
+                let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+                let announce = Arc::new(tokio::sync::Notify::new());
+                let denied = Arc::new(tokio::sync::Notify::new());
+                let h = harness_with_engine(
+                    Arc::new(DenyThenInterruptEngine {
+                        first: std::sync::atomic::AtomicBool::new(true),
+                        denied: denied.clone(),
+                        emit_result,
+                        sibling,
+                        bridge: Mutex::new(via_bridge.then_some(ready_tx)),
+                        announce: announce.clone(),
+                    }),
+                    Arc::default(),
+                    Arc::default(),
                 )
-                .unwrap();
-            h.runtime
-                .send_message(id, vec![ContentBlock::text("go")], Actor::user())
-                .unwrap();
-            let approval = tokio::time::timeout(Duration::from_secs(5), async {
-                loop {
-                    if let Some(approval) = h
-                        .store
-                        .pending_approvals()
+                .await;
+                let id = chat_agent(&h);
+                h.runtime
+                    .update_agent(
+                        id,
+                        aether_runtime::AgentUpdate {
+                            approval: Some(ApprovalPolicy::default()),
+                            ..Default::default()
+                        },
+                        Actor::user(),
+                    )
+                    .unwrap();
+                h.runtime
+                    .send_message(id, vec![ContentBlock::text("go")], Actor::user())
+                    .unwrap();
+                let bridge_reply = if via_bridge {
+                    let (agent, token) = tokio::time::timeout(Duration::from_secs(5), ready_rx)
+                        .await
                         .unwrap()
-                        .into_iter()
-                        .find(|a| a.agent_id == id)
-                    {
-                        break approval;
+                        .unwrap();
+                    let runtime = h.runtime.clone();
+                    Some(tokio::spawn(async move {
+                        runtime
+                            .engine_tool(
+                                agent,
+                                &token,
+                                "permission".into(),
+                                serde_json::json!({
+                                    "tool_name": "Bash",
+                                    "tool_use_id": "denied-call",
+                                    "input": {"command":"make ci"}
+                                }),
+                            )
+                            .await
+                            .unwrap()
+                    }))
+                } else {
+                    None
+                };
+                let approval = tokio::time::timeout(Duration::from_secs(5), async {
+                    loop {
+                        if let Some(approval) = h
+                            .store
+                            .pending_approvals()
+                            .unwrap()
+                            .into_iter()
+                            .find(|a| a.agent_id == id)
+                        {
+                            break approval;
+                        }
+                        tokio::time::sleep(Duration::from_millis(5)).await;
                     }
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
-            })
-            .await
-            .expect("approval raised within seconds");
-            h.runtime
-                .resolve_approval(
-                    approval.id,
-                    aether_core::tool::ApprovalDecision::Denied,
-                    Actor::user(),
-                    Some("do not run make ci".into()),
-                    None,
-                )
-                .unwrap();
-            tokio::time::timeout(Duration::from_secs(5), denied.notified())
-                .await
-                .expect("engine receives genuine deny before interrupt");
-            h.runtime.interrupt_agent(id, Actor::user()).unwrap();
-            wait_for(h.store.as_ref(), id, |a| {
-                a.status.kind() == AgentStatusKind::Waiting
-            })
-            .await;
-            let events = h
-                .store
-                .events(0, 1000, &EventFilter::own_events(id))
-                .unwrap();
-            assert!(events.iter().any(|event| matches!(event.kind, EventKind::ToolDenied { call, .. } if call == approval.call_id)));
-            let interruptions: Vec<_> = events
-                .iter()
-                .filter_map(|event| match &event.kind {
-                    EventKind::Custom { name, payload } if name == "tool.interrupted" => {
-                        Some(payload)
-                    }
-                    _ => None,
                 })
-                .collect();
-            assert_eq!(interruptions.len(), usize::from(sibling));
-            assert!(
-                interruptions
-                    .iter()
-                    .all(|payload| payload["call"] != serde_json::json!(approval.call_id))
-            );
-            if sibling {
-                assert!(
-                    interruptions[0]["note"]
-                        .as_str()
+                .await
+                .expect("approval raised within seconds");
+                h.runtime
+                    .resolve_approval(
+                        approval.id,
+                        aether_core::tool::ApprovalDecision::Denied,
+                        Actor::user(),
+                        Some("do not run make ci".into()),
+                        None,
+                    )
+                    .unwrap();
+                if let Some(reply) = bridge_reply {
+                    let (text, is_error) = tokio::time::timeout(Duration::from_secs(5), reply)
+                        .await
                         .unwrap()
-                        .contains("make other")
+                        .unwrap();
+                    assert!(!is_error);
+                    assert_eq!(
+                        serde_json::from_str::<serde_json::Value>(&text).unwrap()["behavior"],
+                        "deny"
+                    );
+                    announce.notify_one();
+                }
+                tokio::time::timeout(Duration::from_secs(5), denied.notified())
+                    .await
+                    .expect("engine receives genuine deny before interrupt");
+                h.runtime.interrupt_agent(id, Actor::user()).unwrap();
+                wait_for(h.store.as_ref(), id, |a| {
+                    a.status.kind() == AgentStatusKind::Waiting
+                })
+                .await;
+                let events = h
+                    .store
+                    .events(0, 1000, &EventFilter::own_events(id))
+                    .unwrap();
+                let denied_call = events
+                    .iter()
+                    .find_map(|event| match &event.kind {
+                        EventKind::ToolRequested { call, .. }
+                            if call.provider_call_id == "denied-call" =>
+                        {
+                            Some(call.id)
+                        }
+                        _ => None,
+                    })
+                    .expect("native tool announced");
+                assert!(events.iter().any(|event| matches!(event.kind, EventKind::ToolDenied { call, .. } if call == denied_call)));
+                let interruptions: Vec<_> = events
+                    .iter()
+                    .filter_map(|event| match &event.kind {
+                        EventKind::Custom { name, payload } if name == "tool.interrupted" => {
+                            Some(payload)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(interruptions.len(), usize::from(sibling));
+                assert!(
+                    interruptions
+                        .iter()
+                        .all(|payload| payload["call"] != serde_json::json!(denied_call))
                 );
+                if sibling {
+                    assert!(
+                        interruptions[0]["note"]
+                            .as_str()
+                            .unwrap()
+                            .contains("make other")
+                    );
+                }
+                h.runtime.shutdown().await;
             }
-            h.runtime.shutdown().await;
         }
     }
 }
