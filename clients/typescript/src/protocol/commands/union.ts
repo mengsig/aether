@@ -85,6 +85,8 @@ import type {
   ShutdownCommand,
   StartPairingCommand,
   StatusCommand,
+  StorageGcCommand,
+  StorageStatusCommand,
   SubscribeCommand,
   SubscribePushCommand,
   SyncRepositoryKnowledgeCommand,
@@ -183,6 +185,8 @@ export type Command =
   | ShutdownCommand
   | StartPairingCommand
   | StatusCommand
+  | StorageGcCommand
+  | StorageStatusCommand
   | SubscribeCommand
   | SubscribePushCommand
   | SyncRepositoryKnowledgeCommand

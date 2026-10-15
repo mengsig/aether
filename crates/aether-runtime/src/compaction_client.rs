@@ -409,6 +409,7 @@ mod tests {
                 session: None,
                 session_usage: aether_core::model::Usage::default(),
                 new_session_id: String::new(),
+                session_recorder: None,
                 model: None,
                 effort: None,
                 cwd: "/unused-fixture".into(),

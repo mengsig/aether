@@ -6,7 +6,6 @@ from typing import Any, Literal, TypedDict
 from .. import protocol as _protocol
 
 
-# Tagged by `reply`.
 class ReplyRetentionPreview(TypedDict, total=False):
     data: _protocol.RetentionPreview
     reply: Literal["retention_preview"]

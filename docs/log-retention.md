@@ -24,6 +24,13 @@ have active old-version writers. This is not a bound on the entire data director
 database, artifact, native-session, backup, and workspace retention remain
 separate lifecycles described in [known limitations](known-limitations.md).
 
+Managed segments also rotate by age (fourteen days by default), under the same
+writer lock. Archived segments beyond that age are removed on startup or a
+write. Active age uses birth time when available, otherwise modification time;
+continuously written segments on filesystems without birth times remain bounded
+by size. `[storage] logs_days = 0` disables age pruning. See
+[storage configuration](configuration.md#storage).
+
 ## A full disk
 
 The log shares a filesystem with the store, so a disk that fills is recorded

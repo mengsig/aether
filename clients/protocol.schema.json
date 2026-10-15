@@ -2133,6 +2133,36 @@
           "type": "object"
         },
         {
+          "description": "Bounded filesystem inventory and eligibility preview.",
+          "properties": {
+            "cmd": {
+              "const": "storage_status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Host-only filesystem maintenance. Preview never deletes files.",
+          "properties": {
+            "cmd": {
+              "const": "storage_gc",
+              "type": "string"
+            },
+            "dry_run": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cmd",
+            "dry_run"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cmd": {
               "const": "shutdown",
@@ -11196,6 +11226,20 @@
     },
     "Reply": {
       "oneOf": [
+        {
+          "properties": {
+            "data": true,
+            "reply": {
+              "const": "storage_report",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
         {
           "properties": {
             "data": {

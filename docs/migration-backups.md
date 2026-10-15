@@ -10,7 +10,10 @@ IDs used by memory search. A temporary file is published under its final name
 only after the copy completes and is synced. The backup directory is private
 on Unix. If copying or syncing fails, startup fails before migration begins;
 Aether does not silently proceed without the backup. Existing snapshots are
-never overwritten or automatically pruned.
+never overwritten. Background storage maintenance keeps the latest three and
+anything within fourteen days by default; configure `[storage] backups_keep`
+and `backups_days`, or set `backups_days = 0` to disable pruning. See
+[storage configuration](configuration.md#storage).
 
 These are database snapshots, not complete workspace archives. Artifact bytes
 remain in the database's sibling `artifacts/` directory, and the images sent

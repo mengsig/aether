@@ -88,6 +88,8 @@ pub struct RuntimeConfig {
     pub approval_default: aether_core::agent::ApprovalDefault,
     /// How long artifact bytes are kept.
     pub retention: aether_core::artifact::RetentionPolicy,
+    /// Store file and log root used by filesystem maintenance.
+    pub storage_paths: Option<crate::storage::StoragePaths>,
     /// Optional semantic pass over memory retrieval. `None` retrieves
     /// structurally and lexically, exactly as before.
     pub memory_index: Option<Arc<dyn aether_memory::MemoryIndex>>,
@@ -139,6 +141,7 @@ impl Default for RuntimeConfig {
             yolo: false,
             approval_default: aether_core::agent::ApprovalDefault::default(),
             retention: aether_core::artifact::RetentionPolicy::default(),
+            storage_paths: None,
             memory_index: None,
             disk_guard: None,
         }

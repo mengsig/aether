@@ -232,6 +232,7 @@ pub(crate) async fn execute(
         session: ctx.agent.engine_session.clone(),
         session_usage: ctx.agent.engine_session_usage(),
         new_session_id: aether_engine::new_session_id(),
+        session_recorder: Some(super::session_recorder(runtime, ctx.agent.id)),
         model: Some(resolved.model.id.clone()),
         // Launch the same explicit override (or omission) the ledger recorded.
         effort: snapshot.params.effort,

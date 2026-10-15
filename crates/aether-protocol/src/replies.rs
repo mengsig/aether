@@ -243,6 +243,7 @@ pub struct AuthInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "reply", content = "data", rename_all = "snake_case")]
 pub enum Reply {
+    StorageReport(serde_json::Value),
     RetentionPreview(aether_core::retention::RetentionPreview),
     GithubWatcher(aether_core::github::GithubWatcherStatus),
     Schedule(aether_core::schedule::Schedule),

@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 22;
+pub const SCHEMA_VERSION: u32 = 23;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -414,9 +414,19 @@ CREATE INDEX memory_feedback_ranked ON memory_feedback(memory_id, task_id, creat
     WHERE retracted_at IS NULL AND evidence IN ('operator','review');
 "#;
 
+// No foreign key: ownership must outlive the agent and run history.
+const V23: &str = r#"
+CREATE TABLE engine_session_ownership (
+    engine     TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    PRIMARY KEY (engine, session_id)
+);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22,
+    V22, V23,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the

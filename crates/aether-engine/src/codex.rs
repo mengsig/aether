@@ -264,6 +264,9 @@ impl Engine for CodexEngine {
         };
         let cwd: PathBuf = turn.cwd.clone();
         let mut state = ParseState::for_turn(&turn, EngineVersion::parse(&self.version));
+        let ownership_turn = turn.clone();
+        let ownership_cancel = cancel.clone();
+        let mut ownership_recorded = false;
         let run = run_process(
             &self.program,
             args,
@@ -276,7 +279,26 @@ impl Engine for CodexEngine {
             move |line| {
                 // Keep the replacement prompt file alive until the process driver exits.
                 let _instructions = &instructions;
-                parse_line(line, &mut state)
+                let events = parse_line(line, &mut state);
+                if !ownership_recorded
+                    && let Some(id) = events.iter().find_map(|event| match event {
+                        EngineEvent::Session { id, .. } => Some(id.as_str()),
+                        _ => None,
+                    })
+                {
+                    ownership_recorded = true;
+                    if let Err(error) =
+                        ownership_turn.record_new_session(EngineKind::CODEX, id, Vec::new())
+                    {
+                        ownership_cancel.cancel();
+                        return vec![EngineEvent::Done(EngineOutcome {
+                            is_error: true,
+                            error: Some(error.to_string()),
+                            ..Default::default()
+                        })];
+                    }
+                }
+                events
             },
         )
         .await?

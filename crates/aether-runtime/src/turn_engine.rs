@@ -129,6 +129,9 @@ pub(crate) enum EngineLink {
 #[allow(dead_code)]
 fn _usage(_: Usage) {}
 
+mod ownership;
+pub(crate) use ownership::session_recorder;
+
 mod accounting;
 pub(crate) use accounting::TurnPricing;
 use accounting::{

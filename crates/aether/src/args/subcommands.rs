@@ -661,3 +661,12 @@ pub(crate) enum RetentionCmd {
         json: bool,
     },
 }
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum StorageCmd {
+    /// Remove eligible workspaces and migration backups.
+    Gc {
+        #[arg(long)]
+        dry_run: bool,
+    },
+}

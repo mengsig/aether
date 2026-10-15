@@ -177,6 +177,8 @@ pub mod features {
     /// of `snapshot.created` names the memories it rendered.
     pub const MEMORY_CONTEXT: &str = "memory_context";
     /// Host evidence about memories a task saw, with append-only records and retractions.
+    /// Storage inventory and host-only filesystem garbage collection.
+    pub const STORAGE: &str = "storage";
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
 }
 

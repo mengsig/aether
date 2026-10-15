@@ -27,7 +27,12 @@ impl Runtime {
     }
 
     fn preview_retention_at(&self, at: Timestamp) -> Result<RetentionPreview> {
-        let days = self.models.config().retention.completed_run_days.get();
+        let days = self
+            .models
+            .config()
+            .storage
+            .event_history_days
+            .unwrap_or(self.models.config().retention.completed_run_days.get());
         let before = at - chrono::Duration::days(i64::from(days));
         let shadow = self.store.retention_snapshot()?;
         let gate = aether_store::WriteGate::new();
@@ -45,7 +50,7 @@ impl Runtime {
             history_payload_bytes: 0,
             pending_cleanup: Default::default(),
         };
-        for run in runs {
+        for run in runs.into_iter().filter(|_| days > 0) {
             let Some(mut preview) = shadow.preview_run_history(run, before)? else {
                 continue;
             };
@@ -115,7 +120,12 @@ impl Runtime {
         at: Timestamp,
         stop_on_shutdown: bool,
     ) -> Result<HistorySweep> {
-        let days = self.models.config().retention.completed_run_days.get();
+        let days = self
+            .models
+            .config()
+            .storage
+            .event_history_days
+            .unwrap_or(self.models.config().retention.completed_run_days.get());
         let before = at - chrono::Duration::days(i64::from(days));
         // This is only candidate discovery. Expiry re-reads every agent and
         // task under the write gate and checks durable references atomically.
@@ -127,7 +137,7 @@ impl Runtime {
             .map(|agent| agent.run)
             .collect();
         let mut report = HistorySweep::default();
-        for run in runs {
+        for run in runs.into_iter().filter(|_| days > 0) {
             if stop_on_shutdown && self.shutdown.is_cancelled() {
                 report.interrupted = true;
                 break;

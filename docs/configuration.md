@@ -184,3 +184,67 @@ push_hosts = []
 
 Unknown keys and values that cannot mean what they say are refused when the
 configuration loads.
+
+## Storage
+
+Filesystem maintenance runs in the background at startup and hourly. Inspect
+usage and each cleanup decision with `aether storage`, or use
+`aether storage gc --dry-run` before `aether storage gc`. These commands connect
+to an existing daemon. `--json` includes byte counts, scan-limit flags, and the
+last real sweep in this daemon process. Cleanup is host-only; paired remote
+clients cannot request deletion.
+
+```toml
+[storage]
+retention_days = 14
+# workspaces_days = 14
+# engine_sessions_days = 14
+# backups_days = 14
+# logs_days = 14
+# artifacts_days = 30
+# event_history_days = 7
+workspace_grace_seconds = 3600
+backups_keep = 3
+gc_interval_seconds = 3600
+# free_space_floor_bytes = 5368709120
+```
+
+Per-kind day overrides inherit `retention_days`, except artifacts and event
+history, which retain their existing `[artifacts]` and `[retention]` policies
+unless explicitly overridden here. Zero disables cleanup of that kind; log
+size bounds still apply. Day values must be integers from 0 through 65535;
+`backups_keep` and `gc_interval_seconds` must be positive. Unknown keys and
+invalid values fail configuration loading. A zero grace period is allowed.
+
+Eligible clean delegated workspaces are removed after the grace period, without
+waiting fourteen days. A live or resumable agent, integration journal, dirty
+files, or commits not saved on another source-repository ref protect the
+workspace regardless of age. GC rechecks admission under the runtime locks.
+Ignored files and paths it cannot safely inspect may also protect a workspace;
+retention never overrides the work-preservation checks. Inventory and cleanup
+are bounded per pass, so large directories may take several sweeps and byte
+counts marked partial are lower bounds.
+
+Migration backups keep **both** the newest `backups_keep` snapshots and every
+snapshot within the retention window. Unrecognized files are preserved. Logs
+retain their existing seven 16 MiB segment limit and gain age rotation and
+pruning under the same cross-process writer lock. Legacy logs remain untouched
+because old versions may still write them. Age maintenance runs when a log
+writer starts or writes; inactive streams remain bounded by size. See
+[log retention](log-retention.md).
+
+`free_space_floor_bytes` overrides the scheduler's low-disk floor. Unset keeps
+the existing default (the smaller of 5 GiB and 2% of the filesystem), or the
+configured `scheduler.min_free_disk_mib`. Zero disables the floor. New turns
+wait below the floor, and optional log writes wait in a bounded memory buffer;
+required recovery/database writes are still attempted.
+
+New native engine sessions get durable ownership records independent of
+completed-run history. **Engine session deletion is deferred in this release**:
+no Claude or Codex logs, including user sessions and pre-upgrade sessions, are
+deleted. Unknown engine log paths are left unknown, never inferred from a
+similar filename. A later release can prune proven-owned, final sessions under
+resume admission locks. Engine logs, protected workspaces, legacy logs, and
+explicitly disabled retention therefore remain possible sources of growth;
+this policy is not a hard disk quota. SQLite reuses expired history pages rather
+than necessarily shrinking its file.

@@ -6,6 +6,19 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### New
+
+- **Storage maintenance has a single configurable policy and visible decisions.**
+  `[storage]` defaults to fourteen-day filesystem retention, with per-kind
+  overrides, a one-hour grace for safely saved final delegated workspaces,
+  and the latest three migration backups protected. `aether storage` and
+  `aether storage gc --dry-run` show usage and reasons; the daemon sweeps at
+  startup and periodically. Dirty, live, resumable and journal-referenced
+  workspaces are protected. Logs gain age rotation and pause optional writes
+  below the configured disk floor. New engine sessions have durable ownership
+  records; deletion of Claude/Codex session logs is deferred, so these logs
+  remain a known source of growth.
+
 ### Fixed
 
 - **The daemon no longer churns the disk while agents work.** Reading a long

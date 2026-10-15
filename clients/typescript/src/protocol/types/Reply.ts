@@ -55,6 +55,11 @@ import type {
 /**
  * Tagged by `reply`.
  */
+export interface ReplyStorageReport {
+  "data": unknown;
+  "reply": "storage_report";
+}
+
 export interface ReplyRetentionPreview {
   "data": RetentionPreview;
   "reply": "retention_preview";
@@ -371,6 +376,7 @@ export interface ReplySubmissionResolved {
 }
 
 export type Reply =
+    ReplyStorageReport |
     ReplyRetentionPreview |
     ReplyGithubWatcher |
     ReplySchedule |

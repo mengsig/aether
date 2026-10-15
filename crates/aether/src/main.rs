@@ -203,6 +203,13 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             }
             Cmd::Serve { allow_remote } => cli::serve(socket, allow_remote).await,
             Cmd::Schema => cli::schema(),
+            Cmd::Storage { command, json } => {
+                let (gc, dry_run) = match command {
+                    Some(StorageCmd::Gc { dry_run }) => (true, dry_run),
+                    None => (false, true),
+                };
+                cli::storage(endpoint, gc, dry_run, json).await
+            }
             Cmd::Retention { command } => match command {
                 RetentionCmd::Preview { json } => cli::retention_preview(endpoint, json).await,
             },

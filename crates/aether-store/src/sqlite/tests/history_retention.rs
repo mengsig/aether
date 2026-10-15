@@ -4,6 +4,38 @@ use aether_core::task::TaskStatus;
 
 mod provenance;
 
+#[test]
+fn engine_session_ownership_survives_history_expiry_and_reopen() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let database = dir.path().join("store.sqlite");
+    let log = dir.path().join("native-session.jsonl");
+    std::fs::write(&log, "native log").expect("log");
+    let f = Fixture::on(SqliteStore::open(&database).expect("store"));
+    let record = crate::EngineSessionOwnership {
+        engine: "codex".into(),
+        session_id: "new-thread".into(),
+        agent_id: f.agent.id,
+        log_paths: vec![log.clone()],
+        created_at: f.agent.created_at,
+    };
+    f.mutate(Mutation::RecordEngineSessionOwnership(record.clone()));
+    assert!(matches!(
+        f.expire().expect("expiry"),
+        RunExpiry::Expired { .. }
+    ));
+    assert!(f.store.agent(f.agent.id).expect("agent").is_none());
+    drop(f);
+    let store = SqliteStore::open(database).expect("reopen");
+    assert_eq!(
+        store.engine_session_ownerships().expect("ownership"),
+        vec![record]
+    );
+    assert_eq!(
+        std::fs::read_to_string(log).expect("log remains"),
+        "native log"
+    );
+}
+
 struct Fixture {
     store: SqliteStore,
     agent: Agent,

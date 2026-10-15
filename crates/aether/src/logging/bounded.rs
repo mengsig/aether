@@ -1,8 +1,11 @@
-//! Size-bounded segments shared safely by all writers of one log stream.
+//! Size- and age-bounded segments shared safely by writers of one log stream.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+use aether_core::disk::DiskFloor;
 
 /// Records the disk refused, kept to write once it takes them: a full disk
 /// is when the log matters most and can be written least.
@@ -12,6 +15,8 @@ pub(super) struct BoundedLog {
     directory: PathBuf,
     segment_bytes: u64,
     segments: usize,
+    retention: Option<Duration>,
+    disk_floor: Option<DiskFloor>,
     reported_error: bool,
     /// Bytes accepted but not yet written, oldest first.
     backlog: Vec<u8>,
@@ -22,7 +27,18 @@ pub(super) struct BoundedLog {
 }
 
 impl BoundedLog {
+    #[cfg(test)]
     pub(super) fn new(directory: PathBuf, segment_bytes: u64, segments: usize) -> io::Result<Self> {
+        Self::with_policy(directory, segment_bytes, segments, 0, None)
+    }
+
+    pub(super) fn with_policy(
+        directory: PathBuf,
+        segment_bytes: u64,
+        segments: usize,
+        retention_days: u16,
+        disk_floor: Option<DiskFloor>,
+    ) -> io::Result<Self> {
         if segment_bytes == 0 || segments == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -43,6 +59,9 @@ impl BoundedLog {
             directory,
             segment_bytes,
             segments,
+            retention: (retention_days != 0)
+                .then(|| Duration::from_secs(u64::from(retention_days) * 24 * 60 * 60)),
+            disk_floor,
             reported_error: false,
             backlog: Vec::new(),
             backlog_bytes: BACKLOG_BYTES,
@@ -54,6 +73,7 @@ impl BoundedLog {
             private_existing(&writer.path(index))?;
         }
         writer.current()?;
+        writer.maintain(SystemTime::now())?;
         Ok(writer)
     }
 
@@ -98,7 +118,60 @@ impl BoundedLog {
         Ok(())
     }
 
+    fn maintain(&self, now: SystemTime) -> io::Result<()> {
+        let Some(retention) = self.retention else {
+            return Ok(());
+        };
+        let expired = |time| now.duration_since(time).is_ok_and(|age| age >= retention);
+        let file = self.current()?;
+        let metadata = file.metadata()?;
+        // Birth time bounds a busy segment's age. Filesystems without birth
+        // times can still rotate idle segments by their last modification.
+        let modified = metadata.modified()?;
+        let started = match metadata.created() {
+            Ok(created) => created.min(modified),
+            Err(error) if error.kind() == io::ErrorKind::Unsupported => modified,
+            Err(error) => return Err(error),
+        };
+        if metadata.len() > 0 && expired(started) {
+            drop(file);
+            self.rotate()?;
+            self.current()?;
+        }
+        // Validate every candidate before deleting any. Never follow links or
+        // infer ownership from an age or a similar-looking legacy filename.
+        let stale = (1..self.segments)
+            .map(|index| {
+                let path = self.path(index);
+                match open_private_file(&path, OpenOptions::new().read(true)) {
+                    Ok(file) => Ok(expired(file.metadata()?.modified()?).then_some(path)),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+                    Err(error) => Err(error),
+                }
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        for path in stale.into_iter().flatten() {
+            std::fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+
+    fn check_disk_floor(&self) -> io::Result<()> {
+        let Some(floor) = self.disk_floor else {
+            return Ok(());
+        };
+        let available = fs4::available_space(&self.directory)?;
+        let floor_bytes = floor.bytes(fs4::total_space(&self.directory)?);
+        if available < floor_bytes {
+            return Err(io::Error::other(format!(
+                "log disk space below floor: {available} bytes available, {floor_bytes} required"
+            )));
+        }
+        Ok(())
+    }
+
     fn write_locked(&self, bytes: &[u8]) -> io::Result<usize> {
+        self.check_disk_floor()?;
         let mut file = self.current()?;
         let mut size = file.metadata()?.len();
         if size >= self.segment_bytes {
@@ -118,6 +191,7 @@ impl BoundedLog {
             return Ok(());
         }
         let _lock = self.lock()?;
+        self.maintain(SystemTime::now())?;
         self.write_backlog()?;
         if self.dropped > 0 {
             let separator = if self.drop_marker_needs_newline {
@@ -181,6 +255,7 @@ impl Write for BoundedLog {
         }
         let result = self.drain().and_then(|()| {
             let _lock = self.lock()?;
+            self.maintain(SystemTime::now())?;
             self.write_locked(bytes)
         });
         self.report(result)
@@ -193,6 +268,7 @@ impl Write for BoundedLog {
         let mut written = 0;
         let result = self.drain().and_then(|()| {
             let _lock = self.lock()?;
+            self.maintain(SystemTime::now())?;
             while written < bytes.len() {
                 let n = match self.write_locked(&bytes[written..]) {
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,

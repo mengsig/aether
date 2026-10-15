@@ -264,6 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         session: None,
         session_usage: Usage::default(),
         new_session_id: "sess-1".into(),
+        session_recorder: None,
         model: Some("demo".into()),
         effort: None,
         cwd: std::env::current_dir()?,

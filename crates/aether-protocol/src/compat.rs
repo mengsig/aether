@@ -384,6 +384,8 @@ mod tests {
             ("shutdown", &[]),
             ("start_pairing", &[]),
             ("status", &[]),
+            ("storage_gc", &["dry_run"]),
+            ("storage_status", &[]),
             ("subscribe", &["deltas", "query"]),
             ("subscribe_push", &["subscription"]),
             ("sync_repository_knowledge", &[]),

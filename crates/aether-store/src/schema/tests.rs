@@ -834,7 +834,10 @@ fn v22_feedback_migration_preserves_v21_memories_and_saves_a_readable_backup() {
     assert_eq!(version(&v21), 21);
     drop(v21);
     let store = crate::SqliteStore::open(&path).unwrap();
-    assert_eq!(store.meta("schema_version").unwrap(), Some("22".into()));
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some(SCHEMA_VERSION.to_string())
+    );
     assert_eq!(store.memory(record.id).unwrap(), Some(record.clone()));
     let connection = Connection::open(&path).unwrap();
     assert_feedback_columns(&connection);
@@ -855,7 +858,7 @@ fn v22_feedback_migration_preserves_v21_memories_and_saves_a_readable_backup() {
     assert!(matches!(
         refuse_newer_store(current_version(&conn).unwrap(), 21),
         Err(StoreError::SchemaTooNew {
-            found: 22,
+            found: SCHEMA_VERSION,
             supported: 21
         })
     ));
@@ -869,7 +872,7 @@ fn v22_feedback_migration_preserves_v21_memories_and_saves_a_readable_backup() {
             .file_name()
             .unwrap()
             .to_string_lossy()
-            .starts_with("schema-21-before-22-")
+            .starts_with(&format!("schema-21-before-{SCHEMA_VERSION}-"))
     );
     assert_feedback_backup(&backups[0], &record);
 }
@@ -907,7 +910,7 @@ fn assert_feedback_columns(conn: &Connection) {
 fn fresh_v22_feedback_requires_valid_ranking_columns() {
     let conn = Connection::open_in_memory().unwrap();
     migrate(&conn).unwrap();
-    assert_eq!(version(&conn), 22);
+    assert_eq!(version(&conn), SCHEMA_VERSION);
     assert_feedback_columns(&conn);
     let sql = "INSERT INTO memory_feedback
         (id, memory_id, task_id, verdict, evidence, created_at, body)
