@@ -401,21 +401,24 @@ cannot cover missing tokens from another model. Tokens absent from both
 receipts still retain their stream-derived charge; the agent total can then
 exceed the latest dollar receipt. A parked or interrupted run without proven
 closing coverage keeps its cost gap even when every observed token has a price.
-Missing or invalid dollars, an all-zero crash receipt, or a missing session
-baseline leave an `Unreported` cost gap even when every streamed token has a
-price. The turn keeps a floor: the stream's dollars plus base-rate prices for
-closing tokens that never streamed, including turns with no streamed usage. A later usable
-cumulative receipt can cover that gap when the invocation's starting baseline
-is known. A missing baseline stays unknown throughout the run, but a nonzero
-reading is persisted for the next resume. A nonzero receipt with lower
-dollars, lower model counters, or a missing model has unknown cost, as do
-later receipts in the same run, and becomes the baseline the next run bills
-its increase from. An all-zero receipt keeps the previous baseline without
-persisting a new one. It proves a complete $0 cost only when its dollars,
-model counters and per-turn usage are all zero, the invocation streamed no
-tokens, and the session's starting baseline is known to be zero (a fresh
-session or a different session id) without a reset. Every other all-zero
-receipt keeps the gap.
+An unusable receipt (missing or invalid dollars, all-zero counters and
+cost, or a missing or reset baseline) opens an `Unreported` cost gap only
+when the invocation streamed usage or the receipt has nonzero per-turn
+usage. The turn keeps a floor: the stream's dollars plus base-rate prices
+for closing tokens that never streamed. Without that evidence, receipt
+handling is unchanged; the runtime decides any gap from its own evidence
+of work. A later usable cumulative receipt can cover the gap when the
+invocation's starting baseline is known.
+
+An all-zero receipt keeps the previous baseline without persisting a new
+one. A missing baseline stays unknown throughout the run, but a nonzero
+reading is persisted for the next resume. After a fresh-session overload
+with an all-zero receipt, retrying the same session still has no baseline;
+its first nonzero receipt leaves an incomplete floor and establishes the
+baseline for the next resume. A nonzero receipt with lower dollars, lower
+model counters, or a missing model has unknown cost, as do later receipts
+in the same run, and becomes the baseline the next run bills its increase
+from.
 After upgrading, a record without per-model counters gets no coverage on its
 first resume, so the streamed shortfall may be priced once more per session.
 A receipt without `modelUsage` keeps the dollars but drops the per-model

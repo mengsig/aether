@@ -449,18 +449,11 @@ fn parses_errors_unknown_lines_and_rate_limits() {
     let mut st = ParseState::default();
     let failed = r#"{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"s","usage":{}}"#;
     let events = parse_line(failed, &mut st);
-    let [
-        EngineEvent::UsageDelta { usage },
-        EngineEvent::Done(outcome),
-    ] = &events[..]
-    else {
-        panic!("expected gap then result: {events:?}");
+    let [EngineEvent::Done(outcome)] = &events[..] else {
+        panic!("expected result without a gap: {events:?}");
     };
     assert!(outcome.is_error && outcome.error.as_deref() == Some("error_max_turns"));
-    assert_eq!(
-        usage.cost_gap,
-        Some(aether_core::model::CostGap::Unreported)
-    );
+    assert_eq!(outcome.cost_usd, None);
     assert!(matches!(
         parse_line("garbage", &mut st)[0],
         EngineEvent::Note(_)

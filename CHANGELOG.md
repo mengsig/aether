@@ -8,12 +8,11 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
-- **Unusable Claude Code receipts keep a cost floor.** Missing or invalid
-  dollars, all-zero crash receipts, and missing session baselines now leave
-  the turn's cost incomplete even when every streamed token has a price.
-  Closing tokens that never streamed add their base-rate price to the floor.
-  A receipt that proves $0 stays complete, and blank receipts still trigger
-  unanswered-prompt recovery and resend the task on retry.
+- **Unusable Claude Code receipts keep a cost floor when spend is observed.**
+  Missing or invalid dollars, all-zero receipts, and missing or reset
+  baselines leave an `Unreported` gap when the invocation streams usage or
+  the receipt reports nonzero per-turn usage. Model-less streams count too.
+  Receipts without spend evidence keep their previous recovery behavior.
 
 ## 1.0.9
 

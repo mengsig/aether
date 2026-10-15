@@ -25,6 +25,69 @@ fn stream_request() -> Value {
         "content":[], "usage":{"input_tokens":100,"output_tokens":20}}})
 }
 
+fn zero_closing() -> Value {
+    let mut receipt = closing(json!(0.0));
+    receipt["usage"] = json!({"input_tokens":0,"output_tokens":0});
+    receipt
+}
+
+#[tokio::test]
+async fn model_less_stream_usage_survives_an_all_zero_receipt() {
+    let (runtime, _dir) = test_runtime(|_| {}).await;
+    let mut ctx = started_agent_ctx(&runtime).await;
+    let snapshot = usage::bare_snapshot(ctx.agent.id);
+    let resolved = runtime.models.resolve(&snapshot.model).unwrap();
+    let mut state = StreamState::new(pricing(), resolved);
+    let mut parser = ParseState::default();
+    let delta = json!({"type":"stream_event","event":{"type":"message_delta",
+        "usage":{"input_tokens":100,"output_tokens":20}}});
+    for event in parse_line(&delta.to_string(), &mut parser) {
+        handle_event(&runtime, &mut ctx, &snapshot, event, &mut state).unwrap();
+    }
+    assert_eq!(state.stream_usage.cost_usd, 140.0);
+    let outcome = read_closing(&runtime, &mut ctx, &mut state, &mut parser, &zero_closing());
+    let usage = settle_state(&runtime, &mut ctx, state, outcome);
+    assert_eq!(usage.cost_usd, 140.0);
+    assert_eq!((usage.input_tokens, usage.output_tokens), (100, 20));
+    assert!(!usage.cost_complete);
+    assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_all_zero_receipt_without_work_keeps_pre_pr_settlement() {
+    let events = parse_line(&zero_closing().to_string(), &mut ParseState::default());
+    assert!(
+        matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::Done(done)]
+        if done.cost_usd.is_none() && done.cost_usage.is_none())
+    );
+    let (runtime, _dir) = test_runtime(|_| {}).await;
+    let usage = settle(&runtime, ParseState::default(), &[zero_closing()], false).await;
+    assert_eq!(usage, Usage::default());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn runtime_work_evidence_still_marks_a_gap_without_usage() {
+    let (runtime, _dir) = test_runtime(|_| {}).await;
+    for counters in [Value::Null, json!({"input_tokens":"unknown"}), json!({})] {
+        let mut receipt = zero_closing();
+        receipt["result"] = json!("Built.");
+        receipt["usage"] = counters;
+        let events = parse_line(&receipt.to_string(), &mut ParseState::default());
+        assert!(matches!(
+            &events[..],
+            [EngineEvent::ProtocolNote(_), EngineEvent::Done(_)]
+        ));
+        let usage = settle(&runtime, ParseState::default(), &[receipt], false).await;
+        assert_eq!(usage.total_tokens(), 0);
+        assert_eq!(usage.cost_usd, 0.0);
+        assert!(!usage.cost_complete);
+        assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
+    }
+    runtime.shutdown().await;
+}
+
 fn read_closing(
     runtime: &Arc<Runtime>,
     ctx: &mut TurnCtx,
