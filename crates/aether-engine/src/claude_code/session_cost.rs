@@ -74,9 +74,7 @@ impl SessionCost {
         let mut total = models.as_ref().map(sum_counters).unwrap_or_default();
         total.set_cost(Some(dollars));
         if dollars == 0.0 && total.total_tokens() == 0 && total.reasoning_tokens.unwrap_or(0) == 0 {
-            return unknown_receipt(Some(
-                "Claude session receipt is zeroed; this invocation's billed cost is unknown",
-            ));
+            return self.zeroed_receipt(value, models.as_ref(), streamed);
         }
         let accepted = self.accepts(session, total, models.as_ref());
         let baseline = self.baseline(session).filter(|_| accepted && !self.reset);
@@ -102,6 +100,51 @@ impl SessionCost {
         debug_assert!(receipt.cost_usd.is_none_or(|cost| cost >= 0.0));
         debug_assert!(receipt.cost_usage.is_none() || receipt.cost_usd.is_some());
         receipt
+    }
+
+    fn zeroed_receipt(
+        &self,
+        value: &Value,
+        models: Option<&ModelUsage>,
+        streamed: &ModelUsage,
+    ) -> Receipt {
+        debug_assert_eq!(
+            value.get("total_cost_usd").and_then(Value::as_f64),
+            Some(0.0)
+        );
+        debug_assert!(models.is_none_or(|models| {
+            let total = sum_counters(models);
+            total.total_tokens() == 0 && total.reasoning_tokens.unwrap_or(0) == 0
+        }));
+        let session = value.get("session_id").and_then(Value::as_str);
+        let counters_known = value
+            .get("modelUsage")
+            .and_then(Value::as_object)
+            .is_some_and(|raw| {
+                (raw.is_empty() || models.is_some())
+                    && raw.values().all(|model| {
+                        model
+                            .get("thinkingTokens")
+                            .is_none_or(|counter| counter.as_u64() == Some(0))
+                    })
+            });
+        if self.reset
+            || self.baseline(session) != Some(Usage::default())
+            || !counters_known
+            || streamed
+                .values()
+                .any(|usage| usage.total_tokens() > 0 || usage.reasoning_tokens.unwrap_or(0) > 0)
+            || !turn_usage_is_zero(value)
+        {
+            return unknown_receipt(Some(
+                "Claude session receipt is zeroed; this invocation's billed cost is unknown",
+            ));
+        }
+        Receipt {
+            cost_usd: Some(0.0),
+            cost_usage: None,
+            events: Vec::new(),
+        }
     }
 
     fn adopt_reset(&mut self, session: Option<&str>, total: Usage, models: Option<ModelUsage>) {
@@ -214,6 +257,41 @@ impl SessionCost {
         }
         Some(coverage)
     }
+}
+
+fn turn_usage_is_zero(value: &Value) -> bool {
+    let Some(usage) = value.get("usage").filter(|usage| usage.is_object()) else {
+        return false;
+    };
+    let counters_zero = [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ]
+    .iter()
+    .all(|field| {
+        usage
+            .get(field)
+            .is_none_or(|counter| counter.as_u64() == Some(0))
+    });
+    let reasoning_zero = usage.get("output_tokens_details").is_none_or(|details| {
+        details.is_object()
+            && details
+                .get("thinking_tokens")
+                .is_none_or(|counter| counter.as_u64() == Some(0))
+    });
+    let writes_zero = usage.get("cache_creation").is_none_or(|split| {
+        split.is_object()
+            && ["ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"]
+                .iter()
+                .all(|field| {
+                    split
+                        .get(field)
+                        .is_none_or(|counter| counter.as_u64() == Some(0))
+                })
+    });
+    counters_zero && reasoning_zero && writes_zero
 }
 
 fn unknown_receipt(note: Option<&str>) -> Receipt {

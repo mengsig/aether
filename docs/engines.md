@@ -401,17 +401,21 @@ cannot cover missing tokens from another model. Tokens absent from both
 receipts still retain their stream-derived charge; the agent total can then
 exceed the latest dollar receipt. A parked or interrupted run without proven
 closing coverage keeps its cost gap even when every observed token has a price.
-An all-zero crash receipt keeps the previous baseline. Missing or invalid
-dollars, an all-zero crash receipt, or a missing session baseline leave an
-`Unreported` cost gap even when every streamed token has a price. The turn
-keeps a floor: the stream's dollars plus base-rate prices for closing tokens
-that never streamed, including turns with no streamed usage. A later usable
+Missing or invalid dollars, an all-zero crash receipt, or a missing session
+baseline leave an `Unreported` cost gap even when every streamed token has a
+price. The turn keeps a floor: the stream's dollars plus base-rate prices for
+closing tokens that never streamed, including turns with no streamed usage. A later usable
 cumulative receipt can cover that gap when the invocation's starting baseline
 is known. A missing baseline stays unknown throughout the run, but a nonzero
 reading is persisted for the next resume. A nonzero receipt with lower
 dollars, lower model counters, or a missing model has unknown cost, as do
 later receipts in the same run, and becomes the baseline the next run bills
-its increase from.
+its increase from. An all-zero receipt keeps the previous baseline without
+persisting a new one. It proves a complete $0 cost only when its dollars,
+model counters and per-turn usage are all zero, the invocation streamed no
+tokens, and the session's starting baseline is known to be zero (a fresh
+session or a different session id) without a reset. Every other all-zero
+receipt keeps the gap.
 After upgrading, a record without per-model counters gets no coverage on its
 first resume, so the streamed shortfall may be priced once more per session.
 A receipt without `modelUsage` keeps the dollars but drops the per-model

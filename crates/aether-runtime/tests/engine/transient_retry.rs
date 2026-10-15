@@ -339,23 +339,28 @@ async fn resume_exhaustion_never_restarts_the_session() {
 async fn a_claude_zero_cost_overload_receipt_is_metadata_and_can_retry() {
     let events = aether_engine::claude_code::parse_line(
         &serde_json::json!({"type":"result", "subtype":"error_during_execution", "is_error":true,
-            "result":"Model is overloaded", "session_id":"empty", "total_cost_usd":0.0, "usage":{}})
+            "result":"API Error: 529 Model is overloaded", "session_id":"empty", "total_cost_usd":0.0,
+            "modelUsage":{}, "usage":{"input_tokens":0,"output_tokens":0}})
         .to_string(),
         &mut aether_engine::claude_code::ParseState::default(),
     );
-    assert!(
-        matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::UsageDelta { usage },
-            EngineEvent::Done(outcome)]
-        if outcome.cost_usd.is_none() && outcome.cost_usage.is_none()
-            && usage.total_tokens() == 0 && !usage.cost_complete
-            && usage.cost_gap == Some(aether_core::model::CostGap::Unreported))
-    );
+    let proves_zero = matches!(&events[..], [EngineEvent::Done(outcome)]
+        if outcome.cost_usd == Some(0.0) && outcome.usage.cost_complete);
     assert!(
         !events
             .iter()
             .any(|event| matches!(event, EngineEvent::SessionUsage { .. }))
     );
-    let (h, engine) = queued(vec![events, answered("recovered")]).await;
+    let recovered = aether_engine::claude_code::parse_line(
+        &serde_json::json!({"type":"result", "subtype":"success", "result":"recovered",
+            "session_id":"paid", "total_cost_usd":0.25,
+            "modelUsage":{"sonnet":{"inputTokens":10,"outputTokens":2,
+                "cacheReadInputTokens":0,"cacheCreationInputTokens":0}},
+            "usage":{"input_tokens":10,"output_tokens":2}})
+        .to_string(),
+        &mut aether_engine::claude_code::ParseState::default(),
+    );
+    let (h, engine) = queued(vec![events, recovered]).await;
     let id = chat_agent(&h);
     engine_turn(&h, id, "go").await;
     assert_eq!(engine.prompts.lock().unwrap().len(), 2);
@@ -363,6 +368,12 @@ async fn a_claude_zero_cost_overload_receipt_is_metadata_and_can_retry() {
         failures(&h, id),
         [(aether_core::model::ModelErrorClass::Overloaded, true)]
     );
+    let usage = h.store.agent(id).unwrap().unwrap().stats.usage;
+    assert_eq!(usage.cost_usd, 0.25);
+    assert_eq!((usage.input_tokens, usage.output_tokens), (10, 2));
+    assert!(usage.cost_complete);
+    assert_eq!(usage.cost_gap, None);
+    assert!(proves_zero, "the rejected request must prove zero spend");
     h.runtime.shutdown().await;
 }
 

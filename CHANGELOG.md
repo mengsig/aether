@@ -12,6 +12,8 @@ release is also the text of its GitHub release.
   dollars, all-zero crash receipts, and missing session baselines now leave
   the turn's cost incomplete even when every streamed token has a price.
   Closing tokens that never streamed add their base-rate price to the floor.
+  A receipt that proves $0 stays complete, and blank receipts still trigger
+  unanswered-prompt recovery and resend the task on retry.
 
 ## 1.0.9
 

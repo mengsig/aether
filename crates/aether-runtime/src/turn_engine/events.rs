@@ -277,7 +277,7 @@ pub(super) fn handle_event(
                 && let Some(repriced) =
                     TurnPricing::of_session(runtime, &state.configured, reported)
             {
-                if state.usage_seen {
+                if state.usage_seen && !super::driver::is_cost_gap_only(state.stream_usage) {
                     tracing::warn!(
                         agent = %ctx.agent.id,
                         %reported,

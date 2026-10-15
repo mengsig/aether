@@ -209,6 +209,58 @@ fn resumed_parser(prior: Usage) -> ParseState {
 }
 
 #[tokio::test]
+async fn a_session_after_only_a_cost_gap_can_price_unstreamed_closing_tokens() {
+    let (runtime, _dir) = test_runtime(|_| {}).await;
+    let mut ctx = started_agent_ctx(&runtime).await;
+    let snapshot = usage::bare_snapshot(ctx.agent.id);
+    let model = aether_core::model::ModelRef::new("claude-code", "default");
+    let resolved = runtime.models.resolve(&model).unwrap();
+    let mut state = StreamState::new(TurnPricing::of(&runtime, &resolved), resolved);
+    assert!(state.pricing.billed.is_none());
+    let mut parser = ParseState::default();
+    read_closing(
+        &runtime,
+        &mut ctx,
+        &mut state,
+        &mut parser,
+        &closing(Value::Null),
+    );
+    let before = state.usage_before;
+    assert!(state.usage_seen && before.is_some());
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        EngineEvent::Session {
+            id: "s".into(),
+            model: Some("claude-fable-5-1".into()),
+            tools: Vec::new(),
+        },
+        &mut state,
+    )
+    .unwrap();
+    let rate = state
+        .pricing
+        .billed
+        .expect("a gap alone must not block session pricing");
+    assert_eq!(state.usage_before, before);
+    let outcome = read_closing(
+        &runtime,
+        &mut ctx,
+        &mut state,
+        &mut parser,
+        &closing(Value::Null),
+    );
+    let expected = rate.cost_of(&outcome.usage);
+    let usage = settle_state(&runtime, &mut ctx, state, outcome);
+    assert_eq!(usage.cost_usd, expected);
+    assert!(expected > 0.0);
+    assert!(!usage.cost_complete);
+    assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn missing_baseline_keeps_later_receipts_as_floors_in_the_same_run() {
     let (runtime, _dir) = test_runtime(|_| {}).await;
     for prior in [

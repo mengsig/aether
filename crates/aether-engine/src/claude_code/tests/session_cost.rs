@@ -1,6 +1,9 @@
 use super::*;
 use serde_json::json;
 
+#[path = "session_cost_zero.rs"]
+mod zero;
+
 fn receipt(session: &str, cost: f64) -> Value {
     json!({"session_id": session, "total_cost_usd": cost,
         "modelUsage": {"sonnet": {"inputTokens": 10, "outputTokens": 384,

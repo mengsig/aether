@@ -494,11 +494,10 @@ pub(crate) async fn execute(
     {
         run.budget_stop = Some(crossed);
     }
+    let unanswered = run.unanswered();
     let DriveResult {
         outcome,
         park,
-        usage_seen,
-        invoked,
         ran_tools,
         budget_stop,
         uncommitted,
@@ -622,8 +621,7 @@ pub(crate) async fn execute(
     }
     // Nothing said and nothing billed: the model never saw the prompt. The
     // blank reply below then counts as a silent turn, never as an answer.
-    let blank = outcome.text.as_deref().is_none_or(|t| t.trim().is_empty());
-    if blank && !delivered && !invoked && !usage_seen && outcome.usage.total_tokens() == 0 {
+    if unanswered && !delivered {
         record_unanswered_prompt(runtime, ctx, engine.kind(), &snapshot)?;
     }
     // `effects.next` was taken above (`next`) and never reassigned since, so

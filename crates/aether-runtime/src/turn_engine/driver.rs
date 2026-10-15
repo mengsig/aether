@@ -78,7 +78,7 @@ fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
 }
 
 /// An empty unreported-cost delta establishes reconciliation without model activity.
-fn is_cost_gap_only(usage: Usage) -> bool {
+pub(super) fn is_cost_gap_only(usage: Usage) -> bool {
     debug_assert!(usage.cost_usd.is_finite() && usage.cost_usd >= 0.0);
     debug_assert!(
         usage
