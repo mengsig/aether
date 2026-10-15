@@ -14,6 +14,7 @@ export interface OperatorMemorySpec {
   "confidence"?: number | null;
   "importance"?: number | null;
   "kind": MemoryKind;
+  "proposed"?: boolean;
   "scope": OperatorMemoryScope;
   "supersedes"?: MemoryId | null;
   "tags"?: Array<string>;

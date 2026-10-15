@@ -577,6 +577,12 @@ pub(super) async fn dispatch_authorized(
             let result = blocking(move || rt.create_memory_keyed(spec, by, submission)).await?;
             Ok(Reply::Memory(result.map_err(map_err)?))
         }
+        Command::AcceptMemory { id, reason } => Ok(Reply::Memory(
+            rt.accept_memory(id, reason, by).map_err(map_err)?,
+        )),
+        Command::RejectMemory { id, reason } => Ok(Reply::Memory(
+            rt.reject_memory(id, reason, by).map_err(map_err)?,
+        )),
         Command::ForgetMemory { id, reason } => Ok(Reply::Memory(
             rt.forget_memory(id, reason, by).map_err(map_err)?,
         )),

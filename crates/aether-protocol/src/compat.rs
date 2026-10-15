@@ -292,6 +292,7 @@ mod tests {
     fn no_command_requires_a_field_an_older_client_would_not_send() {
         // (cmd tag, the fields the wire requires beyond `cmd` itself)
         const REQUIRED: &[(&str, &[&str])] = &[
+            ("accept_memory", &["id"]),
             ("add_approval_rule", &["decision", "match", "scope"]),
             ("alias_repository", &["alias"]),
             ("archive", &["target"]),
@@ -362,6 +363,7 @@ mod tests {
             ("read_artifact", &["id", "max_bytes"]),
             ("replay", &["agent"]),
             ("reply_to_question", &["content", "question_seq", "to"]),
+            ("reject_memory", &["id", "reason"]),
             ("resolve_approval", &["decision", "id"]),
             ("resolve_submission", &["command"]),
             ("restart", &["agent"]),
@@ -832,5 +834,71 @@ mod tests {
             real["nested"][0],
             serde_json::json!({"type": "text", "text": "[image: shot.png, 1.2 MB]"})
         );
+    }
+}
+
+#[cfg(test)]
+mod proposal_event_tests {
+    use super::*;
+    use aether_core::{
+        event::{Actor, Event, EventDraft, EventKind},
+        id::{EventId, MemoryId},
+        time::now,
+    };
+
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "type")]
+    enum BeforeProposals {
+        #[serde(rename = "memory.accepted")]
+        Accepted { memory: MemoryId },
+        #[serde(rename = "custom")]
+        Custom { name: String, payload: Value },
+    }
+
+    #[test]
+    fn proposal_events_keep_shapes_that_older_subscribers_can_decode() {
+        let id = MemoryId::new();
+        let kinds = [
+            EventKind::Custom {
+                name: "memory.proposed".into(),
+                payload: serde_json::json!({"memory":id}),
+            },
+            EventKind::MemoryAccepted {
+                memory: id,
+                reason: Some("Verified".into()),
+            },
+            EventKind::Custom {
+                name: "memory.proposal_rejected".into(),
+                payload: serde_json::json!({"memory":id,"reason":"Unverified"}),
+            },
+        ];
+        for kind in kinds {
+            let event = Event::from_draft(
+                EventDraft::new(Actor::user(), kind),
+                EventId::new(),
+                1,
+                now(),
+            );
+            let frame = ServerFrame::Event { sub: 1, event };
+            for version in [MIN_PROTOCOL_VERSION, PROTOCOL_VERSION] {
+                let encoded = encode_for(version, &frame).unwrap();
+                assert_eq!(crate::decode::<ServerFrame>(&encoded).unwrap(), frame);
+                let wire: Value = serde_json::from_str(&encoded).unwrap();
+                match serde_json::from_value::<BeforeProposals>(wire["event"]["kind"].clone())
+                    .unwrap()
+                {
+                    BeforeProposals::Accepted { memory } => assert_eq!(memory, id),
+                    BeforeProposals::Custom { name, payload } => {
+                        assert!(name.starts_with("memory.propos"));
+                        assert_eq!(payload["memory"], id.to_string());
+                    }
+                }
+            }
+        }
+        let legacy = serde_json::json!({"type":"memory.accepted","memory":id});
+        assert!(matches!(
+            serde_json::from_value::<EventKind>(legacy).unwrap(),
+            EventKind::MemoryAccepted { reason: None, .. }
+        ));
     }
 }

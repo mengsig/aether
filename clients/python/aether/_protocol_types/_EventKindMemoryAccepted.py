@@ -8,4 +8,5 @@ from .. import protocol as _protocol
 
 class EventKindMemoryAccepted(TypedDict, total=False):
     memory: _protocol.MemoryId
+    reason: str | None  # optional
     type: Literal["memory.accepted"]

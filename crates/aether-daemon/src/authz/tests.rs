@@ -218,3 +218,39 @@ fn submission_namespaces_follow_device_ids_not_connection_or_name() {
     assert_eq!(changed.key, receipt.key);
     assert_ne!(changed.fingerprint, receipt.fingerprint);
 }
+
+#[test]
+fn memory_proposal_authz_requires_host_authority_for_review_and_listing() {
+    let id = aether_core::id::MemoryId::new();
+    let spec = serde_json::from_value(
+        serde_json::json!({"text":"Review this lesson", "kind":"lesson",
+        "scope":{"scope":"global"}, "proposed":true}),
+    )
+    .unwrap();
+    let query = serde_json::from_value(serde_json::json!({"proposed":true})).unwrap();
+    let commands = [
+        Command::CreateMemory {
+            spec,
+            idempotency_key: None,
+        },
+        Command::AcceptMemory { id, reason: None },
+        Command::RejectMemory {
+            id,
+            reason: "Insufficient evidence".into(),
+        },
+        Command::Memories { query },
+    ];
+    for command in commands {
+        assert_eq!(command.access(), Access::HostOnly);
+        assert!(AuthContext::Local.authorize(&command).is_ok());
+        assert!(AuthContext::Token.authorize(&command).is_ok());
+        for role in [DeviceRole::Operator, DeviceRole::Observer] {
+            assert_eq!(
+                code(&device(role), &command),
+                Some(ErrorCode::Forbidden),
+                "{}",
+                command.name()
+            );
+        }
+    }
+}

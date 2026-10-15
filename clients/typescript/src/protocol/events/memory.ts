@@ -14,6 +14,7 @@ export interface EventKindMemoryCandidate {
 
 export interface EventKindMemoryAccepted {
   "memory": MemoryId;
+  "reason"?: string | null;
   "type": "memory.accepted";
 }
 
@@ -52,5 +53,6 @@ export interface EventKindMemoryPinned {
 export interface EventKindMemorySuperseded {
   "new": MemoryId;
   "old": MemoryId;
+  "reason"?: string | null;
   "type": "memory.superseded";
 }

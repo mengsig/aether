@@ -972,3 +972,39 @@ async fn dropping_a_claimed_subscription_outside_the_runtime_unsubscribes() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn memory_proposals_are_refused_without_the_feature_before_sending() {
+    let (transport, peer) = Transport::memory(16);
+    let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = sent.clone();
+    let _daemon = fake_daemon(peer, move |_, _| {
+        seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { true })
+    });
+    let client = Client::open(transport).await.unwrap();
+    let spec = serde_json::from_value(
+        serde_json::json!({"text":"A durable lesson", "kind":"lesson",
+        "scope":{"scope":"global"},"proposed":true}),
+    )
+    .unwrap();
+    assert!(matches!(
+        client.create_memory(spec).await,
+        Err(ClientError::Incompatible(_))
+    ));
+    let id = aether_core::id::MemoryId::new();
+    assert!(matches!(
+        client.accept_memory(id, None).await,
+        Err(ClientError::Incompatible(_))
+    ));
+    assert!(matches!(
+        client.reject_memory(id, "No evidence".into()).await,
+        Err(ClientError::Incompatible(_))
+    ));
+    let query = serde_json::from_value(serde_json::json!({"proposed":true})).unwrap();
+    assert!(matches!(
+        client.memories(query).await,
+        Err(ClientError::Incompatible(_))
+    ));
+    assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
+}

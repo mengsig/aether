@@ -417,12 +417,20 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             Cmd::Set { agent, knobs, json } => cli::set(endpoint, agent, knobs, json).await,
             Cmd::Compact { agent, json } => cli::compact(endpoint, agent, json).await,
             Cmd::Memory { command } => match command {
+                MemoryCmd::Add { memory, json } => cli::memory_add(endpoint, memory, json).await,
+                MemoryCmd::Accept { id, reason, json } => {
+                    cli::memory_accept(endpoint, id, reason, json).await
+                }
+                MemoryCmd::Reject { id, reason, json } => {
+                    cli::memory_reject(endpoint, id, reason, json).await
+                }
                 MemoryCmd::List {
                     scope,
                     text,
                     tag,
                     recorded_by,
                     all,
+                    proposed,
                     limit,
                     json,
                 } => {
@@ -432,6 +440,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                         tag,
                         recorded_by,
                         all,
+                        proposed,
                         limit,
                     };
                     cli::memory_list(endpoint, filter, json).await

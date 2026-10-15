@@ -13,6 +13,7 @@ class OperatorMemorySpec(TypedDict, total=False):
     confidence: float | None  # optional
     importance: float | None  # optional
     kind: _protocol.MemoryKind
+    proposed: bool  # optional
     scope: _protocol.OperatorMemoryScope
     supersedes: _protocol.MemoryId | None  # optional
     tags: list[str]  # optional

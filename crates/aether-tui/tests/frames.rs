@@ -234,6 +234,8 @@ fn memory_records() -> Vec<aether_core::memory::MemoryRecord> {
         superseded_by: None,
         created_at: aether_core::time::now(),
         last_retrieved_at: None,
+        proposed_at: None,
+        accepted_at: None,
         retrieval_count: 0,
         pinned: false,
         forgotten_at: None,

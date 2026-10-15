@@ -558,3 +558,59 @@ fn event_query_child_types_reach_the_store_and_older_daemons_ignore_them() {
     let query: EventQuery = serde_json::from_value(newer).unwrap();
     assert_eq!(query, EventQuery::default());
 }
+
+#[test]
+fn memory_proposal_commands_round_trip_and_legacy_requests_stay_immediate() {
+    use serde_json::json;
+    let id = "mem_01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    let commands = [
+        json!({"cmd":"create_memory", "spec": {"text":"A durable build lesson", "kind":"lesson", "scope":{"scope":"global"}, "proposed":true, "supersedes":id}}),
+        json!({"cmd":"accept_memory", "id":id, "reason":"Repeated successful builds"}),
+        json!({"cmd":"reject_memory", "id":id, "reason":"Not enough evidence"}),
+        json!({"cmd":"memories", "query":{"proposed":true,"include_forgotten":true}}),
+    ];
+    for wire in commands {
+        let command: Command = serde_json::from_value(wire).unwrap();
+        let encoded = serde_json::to_string(&command).unwrap();
+        assert_eq!(serde_json::from_str::<Command>(&encoded).unwrap(), command);
+        assert_eq!(command.access(), Access::HostOnly);
+    }
+    let legacy: Command = serde_json::from_value(json!({"cmd":"create_memory", "spec":{
+        "text":"A durable build fact", "kind":"fact", "scope":{"scope":"global"}}}))
+    .unwrap();
+    assert!(matches!(legacy, Command::CreateMemory { ref spec, .. } if !spec.proposed));
+    assert_eq!(legacy.access(), Access::Operate);
+    let query: MemoryQuerySpec = serde_json::from_str("{}").unwrap();
+    assert!(!query.proposed);
+    assert!(!aether_store::MemoryQuery::from(query).proposed);
+    assert_eq!(features::MEMORY_PROPOSALS, "memory_proposals");
+}
+
+#[test]
+fn legacy_memory_creation_keeps_its_wire_shape_and_idempotency_fingerprint() {
+    use serde_json::json;
+    let wire = json!({"cmd":"create_memory", "idempotency_key":"lesson-1", "spec":{
+        "text":"A durable build convention", "kind":"fact", "scope":{"scope":"global"}}});
+    let mut command: Command = serde_json::from_value(wire).unwrap();
+    let encoded = serde_json::to_value(&command).unwrap();
+    assert!(encoded["spec"].get("proposed").is_none());
+    let legacy_fields = command.keyed_request().unwrap().unwrap().fields;
+    assert_eq!(
+        legacy_fields,
+        json!({"cmd":"create_memory","spec":{
+        "text":"A durable build convention", "kind":"fact", "scope":{"scope":"global"},"tags":[]}})
+    );
+    if let Command::CreateMemory { spec, .. } = &mut command {
+        spec.proposed = true;
+    }
+    let proposed = command.keyed_request().unwrap().unwrap();
+    assert_eq!(proposed.fields["spec"]["proposed"], true);
+    assert_ne!(proposed.fields, legacy_fields);
+    let query: MemoryQuerySpec = serde_json::from_str("{}").unwrap();
+    assert!(
+        serde_json::to_value(query)
+            .unwrap()
+            .get("proposed")
+            .is_none()
+    );
+}

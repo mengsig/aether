@@ -15,6 +15,7 @@ export interface MemoryQuerySpec {
   "include_superseded"?: boolean;
   "kinds"?: Array<MemoryKind>;
   "limit"?: number;
+  "proposed"?: boolean;
   "provenance_agent"?: AgentId | null;
   "recorded_by"?: MemoryRecorder | null;
   "scope"?: MemoryScope | null;

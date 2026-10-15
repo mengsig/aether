@@ -7,10 +7,12 @@ pub(crate) mod schedules;
 pub(crate) mod voice;
 
 mod memory;
+mod memory_proposals;
 pub use memory::{
     AliasTarget, MemoryFilter, memory_alias, memory_aliases, memory_forget, memory_list,
     memory_pin, memory_restore, memory_show, memory_sync, parse_memory_recorder,
 };
+pub use memory_proposals::{MemoryAddArgs, memory_accept, memory_add, memory_reject};
 
 #[cfg(test)]
 use memory::{memory_scope_label, parse_memory_scope};

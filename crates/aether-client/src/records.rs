@@ -179,6 +179,9 @@ impl Client {
     /// A daemon that cannot filter by recorder would answer with every
     /// memory, which reads as all of it being theirs, so that is refused here.
     pub async fn memories(&self, query: MemoryQuerySpec) -> Result<Vec<MemoryRecord>> {
+        if query.proposed {
+            self.require_memory_proposals()?;
+        }
         if query.recorded_by.is_some()
             && !self.welcome().is_some_and(|w| {
                 w.features
@@ -200,6 +203,9 @@ impl Client {
         &self,
         spec: aether_core::memory::OperatorMemorySpec,
     ) -> Result<MemoryRecord> {
+        if spec.proposed {
+            self.require_memory_proposals()?;
+        }
         match self
             .request(Command::CreateMemory {
                 spec,
@@ -210,6 +216,40 @@ impl Client {
             Reply::Memory(record) => Ok(record),
             other => Err(unexpected("memory", &other)),
         }
+    }
+
+    pub async fn accept_memory(
+        &self,
+        id: MemoryId,
+        reason: Option<String>,
+    ) -> Result<MemoryRecord> {
+        self.require_memory_proposals()?;
+        match self.request(Command::AcceptMemory { id, reason }).await? {
+            Reply::Memory(record) => Ok(record),
+            other => Err(unexpected("memory", &other)),
+        }
+    }
+
+    pub async fn reject_memory(&self, id: MemoryId, reason: String) -> Result<MemoryRecord> {
+        self.require_memory_proposals()?;
+        match self.request(Command::RejectMemory { id, reason }).await? {
+            Reply::Memory(record) => Ok(record),
+            other => Err(unexpected("memory", &other)),
+        }
+    }
+
+    fn require_memory_proposals(&self) -> Result<()> {
+        if self.welcome().is_some_and(|welcome| {
+            welcome
+                .features
+                .iter()
+                .any(|feature| feature == aether_protocol::features::MEMORY_PROPOSALS)
+        }) {
+            return Ok(());
+        }
+        Err(ClientError::Incompatible(
+            "daemon cannot review memory proposals; update Aether".into(),
+        ))
     }
 
     pub async fn forget_memory(

@@ -77,6 +77,8 @@ impl Command {
     #[rustfmt::skip]
     pub fn access(&self) -> Access {
         match self {
+            Self::CreateMemory { spec, .. } if spec.proposed => Access::HostOnly,
+            Self::Memories { query } if query.proposed => Access::HostOnly,
             Self::McpServers { refresh, .. } => mcp_servers_access(*refresh),
             Self::ListDevices { include_revoked } => list_devices_access(*include_revoked),
             Self::UpdateAgent { patch, .. } => update_agent_access(patch),
@@ -114,7 +116,8 @@ impl Command {
 
             Self::Shutdown | Self::EngineTool { .. } | Self::EngineTools { .. }
             | Self::ExportRun { .. } | Self::ImportRun { .. }
-            | Self::AliasRepository { .. } => Access::HostOnly,
+            | Self::AliasRepository { .. } | Self::AcceptMemory { .. }
+            | Self::RejectMemory { .. } => Access::HostOnly,
 
             Self::GetRemote | Self::ConfigureRemote { .. } | Self::StartPairing { .. }
             | Self::GetPairing { .. } | Self::ConfirmPairing { .. }

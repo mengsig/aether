@@ -44,7 +44,11 @@ fn map_err(e: RuntimeError) -> ErrorReply {
         RuntimeError::NotFound(what) => {
             ErrorReply::new(ErrorCode::NotFound, format!("{what} not found"))
         }
-        RuntimeError::Invalid(msg) => ErrorReply::new(ErrorCode::InvalidArgument, msg),
+        RuntimeError::Invalid(msg)
+        | RuntimeError::Memory(aether_memory::MemoryError::Invalid(msg)) => {
+            ErrorReply::new(ErrorCode::InvalidArgument, msg)
+        }
+        RuntimeError::Memory(aether_memory::MemoryError::NotFound(id)) => ErrorReply::not_found(id),
         RuntimeError::Transition(t) => ErrorReply::new(ErrorCode::InvalidTransition, t.to_string()),
         RuntimeError::Models(m) => ErrorReply::new(ErrorCode::Unavailable, m.to_string()),
         RuntimeError::Model(m) => ErrorReply::new(ErrorCode::Unavailable, m.to_string()),
@@ -307,6 +311,7 @@ where
                                                     features::MEMORY_RECORDED_BY.into(),
                                                     features::REPOSITORY_ROOT.into(),
                                                     features::REPOSITORY_ALIASES.into(),
+                                                    features::MEMORY_PROPOSALS.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,

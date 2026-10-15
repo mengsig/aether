@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 20;
+pub const SCHEMA_VERSION: u32 = 21;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -393,8 +393,13 @@ CREATE TABLE repository_aliases (
 CREATE INDEX repository_aliases_canonical ON repository_aliases(canonical);
 "#;
 
+const V21: &str = r#"
+ALTER TABLE memories ADD COLUMN proposed INTEGER NOT NULL DEFAULT 0 CHECK (proposed IN (0, 1));
+CREATE INDEX memories_proposals ON memories(scope, proposed, superseded_by, forgotten_at);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the

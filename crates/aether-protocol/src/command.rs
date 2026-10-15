@@ -298,6 +298,17 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idempotency_key: Option<String>,
     },
+    /// Accept a pending proposal and apply its deferred replacement. Needs `memory_proposals`.
+    AcceptMemory {
+        id: MemoryId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    /// Reject a pending proposal with an explanation. Needs `memory_proposals`.
+    RejectMemory {
+        id: MemoryId,
+        reason: String,
+    },
     /// Curate a memory out. The record stays; it is never retrieved again.
     ForgetMemory {
         id: MemoryId,

@@ -764,8 +764,10 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `get_artifact` | observe | |
 | `list_artifacts` | observe | |
 | `read_artifact` | observe | |
-| `memories` | observe | |
-| `create_memory` | operate | |
+| `memories` | observe | `host_only` when `query.proposed` is true. |
+| `create_memory` | operate | `host_only` when `spec.proposed` is true. |
+| `accept_memory` | host_only | Accepts a pending proposal, applying any deferred replacement. |
+| `reject_memory` | host_only | Curates a pending proposal out with a reason. |
 | `forget_memory` | operate | |
 | `restore_memory` | operate | |
 | `pin_memory` | operate | |
@@ -1994,3 +1996,9 @@ Device[]}`; `enable` and `disable` print the `RemoteStatus`, `devices` the
 keeps the stored origins unless `--origin` is given, keeps the stored push
 setting unless `--push` or `--no-push` is given, and fails if the listener
 could not be opened.
+
+Memory proposals stay out of recall until the host accepts them. Rejection
+uses the same curation as `forget_memory`; `restore_memory` reopens review
+without admitting the lesson. See [memory proposals](protocol.md#memory-proposals)
+for the protocol and CLI workflow. Paired devices cannot create, list or review
+proposals; ordinary memory commands keep their existing access.

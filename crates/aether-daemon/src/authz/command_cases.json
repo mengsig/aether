@@ -421,6 +421,21 @@
     }
   },
   {
+    "access": "host_only",
+    "command": {
+      "cmd": "accept_memory",
+      "id": "mem_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "reject_memory",
+      "id": "mem_00000000000000000000000000",
+      "reason": "fixture rejection"
+    }
+  },
+  {
     "access": "operate",
     "command": {
       "cmd": "forget_memory",

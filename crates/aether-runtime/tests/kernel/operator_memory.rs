@@ -12,6 +12,7 @@ fn operator_memory(
         confidence: None,
         tags: vec!["verification".into()],
         supersedes: None,
+        proposed: false,
     }
 }
 

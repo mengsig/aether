@@ -406,6 +406,8 @@ pub struct MemoryQuery {
     pub include_superseded: bool,
     /// Include memories a person curated out. Off for anything a model sees.
     pub include_forgotten: bool,
+    /// Select pending proposals instead of admitted memories. Never enabled for recall.
+    pub proposed: bool,
     /// One record by id, for a browser showing a supersession chain.
     pub id: Option<MemoryId>,
     pub limit: usize,
@@ -425,6 +427,7 @@ impl Default for MemoryQuery {
             exact_text: None,
             include_superseded: false,
             include_forgotten: false,
+            proposed: false,
             id: None,
             limit: 20,
         }
