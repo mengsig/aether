@@ -332,18 +332,24 @@ impl MemoryService {
 
     /// A changed word, number, path, case or punctuation mark may be a changed
     /// requirement, so only the same text, trimmed, can duplicate a memory.
-    fn find_duplicate(&self, c: &MemoryCandidate) -> Result<Option<MemoryRecord>> {
+    fn find_duplicate(
+        &self,
+        scope: &MemoryScope,
+        text: &str,
+        exclude: Option<MemoryId>,
+    ) -> Result<Option<MemoryRecord>> {
         let existing = self.store.memories(&MemoryQuery {
-            scope: Some(c.scope.clone()),
+            scope: Some(scope.clone()),
             exact_scope: true,
-            text: Some(c.text.clone()),
+            text: Some(text.into()),
             limit: 10,
             ..Default::default()
         })?;
-        let text = c.text.trim();
-        let candidate_tokens = tokens(&c.text);
+        let text = text.trim();
+        let candidate_tokens = tokens(text);
         let best = existing
             .into_iter()
+            .filter(|m| Some(m.id) != exclude)
             .filter(|m| m.text.trim() == text)
             .map(|m| {
                 let sim = jaccard(&candidate_tokens, &tokens(&m.text));
@@ -352,7 +358,7 @@ impl MemoryService {
             .filter(|(sim, _)| *sim >= self.policy.duplicate_threshold)
             .max_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, m)| m);
-        debug_assert!(best.as_ref().is_none_or(|m| m.scope == c.scope));
+        debug_assert!(best.as_ref().is_none_or(|m| &m.scope == scope));
         debug_assert!(best.as_ref().is_none_or(MemoryRecord::is_current));
         Ok(best)
     }

@@ -224,7 +224,15 @@ async fn find_memory(
         })
     {
         query.proposed = true;
-        records = client.memories(query).await?;
+        records = match client.memories(query).await {
+            Ok(records) => records,
+            Err(aether_client::ClientError::Protocol(error))
+                if error.code == aether_protocol::ErrorCode::Forbidden =>
+            {
+                return Err(anyhow::anyhow!("no memory {id}"));
+            }
+            Err(error) => return Err(error.into()),
+        };
     }
     anyhow::ensure!(
         records.len() <= 1,

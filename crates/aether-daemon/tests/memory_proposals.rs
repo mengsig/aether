@@ -73,6 +73,22 @@ async fn proposals_are_advertised_persisted_and_accepted_with_deferred_replaceme
 }
 
 #[tokio::test]
+async fn keyed_proposal_creation_returns_the_same_id_and_writes_one_proposed_event() {
+    let mut host = Host::start().await;
+    let mut request = spec("Always verify release builds before publishing", true, None);
+    request["idempotency_key"] = json!("proposed-release-verification");
+    let first = host.ok(request.clone()).await;
+    let second = host.ok(request).await;
+    assert!(first["proposed_at"].is_string());
+    assert_eq!(second["id"], first["id"]);
+    assert_eq!(second, first);
+    let events = host.audit("memory.proposed").await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["memory"], first["id"]);
+    host.daemon.stop().await;
+}
+
+#[tokio::test]
 async fn rejected_proposals_restore_to_review_and_report_missing_ids() {
     let mut host = Host::start().await;
     let pending = host

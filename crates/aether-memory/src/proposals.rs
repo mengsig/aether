@@ -20,24 +20,45 @@ impl MemoryService {
                     "memory {id} is forgotten or superseded"
                 )));
             }
-            if record.accepted_at.is_some() {
-                debug_assert!(record.is_current());
-                return Ok(record);
+            if record.accepted_at.is_none() {
+                self.commit_acceptance(&mut record, reason, by)?;
             }
-            debug_assert!(record.is_proposed());
-            let mut commit = self.deferred_supersession(&record, &by, reason.clone())?;
-            record.accepted_at = Some(now());
             debug_assert!(record.is_current());
-            commit.push_mutation(Mutation::PutMemory(record.clone()));
-            commit.push_event(EventDraft::new(
-                by,
-                EventKind::MemoryAccepted { memory: id, reason },
-            ));
-            self.store.commit(commit)?;
+            debug_assert!(record.accepted_at.is_some());
             record
         };
         self.index_committed(&record)?;
         Ok(record)
+    }
+
+    fn commit_acceptance(
+        &self,
+        record: &mut MemoryRecord,
+        reason: Option<String>,
+        by: Actor,
+    ) -> Result<()> {
+        debug_assert!(record.is_proposed());
+        debug_assert!(record.forgotten_at.is_none());
+        let scope = self.canonical_scope(record.scope.clone())?;
+        if let Some(existing) = self.find_duplicate(&scope, &record.text, record.supersedes)? {
+            return Err(MemoryError::Invalid(format!(
+                "proposal {} duplicates existing memory {}",
+                record.id, existing.id
+            )));
+        }
+        let mut commit = self.deferred_supersession(record, &by, reason.clone())?;
+        record.accepted_at = Some(now());
+        debug_assert!(record.is_current());
+        commit.push_mutation(Mutation::PutMemory(record.clone()));
+        commit.push_event(EventDraft::new(
+            by,
+            EventKind::MemoryAccepted {
+                memory: record.id,
+                reason,
+            },
+        ));
+        self.store.commit(commit)?;
+        Ok(())
     }
 
     fn deferred_supersession(

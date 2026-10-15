@@ -90,11 +90,97 @@ fn proposal_recall_exclusion_covers_structural_lexical_pinned_and_history_querie
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].id, pending.id);
     assert_eq!(found[0].provenance.actor, Some(Actor::user()));
-    assert!(
-        events(&service).iter().any(
-            |e| matches!(&e.kind, EventKind::Custom { name, payload } if name == "memory.proposed" && payload["memory"] == pending.id.to_string())
-        )
+    let history = events(&service);
+    let event = history
+        .iter()
+        .find(|e| matches!(&e.kind, EventKind::Custom { name, .. } if name == "memory.proposed"))
+        .unwrap();
+    let EventKind::Custom { payload, .. } = &event.kind else {
+        unreachable!();
+    };
+    assert_eq!(event.actor, Actor::user());
+    assert_eq!(
+        payload,
+        &serde_json::json!({"memory":pending.id,"scope":{"scope":"global"},"tags":["build"]})
     );
+}
+
+#[test]
+fn proposal_accept_refuses_new_active_duplicate_without_mutations_or_events() {
+    for replace in [false, true] {
+        let service = service();
+        let old =
+            replace.then(|| admit(&service, candidate("Use the old build verification script")));
+        let mut next = candidate("Use the new build verification script");
+        next.supersedes = old.as_ref().map(|record| record.id);
+        let pending = propose(&service, next);
+        let existing = admit(&service, candidate(&pending.text));
+        let history = events(&service);
+        let error = service.accept(pending.id, None, Actor::user()).unwrap_err();
+        assert!(
+            error.to_string().contains(&existing.id.to_string()),
+            "{error}"
+        );
+        assert!(error.to_string().contains("duplicates"), "{error}");
+        assert_eq!(events(&service), history);
+        assert_eq!(service.store.memory(pending.id).unwrap(), Some(pending));
+        assert_eq!(service.store.memory(existing.id).unwrap(), Some(existing));
+        if let Some(old) = old {
+            assert_eq!(service.store.memory(old.id).unwrap(), Some(old));
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct FailOnceIndex(std::sync::atomic::AtomicUsize);
+
+impl MemoryIndex for FailOnceIndex {
+    fn name(&self) -> &'static str {
+        "fail-once"
+    }
+
+    fn index(&self, record: &MemoryRecord) -> Result<()> {
+        assert!(record.is_current());
+        assert!(record.accepted_at.is_some());
+        if self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            return Err(MemoryError::Index {
+                index: self.name().into(),
+                detail: "injected indexing failure".into(),
+            });
+        }
+        Ok(())
+    }
+
+    fn forget(&self, id: MemoryId) -> Result<()> {
+        LocalEmbeddingIndex.forget(id)
+    }
+
+    fn similarity(&self, query: &str, records: &[MemoryRecord]) -> Result<Vec<f32>> {
+        LocalEmbeddingIndex.similarity(query, records)
+    }
+}
+
+#[test]
+fn proposal_accept_retry_repairs_a_failed_index_without_events() {
+    let index = Arc::new(FailOnceIndex::default());
+    let service = service().with_index(index.clone());
+    let pending = propose(
+        &service,
+        candidate("Build changes require independent verification"),
+    );
+    assert!(matches!(
+        service.accept(pending.id, None, Actor::user()),
+        Err(MemoryError::Index { .. })
+    ));
+    let committed = service.store.memory(pending.id).unwrap().unwrap();
+    assert!(committed.is_current());
+    let history = events(&service);
+    assert_eq!(
+        service.accept(pending.id, None, Actor::user()).unwrap(),
+        committed
+    );
+    assert_eq!(index.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(events(&service), history);
 }
 
 #[test]
@@ -193,6 +279,13 @@ fn proposal_implicit_duplicate_replacement_is_also_deferred() {
     stronger.importance = 0.9;
     let pending = propose(&service, stronger);
     assert_eq!(pending.supersedes, Some(old.id));
+    assert!(events(&service).iter().any(|event| {
+        matches!(&event.kind, EventKind::Custom { name, payload }
+        if name == "memory.proposed" && *payload == serde_json::json!({
+            "memory":pending.id, "scope":{"scope":"global"},
+            "supersedes":old.id, "tags":["build"],
+        }))
+    }));
     assert!(service.store.memory(old.id).unwrap().unwrap().is_current());
     service.accept(pending.id, None, Actor::user()).unwrap();
     assert_eq!(

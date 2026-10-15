@@ -440,6 +440,9 @@ the replacement atomically. `reason` is optional on acceptance and is also
 recorded on `memory.superseded`. If the target was forgotten or superseded
 meanwhile, acceptance fails with `invalid_argument` and changes nothing;
 reject the stale proposal and submit a replacement against the current record.
+Acceptance also refuses an active memory with the same text in the canonical
+scope, except the predecessor being replaced. The error names that memory id
+and leaves records and events unchanged.
 Accepting an already accepted, still-current proposal returns the same record
 without another write or event. Missing ids return `not_found`; ordinary
 memories, rejected/forgotten proposals and subsequently superseded accepted
@@ -453,8 +456,12 @@ a pending proposal out. `restore_memory` clears that curation and emits the
 usual `memory.restored`; the proposal still awaits acceptance and remains out
 of recall. Pinning never bypasses review.
 
-Creation emits `memory.candidate` and a `custom` event named `memory.proposed`;
-acceptance emits `memory.accepted` with an optional reason, plus
+Creation emits `memory.candidate` and a `custom` event named `memory.proposed`.
+Its payload is `{"memory":"mem_...","scope":{"scope":"global"},"tags":["build"]}`,
+with the canonical scope serialized as on the memory record and an optional
+`"supersedes":"mem_..."` omitted when no predecessor exists. The authenticated
+actor is on the event envelope.
+Acceptance emits `memory.accepted` with an optional reason, plus
 `memory.superseded` when replacing a record. `memory.proposal_rejected` is
 also a `custom` event name. These existing event shapes keep older subscribers
 able to decode the stream.

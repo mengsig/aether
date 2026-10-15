@@ -1803,3 +1803,6 @@ fn memory_proposal_reject_requires_a_reason_before_connecting() {
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains("--reason"), "{}", stderr(&output));
 }
+
+#[path = "cli_regressions/memory_proposals.rs"]
+mod proposal_lookup_tests;

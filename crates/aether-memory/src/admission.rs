@@ -67,7 +67,7 @@ impl MemoryService {
         } else {
             match candidate.supersedes {
                 Some(id) => Some(self.store.memory(id)?.ok_or(MemoryError::NotFound(id))?),
-                None => self.find_duplicate(&candidate)?,
+                None => self.find_duplicate(&candidate.scope, &candidate.text, None)?,
             }
         };
         if let Some(old) = &old {
@@ -133,17 +133,7 @@ impl MemoryService {
         }
         debug_assert_eq!(record.is_proposed(), proposed);
         debug_assert!(record.forgotten_at.is_none() && record.superseded_by.is_none());
-        let event = if proposed {
-            EventKind::Custom {
-                name: "memory.proposed".into(),
-                payload: serde_json::json!({"memory":record.id}),
-            }
-        } else {
-            EventKind::MemoryAccepted {
-                memory: record.id,
-                reason: None,
-            }
-        };
+        let event = admission_event(&record);
         let mut commit = Commit::new()
             .mutate(Mutation::PutMemory(record.clone()))
             .event(EventDraft::new(actor.clone(), event));
@@ -188,5 +178,26 @@ impl MemoryService {
         };
         debug_assert_eq!(admission.record().is_some(), !commit.is_empty());
         Ok((admission, commit))
+    }
+}
+
+fn admission_event(record: &MemoryRecord) -> EventKind {
+    debug_assert!(record.forgotten_at.is_none());
+    debug_assert!(record.superseded_by.is_none());
+    if !record.is_proposed() {
+        return EventKind::MemoryAccepted {
+            memory: record.id,
+            reason: None,
+        };
+    }
+    let mut payload = serde_json::json!({
+        "memory": record.id, "scope": record.scope, "tags": record.tags,
+    });
+    if let Some(id) = record.supersedes {
+        payload["supersedes"] = serde_json::json!(id);
+    }
+    EventKind::Custom {
+        name: "memory.proposed".into(),
+        payload,
     }
 }

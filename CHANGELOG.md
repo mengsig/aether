@@ -11,7 +11,8 @@ release is also the text of its GitHub release.
 - **Memories can wait for review before agents recall them.** Propose an
   operator lesson with `aether memory add --proposed`, then accept it when
   the evidence holds or reject it with a reason. Proposed replacements leave
-  the old lesson in use until acceptance. Restoring a rejected proposal
+  the old lesson in use until acceptance, which refuses text already admitted
+  in the same scope. Restoring a rejected proposal
   reopens review without putting it into recall, and retrying acceptance or
   rejection does not write duplicate events. Clients can detect support with
   `memory_proposals`; `memory list --proposed` shows the review queue.
