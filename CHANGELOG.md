@@ -8,17 +8,22 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
-- **The daemon no longer writes megabytes to disk for every agent list.**
-  Listing agents or tasks sorted every stored record each time, and once the
-  list passed about 2 MB SQLite did that sort in a temporary file on disk.
-  The terminal's status poll every 2 seconds, each tree refresh, and
-  orchestrators listing agents all paid it: on a store with long history,
-  one status poll wrote about 5.8 MB. Full listings, live agents and one
-  run's agents and tasks now read in creation order from an index and write
-  nothing. Pages of an agent's events together with
-  its children's no longer sort the events' contents either: in a test store
-  of 800,000 events, opening a busy supervisor's transcript wrote 20 MB, and
-  now writes nothing.
+- **The daemon no longer churns the disk while agents work.** Reading a long
+  agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
+  of MB per read. With several agents running, that held host IO pressure
+  high enough to stall other programs' syncs. Those sorts now stay in memory,
+  and what the store keeps, and when it syncs, is unchanged.
+- **Agent lists and a supervisor's history no longer sort everything they
+  read.** Listing agents or tasks sorted every stored record on each call:
+  the terminal's status poll every 2 seconds, each tree refresh, and
+  orchestrators listing agents all paid it. Reading an agent's events together
+  with its children's sorted the events' contents. Those sorts held a copy of
+  everything they read, in memory or on disk. Full listings, live agents, and
+  one run's agents and tasks now read in creation order from an index, and a
+  supervisor's history sorts only event numbers. In a test store, listing
+  10,000 agents peaked at 2.1 MB instead of 40.8 MB, and reading a supervisor's
+  85,715 events with its children's took 0.2 s and 4.1 MB instead of 1.1 s and
+  412 MB.
 - **One run's agent tree no longer reads every task in the store.** Listing a
   run's tasks walked the whole tasks table. In a test store of 20,000 tasks
   that took 22 ms per tree; it now reads only that run's tasks, in 0.06 ms.
