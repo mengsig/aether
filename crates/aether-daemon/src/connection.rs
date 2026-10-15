@@ -312,6 +312,7 @@ where
                                                     features::REPOSITORY_ROOT.into(),
                                                     features::REPOSITORY_ALIASES.into(),
                                                     features::MEMORY_PROPOSALS.into(),
+                                                    features::MEMORY_CONTEXT.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,

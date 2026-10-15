@@ -774,6 +774,7 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `sync_repository_knowledge` | operate | |
 | `alias_repository` | host_only | Moves memory between repository scopes, irreversibly. |
 | `list_repository_aliases` | observe | |
+| `memories_in_context` | host_only | Which memories each model call saw; for weighing them. |
 | `list_runs` | observe | |
 | `get_run_report` | observe | |
 | `replay` | observe | |

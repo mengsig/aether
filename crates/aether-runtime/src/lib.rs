@@ -17,6 +17,7 @@ mod disk;
 mod exhaustion;
 pub mod github;
 mod inspection;
+pub mod memory_context;
 pub mod memory_curation;
 pub mod recovery;
 mod repository_aliases;

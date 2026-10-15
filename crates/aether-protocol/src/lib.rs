@@ -173,6 +173,9 @@ pub mod features {
     pub const REPOSITORY_ALIASES: &str = "repository_aliases";
     /// Operator review of stored memories before they can enter recall.
     pub const MEMORY_PROPOSALS: &str = "memory_proposals";
+    /// The daemon serves `memories_in_context`, and the retrieved-memory layer
+    /// of `snapshot.created` names the memories it rendered.
+    pub const MEMORY_CONTEXT: &str = "memory_context";
 }
 
 mod handshake;

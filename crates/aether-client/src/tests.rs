@@ -1008,3 +1008,21 @@ async fn memory_proposals_are_refused_without_the_feature_before_sending() {
     ));
     assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn memories_in_context_is_refused_without_the_feature_before_sending() {
+    let (transport, peer) = Transport::memory(16);
+    let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = sent.clone();
+    let _daemon = fake_daemon(peer, move |_, _| {
+        seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { true })
+    });
+    let client = Client::open(transport).await.unwrap();
+    let task = Some(aether_core::id::TaskId::new());
+    assert!(matches!(
+        client.memories_in_context(task, None).await,
+        Err(ClientError::Incompatible(_))
+    ));
+    assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
+}

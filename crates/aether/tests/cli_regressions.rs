@@ -492,6 +492,24 @@ async fn cli_with_socket(
                     )
                     .unwrap(),
                 ])),
+                Command::MemoriesInContext { task, invocation } => {
+                    assert_eq!(task.map(|id| id.to_string()).as_deref(), Some(TASK));
+                    assert!(invocation.is_none());
+                    Ok(Reply::MemoriesInContext(
+                        aether_core::snapshot::MemoriesInContext {
+                            snapshots: vec![aether_core::snapshot::SnapshotMemories {
+                                snapshot: "snp_01J00000000000000000000006".parse().unwrap(),
+                                invocations: vec![],
+                                agent: AGENT.parse().unwrap(),
+                                task: *task,
+                                turn: 1,
+                                at: AT.parse().unwrap(),
+                                memories: vec![MEMORY.parse().unwrap()],
+                            }],
+                            truncated: false,
+                        },
+                    ))
+                }
                 other => panic!("unexpected request: {other:?}"),
             };
             write_frame(
@@ -1100,6 +1118,40 @@ async fn memory_alias_needs_a_daemon_that_aliases_and_previews_the_move() {
             "--repository",
             "b",
         ],
+    ] {
+        let refused = isolated_command(root.path(), &args).output().unwrap();
+        assert_eq!(refused.status.code(), Some(2), "{args:?}");
+    }
+}
+
+/// An older daemon is refused before anything is sent; a current one lists
+/// each model call with the memories it had in context.
+#[tokio::test]
+async fn memory_context_lists_the_memories_each_model_call_saw() {
+    let args = ["memory", "context", "--task", TASK];
+    let old = cli(&args, Stub::default()).await;
+    assert_eq!(old.status.code(), Some(1));
+    assert!(
+        stderr(&old).contains("which memories were in context"),
+        "{}",
+        stderr(&old)
+    );
+    let current = || Stub {
+        features: vec![aether_protocol::features::MEMORY_CONTEXT.into()],
+        ..Default::default()
+    };
+    let listed = cli(&args, current()).await;
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    let text = stdout(&listed);
+    assert!(text.contains("snp_01J00000000000000000000006"), "{text}");
+    assert!(text.contains(MEMORY), "{text}");
+    let json = cli(&["memory", "context", "--task", TASK, "--json"], current()).await;
+    let wire: serde_json::Value = serde_json::from_str(&stdout(&json)).unwrap();
+    assert_eq!(wire["snapshots"][0]["memories"][0], MEMORY);
+    let root = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["memory", "context"],
+        vec!["memory", "context", "--task", TASK, "--invocation", "inv_x"],
     ] {
         let refused = isolated_command(root.path(), &args).output().unwrap();
         assert_eq!(refused.status.code(), Some(2), "{args:?}");

@@ -254,3 +254,21 @@ fn memory_proposal_authz_requires_host_authority_for_review_and_listing() {
         }
     }
 }
+
+#[test]
+fn memories_in_context_is_for_the_host_and_never_a_paired_device() {
+    let command = Command::MemoriesInContext {
+        task: Some(aether_core::id::TaskId::new()),
+        invocation: None,
+    };
+    assert_eq!(command.access(), Access::HostOnly);
+    assert!(AuthContext::Local.authorize(&command).is_ok());
+    assert!(AuthContext::Token.authorize(&command).is_ok());
+    for role in [DeviceRole::Operator, DeviceRole::Observer] {
+        assert_eq!(
+            code(&device(role), &command),
+            Some(ErrorCode::Forbidden),
+            "{role:?}"
+        );
+    }
+}

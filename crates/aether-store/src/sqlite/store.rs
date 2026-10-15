@@ -20,7 +20,7 @@ use aether_core::memory::MemoryRecord;
 use aether_core::model::Message;
 use aether_core::repository::RepositoryAlias;
 use aether_core::schedule::{Schedule, ScheduleOccurrence};
-use aether_core::snapshot::{Invocation, InvocationSnapshot};
+use aether_core::snapshot::{Invocation, InvocationSnapshot, SnapshotMemories};
 use aether_core::task::Task;
 use aether_core::time::{Timestamp, now};
 use aether_core::tool::ApprovalRequest;
@@ -421,6 +421,26 @@ impl Store for SqliteStore {
 
     fn snapshot(&self, id: SnapshotId) -> Result<Option<InvocationSnapshot>> {
         self.read_one("SELECT body FROM snapshots WHERE id = ?1", &id.to_string())
+    }
+
+    fn snapshot_memories(&self, ids: &[SnapshotId]) -> Result<Vec<SnapshotMemories>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Built in SQL from the few fields asked for: a snapshot body holds
+        // the whole message tail, which decoding would copy for nothing.
+        let sql = "SELECT json_object('snapshot', s.id, 'agent', s.agent_id, \
+                   'task', json_extract(s.body, '$.task_id'), 'turn', s.turn, \
+                   'at', json_extract(s.body, '$.created_at'), \
+                   'memories', json(COALESCE(json_extract(s.body, '$.memory_ids'), '[]'))) \
+                   FROM json_each(?1) AS wanted JOIN snapshots AS s ON s.id = wanted.value \
+                   ORDER BY wanted.key";
+        let conn = self.read_conn();
+        let found: Vec<SnapshotMemories> =
+            Self::read_many(&conn, sql, &[&serde_json::to_string(ids)?])?;
+        debug_assert!(found.len() <= ids.len());
+        debug_assert!(found.iter().all(|row| ids.contains(&row.snapshot)));
+        Ok(found)
     }
 
     fn invocation(&self, id: InvocationId) -> Result<Option<Invocation>> {

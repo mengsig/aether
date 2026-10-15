@@ -3410,6 +3410,39 @@
           "type": "object"
         },
         {
+          "description": "Which stored memories were in context for every model call of a task,\nor for one invocation. Name exactly one. Needs `memory_context`.",
+          "properties": {
+            "cmd": {
+              "const": "memories_in_context",
+              "type": "string"
+            },
+            "invocation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InvocationId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "task": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Runs this store knows about, newest first.",
           "properties": {
             "cmd": {
@@ -4212,6 +4245,13 @@
         },
         "kind": {
           "$ref": "#/$defs/LayerKind"
+        },
+        "memories": {
+          "description": "The stored memories rendered into a retrieved-memory layer, in render\norder: the snapshot's `memory_ids`. Absent when the layer holds none.",
+          "items": {
+            "$ref": "#/$defs/MemoryId"
+          },
+          "type": "array"
         },
         "placement": {
           "$ref": "#/$defs/LayerPlacement",
@@ -8422,7 +8462,7 @@
         },
         "memory_ids": {
           "default": [],
-          "description": "Memories retrieved into the context, by id.",
+          "description": "Memories rendered into the context, by id, in render order.",
           "items": {
             "$ref": "#/$defs/MemoryId"
           },
@@ -8667,6 +8707,25 @@
         "qualified_name",
         "side_effect",
         "declared"
+      ],
+      "type": "object"
+    },
+    "MemoriesInContext": {
+      "description": "Which memories were in context for a task or one invocation, oldest\nsnapshot first. `truncated` says snapshots past the limit were left out.",
+      "properties": {
+        "snapshots": {
+          "items": {
+            "$ref": "#/$defs/SnapshotMemories"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "snapshots"
       ],
       "type": "object"
     },
@@ -11574,6 +11633,22 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/MemoriesInContext"
+            },
+            "reply": {
+              "const": "memories_in_context",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "$ref": "#/$defs/MemoryRecord"
             },
             "reply": {
@@ -13257,6 +13332,58 @@
       "description": "A snp_ prefixed ULID.",
       "pattern": "^snp_[0-9A-HJKMNP-TV-Z]{26}$",
       "type": "string"
+    },
+    "SnapshotMemories": {
+      "description": "The memories one snapshot put in front of the model, as a host asks for\nthem through `memories_in_context`.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "invocations": {
+          "description": "The invocations in scope answered from this snapshot, oldest first. A\nnative engine turn answers several messages from one snapshot.",
+          "items": {
+            "$ref": "#/$defs/InvocationId"
+          },
+          "type": "array"
+        },
+        "memories": {
+          "default": [],
+          "description": "The snapshot's `memory_ids`: rendered memories, in render order.",
+          "items": {
+            "$ref": "#/$defs/MemoryId"
+          },
+          "type": "array"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/SnapshotId"
+        },
+        "task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TaskId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "turn": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "snapshot",
+        "agent",
+        "turn",
+        "at"
+      ],
+      "type": "object"
     },
     "SpawnSpec": {
       "description": "Root agent + task each spawn occurrence creates, in a new run. Fields as on\n`create_agent`; no parent or existing run.",

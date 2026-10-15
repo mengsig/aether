@@ -465,6 +465,11 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                     cli::memory_alias(endpoint, alias, target, dry_run, json).await
                 }
                 MemoryCmd::Aliases { json } => cli::memory_aliases(endpoint, json).await,
+                MemoryCmd::Context {
+                    task,
+                    invocation,
+                    json,
+                } => cli::memory_context(endpoint, task, invocation, json).await,
             },
             Cmd::Remote { command } => cli::remote::run(socket, command).await,
             Cmd::Bridge { stdio } => cli::bridge::bridge(socket, stdio).await,

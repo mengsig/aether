@@ -139,6 +139,7 @@ impl ContextManager {
                 tokens,
                 items,
                 placement: LayerPlacement::System,
+                memories: Vec::new(),
             });
         };
 
@@ -175,6 +176,10 @@ impl ContextManager {
             memory_text,
             memory_ids.len() as u32,
         );
+        if let Some(layer) = layers.last_mut() {
+            debug_assert_eq!(layer.kind, LayerKind::RetrievedMemory);
+            layer.memories.clone_from(&memory_ids);
+        }
 
         // Recent tail: transcript plus the new user turn from the inbox.
         let mut messages: Vec<Message> = inputs
@@ -225,6 +230,7 @@ impl ContextManager {
             tokens: tail_tokens,
             items: messages.len() as u32,
             placement: LayerPlacement::UserTurn,
+            memories: Vec::new(),
         });
         layers.push(ContextLayer {
             kind: LayerKind::ToolSchemas,
@@ -232,6 +238,7 @@ impl ContextManager {
             tokens: tool_tokens,
             items: inputs.tools.len() as u32,
             placement: LayerPlacement::System,
+            memories: Vec::new(),
         });
 
         let params = self.params(&inputs, &budget);
@@ -327,17 +334,20 @@ pub fn build_request(snapshot: &InvocationSnapshot) -> ModelRequest {
     request
 }
 
+/// The memory layer's text and the ids it renders, in render order: own
+/// memories first, then repository notes, as the text lists them.
 fn memory_layer(
     records: &[MemoryRecord],
     estimator: &TokenEstimator,
     maximum: u32,
 ) -> (Option<String>, Vec<aether_core::id::MemoryId>) {
     let (mut own, mut from_files) = (Vec::new(), Vec::new());
-    let mut memory_ids = Vec::new();
+    let (mut own_ids, mut file_ids) = (Vec::new(), Vec::new());
     let mut text = None;
     for record in records.iter().filter(|record| record.is_current()) {
         let line = render::memory_line(record);
-        if record.provenance.source.is_some() {
+        let from_file = record.provenance.source.is_some();
+        if from_file {
             from_files.push(line);
         } else {
             own.push(line);
@@ -346,15 +356,20 @@ fn memory_layer(
         if estimator.text(&candidate) > maximum {
             break;
         }
-        memory_ids.push(record.id);
+        if from_file {
+            file_ids.push(record.id);
+        } else {
+            own_ids.push(record.id);
+        }
         text = Some(candidate);
     }
     debug_assert!(
         text.as_ref()
             .is_none_or(|text| estimator.text(text) <= maximum)
     );
-    debug_assert_eq!(text.is_some(), !memory_ids.is_empty());
-    (text, memory_ids)
+    own_ids.append(&mut file_ids);
+    debug_assert_eq!(text.is_some(), !own_ids.is_empty());
+    (text, own_ids)
 }
 
 #[cfg(test)]

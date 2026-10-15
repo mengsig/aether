@@ -116,6 +116,7 @@ fn each_turn_carries_what_it_saw_did_and_cost() {
             tokens: 12,
             items: 1,
             placement: Default::default(),
+            memories: Vec::new(),
         }],
     });
     log.push(EventKind::ToolRequested {

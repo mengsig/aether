@@ -58,6 +58,7 @@ import type {
   ListWorkspacesCommand,
   McpServersCommand,
   MemoriesCommand,
+  MemoriesInContextCommand,
   PauseCommand,
   PinMemoryCommand,
   PingCommand,
@@ -152,6 +153,7 @@ export type Command =
   | ListWorkspacesCommand
   | McpServersCommand
   | MemoriesCommand
+  | MemoriesInContextCommand
   | PauseCommand
   | PinMemoryCommand
   | PingCommand

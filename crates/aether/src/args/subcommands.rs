@@ -119,6 +119,21 @@ pub(crate) enum MemoryCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Which memories each model call had in context.
+    Context {
+        /// Every model call of this task, oldest first.
+        #[arg(
+            long,
+            required_unless_present = "invocation",
+            conflicts_with = "invocation"
+        )]
+        task: Option<String>,
+        /// The one model call with this invocation id.
+        #[arg(long)]
+        invocation: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Keep an answer as a durable rule. Without `--remember` nothing is kept.

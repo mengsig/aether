@@ -98,6 +98,10 @@ pub struct ContextLayer {
     /// in the last user message, or in the engine's own retained history.
     #[serde(default)]
     pub placement: LayerPlacement,
+    /// The stored memories rendered into a retrieved-memory layer, in render
+    /// order: the snapshot's `memory_ids`. Absent when the layer holds none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memories: Vec<MemoryId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -133,7 +137,7 @@ pub struct InvocationSnapshot {
     /// The capability profile in force when the request was built.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<CapabilityProfile>,
-    /// Memories retrieved into the context, by id.
+    /// Memories rendered into the context, by id, in render order.
     #[serde(default)]
     pub memory_ids: Vec<MemoryId>,
     /// System layers in render order; their `text` concatenates to the system prompt.
@@ -159,6 +163,48 @@ impl InvocationSnapshot {
         }
         out
     }
+}
+
+/// The memories one snapshot put in front of the model, as a host asks for
+/// them through `memories_in_context`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SnapshotMemories {
+    pub snapshot: SnapshotId,
+    /// The invocations in scope answered from this snapshot, oldest first. A
+    /// native engine turn answers several messages from one snapshot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invocations: Vec<InvocationId>,
+    pub agent: AgentId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskId>,
+    pub turn: u32,
+    pub at: Timestamp,
+    /// The snapshot's `memory_ids`: rendered memories, in render order.
+    #[serde(default)]
+    pub memories: Vec<MemoryId>,
+}
+
+impl SnapshotMemories {
+    pub fn of(snapshot: &InvocationSnapshot) -> Self {
+        Self {
+            snapshot: snapshot.id,
+            invocations: Vec::new(),
+            agent: snapshot.agent_id,
+            task: snapshot.task_id,
+            turn: snapshot.turn,
+            at: snapshot.created_at,
+            memories: snapshot.memory_ids.clone(),
+        }
+    }
+}
+
+/// Which memories were in context for a task or one invocation, oldest
+/// snapshot first. `truncated` says snapshots past the limit were left out.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MemoriesInContext {
+    pub snapshots: Vec<SnapshotMemories>,
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 /// The result of sending a snapshot to a model.

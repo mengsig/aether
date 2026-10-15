@@ -13,6 +13,7 @@ class ContextLayer(TypedDict, total=False):
     """
     items: int  # optional
     kind: _protocol.LayerKind
+    memories: list[_protocol.MemoryId]  # optional
     placement: _protocol.LayerPlacement  # optional
     text: str | None  # optional
     tokens: int

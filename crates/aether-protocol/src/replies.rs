@@ -298,6 +298,7 @@ pub enum Reply {
     Memories(Vec<MemoryRecord>),
     RepositoryAliased(aether_core::repository::RepositoryAliasReport),
     RepositoryAliases(Vec<aether_core::repository::RepositoryAlias>),
+    MemoriesInContext(aether_core::snapshot::MemoriesInContext),
     Memory(MemoryRecord),
     MemorySeeded {
         repository: String,

@@ -117,7 +117,7 @@ impl Command {
             Self::Shutdown | Self::EngineTool { .. } | Self::EngineTools { .. }
             | Self::ExportRun { .. } | Self::ImportRun { .. }
             | Self::AliasRepository { .. } | Self::AcceptMemory { .. }
-            | Self::RejectMemory { .. } => Access::HostOnly,
+            | Self::RejectMemory { .. } | Self::MemoriesInContext { .. } => Access::HostOnly,
 
             Self::GetRemote | Self::ConfigureRemote { .. } | Self::StartPairing { .. }
             | Self::GetPairing { .. } | Self::ConfirmPairing { .. }

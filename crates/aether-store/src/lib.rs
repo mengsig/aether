@@ -34,7 +34,7 @@ use aether_core::memory::{MemoryKind, MemoryRecord, MemoryRecorder, MemoryScope}
 use aether_core::model::{Message, ModelRef};
 use aether_core::repository::{RepositoryAlias, RepositoryAliasCounts};
 use aether_core::schedule::{Schedule, ScheduleOccurrence};
-use aether_core::snapshot::{Invocation, InvocationSnapshot};
+use aether_core::snapshot::{Invocation, InvocationSnapshot, SnapshotMemories};
 use aether_core::task::{Task, TaskStatusKind};
 use aether_core::time::Timestamp;
 use aether_core::tool::ApprovalRequest;
@@ -579,6 +579,17 @@ pub trait Store: Send + Sync {
     fn leases(&self) -> Result<Vec<Lease>>;
 
     fn snapshot(&self, id: SnapshotId) -> Result<Option<InvocationSnapshot>>;
+    /// The memories each stored snapshot rendered, in the order of `ids`;
+    /// ids with no stored snapshot are left out. Disk stores skip the messages.
+    fn snapshot_memories(&self, ids: &[SnapshotId]) -> Result<Vec<SnapshotMemories>> {
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(snapshot) = self.snapshot(*id)? {
+                out.push(SnapshotMemories::of(&snapshot));
+            }
+        }
+        Ok(out)
+    }
     fn invocation(&self, id: InvocationId) -> Result<Option<Invocation>>;
     fn invocations_for_agent(&self, agent: AgentId) -> Result<Vec<Invocation>>;
 

@@ -545,3 +545,51 @@ fn repository_membership_matches_serialized_scopes_including_archived_agents() {
         }
     }
 }
+
+/// The SQL projection reads the same fields the decoded snapshot holds,
+/// in the order asked, and leaves out ids that were never stored.
+#[test]
+fn snapshot_memories_follow_the_requested_order_and_match_the_stored_snapshots() {
+    use aether_core::id::{MemoryId, SnapshotId};
+    use aether_core::snapshot::{InvocationSnapshot, SnapshotMemories};
+
+    let store = SqliteStore::open_in_memory().expect("open");
+    let a = agent();
+    let task = Task::new("x", Actor::user(), a.run, now());
+    let stored = |task_id, memory_ids: Vec<MemoryId>| {
+        let snapshot = InvocationSnapshot {
+            id: SnapshotId::new(),
+            agent_id: a.id,
+            task_id,
+            turn: 3,
+            model: a.model.clone(),
+            adapter: None,
+            capabilities: None,
+            memory_ids,
+            layers: vec![],
+            messages: vec![aether_core::model::Message::user_text("a long tail")],
+            tools: vec![],
+            params: Default::default(),
+            token_estimate: 0,
+            created_at: now(),
+        };
+        store
+            .commit(Commit::new().mutate(Mutation::PutSnapshot(snapshot.clone())))
+            .expect("snapshot");
+        snapshot
+    };
+    let with = stored(Some(task.id), vec![MemoryId::new(), MemoryId::new()]);
+    let without = stored(None, vec![]);
+    let missing = SnapshotId::new();
+
+    let found = store
+        .snapshot_memories(&[without.id, missing, with.id])
+        .expect("memories");
+    assert_eq!(
+        found,
+        vec![SnapshotMemories::of(&without), SnapshotMemories::of(&with)]
+    );
+    assert_eq!(found[1].memories, with.memory_ids);
+    assert_eq!(found[1].task, Some(task.id));
+    assert!(store.snapshot_memories(&[]).expect("empty").is_empty());
+}

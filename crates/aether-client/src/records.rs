@@ -6,7 +6,7 @@ use aether_core::id::{AgentId, ArtifactId, InvocationId, MemoryId, RunId, Snapsh
 use aether_core::memory::MemoryRecord;
 use aether_core::replay::ReplayFrame;
 use aether_core::report::RunReport;
-use aether_core::snapshot::{Invocation, InvocationSnapshot};
+use aether_core::snapshot::{Invocation, InvocationSnapshot, MemoriesInContext};
 use aether_core::transfer::{ExportSummary, ImportSummary};
 use aether_protocol::{
     ArtifactQuery, Command, EventQuery, MemoryQuerySpec, Reply, RunListing, TranscriptEntry,
@@ -309,6 +309,32 @@ impl Client {
         match self.request(Command::ListRepositoryAliases).await? {
             Reply::RepositoryAliases(aliases) => Ok(aliases),
             other => Err(unexpected("repository aliases", &other)),
+        }
+    }
+
+    /// Which stored memories were in context for each model call of `task`,
+    /// or for `invocation`. Name exactly one; the daemon refuses otherwise.
+    pub async fn memories_in_context(
+        &self,
+        task: Option<aether_core::id::TaskId>,
+        invocation: Option<InvocationId>,
+    ) -> Result<MemoriesInContext> {
+        let served = self.welcome().is_some_and(|w| {
+            w.features
+                .iter()
+                .any(|f| f == aether_protocol::features::MEMORY_CONTEXT)
+        });
+        if !served {
+            return Err(ClientError::Incompatible(
+                "daemon cannot say which memories were in context; update Aether".into(),
+            ));
+        }
+        match self
+            .request(Command::MemoriesInContext { task, invocation })
+            .await?
+        {
+            Reply::MemoriesInContext(found) => Ok(found),
+            other => Err(unexpected("memories in context", &other)),
         }
     }
 

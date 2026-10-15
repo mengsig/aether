@@ -82,6 +82,27 @@ fn invocation_failure_class_is_optional_for_older_logs() {
     assert!(serde_json::to_value(old).unwrap().get("class").is_none());
 }
 
+/// A layer written before it named its memories decodes with none, and an
+/// empty list stays off the wire so that body round-trips byte for byte.
+#[test]
+fn snapshot_layers_without_memories_still_decode_and_round_trip() {
+    let old = r#"{"type":"snapshot.created","snapshot":"snp_01M1Z1AEC7ATEWCBH91PZ2NQKV","turn":2,"model":{"provider":"mock","model":"m"},"token_estimate":40,"layers":[{"kind":"retrieved_memory","text":"Memory: x","tokens":3,"items":1,"placement":"system"}]}"#;
+    let kind: EventKind = serde_json::from_str(old).expect("an old snapshot.created decodes");
+    let EventKind::SnapshotCreated { layers, .. } = &kind else {
+        panic!("unexpected {kind:?}");
+    };
+    assert!(layers[0].memories.is_empty());
+    assert_eq!(serde_json::to_string(&kind).unwrap(), old);
+
+    let memory: crate::id::MemoryId = "mem_01M1Z1AEC7ATEWCBH91PZ2NQKV".parse().unwrap();
+    let mut layer = layers[0].clone();
+    layer.memories = vec![memory];
+    let wire = serde_json::to_value(&layer).unwrap();
+    assert_eq!(wire["memories"], serde_json::json!([memory]));
+    let back: crate::snapshot::ContextLayer = serde_json::from_value(wire).unwrap();
+    assert_eq!(back, layer);
+}
+
 /// Every variant this phase reshaped, in the form a store written before
 /// the change holds it. Events are JSON in SQLite and the log is
 /// append-only, so an old body that stops decoding is history lost.

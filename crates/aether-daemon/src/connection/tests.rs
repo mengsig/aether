@@ -585,3 +585,24 @@ fn single_pass_frame_decoding_preserves_correlation_and_duplicate_validation() {
         )
     ));
 }
+
+/// A host-only read is still the operator's: an agent acting through the
+/// daemon is refused before anything is looked up.
+#[tokio::test]
+async fn an_agent_cannot_ask_which_memories_were_in_context() {
+    let (daemon, _config) = daemon().await;
+    let command = Command::MemoriesInContext {
+        task: Some(aether_core::id::TaskId::new()),
+        invocation: None,
+    };
+    let agent = Actor::agent(aether_core::id::AgentId::new());
+    let refused = dispatch(&daemon, command.clone(), agent)
+        .await
+        .expect_err("operators only");
+    assert_eq!(refused.code, ErrorCode::InvalidArgument);
+    assert!(refused.message.contains("operator"), "{}", refused.message);
+    let unknown = dispatch(&daemon, command, Actor::user())
+        .await
+        .expect_err("no such task");
+    assert_eq!(unknown.code, ErrorCode::NotFound);
+}

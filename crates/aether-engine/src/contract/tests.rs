@@ -18,6 +18,7 @@ fn snapshot() -> InvocationSnapshot {
                 tokens: 4,
                 items: 1,
                 placement: LayerPlacement::System,
+                memories: vec![],
             },
             ContextLayer {
                 kind: LayerKind::RuntimeState,
@@ -25,6 +26,7 @@ fn snapshot() -> InvocationSnapshot {
                 tokens: 4,
                 items: 1,
                 placement: LayerPlacement::System,
+                memories: vec![],
             },
         ],
         messages: vec![Message::user_text("old history")],

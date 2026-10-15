@@ -22,6 +22,7 @@ async fn retrieved_memory_reaches_an_engine_turn_once_per_session() {
     let first_system = h.systems.lock().unwrap().last().expect("a turn").clone();
     assert_eq!(first.memory_ids, vec![memory_id]);
     assert_eq!(memory_layer(&first).placement, LayerPlacement::UserTurn);
+    assert_eq!(announced_memories(&h, id, first.id), vec![memory_id]);
     assert!(
         first_prompt.contains(FACT),
         "a stored repository memory reaches the engine: {first_prompt}"
@@ -44,6 +45,11 @@ async fn retrieved_memory_reaches_an_engine_turn_once_per_session() {
     let second_system = h.systems.lock().unwrap().last().expect("a turn").clone();
     assert_eq!(second.memory_ids, vec![memory_id]);
     assert_eq!(memory_layer(&second).placement, LayerPlacement::Retained);
+    assert_eq!(
+        announced_memories(&h, id, second.id),
+        vec![memory_id],
+        "a retained memory is still in context, so the record names it"
+    );
     assert!(
         !second_prompt.contains(FACT),
         "the resumed session already holds an unchanged memory set: {second_prompt}"
@@ -118,6 +124,13 @@ async fn engine_memory_does_not_churn_with_each_message() {
         );
         assert_eq!(memory_layer(&second).placement, LayerPlacement::Retained);
         assert!(second_system.is_empty());
+        for snapshot in [&first, &second] {
+            assert_eq!(
+                announced_memories(&h, agent.id, snapshot.id),
+                snapshot.memory_ids,
+                "{model:?}: snapshot.created names the memories in context"
+            );
+        }
         h.runtime.shutdown().await;
     }
 }
@@ -245,4 +258,33 @@ fn memory_layer(
         .find(|l| l.kind == aether_core::snapshot::LayerKind::RetrievedMemory)
         .expect("memory layer")
         .clone()
+}
+
+/// The memory ids `snapshot.created` named for `snapshot`, from the event
+/// log rather than the stored row; every announcement must agree.
+fn announced_memories(
+    h: &Harness,
+    agent: AgentId,
+    snapshot: aether_core::id::SnapshotId,
+) -> Vec<aether_core::id::MemoryId> {
+    let lists: Vec<_> = h
+        .store
+        .events(0, 10_000, &EventFilter::for_agent(agent))
+        .expect("events")
+        .into_iter()
+        .filter_map(|event| match event.kind {
+            EventKind::SnapshotCreated {
+                snapshot: id,
+                layers,
+                ..
+            } if id == snapshot => layers
+                .into_iter()
+                .find(|l| l.kind == aether_core::snapshot::LayerKind::RetrievedMemory)
+                .map(|layer| layer.memories),
+            _ => None,
+        })
+        .collect();
+    assert!(!lists.is_empty(), "the snapshot was announced");
+    assert!(lists.windows(2).all(|pair| pair[0] == pair[1]));
+    lists.into_iter().next().unwrap_or_default()
 }

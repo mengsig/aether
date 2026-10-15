@@ -351,6 +351,7 @@ mod tests {
             ("list_workspaces", &[]),
             ("mcp_servers", &[]),
             ("memories", &["query"]),
+            ("memories_in_context", &[]),
             ("pause", &["agent"]),
             ("pin_memory", &["id", "pinned"]),
             ("ping", &[]),

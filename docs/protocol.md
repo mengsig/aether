@@ -130,6 +130,10 @@ reviewing proposals. The Rust client refuses these requests to older daemons.
 older daemon refuses both commands as unknown; the Rust client refuses to send
 them to one.
 
+`memory_context` means the daemon serves `memories_in_context` (see
+[memories in context](#memories-in-context)). An older daemon refuses the
+command as unknown; the Rust client refuses to send it to one.
+
 ## Naming a checkout
 
 An agent's memory is scoped by `scope.repository`. Left unset, the daemon
@@ -501,3 +505,51 @@ aether memory list --proposed --all
 the repository from a checkout. `memory show <id>` explicitly finds proposals
 as well as admitted records and marks them `proposed` or `rejected`.
 `memory list --all` alone never includes pending proposals.
+
+## Memories in context
+
+Every model call is assembled from a context snapshot, and `snapshot.created`
+announces it. The `retrieved_memory` layer of that event now carries
+`memories`: the ids of the stored memories actually rendered into the prompt,
+in the order the prompt shows them, after the memory budget trimmed what did
+not fit. Operator and agent memories come first, then repository notes. It
+is the snapshot's `memory_ids`, one list from one place. The field is left out
+when the layer holds no memories, so older events decode and re-serialize
+unchanged, and recording it does not change the prompt. Claude Code and Codex
+turns list the ids too, including a turn whose session already holds the
+memory set and so is not sent it again (`placement: "retained"`).
+
+```json
+{"type":"snapshot.created","snapshot":"snp_...","turn":1,"model":{"provider":"anthropic","model":"..."},"token_estimate":1840,"layers":[{"kind":"retrieved_memory","text":"Relevant memory ...","tokens":96,"items":2,"placement":"system","memories":["mem_...","mem_..."]}]}
+```
+
+The envelope names the agent and task. An invocation names its snapshot on
+`invocation.completed` and `invocation.failed`.
+
+`memories_in_context` asks, after the fact, which memories each model call had
+in context. Name exactly one of `task` or `invocation`; both or neither is
+`invalid_argument`, and an unknown id is `not_found`.
+
+```json
+{"cmd":"memories_in_context","task":"tsk_..."}
+{"cmd":"memories_in_context","invocation":"inv_..."}
+```
+
+The reply is `MemoriesInContext`: one entry per snapshot, oldest first.
+
+```json
+{"snapshots":[{"snapshot":"snp_...","invocations":["inv_..."],"agent":"agt_...","task":"tsk_...","turn":1,"at":"2026-10-15T09:00:00Z","memories":["mem_...","mem_..."]}],"truncated":false}
+```
+
+`invocations` lists the calls answered from the snapshot. A Claude Code or
+Codex turn can answer several messages from one snapshot, and it is left out
+when none finished. `memories` is always present, empty when the call saw
+none. By task, the answer covers every model call of the task's agents, read
+through the task's indexed events, and lists at most 256 snapshots. A longer
+task returns its oldest 256 with `truncated: true`. By invocation, it is that
+one call's snapshot. A chat agent with no task is reachable by invocation.
+
+The command is host-only: the operator socket and the shared-token transport
+are served, paired devices are `forbidden`, and the runtime refuses agent
+actors. The CLI is `aether memory context --task <id>` or `--invocation <id>`,
+with `--json` for the reply as sent.

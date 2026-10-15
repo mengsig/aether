@@ -133,6 +133,7 @@ from ._protocol_commands.mcp import (
 
 from ._protocol_commands.memories import (
     memories,
+    memories_in_context,
 )
 
 from ._protocol_commands.pause import (

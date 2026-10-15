@@ -618,6 +618,10 @@ pub(super) async fn dispatch_authorized(
         Command::ListRepositoryAliases => Ok(Reply::RepositoryAliases(
             rt.repository_aliases().map_err(map_err)?,
         )),
+        Command::MemoriesInContext { task, invocation } => Ok(Reply::MemoriesInContext(
+            rt.memories_in_context(task, invocation, &by)
+                .map_err(map_err)?,
+        )),
         Command::ListModels => providers::list_models(daemon).await,
         Command::AuthStatus => providers::auth_status(daemon).await,
 

@@ -21,6 +21,7 @@ import type {
   Invocation,
   InvocationSnapshot,
   McpServerHealth,
+  MemoriesInContext,
   MemoryRecord,
   ModelInfo,
   Pairing,
@@ -232,6 +233,11 @@ export interface ReplyRepositoryAliases {
   "reply": "repository_aliases";
 }
 
+export interface ReplyMemoriesInContext {
+  "data": MemoriesInContext;
+  "reply": "memories_in_context";
+}
+
 export interface ReplyMemory {
   "data": MemoryRecord;
   "reply": "memory";
@@ -387,6 +393,7 @@ export type Reply =
     ReplyMemories |
     ReplyRepositoryAliased |
     ReplyRepositoryAliases |
+    ReplyMemoriesInContext |
     ReplyMemory |
     ReplyMemorySeeded |
     ReplyRuns |

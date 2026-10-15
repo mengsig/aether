@@ -4,6 +4,8 @@
 import type {
   LayerKind,
   LayerPlacement,
+  MemoryId,
+  memories,
 } from "../../protocol.ts";
 
 /**
@@ -13,6 +15,7 @@ import type {
 export interface ContextLayer {
   "items"?: number;
   "kind": LayerKind;
+  "memories"?: Array<MemoryId>;
   "placement"?: LayerPlacement;
   "text"?: string | null;
   "tokens": number;

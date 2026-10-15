@@ -430,6 +430,13 @@
   {
     "access": "host_only",
     "command": {
+      "cmd": "memories_in_context",
+      "task": "tsk_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
       "cmd": "reject_memory",
       "id": "mem_00000000000000000000000000",
       "reason": "fixture rejection"

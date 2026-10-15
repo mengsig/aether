@@ -496,3 +496,56 @@ pub async fn memory_aliases(
     }
     Ok(())
 }
+
+pub async fn memory_context(
+    socket: impl Into<aether_client::Endpoint>,
+    task: Option<String>,
+    invocation: Option<String>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let task: Option<aether_core::id::TaskId> = task
+        .map(|id| id.parse())
+        .transpose()
+        .context("invalid task id")?;
+    let invocation: Option<aether_core::id::InvocationId> = invocation
+        .map(|id| id.parse())
+        .transpose()
+        .context("invalid invocation id")?;
+    debug_assert!(
+        task.is_some() != invocation.is_some(),
+        "clap takes exactly one"
+    );
+    let socket = socket.into();
+    let client = connect(&socket).await?;
+    let found = client.memories_in_context(task, invocation).await?;
+    if json {
+        println!("{}", serde_json::to_string(&found)?);
+        return Ok(());
+    }
+    if found.snapshots.is_empty() {
+        println!("no model calls recorded.");
+        return Ok(());
+    }
+    println!("{:<30} {:>4} {:<25} memories", "snapshot", "turn", "at");
+    for entry in &found.snapshots {
+        let memories: Vec<String> = entry.memories.iter().map(ToString::to_string).collect();
+        let memories = if memories.is_empty() {
+            "-".to_owned()
+        } else {
+            memories.join(" ")
+        };
+        println!(
+            "{:<30} {:>4} {:<25} {memories}",
+            entry.snapshot,
+            entry.turn,
+            entry.at.to_rfc3339()
+        );
+    }
+    if found.truncated {
+        println!(
+            "(only the oldest {} model calls are listed)",
+            found.snapshots.len()
+        );
+    }
+    Ok(())
+}
