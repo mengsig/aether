@@ -1,5 +1,88 @@
 //! Blank, unanswered and orphaned native-turn recovery.
 use super::*;
+
+fn blank_claude_receipt(dollars: Option<f64>) -> Vec<EngineEvent> {
+    let mut receipt = serde_json::json!({"type":"result", "subtype":"success", "result":"",
+        "session_id":"s1", "total_cost_usd":dollars, "modelUsage":{},
+        "usage":{"input_tokens":0,"output_tokens":0}});
+    if dollars.is_none() {
+        receipt.as_object_mut().unwrap().remove("total_cost_usd");
+    }
+    let events = aether_engine::claude_code::parse_line(
+        &receipt.to_string(),
+        &mut aether_engine::claude_code::ParseState::default(),
+    );
+    assert!(matches!(events.last(), Some(EngineEvent::Done(outcome)) if !outcome.is_error));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Assistant { .. }))
+    );
+    events
+}
+
+#[tokio::test]
+async fn a_blank_claude_receipt_records_an_unanswered_prompt() {
+    for dollars in [Some(0.0), None] {
+        let h = harness_with_engine(
+            QueuedEngine::new(vec![blank_claude_receipt(dollars), answered("Built.")]),
+            Arc::default(),
+            Arc::default(),
+        )
+        .await;
+        let (agent, _) = engine_worker(&h, "watch the build");
+        let agent = wait_for(h.store.as_ref(), agent, |a| a.status.is_terminal()).await;
+        assert!(matches!(agent.status, AgentStatus::Completed { .. }));
+        let failures = failed_invocation_errors(h.store.as_ref(), agent.id);
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(failures[0].contains("without running the model"));
+        h.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn the_retry_after_a_blank_claude_receipt_resends_the_task() {
+    for dollars in [Some(0.0), None] {
+        let mut first = vec![EngineEvent::Session {
+            id: "s1".into(),
+            model: None,
+            tools: Vec::new(),
+        }];
+        first.extend(worked_then_fell_silent());
+        let engine = QueuedEngine::new(vec![
+            first,
+            blank_claude_receipt(dollars),
+            answered("Built."),
+        ]);
+        let h = harness_with_engine(engine.clone(), Arc::default(), Arc::default()).await;
+        let (agent, _) = engine_worker(&h, "watch the build");
+        wait_for(h.store.as_ref(), agent, |a| a.status.is_terminal()).await;
+        let prompts = engine.prompts.lock().unwrap().clone();
+        assert_eq!(prompts.len(), 3, "{prompts:?}");
+        assert_eq!(prompts[0].matches("watch the build").count(), 1);
+        assert!(!prompts[1].contains("watch the build"));
+        assert_eq!(prompts[2].matches("watch the build").count(), 1);
+        h.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn blank_claude_receipts_count_toward_the_unanswered_limit() {
+    let engine = QueuedEngine::new(vec![blank_claude_receipt(None); 3]);
+    let h = harness_with_engine(engine.clone(), Arc::default(), Arc::default()).await;
+    let (agent, _) = engine_worker(&h, "watch the build");
+    let agent = wait_for(h.store.as_ref(), agent, |a| a.status.is_terminal()).await;
+    assert!(
+        matches!(agent.status, AgentStatus::Failed { ref error } if error.contains("3 turns in a row"))
+    );
+    assert_eq!(engine.prompts.lock().unwrap().len(), 3);
+    assert_eq!(
+        failed_invocation_errors(h.store.as_ref(), agent.id).len(),
+        3
+    );
+    h.runtime.shutdown().await;
+}
+
 /// A worker's engine turn never ran the model: the task closes only on the
 /// answer returned by the retry, never on an empty native result.
 #[tokio::test]

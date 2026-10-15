@@ -62,21 +62,27 @@ impl SessionCost {
         self
     }
 
-    pub(super) fn receipt(&mut self, value: &Value, streamed: &ModelUsage) -> Receipt {
+    pub(super) fn receipt(
+        &mut self,
+        value: &Value,
+        streamed: &ModelUsage,
+        has_spend: bool,
+    ) -> Receipt {
         let Some(dollars) = value.get("total_cost_usd").and_then(Value::as_f64) else {
-            return unknown_receipt(None);
+            return unknown_receipt(None, has_spend);
         };
         if !dollars.is_finite() || dollars < 0.0 {
-            return unknown_receipt(Some("Claude reported an invalid session cost"));
+            return unknown_receipt(Some("Claude reported an invalid session cost"), has_spend);
         }
         let session = value.get("session_id").and_then(Value::as_str);
         let models = model_counters(value);
         let mut total = models.as_ref().map(sum_counters).unwrap_or_default();
         total.set_cost(Some(dollars));
         if dollars == 0.0 && total.total_tokens() == 0 && total.reasoning_tokens.unwrap_or(0) == 0 {
-            return unknown_receipt(Some(
-                "Claude session receipt is zeroed; this invocation's billed cost is unknown",
-            ));
+            return unknown_receipt(
+                Some("Claude session receipt is zeroed; this invocation's billed cost is unknown"),
+                has_spend,
+            );
         }
         let accepted = self.accepts(session, total, models.as_ref());
         let baseline = self.baseline(session).filter(|_| accepted && !self.reset);
@@ -89,14 +95,15 @@ impl SessionCost {
             events: Vec::new(),
         };
         if cost_usd.is_none() {
-            receipt.events.push(EngineEvent::ProtocolNote(
-                "Claude session cost baseline is missing or reset; this invocation's billed cost is unknown".into(),
-            ));
+            receipt = unknown_receipt(
+                Some(
+                    "Claude session cost baseline is missing or reset; this invocation's billed cost is unknown",
+                ),
+                has_spend,
+            );
         }
         if !accepted {
-            receipt
-                .events
-                .push(self.adopt_reset(session, total, models.clone()));
+            self.adopt_reset(session, total, models.clone());
         }
         if let Some(session) = session {
             receipt.events.push(self.persist(session, total, models));
@@ -106,12 +113,7 @@ impl SessionCost {
         receipt
     }
 
-    fn adopt_reset(
-        &mut self,
-        session: Option<&str>,
-        total: Usage,
-        models: Option<ModelUsage>,
-    ) -> EngineEvent {
+    fn adopt_reset(&mut self, session: Option<&str>, total: Usage, models: Option<ModelUsage>) {
         debug_assert!(total.cost_complete);
         debug_assert!(
             total.cost_usd > 0.0
@@ -122,9 +124,6 @@ impl SessionCost {
         self.before = Some(total);
         self.reset = true;
         self.before_models = models;
-        let mut usage = Usage::default();
-        usage.mark_cost_gap(aether_core::model::CostGap::Unreported);
-        EngineEvent::UsageDelta { usage }
     }
 
     fn persist(&mut self, session: &str, total: Usage, models: Option<ModelUsage>) -> EngineEvent {
@@ -226,14 +225,20 @@ impl SessionCost {
     }
 }
 
-fn unknown_receipt(note: Option<&str>) -> Receipt {
+fn unknown_receipt(note: Option<&str>, has_spend: bool) -> Receipt {
+    let mut events = Vec::new();
+    if let Some(note) = note {
+        events.push(EngineEvent::ProtocolNote(note.into()));
+    }
+    if has_spend {
+        let mut usage = Usage::default();
+        usage.mark_cost_gap(aether_core::model::CostGap::Unreported);
+        events.push(EngineEvent::UsageDelta { usage });
+    }
     Receipt {
         cost_usd: None,
         cost_usage: None,
-        events: note
-            .map(|note| EngineEvent::ProtocolNote(note.into()))
-            .into_iter()
-            .collect(),
+        events,
     }
 }
 

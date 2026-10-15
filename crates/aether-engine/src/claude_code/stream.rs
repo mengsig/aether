@@ -21,6 +21,7 @@ pub struct ParseState {
     message_usage: std::collections::BTreeMap<UsageRequestId, Usage>,
     message_models: std::collections::BTreeMap<UsageRequestId, String>,
     streamed_models: std::collections::BTreeMap<String, Usage>,
+    streamed_usage_seen: bool,
     /// The keys above in the order they were first seen, so the map can be
     /// bounded without evicting the message still being streamed.
     usage_order: VecDeque<UsageRequestId>,
@@ -259,13 +260,19 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             let is_error =
                 v.get("is_error").and_then(Value::as_bool).unwrap_or(false) || subtype != "success";
             let text = v.get("result").and_then(Value::as_str).map(str::to_owned);
-            let receipt = state.session_cost.receipt(&v, &state.streamed_models);
+            let usage = v.get("usage").map(parse_usage).unwrap_or_default();
+            let has_spend = state.streamed_usage_seen
+                || usage.total_tokens() > 0
+                || usage.reasoning_tokens.is_some_and(|tokens| tokens > 0);
+            let receipt = state
+                .session_cost
+                .receipt(&v, &state.streamed_models, has_spend);
             let cost_usd = receipt.cost_usd;
             let cost_usage = receipt.cost_usage;
             let mut events = receipt.events;
             events.push(EngineEvent::Done(EngineOutcome {
                 closing_accounting: true,
-                usage: v.get("usage").map(parse_usage).unwrap_or_default(),
+                usage,
                 cost_usd,
                 cost_usage: cost_usage.map(Box::new),
                 stop_reason: v
@@ -537,3 +544,7 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/usage.rs"]
 mod usage_tests;
+
+#[cfg(test)]
+#[path = "tests/receipt_evidence.rs"]
+mod receipt_evidence_tests;

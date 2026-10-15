@@ -34,6 +34,7 @@ impl ParseState {
         let reclassified = request.total.cache_write_1h_tokens > previous.cache_write_1h_tokens;
         if delta.total_tokens() > 0 || delta.reasoning_tokens.is_some_and(|n| n > 0) || reclassified
         {
+            self.streamed_usage_seen = true;
             events.push(EngineEvent::UsageRequest { request });
         }
         events.push(EngineEvent::ContextUsage {

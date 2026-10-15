@@ -9,7 +9,7 @@ fn receipt(session: &str, cost: f64) -> Value {
 
 #[test]
 fn fresh_receipt_preserves_cumulative_baseline() {
-    let (cost, events) = bill(&mut SessionCost::default(), &receipt("s", 0.0712778));
+    let (cost, events) = bill_after_spend(&mut SessionCost::default(), &receipt("s", 0.0712778));
     assert_eq!(cost, Some(0.0712778));
     assert!(
         matches!(&events[..], [EngineEvent::SessionUsage { session, total, .. }]
@@ -28,10 +28,10 @@ fn resumed_receipts_subtract_initial_baseline_exactly_once() {
             ..Usage::default()
         },
     );
-    let (cost, _) = bill(&mut state, &receipt("s", 0.0712778));
+    let (cost, _) = bill_after_spend(&mut state, &receipt("s", 0.0712778));
     assert!((cost.unwrap() - 0.0117076).abs() < 1e-12);
     // A later result in the same invocation still covers the entire invocation.
-    let (cost, _) = bill(&mut state, &receipt("s", 0.08));
+    let (cost, _) = bill_after_spend(&mut state, &receipt("s", 0.08));
     assert!((cost.unwrap() - 0.0204298).abs() < 1e-12);
 }
 
@@ -48,9 +48,10 @@ fn unknown_or_reset_baseline_does_not_charge_old_session_history() {
         },
     ] {
         let mut state = resumed(Some("s".into()), prior);
-        let (cost, events) = bill(&mut state, &receipt("s", 0.5));
+        let (cost, events) = bill_after_spend(&mut state, &receipt("s", 0.5));
         assert_eq!(cost, None);
         assert!(matches!(events.first(), Some(EngineEvent::ProtocolNote(_))));
+        assert_unreported_gap(&events);
         assert!(
             matches!(events.last(), Some(EngineEvent::SessionUsage { total, .. })
             if total.cost_usd == 0.5)
@@ -67,21 +68,52 @@ fn replacement_session_starts_a_new_cost_history() {
             ..Usage::default()
         },
     );
-    assert_eq!(bill(&mut state, &receipt("new", 0.2)).0, Some(0.2));
+    assert_eq!(
+        bill_after_spend(&mut state, &receipt("new", 0.2)).0,
+        Some(0.2)
+    );
 }
 
 #[test]
 fn missing_or_invalid_receipt_never_invents_a_price() {
     let mut state = SessionCost::default();
-    assert_eq!(bill(&mut state, &json!({})), (None, vec![]));
-    let (cost, events) = bill(&mut state, &receipt("s", -1.0));
+    let (cost, events) = bill_after_spend(&mut state, &json!({}));
     assert_eq!(cost, None);
-    assert!(matches!(&events[..], [EngineEvent::ProtocolNote(_)]));
+    assert_unreported_gap(&events);
+    let (cost, events) = bill_after_spend(&mut state, &receipt("s", -1.0));
+    assert_eq!(cost, None);
+    assert!(matches!(events.first(), Some(EngineEvent::ProtocolNote(_))));
+    assert_unreported_gap(&events);
+}
+
+fn assert_unreported_gap(events: &[EngineEvent]) {
+    let gaps: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::UsageDelta { usage } => Some(*usage),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps.len(), 1, "each unusable receipt needs one gap delta");
+    assert_eq!(gaps[0].total_tokens(), 0);
+    assert_eq!(gaps[0].cost_usd, 0.0);
+    assert!(!gaps[0].cost_complete);
+    assert_eq!(
+        gaps[0].cost_gap,
+        Some(aether_core::model::CostGap::Unreported)
+    );
+}
+
+#[test]
+fn invalid_receipt_marks_the_unreported_gap() {
+    let (cost, events) = bill_after_spend(&mut SessionCost::default(), &receipt("s", -1.0));
+    assert_eq!(cost, None);
+    assert_unreported_gap(&events);
 }
 
 fn covered_usage(state: &mut SessionCost, value: &Value) -> Option<Usage> {
     let streamed = model_counters(value).unwrap_or_default();
-    let receipt = state.receipt(value, &streamed);
+    let receipt = state.receipt(value, &streamed, true);
     assert!(
         receipt
             .cost_usd
@@ -181,14 +213,14 @@ fn native_interrupt_receipt_includes_restored_session_spend() {
         (usage.cache_read_tokens, usage.cache_write_tokens),
         (1793, 728)
     );
-    assert!((bill(&mut state, &value).0.unwrap() - 0.00020473).abs() < 1e-12);
+    assert!((bill_after_spend(&mut state, &value).0.unwrap() - 0.00020473).abs() < 1e-12);
 }
 
 #[test]
 fn an_unread_counter_cannot_become_a_known_zero_baseline_on_resume() {
     let mut value = receipt("s", 0.05);
     value["modelUsage"]["sonnet"]["outputTokens"] = Value::Null;
-    let (_, events) = bill(&mut SessionCost::default(), &value);
+    let (_, events) = bill_after_spend(&mut SessionCost::default(), &value);
     let [EngineEvent::SessionUsage { total, .. }] = &events[..] else {
         panic!("expected the dollar baseline: {events:?}");
     };
@@ -209,8 +241,9 @@ fn zeroed_crash_receipt_keeps_the_baseline_for_the_next_resume() {
     let mut state = resumed(Some("s".into()), baseline);
     let zeroed = json!({"session_id":"s","subtype":"error_during_execution",
         "total_cost_usd":0.0,"modelUsage":{}});
-    let (cost, events) = bill(&mut state, &zeroed);
+    let (cost, events) = bill_after_spend(&mut state, &zeroed);
     assert_eq!(cost, None);
+    assert_unreported_gap(&events);
     for event in events {
         if let EngineEvent::SessionUsage { total, .. } = event {
             baseline = total;
@@ -219,7 +252,7 @@ fn zeroed_crash_receipt_keeps_the_baseline_for_the_next_resume() {
     let mut state = resumed(Some("s".into()), baseline);
     let mut next = receipt("s", 0.08);
     next["modelUsage"]["sonnet"]["inputTokens"] = json!(200);
-    let (cost, _) = bill(&mut state, &next);
+    let (cost, _) = bill_after_spend(&mut state, &next);
     assert!(
         (cost.unwrap() - 0.03).abs() < 1e-12,
         "next resume billed {cost:?}"
@@ -243,27 +276,73 @@ fn next_run(state: &SessionCost) -> SessionCost {
     SessionCost::resumed(Some(saved.session.clone()), saved.total).with_models(saved.models.clone())
 }
 
-fn bill(state: &mut SessionCost, value: &Value) -> (Option<f64>, Vec<EngineEvent>) {
-    let receipt = state.receipt(value, &BTreeMap::new());
+fn bill_after_spend(state: &mut SessionCost, value: &Value) -> (Option<f64>, Vec<EngineEvent>) {
+    let receipt = state.receipt(value, &BTreeMap::new(), true);
     (receipt.cost_usd, receipt.events)
 }
 
 #[test]
 fn an_all_zero_resumed_baseline_cannot_price_session_history() {
     let mut state = SessionCost::resumed(Some("s".into()), Usage::default());
-    let receipt = state.receipt(&receipt("s", 0.08), &BTreeMap::new());
-    assert_eq!(receipt.cost_usd, None);
-    assert_eq!(receipt.cost_usage, None);
-    assert!(matches!(receipt.events[0], EngineEvent::ProtocolNote(_)));
+    let result = state.receipt(&receipt("s", 0.08), &BTreeMap::new(), true);
+    assert_eq!(result.cost_usd, None);
+    assert_eq!(result.cost_usage, None);
+    assert!(matches!(result.events[0], EngineEvent::ProtocolNote(_)));
+    assert_unreported_gap(&result.events);
+    let (cost, events) = bill_after_spend(&mut state, &receipt("s", 0.1));
+    assert_eq!(cost, None);
+    assert_unreported_gap(&events);
+    let (cost, _) = bill_after_spend(&mut next_run(&state), &receipt("s", 0.13));
+    assert!((cost.unwrap() - 0.03).abs() < 1e-12);
+}
+
+#[test]
+fn unusable_receipts_preserve_a_known_baseline_until_covered() {
+    let prior = Usage {
+        cost_usd: 0.05,
+        ..Usage::default()
+    };
+    for value in [
+        json!({}),
+        receipt("s", -1.0),
+        json!({"session_id":"s", "total_cost_usd":0.0, "modelUsage":{}}),
+    ] {
+        let mut state = resumed(Some("s".into()), prior);
+        let (cost, events) = bill_after_spend(&mut state, &value);
+        assert_eq!(cost, None);
+        assert_unreported_gap(&events);
+        assert!(state.latest.is_none());
+        assert_eq!(state.before, Some(prior));
+        let (cost, _) = bill_after_spend(&mut state, &receipt("s", 0.08));
+        assert!((cost.unwrap() - 0.03).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn a_zero_receipt_without_spend_preserves_the_latest_reading() {
+    let mut state = SessionCost::default();
+    bill_after_spend(&mut state, &receipt("s", 0.05));
+    let latest = state.latest.clone();
+    let zero = json!({"session_id":"s","total_cost_usd":0.0,"modelUsage":{}});
+    let result = state.receipt(&zero, &BTreeMap::new(), false);
+    assert_eq!(result.cost_usd, None);
+    assert_eq!(result.cost_usage, None);
+    assert!(matches!(&result.events[..], [EngineEvent::ProtocolNote(_)]));
+    assert_eq!(state.latest, latest);
+    assert_eq!(state.before, Some(Usage::default()));
+    assert_eq!(
+        bill_after_spend(&mut next_run(&state), &receipt("s", 0.08)).0,
+        Some(0.03)
+    );
 }
 
 #[test]
 fn a_reset_leaves_the_run_unknown_and_baselines_the_next_resume() {
     let mut state = SessionCost::default();
-    let (_, events) = bill(&mut state, &receipt("s", 0.05));
+    let (_, events) = bill_after_spend(&mut state, &receipt("s", 0.05));
     assert!(matches!(&events[..], [EngineEvent::SessionUsage { .. }]));
     let mut lower = receipt("s", 0.04);
-    let (cost, events) = bill(&mut state, &lower);
+    let (cost, events) = bill_after_spend(&mut state, &lower);
     assert_eq!(cost, None);
     assert!(
         matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::UsageDelta { .. },
@@ -271,7 +350,7 @@ fn a_reset_leaves_the_run_unknown_and_baselines_the_next_resume() {
     );
     lower["total_cost_usd"] = json!(0.06);
     lower["modelUsage"]["sonnet"]["outputTokens"] = json!(1);
-    let (cost, events) = bill(&mut state, &lower);
+    let (cost, events) = bill_after_spend(&mut state, &lower);
     assert_eq!(cost, None);
     assert!(
         matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::UsageDelta { .. },
@@ -280,8 +359,15 @@ fn a_reset_leaves_the_run_unknown_and_baselines_the_next_resume() {
     assert_eq!(state.latest.as_ref().unwrap().total.cost_usd, 0.06);
     let (mut resumed, mut covering) = (next_run(&state), next_run(&state));
     // The run's spend before the reset is lost, so its later receipts stay unknown.
-    assert_eq!(bill(&mut state, &receipt("s", 0.08)).0, None);
-    assert!((bill(&mut resumed, &receipt("s", 0.08)).0.unwrap() - 0.02).abs() < 1e-12);
+    assert_eq!(bill_after_spend(&mut state, &receipt("s", 0.08)).0, None);
+    assert!(
+        (bill_after_spend(&mut resumed, &receipt("s", 0.08))
+            .0
+            .unwrap()
+            - 0.02)
+            .abs()
+            < 1e-12
+    );
     let covered = covered_usage(&mut covering, &receipt("s", 0.08)).unwrap();
     assert_eq!(covered.input_tokens, 0);
     assert_eq!(covered.output_tokens, 383);
@@ -297,7 +383,7 @@ fn reset_dollars_are_adopted_across_resumes() {
         },
     );
     for (dollars, expected) in [(2.0, None), (5.0, Some(3.0)), (10.0, Some(5.0))] {
-        let (cost, _) = bill(&mut state, &receipt("s", dollars));
+        let (cost, _) = bill_after_spend(&mut state, &receipt("s", dollars));
         assert_eq!(cost, expected);
         let saved = state
             .latest
@@ -314,12 +400,12 @@ fn a_missing_model_is_adopted_across_resumes() {
     let mut prior = receipt("s", 8.0);
     prior["modelUsage"]["opus"] = prior["modelUsage"]["sonnet"].clone();
     let mut state = SessionCost::default();
-    bill(&mut state, &prior);
+    bill_after_spend(&mut state, &prior);
     let saved = state.latest.as_ref().unwrap();
     state = SessionCost::resumed(Some(saved.session.clone()), saved.total)
         .with_models(saved.models.clone());
     for (dollars, expected) in [(2.0, None), (20.0, Some(18.0)), (200.0, Some(180.0))] {
-        let (cost, _) = bill(&mut state, &receipt("s", dollars));
+        let (cost, _) = bill_after_spend(&mut state, &receipt("s", dollars));
         assert_eq!(cost, expected);
         let saved = state.latest.as_ref().unwrap();
         assert_eq!(saved.models.as_ref().unwrap().len(), 1);
@@ -333,7 +419,7 @@ fn a_missing_model_resets_even_when_remaining_counters_cover_the_prior_total() {
     let mut prior = receipt("s", 8.0);
     prior["modelUsage"]["opus"] = prior["modelUsage"]["sonnet"].clone();
     let mut state = SessionCost::default();
-    bill(&mut state, &prior);
+    bill_after_spend(&mut state, &prior);
     let mut next = receipt("s", 20.0);
     for field in [
         "inputTokens",
@@ -344,7 +430,7 @@ fn a_missing_model_resets_even_when_remaining_counters_cover_the_prior_total() {
         next["modelUsage"]["sonnet"][field] =
             json!(prior["modelUsage"]["sonnet"][field].as_u64().unwrap() * 3);
     }
-    assert_eq!(bill(&mut state, &next).0, None);
+    assert_eq!(bill_after_spend(&mut state, &next).0, None);
     assert_eq!(
         state
             .latest
@@ -359,11 +445,11 @@ fn a_missing_model_resets_even_when_remaining_counters_cover_the_prior_total() {
     let mut resumed = next_run(&state);
     next["total_cost_usd"] = json!(200.0);
     assert_eq!(
-        bill(&mut state, &next).0,
+        bill_after_spend(&mut state, &next).0,
         None,
         "the reset run stays unknown"
     );
-    assert_eq!(bill(&mut resumed, &next).0, Some(180.0));
+    assert_eq!(bill_after_spend(&mut resumed, &next).0, Some(180.0));
 }
 
 #[test]
@@ -378,12 +464,12 @@ fn each_model_counter_reset_is_unknown_even_when_session_totals_grow() {
         let mut prior = receipt("s", 8.0);
         prior["modelUsage"]["sonnet"]["thinkingTokens"] = json!(8);
         let mut state = SessionCost::default();
-        bill(&mut state, &prior);
+        bill_after_spend(&mut state, &prior);
         let mut value = prior.clone();
         value["total_cost_usd"] = json!(10.0);
         value["modelUsage"]["opus"] = prior["modelUsage"]["sonnet"].clone();
         value["modelUsage"]["sonnet"][field] = json!(1);
-        let result = state.receipt(&value, &BTreeMap::new());
+        let result = state.receipt(&value, &BTreeMap::new(), true);
         assert_eq!(result.cost_usd, None, "{field}");
         assert_eq!(result.cost_usage, None, "{field}");
         assert_eq!(
@@ -393,8 +479,12 @@ fn each_model_counter_reset_is_unknown_even_when_session_totals_grow() {
         );
         let mut resumed = next_run(&state);
         value["total_cost_usd"] = json!(12.0);
-        assert_eq!(bill(&mut state, &value).0, None, "{field}");
-        assert_eq!(bill(&mut resumed, &value).0, Some(2.0), "{field}");
+        assert_eq!(bill_after_spend(&mut state, &value).0, None, "{field}");
+        assert_eq!(
+            bill_after_spend(&mut resumed, &value).0,
+            Some(2.0),
+            "{field}"
+        );
     }
 }
 
@@ -420,7 +510,7 @@ fn resumed_model_coverage_cannot_borrow_unstreamed_helper_counters() {
             "helper":{"inputTokens":1000,"outputTokens":1000,
                 "cacheReadInputTokens":1000,"cacheCreationInputTokens":1000}}});
     let streamed = BTreeMap::from([("main".into(), model_usage(200))]);
-    let receipt = state.receipt(&value, &streamed);
+    let receipt = state.receipt(&value, &streamed, true);
     assert!((receipt.cost_usd.unwrap() - 0.03).abs() < 1e-12);
     assert_eq!(receipt.cost_usage, Some(model_usage(100)));
 }

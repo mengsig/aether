@@ -496,10 +496,11 @@ pub(crate) async fn execute(
     {
         run.budget_stop = Some(crossed);
     }
+    // A cost-gap-only delta is receipt metadata, not evidence the model ran.
+    let no_usage = !run.usage_seen || super::driver::is_cost_gap_only(run.stream_usage);
     let DriveResult {
         outcome,
         park,
-        usage_seen,
         invoked,
         ran_tools,
         budget_stop,
@@ -625,7 +626,7 @@ pub(crate) async fn execute(
     // Nothing said and nothing billed: the model never saw the prompt. The
     // blank reply below then counts as a silent turn, never as an answer.
     let blank = outcome.text.as_deref().is_none_or(|t| t.trim().is_empty());
-    if blank && !delivered && !invoked && !usage_seen && outcome.usage.total_tokens() == 0 {
+    if blank && !delivered && !invoked && no_usage && outcome.usage.total_tokens() == 0 {
         record_unanswered_prompt(runtime, ctx, engine.kind(), &snapshot)?;
     }
     // `effects.next` was taken above (`next`) and never reassigned since, so

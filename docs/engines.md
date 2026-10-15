@@ -419,12 +419,24 @@ cannot cover missing tokens from another model. Tokens absent from both
 receipts still retain their stream-derived charge; the agent total can then
 exceed the latest dollar receipt. A parked or interrupted run without proven
 closing coverage keeps its cost gap even when every observed token has a price.
-An all-zero crash receipt keeps the previous baseline. A nonzero receipt with
-lower dollars, lower model counters, or a missing model has unknown cost, as
-do later receipts in the same run, and becomes the baseline the next run bills
-its increase from. A run whose cost stays incomplete without a dollar receipt
-keeps its cost gap and a floor: the stream's dollars plus base-rate prices for
-closing tokens that never streamed.
+An unusable receipt (missing or invalid dollars, all-zero counters and
+cost, or a missing or reset baseline) opens an `Unreported` cost gap only
+when the invocation streamed usage or the receipt has nonzero per-turn
+usage. The turn keeps a floor: the stream's dollars plus base-rate prices
+for closing tokens that never streamed. Without that evidence, receipt
+handling is unchanged; the runtime decides any gap from its own evidence
+of work. A later usable cumulative receipt can cover the gap when the
+invocation's starting baseline is known.
+
+An all-zero receipt keeps the previous baseline without persisting a new
+one. A missing baseline stays unknown throughout the run, but a nonzero
+reading is persisted for the next resume. After a fresh-session overload
+with an all-zero receipt, retrying the same session still has no baseline;
+its first nonzero receipt leaves an incomplete floor and establishes the
+baseline for the next resume. A nonzero receipt with lower dollars, lower
+model counters, or a missing model has unknown cost, as do later receipts
+in the same run, and becomes the baseline the next run bills its increase
+from.
 After upgrading, a record without per-model counters gets no coverage on its
 first resume, so the streamed shortfall may be priced once more per session.
 A receipt without `modelUsage` keeps the dollars but drops the per-model

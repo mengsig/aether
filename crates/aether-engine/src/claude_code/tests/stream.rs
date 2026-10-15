@@ -285,7 +285,7 @@ fn weekly_usage_error_preserves_provider_reset_wording() {
         .to_string(),
         &mut ParseState::default(),
     );
-    let EngineEvent::Done(outcome) = &events[0] else {
+    let Some(EngineEvent::Done(outcome)) = events.last() else {
         panic!("expected result")
     };
     assert!(outcome.is_error);
@@ -308,7 +308,7 @@ fn result_errors_preserve_startup_diagnostics() {
             .to_string(),
             &mut ParseState::default(),
         );
-        let EngineEvent::Done(outcome) = &events[0] else {
+        let Some(EngineEvent::Done(outcome)) = events.last() else {
             panic!("expected result")
         };
         let error = outcome.error.as_deref().expect("failure diagnostic");
@@ -332,7 +332,7 @@ fn result_errors_keep_fallback_and_success_semantics() {
             .to_string(),
             &mut ParseState::default(),
         );
-        let EngineEvent::Done(outcome) = &events[0] else {
+        let Some(EngineEvent::Done(outcome)) = events.last() else {
             panic!("expected result")
         };
         assert_eq!(outcome.error.as_deref(), expected);
@@ -341,7 +341,7 @@ fn result_errors_keep_fallback_and_success_semantics() {
 }
 
 #[test]
-fn parses_observed_stream() {
+fn parses_observed_tool_stream() {
     let mut st = ParseState::default();
     let init = r#"{"type":"system","subtype":"init","cwd":"/x","session_id":"0b1a","tools":["Bash","mcp__aether__echo"],"mcp_servers":[{"name":"aether","status":"connected"}],"model":"claude-sonnet-5","permissionMode":"default"}"#;
     assert_eq!(
@@ -371,6 +371,11 @@ fn parses_observed_stream() {
             text: "a".into()
         })]
     );
+}
+
+#[test]
+fn parses_observed_assistant_and_tool_results() {
+    let mut st = ParseState::default();
     let assistant = r#"{"type":"assistant","message":{"model":"claude-sonnet-5","content":[{"type":"text","text":"I'll run it."},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"echo hi"}}],"usage":{"input_tokens":2,"cache_creation_input_tokens":12495,"cache_read_input_tokens":18534,"output_tokens":8}}}"#;
     let events = parse_line(assistant, &mut st);
     match &events[0] {
@@ -380,9 +385,7 @@ fn parses_observed_stream() {
             model,
         } => {
             assert_eq!(content.len(), 2);
-            // Billing rides the delta stream alone, whether or not the
-            // message carried an id: on the message it would be counted
-            // once per block.
+            // Usage on the message would bill it once per content block.
             assert_eq!(usage, &None);
             assert_eq!(model.as_deref(), Some("claude-sonnet-5"));
         }
@@ -411,6 +414,11 @@ fn parses_observed_stream() {
             is_error: false
         }
     );
+}
+
+#[test]
+fn parses_observed_closing_result() {
+    let mut st = ParseState::default();
     let result = r#"{"type":"result","subtype":"success","is_error":false,"duration_api_ms":3591,"stop_reason":"end_turn","session_id":"0b1a","total_cost_usd":0.0547,"usage":{"input_tokens":2,"cache_creation_input_tokens":12495,"cache_read_input_tokens":18534,"output_tokens":8},"result":"aether engine ok","num_turns":1}"#;
     let result_events = parse_line(result, &mut st);
     assert!(
@@ -423,9 +431,7 @@ fn parses_observed_stream() {
             assert!(!o.is_error);
             assert_eq!(o.cost_usd, Some(0.0547));
             assert_eq!(o.usage.output_tokens, 8);
-            // The price is on the outcome, not in `usage`: an outcome
-            // whose usage claimed to be unpriced would mark the agent's
-            // whole total a floor on a turn the engine did price.
+            // The outcome carries the price; its usage must not introduce a gap.
             assert!(
                 o.usage.cost_complete && o.usage.cost_usd == 0.0,
                 "usage carries tokens only: {:?}",
@@ -436,13 +442,18 @@ fn parses_observed_stream() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn parses_errors_unknown_lines_and_rate_limits() {
+    let mut st = ParseState::default();
     let failed = r#"{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"s","usage":{}}"#;
-    match &parse_line(failed, &mut st)[0] {
-        EngineEvent::Done(o) => {
-            assert!(o.is_error && o.error.as_deref() == Some("error_max_turns"))
-        }
-        other => panic!("{other:?}"),
-    }
+    let events = parse_line(failed, &mut st);
+    let [EngineEvent::Done(outcome)] = &events[..] else {
+        panic!("expected result without a gap: {events:?}");
+    };
+    assert!(outcome.is_error && outcome.error.as_deref() == Some("error_max_turns"));
+    assert_eq!(outcome.cost_usd, None);
     assert!(matches!(
         parse_line("garbage", &mut st)[0],
         EngineEvent::Note(_)

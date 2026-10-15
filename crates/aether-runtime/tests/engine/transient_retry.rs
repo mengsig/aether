@@ -2,6 +2,9 @@
 use super::*;
 use aether_core::model::Usage;
 
+#[path = "transient_retry_receipt.rs"]
+mod receipt;
+
 const STARTUP_TIMEOUT: &str = "codex app-server did not start the turn in time";
 const CAPACITY: &str = "Selected model is at capacity. Please try a different model.";
 
@@ -333,34 +336,6 @@ async fn resume_exhaustion_never_restarts_the_session() {
         assert!(!failures(&h, id)[0].1);
         h.runtime.shutdown().await;
     }
-}
-
-#[tokio::test]
-async fn a_claude_zero_cost_overload_receipt_is_metadata_and_can_retry() {
-    let events = aether_engine::claude_code::parse_line(
-        &serde_json::json!({"type":"result", "subtype":"error_during_execution", "is_error":true,
-            "result":"Model is overloaded", "session_id":"empty", "total_cost_usd":0.0, "usage":{}})
-        .to_string(),
-        &mut aether_engine::claude_code::ParseState::default(),
-    );
-    assert!(
-        matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::Done(outcome)]
-        if outcome.cost_usd.is_none() && outcome.cost_usage.is_none())
-    );
-    assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, EngineEvent::SessionUsage { .. }))
-    );
-    let (h, engine) = queued(vec![events, answered("recovered")]).await;
-    let id = chat_agent(&h);
-    engine_turn(&h, id, "go").await;
-    assert_eq!(engine.prompts.lock().unwrap().len(), 2);
-    assert_eq!(
-        failures(&h, id),
-        [(aether_core::model::ModelErrorClass::Overloaded, true)]
-    );
-    h.runtime.shutdown().await;
 }
 
 struct CleanupEngine {

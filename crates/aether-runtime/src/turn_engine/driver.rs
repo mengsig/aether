@@ -60,6 +60,7 @@ fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
         | EngineEvent::Note(_)
         | EngineEvent::ProtocolNote(_)
         | EngineEvent::Done(_) => false,
+        EngineEvent::UsageDelta { usage } if is_cost_gap_only(*usage) => false,
         EngineEvent::SessionUsage { session, total, .. } => {
             let mut baseline = ctx
                 .agent
@@ -74,6 +75,22 @@ fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
         }
         _ => true,
     }
+}
+
+/// An empty unreported-cost delta establishes reconciliation without model activity.
+pub(super) fn is_cost_gap_only(usage: Usage) -> bool {
+    debug_assert!(usage.cost_usd.is_finite() && usage.cost_usd >= 0.0);
+    debug_assert!(
+        usage
+            .estimated_cost_usd
+            .is_none_or(|cost| cost.is_finite() && cost >= 0.0)
+    );
+    !usage.cost_complete
+        && usage.cost_gap == Some(aether_core::model::CostGap::Unreported)
+        && usage.total_tokens() == 0
+        && usage.reasoning_tokens.is_none_or(|tokens| tokens == 0)
+        && usage.cost_usd == 0.0
+        && usage.estimated_cost_usd.is_none_or(|cost| cost == 0.0)
 }
 
 /// Only evidence of a possible new model request invalidates closing accounting.
@@ -140,7 +157,7 @@ impl DriveResult {
         !self.activity_seen
             && !self.invoked
             && !self.ran_tools
-            && !self.usage_seen
+            && (!self.usage_seen || is_cost_gap_only(self.stream_usage))
             && self
                 .outcome
                 .text
@@ -955,6 +972,44 @@ fn interruption_cause(
 #[cfg(test)]
 mod receipt_tests {
     use super::*;
+
+    #[test]
+    fn only_cost_gap_metadata_leaves_a_run_unanswered() {
+        let mut gap = Usage::default();
+        gap.mark_cost_gap(aether_core::model::CostGap::Unreported);
+        let mut run = super::super::execution::test_run();
+        run.usage_seen = true;
+        run.stream_usage = gap;
+        assert!(is_cost_gap_only(gap));
+        assert!(run.unanswered());
+        for usage in [
+            Usage {
+                input_tokens: 1,
+                ..gap
+            },
+            Usage {
+                reasoning_tokens: Some(1),
+                ..gap
+            },
+            Usage {
+                cost_usd: 1.0,
+                ..gap
+            },
+            Usage {
+                estimated_cost_usd: Some(1.0),
+                ..gap
+            },
+            Usage {
+                cost_gap: Some(aether_core::model::CostGap::Interrupted),
+                ..gap
+            },
+            Usage::default(),
+        ] {
+            run.stream_usage = usage;
+            assert!(!is_cost_gap_only(usage));
+            assert!(!run.unanswered());
+        }
+    }
 
     #[test]
     fn cleanup_keeps_cost_counters_paired_with_the_selected_dollar_receipt() {
