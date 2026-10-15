@@ -110,7 +110,6 @@ async fn list(client: &aether_client::Client, memory: MemoryId, json: bool) -> a
     }
     if found.records.is_empty() {
         println!("no feedback for {memory}.");
-        return Ok(());
     }
     for record in found.records {
         println!(

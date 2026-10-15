@@ -170,6 +170,37 @@ fn helped_moves_a_memory_up_and_hurt_down_by_exactly_its_factor() {
 }
 
 #[test]
+fn feedback_scales_the_whole_score_semantic_similarity_included() {
+    let f = fixture(true);
+    let id = f.put(
+        "Release builds run scripts/release.sh first",
+        MemoryScope::Global,
+        0.6,
+        false,
+    );
+    let query = "how are release builds run";
+    let record = f.store.memory(id).expect("read").expect("stored");
+    let semantic = LocalEmbeddingIndex
+        .similarity(query, &[record])
+        .expect("similarity");
+    assert!(semantic[0] > 0.0, "{semantic:?}");
+    let request = RetrievalRequest {
+        query: Some(query.into()),
+        limit: 5,
+        ..Default::default()
+    };
+    let before = f.ranked(&request);
+    f.votes(id, MemoryVerdict::Helped, 3);
+    let after = f.ranked(&request);
+    let up = FeedbackTally { helped: 3, hurt: 0 }.factor();
+    assert!(up > 1.0);
+    assert_eq!(
+        score_of(&after, id).to_bits(),
+        (score_of(&before, id) * up).to_bits()
+    );
+}
+
+#[test]
 fn a_pinned_memory_keeps_its_score_and_place_whatever_its_feedback() {
     let f = fixture(false);
     let pinned = f.put(

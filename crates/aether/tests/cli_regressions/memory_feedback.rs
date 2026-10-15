@@ -175,6 +175,24 @@ async fn feedback_cli_lists_an_older_daemons_reply_as_unranked() {
 }
 
 #[tokio::test]
+async fn feedback_cli_lists_no_feedback_with_its_neutral_ranking() {
+    let output = exchange(
+        &["memory", "feedback", "list", MEMORY],
+        json!({"cmd":"memory_feedback", "memory":MEMORY}),
+        "memory_feedback_list",
+        json!({"records":[], "truncated":false,
+            "ranking":{"helped":0, "hurt":0, "factor":1.0}}),
+    )
+    .await;
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "no feedback for {MEMORY}.\nranking factor 1.00 (0 helped, 0 hurt across the latest 20 tasks; 2 needed to move recall)\n"
+        )
+    );
+}
+
+#[tokio::test]
 async fn feedback_cli_requires_support_and_rejects_invalid_arguments_before_connecting() {
     let old = cli(&["memory", "feedback", "list", MEMORY], Stub::default()).await;
     assert_eq!(old.status.code(), Some(1));

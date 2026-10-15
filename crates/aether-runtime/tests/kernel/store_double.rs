@@ -89,6 +89,7 @@ pub struct CommitsMidPass {
     read_failed: std::sync::atomic::AtomicBool,
     dependency_owner_read: std::sync::atomic::AtomicBool,
     skip: std::sync::atomic::AtomicUsize,
+    tally_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl CommitsMidPass {
@@ -101,6 +102,7 @@ impl CommitsMidPass {
             read_failed: std::sync::atomic::AtomicBool::new(false),
             dependency_owner_read: std::sync::atomic::AtomicBool::new(false),
             skip: std::sync::atomic::AtomicUsize::new(0),
+            tally_reads: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -117,6 +119,11 @@ impl CommitsMidPass {
     /// Whether an armed read failure actually fired.
     pub fn read_failed(&self) -> bool {
         self.read_failed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many counted-feedback reads have reached the store.
+    pub fn tally_reads(&self) -> usize {
+        self.tally_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Whether the armed write has run.
@@ -457,6 +464,8 @@ impl Store for CommitsMidPass {
     ) -> aether_store::Result<
         std::collections::BTreeMap<MemoryId, aether_core::memory_feedback::FeedbackTally>,
     > {
+        self.tally_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.fire(Hook::FeedbackTallyRead)?;
         self.inner.memory_feedback_tallies(memories)
     }

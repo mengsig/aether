@@ -14,18 +14,29 @@ impl MemoryService {
     /// feedback scales a non-pinned memory's score by 0.75 to 1.25. A
     /// repository named by an old alias is read where its memories now live.
     pub fn retrieve(&self, req: &RetrievalRequest) -> Result<Vec<Retrieved>> {
-        self.read_resolved(req.scope.clone(), |scope| {
-            self.retrieve_resolved(&RetrievalRequest {
+        let limit = if req.limit == 0 { 5 } else { req.limit };
+        // Only collection is repeated when an alias lands mid-read; ranking,
+        // and its one feedback read, run once on the pool that was kept.
+        let (req, scopes, pool) = self.read_resolved(req.scope.clone(), |scope| {
+            let req = RetrievalRequest {
                 scope,
                 ..req.clone()
-            })
-        })
+            };
+            let scopes = self.scopes_for(&req);
+            let pool = self.candidate_pool(&req, &scopes, limit)?;
+            Ok((req, scopes, pool))
+        })?;
+        self.rank(&req, &scopes, pool, limit)
     }
 
-    fn retrieve_resolved(&self, req: &RetrievalRequest) -> Result<Vec<Retrieved>> {
-        let limit = if req.limit == 0 { 5 } else { req.limit };
-        let scopes = self.scopes_for(req);
-        let pool = self.candidate_pool(req, &scopes, limit)?;
+    fn rank(
+        &self,
+        req: &RetrievalRequest,
+        scopes: &[MemoryScope],
+        pool: Vec<MemoryRecord>,
+        limit: usize,
+    ) -> Result<Vec<Retrieved>> {
+        debug_assert!(limit > 0);
         let query_tokens = req.query.as_deref().map(tokens).unwrap_or_default();
         let at = now();
         let semantic = self.semantic_scores(req, &pool)?;
@@ -35,7 +46,7 @@ impl MemoryService {
             .zip(semantic)
             .map(|(record, semantic)| {
                 let score =
-                    score(&record, req, &scopes, &query_tokens, at) + SEMANTIC_WEIGHT * semantic;
+                    score(&record, req, scopes, &query_tokens, at) + SEMANTIC_WEIGHT * semantic;
                 let score = with_feedback(score, &record, tallies.get(&record.id));
                 Retrieved { record, score }
             })
