@@ -225,6 +225,63 @@ async fn the_host_query_answers_by_task_and_by_invocation() {
     h.runtime.shutdown().await;
 }
 
+/// Daemon recovery and imported history record a failed call by its
+/// `invocation.failed` event alone, with no invocation row to look up.
+#[tokio::test]
+async fn a_failed_call_with_no_invocation_row_is_found_by_its_event() {
+    let h = harness(scripted_task()).await;
+    seed_memories(&h);
+    let (agent, task) = finished_task(&h, "How is a release build made and signed?").await;
+    let before = h
+        .runtime
+        .memories_in_context(Some(task), None, &Actor::user())
+        .expect("by task");
+    let first = before.snapshots.first().expect("a snapshot").clone();
+    assert!(!first.memories.is_empty());
+    let failed = |task: Option<TaskId>| {
+        let invocation = InvocationId::new();
+        let mut draft = EventDraft::new(
+            Actor::System,
+            EventKind::InvocationFailed {
+                class: None,
+                invocation,
+                snapshot: first.snapshot,
+                error: "daemon restarted during the turn".into(),
+                retryable: true,
+                cancelled: false,
+                partial: Vec::new(),
+            },
+        )
+        .agent(agent);
+        draft.task_id = task;
+        h.store.commit(Commit::new().event(draft)).expect("commit");
+        assert!(h.store.invocation(invocation).expect("read").is_none());
+        invocation
+    };
+    let recovered = failed(None);
+    let imported = failed(Some(task));
+
+    for call in [recovered, imported] {
+        let found = h
+            .runtime
+            .memories_in_context(None, Some(call), &Actor::user())
+            .expect("found by its event");
+        assert_eq!(found.snapshots.len(), 1);
+        let entry = &found.snapshots[0];
+        assert_eq!(
+            (entry.snapshot, &entry.memories),
+            (first.snapshot, &first.memories)
+        );
+        assert_eq!(entry.invocations, vec![call]);
+    }
+    let after = h
+        .runtime
+        .memories_in_context(Some(task), None, &Actor::user())
+        .expect("by task");
+    assert!(after.snapshots[0].invocations.contains(&imported));
+    h.runtime.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_task_that_saw_no_memories_lists_its_snapshots_with_none() {
     let h = harness(scripted_task()).await;

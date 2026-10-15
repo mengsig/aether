@@ -519,6 +519,12 @@ unchanged, and recording it does not change the prompt. Claude Code and Codex
 turns list the ids too, including a turn whose session already holds the
 memory set and so is not sent it again (`placement: "retained"`).
 
+`memories` is what that call's layer delivered. A resumed Claude Code or Codex
+session also keeps what earlier calls in it were sent, until the engine
+compacts its own history, so a memory forgotten or displaced since then can
+still be in that session without being listed on the later call. Read a
+task's answer as a whole for everything its agents were shown.
+
 ```json
 {"type":"snapshot.created","snapshot":"snp_...","turn":1,"model":{"provider":"anthropic","model":"..."},"token_estimate":1840,"layers":[{"kind":"retrieved_memory","text":"Relevant memory ...","tokens":96,"items":2,"placement":"system","memories":["mem_...","mem_..."]}]}
 ```
@@ -526,8 +532,8 @@ memory set and so is not sent it again (`placement: "retained"`).
 The envelope names the agent and task. An invocation names its snapshot on
 `invocation.completed` and `invocation.failed`.
 
-`memories_in_context` asks, after the fact, which memories each model call had
-in context. Name exactly one of `task` or `invocation`; both or neither is
+`memories_in_context` asks, after the fact, which memories each model call was
+given. Name exactly one of `task` or `invocation`; both or neither is
 `invalid_argument`, and an unknown id is `not_found`.
 
 ```json
@@ -547,7 +553,11 @@ when none finished. `memories` is always present, empty when the call saw
 none. By task, the answer covers every model call of the task's agents, read
 through the task's indexed events, and lists at most 256 snapshots. A longer
 task returns its oldest 256 with `truncated: true`. By invocation, it is that
-one call's snapshot. A chat agent with no task is reachable by invocation.
+one call's snapshot, found from its invocation record or, for a failed call
+with none (daemon recovery and imported history keep none), from its
+`invocation.failed` event. A chat agent with no task is reachable by
+invocation, and so is a call daemon recovery closed: its event names no task,
+so a task's answer lists that call's snapshot without it.
 
 The command is host-only: the operator socket and the shared-token transport
 are served, paired devices are `forbidden`, and the runtime refuses agent

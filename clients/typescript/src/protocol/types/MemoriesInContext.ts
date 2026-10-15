@@ -7,8 +7,8 @@ import type {
 } from "../../protocol.ts";
 
 /**
- * Which memories were in context for a task or one invocation, oldest
- * snapshot first. `truncated` says snapshots past the limit were left out.
+ * Which memories each model call of a task, or one invocation, was given,
+ * oldest snapshot first. `truncated` says snapshots past the limit were left out.
  */
 export interface MemoriesInContext {
   "snapshots": Array<SnapshotMemories>;

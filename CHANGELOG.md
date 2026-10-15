@@ -16,7 +16,7 @@ release is also the text of its GitHub release.
   reopens review without putting it into recall, and retrying acceptance or
   rejection does not write duplicate events. Clients can detect support with
   `memory_proposals`; `memory list --proposed` shows the review queue.
-- **You can see which memories each model call had in front of it.** The
+- **You can see which memories each model call was given.** The
   context record of every call now lists the memories it rendered, in the
   order the prompt shows them, for Claude Code and Codex turns too. The prompt
   itself is unchanged. Ask for a task or a single call with

@@ -16,8 +16,8 @@ def memories(*, query: MemoryQuerySpec) -> dict[str, Any]:
     return frame
 
 def memories_in_context(*, invocation: InvocationId | None = None, task: TaskId | None = None) -> dict[str, Any]:
-    """Which stored memories were in context for every model call of a task,
-    or for one invocation. Name exactly one. Needs `memory_context`.
+    """Which stored memories every model call of a task, or one invocation,
+    was given. Name exactly one. Needs `memory_context`.
     """
     frame: dict[str, Any] = {"cmd": "memories_in_context"}
     if invocation is not None:

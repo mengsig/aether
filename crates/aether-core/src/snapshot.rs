@@ -98,8 +98,9 @@ pub struct ContextLayer {
     /// in the last user message, or in the engine's own retained history.
     #[serde(default)]
     pub placement: LayerPlacement,
-    /// The stored memories rendered into a retrieved-memory layer, in render
+    /// The stored memories this retrieved-memory layer delivered, in render
     /// order: the snapshot's `memory_ids`. Absent when the layer holds none.
+    /// A resumed native session may still hold earlier calls' memories too.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memories: Vec<MemoryId>,
 }
@@ -198,8 +199,8 @@ impl SnapshotMemories {
     }
 }
 
-/// Which memories were in context for a task or one invocation, oldest
-/// snapshot first. `truncated` says snapshots past the limit were left out.
+/// Which memories each model call of a task, or one invocation, was given,
+/// oldest snapshot first. `truncated` says snapshots past the limit were left out.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoriesInContext {
     pub snapshots: Vec<SnapshotMemories>,

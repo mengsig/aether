@@ -312,8 +312,8 @@ impl Client {
         }
     }
 
-    /// Which stored memories were in context for each model call of `task`,
-    /// or for `invocation`. Name exactly one; the daemon refuses otherwise.
+    /// Which stored memories each model call of `task`, or `invocation`, was
+    /// given. Name exactly one; the daemon refuses otherwise.
     pub async fn memories_in_context(
         &self,
         task: Option<aether_core::id::TaskId>,

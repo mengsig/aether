@@ -18,8 +18,8 @@ export function memories(args: Omit<MemoriesCommand, "cmd">): MemoriesCommand {
 }
 
 /**
- * Which stored memories were in context for every model call of a task,
- * or for one invocation. Name exactly one. Needs `memory_context`.
+ * Which stored memories every model call of a task, or one invocation,
+ * was given. Name exactly one. Needs `memory_context`.
  */
 export interface MemoriesInContextCommand {
   "cmd": "memories_in_context";

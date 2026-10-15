@@ -1,7 +1,8 @@
 //! Which stored memories each model call saw, for a host weighing them.
 //!
 //! Read from the stored snapshots, found through the task's indexed
-//! `snapshot.created` and invocation events; nothing here scans the log.
+//! `snapshot.created` and invocation events, or the type-indexed failed
+//! calls for one with no invocation row; nothing here scans the whole log.
 
 use std::collections::HashMap;
 
@@ -18,8 +19,8 @@ pub const MEMORY_CONTEXT_LIMIT: usize = 256;
 const PAGE: usize = 512;
 
 impl Runtime {
-    /// The memories in context for every model call of `task`, or for the
-    /// one `invocation`; exactly one must be named. Operators only.
+    /// The memories every model call of `task`, or the one `invocation`, was
+    /// given; exactly one must be named. Operators only.
     pub fn memories_in_context(
         &self,
         task: Option<TaskId>,
@@ -41,17 +42,48 @@ impl Runtime {
     }
 
     fn invocation_memories(&self, id: InvocationId) -> Result<MemoriesInContext> {
-        let invocation = self
-            .store
-            .invocation(id)?
-            .ok_or_else(|| RuntimeError::NotFound(id.to_string()))?;
-        let mut snapshots = self.stored_memories(&[invocation.snapshot_id])?;
+        let snapshot = match self.store.invocation(id)? {
+            Some(invocation) => invocation.snapshot_id,
+            None => self
+                .failed_call_snapshot(id)?
+                .ok_or_else(|| RuntimeError::NotFound(id.to_string()))?,
+        };
+        let mut snapshots = self.stored_memories(&[snapshot])?;
         debug_assert_eq!(snapshots.len(), 1);
         snapshots[0].invocations.push(id);
         Ok(MemoriesInContext {
             snapshots,
             truncated: false,
         })
+    }
+
+    /// The snapshot a failed call answered from, read from its
+    /// `invocation.failed` event: daemon recovery and imports keep no row for it.
+    fn failed_call_snapshot(&self, id: InvocationId) -> Result<Option<SnapshotId>> {
+        let filter = EventFilter {
+            types: vec!["invocation.failed".into()],
+            ..Default::default()
+        };
+        let mut after = 0;
+        loop {
+            let page = self.store.events(after, PAGE, &filter)?;
+            for event in &page {
+                debug_assert!(event.seq > after, "events arrive in sequence order");
+                after = event.seq;
+                if let EventKind::InvocationFailed {
+                    invocation,
+                    snapshot,
+                    ..
+                } = &event.kind
+                    && *invocation == id
+                {
+                    return Ok(Some(*snapshot));
+                }
+            }
+            if page.len() < PAGE {
+                return Ok(None);
+            }
+        }
     }
 
     fn task_memories(&self, task: TaskId) -> Result<MemoriesInContext> {

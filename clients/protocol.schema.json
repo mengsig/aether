@@ -3410,7 +3410,7 @@
           "type": "object"
         },
         {
-          "description": "Which stored memories were in context for every model call of a task,\nor for one invocation. Name exactly one. Needs `memory_context`.",
+          "description": "Which stored memories every model call of a task, or one invocation,\nwas given. Name exactly one. Needs `memory_context`.",
           "properties": {
             "cmd": {
               "const": "memories_in_context",
@@ -4247,7 +4247,7 @@
           "$ref": "#/$defs/LayerKind"
         },
         "memories": {
-          "description": "The stored memories rendered into a retrieved-memory layer, in render\norder: the snapshot's `memory_ids`. Absent when the layer holds none.",
+          "description": "The stored memories this retrieved-memory layer delivered, in render\norder: the snapshot's `memory_ids`. Absent when the layer holds none.\nA resumed native session may still hold earlier calls' memories too.",
           "items": {
             "$ref": "#/$defs/MemoryId"
           },
@@ -8711,7 +8711,7 @@
       "type": "object"
     },
     "MemoriesInContext": {
-      "description": "Which memories were in context for a task or one invocation, oldest\nsnapshot first. `truncated` says snapshots past the limit were left out.",
+      "description": "Which memories each model call of a task, or one invocation, was given,\noldest snapshot first. `truncated` says snapshots past the limit were left out.",
       "properties": {
         "snapshots": {
           "items": {
