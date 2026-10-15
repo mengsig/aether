@@ -92,6 +92,11 @@ test('observers inspect details without interrupt and missing metrics remain unk
   const nextSprint = page.locator('.fleet-graph-node[data-agent-id="agt_00000000000000000000000007"]');
   await nextSprint.focus(); await nextSprint.click();
   assert.equal(await page.getByRole('dialog').getByText('Not reported', { exact: true }).count(), 2);
+  const kept = await page.evaluate(selector => new Promise(resolve => {
+    const dialog = document.querySelector('.fleet-agent-sheet'); const node = document.querySelector(selector);
+    dialog.addEventListener('close', () => resolve(document.activeElement === node), { once: true }); dialog.close(); node.focus();
+  }), nodeSelector);
+  assert.equal(kept, true, 'focus moved before the queued close event must not return to the opener');
 });
 
 test('both reduced-motion controls disable animation and large text reflows without page overflow', { skip, timeout: 90000 }, async t => {
