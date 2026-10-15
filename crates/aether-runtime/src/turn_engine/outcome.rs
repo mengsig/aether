@@ -154,6 +154,32 @@ pub(super) fn record_engine_incident(
     Ok(())
 }
 
+pub(super) fn record_engine_cancelled(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    snapshot: &InvocationSnapshot,
+    engine: EngineKind,
+    detail: Option<&str>,
+    partial: Uncommitted,
+) -> Result<()> {
+    debug_assert_eq!(snapshot.agent_id, ctx.agent.id);
+    // The partial goes first so it reads before the incident it was cut by.
+    if !partial.content.is_empty() {
+        runtime.apply(engine_failure_commit(
+            ctx,
+            snapshot,
+            "cancelled",
+            ModelErrorClass::Cancelled,
+            false,
+            partial,
+        ))?;
+    }
+    if detail.is_some_and(super::names_exhaustion) {
+        record_engine_incident(runtime, ctx, snapshot, engine, detail)?;
+    }
+    Ok(())
+}
+
 fn engine_failure_commit(
     ctx: &TurnCtx,
     snapshot: &InvocationSnapshot,
@@ -190,7 +216,7 @@ fn engine_failure_commit(
             error: error.into(),
             class: Some(class),
             retryable,
-            cancelled: false,
+            cancelled: class == ModelErrorClass::Cancelled,
             partial: partial.content,
         }))
         .mutate(Mutation::PutInvocation(invocation))

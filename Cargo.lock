@@ -275,13 +275,16 @@ dependencies = [
 name = "aether-runtime"
 version = "1.0.6"
 dependencies = [
+ "aether-client",
  "aether-context",
  "aether-core",
  "aether-engine",
  "aether-memory",
  "aether-model",
+ "aether-protocol",
  "aether-store",
  "aether-tools",
+ "aether-tui",
  "async-trait",
  "base64 0.23.1",
  "chrono",

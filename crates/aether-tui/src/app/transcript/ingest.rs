@@ -8,7 +8,7 @@ use aether_core::agent::{AgentStatusKind, WaitCondition};
 use aether_core::approval::RuleScope;
 use aether_core::event::{Actor, Event, EventKind};
 use aether_core::id::{
-    AgentId, ApprovalId, ArtifactId, InboxItemId, ScheduleId, TaskId, ToolCallId,
+    AgentId, ApprovalId, ArtifactId, InboxItemId, InvocationId, ScheduleId, TaskId, ToolCallId,
 };
 use aether_core::inbox::InboxKind;
 use aether_core::model::{ContentBlock, Effort, MessageRole, ModelErrorClass, ModelRef, Usage};
@@ -59,6 +59,9 @@ pub(super) struct Private {
     artifact_cells: HashMap<ArtifactId, CellId>,
     /// The operator's last approval here: its event seq and record cell.
     approved: Option<(u64, CellId)>,
+    /// The invocation whose reply is already drawn, by its message or by a
+    /// stream cut short, so its cancelled partial is not drawn again.
+    drawn: Option<InvocationId>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -313,6 +316,10 @@ impl AgentTranscript {
     /// Keep what streamed when a turn stops before its message is committed.
     fn commit_stream(&mut self, at: Timestamp) {
         let stream = self.stream.take();
+        let shown = !stream.reasoning.trim().is_empty() || !stream.text.trim().is_empty();
+        if shown && stream.invocation.is_some() {
+            self.private.drawn = stream.invocation;
+        }
         self.push_reply(at, &stream.reasoning, &stream.text, stream.reasoning_since);
     }
 
@@ -1176,6 +1183,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             content,
             invocation,
         } => {
+            t.private.drawn = *invocation;
             let thinking = thinking_of(content);
             let since = if *invocation == t.stream.invocation {
                 let since = t.stream.reasoning_since;
@@ -1311,6 +1319,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             ..
         } => {
             if *cancelled {
+                cancelled_partial(t, at, *invocation, partial);
                 return;
             }
             let provider = t.private.who.model.as_ref().map(|m| m.provider.clone());
@@ -1496,6 +1505,31 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
         }
         _ => {}
     }
+}
+
+fn cancelled_partial(
+    t: &mut AgentTranscript,
+    at: Timestamp,
+    invocation: InvocationId,
+    partial: &[ContentBlock],
+) {
+    if t.private.drawn == Some(invocation) {
+        return;
+    }
+    let thinking = thinking_of(partial);
+    let text = text_of(partial);
+    if thinking.trim().is_empty() && text.trim().is_empty() {
+        return;
+    }
+    if t.stream.invocation == Some(invocation) {
+        t.stream.reset();
+    }
+    t.push_reply(at, &thinking, &text, None);
+    t.private.drawn = Some(invocation);
+    debug_assert!(
+        t.stream.invocation != Some(invocation),
+        "a drawn partial left its stream live, so the stream would draw it again"
+    );
 }
 
 /// Prefer an object's summary; details retain the same bounded JSON preview.

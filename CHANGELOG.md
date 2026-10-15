@@ -14,6 +14,10 @@ release is also the text of its GitHub release.
   content. The failure record now keeps the uncommitted reasoning and text
   under the id they streamed under, so both views show them once. Nothing is
   billed for it, and it is never sent back to the model.
+- **The same holds when such a turn is cancelled or interrupted.** What had
+  streamed is kept as a cancelled failure under the id it streamed under, so
+  a reload matches the live view. It costs nothing, and a resumed turn does
+  not see it as something the agent said.
 
 ## 1.0.6
 

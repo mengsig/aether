@@ -2052,3 +2052,6 @@ fn terminal_agents_release_orphaned_calls_and_artifact_records() {
         feed.t(agent).assert_window_indexes();
     }
 }
+
+#[path = "cancel_tests.rs"]
+mod cancellation;

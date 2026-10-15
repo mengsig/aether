@@ -537,3 +537,6 @@ mod accounting;
 
 #[path = "engine_wait/stream_failure.rs"]
 mod stream_failure;
+
+#[path = "engine_wait/stream_cancel.rs"]
+mod stream_cancel;

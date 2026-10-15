@@ -554,15 +554,14 @@ pub(crate) async fn execute(
             }
         }
         EngineVerdict::Cancelled => {
-            if hard_exhaustion {
-                record_engine_incident(
-                    runtime,
-                    ctx,
-                    &snapshot,
-                    engine.kind(),
-                    outcome.error.as_deref(),
-                )?;
-            }
+            super::outcome::record_engine_cancelled(
+                runtime,
+                ctx,
+                &snapshot,
+                engine.kind(),
+                outcome.error.as_deref(),
+                uncommitted,
+            )?;
             return Ok(EngineLink::Done(Next::Cancelled(Some("cancelled".into()))));
         }
         EngineVerdict::Ran => {}

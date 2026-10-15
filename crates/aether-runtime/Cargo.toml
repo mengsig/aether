@@ -39,6 +39,9 @@ nix = { workspace = true }
 fs4 = { workspace = true }
 
 [dev-dependencies]
+aether-client = { workspace = true }
+aether-protocol = { workspace = true }
+aether-tui = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 async-trait = { workspace = true }
 rusqlite = { workspace = true }
