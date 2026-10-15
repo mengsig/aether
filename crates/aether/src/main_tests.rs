@@ -588,8 +588,11 @@ fn storage_command_supports_status_and_dry_run() {
     assert!(matches!(
         args.command,
         Some(Cmd::Storage {
-            command: Some(StorageCmd::Gc { dry_run: true }),
-            json: true
+            command: Some(StorageCmd::Gc {
+                dry_run: true,
+                json: true
+            }),
+            json: false
         })
     ));
 }

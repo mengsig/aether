@@ -60,13 +60,21 @@ fn managed_appender(
     file_name: &str,
     config_dir: &Path,
 ) -> anyhow::Result<bounded::BoundedLog> {
-    let config = aether_model::config::load_config(config_dir)?;
-    let storage = config.storage;
-    let disk_floor = match storage.free_space_floor_bytes {
-        None => config.scheduler.disk_floor().map_err(anyhow::Error::msg)?,
-        Some(0) => None,
-        Some(bytes) => Some(aether_core::disk::DiskFloor::Bytes(bytes)),
-    };
+    // Logging must remain available to bridges and clients after a bad config edit.
+    // Daemon startup still validates its configuration through the normal loader.
+    let policy = (|| -> anyhow::Result<_> {
+        let config = aether_model::config::load_config(config_dir)?;
+        let disk_floor = match config.storage.free_space_floor_bytes {
+            None => config.scheduler.disk_floor().map_err(anyhow::Error::msg)?,
+            Some(0) => None,
+            Some(bytes) => Some(aether_core::disk::DiskFloor::Bytes(bytes)),
+        };
+        Ok((config.storage, disk_floor))
+    })();
+    let (storage, disk_floor) = policy.unwrap_or_else(|error| {
+        eprintln!("aether: cannot load log policy from {}: {error}; using default log retention and disk floor", config_dir.display());
+        (aether_model::config::StorageSection::default(), Some(aether_core::disk::DiskFloor::Default))
+    });
     // A versioned namespace keeps size rotation separate from daily and
     // pre-migration files, which may still have active writers.
     let directory = log_dir.join(file_name).join(SEGMENTS_DIR);
@@ -158,15 +166,20 @@ mod tests {
     }
 
     #[test]
-    fn invalid_log_configuration_is_visible_before_creating_log_files() {
+    fn invalid_log_configuration_falls_back_without_breaking_auxiliary_commands() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(
             root.path().join("config.toml"),
             "[storage]\nlogs_days = -1\n",
         )
         .unwrap();
-        assert!(managed_appender(root.path(), "aetherd.log", root.path()).is_err());
-        assert!(!root.path().join("aetherd.log").exists());
+        assert!(aether_model::config::load_config(root.path()).is_err());
+        let _appender = managed_appender(root.path(), "mcp-bridge.log", root.path()).unwrap();
+        assert!(
+            root.path()
+                .join("mcp-bridge.log/segments-v1/events.0.log")
+                .is_file()
+        );
     }
 
     #[test]

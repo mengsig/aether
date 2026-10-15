@@ -668,5 +668,7 @@ pub(crate) enum StorageCmd {
     Gc {
         #[arg(long)]
         dry_run: bool,
+        #[arg(long)]
+        json: bool,
     },
 }

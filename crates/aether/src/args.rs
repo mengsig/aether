@@ -112,7 +112,7 @@ pub(crate) enum Cmd {
     Storage {
         #[command(subcommand)]
         command: Option<StorageCmd>,
-        #[arg(long, global = true)]
+        #[arg(long)]
         json: bool,
     },
     /// Inspect retention without deleting history or artifact payloads.

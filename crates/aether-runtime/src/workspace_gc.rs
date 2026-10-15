@@ -124,8 +124,15 @@ impl Runtime {
             .take(MAX_CANDIDATES)
             .cloned()
             .collect();
+        // Preview only snapshots discovery; its Git inspection must not delay a real sweep.
+        let mut cursor = if dry_run {
+            drop(cursor);
+            None
+        } else {
+            Some(cursor)
+        };
         for directory in selected {
-            if !dry_run {
+            if let Some(cursor) = cursor.as_mut() {
                 cursor.pending.pop_front();
             }
             let mut candidate = workspace::gc::Candidate::new(directory);
@@ -186,23 +193,34 @@ impl Runtime {
             return Err(invalid("workspace GC candidate must be a real directory"));
         }
         let workspace_path = candidate.directory.join("workspace");
-        let _integration = workspace::gc::integration_lock(root, dry_run)?;
-        {
+        let _integration = if dry_run {
+            None
+        } else {
+            workspace::gc::integration_lock(root, false)?
+        };
+        let _reservation = if dry_run {
+            None
+        } else {
             let _hold = self.hold();
             let agents = self.store.agents(&AgentFilter::default())?;
             self.gc_agent_blocker(&agents, &workspace_path, None, &self.sched.lock())?;
             *self.workspace_gc_active.lock() = Some(workspace_path.clone());
-        }
-        // A reservation keeps creation out while slow inspection runs without
-        // the write gate. It outlives permission restoration on every exit.
-        let _reservation = Reservation(self);
+            // Keep creation out until permission restoration, including on errors.
+            Some(Reservation(self))
+        };
         let result = (|| {
             candidate.measure(dry_run)?;
             let manifest = candidate.inspect(root)?;
-            let _hold = self.hold();
+            let _hold = (!dry_run).then(|| self.hold());
             let agents = self.store.agents(&AgentFilter::default())?;
             let sched = self.sched.lock();
             self.gc_agent_blocker(&agents, &workspace_path, Some(manifest.parent), &sched)?;
+            let _sched = if dry_run {
+                drop(sched);
+                None
+            } else {
+                Some(sched)
+            };
             let latest = agents
                 .iter()
                 .filter(|agent| scope_uses_workspace(&agent.scope, &workspace_path))

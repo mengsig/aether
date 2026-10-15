@@ -43,10 +43,15 @@ impl Runtime {
     /// A preview uses exactly the cleanup checks but never mutates files.
     /// Reports are bounded inventories, not a reservation against later writes.
     pub fn storage_gc(&self, dry_run: bool) -> Result<Value> {
-        let _guard = self
-            .storage_gc_lock
-            .try_lock()
-            .ok_or_else(|| invalid("another storage sweep is running"))?;
+        let _guard = if dry_run {
+            None
+        } else {
+            Some(
+                self.storage_gc_lock
+                    .try_lock()
+                    .ok_or_else(|| invalid("another storage sweep is running"))?,
+            )
+        };
         let config = &self.models.config().storage;
         let workspaces = if config.days(config.workspaces_days) == 0 {
             json!({"disabled": true, "reason": "workspace cleanup disabled"})

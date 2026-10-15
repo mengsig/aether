@@ -506,3 +506,37 @@ async fn active_gc_reservation_rejects_creation_until_released() {
     f.runtime.workspace_gc_active.lock().take();
     assert!(f.runtime.recheck_workspace_gc_admission(&scope).is_ok());
 }
+
+#[tokio::test]
+async fn preview_does_not_reserve_admission_or_take_maintenance_locks() {
+    let f = fixture().await;
+    let integration = workspace::gc::integration_lock(&f.managed, false).unwrap();
+    let sweep = f.runtime.storage_gc_lock.lock();
+    let hold = f.runtime.hold();
+    let existing_reservation = f.source.clone();
+    *f.runtime.workspace_gc_active.lock() = Some(existing_reservation.clone());
+    let runtime = f.runtime.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let preview = runtime.gc_workspaces(Duration::ZERO, true);
+        let status = runtime.storage_gc(true);
+        tx.send((preview, status)).unwrap();
+    });
+    let result = rx.recv_timeout(Duration::from_secs(10));
+    // Release every lock before joining even if the regression times out.
+    drop(hold);
+    drop(sweep);
+    drop(integration);
+    worker.join().unwrap();
+    let (preview, status) = result.expect("preview must not wait for mutation locks");
+    assert_eq!(
+        preview.unwrap().workspaces[0].action,
+        WorkspaceGcAction::WouldRemove
+    );
+    assert!(status.unwrap()["dry_run"].as_bool().unwrap());
+    assert_eq!(
+        *f.runtime.workspace_gc_active.lock(),
+        Some(existing_reservation)
+    );
+    assert!(f.manifest.workspace.exists());
+}
