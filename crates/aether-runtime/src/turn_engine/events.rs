@@ -498,10 +498,11 @@ pub(super) fn handle_event(
             };
             // Claude synthesizes this denial when its process is interrupted.
             // Only Aether's independent stop evidence can override that wording.
-            if is_error
-                && content.contains("The user doesn't want to proceed with this tool use")
-                && let Some(cause) = &state.interruption
-            {
+            let cancelled_result = (is_error
+                && (content.contains("The user doesn't want to proceed with this tool use")
+                    || content.trim() == "cancelled"))
+                || (call.tool == "bash" && content.ends_with("[exit code ?]"));
+            if cancelled_result && let Some(cause) = &state.interruption {
                 let mut commit = Commit::new();
                 crate::tool_interruption::record(
                     &mut commit,

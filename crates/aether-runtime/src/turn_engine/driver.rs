@@ -853,6 +853,44 @@ fn merge_cleanup_receipt(outcome: &mut EngineOutcome, receipt: EngineOutcome) {
     outcome.interrupted |= receipt.interrupted;
 }
 
+fn interruption_cause(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    cancel: &CancellationToken,
+    park: Option<&Park>,
+    budget: Option<&Crossed>,
+) -> Option<String> {
+    let (stop_reason, request) = runtime
+        .sched
+        .lock()
+        .running
+        .get(&ctx.agent.id)
+        .map(|running| (running.stop_reason.clone(), running.cancel_request.clone()))
+        .unwrap_or_default();
+    if let Some(reason) = stop_reason {
+        return Some(format!("scheduler stop: {reason}"));
+    }
+    if let Some(request) = request {
+        return Some(format!(
+            "agent cancellation: {}",
+            request.reason.as_deref().unwrap_or("cancel requested")
+        ));
+    }
+    if runtime.shutdown.is_cancelled() {
+        return Some("daemon stop or restart".into());
+    }
+    if let Some(budget) = budget {
+        return Some(format!("budget stop: {}", budget.reason));
+    }
+    if cancel.is_cancelled() {
+        return Some("turn interrupt".into());
+    }
+    if park.is_some_and(|park| park.stop_requested || park.killed()) {
+        return Some("harness ended the turn".into());
+    }
+    None
+}
+
 #[cfg(test)]
 mod receipt_tests {
     use super::*;
@@ -926,38 +964,4 @@ mod receipt_tests {
         assert!(seen);
         assert_eq!(cursor, 7);
     }
-}
-
-fn interruption_cause(
-    runtime: &Runtime,
-    ctx: &TurnCtx,
-    cancel: &CancellationToken,
-    park: Option<&Park>,
-    budget: Option<&Crossed>,
-) -> Option<String> {
-    if runtime.shutdown.is_cancelled() {
-        return Some("daemon stop or restart".into());
-    }
-    if let Some(request) = runtime
-        .sched
-        .lock()
-        .running
-        .get(&ctx.agent.id)
-        .and_then(|r| r.cancel_request.clone())
-    {
-        return Some(format!(
-            "agent cancellation: {}",
-            request.reason.as_deref().unwrap_or("cancel requested")
-        ));
-    }
-    if let Some(budget) = budget {
-        return Some(format!("budget stop: {}", budget.reason));
-    }
-    if cancel.is_cancelled() {
-        return Some("turn interrupt".into());
-    }
-    if park.is_some_and(|park| park.stop_requested || park.killed()) {
-        return Some("harness ended the turn".into());
-    }
-    None
 }

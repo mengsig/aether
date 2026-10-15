@@ -32,7 +32,7 @@ pub(crate) fn record(
     // The projection consumes the cause before the generic closing event.
     commit.push_event(draft(EventKind::Custom {
         name: EVENT.into(),
-        payload: serde_json::json!({"call": call, "cause": cause, "note": note}),
+        payload: serde_json::json!({"call": call, "tool": tool, "cause": cause, "note": note}),
     }));
     commit.push_event(draft(EventKind::ToolCancelled { call }));
 }

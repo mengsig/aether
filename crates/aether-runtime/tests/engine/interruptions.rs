@@ -101,7 +101,7 @@ const SYNTHETIC_DENIAL: &str =
 /// Emits Claude's killed-tool result, or Codex's interrupted turn without a result.
 struct InFlightEngine {
     prompts: Arc<Mutex<Vec<String>>>,
-    denial: bool,
+    result: Option<(&'static str, bool)>,
     wait_for_stop: bool,
     tool: &'static str,
 }
@@ -125,7 +125,7 @@ impl Engine for InFlightEngine {
             prompts.len() == 1
         };
         let (tx, rx) = mpsc::channel(8);
-        let (denial, wait_for_stop, tool) = (self.denial, self.wait_for_stop, self.tool);
+        let (result, wait_for_stop, tool) = (self.result, self.wait_for_stop, self.tool);
         tokio::spawn(async move {
             tx.send(EngineEvent::Session {
                 id: "in-flight-session".into(),
@@ -149,11 +149,11 @@ impl Engine for InFlightEngine {
                 if wait_for_stop {
                     cancel.cancelled().await;
                 }
-                if denial {
+                if let Some((content, is_error)) = result {
                     tx.send(EngineEvent::ToolResult {
                         tool_use_id: "running-call".into(),
-                        content: SYNTHETIC_DENIAL.into(),
-                        is_error: true,
+                        content: content.into(),
+                        is_error,
                     })
                     .await
                     .unwrap();
@@ -196,11 +196,24 @@ async fn in_flight(denial: bool, wait_for_stop: bool) -> Harness {
 }
 
 async fn in_flight_tool(denial: bool, wait_for_stop: bool, tool: &'static str) -> Harness {
+    in_flight_result(
+        denial.then_some((SYNTHETIC_DENIAL, true)),
+        wait_for_stop,
+        tool,
+    )
+    .await
+}
+
+async fn in_flight_result(
+    result: Option<(&'static str, bool)>,
+    wait_for_stop: bool,
+    tool: &'static str,
+) -> Harness {
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let h = harness_with_engine(
         Arc::new(InFlightEngine {
             prompts: prompts.clone(),
-            denial,
+            result,
             wait_for_stop,
             tool,
         }),
@@ -232,8 +245,13 @@ async fn in_flight_tool(denial: bool, wait_for_stop: bool, tool: &'static str) -
 
 #[tokio::test]
 async fn interrupt_corrects_synthetic_denial_and_delivers_note_on_resume() {
-    for denial in [false, true] {
-        let h = in_flight(denial, true).await;
+    for (tool, result) in [
+        ("Bash", None),
+        ("Bash", Some((SYNTHETIC_DENIAL, true))),
+        ("mcp__aether__shell", Some(("cancelled", true))),
+        ("bash", Some(("[exit code ?]", false))),
+    ] {
+        let h = in_flight_result(result, true, tool).await;
         let id = h
             .store
             .agents(&aether_store::AgentFilter::default())
@@ -266,6 +284,14 @@ async fn interrupt_corrects_synthetic_denial_and_delivers_note_on_resume() {
         assert!(prompts[1].contains("not denied"));
         assert!(prompts[1].contains("make ci"));
         assert!(prompts[1].contains("turn interrupt"));
+        h.runtime
+            .send_message(id, vec![ContentBlock::text("one more")], Actor::user())
+            .unwrap();
+        wait_for(h.store.as_ref(), id, |a| {
+            a.stats.turns >= 3 && a.status.kind() == AgentStatusKind::Waiting
+        })
+        .await;
+        assert!(!h.prompts.lock().unwrap()[2].contains("not denied"));
         h.runtime.shutdown().await;
     }
 }
@@ -324,7 +350,7 @@ async fn daemon_restart_delivers_interrupted_tool_note_to_retained_session() {
     h.runtime.shutdown().await;
     let engine: Arc<dyn Engine> = Arc::new(InFlightEngine {
         prompts: h.prompts.clone(),
-        denial: true,
+        result: Some((SYNTHETIC_DENIAL, true)),
         wait_for_stop: true,
         tool: "Read",
     });
@@ -346,4 +372,69 @@ async fn daemon_restart_delivers_interrupted_tool_note_to_retained_session() {
     assert!(prompts[1].contains("daemon stop or restart"));
     assert!(prompts[1].contains("not denied"));
     restarted.shutdown().await;
+}
+
+#[tokio::test]
+async fn scheduler_deadline_retains_the_cause_of_an_in_flight_interruption() {
+    let h = in_flight(true, true).await;
+    let id = h
+        .store
+        .agents(&aether_store::AgentFilter::default())
+        .unwrap()[0]
+        .id;
+    h.runtime
+        .update_agent(
+            id,
+            aether_runtime::AgentUpdate {
+                deadline: Some(aether_core::agent::DeadlineUpdate::Set(
+                    aether_core::time::now(),
+                )),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let events = h.store.events(0, 1000, &EventFilter::own_events(id)).unwrap();
+            if events.iter().any(|event| matches!(&event.kind, EventKind::Custom { name, payload }
+                if name == "tool.interrupted" && payload["cause"].as_str().unwrap().contains("scheduler stop: deadline of"))) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }).await.expect("deadline interruption records its cause within seconds");
+    assert!(matches!(
+        h.store.agent(id).unwrap().unwrap().status,
+        AgentStatus::Failed { .. }
+    ));
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn completed_command_racing_an_interrupt_keeps_its_success() {
+    let h = in_flight_result(Some(("done\n[exit code 0]", false)), true, "bash").await;
+    let id = h
+        .store
+        .agents(&aether_store::AgentFilter::default())
+        .unwrap()[0]
+        .id;
+    h.runtime.interrupt_agent(id, Actor::user()).unwrap();
+    wait_for(h.store.as_ref(), id, |a| {
+        a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    let events = h
+        .store
+        .events(0, 1000, &EventFilter::own_events(id))
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::ToolSucceeded { .. }))
+    );
+    assert!(!events.iter().any(
+        |event| matches!(&event.kind, EventKind::Custom { name, .. } if name == "tool.interrupted")
+    ));
+    h.runtime.shutdown().await;
 }

@@ -2082,3 +2082,23 @@ fn interrupted_tool_has_a_cause_in_live_and_replayed_transcripts() {
     }
     check(&replay);
 }
+
+#[test]
+fn interruption_cause_survives_a_terminal_event_arriving_first() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "worker", "assistant");
+    let call = feed.tool(agent, "shell", json!({"command": "make ci"}));
+    feed.on(
+        agent,
+        EventKind::AgentFailed {
+            error: "deadline of now".into(),
+        },
+    );
+    feed.on(agent, EventKind::Custom {
+        name: "tool.interrupted".into(),
+        payload: json!({"call": call, "tool": "shell", "cause": "scheduler stop: deadline of now"}),
+    });
+    assert!(feed.models(agent).iter().any(|model| matches!(model,
+        CellModel::Notice { text, .. } if text.to_string().contains("shell interrupted (scheduler stop: deadline of now)")
+    )));
+}

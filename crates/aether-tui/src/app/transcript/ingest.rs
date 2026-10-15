@@ -1503,6 +1503,11 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 serde_json::from_value::<ToolCallId>(payload["call"].clone()),
                 payload["cause"].as_str(),
             ) {
+                let visible = t
+                    .private
+                    .calls
+                    .get(&call)
+                    .is_some_and(|open| open.hidden.is_none());
                 tool_settled(
                     t,
                     at,
@@ -1511,6 +1516,16 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                     &format!("interrupted ({cause})"),
                     None,
                 );
+                // A deadline can end the agent before its engine finishes cleanup.
+                if !visible {
+                    let tool = payload["tool"].as_str().unwrap_or("Tool call");
+                    notice(
+                        t,
+                        at,
+                        NoticeKind::Engine,
+                        format!("{tool} interrupted ({cause})").into(),
+                    );
+                }
             }
         }
         EventKind::Custom { name, payload } if name == "engine.interrupted" => {

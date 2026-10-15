@@ -224,8 +224,11 @@ fn stop_and_cancel_subtree(
         .sched
         .lock()
         .running
-        .get(&stale.id)
-        .map(|r| r.cancel.clone());
+        .get_mut(&stale.id)
+        .map(|running| {
+            running.stop_reason.get_or_insert_with(|| reason.clone());
+            running.cancel.clone()
+        });
     if let Some(token) = running {
         token.cancel();
     }

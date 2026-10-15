@@ -12,6 +12,7 @@ fn flight(runtime: &crate::Runtime, owner: AgentId, task: TaskId) {
             task: Some(task),
             cancel: CancellationToken::new(),
             cancel_request: None,
+            stop_reason: None,
             interrupt: CancellationToken::new(),
             addressed: false,
             provider: "claude-code".into(),
