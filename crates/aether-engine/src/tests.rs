@@ -34,6 +34,7 @@ async fn an_engine_child_cannot_read_a_variable_the_daemon_hides() {
         vec!["-lc".into(), "printenv".into()],
         PathBuf::from("/"),
         &["HOME".to_owned()],
+        None,
         String::new(),
         false,
         None,
@@ -56,6 +57,40 @@ async fn an_engine_child_cannot_read_a_variable_the_daemon_hides() {
         !printed.iter().any(|l| l.starts_with("HOME=")),
         "the hidden variable reached the engine child: {printed:?}"
     );
+}
+
+/// An engine CLI and everything it starts find the agent's own temp dir,
+/// even when the daemon hides its own TMPDIR.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_engine_child_gets_the_agent_temp_dir() {
+    let dir = PathBuf::from("/var/agent-temp/0123456789AB");
+    let mut run = run_process(
+        "bash",
+        vec!["-lc".into(), "printenv".into()],
+        PathBuf::from("/"),
+        &["TMPDIR".to_owned(), "TEMP".to_owned()],
+        Some(&dir),
+        String::new(),
+        false,
+        None,
+        CancellationToken::new(),
+        |line| vec![EngineEvent::Note(line.to_owned())],
+    )
+    .await
+    .expect("spawn bash");
+    let mut printed = Vec::new();
+    while let Some(event) = run.events.recv().await {
+        if let EngineEvent::Note(line) = event {
+            printed.push(line);
+        }
+    }
+    for name in aether_core::agent_temp::ENV_VARS {
+        let expected = format!("{name}={}", dir.display());
+        assert!(
+            printed.contains(&expected),
+            "{expected} missing: {printed:?}"
+        );
+    }
 }
 
 /// The escalation is the whole point of the ladder: a group member that
@@ -109,6 +144,7 @@ async fn a_cancel_is_reported_before_the_term_ladder_runs() {
         vec!["-c".into(), "exec sleep 30".into()],
         PathBuf::from("/"),
         &[],
+        None,
         String::new(),
         false,
         None,
@@ -156,6 +192,7 @@ async fn stdout_read_error_preserves_stderr_and_session_loss_for_retry() {
         ],
         dir.path().to_path_buf(),
         &[],
+        None,
         String::new(),
         false,
         None,
@@ -188,6 +225,7 @@ async fn process_crash_without_a_result_has_no_closing_accounting() {
         vec!["-c".into(), "exit 1".into()],
         PathBuf::from("/"),
         &[],
+        None,
         String::new(),
         false,
         None,

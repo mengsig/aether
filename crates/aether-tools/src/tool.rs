@@ -41,6 +41,9 @@ pub struct ToolContext {
     /// The search credential lives here: an agent that can run a command
     /// must not be able to `printenv` it.
     pub hidden_env: Arc<[String]>,
+    /// This agent's private temp dir, created on first use and exported to
+    /// host commands as TMPDIR, TMP and TEMP. `None` leaves the daemon's own.
+    pub temp_dir: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -52,6 +55,7 @@ impl std::fmt::Debug for ToolContext {
             .field("scope", &self.scope)
             .field("cwd", &self.cwd)
             .field("env", &self.env.keys().collect::<Vec<_>>())
+            .field("temp_dir", &self.temp_dir)
             .finish_non_exhaustive()
     }
 }

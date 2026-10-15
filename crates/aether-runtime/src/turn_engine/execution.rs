@@ -255,6 +255,7 @@ pub(crate) async fn execute(
         lean_host_context: ctx.agent.config.host_context.is_lean(),
         network_access: ctx.agent.scope.network == aether_core::agent::NetworkPolicy::Allowed,
         bypass_permissions: ctx.agent.config.approval.require_for.is_empty(),
+        temp_dir: None,
         mcp: None,
     };
 
@@ -296,6 +297,7 @@ pub(crate) async fn execute(
                 token.clone(),
             ],
         });
+        turn.temp_dir = crate::turn::agent_temp_dir(runtime, ctx.agent.id)?;
         let (req_tx, mut req_rx) = mpsc::channel(16);
         let registered = EngineTurnGuard::register(
             runtime,

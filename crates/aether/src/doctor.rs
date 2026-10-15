@@ -7,6 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
+mod agent_temp;
+pub use agent_temp::check_agent_temp;
+
 use aether_core::disk::{DiskFloor, LowDisk};
 use aether_protocol::remote::RemoteStatus;
 use aether_protocol::{AuthInfo, DaemonStatus};

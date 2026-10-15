@@ -39,6 +39,7 @@ fn ctx_without_workspace_root(cwd: &std::path::Path) -> ToolContext {
         artifacts: Arc::new(NoSink),
         env: BTreeMap::new(),
         hidden_env: Vec::new().into(),
+        temp_dir: None,
     }
 }
 

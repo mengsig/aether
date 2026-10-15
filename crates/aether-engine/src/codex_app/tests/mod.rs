@@ -53,6 +53,7 @@ pub(super) fn turn(session: Option<&str>, bypass: bool) -> EngineTurn {
         extra_dirs: vec![PathBuf::from("/shared")],
         hidden_env: Vec::new(),
         tool_hidden_env: Vec::new(),
+        temp_dir: None,
         summary_only: false,
         lean_host_context: false,
         network_access: true,

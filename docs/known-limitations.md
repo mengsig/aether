@@ -112,6 +112,14 @@ looks like a boundary and is not one.
   `allowed_paths` permission alone do not establish workspace ownership;
   explicit workspace roots, manifest relationships and resource leases do.
 
+- An agent's private temp directory only covers programs that honour
+  `TMPDIR`, `TMP` or `TEMP`. A tool that writes to a hardcoded `/tmp` path
+  still writes to the shared `/tmp`. MCP servers that the daemon starts and
+  shares between agents, and the daemon's own git helpers, keep the daemon's
+  temp directory. Agent temp directories are not cleaned up automatically
+  yet: `aether storage` shows their size, and you can remove a finished
+  agent's directory by hand.
+
 - Images sent with a message are stored under `aether.attachments/` in the
   data directory and are never removed automatically, including when their
   agent is archived; delete old files by hand once no live agent needs them.

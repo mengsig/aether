@@ -71,6 +71,72 @@ async fn exec_server_hides_provider_auth_while_app_server_keeps_it() {
     );
 }
 
+#[tokio::test]
+async fn fresh_and_resumed_app_servers_get_the_agent_temp_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let leaf = dir.path().join("0123456789AB");
+    std::fs::create_dir(&leaf).unwrap();
+    crate::test_script::write(
+        &dir.path().join("codex"),
+        "#!/bin/sh\nprintf '%s|%s|%s' \"$TMPDIR\" \"$TMP\" \"$TEMP\" > \"$TMPDIR/seen\"\nexit 1\n",
+    );
+    let engine = CodexAppEngine::new(dir.path().join("codex").to_str().unwrap(), "0.162.1");
+    for session in [None, Some("th")] {
+        let mut t = turn(session, false);
+        t.cwd = dir.path().into();
+        t.temp_dir = Some(leaf.clone());
+        t.mcp = None;
+        let mut run = engine.run(t, CancellationToken::new()).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while run.events.recv().await.is_some() {}
+        })
+        .await
+        .expect("fake app-server exited");
+        let seen = std::fs::read_to_string(leaf.join("seen")).unwrap();
+        assert_eq!(seen, format!("{0}|{0}|{0}", leaf.display()), "{session:?}");
+        std::fs::remove_file(leaf.join("seen")).unwrap();
+    }
+}
+
+#[test]
+fn codex_commands_get_the_agent_temp_dir_and_may_write_it() {
+    let engine = CodexAppEngine::new("codex", "0.162.1");
+    let mut t = turn(None, false);
+    assert!(
+        !engine
+            .args(&t)
+            .join(" ")
+            .contains("shell_environment_policy")
+    );
+    assert_eq!(
+        turn_params(&t, "th", false)["sandboxPolicy"]["writableRoots"],
+        json!(["/shared"])
+    );
+    t.temp_dir = Some(PathBuf::from("/var/t/0123456789AB"));
+    let args = engine.args(&t);
+    for name in aether_core::agent_temp::ENV_VARS {
+        let set = format!("shell_environment_policy.set.{name}=\"/var/t/0123456789AB\"");
+        assert!(
+            args.windows(2).any(|pair| pair == ["-c", set.as_str()]),
+            "{args:?}"
+        );
+    }
+    for (session, network) in [
+        (None, true),
+        (Some("th"), true),
+        (None, false),
+        (Some("th"), false),
+    ] {
+        t.session = session.map(str::to_owned);
+        t.network_access = network;
+        assert_eq!(
+            turn_params(&t, "th", false)["sandboxPolicy"]["writableRoots"],
+            json!(["/shared", "/var/t/0123456789AB"]),
+            "{session:?} network={network}"
+        );
+    }
+}
+
 /// Writes an executable shell script named `codex` under a fresh temp
 /// dir and returns that dir, so `detect_verbose_on` can be pointed at it
 /// instead of the host's real CLI. `help_script` answers `app-server

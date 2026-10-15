@@ -239,6 +239,31 @@ async fn summary_exec_does_not_warn_about_disabled_commands() {
     assert!(run.events.recv().await.is_none());
 }
 
+#[test]
+fn exec_commands_get_the_agent_temp_dir() {
+    let engine = CodexEngine::new("codex", "0.162.0");
+    let mut turn = turn_with_effort(None);
+    assert!(
+        !engine
+            .args(&turn)
+            .join(" ")
+            .contains("shell_environment_policy")
+    );
+    turn.temp_dir = Some(PathBuf::from("/var/t/0123456789AB"));
+    for session in [None, Some("thread-1".to_owned())] {
+        turn.session = session;
+        let args = engine.args(&turn);
+        for name in aether_core::agent_temp::ENV_VARS {
+            let set = format!("shell_environment_policy.set.{name}=\"/var/t/0123456789AB\"");
+            assert!(
+                args.windows(2).any(|pair| pair == ["-c", set.as_str()]),
+                "{args:?}"
+            );
+        }
+        assert_eq!(args.last().map(String::as_str), Some("-"));
+    }
+}
+
 #[tokio::test]
 async fn exec_warns_once_per_session_across_turns_and_engine_clones() {
     let dir = tempfile::tempdir().unwrap();
@@ -388,6 +413,7 @@ fn turn_with_effort(effort: Option<Effort>) -> EngineTurn {
         extra_dirs: vec![],
         hidden_env: Vec::new(),
         tool_hidden_env: Vec::new(),
+        temp_dir: None,
         summary_only: false,
         lean_host_context: false,
         network_access: true,

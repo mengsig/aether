@@ -421,6 +421,7 @@ mod tests {
                 bypass_permissions: false,
                 hidden_env: vec![],
                 tool_hidden_env: vec![],
+                temp_dir: None,
                 mcp: None,
             },
         };

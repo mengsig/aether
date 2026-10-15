@@ -207,6 +207,23 @@ hooks for isolated summary invocations and explicitly network-denied turns:
 hooks can perform I/O outside the sandbox. Scope and approval enforcement remain
 Aether responsibilities; other native setting overrides are still being audited.
 
+## Agent temp dirs
+
+Each engine run gets the agent's own temp directory (see
+[configuration](configuration.md#agent-temp-dirs)) as `TMPDIR`, `TMP` and
+`TEMP`. This covers fresh, resumed and compaction runs.
+
+- **Claude Code** gets the variables in its own environment, and its tools
+  inherit them. In sandbox mode Claude Code sets `TMPDIR` to its own
+  `claude-<uid>` subdirectory inside that directory. Network-denied runs are
+  sandboxed, and their sandbox may also write to the agent's temp directory.
+- **Codex** gets the variables in the app-server's environment, the loopback
+  sandbox's environment, and `shell_environment_policy.set`. That way its
+  commands get them even when the operator's policy would not pass them
+  through. The directory is also added to the workspace-write sandbox's
+  writable roots.
+- **Container backends** keep the container's own `/tmp`.
+
 ## Codex credentials and trust boundary
 
 The Codex model process retains its provider credentials for authentication.

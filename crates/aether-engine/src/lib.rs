@@ -18,7 +18,7 @@ mod output;
 mod process_interrupt;
 mod usage;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use aether_core::model::{ContentBlock, Effort, StreamEvent, Usage};
 use aether_core::tool::SideEffectClass;
@@ -160,6 +160,9 @@ pub struct EngineTurn {
     pub hidden_env: Vec<String>,
     /// Variables hidden from separately spawned command runners, including provider auth.
     pub tool_hidden_env: Vec<String>,
+    /// The agent's private temp dir, already created, exported to the engine
+    /// and the commands it runs as TMPDIR, TMP and TEMP.
+    pub temp_dir: Option<PathBuf>,
     pub mcp: Option<McpBridge>,
 }
 
@@ -383,6 +386,36 @@ pub(crate) fn strip_hidden(command: &mut tokio::process::Command, hidden_env: &[
     }
 }
 
+/// Point a process's temp variables at the agent's temp dir, after any
+/// hidden names were stripped so none of them can remove it again.
+pub(crate) fn export_temp_dir(command: &mut tokio::process::Command, temp_dir: Option<&Path>) {
+    let Some(dir) = temp_dir else {
+        return;
+    };
+    debug_assert!(dir.is_absolute(), "{} is not absolute", dir.display());
+    for name in aether_core::agent_temp::ENV_VARS {
+        command.env(name, dir);
+    }
+}
+
+/// Codex `-c` overrides that hand its commands the agent's temp dir even when
+/// the operator's `shell_environment_policy` would not inherit it.
+pub(crate) fn codex_temp_env_args(temp_dir: Option<&Path>) -> Vec<String> {
+    let Some(dir) = temp_dir else {
+        return Vec::new();
+    };
+    let value = serde_json::json!(dir.to_string_lossy());
+    aether_core::agent_temp::ENV_VARS
+        .iter()
+        .flat_map(|name| {
+            [
+                "-c".into(),
+                format!("shell_environment_policy.set.{name}={value}"),
+            ]
+        })
+        .collect()
+}
+
 /// A spawned CLI: its normalized events and, when kept open, its raw stdin.
 #[derive(Debug)]
 pub(crate) struct ProcessRun {
@@ -412,6 +445,7 @@ pub(crate) async fn run_process<P>(
     args: Vec<String>,
     cwd: PathBuf,
     hidden_env: &[String],
+    temp_dir: Option<&Path>,
     first_input: String,
     keep_stdin_open: bool,
     cancel_input: Option<String>,
@@ -435,6 +469,7 @@ where
     // Own process group so cancellation can take the CLI's children with it.
     command.as_std_mut().process_group(0);
     strip_hidden(&mut command, hidden_env);
+    export_temp_dir(&mut command, temp_dir);
     let mut child = command.spawn().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => EngineError::NotInstalled {
             program: program.to_owned(),

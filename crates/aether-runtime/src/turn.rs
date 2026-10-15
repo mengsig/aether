@@ -56,7 +56,7 @@ pub(crate) use compaction::{compact, compaction_pending, compaction_pending_for_
 mod failure;
 use failure::*;
 mod context;
-pub(crate) use context::{retrieve_memories, tool_context};
+pub(crate) use context::{agent_temp_dir, retrieve_memories, tool_context};
 mod tools;
 pub(crate) use tools::ToolEffects;
 use tools::*;

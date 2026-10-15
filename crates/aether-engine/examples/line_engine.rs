@@ -276,6 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bypass_permissions: false,
         hidden_env: Vec::new(),
         tool_hidden_env: Vec::new(),
+        temp_dir: None,
         mcp: None,
     };
     let mut run = engine.run(turn, CancellationToken::new()).await?;

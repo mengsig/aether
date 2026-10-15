@@ -1,6 +1,7 @@
 //! The daemon: owns the runtime and the store, serves the protocol over a
 //! Unix socket. Every connected client is a projection; none is privileged.
 
+mod agent_temp;
 mod authz;
 mod connection;
 #[cfg(test)]
@@ -258,6 +259,11 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         builtins.background().cloned(),
     );
     let tools = Arc::new(builtins.with_mcp(mcp.clone()));
+    let agent_temp_root = agent_temp::prepare(
+        models.config().agents.temp_root.as_deref(),
+        &store_path,
+        &instance_id,
+    )?;
     let runtime = Runtime::start(
         RuntimeConfig {
             holder: format!("aetherd-{}-{}", instance_id, std::process::id()),
@@ -293,6 +299,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             delegated_workspace_root: Some(
                 config.store_path.with_extension("delegated-workspaces"),
             ),
+            agent_temp_root: Some(agent_temp_root),
             bridge: std::env::current_exe()
                 .ok()
                 .map(|command| aether_runtime::BridgeConfig {

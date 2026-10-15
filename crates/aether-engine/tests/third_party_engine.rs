@@ -37,6 +37,7 @@ fn turn(cwd: PathBuf) -> EngineTurn {
         bypass_permissions: false,
         hidden_env: vec!["ANTHROPIC_API_KEY".into()],
         tool_hidden_env: vec!["ANTHROPIC_API_KEY".into()],
+        temp_dir: None,
         mcp: None,
     }
 }

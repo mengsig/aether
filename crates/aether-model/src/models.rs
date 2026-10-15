@@ -533,6 +533,7 @@ mod tests {
             artifacts: Default::default(),
             retention: Default::default(),
             storage: Default::default(),
+            agents: Default::default(),
             mcp: Default::default(),
             memory: Default::default(),
             listen: Default::default(),

@@ -231,6 +231,7 @@ pub(super) async fn start(
     program: &str,
     cwd: &Path,
     hidden_env: &[String],
+    temp_dir: Option<&Path>,
 ) -> Result<Sandbox, EngineError> {
     use std::os::unix::process::CommandExt as _;
 
@@ -278,6 +279,7 @@ pub(super) async fn start(
         .kill_on_drop(true);
     command.as_std_mut().process_group(0);
     crate::strip_hidden(&mut command, hidden_env);
+    crate::export_temp_dir(&mut command, temp_dir);
     let mut child = command
         .spawn()
         .map_err(|e| unsupported(format!("cannot start bwrap: {e}")))?;

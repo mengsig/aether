@@ -164,6 +164,7 @@ impl CodexAppEngine {
             args.push("-c".into());
             args.push(format!("mcp_servers.aether.args={}", json!(mcp.args)));
         }
+        args.extend(crate::codex_temp_env_args(turn.temp_dir.as_deref()));
         args
     }
 }
@@ -289,6 +290,7 @@ pub fn turn_params(turn: &EngineTurn, thread_id: &str, loopback_note_in_effect: 
         let roots: Vec<String> = turn
             .extra_dirs
             .iter()
+            .chain(&turn.temp_dir)
             .map(|d| d.to_string_lossy().into_owned())
             .collect();
         let environments = loopback_environments(turn);
@@ -371,7 +373,15 @@ impl Engine for CodexAppEngine {
 
         let sandbox = if loopback_sandboxed(&turn) {
             self.validate_network_policy(false)?;
-            Some(loopback::start(&self.program, &turn.cwd, &turn.tool_hidden_env).await?)
+            Some(
+                loopback::start(
+                    &self.program,
+                    &turn.cwd,
+                    &turn.tool_hidden_env,
+                    turn.temp_dir.as_deref(),
+                )
+                .await?,
+            )
         } else {
             None
         };
@@ -388,6 +398,7 @@ impl Engine for CodexAppEngine {
             .kill_on_drop(true);
         command.as_std_mut().process_group(0);
         crate::strip_hidden(&mut command, &turn.hidden_env);
+        crate::export_temp_dir(&mut command, turn.temp_dir.as_deref());
         let mut child = command.spawn().map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => EngineError::NotInstalled {
                 program: self.program.clone(),

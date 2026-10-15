@@ -86,6 +86,7 @@ fn ctx(root: &std::path::Path, image: String) -> ToolContext {
         artifacts: Arc::new(UnusedSink),
         env: BTreeMap::new(),
         hidden_env: Vec::new().into(),
+        temp_dir: None,
     }
 }
 

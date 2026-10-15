@@ -4,6 +4,20 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### New
+
+- **Each agent gets its own temp directory.** The processes an agent starts,
+  meaning its Claude Code or Codex CLI and the host commands, background jobs
+  and terminals it runs, get `TMPDIR`, `TMP` and `TEMP` pointing at a private
+  0700 directory. That directory sits under `[agents] temp_root`, which
+  defaults to `t` in the data directory. The daemon refuses a root that is
+  not private to the user, or that another instance has claimed. Startup and
+  `aether doctor` warn when the root is on tmpfs or too long for socket paths.
+  `aether storage` reports their size under `agent_temp`. Nothing is deleted
+  yet.
+
 ## 1.0.9
 
 Cost figures are more accurate. A Claude Code agent that pauses and resumes

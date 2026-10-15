@@ -793,3 +793,34 @@ fn unsafe_credential_directory_warns_with_exact_repair() {
         0o775
     );
 }
+
+#[test]
+fn the_agent_temp_root_is_judged_where_the_daemon_will_put_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths(dir.path());
+    let check = check_agent_temp(&paths, None);
+    // Warns, rather than passes, when the test's temp dir is held in memory.
+    assert_ne!(check.level, Level::Fail, "{check:?}");
+    assert!(
+        check
+            .detail
+            .contains(&paths.data_dir.join("t").display().to_string())
+    );
+    assert!(!paths.data_dir.join("t").exists(), "doctor creates nothing");
+
+    let shared = dir.path().join("shared");
+    std::fs::create_dir(&shared).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777)).unwrap();
+    let check = check_agent_temp(&paths, Some(&shared));
+    assert_eq!(check.level, Level::Fail, "{check:?}");
+    assert!(
+        check.detail.contains("writable by group or others"),
+        "{check:?}"
+    );
+
+    let long = Path::new("/var/tmp").join("x".repeat(40));
+    let check = check_agent_temp(&paths, Some(&long));
+    assert_eq!(check.level, Level::Warn, "{check:?}");
+    assert!(check.detail.contains("budget"), "{check:?}");
+}

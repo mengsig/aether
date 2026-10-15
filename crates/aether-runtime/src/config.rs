@@ -52,6 +52,9 @@ pub struct RuntimeConfig {
     pub github_checkout_root: Option<PathBuf>,
     /// Private location for detached worktrees made by isolated delegation.
     pub delegated_workspace_root: Option<PathBuf>,
+    /// Root of the per-agent temp dirs, already prepared and claimed for
+    /// `instance_id`. `None` leaves agents the daemon's own temp dir.
+    pub agent_temp_root: Option<PathBuf>,
     pub network_default: aether_core::agent::NetworkPolicy,
     pub execution: ExecutionPolicy,
     /// Consecutive failed invocations before an agent is failed.
@@ -127,6 +130,7 @@ impl Default for RuntimeConfig {
             workspace_root: None,
             github_checkout_root: None,
             delegated_workspace_root: None,
+            agent_temp_root: None,
             network_default: aether_model::config::NetworkSection::default().default,
             execution: ExecutionPolicy::default(),
             max_consecutive_failures: 3,

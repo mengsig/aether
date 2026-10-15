@@ -20,7 +20,28 @@ pub(crate) fn tool_context(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> ToolContext
         }),
         env: BTreeMap::new(),
         hidden_env: runtime.tools.hidden_env(),
+        temp_dir: agent_temp_path(runtime, ctx.agent.id),
     }
+}
+
+/// Where `agent`'s temp dir lives; nothing is created.
+pub(crate) fn agent_temp_path(runtime: &Runtime, agent: AgentId) -> Option<std::path::PathBuf> {
+    let root = runtime.config.agent_temp_root.as_deref()?;
+    Some(aether_core::agent_temp::leaf_path(root, agent))
+}
+
+/// `agent`'s temp dir, created (or recreated) now because a process of the
+/// agent's is about to start. A dir that is not safely ours stops the turn.
+pub(crate) fn agent_temp_dir(
+    runtime: &Runtime,
+    agent: AgentId,
+) -> Result<Option<std::path::PathBuf>> {
+    let Some(leaf) = agent_temp_path(runtime, agent) else {
+        return Ok(None);
+    };
+    aether_core::agent_temp::ensure_leaf(&leaf, &runtime.config.instance_id)
+        .map_err(|e| RuntimeError::Invalid(format!("agent temp dir: {e}")))?;
+    Ok(Some(leaf))
 }
 
 /// Memories for this turn, ranked by the task objective and the inbox about

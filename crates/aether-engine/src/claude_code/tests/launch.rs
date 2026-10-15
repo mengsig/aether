@@ -21,6 +21,7 @@ fn turn() -> EngineTurn {
         extra_dirs: vec![],
         hidden_env: Vec::new(),
         tool_hidden_env: Vec::new(),
+        temp_dir: None,
         summary_only: false,
         lean_host_context: false,
         network_access: true,
@@ -87,6 +88,61 @@ async fn ownership_recording_failure_stops_claude_launch() {
     assert!(matches!(error, EngineError::SessionOwnership(_)));
     assert!(error.to_string().contains("storage unavailable"));
     assert!(cancel.is_cancelled());
+}
+
+#[tokio::test]
+async fn fresh_and_resumed_claude_get_the_agent_temp_dir() {
+    let dir = fake_claude(
+        r#"printf '%s|%s|%s' "$TMPDIR" "$TMP" "$TEMP" > "$TMPDIR/seen"; cat >/dev/null"#,
+    );
+    let engine = ClaudeCodeEngine::new(dir.path().join("claude").to_string_lossy(), "2.1.265");
+    let leaf = dir.path().join("0123456789AB");
+    std::fs::create_dir(&leaf).unwrap();
+    for session in [None, Some("existing".to_owned())] {
+        let mut t = turn();
+        t.session = session.clone();
+        t.cwd = dir.path().into();
+        t.temp_dir = Some(leaf.clone());
+        let cancel = CancellationToken::new();
+        let mut run = engine.run(t, cancel.clone()).await.unwrap();
+        let seen = leaf.join("seen");
+        for _ in 0..200 {
+            if std::fs::read_to_string(&seen).is_ok_and(|s| !s.is_empty()) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        cancel.cancel();
+        while run.events.recv().await.is_some() {}
+        let seen = std::fs::read_to_string(&seen).unwrap();
+        assert_eq!(seen, format!("{0}|{0}|{0}", leaf.display()), "{session:?}");
+        std::fs::remove_file(leaf.join("seen")).unwrap();
+    }
+}
+
+#[test]
+fn a_sandboxed_claude_may_write_only_its_own_temp_dir_beyond_the_defaults() {
+    let engine = ClaudeCodeEngine::new("claude", "2.1.265");
+    let settings = |t: &EngineTurn| -> Value {
+        let args = engine.args(t);
+        serde_json::from_str(&args[args.iter().position(|a| a == "--settings").unwrap() + 1])
+            .unwrap()
+    };
+    let mut t = turn();
+    t.temp_dir = Some(PathBuf::from("/var/t/0123456789AB"));
+    t.network_access = false;
+    assert_eq!(
+        settings(&t)["sandbox"]["filesystem"],
+        json!({"allowWrite": ["/var/t/0123456789AB"]})
+    );
+    t.temp_dir = None;
+    assert!(settings(&t)["sandbox"].get("filesystem").is_none());
+    t.temp_dir = Some(PathBuf::from("/var/t/0123456789AB"));
+    t.network_access = true;
+    assert!(
+        settings(&t).get("sandbox").is_none(),
+        "an online turn is not sandboxed"
+    );
 }
 
 #[test]

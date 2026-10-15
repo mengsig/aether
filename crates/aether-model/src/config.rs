@@ -10,12 +10,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::profile::ProfileSetting;
 
+mod agents;
 mod remote;
 mod retention;
 mod scheduler;
 mod storage;
 mod templates;
 
+pub use agents::AgentsSection;
 pub use remote::RemoteSection;
 pub use retention::RetentionSection;
 pub use storage::StorageSection;
@@ -89,6 +91,7 @@ pub struct AetherConfig {
     pub artifacts: ArtifactsSection,
     pub retention: RetentionSection,
     pub storage: StorageSection,
+    pub agents: AgentsSection,
     pub mcp: McpSection,
     pub memory: MemorySection,
     pub listen: ListenSection,
@@ -610,6 +613,7 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
             config.listen.address().map_err(&bad)?;
             config.remote.address().map_err(&bad)?;
             config.serve.address().map_err(&bad)?;
+            config.agents.validate().map_err(&bad)?;
             for server in &config.mcp.servers {
                 server.validate().map_err(&bad)?;
             }

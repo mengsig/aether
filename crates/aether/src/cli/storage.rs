@@ -20,6 +20,7 @@ pub async fn storage(
         "engine_sessions",
         "artifacts",
         "event_history",
+        "agent_temp",
     ] {
         let value = &report[kind];
         if let Some(bytes) = value["bytes"].as_u64() {
@@ -38,6 +39,12 @@ pub async fn storage(
         }
         if let Some(bytes) = value["bytes_removed"].as_u64() {
             println!("  {bytes} bytes freed");
+        }
+        if let Some(dirs) = value["dirs"].as_u64() {
+            println!("  {dirs} agent temp dirs");
+        }
+        if let Some(unreadable) = value["unreadable"].as_u64().filter(|n| *n > 0) {
+            println!("  {unreadable} directories could not be read");
         }
         if value["truncated"] == true {
             println!("  partial inventory: scan limit reached");

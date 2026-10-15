@@ -106,5 +106,6 @@ pub fn ctx_in(root: &Path) -> ToolContext {
         artifacts: Arc::new(MemorySink::default()),
         env: BTreeMap::new(),
         hidden_env: Vec::new().into(),
+        temp_dir: None,
     }
 }

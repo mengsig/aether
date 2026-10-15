@@ -108,6 +108,14 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # [retention]
 # completed_run_days = 7  # positive days; 0 is invalid
 
+# Each agent's processes get their own private TMPDIR, TMP and TEMP under
+# this root, one 0700 directory per agent. Unset means `t` beside the store.
+# Use an absolute path on disk, not tmpfs, short enough (root plus 13 bytes,
+# 50 at most) that tools can still create Unix sockets under it.
+#
+# [agents]
+# temp_root = "/var/tmp/aether"
+
 # How long artifact bytes are kept. Records are never removed, so an old run
 # still says what it produced even once the payload is gone.
 #

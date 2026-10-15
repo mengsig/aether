@@ -387,3 +387,38 @@ async fn stop_skips_the_grace_when_only_the_unreaped_leader_remains() {
     .expect("an empty live group must not wait out the grace")
     .unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_and_terminal_processes_get_the_agent_temp_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = ctx_in(dir.path());
+    let root = dir.path().join("t");
+    aether_core::agent_temp::prepare_root(&root, &ctx.instance_id).unwrap();
+    let leaf = aether_core::agent_temp::leaf_path(&root, ctx.agent_id);
+    ctx.temp_dir = Some(leaf.clone());
+    let reg = BackgroundProcesses::new();
+    let expected = format!("{0}|{0}|{0}", leaf.display());
+    for terminal in [false, true] {
+        let started = reg
+            .start_with_terminal(
+                ctx.agent_id,
+                r#"printf '%s|%s|%s' "$TMPDIR" "$TMP" "$TEMP""#,
+                &ctx,
+                terminal,
+            )
+            .unwrap();
+        let mut seen = String::new();
+        let deadline = std::time::Instant::now() + WAIT_CEILING;
+        loop {
+            let out = reg.read(ctx.agent_id, started.id).unwrap();
+            seen.push_str(&out.text);
+            if !out.status.running {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "never finished");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(seen.contains(&expected), "terminal={terminal}: {seen:?}");
+    }
+    assert!(leaf.is_dir());
+}

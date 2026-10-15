@@ -114,21 +114,28 @@ pub(crate) fn prepare_interactive(
     }
     match &ctx.scope.backend {
         ExecutionBackend::Host => Ok(PreparedCommand {
-            command: host_command(command, ctx),
+            command: host_command(command, ctx)?,
             teardown: None,
         }),
         ExecutionBackend::Container { image } => container_command(command, image, ctx, terminal),
     }
 }
 
-fn host_command(command: &str, ctx: &ToolContext) -> tokio::process::Command {
+fn host_command(command: &str, ctx: &ToolContext) -> Result<tokio::process::Command, ToolError> {
     let mut cmd = tokio::process::Command::new("bash");
     cmd.arg("-lc")
         .arg(command)
         .current_dir(&ctx.cwd)
         .envs(&ctx.env);
     pipes(&mut cmd, ctx);
-    cmd
+    if let Some(dir) = &ctx.temp_dir {
+        aether_core::agent_temp::ensure_leaf(dir, &ctx.instance_id)
+            .map_err(|e| ToolError::Internal(format!("agent temp dir: {e}")))?;
+        for name in aether_core::agent_temp::ENV_VARS {
+            cmd.env(name, dir);
+        }
+    }
+    Ok(cmd)
 }
 
 fn container_command(
@@ -414,6 +421,72 @@ mod tests {
         let prepared = prepare("echo hi", &ctx).expect("prepare");
         assert!(prepared.teardown.is_none());
         assert_eq!(rendered(&prepared.command), "bash -lc echo hi");
+    }
+
+    /// `ctx` with its agent's temp dir under a fresh root in `dir`.
+    fn with_temp_dir(dir: &std::path::Path) -> ToolContext {
+        let mut ctx = ctx_in(dir);
+        let root = dir.join("t");
+        aether_core::agent_temp::prepare_root(&root, &ctx.instance_id).expect("root");
+        ctx.temp_dir = Some(aether_core::agent_temp::leaf_path(&root, ctx.agent_id));
+        ctx
+    }
+
+    #[tokio::test]
+    async fn host_commands_get_the_agent_temp_dir_and_it_is_recreated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ctx = with_temp_dir(dir.path());
+        let leaf = ctx.temp_dir.clone().expect("temp dir");
+        let script = r#"printf '%s|%s|%s' "$TMPDIR" "$TMP" "$TEMP" && touch "$TMPDIR/x""#;
+        let expected = format!("{0}|{0}|{0}", leaf.display());
+        for round in ["created", "recreated"] {
+            let output = prepare(script, &ctx)
+                .expect("prepare")
+                .command
+                .output()
+                .await
+                .expect("run");
+            assert!(output.status.success(), "{round}: {output:?}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{round}");
+            assert!(leaf.join("x").exists(), "{round}");
+            std::fs::remove_dir_all(&leaf).expect("delete");
+        }
+    }
+
+    #[test]
+    fn a_temp_dir_that_is_not_ours_refuses_the_command() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ctx = with_temp_dir(dir.path());
+        let leaf = ctx.temp_dir.clone().expect("temp dir");
+        std::os::unix::fs::symlink(dir.path(), &leaf).expect("symlink");
+        let e = prepare("true", &ctx).expect_err("a symlinked temp dir");
+        assert!(
+            matches!(&e, ToolError::Internal(m) if m.contains("not a real directory")),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn the_container_backend_keeps_the_image_temp_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut ctx = with_temp_dir(dir.path());
+        ctx.scope.backend = ExecutionBackend::Container {
+            image: "alpine:3".into(),
+        };
+        let prepared = prepare("true", &ctx).expect("prepare");
+        let line = rendered(&prepared.command);
+        assert!(!line.contains("TMPDIR") && !line.contains("TEMP"), "{line}");
+        let envs: Vec<_> = prepared
+            .command
+            .as_std()
+            .get_envs()
+            .map(|(k, _)| k.to_owned())
+            .collect();
+        assert!(!envs.iter().any(|k| k == "TMPDIR"), "{envs:?}");
+        assert!(
+            !ctx.temp_dir.expect("temp dir").exists(),
+            "nothing is created for a container"
+        );
     }
 
     #[test]

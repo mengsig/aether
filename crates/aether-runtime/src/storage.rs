@@ -12,6 +12,7 @@ use crate::{Result, Runtime, RuntimeError};
 
 const MAX_ENTRIES: usize = 10_000;
 
+mod agent_temp;
 mod engine_sessions;
 
 #[derive(Debug, Clone)]
@@ -93,6 +94,10 @@ impl Runtime {
                 serde_json::to_value(inventory(&paths.logs).map_err(invalid)?).map_err(invalid)?;
             report["database_bytes"] = json!(fs::metadata(&paths.store).map_err(invalid)?.len());
             report["available_bytes"] = json!(fs4::available_space(root).map_err(invalid)?);
+        }
+        if let Some(root) = &self.config.agent_temp_root {
+            report["agent_temp"] = serde_json::to_value(agent_temp::report(root).map_err(invalid)?)
+                .map_err(invalid)?;
         }
         let artifacts = self.store.live_artifacts()?;
         let mut digests = std::collections::HashSet::new();

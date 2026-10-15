@@ -162,6 +162,9 @@ impl ClaudeCodeEngine {
                 "allowUnsandboxedCommands": false,
                 "network": {"strictAllowlist": true, "allowedDomains": [], "deniedDomains": ["*"]}
             });
+            if let Some(dir) = &turn.temp_dir {
+                settings["sandbox"]["filesystem"] = json!({"allowWrite": [dir.to_string_lossy()]});
+            }
             settings["permissions"] = json!({"deny": ["WebFetch(domain:*)", "WebSearch"]});
         }
         args.extend(["--settings".into(), settings.to_string()]);
@@ -294,6 +297,7 @@ impl Engine for ClaudeCodeEngine {
             args,
             cwd,
             &turn.hidden_env,
+            turn.temp_dir.as_deref(),
             user_message_line(&turn.prompt, &turn.images),
             true,
             Some(input::interrupt_line()),

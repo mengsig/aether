@@ -47,6 +47,7 @@ fn ctx() -> ToolContext {
         artifacts: Arc::new(UnusedSink),
         env: BTreeMap::new(),
         hidden_env: Vec::new().into(),
+        temp_dir: None,
     }
 }
 

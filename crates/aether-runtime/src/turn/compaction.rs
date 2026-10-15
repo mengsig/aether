@@ -215,6 +215,7 @@ pub(super) async fn compaction_client(
             bypass_permissions: false,
             hidden_env: runtime.tools.engine_hidden_env().to_vec(),
             tool_hidden_env: runtime.tools.hidden_env().to_vec(),
+            temp_dir: crate::turn::agent_temp_dir(runtime, ctx.agent.id)?,
             mcp: None,
         },
     }))
