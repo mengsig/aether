@@ -13,8 +13,9 @@ release is also the text of its GitHub release.
   list passed about 2 MB SQLite did that sort in a temporary file on disk.
   The terminal's status poll every 2 seconds, each tree refresh, and
   orchestrators listing agents all paid it: on a store with long history,
-  one status poll wrote about 5.8 MB. Listings now read in creation order
-  from an index and write nothing. Pages of an agent's events together with
+  one status poll wrote about 5.8 MB. Full listings, live agents and one
+  run's agents and tasks now read in creation order from an index and write
+  nothing. Pages of an agent's events together with
   its children's no longer sort the events' contents either: in a test store
   of 800,000 events, opening a busy supervisor's transcript wrote 20 MB, and
   now writes nothing.

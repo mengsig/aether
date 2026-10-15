@@ -718,8 +718,8 @@ impl Store for SqliteStore {
     }
 }
 
-/// The agent listing for `filter`, in creation order off `agents_created` (or
-/// `agents_run_created` for one run): no sort, so no temp file as it grows.
+/// The agent listing for `filter`. Whole, live-only and per-run listings walk
+/// `agents_created` or `agents_run_created` in order; other filters sort matches.
 pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> String {
     debug_assert!(args.is_empty(), "placeholders are numbered from 1");
     let mut sql = String::from("SELECT body FROM agents WHERE 1 = 1");
@@ -760,8 +760,8 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
     sql
 }
 
-/// The task listing for `filter`, in creation order off `tasks_created` (or
-/// `tasks_run_created` for one run).
+/// The task listing for `filter`. Whole and per-run listings walk
+/// `tasks_created` or `tasks_run_created` in order; other filters sort matches.
 pub(super) fn task_list_sql(filter: &TaskFilter, args: &mut Arguments) -> String {
     debug_assert!(args.is_empty(), "placeholders are numbered from 1");
     let mut sql = String::from("SELECT body FROM tasks WHERE 1 = 1");
