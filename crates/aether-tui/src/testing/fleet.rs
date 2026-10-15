@@ -70,6 +70,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
                 waiting_on: vec![],
                 lease: None,
                 subtree_usage: Usage::default(),
+                hidden_usage: None,
             },
         );
     }
@@ -82,6 +83,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     app.reduce(AppEvent::Reply {
@@ -222,6 +224,7 @@ pub fn loaded_app_with_capped_subtree(cap: usize) -> App {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     nodes.insert(
@@ -233,6 +236,7 @@ pub fn loaded_app_with_capped_subtree(cap: usize) -> App {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     nodes.insert(
@@ -244,6 +248,7 @@ pub fn loaded_app_with_capped_subtree(cap: usize) -> App {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     app.reduce(AppEvent::Reply {
@@ -289,6 +294,7 @@ pub fn loaded_app_with_capped_subtree_under_finished_child(cap: usize) -> App {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     nodes.insert(
@@ -300,6 +306,7 @@ pub fn loaded_app_with_capped_subtree_under_finished_child(cap: usize) -> App {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     nodes.insert(
@@ -311,6 +318,7 @@ pub fn loaded_app_with_capped_subtree_under_finished_child(cap: usize) -> App {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     app.reduce(AppEvent::Reply {

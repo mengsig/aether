@@ -161,6 +161,7 @@ pub fn app_with_transcript(messages: &[&str]) -> App {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     app.reduce(AppEvent::Reply {
@@ -300,6 +301,7 @@ pub fn populated_app() -> App {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     app.reduce(AppEvent::Connected);

@@ -360,7 +360,7 @@ pub(super) fn handle_event(
             // cost unset rather than claim $0, so the turn total can stand in.
             let reported = usage.filter(|u| u.total_tokens() > 0);
             if let Some(usage) = reported {
-                note_context_usage(ctx, state, usage.context_tokens());
+                note_context_usage(runtime, ctx, state, usage.context_tokens());
             }
             let mut usage = reported.unwrap_or_default();
             if reported.is_some() {
@@ -473,6 +473,7 @@ pub(super) fn handle_event(
             let answered = snapshot.model.clone();
             crate::turn::close_exhaustion_episode(runtime, ctx, &hold, &mut commit, &answered)?;
             runtime.apply_held(hold, commit)?;
+            publish_accounting(runtime, ctx, state);
         }
         EngineEvent::UsageDelta { mut usage } => {
             // The engine could not read every counter behind these tokens, so
@@ -487,12 +488,12 @@ pub(super) fn handle_event(
                         .unwrap_or(aether_core::model::CostGap::Unreported),
                 );
             }
-            record_usage(ctx, state, usage);
+            record_usage(runtime, ctx, state, usage);
         }
         EngineEvent::UsageRequest { request } => {
             let usage = state.pricing.request_delta(&request);
             state.request_usage_seen = true;
-            record_usage(ctx, state, usage);
+            record_usage(runtime, ctx, state, usage);
         }
         EngineEvent::ToolResult {
             tool_use_id,
@@ -557,7 +558,7 @@ pub(super) fn handle_event(
                 Some(aether_core::agent::EngineSessionUsage { session, total });
         }
         EngineEvent::ContextUsage { tokens } => {
-            note_context_usage(ctx, state, tokens);
+            note_context_usage(runtime, ctx, state, tokens);
         }
         EngineEvent::Note(text) => {
             tracing::debug!(agent = %ctx.agent.id, "{}", clamp(&text, MAX_ENGINE_ERROR))
@@ -574,7 +575,7 @@ pub(super) fn handle_event(
     Ok(())
 }
 
-fn record_usage(ctx: &mut TurnCtx, state: &mut StreamState, usage: Usage) {
+fn record_usage(runtime: &Runtime, ctx: &mut TurnCtx, state: &mut StreamState, usage: Usage) {
     state.priced |= usage.cost_complete;
     state.usage_seen = true;
     state
@@ -584,11 +585,26 @@ fn record_usage(ctx: &mut TurnCtx, state: &mut StreamState, usage: Usage) {
     ctx.add_usage(usage);
     ctx.agent.updated_at = now();
     state.accounting.usage();
+    publish_accounting(runtime, ctx, state);
 }
 
-fn note_context_usage(ctx: &mut TurnCtx, state: &mut StreamState, tokens: u64) {
+fn note_context_usage(runtime: &Runtime, ctx: &mut TurnCtx, state: &mut StreamState, tokens: u64) {
     ctx.agent.stats.context_tokens = Some(tokens);
     state.accounting.context(tokens);
+    publish_accounting(runtime, ctx, state);
+}
+
+fn publish_accounting(runtime: &Runtime, ctx: &TurnCtx, state: &StreamState) {
+    runtime.bus.publish_delta(
+        ctx.agent.id,
+        state.message_invocation,
+        DeltaKind::Accounting {
+            after_seq: runtime.bus.last_seq(),
+            total: ctx.agent.stats.usage,
+            turn_usage: ctx.turn_usage,
+            context_tokens: ctx.agent.stats.context_tokens,
+        },
+    );
 }
 
 /// Whether `event` may commit anything or wait on someone, which pending
@@ -605,4 +621,122 @@ pub(super) fn writes_record(event: &EngineEvent) -> bool {
             // Folds what is pending into its own commit.
             | EngineEvent::Assistant { .. }
     )
+}
+
+#[cfg(test)]
+mod live_accounting_tests {
+    use super::*;
+    use crate::BusMessage;
+    use aether_core::id::SnapshotId;
+    use aether_core::model::{ModelCost, ModelRef};
+    use aether_core::snapshot::InvocationParams;
+    use aether_engine::{RequestUsage, UsageRequestId};
+
+    #[tokio::test(start_paused = true)]
+    async fn readings_publish_absolute_live_accounting_without_committing() {
+        let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+        let mut ctx = super::super::tests::started_agent_ctx(&runtime).await;
+        let configured = runtime
+            .models
+            .registry()
+            .resolve(&ModelRef::new("claude-code", "haiku"))
+            .unwrap();
+        let mut state = StreamState::new(
+            TurnPricing {
+                billed: None,
+                estimate: Some(ModelCost {
+                    input_per_mtok: 2.0,
+                    output_per_mtok: 4.0,
+                    ..Default::default()
+                }),
+            },
+            configured,
+        );
+        let snapshot = InvocationSnapshot {
+            id: SnapshotId::new(),
+            agent_id: ctx.agent.id,
+            task_id: None,
+            turn: 0,
+            model: ModelRef::new("claude-code", "haiku"),
+            adapter: None,
+            capabilities: None,
+            memory_ids: vec![],
+            layers: vec![],
+            messages: vec![],
+            tools: vec![],
+            params: InvocationParams::default(),
+            token_estimate: 0,
+            created_at: now(),
+        };
+        let commits = runtime.store.commits();
+        let last_seq = runtime.store.last_seq().unwrap();
+        let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
+        let mut bus = runtime.subscribe();
+        let usage = Usage {
+            input_tokens: 100,
+            output_tokens: 20,
+            ..Default::default()
+        };
+        for event in [
+            EngineEvent::UsageDelta { usage },
+            EngineEvent::ContextUsage { tokens: 0 },
+            EngineEvent::UsageRequest {
+                request: RequestUsage {
+                    id: UsageRequestId::Engine("request".into()),
+                    previous: Usage::default(),
+                    total: usage,
+                },
+            },
+            EngineEvent::ContextUsage { tokens: 412 },
+        ] {
+            handle_event(&runtime, &mut ctx, &snapshot, event, &mut state).unwrap();
+            match bus.try_recv().expect("a reading publishes immediately") {
+                BusMessage::Delta {
+                    agent,
+                    invocation,
+                    delta:
+                        DeltaKind::Accounting {
+                            after_seq,
+                            total,
+                            turn_usage,
+                            context_tokens,
+                        },
+                } => {
+                    assert_eq!(after_seq, last_seq);
+                    assert_eq!(agent, ctx.agent.id);
+                    assert_eq!(invocation, state.message_invocation);
+                    assert_eq!(total, ctx.agent.stats.usage);
+                    assert_eq!(turn_usage, ctx.turn_usage);
+                    assert_eq!(context_tokens, ctx.agent.stats.context_tokens);
+                }
+                message => panic!("expected transient accounting, got {message:?}"),
+            }
+            assert!(
+                bus.try_recv().is_err(),
+                "no sequenced event for a held reading"
+            );
+            assert_eq!(runtime.store.commits(), commits);
+            assert_eq!(runtime.store.last_seq().unwrap(), last_seq);
+            assert_eq!(runtime.store.agent(ctx.agent.id).unwrap().unwrap(), stored);
+        }
+        assert_eq!(ctx.agent.stats.usage.input_tokens, 200);
+        assert!(ctx.agent.stats.usage.estimated_cost_usd.is_some());
+        flush_accounting(&runtime, &ctx, &mut state.accounting).unwrap();
+        let BusMessage::Event(event) = bus.try_recv().unwrap() else {
+            panic!("durable usage")
+        };
+        assert!(
+            matches!(event.kind, EventKind::AgentUsageUpdated { total, turn_usage }
+            if total == ctx.agent.stats.usage && turn_usage == ctx.turn_usage)
+        );
+        let BusMessage::Event(event) = bus.try_recv().unwrap() else {
+            panic!("durable context")
+        };
+        assert!(matches!(&event.kind, EventKind::Custom { name, payload }
+            if name == "context.usage" && payload["tokens"] == 412));
+        let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
+        assert_eq!(stored.stats.usage, ctx.agent.stats.usage);
+        assert_eq!(stored.stats.context_tokens, Some(412));
+        runtime.shutdown().await;
+    }
 }

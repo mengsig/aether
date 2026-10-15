@@ -184,6 +184,8 @@ pub struct App {
     pub terminal_focused: bool,
     /// Tokens the last model call carried per agent: the context in use.
     pub context_tokens: HashMap<AgentId, u64>,
+    /// Latest accounting on this connection, including readings ahead of storage.
+    live_accounting: HashMap<AgentId, accounting::AccountingProjection>,
     /// Latest subscription quota reported by an engine, per provider.
     pub quotas: HashMap<String, aether_core::provider::ProviderUsage>,
     /// Branch per workspace path on screen; see `app/git.rs`.
@@ -236,6 +238,7 @@ pub use helpers::{
 };
 use helpers::{decode_artifact, eviction_notice, explain, names_version, then_operation};
 pub(crate) use images::{image_label, with_image_lines};
+mod accounting;
 mod agents;
 pub mod approval_flow;
 pub(crate) mod approvals;

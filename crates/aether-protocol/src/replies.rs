@@ -98,6 +98,10 @@ pub struct TreeNode {
     pub lease: Option<Lease>,
     /// Usage rolled up over this agent and its descendants.
     pub subtree_usage: Usage,
+    /// Usage of child subtrees omitted from this tree (for example archived children).
+    /// Kept separately so live clients can replace visible usage without losing it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_usage: Option<Usage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]

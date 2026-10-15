@@ -1,4 +1,6 @@
-use super::{AgentId, Command, Deserialize, ErrorReply, Event, InvocationId, Reply, Serialize};
+use super::{
+    AgentId, Command, Deserialize, ErrorReply, Event, InvocationId, Reply, Serialize, Usage,
+};
 
 /// Client to daemon. The request id is `req` on the wire so it can never
 /// collide with a command's own `id` field after flattening.
@@ -10,14 +12,29 @@ pub struct ClientFrame {
     pub command: Command,
 }
 
-/// Transient streaming signal. Not persisted; the completed message is the event.
+/// Transient streaming signal. Not persisted; durable events reconcile it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "delta", rename_all = "snake_case")]
 pub enum Delta {
-    TurnStarted { turn: u32 },
-    Text { text: String },
-    Thinking { text: String },
-    ToolInput { name: String, partial_json: String },
+    TurnStarted {
+        turn: u32,
+    },
+    Text {
+        text: String,
+    },
+    Thinking {
+        text: String,
+    },
+    ToolInput {
+        name: String,
+        partial_json: String,
+    },
+    /// Absolute in-memory figures. Replace prior totals; never add these to durable usage.
+    Accounting {
+        total: Usage,
+        turn_usage: Usage,
+        context_tokens: Option<u64>,
+    },
     TurnFinished,
 }
 

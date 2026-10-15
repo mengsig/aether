@@ -305,6 +305,7 @@ fn approval_from_a_background_agent_notifies_by_its_own_name_without_scrolling()
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     app.reduce(AppEvent::Focus(false));

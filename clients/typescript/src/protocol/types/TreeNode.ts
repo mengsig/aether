@@ -16,6 +16,7 @@ import type {
 export interface TreeNode {
   "agent": Agent;
   "children": Array<AgentId>;
+  "hidden_usage"?: Usage | null;
   "lease"?: Lease | null;
   "subtree_usage": Usage;
   "task"?: Task | null;

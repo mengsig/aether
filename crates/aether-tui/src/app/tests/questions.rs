@@ -50,6 +50,7 @@ fn add_asker(app: &mut App) -> AgentId {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     asker

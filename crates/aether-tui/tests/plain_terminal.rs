@@ -86,6 +86,7 @@ impl Store {
                     waiting_on: vec![],
                     lease: None,
                     subtree_usage: Usage::default(),
+                    hidden_usage: None,
                 },
             );
         }

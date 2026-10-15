@@ -577,6 +577,9 @@ impl AgentTranscript {
 
     /// Append a streamed delta. Only source text changes; nothing is laid out.
     pub fn stream(&mut self, invocation: InvocationId, delta: &Delta, now: Timestamp) {
+        if matches!(delta, Delta::Accounting { .. }) {
+            return;
+        }
         if let Some(live) = &mut self.live {
             live.stream(invocation, delta, now);
             return;
@@ -595,7 +598,10 @@ impl AgentTranscript {
                     self.stream.reasoning_title = reasoning_title(&self.stream.reasoning);
                 }
             }
-            Delta::TurnStarted { .. } | Delta::ToolInput { .. } | Delta::TurnFinished => {}
+            Delta::TurnStarted { .. }
+            | Delta::ToolInput { .. }
+            | Delta::Accounting { .. }
+            | Delta::TurnFinished => {}
         }
     }
 

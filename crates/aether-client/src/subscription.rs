@@ -9,6 +9,10 @@ use tokio::sync::mpsc;
 
 /// Frames delivered to a subscription.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "keep streamed accounting snapshots inline without a per-frame allocation"
+)]
 pub enum SubscriptionFrame {
     Event(Box<Event>),
     /// Terminal overflow. Resume after the last consumed event sequence, or
