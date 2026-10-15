@@ -1,6 +1,7 @@
 //! Bytes the store writes per streamed event stay bounded however long the
 //! history grows (#57). Its own binary, so `/proc/self/io` counts only this test.
 #![cfg(target_os = "linux")]
+#![allow(clippy::expect_used)]
 
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
