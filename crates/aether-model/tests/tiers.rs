@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+
 //! Model tiers: the catalog's declared bands, operator overrides and the
 //! price fallback, as `Models::tier` reports them.
 
@@ -96,8 +98,7 @@ fn an_unknown_tier_name_is_a_config_error_naming_the_choices() {
     )
     .expect("config.toml");
     let error = Models::load(Some(dir.path().to_path_buf()))
-        .err()
-        .expect("must be refused")
+        .expect_err("must be refused")
         .to_string();
     assert!(error.contains("config.toml"), "{error}");
     assert!(error.contains("cheap"), "{error}");
@@ -113,8 +114,7 @@ fn an_override_key_must_be_provider_slash_model() {
     )
     .expect("config.toml");
     let error = Models::load(Some(dir.path().to_path_buf()))
-        .err()
-        .expect("must be refused")
+        .expect_err("must be refused")
         .to_string();
     assert!(error.contains("models.tiers key `opus`"), "{error}");
 }
