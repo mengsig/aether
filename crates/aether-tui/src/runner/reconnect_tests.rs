@@ -13,6 +13,8 @@ use aether_store::{Commit, Mutation, SqliteStore, Store};
 mod fixture;
 #[path = "reconnect_tests/in_flight.rs"]
 mod in_flight;
+#[path = "reconnect_tests/late_replies.rs"]
+mod late_replies;
 #[path = "reconnect_tests/state.rs"]
 mod state;
 use fixture::{Fixture, models};

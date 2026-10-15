@@ -32,7 +32,7 @@ impl Observer {
                 | AppEvent::Focus(_),
             ) => Some(json!({"kind": "input"})),
             LoopEvent::App(AppEvent::Reply {
-                then: Then::Backfill(_),
+                then: Then::Backfill { .. },
                 ..
             }) => Some(json!({"kind": "backfill"})),
             LoopEvent::Reconnected(_) => Some(json!({"kind": "reconnected"})),

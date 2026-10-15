@@ -67,7 +67,7 @@ pub(crate) fn projection(agent: Agent, history: Vec<Event>) -> App {
         })),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: aether_tui::testing::backfill_then(&app, id),
         result: Ok(Reply::Events(history)),
     });
     assert!(app.transcripts[&id].loaded);

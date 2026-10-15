@@ -51,6 +51,14 @@ pub fn render_with(
         .join("\n")
 }
 
+/// Routes a reply to `agent`'s history page asked for on the current connection.
+pub fn backfill_then(app: &App, agent: AgentId) -> Then {
+    Then::Backfill {
+        agent,
+        connection: app.connection,
+    }
+}
+
 /// Feed `app` a daemon status report with a chosen suspended-agent count and
 /// everything else quiet, for the fleet-line and status-bar tests.
 pub fn apply_status_with_suspended(app: &mut App, agents_suspended: u32) {
@@ -154,7 +162,7 @@ pub fn app_with_transcript(messages: &[&str]) -> App {
         })),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: backfill_then(&app, id),
         result: Ok(Reply::Events(vec![])),
     });
 
@@ -294,7 +302,7 @@ pub fn populated_app() -> App {
         })),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: backfill_then(&app, id),
         result: Ok(Reply::Events(vec![])),
     });
     // Fleet counts, provider load and run spend: the status bar segments only

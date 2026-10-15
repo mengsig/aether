@@ -36,16 +36,22 @@ pub enum Then {
         next: Box<Then>,
     },
     VoiceReply(u64),
-    /// The daemon's defaults, fetched to start this root.
-    RootDefaults(StartId),
+    /// The daemon's defaults, fetched on `connection` to start this root.
+    RootDefaults {
+        start: StartId,
+        connection: u64,
+    },
     Ignore,
     CompactionAccepted(AgentId),
     Status,
     /// The periodic refresh: only its own answer frees the next poll.
     StatusPoll,
     Tree,
-    /// An agent's history, fetched once when it is first viewed.
-    Backfill(AgentId),
+    /// A page of an agent's history, asked for on `connection`.
+    Backfill {
+        agent: AgentId,
+        connection: u64,
+    },
     /// Reply to this root start's create request.
     AgentCreated(StartId),
     /// Reply to a restart: select the new agent and load what it inherited.

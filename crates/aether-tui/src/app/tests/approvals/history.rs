@@ -17,7 +17,7 @@ fn answer(seq: u64, agent: AgentId, text: &str) -> Event {
 
 fn history_reply(app: &mut App, agent: AgentId, events: Vec<Event>) -> Vec<Effect> {
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(agent),
+        then: crate::testing::backfill_then(app, agent),
         result: Ok(Reply::Events(events)),
     })
 }
@@ -40,7 +40,7 @@ fn requester_reading_history() -> (App, AgentId, ApprovalId) {
                 query: aether_protocol::EventQuery { before: Some(5), .. },
                 ..
             },
-            then: Then::Backfill(id),
+            then: Then::Backfill { agent: id, .. },
         }) if id == requester
     ));
     app.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(answer(

@@ -184,7 +184,7 @@ fn a_question_survives_its_agents_history_loading_afterwards() {
         e,
         Effect::Request {
             command: Command::GetEvents { .. },
-            then: Then::Backfill(a),
+            then: Then::Backfill { agent: a, .. },
         } if *a == asker
     )));
     let history = vec![
@@ -200,7 +200,7 @@ fn a_question_survives_its_agents_history_loading_afterwards() {
         ),
     ];
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(asker),
+        then: crate::testing::backfill_then(&app, asker),
         result: Ok(Reply::Events(history)),
     });
 
@@ -237,7 +237,7 @@ fn a_question_asked_while_history_loads_is_kept() {
         },
     )];
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(asker),
+        then: crate::testing::backfill_then(&app, asker),
         result: Ok(Reply::Events(history)),
     });
     let models = models(&app);
@@ -350,7 +350,7 @@ fn a_reloaded_transcript_sees_that_a_question_was_answered() {
             .map(|(seq, kind)| event(seq, asker, kind)),
     );
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(asker),
+        then: crate::testing::backfill_then(&app, asker),
         result: Ok(Reply::Events(history)),
     });
     let models = models(&app);

@@ -83,7 +83,7 @@ fn start_then(effects: &[Effect]) -> Then {
             }
             | Effect::Request {
                 command: Command::Status,
-                then: then @ Then::RootDefaults(_),
+                then: then @ Then::RootDefaults { .. },
             } => Some(then.clone()),
             _ => None,
         })
@@ -121,7 +121,7 @@ fn app_with_agent() -> (App, AgentId) {
         }
     )));
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Ok(Reply::Events(vec![])),
     });
     assert_eq!(app.selected, Some(id));

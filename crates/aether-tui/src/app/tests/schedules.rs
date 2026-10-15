@@ -287,7 +287,10 @@ fn backfill_remembers_every_missing_schedule_lookup() {
     for pass in 0..2 {
         app.transcripts.get_mut(&target).unwrap().loaded = false;
         app.select(target);
-        let effects = app.on_reply(Then::Backfill(target), Ok(Reply::Events(history.clone())));
+        let effects = app.on_reply(
+            crate::testing::backfill_then(&app, target),
+            Ok(Reply::Events(history.clone())),
+        );
         assert_eq!(schedule_lists(&effects), usize::from(pass == 0));
         app.on_reply(Then::Schedules, Ok(Reply::Schedules(vec![])));
     }

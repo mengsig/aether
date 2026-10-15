@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use super::images::Outgoing;
 use super::{
-    Agent, AgentConfig, AgentId, AgentPatch, App, ApprovalPolicy, Command, CreateAgent, Effect,
-    Intent, ModelChain, Role, Scope, Then,
+    Agent, AgentConfig, AgentId, AgentPatch, App, ApprovalPolicy, Command, CreateAgent,
+    DaemonStatus, Effect, Intent, ModelChain, Role, Scope, Then,
 };
 use crate::workspace;
 
@@ -167,7 +167,10 @@ impl App {
         let Some(status) = &self.status else {
             return Effect::Request {
                 command: Command::Status,
-                then: Then::RootDefaults(id),
+                then: Then::RootDefaults {
+                    start: id,
+                    connection: self.connection,
+                },
             };
         };
         let network = status.network_default;
@@ -202,10 +205,29 @@ impl App {
         }
     }
 
-    /// The daemon's defaults arrived: ask for start `id`'s root now.
-    pub(super) fn resume_root_start(&mut self, id: StartId) -> Option<Effect> {
+    /// The daemon's defaults, read on `connection`, arrived: ask for start
+    /// `id`'s root now. Defaults from before a reconnect may have changed since.
+    pub(super) fn root_defaults_arrived(
+        &mut self,
+        id: StartId,
+        connection: u64,
+        status: DaemonStatus,
+    ) -> Option<Effect> {
+        debug_assert!(
+            connection <= self.connection,
+            "a reply from a connection not yet made"
+        );
+        if connection == self.connection {
+            self.status = Some(status);
+        }
         let workspace = self.root_starts.get(&id)?.workspace.clone();
-        Some(self.request_root(id, workspace))
+        let request = self.request_root(id, workspace);
+        debug_assert!(
+            !matches!(&request, Effect::Request { then: Then::RootDefaults { connection, .. }, .. }
+                if *connection != self.connection),
+            "defaults are read again on the current connection"
+        );
+        Some(request)
     }
 
     /// Start `id` failed. While the operator waits on it, it keeps its

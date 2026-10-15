@@ -114,7 +114,7 @@ fn artifact_created_adopts_only_for_the_agent_the_list_shows() {
         result: Ok(Reply::Tree(two)),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(b),
+        then: crate::testing::backfill_then(&app, b),
         result: Ok(Reply::Events(vec![])),
     });
 
