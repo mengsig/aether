@@ -8,14 +8,6 @@ release is also the text of its GitHub release.
 
 ### New
 
-- **Memories can wait for review before agents recall them.** Propose an
-  operator lesson with `aether memory add --proposed`, then accept it when
-  the evidence holds or reject it with a reason. Proposed replacements leave
-  the old lesson in use until acceptance, which refuses text already admitted
-  in the same scope. Restoring a rejected proposal
-  reopens review without putting it into recall, and retrying acceptance or
-  rejection does not write duplicate events. Clients can detect support with
-  `memory_proposals`; `memory list --proposed` shows the review queue.
 - **You can see which memories each model call was given.** The
   context record of every call now lists the memories it rendered, in the
   order the prompt shows them, for Claude Code and Codex turns too. The prompt
@@ -23,6 +15,24 @@ release is also the text of its GitHub release.
   `aether memory context --task <id>` or `--invocation <id>`; clients can
   detect support with `memory_context`. This is the first step toward judging
   memories by how the work they informed turned out.
+
+## 1.0.7
+
+Lessons can wait for your approval before agents recall them. A Claude Code
+or Codex answer cut off partway now looks the same live and after a reload,
+however it was stopped. Costs Aether works out itself now match Anthropic's
+bill for cached prompts.
+
+### New
+
+- **Memories can wait for review before agents recall them.** Propose an
+  operator lesson with `aether memory add --proposed`, then accept it when
+  the evidence holds or reject it with a reason. Proposed replacements leave
+  the old lesson in use until acceptance, which refuses text already admitted
+  in the same scope. Restoring a rejected proposal reopens review without
+  putting it into recall, and retrying acceptance or rejection does not write
+  duplicate events. Clients can detect support with `memory_proposals`;
+  `memory list --proposed` shows the review queue.
 
 ### Fixed
 
@@ -63,6 +73,14 @@ release is also the text of its GitHub release.
   bills them at $0.10 per million tokens (0.05x input), as for Opus 5.5, but
   Aether used $0.20. A turn reading 200,000 cached tokens is now priced at
   $0.02 for those reads instead of $0.04.
+
+### Before updating
+
+- **Store schema 21.** Adds the column that keeps proposed memories out of
+  recall. The migration is one way: Aether saves the old database first (see
+  [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)), and a binary that predates
+  schema 21 refuses to open a migrated database. To go back, stop the daemon
+  and restore that backup with the older binary; changes made since are lost.
 
 ## 1.0.6
 
