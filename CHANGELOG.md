@@ -8,6 +8,16 @@ release is also the text of its GitHub release.
 
 ### New
 
+- **Codex usage now carries a dollar estimate that says it is one.** A Codex
+  (ChatGPT subscription) turn used to be booked as billed dollars at the
+  OpenAI list price, so a run with any unreported part, such as an interrupted
+  one, left a total with no complete cost and no estimate; tools that enforce
+  dollar budgets, like Archon, then stopped the work. Codex turns are now
+  estimated from the API model behind the slug, the way a subscription model
+  without a price already was, and show as `≈ $X API-equivalent` next to a
+  cost of `not reported`. Dollar caps on Codex agents are still refused. Older
+  records keep the figures they were stored with.
+
 - **You can record whether a memory helped or hurt a task.**
   `aether memory feedback record` keeps a verdict, where the evidence came
   from and a reason, and only for a memory the task's agents were given.

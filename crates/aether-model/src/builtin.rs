@@ -264,7 +264,7 @@ fn openai_codex() -> ProviderDef {
         base_url: String::new(),
         auth: AuthMethods::none(),
         headers: BTreeMap::new(),
-        models: codex_models()
+        models: priced_codex_models()
             .into_iter()
             .filter(|m| m.id != "default")
             .collect(),
@@ -355,10 +355,10 @@ fn engine_model(id: &str, name: &str, context: u32, max_out: u32) -> ModelDef {
     }
 }
 
-/// Price an engine model at the list price of the API model behind it, so a
-/// turn on the subscription still carries a cost that reports, replays and
-/// budgets can bind to. A provider that publishes no per-token price keeps
-/// `None`: a made-up number would corrupt every budget that read it.
+/// Price a model at the list price of the API model behind it, so a turn
+/// carries a cost that reports, replays and budgets can bind to. A provider
+/// that publishes no per-token price keeps `None`: a made-up number would
+/// corrupt every budget that read it.
 fn priced(mut model: ModelDef, cost: ModelCost) -> ModelDef {
     model.capabilities.cost = Some(cost);
     model
@@ -369,28 +369,36 @@ const CODEX_CONTEXT: u32 = 272_000;
 
 /// Models the Codex CLI and the ChatGPT backend accept, by their Codex slugs.
 /// Each family's short name is an alias of its newest explicit version.
-/// A slug the OpenAI API prices under the same id is [`priced`] from that
-/// entry, so the two tables cannot drift; any other slug stays unpriced.
+/// Unpriced: a ChatGPT subscription bills no per-token dollars, so the runtime
+/// estimates a turn from the API model behind the slug
+/// ([`crate::Registry::api_equivalent_price`]) and reports it as an estimate.
 fn codex_models() -> Vec<ModelDef> {
-    let api = openai_current_models();
-    let list_price = |id: &str| {
-        api.iter()
-            .find(|model| model.id == id)
-            .and_then(|model| model.capabilities.cost)
-    };
-    let models = vec![
+    vec![
         engine_model("gpt-6-astra", "GPT-6 Astra", CODEX_CONTEXT, 128_000).with_aliases(["astra"]),
         engine_model("gpt-6.1-sol", "GPT-6.1 Sol", CODEX_CONTEXT, 128_000)
             .with_aliases(["sol"])
             .with_default_effort(GPT_6_1_SOL_EFFORT),
         engine_model("gpt-6-luna", "GPT-6 Luna", CODEX_CONTEXT, 128_000).with_aliases(["luna"]),
         engine_model("default", "Codex default model", CODEX_CONTEXT, 128_000),
-    ];
-    models
+    ]
+}
+
+/// [`codex_models`] for an operator-supplied endpoint that bills per token:
+/// each slug the OpenAI API prices under the same id carries that entry's
+/// price, so the two tables cannot drift; any other slug stays unpriced.
+fn priced_codex_models() -> Vec<ModelDef> {
+    let api = openai_current_models();
+    codex_models()
         .into_iter()
-        .map(|model| match list_price(&model.id) {
-            Some(cost) => priced(model, cost),
-            None => model,
+        .map(|model| {
+            let list_price = api
+                .iter()
+                .find(|api| api.id == model.id)
+                .and_then(|api| api.capabilities.cost);
+            match list_price {
+                Some(cost) => priced(model, cost),
+                None => model,
+            }
         })
         .collect()
 }

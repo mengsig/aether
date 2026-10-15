@@ -93,42 +93,54 @@ fn claude_code_models_are_priced_like_the_api_models_behind_them() {
     );
 }
 
-/// Codex turns are priced the same way: at the list price of the OpenAI API
-/// model behind each slug, so spend reports read Aether's number as is.
+/// The `codex` engine route is a ChatGPT subscription: it carries no price of
+/// its own, so its turns are estimated from the API model behind each slug.
+/// The operator-supplied `openai-codex` endpoint bills per token and is priced.
 #[test]
-fn codex_models_are_priced_like_the_api_models_behind_them() {
+fn codex_engine_models_are_estimated_from_the_api_models_behind_them() {
+    let registry = crate::registry::Registry::builtin();
     let all = providers();
     let api = all.iter().find(|p| p.id == "openai").expect("api");
-    for engine_id in ["codex", "openai-codex"] {
-        let engine = all.iter().find(|p| p.id == engine_id).expect(engine_id);
-        for id in ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"] {
-            let priced = engine
-                .model(id)
-                .unwrap_or_else(|| panic!("{engine_id}/{id}"))
-                .capabilities
-                .cost;
-            let reference = api
-                .model(id)
-                .unwrap_or_else(|| panic!("openai/{id}"))
-                .capabilities
-                .cost;
-            assert!(priced.is_some(), "{engine_id}/{id} must be priced");
-            assert_eq!(priced, reference, "{engine_id}/{id}");
-        }
-        // No slug has a price of its own: a price is the API's or none.
-        for model in &engine.models {
-            let reference = api.model(&model.id).and_then(|m| m.capabilities.cost);
-            assert_eq!(
-                model.capabilities.cost, reference,
-                "{engine_id}/{}",
-                model.id
-            );
-        }
+    let engine = all.iter().find(|p| p.id == "codex").expect("codex");
+    for model in &engine.models {
+        assert_eq!(model.capabilities.cost, None, "codex/{}", model.id);
     }
-    // `default` is whatever the CLI picks; pricing it would bill the wrong model.
-    let codex = all.iter().find(|p| p.id == "codex").expect("codex");
-    let default = codex.model("default").expect("codex/default");
-    assert_eq!(default.capabilities.cost, None);
+    for id in ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"] {
+        let resolved = registry
+            .resolve(&aether_core::model::ModelRef::new("codex", id))
+            .unwrap_or_else(|_| panic!("codex/{id}"));
+        let reference = api
+            .model(id)
+            .unwrap_or_else(|| panic!("openai/{id}"))
+            .capabilities
+            .cost;
+        assert!(reference.is_some(), "openai/{id} must be priced");
+        assert_eq!(registry.api_equivalent_price(&resolved), reference, "{id}");
+    }
+    // `default` is whatever the CLI picks; estimating it would bill the wrong model.
+    let default = registry
+        .resolve(&aether_core::model::ModelRef::new("codex", "default"))
+        .expect("codex/default");
+    assert_eq!(registry.api_equivalent_price(&default), None);
+
+    let dialect = all
+        .iter()
+        .find(|p| p.id == "openai-codex")
+        .expect("dialect");
+    for id in ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"] {
+        let priced = dialect.model(id).expect(id).capabilities.cost;
+        assert!(priced.is_some(), "openai-codex/{id} must be priced");
+        assert_eq!(priced, api.model(id).expect(id).capabilities.cost, "{id}");
+    }
+    // No slug has a price of its own: a price is the API's or none.
+    for model in &dialect.models {
+        let reference = api.model(&model.id).and_then(|m| m.capabilities.cost);
+        assert_eq!(
+            model.capabilities.cost, reference,
+            "openai-codex/{}",
+            model.id
+        );
+    }
 }
 
 #[test]
@@ -394,9 +406,16 @@ fn gpt6_preference_order_and_prices_are_consistent() {
                     .unwrap();
                 assert_eq!(resolved.model, *model, "{id}/{alias}");
             }
+            // The codex engine is estimated from its API twin, not priced.
             let price = model
                 .capabilities
                 .cost
+                .or_else(|| {
+                    let resolved = registry
+                        .resolve(&aether_core::model::ModelRef::new(id, alias))
+                        .ok()?;
+                    registry.api_equivalent_price(&resolved)
+                })
                 .unwrap_or_else(|| panic!("{id}/{alias} is priced"));
             assert_eq!(
                 (

@@ -399,10 +399,11 @@ Three rules the runtime depends on:
    the child and finish; never strand the process.
 3. **Never invent.** An unknown line is a `Note`, not a guess. A cost you were
    not told is `None` — Codex reports none, and a fabricated number would
-   silently corrupt budgets. Codex turns are priced at OpenAI API list prices
-   by the model registry, like Claude Code turns at Anthropic's. `default`
-   bills as the model its session reports; a model with no published API
-   price stays unpriced.
+   silently corrupt budgets. Codex turns are estimated at OpenAI API list
+   prices by the model registry and reported as API-equivalent estimates, never
+   as billed dollars; Claude Code turns are priced at Anthropic's. `default`
+   is estimated as the model its session reports; a model with no published
+   API price stays unpriced.
 
 A harness tool can end the turn under you. When a bridge call parks the agent
 (`wait_for`, `delegate` with a wait, `complete_task`, `fail_task`, `ask_user`)
