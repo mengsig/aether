@@ -152,6 +152,12 @@ impl CommitsMidPass {
 }
 
 impl Store for CommitsMidPass {
+    fn engine_session_ownerships(
+        &self,
+    ) -> aether_store::Result<Vec<aether_store::EngineSessionOwnership>> {
+        self.inner.engine_session_ownerships()
+    }
+
     fn expire_run_history(
         &self,
         run: aether_core::id::RunId,

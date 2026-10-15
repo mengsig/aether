@@ -373,6 +373,32 @@ impl Driver {
                 self.environment_confirmed = loopback::confirms(result);
                 self.loopback_note_in_effect =
                     sent == Sent::ThreadResume && loopback_note_in_effect(&result["thread"]);
+                let thread_id = result["thread"]["id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                if sent == Sent::ThreadStart {
+                    let paths = result["thread"]["path"]
+                        .as_str()
+                        .filter(|path| !path.is_empty())
+                        .map(std::path::PathBuf::from)
+                        .filter(|path| {
+                            path.is_absolute()
+                                && !path
+                                    .components()
+                                    .any(|part| matches!(part, std::path::Component::ParentDir))
+                        })
+                        .into_iter()
+                        .collect();
+                    if let Err(error) = self.state.turn.record_new_session(
+                        crate::EngineKind::CODEX,
+                        &thread_id,
+                        paths,
+                    ) {
+                        self.finish_error(error.to_string()).await;
+                        return false;
+                    }
+                }
                 // A fresh thread reports its sticky sandbox now; a resumed one only after turn/start.
                 if sent == Sent::ThreadStart
                     && self.environment.is_some()
@@ -385,10 +411,6 @@ impl Driver {
                     .await;
                     return false;
                 }
-                let thread_id = result["thread"]["id"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned();
                 self.state.thread_id = Some(thread_id.clone());
                 let model = result["model"].as_str().map(str::to_owned);
                 if !self

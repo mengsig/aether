@@ -6,8 +6,29 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### New
+
+- **Storage maintenance has a single configurable policy and visible decisions.**
+  `[storage]` defaults to fourteen-day filesystem retention, with per-kind
+  overrides, a one-hour grace for safely saved final delegated workspaces,
+  and the latest three migration backups protected. `aether storage` and
+  `aether storage gc --dry-run` show usage and reasons; the daemon sweeps at
+  startup and periodically. Dirty, live, resumable and journal-referenced
+  workspaces are protected. Logs gain age rotation and pause optional writes
+  below the configured disk floor. New engine sessions have durable ownership
+  records; deletion of Claude/Codex session logs is deferred, so these logs
+  remain a known source of growth.
+
 ### Fixed
 
+- **Clipboard images paste into the terminal UI with Ctrl+V.** Ctrl+V prefers
+  offered plain text, otherwise attaches a supported image; Alt+V and `/image`
+  force an image. Text keeps the usual long-text placeholders and image-path
+  detection. A truly empty terminal paste also tries the clipboard image;
+  whitespace-only pastes and plain-mode input stay text. Reads happen in the
+  background; an empty clipboard, missing helper or SSH session gets a one-line
+  explanation without changing the draft. Existing custom key bindings are
+  preserved.
 - **Codex usage now carries a dollar estimate that says it is one.** A Codex
   (ChatGPT subscription) turn used to be booked as billed dollars at the
   OpenAI list price, so a run with any unreported part, such as an interrupted
@@ -51,6 +72,11 @@ release is also the text of its GitHub release.
   with an error. Escaped processes later in the search stayed alive, and a
   restarted daemon kept retrying the cleanup instead of finishing it. A
   process exiting mid-search is now skipped like one that has gone.
+- **An SSH remote no longer mistakes a finished send for one in flight.** If
+  the client started another program just as a send ended, the send's outbox
+  entry stayed locked until that program had started. Resolving the outbox on
+  connect could skip the entry, and `/outbox` could refuse it as being sent
+  by another process. Each entry is now unlocked as soon as its send ends.
 
 ### Before updating
 

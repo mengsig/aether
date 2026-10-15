@@ -1,6 +1,71 @@
 use super::*;
 use aether_core::model::Effort;
 
+#[tokio::test]
+async fn exec_ownership_only_records_ids_discovered_on_fresh_launches() {
+    let dir = fake_codex(
+        "cat >/dev/null\necho '{\"type\":\"thread.started\",\"thread_id\":\"new-thread\"}'",
+    );
+    let engine = CodexEngine::new(dir.path().join("codex").to_string_lossy(), "0.162.0");
+    for session in [None, Some("user-session".into())] {
+        let recorder = std::sync::Arc::new(crate::ownership_tests::Recorder::default());
+        let t = EngineTurn {
+            session: session.clone(),
+            cwd: dir.path().into(),
+            session_recorder: Some(recorder.clone()),
+            ..turn_with_effort(None)
+        };
+        let mut run = engine.run(t, CancellationToken::new()).await.unwrap();
+        while run.events.recv().await.is_some() {}
+        let records = recorder.records.lock().unwrap();
+        if session.is_none() {
+            assert_eq!(records.len(), 1);
+            assert_eq!(records[0].engine, EngineKind::CODEX);
+            assert_eq!(records[0].id, "new-thread");
+            assert!(records[0].log_paths.is_empty());
+        } else {
+            assert!(
+                records.is_empty(),
+                "a resumed user session returning a different id is not evidence of creation"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn exec_ownership_storage_failure_is_visible_and_cancels_process() {
+    let dir = fake_codex(
+        "cat >/dev/null\necho '{\"type\":\"thread.started\",\"thread_id\":\"new-thread\"}'\nsleep 30",
+    );
+    let engine = CodexEngine::new(dir.path().join("codex").to_string_lossy(), "0.162.0");
+    let t = EngineTurn {
+        cwd: dir.path().into(),
+        session_recorder: Some(std::sync::Arc::new(crate::ownership_tests::Recorder {
+            fail: true,
+            ..Default::default()
+        })),
+        ..turn_with_effort(None)
+    };
+    let cancel = CancellationToken::new();
+    let mut run = engine.run(t, cancel.clone()).await.unwrap();
+    let mut saw_error = false;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Some(event) = run.events.recv().await {
+            if let EngineEvent::Done(outcome) = event {
+                saw_error |= outcome.is_error
+                    && outcome
+                        .error
+                        .as_deref()
+                        .is_some_and(|error| error.contains("storage unavailable"));
+            }
+        }
+    })
+    .await
+    .expect("failed ownership recording must stop the process");
+    assert!(saw_error);
+    assert!(cancel.is_cancelled());
+}
+
 /// Writes an executable shell script named `codex` under a fresh temp
 /// dir and returns that dir, so `detect_verbose_on` can be pointed at it
 /// instead of the host's real CLI.
@@ -75,6 +140,7 @@ print(json.dumps({'type':'turn.completed','usage':{}}), flush=True)
         prompt: "hello".into(),
         system_prompt: "Aether replacement sentinel".into(),
         new_session_id: "new".into(),
+        session_recorder: None,
         cwd: dir.path().into(),
         summary_only: true,
         lean_host_context: false,
@@ -314,6 +380,7 @@ fn turn_with_effort(effort: Option<Effort>) -> EngineTurn {
         session: None,
         session_usage: Usage::default(),
         new_session_id: "n".into(),
+        session_recorder: None,
         model: None,
         effort,
         cwd: PathBuf::from("/w"),

@@ -27,6 +27,12 @@ pub enum Command {
     Status,
     /// Read-only retention decisions; never applies deletion or cleanup.
     PreviewRetention,
+    /// Bounded filesystem inventory and eligibility preview.
+    StorageStatus,
+    /// Host-only filesystem maintenance. Preview never deletes files.
+    StorageGc {
+        dry_run: bool,
+    },
     Shutdown,
     /// Keep an otherwise silent connection alive under an idle timeout.
     /// Answered with [`Reply::Ok`].

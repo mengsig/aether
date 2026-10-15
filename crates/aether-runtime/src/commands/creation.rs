@@ -125,6 +125,7 @@ impl Runtime {
             self.inherit_from_parent(&hold, parent, &mut agent)?;
             crate::cancellation::check_parent(self, &hold, parent.id)?;
         }
+        self.recheck_workspace_gc_admission(&agent.scope)?;
         commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
         crate::submission::record_receipt(&mut commit, submission, &(agent.clone(), task.clone()))?;
         self.apply_held(hold, commit)?;

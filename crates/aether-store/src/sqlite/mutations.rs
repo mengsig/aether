@@ -6,6 +6,9 @@ use rusqlite::{Transaction, params};
 impl SqliteStore {
     pub(super) fn apply(tx: &Transaction<'_>, mutation: Mutation) -> Result<()> {
         match mutation {
+            Mutation::RecordEngineSessionOwnership(record) => {
+                super::engine_sessions::record(tx, record)?;
+            }
             Mutation::UpsertAgent(agent) => {
                 tx.execute(
                     "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)

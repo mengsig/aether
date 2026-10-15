@@ -18,6 +18,7 @@ use std::sync::atomic::AtomicU64;
 mod blobs;
 mod checkpoint;
 mod devices;
+mod engine_sessions;
 mod event_queries;
 mod history_retention;
 pub use history_retention::RunExpiry;

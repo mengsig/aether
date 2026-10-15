@@ -195,3 +195,5 @@ fn final_sync_reports_without_failing_when_a_reader_prevents_a_full_checkpoint()
     reader.execute_batch("ROLLBACK").unwrap();
     assert!(store.sync().unwrap());
 }
+
+mod engine_sessions;

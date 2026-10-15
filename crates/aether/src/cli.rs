@@ -19,6 +19,8 @@ pub use memory_proposals::{MemoryAddArgs, memory_accept, memory_add, memory_reje
 #[cfg(test)]
 use memory::{memory_scope_label, parse_memory_scope};
 
+mod storage;
+pub use storage::storage;
 mod retention;
 pub use retention::retention_preview;
 

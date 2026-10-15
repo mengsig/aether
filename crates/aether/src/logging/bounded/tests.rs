@@ -437,3 +437,189 @@ fn drop_marker_starts_a_new_line_after_a_dropped_tail() {
         assert!(lines[1].ends_with("dropped 1 log records the disk would not take"));
     }
 }
+
+const DAY: Duration = Duration::from_secs(24 * 60 * 60);
+
+fn set_modified(path: &Path, modified: SystemTime) {
+    OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+}
+
+fn maintain_at(log: &BoundedLog, now: SystemTime) -> io::Result<()> {
+    let _lock = log.lock()?;
+    log.maintain(now)
+}
+
+#[test]
+fn archived_age_boundary_is_inclusive_and_future_files_are_preserved() {
+    let root = tempfile::tempdir().unwrap();
+    let log = BoundedLog::with_policy(root.path().into(), 64, 4, 1, None).unwrap();
+    let now = SystemTime::now();
+    for index in 1..4 {
+        std::fs::write(log.path(index), b"old").unwrap();
+    }
+    set_modified(&log.path(1), now - DAY + Duration::from_secs(1));
+    set_modified(&log.path(2), now - DAY);
+    set_modified(&log.path(3), now + DAY);
+    maintain_at(&log, now).unwrap();
+    assert!(log.path(1).exists());
+    assert!(!log.path(2).exists());
+    assert!(log.path(3).exists());
+    maintain_at(&log, now + Duration::from_secs(1)).unwrap();
+    assert!(!log.path(1).exists());
+    assert!(log.path(0).exists());
+    assert!(log.path(3).exists());
+}
+
+#[test]
+fn stale_active_segment_rotates_before_a_new_record_is_written() {
+    let root = tempfile::tempdir().unwrap();
+    let mut first = BoundedLog::with_policy(root.path().into(), 64, 3, 1, None).unwrap();
+    let mut second = BoundedLog::with_policy(root.path().into(), 64, 3, 1, None).unwrap();
+    first.write_all(b"expired\n").unwrap();
+    set_modified(&first.path(0), SystemTime::now() - DAY);
+    second.write_all(b"second\n").unwrap();
+    first.write_all(b"first\n").unwrap();
+    assert_eq!(std::fs::read(first.path(0)).unwrap(), b"second\nfirst\n");
+    assert!(!first.path(1).exists());
+}
+
+#[test]
+fn birth_time_rotates_a_busy_segment_even_when_its_modified_time_is_recent() {
+    let root = tempfile::tempdir().unwrap();
+    let mut log = BoundedLog::with_policy(root.path().into(), 64, 3, 1, None).unwrap();
+    log.write_all(b"busy\n").unwrap();
+    let metadata = std::fs::metadata(log.path(0)).unwrap();
+    let created = match metadata.created() {
+        Ok(created) => created,
+        Err(error) if error.kind() == io::ErrorKind::Unsupported => return,
+        Err(error) => panic!("read segment birth time: {error}"),
+    };
+    let now = created + DAY;
+    set_modified(&log.path(0), now);
+    maintain_at(&log, now - Duration::from_secs(1)).unwrap();
+    assert!(!log.path(1).exists());
+    maintain_at(&log, now).unwrap();
+    assert_eq!(std::fs::read(log.path(1)).unwrap(), b"busy\n");
+    assert!(std::fs::read(log.path(0)).unwrap().is_empty());
+}
+
+#[test]
+fn zero_days_disables_age_pruning_but_preserves_size_rotation() {
+    let root = tempfile::tempdir().unwrap();
+    let mut log = BoundedLog::with_policy(root.path().into(), 4, 2, 0, None).unwrap();
+    log.write_all(b"abcd").unwrap();
+    set_modified(&log.path(0), SystemTime::UNIX_EPOCH);
+    log.write_all(b"efgh").unwrap();
+    assert_eq!(std::fs::read(log.path(1)).unwrap(), b"abcd");
+    log.write_all(b"ijkl").unwrap();
+    assert_eq!(retained(root.path(), 2), b"efghijkl");
+}
+
+#[test]
+fn age_pruning_ignores_legacy_and_noncanonical_names() {
+    let root = tempfile::tempdir().unwrap();
+    let log = BoundedLog::with_policy(root.path().into(), 64, 3, 1, None).unwrap();
+    for name in ["events.2020-01-01.log", "events.01.log", "notes.txt"] {
+        let path = root.path().join(name);
+        std::fs::write(&path, b"keep").unwrap();
+        set_modified(&path, SystemTime::UNIX_EPOCH);
+    }
+    std::fs::write(log.path(1), b"expired").unwrap();
+    set_modified(&log.path(1), SystemTime::UNIX_EPOCH);
+    maintain_at(&log, SystemTime::now()).unwrap();
+    assert!(!log.path(1).exists());
+    for name in ["events.2020-01-01.log", "events.01.log", "notes.txt"] {
+        assert_eq!(std::fs::read(root.path().join(name)).unwrap(), b"keep");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn age_pruning_validates_all_archives_before_deleting_any() {
+    let root = tempfile::tempdir().unwrap();
+    let log = BoundedLog::with_policy(root.path().into(), 64, 3, 1, None).unwrap();
+    std::fs::write(log.path(1), b"expired").unwrap();
+    set_modified(&log.path(1), SystemTime::UNIX_EPOCH);
+    let target = root.path().join("legacy");
+    std::fs::write(&target, b"keep").unwrap();
+    std::os::unix::fs::symlink(&target, log.path(2)).unwrap();
+    assert!(maintain_at(&log, SystemTime::now()).is_err());
+    assert_eq!(std::fs::read(log.path(1)).unwrap(), b"expired");
+    assert_eq!(std::fs::read(target).unwrap(), b"keep");
+}
+
+#[test]
+fn concurrent_age_rotation_keeps_every_new_record_and_the_size_bound() {
+    let root = tempfile::tempdir().unwrap();
+    let mut writers: Vec<_> = (0..4)
+        .map(|_| BoundedLog::with_policy(root.path().into(), 64, 32, 1, None).unwrap())
+        .collect();
+    writers[0].write_all(b"expired\n").unwrap();
+    set_modified(&writers[0].path(0), SystemTime::UNIX_EPOCH);
+    let barrier = std::sync::Barrier::new(4);
+    std::thread::scope(|scope| {
+        for (writer, mut log) in writers.into_iter().enumerate() {
+            let barrier = &barrier;
+            scope.spawn(move || {
+                barrier.wait();
+                for record in 0..32 {
+                    log.write_all(format!("{writer}:{record:04}\n").as_bytes())
+                        .unwrap();
+                }
+            });
+        }
+    });
+    let text = String::from_utf8(retained(root.path(), 32)).unwrap();
+    let mut actual: Vec<_> = text.lines().map(str::to_owned).collect();
+    actual.sort();
+    let expected: Vec<_> = (0..4)
+        .flat_map(|writer| (0..32).map(move |record| format!("{writer}:{record:04}")))
+        .collect();
+    assert_eq!(actual, expected);
+    for index in 0..32 {
+        match std::fs::metadata(root.path().join(format!("events.{index}.log"))) {
+            Ok(metadata) => assert!(metadata.len() <= 64),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => panic!("inspect managed segment: {error}"),
+        }
+    }
+}
+
+#[test]
+fn configured_disk_floor_stops_writes_and_resumes_the_backlog_in_order() {
+    let root = tempfile::tempdir().unwrap();
+    let mut log = BoundedLog::with_policy(
+        root.path().into(),
+        1024,
+        2,
+        1,
+        Some(DiskFloor::Bytes(u64::MAX)),
+    )
+    .unwrap();
+    let error = log.write_all(b"queued\n").unwrap_err();
+    assert!(error.to_string().contains("below floor"));
+    assert!(std::fs::read(log.path(0)).unwrap().is_empty());
+    assert!(log.flush().is_err());
+    assert!(log.write(b"not accepted\n").is_err());
+    log.disk_floor = None;
+    log.write_all(b"after\n").unwrap();
+    assert_eq!(std::fs::read(log.path(0)).unwrap(), b"queued\nafter\n");
+}
+
+#[test]
+fn disk_floor_policy_defaults_and_explicit_zero_are_distinct() {
+    let root = tempfile::tempdir().unwrap();
+    let default =
+        BoundedLog::with_policy(root.path().into(), 64, 2, 1, Some(DiskFloor::Default)).unwrap();
+    assert_eq!(default.disk_floor, Some(DiskFloor::Default));
+    let disabled = BoundedLog::with_policy(root.path().into(), 64, 2, 1, None).unwrap();
+    assert_eq!(disabled.disk_floor, None);
+    let explicit =
+        BoundedLog::with_policy(root.path().into(), 64, 2, 1, Some(DiskFloor::Bytes(42))).unwrap();
+    assert_eq!(explicit.disk_floor, Some(DiskFloor::Bytes(42)));
+}

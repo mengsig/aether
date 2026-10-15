@@ -146,10 +146,7 @@ async fn run_loop(
                 }
                 Some(LoopEvent::App(event)) => {
                     let lost = matches!(event, AppEvent::Disconnected { .. } | AppEvent::HistoryExpired);
-                    let effects = match event {
-                        AppEvent::Paste(line) => submit_line(&mut app, &mut out, &line)?,
-                        event => app.reduce(event),
-                    };
+                    let effects = app.reduce(event);
                     out.close_views(&mut app)?;
                     // The status line says "reconnecting", so something has
                     // to be reconnecting. Same backoff as the TUI's.
@@ -877,6 +874,20 @@ mod tests {
 
     fn output(out: &Printer<Vec<u8>>) -> &str {
         std::str::from_utf8(&out.output).expect("plain output is UTF-8")
+    }
+
+    #[test]
+    fn blank_plain_lines_never_read_the_clipboard() {
+        for line in ["", " \t\n"] {
+            let mut app = app_with_transcript(&[]);
+            let mut out = Printer::new(Vec::new());
+            let effects = submit_line(&mut app, &mut out, line).expect("plain line");
+            assert!(effects.is_empty(), "{effects:?}");
+            assert_eq!(app.input.image_reads, 0);
+            assert!(app.input.images.is_empty());
+            assert!(app.reduce(AppEvent::Paste(line.into())).is_empty());
+            assert_eq!(app.input.image_reads, 0);
+        }
     }
 
     #[test]

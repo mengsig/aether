@@ -35,6 +35,10 @@ async fn engine_compaction_replaces_session_only_after_valid_checkpoint() {
         let recorded = turns.lock().unwrap().clone();
         for turn in &recorded {
             assert!(
+                turn.session_recorder.is_some(),
+                "ordinary and checkpoint launches carry ownership recording"
+            );
+            assert!(
                 turn.tool_hidden_env
                     .contains(&"ENGINE_TEST_PROVIDER_KEY".to_owned())
             );

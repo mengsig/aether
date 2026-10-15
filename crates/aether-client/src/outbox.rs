@@ -62,7 +62,20 @@ pub(crate) struct Pending {
 #[derive(Debug)]
 pub(crate) struct Claim {
     pub(crate) key: String,
-    _file: std::fs::File,
+    file: std::fs::File,
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        // A concurrent fork can keep the descriptor alive until the child execs.
+        // The claim's lifetime, not that unrelated child's, owns the lock.
+        if let Err(error) = self.file.unlock() {
+            // Closing remains safe: any inherited descriptors retain the lock
+            // until they close, delaying resolution rather than allowing overlap.
+            tracing::warn!(key = %self.key, %error,
+                "could not unlock outbox claim; closing it and awaiting any inherited descriptors");
+        }
+    }
 }
 
 pub(crate) enum Claimed {
@@ -149,8 +162,7 @@ impl Outbox {
             sent_at: now(),
             unconfirmed: None,
         };
-        let file = self.publish(&key, &serde_json::to_vec(&entry)?).await?;
-        Ok(Claim { key, _file: file })
+        self.publish(key, &serde_json::to_vec(&entry)?).await
     }
 
     async fn staged(&self, bytes: &[u8]) -> Result<(PathBuf, std::fs::File)> {
@@ -178,24 +190,27 @@ impl Outbox {
     }
 
     /// Publish `bytes` as the entry for `key`, locked from the moment it
-    /// exists. The lock lives as long as the returned file is open.
-    async fn publish(&self, key: &str, bytes: &[u8]) -> Result<std::fs::File> {
+    /// exists. The lock lives as long as the returned claim.
+    async fn publish(&self, key: String, bytes: &[u8]) -> Result<Claim> {
         debug_assert!(!key.is_empty());
         let (temporary, file) = self.staged(bytes).await?;
         file.try_lock()
             .map_err(|error| std::io::Error::other(format!("cannot lock a new entry: {error}")))?;
+        // Held as a claim from here, so every early return below unlocks it.
+        let claim = Claim { key, file };
         // A hard link, not a rename: it fails where an entry already stands.
-        let linked = tokio::fs::hard_link(&temporary, self.path(key)).await;
+        let linked = tokio::fs::hard_link(&temporary, self.path(&claim.key)).await;
         tokio::fs::remove_file(&temporary).await?;
         match linked {
             Ok(()) => {
                 self.sync_directory().await?;
-                Ok(file)
+                Ok(claim)
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 Err(ClientError::DeliveryUnconfirmed(format!(
-                    "operation {key} was recorded concurrently; it is resolved on the next \
-                     connection"
+                    "operation {} was recorded concurrently; it is resolved on the next \
+                     connection",
+                    claim.key
                 )))
             }
             Err(error) => Err(error.into()),
@@ -362,8 +377,13 @@ impl Outbox {
             Err(std::fs::TryLockError::WouldBlock) => return Ok(Claimed::Busy),
             Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
         }
+        // Held as a claim from here, so every early return below unlocks it.
+        let claim = Claim {
+            key: key.to_owned(),
+            file,
+        };
         let replaced = match std::fs::metadata(&path) {
-            Ok(now) => now.ino() != file.metadata()?.ino(),
+            Ok(now) => now.ino() != claim.file.metadata()?.ino(),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Claimed::Gone),
             Err(error) => return Err(error.into()),
         };
@@ -371,13 +391,7 @@ impl Outbox {
             return Ok(Claimed::Busy);
         }
         match self.read(&path).await? {
-            Some(entry) => Ok(Claimed::Held(
-                Claim {
-                    key: key.to_owned(),
-                    _file: file,
-                },
-                Box::new(entry),
-            )),
+            Some(entry) => Ok(Claimed::Held(claim, Box::new(entry))),
             None => Ok(Claimed::Gone),
         }
     }

@@ -108,6 +108,13 @@ pub(crate) enum Cmd {
     /// Print the protocol as a JSON Schema. The client libraries under
     /// `clients/` are generated from exactly this document.
     Schema,
+    /// Inspect storage usage, or collect eligible files.
+    Storage {
+        #[command(subcommand)]
+        command: Option<StorageCmd>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect retention without deleting history or artifact payloads.
     Retention {
         #[command(subcommand)]

@@ -26,12 +26,14 @@ pub mod resources;
 mod retention;
 pub mod scheduler;
 pub mod schedules;
+pub mod storage;
 pub mod submission;
 pub mod transfer;
 pub mod turn;
 pub mod turn_engine;
 pub mod wait;
 mod workspace;
+pub mod workspace_gc;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -258,6 +260,8 @@ pub struct Runtime {
     commit_lock: aether_store::WriteGate,
     /// Shared-payload lifecycle; acquired before the commit gate and SQLite connection.
     artifact_lock: tokio::sync::Mutex<()>,
+    storage_gc_lock: parking_lot::Mutex<()>,
+    storage_last_run: parking_lot::Mutex<Option<serde_json::Value>>,
     /// Root agent ids this process has already seeded repository knowledge
     /// for, so a client retry-storming a keyed `create_agent` does not repeat
     /// the tree walk and memory-gate work on every replay. Per process, not
@@ -265,6 +269,8 @@ pub struct Runtime {
     pub(crate) seeded_repositories: parking_lot::Mutex<std::collections::HashSet<AgentId>>,
     /// Free space on the store's filesystem, as the disk guard last saw it.
     pub(crate) disk: parking_lot::Mutex<disk::DiskState>,
+    workspace_gc_cursor: parking_lot::Mutex<workspace_gc::WorkspaceGcCursor>,
+    workspace_gc_active: parking_lot::Mutex<Option<std::path::PathBuf>>,
 }
 
 impl std::fmt::Debug for Runtime {
@@ -373,6 +379,10 @@ impl Runtime {
             started_at: now(),
             commit_lock,
             artifact_lock: tokio::sync::Mutex::new(()),
+            workspace_gc_cursor: Default::default(),
+            workspace_gc_active: Default::default(),
+            storage_gc_lock: parking_lot::Mutex::new(()),
+            storage_last_run: parking_lot::Mutex::new(None),
             seeded_repositories: parking_lot::Mutex::new(std::collections::HashSet::new()),
             disk: parking_lot::Mutex::new(disk::DiskState::default()),
         });

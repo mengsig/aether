@@ -51,7 +51,7 @@ actions! {
     EraseStart, "erase_start", "Erase to line start", "ctrl+u";
     EraseEnd, "erase_end", "Erase to line end", "ctrl+k";
     Yank, "yank", "paste last erased", "ctrl+y";
-    PasteImage, "paste_image", "attach clipboard image", "alt+v";
+    PasteImage, "paste_image", "paste clipboard", "ctrl+v / alt+v";
     WordLeft, "word_left", "Move a word left", "alt+b / ctrl+left";
     WordRight, "word_right", "Move a word right", "alt+f / ctrl+right";
 }
@@ -226,12 +226,14 @@ impl fmt::Display for KeyChord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyBindings {
     bindings: BTreeMap<KeyAction, Vec<KeyChord>>,
+    paste_image_fallback: bool,
 }
 
 impl Default for KeyBindings {
     fn default() -> Self {
         Self {
             bindings: KeyAction::ALL.iter().map(|a| (*a, defaults(*a))).collect(),
+            paste_image_fallback: false,
         }
     }
 }
@@ -251,6 +253,10 @@ impl KeyBindings {
     }
 
     pub fn customised(&self, action: KeyAction) -> bool {
+        if action == KeyAction::PasteImage && self.paste_image_fallback {
+            debug_assert_eq!(self.bindings[&action], defaults(action)[1..]);
+            return false;
+        }
         self.bindings[&action] != defaults(action)
     }
 
@@ -345,6 +351,9 @@ impl KeyBindings {
     pub fn assign(&mut self, action: KeyAction, chord: KeyChord) -> Result<(), String> {
         self.validate(action, &[chord])?;
         self.bindings.insert(action, vec![chord]);
+        if action == KeyAction::PasteImage {
+            self.paste_image_fallback = false;
+        }
         Ok(())
     }
 
@@ -352,6 +361,9 @@ impl KeyBindings {
         let chords = defaults(action);
         self.validate(action, &chords)?;
         self.bindings.insert(action, chords);
+        if action == KeyAction::PasteImage {
+            self.paste_image_fallback = false;
+        }
         Ok(())
     }
 
@@ -394,6 +406,27 @@ impl KeyBindings {
             .collect()
     }
 
+    fn preserve_ctrl_v_override(&mut self, candidates: &BTreeMap<KeyAction, KeyChord>) {
+        let ctrl_v = KeyChord {
+            code: KeyCode::Char('v'),
+            modifiers: KeyModifiers::CONTROL,
+        };
+        if candidates.contains_key(&KeyAction::PasteImage)
+            || !candidates.values().any(|chord| *chord == ctrl_v)
+        {
+            return;
+        }
+        // Ctrl+V was previously free: keep an existing override that owns it.
+        self.bindings
+            .entry(KeyAction::PasteImage)
+            .and_modify(|chords| {
+                debug_assert!(chords.contains(&ctrl_v));
+                chords.retain(|chord| *chord != ctrl_v);
+                debug_assert!(!chords.is_empty(), "Alt+V remains available");
+            });
+        self.paste_image_fallback = true;
+    }
+
     pub fn load(raw: &BTreeMap<String, toml::Value>) -> (Self, Vec<String>) {
         let mut keys;
         let mut notices = Vec::new();
@@ -424,6 +457,7 @@ impl KeyBindings {
             for (a, chord) in &candidates {
                 keys.bindings.insert(*a, vec![*chord]);
             }
+            keys.preserve_ctrl_v_override(&candidates);
             let bad: Vec<_> = candidates
                 .iter()
                 .filter_map(|(a, chord)| keys.validate(*a, &[*chord]).err().map(|e| (*a, e)))

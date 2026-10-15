@@ -286,3 +286,37 @@ async fn a_full_outbox_refuses_new_sends_and_keeps_listing() {
     );
     assert!(!outbox.path("over").exists());
 }
+
+#[tokio::test]
+async fn a_dropped_claim_releases_its_lock_even_with_an_inherited_descriptor() {
+    let (outbox, _directory) = outbox().await;
+    let claim = outbox
+        .record(&send("lost", "inherited-key"), Some(HORIZON))
+        .await
+        .expect("record");
+    // A forked child retains this same open file description until exec or exit.
+    let inherited = claim.file.try_clone().expect("inherited descriptor");
+    drop(claim);
+
+    let Claimed::Held(next, entry) = outbox.claim("inherited-key").await.expect("claim") else {
+        panic!("a released claim must not wait for an unrelated child to exec");
+    };
+    assert_eq!(entry.key(), "inherited-key");
+    assert!(entry.unconfirmed.is_none());
+    drop(inherited);
+    assert!(matches!(
+        outbox.claim("inherited-key").await.expect("still held"),
+        Claimed::Busy
+    ));
+
+    let inherited = next.file.try_clone().expect("inherited adopted descriptor");
+    drop(next);
+    assert!(matches!(
+        outbox
+            .claim("inherited-key")
+            .await
+            .expect("released adopter"),
+        Claimed::Held(..)
+    ));
+    drop(inherited);
+}

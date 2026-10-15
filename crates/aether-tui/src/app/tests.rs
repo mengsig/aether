@@ -245,6 +245,8 @@ mod memory;
 
 mod composer;
 
+#[cfg(unix)]
+mod clipboard_paste;
 mod images;
 
 mod streaming;

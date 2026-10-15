@@ -70,6 +70,8 @@ impl App {
             AppEvent::Key(key) => self.dispatch_key(key),
 
             AppEvent::Paste(text) => self.dispatch_paste(&text),
+            AppEvent::TerminalImagePaste => self.terminal_image_paste(),
+            AppEvent::ClipboardRead(content) => self.clipboard_read(content),
             AppEvent::ImagePathPasted { text, image } => self.image_path_pasted(&text, image),
             AppEvent::ImageRead(image) => {
                 self.image_read(image);

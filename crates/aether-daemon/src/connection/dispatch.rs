@@ -83,6 +83,12 @@ pub(super) async fn dispatch_authorized(
         // Nothing but a frame in: the point is to hold a quiet connection
         // open under the idle timeout.
         Command::Ping => Ok(Reply::Ok),
+        Command::StorageStatus | Command::StorageGc { .. } => {
+            let dry_run = !matches!(command, Command::StorageGc { dry_run: false });
+            let reading = rt.clone();
+            let report = blocking(move || reading.storage_gc(dry_run).map_err(map_err)).await??;
+            Ok(Reply::StorageReport(report))
+        }
         Command::PreviewRetention => {
             let reading = rt.clone();
             let preview = blocking(move || reading.preview_retention().map_err(map_err)).await??;

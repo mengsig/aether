@@ -1,4 +1,6 @@
 [
+  {"access": "observe", "command": {"cmd": "storage_status"}},
+  {"access": "host_only", "command": {"cmd": "storage_gc", "dry_run": false}},
   {
     "access": "observe",
     "command": {

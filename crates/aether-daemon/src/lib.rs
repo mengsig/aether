@@ -85,6 +85,19 @@ fn retention_of(
     }
 }
 
+fn storage_artifact_policy(
+    config: &aether_model::config::AetherConfig,
+) -> aether_core::artifact::RetentionPolicy {
+    let mut policy = retention_of(&config.artifacts);
+    if let Some(days) = config.storage.artifacts_days {
+        if days == 0 {
+            return aether_core::artifact::RetentionPolicy::keep_everything();
+        }
+        policy.max_age_days = Some(u32::from(days));
+    }
+    policy
+}
+
 /// The configured provider, as the search tool wants it. The two structs
 /// are field-for-field identical strings, so a transposed pair here would
 /// compile and ship; `the_provider_copy_keeps_every_field_in_place` stops it.
@@ -222,12 +235,15 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             reason,
         }
     })?;
-    let disk_floor = models.config().scheduler.disk_floor().map_err(|reason| {
+    let mut disk_floor = models.config().scheduler.disk_floor().map_err(|reason| {
         aether_model::config::ConfigError {
             path: "config.toml".into(),
             reason,
         }
     })?;
+    if let Some(bytes) = models.config().storage.free_space_floor_bytes {
+        disk_floor = (bytes > 0).then_some(aether_core::disk::DiskFloor::Bytes(bytes));
+    }
     // MCP health transitions become events once the runtime exists, so the
     // channel is created before it and drained after it starts.
     let (mcp_tx, mcp_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -263,7 +279,11 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             yolo,
             approval_default: models.config().approval.default,
             network_default: models.config().network.default,
-            retention: retention_of(&models.config().artifacts),
+            retention: storage_artifact_policy(models.config()),
+            storage_paths: Some(aether_runtime::storage::StoragePaths {
+                store: store_path.clone(),
+                logs: aether_protocol::paths::log_dir(),
+            }),
             memory_index: memory_index_of(models.config().memory.index),
             default_model,
             workspace_root: config.workspace_root.clone(),
@@ -936,6 +956,22 @@ mod tests {
         for name in ["CUSTOM_KEY", "ANTHROPIC_API_KEY"] {
             assert!(tools.hidden_env().contains(&name.to_owned()));
         }
+    }
+
+    #[test]
+    fn storage_artifact_override_preserves_legacy_and_disables_all_limits_at_zero() {
+        let mut config = aether_model::config::AetherConfig::default();
+        assert_eq!(
+            storage_artifact_policy(&config),
+            retention_of(&config.artifacts)
+        );
+        config.storage.artifacts_days = Some(14);
+        assert_eq!(storage_artifact_policy(&config).max_age_days, Some(14));
+        config.storage.artifacts_days = Some(0);
+        assert_eq!(
+            storage_artifact_policy(&config),
+            aether_core::artifact::RetentionPolicy::keep_everything()
+        );
     }
 
     #[test]

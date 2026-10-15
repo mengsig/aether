@@ -70,15 +70,19 @@ fn mouse_flag(mouse: bool, no_mouse: bool) -> Option<bool> {
 fn main() -> std::process::ExitCode {
     let matches = Args::command().get_matches();
     let mut command_matches = &matches;
-    while let Some((_, subcommand)) = command_matches.subcommand() {
+    let mut json = false;
+    loop {
+        json |= command_matches
+            .try_get_one::<bool>("json")
+            .ok()
+            .flatten()
+            .copied()
+            .unwrap_or(false);
+        let Some((_, subcommand)) = command_matches.subcommand() else {
+            break;
+        };
         command_matches = subcommand;
     }
-    let json = command_matches
-        .try_get_one::<bool>("json")
-        .ok()
-        .flatten()
-        .copied()
-        .unwrap_or(false);
     let mut args = Args::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     let json = json && !matches!(args.command, Some(Cmd::Bridge { .. }));
     if let Err(error) = cli::remote::check_selectors(&matches) {
@@ -203,6 +207,16 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             }
             Cmd::Serve { allow_remote } => cli::serve(socket, allow_remote).await,
             Cmd::Schema => cli::schema(),
+            Cmd::Storage { command, json } => {
+                let (gc, dry_run, json) = match command {
+                    Some(StorageCmd::Gc {
+                        dry_run,
+                        json: gc_json,
+                    }) => (true, dry_run, json || gc_json),
+                    None => (false, true, json),
+                };
+                cli::storage(endpoint, gc, dry_run, json).await
+            }
             Cmd::Retention { command } => match command {
                 RetentionCmd::Preview { json } => cli::retention_preview(endpoint, json).await,
             },

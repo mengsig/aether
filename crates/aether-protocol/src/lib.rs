@@ -180,6 +180,8 @@ pub mod features {
     /// The daemon serves `memories_in_context`, and the retrieved-memory layer
     /// of `snapshot.created` names the memories it rendered.
     pub const MEMORY_CONTEXT: &str = "memory_context";
+    /// Storage inventory and host-only filesystem garbage collection.
+    pub const STORAGE: &str = "storage";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
 }

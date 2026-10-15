@@ -25,6 +25,7 @@ fn turn(cwd: PathBuf) -> EngineTurn {
         session: None,
         session_usage: aether_core::model::Usage::default(),
         new_session_id: "sess-1".into(),
+        session_recorder: None,
         model: Some("demo".into()),
         effort: None,
         cwd,

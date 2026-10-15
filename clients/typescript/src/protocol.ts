@@ -50,6 +50,7 @@ export * from "./protocol/commands/set.ts";
 export * from "./protocol/commands/shutdown.ts";
 export * from "./protocol/commands/start.ts";
 export * from "./protocol/commands/status.ts";
+export * from "./protocol/commands/storage.ts";
 export * from "./protocol/commands/subscribe.ts";
 export * from "./protocol/commands/sync.ts";
 export * from "./protocol/commands/test.ts";
