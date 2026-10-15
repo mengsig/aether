@@ -233,3 +233,50 @@ fn a_tail_streamed_after_a_sweep_is_drawn_once_when_its_message_lands() {
     assert_eq!(assistant_texts(&feed, root), ["Cut answer", "and its tail"]);
     assert!(feed.t(root).stream.is_empty());
 }
+
+#[test]
+fn a_cut_stream_is_released_once_its_message_cannot_come() {
+    let mut feed = Feed::new();
+    let (root, _) = feed.spawn(None, "aether", "assistant");
+    let native = InvocationId::new();
+    cut_by_a_sweep(&mut feed, root, native, "Cut native answer");
+    assert!(feed.t(root).holds_cut());
+    let tail = Delta::Text {
+        text: " and its tail".into(),
+    };
+    let at = feed.clock;
+    feed.transcripts
+        .get_mut(&root)
+        .unwrap()
+        .stream(native, &tail, at);
+    feed.on(
+        root,
+        EventKind::InvocationFailed {
+            invocation: native,
+            snapshot: aether_core::id::SnapshotId::new(),
+            error: "cancelled".into(),
+            class: Some(ModelErrorClass::Cancelled),
+            retryable: false,
+            cancelled: true,
+            partial: vec![ContentBlock::text("Cut native answer and its tail")],
+        },
+    );
+    assert_eq!(
+        assistant_texts(&feed, root),
+        ["Cut native answer", "and its tail"]
+    );
+    assert!(
+        !feed.t(root).holds_cut(),
+        "its last record left the cut held after drawing its tail"
+    );
+
+    cut_by_a_sweep(&mut feed, root, InvocationId::new(), "Cut API answer");
+    assert!(feed.t(root).holds_cut());
+    let next = Delta::Text {
+        text: "A later turn".into(),
+    };
+    let at = feed.clock;
+    let t = feed.transcripts.get_mut(&root).unwrap();
+    t.stream(InvocationId::new(), &next, at);
+    assert!(!t.holds_cut(), "a later turn's stream left the cut held");
+}

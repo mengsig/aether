@@ -103,6 +103,17 @@ struct Session {
 // ----- cell bookkeeping ---------------------------------------------------------
 
 impl AgentTranscript {
+    /// A stream for another invocation means the cut one's message never came.
+    pub(super) fn retire_cut(&mut self, streaming: InvocationId) {
+        self.private.cut.take_if(|cut| cut.invocation != streaming);
+        debug_assert!(
+            self.private
+                .cut
+                .as_ref()
+                .is_none_or(|cut| cut.invocation == streaming)
+        );
+    }
+
     /// A grouped call's own failure, as the call cell only named modes draw.
     fn mode_failure(&mut self, at: Timestamp, name: &str, status: CallStatus, error: &str) {
         self.push_named(
@@ -1565,6 +1576,17 @@ fn cancelled_partial(
     invocation: InvocationId,
     partial: &[ContentBlock],
 ) {
+    draw_cancelled_partial(t, at, invocation, partial);
+    // The invocation's last record: no message for it follows to read the cut.
+    t.private.cut.take_if(|cut| cut.invocation == invocation);
+}
+
+fn draw_cancelled_partial(
+    t: &mut AgentTranscript,
+    at: Timestamp,
+    invocation: InvocationId,
+    partial: &[ContentBlock],
+) {
     if t.private.drawn == Some(invocation) {
         // A stop drew this stream already; what streamed after it is its tail.
         if t.stream.invocation == Some(invocation) {
@@ -2487,6 +2509,10 @@ impl AgentTranscript {
 
 #[cfg(test)]
 impl AgentTranscript {
+    pub(super) fn holds_cut(&self) -> bool {
+        self.private.cut.is_some()
+    }
+
     pub(super) fn assert_calls_closed(&self) {
         assert!(self.private.calls.is_empty());
         assert!(self.private.approvals.is_empty());
