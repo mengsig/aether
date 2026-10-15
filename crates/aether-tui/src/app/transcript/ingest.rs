@@ -1514,6 +1514,10 @@ fn cancelled_partial(
     partial: &[ContentBlock],
 ) {
     if t.private.drawn == Some(invocation) {
+        // A stop drew this stream already; what streamed after it is its tail.
+        if t.stream.invocation == Some(invocation) {
+            t.commit_stream(at);
+        }
         return;
     }
     let thinking = thinking_of(partial);
