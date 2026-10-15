@@ -402,8 +402,11 @@ receipts still retain their stream-derived charge; the agent total can then
 exceed the latest dollar receipt. A parked or interrupted run without proven
 closing coverage keeps its cost gap even when every observed token has a price.
 An all-zero crash receipt keeps the previous baseline. A nonzero receipt with
-lower dollars, lower model counters, or a missing model has unknown cost and
-becomes the new baseline, so later receipts bill only its increase.
+lower dollars, lower model counters, or a missing model has unknown cost, as
+do later receipts in the same run, and becomes the baseline the next run bills
+its increase from. A run whose cost stays incomplete without a dollar receipt
+keeps its cost gap and a floor: the stream's dollars plus base-rate prices for
+closing tokens that never streamed.
 After upgrading, a record without per-model counters gets no coverage on its
 first resume, so the streamed shortfall may be priced once more per session.
 A receipt without `modelUsage` keeps the dollars but drops the per-model

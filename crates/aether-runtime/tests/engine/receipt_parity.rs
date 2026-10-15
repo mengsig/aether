@@ -207,9 +207,23 @@ async fn dollars_missing_from_model_usage_stay_billed_despite_unstreamed_helper_
 
 #[tokio::test]
 async fn a_reset_receipt_persists_the_new_baseline_and_keeps_a_stream_floor_with_a_gap() {
+    let gap = reset_receipt_floor(vec![streamed_request("second")]).await;
+    assert_eq!(gap, Some(CostGap::Mixed));
+}
+
+#[tokio::test]
+async fn a_reset_receipt_without_streamed_usage_prices_its_closing_tokens_as_a_floor() {
+    let gap = reset_receipt_floor(Vec::new()).await;
+    assert!(gap.is_some());
+}
+
+/// The cost gap of a resumed run whose receipt resets after `streamed`.
+async fn reset_receipt_floor(mut streamed: Vec<Value>) -> Option<CostGap> {
+    assert!(streamed.len() <= 1);
+    streamed.push(result(0.02, 1, false, false));
     let runs = vec![
         vec![streamed_request("first"), result(0.05, 1, true, false)],
-        vec![streamed_request("second"), result(0.02, 1, false, false)],
+        streamed,
     ];
     let (tx, mut ready) = mpsc::channel(2);
     let h = harness_with_engine_config(
@@ -236,10 +250,15 @@ async fn a_reset_receipt_persists_the_new_baseline_and_keeps_a_stream_floor_with
         output_tokens: 10,
         ..Usage::default()
     });
-    assert!((second.stats.usage.cost_usd - first.stats.usage.cost_usd - floor).abs() < 1e-12);
+    let added = second.stats.usage.cost_usd - first.stats.usage.cost_usd;
+    assert!((added - floor).abs() < 1e-12, "{:?}", second.stats.usage);
+    assert_eq!(
+        second.stats.usage.total_tokens() - first.stats.usage.total_tokens(),
+        110
+    );
     assert!(!second.stats.usage.cost_complete);
-    assert_eq!(second.stats.usage.cost_gap, Some(CostGap::Mixed));
     h.runtime.shutdown().await;
+    second.stats.usage.cost_gap
 }
 
 async fn assert_missing_receipt(helper: bool) {

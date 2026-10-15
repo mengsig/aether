@@ -139,19 +139,26 @@ impl TurnPricing {
             above_threshold: None,
             ..self.estimate?
         };
-        let extra = Usage {
-            input_tokens: total.input_tokens.saturating_sub(streamed.input_tokens),
-            output_tokens: total.output_tokens.saturating_sub(streamed.output_tokens),
-            cache_read_tokens: total
-                .cache_read_tokens
-                .saturating_sub(streamed.cache_read_tokens),
-            cache_write_tokens: total
-                .cache_write_tokens
-                .saturating_sub(streamed.cache_write_tokens),
-            cache_write_1h_tokens: total.cache_write_1h_since(streamed),
-            ..Usage::default()
+        Some(
+            streamed.estimated_cost_usd.unwrap_or(0.0)
+                + rate.cost_of(&tokens_beyond(total, streamed)),
+        )
+    }
+
+    /// Billed base-rate dollars for closing counters the stream never carried.
+    /// Those counters have no request boundaries from which to select a prompt tier.
+    pub(super) fn unstreamed_cost(&self, total: &Usage, streamed: &Usage) -> f64 {
+        debug_assert!(total.total_tokens() >= streamed.total_tokens());
+        let Some(rate) = self.billed else {
+            return 0.0;
         };
-        Some(streamed.estimated_cost_usd.unwrap_or(0.0) + rate.cost_of(&extra))
+        let rate = ModelCost {
+            above_threshold: None,
+            ..rate
+        };
+        let cost = rate.cost_of(&tokens_beyond(total, streamed));
+        debug_assert!(cost.is_finite() && cost >= 0.0);
+        cost
     }
 
     /// Add base-rate pricing for streamed tokens absent from a priced closing receipt.
@@ -161,18 +168,7 @@ impl TurnPricing {
         debug_assert!(self.billed.is_none() || self.estimate.is_none());
         debug_assert!(total.cost_complete && total.cost_basis == CostBasis::ProviderReported);
         debug_assert!(total.cache_write_1h_tokens <= total.cache_write_tokens);
-        let mut shortfall = Usage {
-            input_tokens: total.input_tokens.saturating_sub(closing.input_tokens),
-            output_tokens: total.output_tokens.saturating_sub(closing.output_tokens),
-            cache_read_tokens: total
-                .cache_read_tokens
-                .saturating_sub(closing.cache_read_tokens),
-            cache_write_tokens: total
-                .cache_write_tokens
-                .saturating_sub(closing.cache_write_tokens),
-            cache_write_1h_tokens: total.cache_write_1h_since(closing),
-            ..Usage::default()
-        };
+        let mut shortfall = tokens_beyond(total, closing);
         if shortfall.total_tokens() == 0 {
             return false;
         }
@@ -190,6 +186,22 @@ impl TurnPricing {
             total.cost_basis = total.cost_basis.combine(shortfall.cost_basis);
         }
         true
+    }
+}
+
+/// The billable token counters in `total` beyond those in `covered`.
+fn tokens_beyond(total: &Usage, covered: &Usage) -> Usage {
+    Usage {
+        input_tokens: total.input_tokens.saturating_sub(covered.input_tokens),
+        output_tokens: total.output_tokens.saturating_sub(covered.output_tokens),
+        cache_read_tokens: total
+            .cache_read_tokens
+            .saturating_sub(covered.cache_read_tokens),
+        cache_write_tokens: total
+            .cache_write_tokens
+            .saturating_sub(covered.cache_write_tokens),
+        cache_write_1h_tokens: total.cache_write_1h_since(covered),
+        ..Usage::default()
     }
 }
 

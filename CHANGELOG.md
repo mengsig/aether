@@ -46,7 +46,9 @@ release is also the text of its GitHub release.
   over every resume. Aether now prices only streamed tokens those counts do
   not cover, and the note on an interrupted turn says whether the missing
   part was priced. An all-zero crash receipt keeps the last baseline;
-  lower nonzero receipts leave a cost gap and become the new baseline.
+  lower nonzero receipts leave a cost gap and become the next turn's
+  baseline. Such a turn still counts its tokens at list price as a lower
+  bound beside that gap.
 - **The daemon no longer churns the disk while agents work.** Reading a long
   agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
   of MB per read. With several agents running, that held host IO pressure

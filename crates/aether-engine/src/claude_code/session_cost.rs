@@ -16,6 +16,8 @@ pub(super) struct SessionCost {
     before: Option<Usage>,
     before_models: Option<ModelUsage>,
     latest: Option<EngineSessionUsage>,
+    /// Receipts are cumulative per run; after a reset, none can say what the run cost.
+    reset: bool,
 }
 
 pub(super) struct Receipt {
@@ -45,6 +47,7 @@ impl SessionCost {
             before,
             before_models: None,
             latest: None,
+            reset: false,
         }
     }
 
@@ -76,7 +79,7 @@ impl SessionCost {
             ));
         }
         let accepted = self.accepts(session, total, models.as_ref());
-        let baseline = self.baseline(session).filter(|_| accepted);
+        let baseline = self.baseline(session).filter(|_| accepted && !self.reset);
         let cost_usd = baseline.map(|before| dollars - before.cost_usd);
         let cost_usage =
             cost_usd.and_then(|_| self.cost_usage(session, models.as_ref()?, streamed));
@@ -117,6 +120,7 @@ impl SessionCost {
         );
         self.session = session.map(str::to_owned);
         self.before = Some(total);
+        self.reset = true;
         self.before_models = models;
         let mut usage = Usage::default();
         usage.mark_cost_gap(aether_core::model::CostGap::Unreported);

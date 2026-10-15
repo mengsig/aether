@@ -779,30 +779,41 @@ fn price_closing_usage(usage: &mut Usage, run: &DriveResult, raised: bool) -> bo
             .then_some(run.stream_usage.cost_usd)
     });
     usage.set_cost(billed);
-    if billed.is_none() {
-        usage.cost_usd = run.stream_usage.cost_usd;
-        usage.cost_gap = run
-            .stream_usage
-            .cost_gap
-            .or(Some(aether_core::model::CostGap::Unreported));
-    }
     // Preserve request estimates; merged counters cannot select prompt tiers.
     usage.estimated_cost_usd = match billed {
         Some(_) => None,
         None if run.request_usage_seen => run.pricing.request_estimate_of(usage, &run.stream_usage),
         None => run.pricing.estimate_of(usage),
     };
-    if run.outcome.cost_usd.is_none() {
-        usage.cost_basis = if usage.estimated_cost_usd.is_some() {
-            aether_core::model::CostBasis::ListPrice
-        } else {
-            run.stream_usage.cost_basis
-        };
+    if billed.is_none() {
+        floor_unbilled_cost(usage, run);
+    } else if run.outcome.cost_usd.is_none() {
+        usage.cost_basis = run.stream_usage.cost_basis;
     } else if raised {
         let covered = closing_cost_coverage(*usage, run);
         return run.pricing.price_closing_shortfall(usage, &covered);
     }
     true
+}
+
+/// Without a dollar receipt, the stream's dollars plus base-rate prices for
+/// closing tokens it never carried are a floor; the cost gap stays.
+fn floor_unbilled_cost(usage: &mut Usage, run: &DriveResult) {
+    use aether_core::model::CostBasis;
+    let streamed = run.stream_usage;
+    debug_assert!(run.outcome.cost_usd.is_none() && !streamed.cost_complete);
+    debug_assert!(!usage.cost_complete && usage.cost_usd == 0.0);
+    let unstreamed = run.pricing.unstreamed_cost(usage, &streamed);
+    usage.cost_usd = streamed.cost_usd + unstreamed;
+    usage.cost_gap = streamed
+        .cost_gap
+        .or(Some(aether_core::model::CostGap::Unreported));
+    usage.cost_basis = match (usage.estimated_cost_usd, unstreamed > 0.0) {
+        (Some(_), _) => CostBasis::ListPrice,
+        (None, false) => streamed.cost_basis,
+        (None, true) if streamed.cost_usd == 0.0 => CostBasis::ListPrice,
+        (None, true) => streamed.cost_basis.combine(CostBasis::ListPrice),
+    };
 }
 
 fn closing_cost_coverage(total: Usage, run: &DriveResult) -> Usage {

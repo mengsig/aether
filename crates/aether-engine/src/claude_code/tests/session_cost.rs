@@ -233,6 +233,16 @@ fn resumed(session: Option<String>, usage: Usage) -> SessionCost {
     SessionCost::resumed(session, usage).with_models(models)
 }
 
+/// The next run's state, resumed from the baseline this one persisted.
+fn next_run(state: &SessionCost) -> SessionCost {
+    let saved = state
+        .latest
+        .as_ref()
+        .expect("a nonzero receipt was persisted");
+    assert!(saved.total.cost_complete);
+    SessionCost::resumed(Some(saved.session.clone()), saved.total).with_models(saved.models.clone())
+}
+
 fn bill(state: &mut SessionCost, value: &Value) -> (Option<f64>, Vec<EngineEvent>) {
     let receipt = state.receipt(value, &BTreeMap::new());
     (receipt.cost_usd, receipt.events)
@@ -248,7 +258,7 @@ fn an_all_zero_resumed_baseline_cannot_price_session_history() {
 }
 
 #[test]
-fn reset_receipts_in_one_process_adopt_the_new_baseline() {
+fn a_reset_leaves_the_run_unknown_and_baselines_the_next_resume() {
     let mut state = SessionCost::default();
     let (_, events) = bill(&mut state, &receipt("s", 0.05));
     assert!(matches!(&events[..], [EngineEvent::SessionUsage { .. }]));
@@ -268,8 +278,11 @@ fn reset_receipts_in_one_process_adopt_the_new_baseline() {
         EngineEvent::SessionUsage { total, .. }] if total.output_tokens == 1)
     );
     assert_eq!(state.latest.as_ref().unwrap().total.cost_usd, 0.06);
-    assert!((bill(&mut state, &receipt("s", 0.08)).0.unwrap() - 0.02).abs() < 1e-12);
-    let covered = covered_usage(&mut state, &receipt("s", 0.08)).unwrap();
+    let (mut resumed, mut covering) = (next_run(&state), next_run(&state));
+    // The run's spend before the reset is lost, so its later receipts stay unknown.
+    assert_eq!(bill(&mut state, &receipt("s", 0.08)).0, None);
+    assert!((bill(&mut resumed, &receipt("s", 0.08)).0.unwrap() - 0.02).abs() < 1e-12);
+    let covered = covered_usage(&mut covering, &receipt("s", 0.08)).unwrap();
     assert_eq!(covered.input_tokens, 0);
     assert_eq!(covered.output_tokens, 383);
 }
@@ -343,8 +356,14 @@ fn a_missing_model_resets_even_when_remaining_counters_cover_the_prior_total() {
             .len(),
         1
     );
+    let mut resumed = next_run(&state);
     next["total_cost_usd"] = json!(200.0);
-    assert_eq!(bill(&mut state, &next).0, Some(180.0));
+    assert_eq!(
+        bill(&mut state, &next).0,
+        None,
+        "the reset run stays unknown"
+    );
+    assert_eq!(bill(&mut resumed, &next).0, Some(180.0));
 }
 
 #[test]
@@ -372,8 +391,10 @@ fn each_model_counter_reset_is_unknown_even_when_session_totals_grow() {
             10.0,
             "{field}"
         );
+        let mut resumed = next_run(&state);
         value["total_cost_usd"] = json!(12.0);
-        assert_eq!(bill(&mut state, &value).0, Some(2.0), "{field}");
+        assert_eq!(bill(&mut state, &value).0, None, "{field}");
+        assert_eq!(bill(&mut resumed, &value).0, Some(2.0), "{field}");
     }
 }
 
