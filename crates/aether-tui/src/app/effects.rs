@@ -231,3 +231,36 @@ pub enum AppEvent {
         result: Result<Reply, ClientError>,
     },
 }
+
+impl Then {
+    /// Reads every connection makes again: the connect snapshot asks for them
+    /// and the next poll re-reads status, so an older answer only rolls back.
+    pub(crate) fn superseded_on_reconnect(&self) -> bool {
+        matches!(
+            self,
+            Then::Status
+                | Then::StatusPoll
+                | Then::Tree
+                | Then::Approvals { .. }
+                | Then::Models
+                | Then::Auth
+        )
+    }
+}
+
+impl AppEvent {
+    /// Whether a protocol event still applies once the connection it came on
+    /// was replaced. Outcomes of what the person asked for always do.
+    pub(crate) fn outlives_connection(&self) -> bool {
+        match self {
+            AppEvent::Reply { then, .. } => !then.superseded_on_reconnect(),
+            AppEvent::Outbox { .. } => true,
+            // The new subscription replays from the cursor; the old stream's end is old news.
+            AppEvent::Subscribed { .. }
+            | AppEvent::Frame(_)
+            | AppEvent::Disconnected { .. }
+            | AppEvent::HistoryExpired => false,
+            _ => true,
+        }
+    }
+}

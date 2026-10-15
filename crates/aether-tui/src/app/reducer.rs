@@ -366,7 +366,9 @@ impl App {
         self.approvals_revision = self.approvals_revision.wrapping_add(1);
         self.connected = true;
         self.status = None;
+        // The runner drops the old connection's answers to these; nothing waits on them.
         self.status_poll_in_flight = false;
+        self.tree_in_flight = false;
         // A fresh connection ends the outage the flags were suppressing
         // repeats for; the next disconnect gets to report itself again.
         self.disconnect_reply_noticed = false;
@@ -385,6 +387,11 @@ impl App {
         if !self.remote_snapshot_pending {
             effects.extend(self.snapshot_requests());
         }
+        debug_assert!(!self.status_poll_in_flight, "the next tick polls status");
+        debug_assert_eq!(
+            self.tree_in_flight, !self.remote_snapshot_pending,
+            "only this connection's snapshot may hold the tree request"
+        );
         effects
     }
 

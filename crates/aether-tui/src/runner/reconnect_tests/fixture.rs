@@ -42,7 +42,7 @@ impl Fixture {
         assert_eq!(self.store.agent(agent.id).unwrap(), Some(agent));
     }
 
-    pub fn commit(&self, kinds: Vec<EventKind>) {
+    pub fn commit(&self, kinds: Vec<EventKind>) -> Vec<aether_core::event::Event> {
         assert!(!kinds.is_empty());
         let count = kinds.len();
         let events = self
@@ -60,6 +60,7 @@ impl Fixture {
             })
             .unwrap();
         assert_eq!(events.len(), count);
+        events
     }
 
     async fn start(&mut self) {
@@ -82,7 +83,7 @@ impl Fixture {
         assert!(client.welcome().is_some());
     }
 
-    async fn client(&self) -> Client {
+    pub async fn client(&self) -> Client {
         super::super::history_tests::connect_when_ready(&self.directory.path().join("d.sock")).await
     }
 
@@ -115,9 +116,19 @@ impl Fixture {
         app
     }
 
-    pub async fn reconnect(&self, app: &mut App) {
+    pub async fn reconnect(&self, app: &mut App) -> Link {
         let client = self.reconnect_client(app).await;
-        let effects = app.reconnected(&client);
+        self.catch_up(app, Link::new(client)).await
+    }
+
+    /// Reconnect as the loop does when `previous` was the view's connection.
+    pub async fn reconnect_after(&self, app: &mut App, previous: &Link) -> Link {
+        let client = self.reconnect_client(app).await;
+        self.catch_up(app, previous.reconnected(client)).await
+    }
+
+    async fn catch_up(&self, app: &mut App, link: Link) -> Link {
+        let effects = app.reconnected(&link.client);
         let after = effects
             .iter()
             .find_map(|e| match e {
@@ -127,25 +138,34 @@ impl Fixture {
             .expect("reconnect subscribes");
         let last = self.store.last_seq().unwrap();
         let (tx, mut rx) = mpsc::unbounded_channel();
-        spawn_subscription(client.clone(), tx, after);
-        self.answer(app, &client, effects).await;
+        spawn_subscription(link.clone(), tx, after);
+        self.answer(app, &link.client, effects).await;
         loop {
             let next = tokio::time::timeout(Duration::from_secs(10), rx.recv())
                 .await
                 .unwrap()
                 .unwrap();
-            let LoopEvent::AppFrom { event, instance } = next else {
+            let LoopEvent::AppFrom {
+                event,
+                instance,
+                generation,
+            } = next
+            else {
                 panic!("scoped event");
             };
             assert_eq!(Some(&instance), app.options.instance_id.as_ref());
+            let event = link
+                .admit(&instance, generation, event)
+                .expect("the current connection's own event");
             let effects = app.reduce(event);
-            self.answer(app, &client, effects).await;
+            self.answer(app, &link.client, effects).await;
             if app.subscription.is_some() && app.last_seq.unwrap_or(0) >= last {
                 break;
             }
         }
         assert!(app.connected);
         assert!(app.last_seq.unwrap_or(0) >= last);
+        link
     }
 
     async fn reconnect_client(&self, app: &mut App) -> Client {
