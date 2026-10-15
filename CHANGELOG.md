@@ -13,8 +13,12 @@ release is also the text of its GitHub release.
   from and a reason, and only for a memory the task's agents were given.
   Feedback can be retracted and listed, keyed retries never record it twice,
   and every change leaves an event. Agents and paired devices cannot use it;
-  clients detect support with `memory_feedback`. Recall and ranking are
-  unchanged for now.
+  clients detect support with `memory_feedback`. Once a memory has helped or
+  hurt verdicts from two tasks, they move its rank in recall: its score is
+  scaled by 0.75 to 1.25, counting each task's latest operator or review
+  verdict over the latest 20 tasks. Pinned memories are untouched, and
+  feedback never hides a memory or changes how many are recalled.
+  `aether memory feedback list` shows the current factor.
 - **You can see which memories each model call was given.** The
   context record of every call now lists the memories it rendered, in the
   order the prompt shows them, for Claude Code and Codex turns too. The prompt

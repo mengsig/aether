@@ -117,6 +117,8 @@ mod queries;
 
 mod memories;
 
+mod memory_feedback;
+
 mod submissions;
 
 mod ledger;

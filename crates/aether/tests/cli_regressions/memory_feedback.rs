@@ -128,23 +128,68 @@ async fn feedback_cli_retracts_and_lists_with_retraction_status() {
         if json_output {
             args.push("--json");
         }
+        let ranking = json!({"helped":3, "hurt":1, "factor":0.75 + 0.5 * 4.0 / 6.0});
         let output = exchange(
             &args,
             json!({"cmd":"memory_feedback", "memory":MEMORY}),
             "memory_feedback_list",
-            json!({"records":[data], "truncated":false}),
+            json!({"records":[data], "truncated":false, "ranking":ranking}),
         )
         .await;
         if json_output {
-            assert_eq!(
-                serde_json::from_str::<Value>(&stdout(&output)).unwrap()["records"][0],
-                data
-            );
+            let printed = serde_json::from_str::<Value>(&stdout(&output)).unwrap();
+            assert_eq!(printed["records"][0], data);
+            assert_eq!(printed["ranking"]["helped"], 3);
+            assert_eq!(printed["ranking"]["hurt"], 1);
         } else {
             assert!(stdout(&output).contains("(retracted)"));
             assert!(stdout(&output).contains(FEEDBACK));
+            assert!(
+                stdout(&output).contains(
+                    "ranking factor 1.08 (3 helped, 1 hurt across the latest 20 tasks)\n"
+                ),
+                "{}",
+                stdout(&output)
+            );
         }
     }
+}
+
+#[tokio::test]
+async fn feedback_cli_lists_an_older_daemons_reply_as_unranked() {
+    let output = exchange(
+        &["memory", "feedback", "list", MEMORY],
+        json!({"cmd":"memory_feedback", "memory":MEMORY}),
+        "memory_feedback_list",
+        json!({"records":[record(false)], "truncated":false}),
+    )
+    .await;
+    assert!(stdout(&output).contains(FEEDBACK));
+    assert!(
+        stdout(&output).contains(
+            "ranking factor 1.00 (0 helped, 0 hurt across the latest 20 tasks; 2 needed to move recall)"
+        ),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[tokio::test]
+async fn feedback_cli_lists_no_feedback_with_its_neutral_ranking() {
+    let output = exchange(
+        &["memory", "feedback", "list", MEMORY],
+        json!({"cmd":"memory_feedback", "memory":MEMORY}),
+        "memory_feedback_list",
+        json!({"records":[], "truncated":false,
+            "ranking":{"helped":0, "hurt":0, "factor":1.0}}),
+    )
+    .await;
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "no feedback for {MEMORY}.\nranking factor 1.00 (0 helped, 0 hurt across the latest 20 tasks; 2 needed to move recall)\n"
+        )
+    );
 }
 
 #[tokio::test]

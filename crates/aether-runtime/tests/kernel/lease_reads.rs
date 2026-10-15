@@ -256,6 +256,15 @@ impl Store for CountingStore {
         self.inner.memory_feedback(memory, limit)
     }
 
+    fn memory_feedback_tallies(
+        &self,
+        memories: &[MemoryId],
+    ) -> aether_store::Result<
+        std::collections::BTreeMap<MemoryId, aether_core::memory_feedback::FeedbackTally>,
+    > {
+        self.inner.memory_feedback_tallies(memories)
+    }
+
     fn memory(&self, id: MemoryId) -> StoreResult<Option<MemoryRecord>> {
         self.inner.memory(id)
     }

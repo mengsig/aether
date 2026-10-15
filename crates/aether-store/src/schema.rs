@@ -402,11 +402,16 @@ const V22: &str = r#"
 CREATE TABLE memory_feedback (
     id           TEXT PRIMARY KEY,
     memory_id    TEXT NOT NULL,
+    task_id      TEXT NOT NULL,
+    verdict      TEXT NOT NULL CHECK (verdict IN ('helped','hurt','neutral')),
+    evidence     TEXT NOT NULL CHECK (evidence IN ('operator','review','outcome')),
     created_at   TEXT NOT NULL,
     retracted_at TEXT,
     body         TEXT NOT NULL
 );
 CREATE INDEX memory_feedback_memory_created ON memory_feedback(memory_id, created_at);
+CREATE INDEX memory_feedback_ranked ON memory_feedback(memory_id, task_id, created_at DESC, id DESC, verdict)
+    WHERE retracted_at IS NULL AND evidence IN ('operator','review');
 "#;
 
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [

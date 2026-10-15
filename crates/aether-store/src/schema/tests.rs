@@ -837,6 +837,7 @@ fn v22_feedback_migration_preserves_v21_memories_and_saves_a_readable_backup() {
     assert_eq!(store.meta("schema_version").unwrap(), Some("22".into()));
     assert_eq!(store.memory(record.id).unwrap(), Some(record.clone()));
     let connection = Connection::open(&path).unwrap();
+    assert_feedback_columns(&connection);
     assert_eq!(
         connection
             .query_row("SELECT count(*) FROM memory_feedback", [], |row| row
@@ -886,5 +887,46 @@ fn assert_feedback_backup(path: &std::path::Path, record: &aether_core::memory::
             )
             .unwrap(),
         serde_json::to_string(&record).unwrap()
+    );
+}
+
+fn assert_feedback_columns(conn: &Connection) {
+    let mut statement = conn.prepare("PRAGMA table_info(memory_feedback)").unwrap();
+    let columns: Vec<(String, String, bool)> = statement
+        .query_map([], |row| Ok((row.get(1)?, row.get(2)?, row.get(3)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    for name in ["task_id", "verdict", "evidence"] {
+        assert!(columns.contains(&(name.into(), "TEXT".into(), true)));
+    }
+    assert_eq!(columns.len(), 8);
+}
+
+#[test]
+fn fresh_v22_feedback_requires_valid_ranking_columns() {
+    let conn = Connection::open_in_memory().unwrap();
+    migrate(&conn).unwrap();
+    assert_eq!(version(&conn), 22);
+    assert_feedback_columns(&conn);
+    let sql = "INSERT INTO memory_feedback
+        (id, memory_id, task_id, verdict, evidence, created_at, body)
+        VALUES ('feedback', 'memory', ?1, ?2, ?3, 'timestamp', '{}')";
+    for (task, verdict, evidence) in [
+        (None, Some("helped"), Some("operator")),
+        (Some("task"), None, Some("operator")),
+        (Some("task"), Some("helped"), None),
+        (Some("task"), Some("unknown"), Some("operator")),
+        (Some("task"), Some("helped"), Some("unknown")),
+    ] {
+        assert!(matches!(
+            conn.execute(sql, rusqlite::params![task, verdict, evidence]),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::ConstraintViolation
+        ));
+    }
+    assert_eq!(
+        conn.execute(sql, ["task", "neutral", "outcome"]).unwrap(),
+        1
     );
 }
