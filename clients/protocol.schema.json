@@ -4211,6 +4211,36 @@
         }
       ]
     },
+    "CostGap": {
+      "description": "Why the dollar total may omit work.",
+      "oneOf": [
+        {
+          "const": "unreported",
+          "description": "The engine did not fully report usage for work it performed.",
+          "type": "string"
+        },
+        {
+          "const": "unpriced",
+          "description": "Usage was reported without a price or provider cost.",
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "Possibly billed work lacks closing accounting, including cancellation after submission.",
+          "type": "string"
+        },
+        {
+          "const": "mixed",
+          "description": "Two or more different missing-cost reasons contributed.",
+          "type": "string"
+        },
+        {
+          "const": "unknown",
+          "description": "Legacy records lack a reason; unrecognized future reasons also read as unknown.",
+          "type": "string"
+        }
+      ]
+    },
     "CreateAgent": {
       "description": "Request to create an agent, optionally with an initial task.\nA child requires explicit `config.effort`: low, medium, high, xhigh or max.",
       "properties": {
@@ -14419,8 +14449,19 @@
           "description": "Source of the dollar figures, including `estimated_cost_usd` where present.\nList-price figures retain their existing budget semantics; this is a label."
         },
         "cost_complete": {
-          "description": "Every invocation folded in here could be priced. Once false it never\nreturns to true: an unknown cannot be recovered by adding to it.",
+          "description": "Every contribution's cost is accounted for. Adding usage cannot repair a gap;\nclosing accounting may replace provisional usage for the same run.",
           "type": "boolean"
+        },
+        "cost_gap": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostGap"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Missing-cost reason; absent for complete totals. Live missing usage is unreported;\nlegacy or unrecognized reasons read as unknown. Distinct reasons combine as mixed."
         },
         "cost_usd": {
           "description": "Dollars over the invocations that could be priced. A floor when\n`cost_complete` is false.",

@@ -816,17 +816,13 @@ async fn settle_test_receipt(
             ..Default::default()
         },
         activity_seen: true,
-        park: None,
         priced: state.priced,
         usage_seen: state.usage_seen,
-        invoked: false,
-        ran_tools: false,
         usage_before: state.usage_before,
         stream_usage: state.stream_usage,
         request_usage_seen: state.request_usage_seen,
-        budget_stop: None,
         pricing: state.pricing,
-        cleaned_up: true,
+        ..super::super::execution::test_run()
     };
     super::super::execution::settle_usage(runtime, &mut ctx, &run).unwrap();
     let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
@@ -996,5 +992,50 @@ async fn closing_receipt_with_cost_but_no_tokens_keeps_provider_cost() {
     assert!(usage.cost_complete);
     assert_eq!(usage.total_tokens(), 60);
     assert!(notes.is_empty());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn live_usage_without_counters_or_reason_is_unreported() {
+    let (runtime, _dir) = test_runtime(|_| {}).await;
+    let mut ctx = started_agent_ctx(&runtime).await;
+    let snapshot = bare_snapshot(ctx.agent.id);
+    let mut state = StreamState::new(
+        TurnPricing::default(),
+        configured(&runtime, "claude-code/default"),
+    );
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        assistant_saying("answer"),
+        &mut state,
+    )
+    .unwrap();
+    let invocations = runtime.store.invocations_for_agent(ctx.agent.id).unwrap();
+    assert_eq!(invocations.len(), 1);
+    assert_eq!(
+        invocations[0].usage.cost_gap,
+        Some(aether_core::model::CostGap::Unreported)
+    );
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        EngineEvent::UsageDelta {
+            usage: Usage {
+                input_tokens: 10,
+                cost_complete: false,
+                ..Default::default()
+            },
+        },
+        &mut state,
+    )
+    .unwrap();
+    assert_eq!(
+        state.stream_usage.cost_gap,
+        Some(aether_core::model::CostGap::Unreported)
+    );
+    assert!(!state.stream_usage.cost_complete);
     runtime.shutdown().await;
 }

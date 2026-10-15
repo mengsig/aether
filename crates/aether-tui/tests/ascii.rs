@@ -502,5 +502,5 @@ fn ascii_populated_report_preserves_unicode_data_without_unicode_decoration() {
     let text = content_frame(&app, 240, 60);
     assert!(text.matches(original).count() >= 4, "{text}");
     assert!(chrome(&text, &[original]).is_ascii(), "{text}");
-    assert!(text.contains(">= $0.40 (some unpriced)"), "{text}");
+    assert!(text.contains(">= $0.40 (some cost unknown)"), "{text}");
 }

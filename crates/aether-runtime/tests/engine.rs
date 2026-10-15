@@ -37,6 +37,8 @@ mod compaction;
 mod completion_recovery;
 #[path = "engine/completion_waits.rs"]
 mod completion_waits;
+#[path = "engine/cost_gap.rs"]
+mod cost_gap;
 #[path = "engine/effort.rs"]
 mod effort;
 #[path = "engine/exhaustion.rs"]
@@ -130,7 +132,7 @@ async fn harness_with_engine_and_providers_toml(
     systems: Arc<Mutex<Vec<String>>>,
     providers_toml: Option<&str>,
 ) -> Harness {
-    build_harness(engine, prompts, systems, providers_toml, |_| {}).await
+    build_harness(engine, prompts, systems, providers_toml, None, |_| {}).await
 }
 
 /// Like `harness_with_engine`, with the runtime config adjusted first.
@@ -138,7 +140,15 @@ async fn harness_with_engine_config(
     engine: Arc<dyn Engine>,
     configure: impl FnOnce(&mut RuntimeConfig),
 ) -> Harness {
-    build_harness(engine, Arc::default(), Arc::default(), None, configure).await
+    build_harness(
+        engine,
+        Arc::default(),
+        Arc::default(),
+        None,
+        None,
+        configure,
+    )
+    .await
 }
 
 async fn build_harness(
@@ -146,6 +156,7 @@ async fn build_harness(
     prompts: Arc<Mutex<Vec<String>>>,
     systems: Arc<Mutex<Vec<String>>>,
     providers_toml: Option<&str>,
+    config_toml: Option<&str>,
     configure: impl FnOnce(&mut RuntimeConfig),
 ) -> Harness {
     let workspace = tempfile::tempdir().expect("tempdir");
@@ -154,6 +165,9 @@ async fn build_harness(
     if let Some(toml) = providers_toml {
         std::fs::write(config_dir.path().join("providers.toml"), toml)
             .expect("write providers.toml");
+    }
+    if let Some(toml) = config_toml {
+        std::fs::write(config_dir.path().join("config.toml"), toml).expect("write config.toml");
     }
     let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().expect("store"));
     let models = Arc::new(Models::load(Some(config_dir.path().to_path_buf())).expect("models"));
@@ -386,6 +400,7 @@ fn answered(text: &str) -> Vec<EngineEvent> {
             model: None,
         },
         EngineEvent::Done(EngineOutcome {
+            closing_accounting: true,
             text: Some(text.into()),
             ..Default::default()
         }),
@@ -396,6 +411,7 @@ fn answered(text: &str) -> Vec<EngineEvent> {
 /// reported on a resume that first closed an orphaned background shell.
 fn never_invoked() -> Vec<EngineEvent> {
     vec![EngineEvent::Done(EngineOutcome {
+        closing_accounting: true,
         text: Some(String::new()),
         ..Default::default()
     })]
@@ -549,6 +565,7 @@ impl Engine for CheckpointEngine {
         };
         tx.send(EngineEvent::UsageDelta { usage }).await.unwrap();
         tx.send(EngineEvent::Done(EngineOutcome {
+            closing_accounting: true,
             text: Some(text),
             usage,
             cost_usd: Some(if turn.summary_only { 1.5 } else { 0.25 }),
@@ -564,3 +581,6 @@ impl Engine for CheckpointEngine {
         })
     }
 }
+
+#[path = "engine/cost_gap_review.rs"]
+mod cost_gap_review;

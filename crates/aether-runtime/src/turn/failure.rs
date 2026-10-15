@@ -35,7 +35,7 @@ pub(super) fn record_failure(
     model: &aether_core::model::ModelRef,
     rest: &[aether_core::model::ModelRef],
     error: ModelError,
-    partial: ModelResponse,
+    mut partial: ModelResponse,
     cancel: &CancellationToken,
 ) -> Result<LinkOutcome> {
     let mut error = error;
@@ -43,6 +43,11 @@ pub(super) fn record_failure(
     let detail = exhaustion_detail(&error).unwrap_or_else(|| error.to_string());
     let finished_at = now();
     let cancelled = cancel.is_cancelled() || error.class == ModelErrorClass::Cancelled;
+    if cancelled {
+        partial
+            .usage
+            .mark_cost_gap(aether_core::model::CostGap::Interrupted);
+    }
     // A cancellation is ours, not the provider's; everything else is what the
     // provider has been failing with lately.
     if !cancelled {

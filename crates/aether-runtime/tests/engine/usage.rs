@@ -43,6 +43,7 @@ impl Engine for DeltaUsageEngine {
             },
             EngineEvent::Done(if self.report_outcome {
                 EngineOutcome {
+                    closing_accounting: true,
                     text: Some("done".into()),
                     cost_usd: Some(0.123),
                     usage: Usage {
@@ -55,6 +56,7 @@ impl Engine for DeltaUsageEngine {
                 }
             } else {
                 EngineOutcome {
+                    closing_accounting: true,
                     is_error: true,
                     error: Some("stream interrupted".into()),
                     ..Default::default()
@@ -249,6 +251,7 @@ impl Engine for SessionModelEngine {
                 // The engine's own total for the turn, with no price on it:
                 // whatever this turn costs has to come from the registry.
                 EngineEvent::Done(EngineOutcome {
+                    closing_accounting: true,
                     text: Some("done".into()),
                     cost_usd: None,
                     usage,

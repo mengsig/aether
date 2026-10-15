@@ -196,3 +196,45 @@ fn depths_preserve_missing_parent_and_cycle_boundary_behavior() {
         assert_eq!(depths[id], ids.len() as u32);
     }
 }
+
+#[test]
+fn cost_gap_reasons_survive_report_rollups_and_rendering() {
+    use crate::model::CostGap;
+    let mut log = Log::new();
+    let (root, child) = (AgentId::new(), AgentId::new());
+    log.push(created(root, None, "root"));
+    log.push(created(child, Some(root), "child"));
+    for (agent, gap, dollars) in [
+        (root, CostGap::Unpriced, 1.0),
+        (child, CostGap::Interrupted, 2.0),
+    ] {
+        let mut usage = Usage {
+            cost_usd: dollars,
+            input_tokens: 10,
+            ..Default::default()
+        };
+        usage.mark_cost_gap(gap);
+        log.push(
+            EventDraft::new(
+                Actor::agent(agent),
+                EventKind::AgentUsageUpdated {
+                    total: usage,
+                    turn_usage: usage,
+                },
+            )
+            .agent(agent),
+        );
+    }
+    let report = log.report();
+    assert_eq!(report.body.usage.cost_gap, Some(CostGap::Mixed));
+    assert_eq!(report.body.usage.cost_usd, 3.0);
+    assert_eq!(report.body.usage.total_tokens(), 20);
+    let root_line = report
+        .body
+        .agents
+        .iter()
+        .find(|agent| agent.id == root)
+        .unwrap();
+    assert_eq!(root_line.subtree_usage.cost_gap, Some(CostGap::Mixed));
+    assert!(report.digest().contains("multiple cost gaps"));
+}

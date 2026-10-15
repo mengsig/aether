@@ -130,9 +130,9 @@ pub(crate) enum EngineLink {
 fn _usage(_: Usage) {}
 
 mod accounting;
+pub(crate) use accounting::TurnPricing;
 use accounting::{
-    SubtreeUsage, TurnPricing, budget_crossed, raise_to, recompute_snapshot_accounting,
-    record_context_usage,
+    SubtreeUsage, budget_crossed, raise_to, recompute_snapshot_accounting, record_context_usage,
 };
 mod execution;
 pub(crate) use execution::execute;

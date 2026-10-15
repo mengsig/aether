@@ -297,6 +297,7 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             let text = v.get("result").and_then(Value::as_str).map(str::to_owned);
             let (cost_usd, mut events) = state.session_cost.receipt(&v);
             events.push(EngineEvent::Done(EngineOutcome {
+                closing_accounting: true,
                 usage: v.get("usage").map(parse_usage).unwrap_or_default(),
                 cost_usd,
                 stop_reason: v
@@ -531,6 +532,7 @@ fn parse_usage(u: &Value) -> Usage {
         // engine did report a price for as a floor.
         cost_usd: 0.0,
         cost_complete: true,
+        cost_gap: None,
         cost_basis: Default::default(),
         // Any estimate for these tokens comes from the registry, in the runtime.
         estimated_cost_usd: None,

@@ -15,7 +15,7 @@ fn native_delegation_stops_the_turn_instead_of_disappearing() {
         );
         assert!(state.done);
         assert!(matches!(&events[..], [EngineEvent::Done(outcome)]
-            if outcome.is_error && outcome.interrupted && outcome.error.as_ref().unwrap().contains("native delegation")));
+            if outcome.is_error && outcome.interrupted && !outcome.closing_accounting && outcome.error.as_ref().unwrap().contains("native delegation")));
         assert!(
             state
                 .notification("item/agentMessage/delta", &json!({"delta":"late"}))
@@ -157,6 +157,7 @@ fn failures_and_retries_are_reported() {
     match ended.last() {
         Some(EngineEvent::Done(o)) => {
             assert!(o.is_error);
+            assert!(o.closing_accounting);
             assert_eq!(o.error.as_deref(), Some("quota"));
         }
         other => panic!("{other:?}"),
@@ -178,6 +179,7 @@ fn unexpected_native_interrupt_is_an_error_without_a_harness_boundary_flag() {
             })
             .unwrap();
         assert_eq!(outcome.is_error, !cancelling);
+        assert!(!outcome.closing_accounting);
         assert!(!outcome.interrupted);
         if !cancelling {
             assert!(outcome.error.as_ref().unwrap().contains("unexpectedly"));

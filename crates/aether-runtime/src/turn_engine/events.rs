@@ -293,7 +293,7 @@ pub(super) fn handle_event(
                 state.pricing.apply(&mut usage);
                 state.priced |= usage.cost_complete;
             } else {
-                usage.cost_complete = false;
+                usage.mark_cost_gap(aether_core::model::CostGap::Unreported);
             }
             // The observed interval since the engine started producing this
             // message: the turn's start for the first one, the previous
@@ -401,10 +401,15 @@ pub(super) fn handle_event(
         EngineEvent::UsageDelta { mut usage } => {
             // The engine could not read every counter behind these tokens, so
             // any price for them could be off either way: counted, unpriced.
-            let exact = usage.cost_complete;
+            let coverage = usage;
             state.pricing.apply(&mut usage);
-            if !exact {
+            if !coverage.cost_complete {
                 usage.set_cost(None);
+                usage.cost_gap = Some(
+                    coverage
+                        .cost_gap
+                        .unwrap_or(aether_core::model::CostGap::Unreported),
+                );
             }
             record_usage(runtime, ctx, state, usage)?;
         }

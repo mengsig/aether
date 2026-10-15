@@ -125,7 +125,7 @@ async fn a_cancel_is_reported_before_the_term_ladder_runs() {
         .expect("the cancel was reported only after the ladder")
         .expect("the run reports its cancel");
     assert!(
-        matches!(&event, EngineEvent::Done(o) if o.error.as_deref() == Some("cancelled")),
+        matches!(&event, EngineEvent::Done(o) if !o.closing_accounting && o.error.as_deref() == Some("cancelled")),
         "{event:?}"
     );
     assert!(
@@ -179,4 +179,34 @@ async fn stdout_read_error_preserves_stderr_and_session_loss_for_retry() {
     let error = outcome.error.unwrap();
     assert!(error.contains("stdout read error"), "{error}");
     assert!(error.contains("old conversation"), "{error}");
+}
+
+#[tokio::test]
+async fn process_crash_without_a_result_has_no_closing_accounting() {
+    let mut run = run_process(
+        "sh",
+        vec!["-c".into(), "exit 1".into()],
+        PathBuf::from("/"),
+        &[],
+        String::new(),
+        false,
+        None,
+        CancellationToken::new(),
+        |_| Vec::new(),
+    )
+    .await
+    .expect("spawn sh");
+    let Some(EngineEvent::Done(outcome)) = run.events.recv().await else {
+        panic!("expected crash outcome");
+    };
+    assert!(outcome.is_error);
+    assert!(
+        outcome
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("without a result")
+    );
+    assert!(!outcome.closing_accounting);
+    assert_eq!(outcome.usage, Usage::default());
 }

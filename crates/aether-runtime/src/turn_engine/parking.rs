@@ -99,6 +99,8 @@ pub(super) struct Park {
     /// The runtime stopped the process rather than the engine ending itself.
     /// Shared with the stop timer, which is what usually sets it.
     pub(super) killed: Arc<AtomicBool>,
+    /// A native interrupt was requested, even if the process has not exited.
+    pub(super) stop_requested: bool,
     /// The armed stop, so a turn that ends before it fires can call it off.
     pub(super) stop: Option<tokio::task::AbortHandle>,
     /// Harness calls the turn refused after its end was decided.
@@ -113,11 +115,28 @@ impl Park {
     pub(super) fn started(background: &BTreeSet<String>) -> Self {
         Self {
             killed: Arc::new(AtomicBool::new(false)),
+            stop_requested: false,
             stop: None,
             refused: 0,
             refused_names: Vec::new(),
             background: background.iter().take(MAX_PARKED_NAMES).cloned().collect(),
         }
+    }
+
+    /// Request a native interrupt before EOF; closing terminal input alone
+    /// still permits the engine to finish its accounting.
+    pub(super) fn ask_to_stop(
+        &mut self,
+        input: &mut Option<mpsc::Sender<EngineInput>>,
+        stop: Option<&mpsc::Sender<std::time::Duration>>,
+        grace: std::time::Duration,
+    ) {
+        if let Some(stop) = stop {
+            self.stop_requested = true;
+            // Full means a stop is queued; closed means the engine is gone.
+            let _ = stop.try_send(grace);
+        }
+        drop(input.take());
     }
 
     pub(super) fn killed(&self) -> bool {
@@ -198,10 +217,10 @@ pub(super) fn start_park(
     fired: mpsc::Sender<()>,
     defer_interrupt: bool,
 ) -> Park {
-    if !defer_interrupt || grace.is_zero() {
-        ask_to_stop(input, stop, grace);
-    }
     let mut park = Park::started(background);
+    if !defer_interrupt || grace.is_zero() {
+        park.ask_to_stop(input, stop, grace);
+    }
     if grace.is_zero() {
         park.stop_now(cancel);
     } else {
@@ -234,24 +253,6 @@ pub(super) fn park_grace(
         _ if background_running => BACKGROUND_GRACE.min(configured),
         _ => configured,
     }
-}
-
-/// Ask the engine to end the turn the way it supports: closing stdin, which
-/// a CLI that exits on it honours, plus its own stop verb when it has one.
-/// Queue the native interrupt before closing input so EOF cannot race it.
-/// `grace` is how
-/// long the runtime will wait before stopping the process itself, so an
-/// adapter with its own wind-down timer does not outlast it.
-pub(super) fn ask_to_stop(
-    input: &mut Option<mpsc::Sender<EngineInput>>,
-    stop: Option<&mpsc::Sender<std::time::Duration>>,
-    grace: std::time::Duration,
-) {
-    if let Some(stop) = stop {
-        // Capacity 1 and asked once: a full channel is a stop already sent.
-        let _ = stop.try_send(grace);
-    }
-    drop(input.take());
 }
 
 /// Who ended the run. An adapter that force-killed the process when its own

@@ -51,7 +51,7 @@ fn digest_ascii_changes_only_authored_decoration_and_keeps_cost_truth() {
             assert!(text.matches(original).count() >= 4, "{text}");
             assert!(text.replace(original, "DATA").is_ascii(), "{text}");
             if !usage.cost_complete && usage.cost_usd > 0.0 {
-                assert!(text.contains(">= $0.4000 (some unpriced)"), "{text}");
+                assert!(text.contains(">= $0.4000 (some cost unknown)"), "{text}");
             } else if !usage.cost_complete {
                 assert!(text.contains(crate::model::Usage::COST_UNKNOWN), "{text}");
             }

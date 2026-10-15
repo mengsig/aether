@@ -360,3 +360,55 @@ whole command, images included, and stores nothing.
 `subtree: true` delivers the same references to every recipient; the bytes
 are still stored once. The `send_message` tool that agents use to write to
 each other is text only.
+
+## Usage and cost coverage
+
+`Usage.cost_usd` is the sum of known costs; `cost_complete: false` makes it a
+lower bound. `cost_basis` identifies list prices, provider receipts, or a mix.
+The optional `cost_gap` explains incomplete coverage: `unpriced` means reported
+usage had neither a price nor a provider cost; `unreported` means the engine
+did not fully report usage; `interrupted` means possibly billed work lacks
+closing accounting, including caller cancellation after submission. Closing
+accounting means the engine's own final usage message, not a synthesized
+adapter outcome or an interrupted turn completion. Any two different reasons
+combine as `mixed`. `unknown` is reserved for legacy
+incomplete records and unrecognized future reasons in Rust readers.
+
+Complete totals omit `cost_gap`. Missing reasons on older incomplete records
+read as `unknown`. Adding complete usage cannot repair a gap or lower known
+costs or token counters. Engine failures with closing accounting keep their
+reported coverage; a missing dollar figure alone is not an interruption.
+Caller cancellation after submission contributes an `interrupted` gap even if
+the engine reports a final cost: an aborted stream can omit output. Proven pre-launch
+failures, including unsupported engine configuration, remain complete zero.
+An absent start acknowledgement or usage receipt is not proof of zero spend.
+
+An API request becomes possibly billed once its stream starts. A stream
+failure without closing accounting keeps observed tokens and priced dollars
+as a floor with an `interrupted` gap. An error response before stream start adds no spend.
+
+After a harness stop (park, kill-switch, or exhaustion), costs are complete
+only if closing accounting arrived before the stop was requested and no possible
+new request followed it. A closing receipt after interrupting an in-flight
+request cannot repair the `interrupted` gap. Terminal parks allow final accounting
+until their grace expires; they do not request a native interrupt.
+Engine message invocation records carry no usage when the engine accounts
+per request. Their zero-dollar `unreported` gap describes missing per-message
+usage, not missing turn accounting: request usage and its coverage belong to
+the turn and agent totals.
+
+Only possible new model work invalidates an engine's closing receipt: assistant
+content, tool activity, or background results and steered messages handed to
+the engine. Rejected input and bookkeeping events add no spend. A background
+result delivered after a receipt is possibly billed; without another answer
+within the grace period, coverage includes an `interrupted` gap.
+
+Known limits: if streamed usage crosses a budget before the runtime reads the
+closing receipt, the run remains an incomplete floor. A receipt alone cannot
+prove that a cancelled request reported every output token. Usage and prices
+remain dependent on what engines and providers report; list prices are estimates.
+
+No Welcome feature flag is needed: this is optional response metadata. Older
+daemons omit it, and clients must keep an absent reason unknown. Generated
+Python and TypeScript clients list the known reason strings; Rust readers map
+unrecognized strings to `unknown`.

@@ -195,6 +195,7 @@ pub(super) async fn compaction_client(
     let tool_ctx = tool_context(runtime, ctx);
     Ok(Arc::new(crate::compaction_client::CompactionClient {
         engine,
+        pricing: crate::turn_engine::TurnPricing::of(runtime, &resolved),
         turn: aether_engine::EngineTurn {
             prompt: String::new(),
             images: Vec::new(),
@@ -593,7 +594,11 @@ pub(super) fn record_compaction_usage(
     let resolved = runtime.models.resolve(&attempt.model)?;
     let mut usage = attempt.usage.unwrap_or_default();
     if attempt.usage.is_none() {
-        usage.set_cost(None);
+        usage.mark_cost_gap(if attempt.error.is_some() {
+            aether_core::model::CostGap::Interrupted
+        } else {
+            aether_core::model::CostGap::Unreported
+        });
     } else if !resolved.provider.protocol.is_engine() {
         usage.price_from(resolved.model.capabilities.cost, None);
     }

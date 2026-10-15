@@ -35,6 +35,42 @@ impl CostBasis {
     }
 }
 
+/// Why the dollar total may omit work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CostGap {
+    /// The engine did not fully report usage for work it performed.
+    Unreported,
+    /// Usage was reported without a price or provider cost.
+    Unpriced,
+    /// Possibly billed work lacks closing accounting, including cancellation after submission.
+    Interrupted,
+    /// Two or more different missing-cost reasons contributed.
+    Mixed,
+    /// Legacy records lack a reason; unrecognized future reasons also read as unknown.
+    #[serde(other)]
+    Unknown,
+}
+
+impl CostGap {
+    pub fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (a, b) if a == b => a,
+            _ => Self::Mixed,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "some cost unknown",
+            Self::Unpriced => Usage::COST_PARTIAL,
+            Self::Unreported => "usage not fully reported",
+            Self::Interrupted => "interrupted run, cost unknown",
+            Self::Mixed => "multiple cost gaps",
+        }
+    }
+}
+
 /// Token accounting for one invocation, or a running total.
 ///
 /// `cost_usd` sums invocations with a configured price or provider-reported
@@ -58,9 +94,13 @@ pub struct Usage {
     /// Dollars over the invocations that could be priced. A floor when
     /// `cost_complete` is false.
     pub cost_usd: f64,
-    /// Every invocation folded in here could be priced. Once false it never
-    /// returns to true: an unknown cannot be recovered by adding to it.
+    /// Every contribution's cost is accounted for. Adding usage cannot repair a gap;
+    /// closing accounting may replace provisional usage for the same run.
     pub cost_complete: bool,
+    /// Missing-cost reason; absent for complete totals. Live missing usage is unreported;
+    /// legacy or unrecognized reasons read as unknown. Distinct reasons combine as mixed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_gap: Option<CostGap>,
     /// Source of the dollar figures, including `estimated_cost_usd` where present.
     /// List-price figures retain their existing budget semantics; this is a label.
     #[serde(default)]
@@ -87,6 +127,7 @@ impl Default for Usage {
             reasoning_tokens: None,
             cost_usd: 0.0,
             cost_complete: true,
+            cost_gap: None,
             cost_basis: CostBasis::Unknown,
             estimated_cost_usd: None,
         }
@@ -108,6 +149,8 @@ struct UsageWire {
     #[serde(default)]
     cost_complete: Option<bool>,
     #[serde(default)]
+    cost_gap: Option<CostGap>,
+    #[serde(default)]
     cost_basis: CostBasis,
     /// Absent in a store written before estimates existed, and absent
     /// whenever nothing was estimated: both read as no estimate.
@@ -117,6 +160,8 @@ struct UsageWire {
 
 impl From<UsageWire> for Usage {
     fn from(w: UsageWire) -> Self {
+        let complete = w.cost_complete.unwrap_or(w.cost_usd.is_some());
+        let gap = (!complete).then_some(w.cost_gap.unwrap_or(CostGap::Unknown));
         Self {
             input_tokens: w.input_tokens,
             output_tokens: w.output_tokens,
@@ -124,7 +169,8 @@ impl From<UsageWire> for Usage {
             cache_write_tokens: w.cache_write_tokens,
             reasoning_tokens: w.reasoning_tokens,
             cost_usd: w.cost_usd.unwrap_or(0.0),
-            cost_complete: w.cost_complete.unwrap_or(w.cost_usd.is_some()),
+            cost_complete: complete,
+            cost_gap: gap,
             cost_basis: w.cost_basis,
             estimated_cost_usd: w.estimated_cost_usd,
         }
@@ -147,10 +193,14 @@ impl Usage {
         if self.cost_complete {
             return amount(value);
         }
+        let gap = self.cost_gap.unwrap_or(CostGap::Unknown);
         if self.cost_usd <= 0.0 {
-            return Self::COST_UNKNOWN.to_owned();
+            return match gap {
+                CostGap::Unknown | CostGap::Unpriced => Self::COST_UNKNOWN.to_owned(),
+                _ => format!("{} ({})", Self::COST_UNKNOWN, gap.label()),
+            };
         }
-        format!("≥ {} ({})", amount(value), Self::COST_PARTIAL)
+        format!("≥ {} ({})", amount(value), gap.label())
     }
 
     /// [`Self::said`] about the cost itself.
@@ -212,8 +262,11 @@ impl Usage {
     /// Price one invocation: the dollars the model or engine reported, or
     /// `None` when it reported none, which makes this usage a floor.
     pub fn set_cost(&mut self, cost: Option<f64>) {
+        debug_assert!(cost.is_none_or(|value| value.is_finite() && value >= 0.0));
+        debug_assert!(self.estimated_cost_usd.is_none_or(|value| value >= 0.0));
         self.cost_usd = cost.unwrap_or(0.0);
         self.cost_complete = cost.is_some();
+        self.cost_gap = cost.is_none().then_some(CostGap::Unpriced);
         self.cost_basis = if cost.is_some() {
             CostBasis::ProviderReported
         } else if self.estimated_cost_usd.is_some() {
@@ -221,6 +274,32 @@ impl Usage {
         } else {
             CostBasis::Unknown
         };
+    }
+
+    /// Preserve the known floor while recording another missing contribution.
+    pub fn mark_cost_gap(&mut self, gap: CostGap) {
+        debug_assert!(self.cost_usd.is_finite() && self.cost_usd >= 0.0);
+        debug_assert!(self.estimated_cost_usd.is_none_or(|cost| cost >= 0.0));
+        self.cost_gap = Some(if self.cost_complete {
+            gap
+        } else {
+            self.cost_gap.unwrap_or(CostGap::Unknown).combine(gap)
+        });
+        self.cost_complete = false;
+    }
+
+    /// Merge coverage without adding the other contribution's counters or cost.
+    pub fn merge_cost_coverage(&mut self, other: Self) {
+        debug_assert!(self.cost_usd.is_finite() && self.cost_usd >= 0.0);
+        debug_assert!(other.cost_usd.is_finite() && other.cost_usd >= 0.0);
+        self.cost_gap = if self.cost_complete {
+            None
+        } else {
+            Some(self.cost_gap.unwrap_or(CostGap::Unknown))
+        };
+        if !other.cost_complete {
+            self.mark_cost_gap(other.cost_gap.unwrap_or(CostGap::Unknown));
+        }
     }
 
     /// Price one invocation from the registry: billed dollars where its model
@@ -295,7 +374,7 @@ impl AddAssign for Usage {
             (a, b) => Some(a.unwrap_or(0).saturating_add(b.unwrap_or(0))),
         };
         self.cost_usd += rhs.cost_usd;
-        self.cost_complete &= rhs.cost_complete;
+        self.merge_cost_coverage(rhs);
         // Like `reasoning_tokens`: a total nobody estimated stays unestimated
         // rather than becoming a confident zero.
         self.estimated_cost_usd = match (self.estimated_cost_usd, rhs.estimated_cost_usd) {

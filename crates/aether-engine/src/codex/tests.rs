@@ -459,6 +459,7 @@ fn parses_thread_items_and_usage() {
                 "billed as it arrives, for the runtime to price"
             );
             assert!(!o.is_error);
+            assert!(o.closing_accounting);
             assert_eq!(o.usage, usage, "and the run's total closes the turn");
         }
         other => panic!("{other:?}"),
@@ -466,7 +467,8 @@ fn parses_thread_items_and_usage() {
     let failed = r#"{"type":"turn.failed","error":{"message":"You've hit your usage limit."}}"#;
     match &parse_line(failed, &mut st)[0] {
         EngineEvent::Done(o) => {
-            assert!(o.is_error && o.error.as_deref().unwrap().contains("usage limit"))
+            assert!(o.is_error && o.error.as_deref().unwrap().contains("usage limit"));
+            assert!(!o.closing_accounting);
         }
         other => panic!("{other:?}"),
     }
@@ -572,6 +574,10 @@ fn a_missing_counter_is_not_a_restart() {
             assert_eq!(usage.cache_read_tokens, 0, "the cached counter held");
             assert_eq!((usage.input_tokens, usage.output_tokens), (200, 10));
             assert!(!usage.cost_complete, "an inexact split is not a price");
+            assert_eq!(
+                serde_json::to_value(usage).unwrap()["cost_gap"],
+                "unreported"
+            );
             assert_eq!(o.usage.total_tokens(), 1_200 + 20);
         }
         other => panic!("{other:?}"),
@@ -895,5 +901,28 @@ fn a_different_thread_does_not_inherit_the_resumed_ones_counters() {
             assert_eq!((usage.input_tokens, usage.output_tokens), (300, 20));
         }
         other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn failed_turn_counts_as_closing_accounting_only_with_its_own_usage() {
+    for kind in ["turn.failed", "error"] {
+        let mut state = ParseState::default();
+        let events = parse_line(
+            &json!({"type":kind,"error":{"message":"failure"},
+            "usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":10,
+                "reasoning_output_tokens":0}})
+            .to_string(),
+            &mut state,
+        );
+        let Some(EngineEvent::Done(outcome)) = events.last() else {
+            panic!("{events:?}");
+        };
+        assert!(outcome.is_error);
+        assert_eq!(outcome.closing_accounting, kind == "turn.failed");
+        assert_eq!(
+            outcome.usage.total_tokens(),
+            if kind == "turn.failed" { 110 } else { 0 }
+        );
     }
 }

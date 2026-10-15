@@ -260,3 +260,182 @@ async fn an_adapter_force_kill_is_not_recorded_as_the_engine_stopping_itself() {
     );
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn park_timer_killing_an_in_flight_request_is_interrupted() {
+    let mut h = harness_with(
+        Duration::from_millis(200),
+        OnKill::Report(vec![cancelled_with(Usage::default())]),
+    )
+    .await;
+    let worker = start_agent(
+        &h,
+        CreateAgentSpec {
+            objective: Some("finish while accounting drains".into()),
+            start: true,
+            model: Some(ModelRef::new("claude-code", "haiku")),
+            config: Some(AgentConfig {
+                approval: ApprovalPolicy::none(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+    let turn = turn_of(&mut h, worker).await;
+    let events = turn.events.upgrade().expect("live engine");
+    events
+        .send(EngineEvent::UsageDelta {
+            usage: Usage {
+                input_tokens: 100,
+                output_tokens: 10,
+                ..Default::default()
+            },
+        })
+        .await
+        .expect("first request usage");
+    let (reply, is_error) = call(&h, &turn, "complete_task", json!({"summary":"done"})).await;
+    assert!(!is_error, "{reply}");
+    events
+        .send(EngineEvent::Delta(
+            aether_core::model::StreamEvent::MessageStart {
+                provider_message_id: None,
+                model: None,
+            },
+        ))
+        .await
+        .expect("request started after completion");
+    let ended = wait_until(h.store.as_ref(), worker, |a| a.status.is_terminal()).await;
+    assert!(
+        turn.observed.cancelled(),
+        "park timer must kill the in-flight request"
+    );
+    assert_eq!(ended.stats.usage.total_tokens(), 110);
+    assert!(!ended.stats.usage.cost_complete);
+    assert_eq!(
+        ended.stats.usage.cost_gap,
+        Some(aether_core::model::CostGap::Interrupted)
+    );
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn native_park_stop_of_an_in_flight_request_is_interrupted() {
+    let mut h = harness(Duration::from_secs(30)).await;
+    let worker = start_coordinator(&h);
+    let turn = turn_of(&mut h, worker).await;
+    let events = turn.events.upgrade().expect("live engine");
+    events
+        .send(EngineEvent::UsageDelta {
+            usage: Usage {
+                input_tokens: 100,
+                output_tokens: 10,
+                ..Default::default()
+            },
+        })
+        .await
+        .expect("first request usage");
+    let (reply, error) = call(&h, &turn, "wait_for", json!({"timeout_seconds": 3600})).await;
+    assert!(!error, "{reply}");
+    assert!(turn.observed.stopped());
+    assert!(!turn.observed.cancelled());
+    events
+        .send(EngineEvent::Delta(
+            aether_core::model::StreamEvent::MessageStart {
+                provider_message_id: None,
+                model: None,
+            },
+        ))
+        .await
+        .expect("next request in flight");
+    turn.end
+        .send(())
+        .expect("native closing result after interrupt");
+    let ended = wait_for_park(&h, worker).await;
+    assert!(!turn.observed.cancelled());
+    assert_eq!(ended.stats.usage.total_tokens(), 110);
+    assert!(!ended.stats.usage.cost_complete);
+    assert_eq!(
+        ended.stats.usage.cost_gap,
+        Some(aether_core::model::CostGap::Interrupted)
+    );
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn park_stop_after_closing_receipt_stays_complete() {
+    let measured = Usage {
+        input_tokens: 100,
+        output_tokens: 10,
+        ..Default::default()
+    };
+    let mut h = harness_full(
+        Duration::from_millis(200),
+        OnKill::Report(vec![EngineOutcome {
+            closing_accounting: true,
+            usage: measured,
+            ..Default::default()
+        }]),
+        Script {
+            background: Some("still-running".into()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let mut spec = coordinator_spec();
+    spec.config.as_mut().expect("configured agent").long_lived = false;
+    let worker = start_agent(&h, spec);
+    let turn = turn_of(&mut h, worker).await;
+    let (reply, error) = call(&h, &turn, "complete_task", json!({"summary": "done"})).await;
+    assert!(!error, "{reply}");
+    assert!(!turn.observed.stopped());
+    turn.events
+        .upgrade()
+        .expect("live engine")
+        .send(EngineEvent::Done(EngineOutcome {
+            closing_accounting: true,
+            usage: measured,
+            ..Default::default()
+        }))
+        .await
+        .expect("receipt before the park timer fires");
+    let ended = wait_until(h.store.as_ref(), worker, |a| a.status.is_terminal()).await;
+    assert!(
+        turn.observed.cancelled(),
+        "the park timer stopped the engine"
+    );
+    assert_eq!(ended.stats.usage.total_tokens(), 110);
+    assert!(ended.stats.usage.cost_complete);
+    assert_eq!(ended.stats.usage.cost_gap, None);
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn terminal_park_closing_receipt_stays_complete() {
+    let mut h = harness_full(
+        Duration::from_secs(30),
+        OnKill::Silent,
+        Script {
+            end_usage: Some(Usage {
+                input_tokens: 100,
+                output_tokens: 10,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
+    .await;
+    let mut spec = coordinator_spec();
+    spec.config.as_mut().expect("configured agent").long_lived = false;
+    let worker = start_agent(&h, spec);
+    let turn = turn_of(&mut h, worker).await;
+    let (reply, error) = call(&h, &turn, "complete_task", json!({"summary": "done"})).await;
+    assert!(!error, "{reply}");
+    assert!(!turn.observed.stopped());
+    turn.end.send(()).expect("native terminal receipt");
+    let ended = wait_until(h.store.as_ref(), worker, |a| a.status.is_terminal()).await;
+    assert!(!turn.observed.cancelled());
+    assert_eq!(ended.stats.usage.total_tokens(), 110);
+    assert!(ended.stats.usage.cost_complete);
+    assert_eq!(ended.stats.usage.cost_gap, None);
+    h.runtime.shutdown().await;
+}

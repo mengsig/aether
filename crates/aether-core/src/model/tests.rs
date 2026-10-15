@@ -334,7 +334,7 @@ fn a_derived_number_is_said_the_way_its_cost_is() {
     let mut complete = priced(2.0);
     assert_eq!(complete.said(4.0, hour), "$4.00/h");
     complete.cost_complete = false;
-    assert_eq!(complete.said(4.0, hour), "≥ $4.00/h (some unpriced)");
+    assert_eq!(complete.said(4.0, hour), "≥ $4.00/h (some cost unknown)");
     assert_eq!(unpriced().said(0.0, hour), Usage::COST_UNKNOWN);
 }
 
@@ -506,6 +506,7 @@ fn unpriced() -> Usage {
     Usage {
         input_tokens: 100,
         cost_complete: false,
+        cost_gap: Some(CostGap::Unpriced),
         ..Default::default()
     }
 }
@@ -667,4 +668,92 @@ fn context_tokens_include_caches_exclude_output_and_saturate() {
     ] {
         assert_eq!(usage.context_tokens(), u64::MAX);
     }
+}
+
+#[test]
+fn cost_gaps_combine_all_distinct_reasons_as_mixed() {
+    use CostGap::{Interrupted, Mixed, Unknown, Unpriced, Unreported};
+    for left in [Unknown, Unpriced, Interrupted, Unreported, Mixed] {
+        for right in [Unknown, Unpriced, Interrupted, Unreported, Mixed] {
+            assert_eq!(
+                left.combine(right),
+                if left == right { left } else { Mixed }
+            );
+            assert_eq!(left.combine(right), right.combine(left));
+        }
+    }
+}
+
+#[test]
+fn legacy_cost_gaps_read_as_unknown_and_complete_records_drop_the_gap() {
+    let base = serde_json::json!({"input_tokens": 1, "output_tokens": 2,
+        "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": 0.5,
+        "cost_complete": false});
+    let old: Usage = serde_json::from_value(base.clone()).unwrap();
+    assert_eq!(old.cost_gap, Some(CostGap::Unknown));
+    assert_eq!(old.cost_usd, 0.5);
+    for gap in [
+        CostGap::Unknown,
+        CostGap::Unpriced,
+        CostGap::Unreported,
+        CostGap::Interrupted,
+        CostGap::Mixed,
+    ] {
+        let mut wire = base.clone();
+        wire["cost_gap"] = serde_json::to_value(gap).unwrap();
+        let usage: Usage = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(usage.cost_gap, Some(gap));
+        assert_eq!(
+            serde_json::from_value::<Usage>(serde_json::to_value(usage).unwrap()).unwrap(),
+            usage
+        );
+        wire["cost_complete"] = true.into();
+        let complete: Usage = serde_json::from_value(wire).unwrap();
+        assert_eq!(complete.cost_gap, None);
+        assert!(
+            serde_json::to_value(complete)
+                .unwrap()
+                .get("cost_gap")
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn cost_gap_rollups_preserve_all_counters_and_known_dollars() {
+    let mut total = priced(2.0);
+    total.input_tokens = 10;
+    let mut gap = Usage {
+        output_tokens: 5,
+        ..Default::default()
+    };
+    gap.mark_cost_gap(CostGap::Interrupted);
+    total += gap;
+    assert_eq!(total.cost_gap, Some(CostGap::Interrupted));
+    assert_eq!(total.cost_usd, 2.0);
+    assert_eq!(total.total_tokens(), 15);
+    assert_eq!(
+        total.cost_line(),
+        "≥ $2.0000 (interrupted run, cost unknown)"
+    );
+    total += unpriced();
+    assert_eq!(total.cost_gap, Some(CostGap::Mixed));
+    assert!(total.cost_usd >= 2.0);
+    assert!(total.total_tokens() >= 15);
+    total += Usage {
+        cost_complete: false,
+        ..Default::default()
+    };
+    assert_eq!(total.cost_gap, Some(CostGap::Mixed));
+    assert_eq!(total.cost_usd, 2.0);
+}
+
+#[test]
+fn future_cost_gap_values_read_as_unknown() {
+    let wire = serde_json::json!({"input_tokens": 1, "output_tokens": 2,
+        "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": 0.5,
+        "cost_complete": false, "cost_gap": "future_reason"});
+    let usage: Usage = serde_json::from_value(wire).unwrap();
+    assert_eq!(usage.cost_gap, Some(CostGap::Unknown));
+    assert_eq!(usage.cost_usd, 0.5);
 }

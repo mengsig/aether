@@ -271,4 +271,22 @@ mod tests {
         assert!((summary.rate_usd_per_hour - 0.116001).abs() < 1e-12);
         assert!((summary.forecast_usd_next_hour - 0.1740015).abs() < 1e-12);
     }
+
+    #[test]
+    fn cost_gap_reasons_roll_up_through_budgets_and_run_summaries() {
+        use crate::model::CostGap;
+        let run = RunId::new();
+        let mut root = agent(None, run, 1.0, true);
+        let mut child = agent(Some(root.id), run, 2.0, false);
+        root.stats.usage.mark_cost_gap(CostGap::Unpriced);
+        child.stats.usage.mark_cost_gap(CostGap::Interrupted);
+        let members = [root.clone(), child];
+        let total = subtree_usage(&members)[&root.id];
+        assert_eq!(total.cost_gap, Some(CostGap::Mixed));
+        assert_eq!(total.cost_usd, 3.0);
+        assert_eq!(total.total_tokens(), 20);
+        let summary = &active_runs(&members, now())[0];
+        assert_eq!(summary.usage, total);
+        assert!(!summary.usage.cost_complete);
+    }
 }

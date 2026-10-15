@@ -42,6 +42,7 @@ async fn check_startup_failure(dispatch: bool) {
     };
     assert_eq!(outcome.prompt_not_submitted, !dispatch);
     assert!(outcome.is_error);
+    assert!(!outcome.closing_accounting);
     drop(driver);
     child.wait().await.unwrap();
 }
@@ -636,6 +637,7 @@ async fn sandbox_exit_mid_turn_fails_the_turn() {
     .await
     .expect("a lost sandbox must end the turn");
     assert!(outcome.is_error);
+    assert!(!outcome.closing_accounting);
     let error = outcome.error.unwrap();
     assert!(error.contains("sandbox exited mid-turn"), "{error}");
     assert!(error.contains("SIGKILL"), "{error}");

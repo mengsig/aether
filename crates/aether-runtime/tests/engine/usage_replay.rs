@@ -166,6 +166,7 @@ impl Engine for SessionCounterEngine {
                 .await;
             let _ = tx
                 .send(EngineEvent::Done(EngineOutcome {
+                    closing_accounting: true,
                     text: Some("done".into()),
                     session: Some("thread-1".into()),
                     ..Default::default()
@@ -445,7 +446,11 @@ async fn a_codex_exec_turn_with_an_unreadable_counter_is_not_priced_as_exact() {
         "the tokens are still counted"
     );
     assert!(!usage.cost_complete, "an inexact reading is not a price");
-    assert_eq!(usage.cost_line(), aether_core::model::Usage::COST_UNKNOWN);
+    assert_eq!(
+        usage.cost_gap,
+        Some(aether_core::model::CostGap::Unreported)
+    );
+    assert_eq!(usage.cost_line(), "not reported (usage not fully reported)");
     let events = h
         .store
         .events(0, 1000, &EventFilter::for_agent(agent))
@@ -542,7 +547,11 @@ async fn a_codex_exec_turn_completed_without_usage_is_not_priced_as_exact() {
     let (h, agent) = codex_exec_agent(runs, &ModelRef::new("codex", "sol")).await;
     let usage = codex_exec_turn(&h, agent, 1).await;
     assert!(!usage.cost_complete, "nothing read is not a $0 price");
-    assert_eq!(usage.cost_line(), aether_core::model::Usage::COST_UNKNOWN);
+    assert_eq!(
+        usage.cost_gap,
+        Some(aether_core::model::CostGap::Unreported)
+    );
+    assert_eq!(usage.cost_line(), "not reported (usage not fully reported)");
     assert!(noted(
         &h,
         agent,

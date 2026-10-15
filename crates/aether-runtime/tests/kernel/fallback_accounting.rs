@@ -101,8 +101,12 @@ async fn a_failed_invocation_prices_the_tokens_it_burned() {
         failed.usage
     );
     assert!(
-        failed.usage.cost_complete,
-        "a failed invocation must still be priced"
+        !failed.usage.cost_complete,
+        "an unfinished stream has only a cost floor"
+    );
+    assert_eq!(
+        failed.usage.cost_gap,
+        Some(aether_core::model::CostGap::Interrupted)
     );
     let cost = failed.usage.cost_usd;
     assert!(cost > 0.0, "burned tokens priced at {cost}");
@@ -246,4 +250,20 @@ async fn a_chain_failing_everywhere_costs_one_turn_not_three() {
         error.contains("every link of the model chain failed") && error.contains("3 turns"),
         "the failure must name the chain, not one link: {error}"
     );
+}
+
+#[tokio::test]
+async fn prestream_error_status_keeps_complete_zero() {
+    let error =
+        aether_core::model::ModelError::new(ModelErrorClass::InvalidRequest, "fixture rejection");
+    let h = harness(vec![Err(error)]).await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(spec("rejected request"), Actor::user())
+        .unwrap();
+    h.wait_until(agent.id, |status| status.is_terminal()).await;
+    let invocations = h.store.invocations_for_agent(agent.id).unwrap();
+    assert_eq!(invocations.len(), 1);
+    assert_eq!(invocations[0].usage, aether_core::model::Usage::default());
+    h.runtime.shutdown().await;
 }

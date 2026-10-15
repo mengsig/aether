@@ -70,6 +70,7 @@ fn unpriced(id: AgentId) -> EventDraft {
                 input_tokens: 100,
                 output_tokens: 10,
                 cost_complete: false,
+                cost_gap: Some(crate::model::CostGap::Unpriced),
                 ..Default::default()
             },
             stop_reason: None,

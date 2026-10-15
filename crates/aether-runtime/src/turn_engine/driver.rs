@@ -16,6 +16,10 @@ use super::{
 /// run's provisional accounting.
 pub(super) struct DriveResult {
     pub(super) outcome: EngineOutcome,
+    /// Later activity invalidates an earlier closing outcome.
+    pub(super) receipt_seen: bool,
+    /// The caller's token was cancelled; local harness stops use the engine child.
+    pub(super) user_cancelled: bool,
     /// Streamed content, tool/bridge activity or steering prevents replay.
     pub(super) activity_seen: bool,
     /// Present when a harness action ended the turn while the engine was
@@ -65,6 +69,64 @@ fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
             *total != baseline
         }
         _ => true,
+    }
+}
+
+/// Only evidence of a possible new model request invalidates closing accounting.
+fn event_may_start_request(event: &EngineEvent) -> bool {
+    matches!(
+        event,
+        EngineEvent::Assistant { .. }
+            | EngineEvent::Delta(
+                aether_core::model::StreamEvent::MessageStart { .. }
+                    | aether_core::model::StreamEvent::TextDelta { .. }
+                    | aether_core::model::StreamEvent::ThinkingDelta { .. }
+                    | aether_core::model::StreamEvent::BlockStart { .. }
+                    | aether_core::model::StreamEvent::ToolInputDelta { .. }
+            )
+            | EngineEvent::ToolResult { .. }
+            | EngineEvent::Permission { .. }
+            | EngineEvent::Question { .. }
+            | EngineEvent::BackgroundTask { running: false, .. }
+            | EngineEvent::InputAccepted
+    )
+}
+
+fn failed_launch(
+    error: aether_engine::EngineError,
+    pricing: TurnPricing,
+    user_cancelled: bool,
+) -> DriveResult {
+    debug_assert!(pricing.billed.is_none() || pricing.estimate.is_none());
+    let prompt_not_submitted = error.proves_no_submission();
+    debug_assert!(
+        pricing
+            .billed
+            .into_iter()
+            .chain(pricing.estimate)
+            .all(|cost| cost.rates().all(|rate| rate.is_finite() && rate >= 0.0))
+    );
+    DriveResult {
+        outcome: EngineOutcome {
+            is_error: true,
+            error: Some(error.to_string()),
+            prompt_not_submitted,
+            ..Default::default()
+        },
+        receipt_seen: false,
+        user_cancelled,
+        activity_seen: false,
+        park: None,
+        priced: false,
+        usage_seen: false,
+        invoked: false,
+        ran_tools: false,
+        usage_before: None,
+        stream_usage: Usage::default(),
+        request_usage_seen: false,
+        budget_stop: None,
+        pricing,
+        cleaned_up: true,
     }
 }
 
@@ -126,25 +188,7 @@ pub(super) async fn drive(
     let mut run = match engine.run(turn, engine_cancel.clone()).await {
         Ok(r) => r,
         Err(e) => {
-            return Ok(DriveResult {
-                outcome: EngineOutcome {
-                    is_error: true,
-                    error: Some(e.to_string()),
-                    ..Default::default()
-                },
-                activity_seen: false,
-                park: None,
-                priced: false,
-                usage_seen: false,
-                invoked: false,
-                ran_tools: false,
-                usage_before: None,
-                stream_usage: Usage::default(),
-                request_usage_seen: false,
-                budget_stop: None,
-                pricing,
-                cleaned_up: true,
-            });
+            return Ok(failed_launch(e, pricing, cancel.is_cancelled()));
         }
     };
     let mut input = run.input.take();
@@ -152,6 +196,8 @@ pub(super) async fn drive(
     let stop = run.stop.take();
     let inbox_before = ctx.agent.inbox_cursor;
     let mut activity_seen = false;
+    let mut receipt_seen = false;
+    let mut receipt_input_cursor = inbox_before;
     let mut steering = Steering::new(inbox_before);
     // Delivered between context assembly and now: hand it over straight away.
     steer(runtime, ctx, &mut steering, &mut input).await?;
@@ -214,7 +260,14 @@ pub(super) async fn drive(
                 }
             }
             ev = run.events.recv() => {
-                activity_seen |= ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
+                let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
+                if let Some(EngineEvent::Done(outcome)) = &ev {
+                    let stopped = engine_cancel.is_cancelled() || park.as_ref().is_some_and(|park| park.stop_requested);
+                    observe_closing(outcome, stopped, steering.sent_up_to, &mut receipt_seen, &mut receipt_input_cursor);
+                } else if ev.as_ref().is_some_and(event_may_start_request) {
+                    receipt_seen = false;
+                }
+                activity_seen |= active;
                 match ev {
                 None => break settled.take().unwrap_or_else(|| EngineOutcome {
                     is_error: true,
@@ -231,27 +284,7 @@ pub(super) async fn drive(
                         .as_ref()
                         .and_then(|held| held.error.clone())
                         .filter(|error| names_exhaustion(error));
-                    settled = Some(match settled.take() {
-                        Some(mut held) => {
-                            let mut receipt = o;
-                            // A late receipt may improve accounting, but cannot
-                            // turn a cancellation or forced stop into success.
-                            receipt.is_error |= held.is_error;
-                            receipt.forced |= held.forced;
-                            receipt.interrupted |= held.interrupted;
-                            receipt.error = receipt.error.or(held.error.take());
-                            if receipt.usage.total_tokens() == 0 && held.usage.total_tokens() > 0 {
-                                held.is_error = receipt.is_error;
-                                held.forced = receipt.forced;
-                                held.interrupted = receipt.interrupted;
-                                held.error = receipt.error;
-                                held
-                            } else {
-                                receipt
-                            }
-                        }
-                        None => o,
-                    });
+                    settled = Some(merge_reaped_outcome(settled.take(), o));
                     // A synthetic cancellation during reap is not the cause
                     // that made the provider stop answering.
                     if let (Some(error), Some(outcome)) = (exhaustion, settled.as_mut()) {
@@ -427,9 +460,9 @@ pub(super) async fn drive(
                     let before = ctx.agent.stats.usage;
                     let commits_before = runtime.store.commits();
                     handle_event(runtime, ctx, snapshot, ev, &mut state)?;
-                    if reply_received {
+                    if reply_received && let Some(park) = park.as_mut() {
                         park_reply = None;
-                        super::parking::ask_to_stop(&mut input, stop.as_ref(), runtime.config.engine_park_grace);
+                        park.ask_to_stop(&mut input, stop.as_ref(), runtime.config.engine_park_grace);
                     }
                     subtree.note_own_commits(
                         runtime.store.commits().saturating_sub(commits_before),
@@ -481,6 +514,7 @@ pub(super) async fn drive(
             }
             req = req_rx.recv() => {
                 if let Some(req) = req {
+                    receipt_seen = false;
                     activity_seen = true;
                     if native_wait.is_some() && req.name == "wait_for" {
                         let _ = req.reply.send(("A native background wait is already pending in this session.".into(), true));
@@ -641,6 +675,7 @@ pub(super) async fn drive(
                     break;
                 }
                 request = req_rx.recv() => if let Some(request) = request {
+                    receipt_seen = false;
                     activity_seen = true;
                     let _ = request.reply.send((TURN_IS_OVER.to_owned(), true));
                 },
@@ -650,31 +685,14 @@ pub(super) async fn drive(
                         break;
                     }
                     Some(EngineEvent::Done(receipt)) => {
+                        observe_closing(&receipt, true, steering.sent_up_to, &mut receipt_seen, &mut receipt_input_cursor);
                         activity_seen = true;
-                        raise_to(&mut outcome.usage, receipt.usage);
-                        outcome.usage.cost_usd = outcome.usage.cost_usd.max(receipt.usage.cost_usd);
-                        outcome.usage.cost_complete &= receipt.usage.cost_complete;
-                        outcome.usage.estimated_cost_usd = match (outcome.usage.estimated_cost_usd, receipt.usage.estimated_cost_usd) {
-                            (Some(before), Some(after)) => Some(before.max(after)),
-                            (before, after) => before.or(after),
-                        };
-                        outcome.cost_usd = match (outcome.cost_usd, receipt.cost_usd) {
-                            (Some(before), Some(after)) => Some(before.max(after)),
-                            (before, after) => before.or(after),
-                        };
-                        let receipt_class = crate::exhaustion::engine_error_class(
-                            receipt.error.as_deref().unwrap_or(""),
-                        );
-                        if crate::exhaustion::recoverable_by_fallback(receipt_class) {
-                            outcome.error = receipt.error;
-                        }
-                        if receipt.text.as_deref().is_some_and(|text| !text.is_empty()) {
-                            outcome.text = receipt.text;
-                        }
-                        outcome.forced |= receipt.forced;
+                        merge_cleanup_receipt(&mut outcome, receipt);
                     }
                     Some(event) => {
-                        activity_seen |= event_has_activity(&event, ctx);
+                        let active = event_has_activity(&event, ctx);
+                        receipt_seen &= !event_may_start_request(&event);
+                        activity_seen |= active;
                         let usage_before = ctx.agent.stats.usage;
                         handle_event(runtime, ctx, snapshot, event, &mut state)?;
                         if ctx.agent.stats.usage != usage_before
@@ -701,7 +719,11 @@ pub(super) async fn drive(
         DeltaKind::TurnFinished,
     );
     Ok(DriveResult {
+        receipt_seen: receipt_seen
+            && !outcome.interrupted
+            && steering.sent_up_to <= receipt_input_cursor,
         outcome,
+        user_cancelled: cancel.is_cancelled(),
         activity_seen: activity_seen || steering.sent_up_to > inbox_before,
         park,
         priced: state.priced,
@@ -715,4 +737,157 @@ pub(super) async fn drive(
         pricing: state.pricing,
         cleaned_up,
     })
+}
+
+fn observe_closing(
+    outcome: &EngineOutcome,
+    stopped: bool,
+    sent: u64,
+    seen: &mut bool,
+    cursor: &mut u64,
+) {
+    debug_assert!(
+        outcome
+            .cost_usd
+            .is_none_or(|cost| cost.is_finite() && cost >= 0.0)
+    );
+    debug_assert!(!outcome.closing_accounting || !outcome.prompt_not_submitted);
+    // Once stopped without coverage, no later receipt can prove all output
+    // was reported. A receipt already in hand remains valid until new work.
+    if outcome.interrupted || (stopped && !*seen) {
+        *seen = false;
+    } else if outcome.closing_accounting {
+        *seen = true;
+        *cursor = sent;
+    }
+}
+
+fn merge_reaped_outcome(held: Option<EngineOutcome>, mut receipt: EngineOutcome) -> EngineOutcome {
+    debug_assert!(
+        receipt
+            .cost_usd
+            .is_none_or(|cost| cost.is_finite() && cost >= 0.0)
+    );
+    debug_assert!(held.as_ref().is_none_or(|o| {
+        o.cost_usd
+            .is_none_or(|cost| cost.is_finite() && cost >= 0.0)
+    }));
+    let Some(mut held) = held else {
+        return receipt;
+    };
+    receipt.is_error |= held.is_error;
+    receipt.forced |= held.forced;
+    receipt.interrupted |= held.interrupted;
+    receipt.error = receipt.error.or(held.error.take());
+    if receipt.usage.total_tokens() > 0 || held.usage.total_tokens() == 0 {
+        return receipt;
+    }
+    held.is_error = receipt.is_error;
+    held.forced = receipt.forced;
+    held.interrupted = receipt.interrupted;
+    held.error = receipt.error;
+    held
+}
+
+fn merge_cleanup_receipt(outcome: &mut EngineOutcome, receipt: EngineOutcome) {
+    debug_assert!(outcome.usage.cost_usd.is_finite() && outcome.usage.cost_usd >= 0.0);
+    debug_assert!(receipt.usage.cost_usd.is_finite() && receipt.usage.cost_usd >= 0.0);
+    raise_to(&mut outcome.usage, receipt.usage);
+    outcome.usage.cost_usd = outcome.usage.cost_usd.max(receipt.usage.cost_usd);
+    outcome.usage.merge_cost_coverage(receipt.usage);
+    outcome.usage.estimated_cost_usd = match (
+        outcome.usage.estimated_cost_usd,
+        receipt.usage.estimated_cost_usd,
+    ) {
+        (Some(before), Some(after)) => Some(before.max(after)),
+        (before, after) => before.or(after),
+    };
+    outcome.cost_usd = match (outcome.cost_usd, receipt.cost_usd) {
+        (Some(before), Some(after)) => Some(before.max(after)),
+        (before, after) => before.or(after),
+    };
+    let class = crate::exhaustion::engine_error_class(receipt.error.as_deref().unwrap_or(""));
+    if crate::exhaustion::recoverable_by_fallback(class) {
+        outcome.error = receipt.error;
+    }
+    if receipt.text.as_deref().is_some_and(|text| !text.is_empty()) {
+        outcome.text = receipt.text;
+    }
+    outcome.forced |= receipt.forced;
+    outcome.interrupted |= receipt.interrupted;
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_done_cannot_establish_or_replace_closing_accounting() {
+        let mut seen = false;
+        let mut cursor = 0;
+        observe_closing(&EngineOutcome::default(), false, 7, &mut seen, &mut cursor);
+        assert!(!seen);
+        assert_eq!(cursor, 0);
+        observe_closing(
+            &EngineOutcome {
+                closing_accounting: true,
+                ..Default::default()
+            },
+            false,
+            7,
+            &mut seen,
+            &mut cursor,
+        );
+        observe_closing(&EngineOutcome::default(), false, 9, &mut seen, &mut cursor);
+        assert!(seen);
+        assert_eq!(cursor, 7, "synthetic outcomes cannot cover newer input");
+    }
+
+    #[test]
+    fn interrupted_outcome_never_counts_as_closing_accounting() {
+        let mut seen = true;
+        let mut cursor = 7;
+        observe_closing(
+            &EngineOutcome {
+                closing_accounting: true,
+                interrupted: true,
+                ..Default::default()
+            },
+            false,
+            9,
+            &mut seen,
+            &mut cursor,
+        );
+        assert!(!seen);
+        assert_eq!(cursor, 7);
+    }
+
+    #[test]
+    fn receipts_after_an_uncovered_stop_cannot_restore_coverage() {
+        let mut seen = false;
+        let mut cursor = 0;
+        let receipt = EngineOutcome {
+            closing_accounting: true,
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            observe_closing(&receipt, true, 7, &mut seen, &mut cursor);
+            assert!(!seen);
+            assert_eq!(cursor, 0);
+        }
+    }
+
+    #[test]
+    fn a_stop_preserves_a_receipt_already_seen() {
+        let mut seen = false;
+        let mut cursor = 0;
+        let receipt = EngineOutcome {
+            closing_accounting: true,
+            ..Default::default()
+        };
+        observe_closing(&receipt, false, 7, &mut seen, &mut cursor);
+        observe_closing(&receipt, true, 7, &mut seen, &mut cursor);
+        assert!(seen);
+        assert_eq!(cursor, 7);
+    }
 }

@@ -2,7 +2,7 @@
 use super::*;
 /// One turn, one assistant message with usage the engine reported, no cost:
 /// exactly what Claude Code's stream looks like per inner model call.
-struct UsageEngine;
+pub(super) struct UsageEngine;
 
 #[async_trait::async_trait]
 impl Engine for UsageEngine {
@@ -34,6 +34,7 @@ impl Engine for UsageEngine {
                 .await;
             let _ = events
                 .send(EngineEvent::Done(EngineOutcome {
+                    closing_accounting: true,
                     text: Some("done".into()),
                     ..Default::default()
                 }))
@@ -87,6 +88,7 @@ impl Engine for AccountingEngine {
                 .await;
             let _ = events
                 .send(EngineEvent::Done(EngineOutcome {
+                    closing_accounting: true,
                     text: Some("done".into()),
                     cost_usd: turn_cost,
                     usage: turn_usage,
@@ -304,7 +306,17 @@ async fn a_priced_engine_turn_ignores_the_engine_s_own_total() {
 /// figure is what every surface above then renders as the whole.
 #[tokio::test]
 async fn a_turn_the_engine_did_not_price_makes_the_agent_total_a_floor() {
-    let h = harness_priced(Reply::OneTurn, vec![Some(0.25), None]).await;
+    let h = harness_with_engine_config(
+        Arc::new(ScriptedEngine {
+            reply: Reply::OneTurn,
+            prompts: Arc::default(),
+            systems: Arc::default(),
+            costs: Arc::new(Mutex::new(vec![Some(0.25), None].into())),
+            tool_gate: None,
+        }),
+        |config| config.default_model = Some(ModelRef::new("claude-code", "default")),
+    )
+    .await;
     let id = chat_agent(&h);
     wait_for(h.store.as_ref(), id, |a| {
         a.status.kind() == AgentStatusKind::Waiting

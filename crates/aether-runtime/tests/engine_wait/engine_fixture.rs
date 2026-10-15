@@ -342,6 +342,7 @@ impl Engine for ParkEngine {
             };
             let outcomes = match wind_down(ended, cancel, winding).await {
                 Some(()) => vec![EngineOutcome {
+                    closing_accounting: true,
                     text: Some("ok".into()),
                     forced: end_forced,
                     usage: end_usage,

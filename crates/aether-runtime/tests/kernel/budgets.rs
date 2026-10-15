@@ -161,6 +161,7 @@ async fn a_budget_fires_on_the_priced_part_of_a_partly_unpriced_subtree() {
         aether_core::model::Usage {
             input_tokens: 500,
             cost_complete: false,
+            cost_gap: Some(aether_core::model::CostGap::Unpriced),
             ..Default::default()
         },
     );

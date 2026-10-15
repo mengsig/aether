@@ -230,6 +230,7 @@ impl Agent {
             (Some(seen), Some(session)) if &seen.session == session => seen.total,
             (_, Some(_)) => Usage {
                 cost_complete: false,
+                cost_gap: Some(crate::model::CostGap::Unknown),
                 ..Usage::default()
             },
             _ => Usage::default(),

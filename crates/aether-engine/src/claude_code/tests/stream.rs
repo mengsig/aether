@@ -29,6 +29,7 @@ fn resumed_result_keeps_invocation_tokens_and_emits_baseline_before_done() {
     };
     assert_eq!(total.cost_usd, 0.0712778);
     assert_eq!(total.output_tokens, 384);
+    assert!(outcome.closing_accounting);
     assert_eq!(outcome.usage.input_tokens, 6);
     assert_eq!(outcome.usage.output_tokens, 89);
     assert_eq!(outcome.usage.cache_read_tokens, 46168);

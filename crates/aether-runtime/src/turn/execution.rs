@@ -483,6 +483,10 @@ pub(super) async fn run_link(
         runtime.apply_held(hold, commit)?;
     }
 
+    if cancel.is_cancelled() {
+        return Ok(LinkOutcome::Done(Next::Cancelled(Some("cancelled".into()))));
+    }
+
     // ---- 4. invoke the model -------------------------------------------------
     let invocation_id = InvocationId::new();
     let started_at = now();
@@ -520,7 +524,9 @@ pub(super) async fn run_link(
     let bus = runtime.bus.clone();
     let agent_id = ctx.agent.id;
     let mut tool_names: BTreeMap<usize, String> = BTreeMap::new();
+    let mut receipt_seen = false;
     let outcome = collect_partial(stream, |event| match event {
+        StreamEvent::MessageStop => receipt_seen = true,
         StreamEvent::TextDelta { text, .. } => bus.publish_delta(
             agent_id,
             invocation_id,
@@ -569,12 +575,12 @@ pub(super) async fn run_link(
     let response = match outcome {
         Ok(r) => r,
         Err(mut failure) => {
-            // Price what the failed attempt burned, the same way the success
-            // path does. A chain spends several links per turn, so leaving a
-            // burned link uncosted undercounts exactly the spend chains add.
-            if let Some(cost) = resolved.model.capabilities.cost.as_ref() {
-                failure.partial.usage.price_from(Some(*cost), None);
-            }
+            account_failed_stream(
+                &mut failure.partial.usage,
+                resolved.model.capabilities.cost,
+                receipt_seen,
+                cancel.is_cancelled(),
+            );
             return record_failure(
                 runtime,
                 ctx,
@@ -719,4 +725,18 @@ pub(super) async fn run_link(
     }
     compose_tool_results(runtime, ctx)?;
     Ok(LinkOutcome::Done(effects.next.unwrap_or(Next::Ready)))
+}
+
+fn account_failed_stream(
+    usage: &mut aether_core::model::Usage,
+    cost: Option<aether_core::model::ModelCost>,
+    receipt_seen: bool,
+    cancelled: bool,
+) {
+    debug_assert!(usage.cost_usd.is_finite() && usage.cost_usd >= 0.0);
+    debug_assert!(cost.is_none_or(|cost| cost.rates().all(|rate| rate.is_finite() && rate >= 0.0)));
+    usage.price_from(cost, None);
+    if cancelled || !receipt_seen {
+        usage.mark_cost_gap(aether_core::model::CostGap::Interrupted);
+    }
 }

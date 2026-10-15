@@ -407,6 +407,7 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             // Without a usage object every counter is unread, and said so.
             let mut events = account(v.get("usage").unwrap_or(&Value::Null), state);
             events.push(EngineEvent::Done(EngineOutcome {
+                closing_accounting: true,
                 usage: state.usage,
                 text: state.final_text.take(),
                 ..Default::default()
@@ -424,13 +425,21 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             let session_lost = message.contains("session")
                 && (message.contains("not found") || message.contains("No such"));
             state.final_text = None;
-            vec![EngineEvent::Done(EngineOutcome {
+            let closing_accounting = kind == "turn.failed" && v["usage"].is_object();
+            let mut events = if closing_accounting {
+                account(&v["usage"], state)
+            } else {
+                Vec::new()
+            };
+            events.push(EngineEvent::Done(EngineOutcome {
+                closing_accounting,
                 usage: state.usage,
                 is_error: true,
                 error: Some(message),
                 session_lost,
                 ..Default::default()
-            })]
+            }));
+            events
         }
         _ => Vec::new(),
     }
@@ -525,7 +534,9 @@ fn account(usage: &Value, state: &mut ParseState) -> Vec<EngineEvent> {
     // Never lowered: the cached-inside-input split can dip, and a bill that
     // dips is billed twice when it climbs back.
     let mut delta = consumed_since(state.billed.into_usage(), state.usage);
-    delta.cost_complete = !state.inexact;
+    if state.inexact {
+        delta.mark_cost_gap(aether_core::model::CostGap::Unreported);
+    }
     state.usage += delta;
     if let Some(session) = state.thread_id.clone() {
         // Ahead of the delta: whatever persists the spend persists the

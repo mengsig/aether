@@ -44,13 +44,17 @@ pub(super) fn record_context_usage(
 /// priced invocation needs no estimate - which is what
 /// [`aether_model::Registry::api_equivalent_price`] guarantees.
 #[derive(Debug, Clone, Copy, Default)]
-pub(super) struct TurnPricing {
+pub(crate) struct TurnPricing {
     pub(super) billed: Option<ModelCost>,
     pub(super) estimate: Option<ModelCost>,
 }
 
 impl TurnPricing {
-    pub(super) fn of(runtime: &Arc<Runtime>, resolved: &ResolvedModel) -> Self {
+    pub(crate) fn of(runtime: &Runtime, resolved: &ResolvedModel) -> Self {
+        debug_assert!(
+            !resolved.model.id.is_empty(),
+            "pricing needs a resolved model"
+        );
         let pricing = Self {
             billed: resolved.model.capabilities.cost,
             estimate: runtime.models.registry().api_equivalent_price(resolved),
@@ -94,12 +98,13 @@ impl TurnPricing {
 
     /// Price one invocation's tokens: billed dollars or an estimate, whichever
     /// this model supports.
-    pub(super) fn apply(&self, usage: &mut Usage) {
+    pub(crate) fn apply(&self, usage: &mut Usage) {
         usage.price_from(self.billed, self.estimate);
     }
 
     /// Charge the change in complete-request prices, preserving their cost provenance.
     pub(super) fn request_delta(&self, request: &aether_engine::RequestUsage) -> Usage {
+        let coverage = request.delta();
         let mut previous = request.previous;
         let mut total = request.total;
         self.apply(&mut previous);
@@ -107,15 +112,17 @@ impl TurnPricing {
         let mut usage = Usage {
             cost_usd: total.cost_usd - previous.cost_usd,
             cost_complete: total.cost_complete,
+            cost_gap: total.cost_gap,
             cost_basis: total.cost_basis,
             estimated_cost_usd: total
                 .estimated_cost_usd
                 .zip(previous.estimated_cost_usd)
                 .map(|(total, previous)| total - previous),
-            ..request.delta()
+            ..coverage
         };
-        if !request.previous.cost_complete || !request.total.cost_complete {
+        if !coverage.cost_complete {
             usage.set_cost(None);
+            usage.cost_gap = coverage.cost_gap;
         }
         usage
     }
@@ -182,7 +189,7 @@ impl TurnPricing {
         };
         shortfall.price_from(self.billed.map(base_rate), self.estimate.map(base_rate));
         total.cost_usd += shortfall.cost_usd;
-        total.cost_complete &= shortfall.cost_complete;
+        total.merge_cost_coverage(shortfall);
         total.estimated_cost_usd = shortfall.estimated_cost_usd;
         if self.billed.is_some() || self.estimate.is_some() {
             total.cost_basis = total.cost_basis.combine(shortfall.cost_basis);
@@ -384,6 +391,7 @@ mod tests {
             raised,
             Usage {
                 cost_complete: false,
+                cost_gap: Some(aether_core::model::CostGap::Unpriced),
                 cost_basis: CostBasis::Mixed,
                 estimated_cost_usd: Some(98.0),
                 ..original
@@ -404,6 +412,7 @@ mod tests {
             raised,
             Usage {
                 cost_complete: false,
+                cost_gap: Some(aether_core::model::CostGap::Unpriced),
                 ..original
             }
         );
@@ -442,5 +451,27 @@ mod tests {
             assert_eq!(total.estimated_cost_usd, None);
             assert_eq!(total, raised);
         }
+    }
+
+    #[test]
+    fn pricing_cannot_invent_a_reason_for_legacy_incomplete_counters() {
+        let pricing = TurnPricing {
+            billed: Some(shortfall_rate()),
+            estimate: None,
+        };
+        let request = aether_engine::RequestUsage {
+            id: aether_engine::UsageRequestId::Engine("legacy".into()),
+            previous: Usage::default(),
+            total: serde_json::from_value(serde_json::json!({
+                "input_tokens": 10, "output_tokens": 0, "cache_read_tokens": 0,
+                "cache_write_tokens": 0, "cost_complete": false
+            }))
+            .unwrap(),
+        };
+        let usage = pricing.request_delta(&request);
+        assert_eq!(usage.cost_gap, Some(aether_core::model::CostGap::Unknown));
+        assert!(!usage.cost_complete);
+        assert_eq!(usage.cost_usd, 0.0);
+        assert_eq!(usage.input_tokens, 10);
     }
 }
