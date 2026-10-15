@@ -31,6 +31,7 @@ use crate::{
     Mutation, RepositoryAliasMove, Result, Store, StoreError, TaskFilter, TranscriptEntry,
 };
 
+use super::event_queries::Arguments;
 use super::{SqliteStore, schedule_time};
 
 impl Store for SqliteStore {
@@ -298,41 +299,8 @@ impl Store for SqliteStore {
     }
 
     fn agents(&self, filter: &AgentFilter) -> Result<Vec<Agent>> {
-        let mut sql = String::from("SELECT body FROM agents WHERE 1 = 1");
-        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(p) = filter.parent {
-            args.push(Box::new(p.to_string()));
-            sql.push_str(&format!(" AND parent = ?{}", args.len()));
-        }
-        if let Some(r) = filter.run {
-            args.push(Box::new(r.to_string()));
-            sql.push_str(&format!(" AND run = ?{}", args.len()));
-        }
-        if filter.live_only {
-            // Off `is_terminal`, not a list typed here: a new terminal status
-            // must not silently start counting as live.
-            let terminal: Vec<String> = AgentStatusKind::ALL
-                .iter()
-                .filter(|k| k.is_terminal())
-                .map(|k| {
-                    args.push(Box::new(k.as_str().to_owned()));
-                    format!("?{}", args.len())
-                })
-                .collect();
-            sql.push_str(&format!(" AND status NOT IN ({})", terminal.join(",")));
-        }
-        if !filter.statuses.is_empty() {
-            let placeholders: Vec<String> = filter
-                .statuses
-                .iter()
-                .map(|s| {
-                    args.push(Box::new(s.as_str().to_owned()));
-                    format!("?{}", args.len())
-                })
-                .collect();
-            sql.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
-        }
-        sql.push_str(" ORDER BY created_at ASC");
+        let mut args: Arguments = Vec::new();
+        let sql = agent_list_sql(filter, &mut args);
         let conn = self.read_conn();
         let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
         let mut agents: Vec<Agent> = Self::read_many(&conn, &sql, &refs)?;
@@ -350,32 +318,8 @@ impl Store for SqliteStore {
     }
 
     fn tasks(&self, filter: &TaskFilter) -> Result<Vec<Task>> {
-        let mut sql = String::from("SELECT body FROM tasks WHERE 1 = 1");
-        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if let Some(o) = filter.owner {
-            args.push(Box::new(o.to_string()));
-            sql.push_str(&format!(" AND owner = ?{}", args.len()));
-        }
-        if let Some(p) = filter.parent_task {
-            args.push(Box::new(p.to_string()));
-            sql.push_str(&format!(" AND parent_task = ?{}", args.len()));
-        }
-        if let Some(r) = filter.run {
-            args.push(Box::new(r.to_string()));
-            sql.push_str(&format!(" AND run = ?{}", args.len()));
-        }
-        if !filter.statuses.is_empty() {
-            let placeholders: Vec<String> = filter
-                .statuses
-                .iter()
-                .map(|s| {
-                    args.push(Box::new(s.as_str().to_owned()));
-                    format!("?{}", args.len())
-                })
-                .collect();
-            sql.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
-        }
-        sql.push_str(" ORDER BY created_at ASC");
+        let mut args: Arguments = Vec::new();
+        let sql = task_list_sql(filter, &mut args);
         let conn = self.read_conn();
         let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
         Self::read_many(&conn, &sql, &refs)
@@ -772,4 +716,79 @@ impl Store for SqliteStore {
         self.meta("instance_id")?
             .ok_or_else(|| StoreError::Corrupt("missing instance_id".into()))
     }
+}
+
+/// The agent listing for `filter`. Whole, live-only and per-run listings walk
+/// `agents_created` or `agents_run_created` in order; other filters sort matches.
+pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> String {
+    debug_assert!(args.is_empty(), "placeholders are numbered from 1");
+    let mut sql = String::from("SELECT body FROM agents WHERE 1 = 1");
+    if let Some(p) = filter.parent {
+        args.push(Box::new(p.to_string()));
+        sql.push_str(&format!(" AND parent = ?{}", args.len()));
+    }
+    if let Some(r) = filter.run {
+        args.push(Box::new(r.to_string()));
+        sql.push_str(&format!(" AND run = ?{}", args.len()));
+    }
+    if filter.live_only {
+        // Off `is_terminal`, not a list typed here: a new terminal status
+        // must not silently start counting as live.
+        let terminal: Vec<String> = AgentStatusKind::ALL
+            .iter()
+            .filter(|k| k.is_terminal())
+            .map(|k| {
+                args.push(Box::new(k.as_str().to_owned()));
+                format!("?{}", args.len())
+            })
+            .collect();
+        sql.push_str(&format!(" AND status NOT IN ({})", terminal.join(",")));
+    }
+    if !filter.statuses.is_empty() {
+        let placeholders: Vec<String> = filter
+            .statuses
+            .iter()
+            .map(|s| {
+                args.push(Box::new(s.as_str().to_owned()));
+                format!("?{}", args.len())
+            })
+            .collect();
+        sql.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
+    }
+    sql.push_str(" ORDER BY created_at ASC");
+    debug_assert_eq!(sql.matches('?').count(), args.len());
+    sql
+}
+
+/// The task listing for `filter`. Whole and per-run listings walk
+/// `tasks_created` or `tasks_run_created` in order; other filters sort matches.
+pub(super) fn task_list_sql(filter: &TaskFilter, args: &mut Arguments) -> String {
+    debug_assert!(args.is_empty(), "placeholders are numbered from 1");
+    let mut sql = String::from("SELECT body FROM tasks WHERE 1 = 1");
+    if let Some(o) = filter.owner {
+        args.push(Box::new(o.to_string()));
+        sql.push_str(&format!(" AND owner = ?{}", args.len()));
+    }
+    if let Some(p) = filter.parent_task {
+        args.push(Box::new(p.to_string()));
+        sql.push_str(&format!(" AND parent_task = ?{}", args.len()));
+    }
+    if let Some(r) = filter.run {
+        args.push(Box::new(r.to_string()));
+        sql.push_str(&format!(" AND run = ?{}", args.len()));
+    }
+    if !filter.statuses.is_empty() {
+        let placeholders: Vec<String> = filter
+            .statuses
+            .iter()
+            .map(|s| {
+                args.push(Box::new(s.as_str().to_owned()));
+                format!("?{}", args.len())
+            })
+            .collect();
+        sql.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
+    }
+    sql.push_str(" ORDER BY created_at ASC");
+    debug_assert_eq!(sql.matches('?').count(), args.len());
+    sql
 }

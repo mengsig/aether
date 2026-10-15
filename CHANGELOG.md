@@ -18,6 +18,37 @@ release is also the text of its GitHub release.
   of MB per read. With several agents running, that held host IO pressure
   high enough to stall other programs' syncs. Those sorts now stay in memory,
   and what the store keeps, and when it syncs, is unchanged.
+- **Agent lists and a supervisor's history no longer sort everything they
+  read.** Listing agents or tasks sorted every stored record on each call:
+  the terminal's status poll every 2 seconds, each tree refresh, and
+  orchestrators listing agents all paid it. Reading an agent's events together
+  with its children's sorted the events' contents. Those sorts held a copy of
+  everything they read, in memory or on disk. Full listings, live agents, and
+  one run's agents and tasks now read in creation order from an index, and a
+  supervisor's history sorts only event numbers. In a test store, listing
+  10,000 agents peaked at 2.1 MB instead of 40.8 MB, and reading a supervisor's
+  85,715 events with its children's took 0.2 s and 4.1 MB instead of 1.1 s and
+  412 MB.
+- **One run's agent tree no longer reads every task in the store.** Listing a
+  run's tasks walked the whole tasks table. In a test store of 20,000 tasks
+  that took 22 ms per tree; it now reads only that run's tasks, in 0.06 ms.
+- **Stopping a background job no longer gives up when one of its processes
+  is exiting.** On Linux before 7.2, a process that is exiting briefly hides
+  its environment, and the search for a job's escaped processes stopped there
+  with an error. Escaped processes later in the search stayed alive, and a
+  restarted daemon kept retrying the cleanup instead of finishing it. A
+  process exiting mid-search is now skipped like one that has gone.
+
+### Before updating
+
+- **Store schema 23.** Adds indexes that list agents and tasks in creation
+  order, across the store and within one run. The per-run agents index
+  replaces the old run index. The migration is one way: Aether saves the old
+  database first (see
+  [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)),
+  and a binary that predates schema 23 refuses to open a migrated database.
+  To go back, stop the daemon and restore that backup with the older binary;
+  changes made since are lost.
 
 ## 1.0.8
 
