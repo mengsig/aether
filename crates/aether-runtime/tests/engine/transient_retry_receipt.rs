@@ -278,3 +278,21 @@ async fn a_message_start_after_a_proven_zero_reopens_the_gap() {
     assert!(!usage.cost_complete, "{usage:?}");
     assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
 }
+
+#[tokio::test]
+async fn a_request_after_a_proven_zero_reopens_the_gap() {
+    let background = json!({"type":"system","subtype":"task_started","task_id":"background"});
+    let engine = failed_after(vec![background]);
+    let requesting = json!({"type":"system","subtype":"status","status":"requesting",
+        "session_id":"fresh"});
+    engine
+        .runs
+        .lock()
+        .unwrap()
+        .front_mut()
+        .unwrap()
+        .push(requesting);
+    let usage = failed_worker_usage(engine).await;
+    assert!(!usage.cost_complete, "{usage:?}");
+    assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
+}

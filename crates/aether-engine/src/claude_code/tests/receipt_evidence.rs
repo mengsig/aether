@@ -348,3 +348,29 @@ fn any_output_after_a_proven_zero_withdraws_it() {
         );
     }
 }
+
+#[test]
+fn a_request_status_after_a_proven_zero_withdraws_it() {
+    let requesting = json!({"type":"system","subtype":"status","status":"requesting",
+        "session_id":"s"})
+    .to_string();
+    let idle =
+        json!({"type":"system","subtype":"status","status":null,"session_id":"s"}).to_string();
+    let mut state = ParseState::default();
+    assert!(parse_line(&requesting, &mut state).is_empty());
+    let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
+    assert_eq!(
+        receipt_cost(&events),
+        Some(0.0),
+        "the first request is the refused one"
+    );
+    assert!(parse_line(&idle, &mut state).is_empty());
+    let events = parse_line(&requesting, &mut state);
+    assert!(
+        matches!(&events[..], [EngineEvent::UsageDelta { usage }]
+            if usage.cost_gap == Some(aether_core::model::CostGap::Unreported)
+                && usage.total_tokens() == 0),
+        "{events:?}"
+    );
+    assert!(parse_line(&requesting, &mut state).is_empty());
+}

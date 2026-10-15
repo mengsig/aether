@@ -37,8 +37,8 @@ release is also the text of its GitHub release.
   with no usage streamed, no model output, every counter zero, and every
   earlier retry caused by one of those statuses. Otherwise the gap stays.
   That includes a retry after a dropped connection, a timeout, 429, 5xx or
-  529. Any retry or model output later in the same process withdraws the
-  $0.
+  529. Any retry, new request or model output later in the same process
+  withdraws the $0.
 
 ## 1.0.9
 

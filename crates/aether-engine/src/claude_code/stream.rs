@@ -160,6 +160,7 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
                 running: false,
             }],
             Some("api_retry") => state.note_retry(&v),
+            Some("status") => state.note_status(&v),
             Some("init") => {
                 vec![EngineEvent::Session {
                     id: v

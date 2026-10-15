@@ -446,10 +446,10 @@ billed, so the receipt stays unknown. Claude Code also resends a refused 400
 in a reshaped form without an `api_retry` record, but only after the API
 refused it.
 
-Any `api_retry` or model output later in the same process, for example while
-background work keeps it open, withdraws the $0, whatever the retry's status.
-Either starts a request the receipt cannot cover, so the adapter reports an
-`Unreported` gap.
+Any `api_retry`, `requesting` status or model output later in the same
+process, for example while background work keeps it open, withdraws the $0,
+whatever the retry's status. Each starts a request the receipt cannot cover,
+so the adapter reports an `Unreported` gap.
 Unless a later receipt closes the turn, the runtime no longer counts the held
 receipt as covering it, and the turn ends with an `Interrupted` gap. The gap
 reads `mixed` when the run also ends without a dollar receipt, for example

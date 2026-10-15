@@ -25,6 +25,18 @@ impl ParseState {
         Vec::new()
     }
 
+    /// A `status` record naming work, such as `requesting`, starts a request. One
+    /// after a proven $0 is a request the receipt cannot cover, so it withdraws it.
+    pub(super) fn note_status(&mut self, v: &Value) -> Vec<EngineEvent> {
+        debug_assert_eq!(v.get("subtype").and_then(Value::as_str), Some("status"));
+        debug_assert!(!self.zero_proven || self.refusal_unprovable);
+        let working = v.get("status").is_some_and(|status| !status.is_null());
+        if working && std::mem::take(&mut self.zero_proven) {
+            return vec![cost_gap()];
+        }
+        Vec::new()
+    }
+
     /// Model output shows that inference ran, counted or not. Claude Code's own
     /// message for an API error is the one assistant record the model did not write.
     /// Any output after a proven $0 belongs to a new request, so it withdraws the $0.
