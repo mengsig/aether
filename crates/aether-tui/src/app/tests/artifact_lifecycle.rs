@@ -72,7 +72,7 @@ fn a_fresh_session_lets_the_reply_say_the_bytes_are_gone() {
         "an empty cache must not refuse to ask the daemon: {effects:?}"
     );
     app.reduce(AppEvent::Reply {
-        then: Then::ArtifactBytes(art),
+        then: crate::testing::artifact_bytes_then(&app, art),
         result: Ok(Reply::ArtifactBytes {
             artifact: record,
             base64: String::new(),
@@ -100,7 +100,7 @@ fn an_evicted_reply_does_not_leave_the_pager_downloading() {
     let art = record.id;
     app.open_view(ViewKind::ArtifactPager(art));
     app.reduce(AppEvent::Reply {
-        then: Then::ArtifactBytes(art),
+        then: crate::testing::artifact_bytes_then(&app, art),
         result: Ok(Reply::ArtifactBytes {
             artifact: record,
             base64: String::new(),
@@ -147,7 +147,7 @@ fn a_snapshot_adopted_from_artifact_created_does_not_outrank_the_reply() {
     let mut evicted_now = record;
     evicted_now.evicted_at = Some(now());
     app.reduce(AppEvent::Reply {
-        then: Then::ArtifactBytes(art),
+        then: crate::testing::artifact_bytes_then(&app, art),
         result: Ok(Reply::ArtifactBytes {
             artifact: evicted_now,
             base64: String::new(),
@@ -186,7 +186,7 @@ fn the_artifacts_view_opens_what_the_cursor_is_on() {
     );
     assert!(pager_open(&app));
     app.reduce(AppEvent::Reply {
-        then: Then::ArtifactBytes(kept_id),
+        then: crate::testing::artifact_bytes_then(&app, kept_id),
         result: Ok(Reply::ArtifactBytes {
             artifact: kept.clone(),
             base64: base64_of("hello from the artifact"),
@@ -207,7 +207,7 @@ fn the_artifacts_view_opens_what_the_cursor_is_on() {
 
     // A reply that lands after the pager was closed does not reopen it.
     app.reduce(AppEvent::Reply {
-        then: Then::ArtifactBytes(kept_id),
+        then: crate::testing::artifact_bytes_then(&app, kept_id),
         result: Ok(Reply::ArtifactBytes {
             artifact: kept,
             base64: base64_of("too late"),

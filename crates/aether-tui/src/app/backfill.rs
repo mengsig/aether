@@ -1,5 +1,6 @@
 //! Recent history on attach and older windows on demand. Live frames arriving
 //! during the initial request are replayed over the bounded history window.
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
 use aether_core::id::InvocationId;
@@ -34,6 +35,9 @@ struct Pending {
     stream: StreamState,
     buffer_start: usize,
     abandoned: Option<Abandoned>,
+    /// Asked for on this connection. History expiring cancels pages and bumps
+    /// it, so a cancelled page's reply never matches its replacement.
+    connection: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,9 +137,10 @@ impl App {
                 stream,
                 buffer_start: self.backfill.buffered.len(),
                 abandoned: None,
+                connection: self.connection,
             },
         );
-        Some(page_request(agent, before))
+        Some(page_request(agent, before, self.connection))
     }
 
     /// Keep a live event for replay while any history is in flight.
@@ -191,47 +196,27 @@ impl App {
     pub(super) fn on_backfill(
         &mut self,
         agent: AgentId,
+        connection: u64,
         result: Result<Reply, ClientError>,
     ) -> Vec<Effect> {
-        let Some(mut pending) = self.backfill.pages.remove(&agent) else {
+        let Some(mut pending) = self.take_page(agent, connection) else {
             return Vec::new();
         };
-        if pending.abandoned.is_some() {
+        if pending.abandoned.is_some() || pending.latest_requested {
             return self.finish_backfill(agent, pending, false);
         }
-        if pending.latest_requested {
-            return self.finish_backfill(agent, pending, false);
-        }
-        let retry = if pending.before.is_some() {
-            "scroll up to retry"
-        } else {
-            "reselect to retry"
-        };
         let events = match result {
             Ok(Reply::Events(events)) => events,
             Ok(other) => {
                 self.flash_error(format!(
-                    "loading {}'s transcript: unexpected reply {other:?}; {retry}",
-                    self.agent_name(agent)
+                    "loading {}'s transcript: unexpected reply {other:?}; {}",
+                    self.agent_name(agent),
+                    retry_hint(pending.before)
                 ));
                 return self.finish_backfill(agent, pending, false);
             }
             Err(error) => {
-                if pending.before.is_some()
-                    && matches!(&error, ClientError::Protocol(reply)
-                        if reply.code == aether_protocol::ErrorCode::NotFound
-                            && reply.message.contains("history expired"))
-                {
-                    if let Some(current) = self.transcripts.get_mut(&agent) {
-                        current.older_available = false;
-                    }
-                    self.flash_error(format!("Earlier history is no longer available: {error}"));
-                    return self.finish_backfill(agent, pending, false);
-                }
-                self.flash_error(format!(
-                    "loading {}'s transcript: {error}; {retry}",
-                    self.agent_name(agent)
-                ));
+                self.page_failed(agent, pending.before, &error);
                 return self.finish_backfill(agent, pending, false);
             }
         };
@@ -253,6 +238,50 @@ impl App {
         }
         pending.events = events;
         self.finish_backfill(agent, pending, true)
+    }
+
+    /// Say why the page before `before` did not load. Expired older history
+    /// means no earlier page exists any more.
+    fn page_failed(&mut self, agent: AgentId, before: Option<u64>, error: &ClientError) {
+        debug_assert!(
+            !self.backfill.pages.contains_key(&agent),
+            "a failed page is no longer in flight"
+        );
+        let expired = matches!(error, ClientError::Protocol(reply)
+            if reply.code == aether_protocol::ErrorCode::NotFound
+                && reply.message.contains("history expired"));
+        if before.is_none() || !expired {
+            self.flash_error(format!(
+                "loading {}'s transcript: {error}; {}",
+                self.agent_name(agent),
+                retry_hint(before)
+            ));
+            return;
+        }
+        if let Some(current) = self.transcripts.get_mut(&agent) {
+            current.older_available = false;
+        }
+        self.flash_error(format!("Earlier history is no longer available: {error}"));
+    }
+
+    /// The page this reply answers. A page cancelled when history expired
+    /// answers nothing, and the request that replaced it stays in flight.
+    fn take_page(&mut self, agent: AgentId, connection: u64) -> Option<Pending> {
+        debug_assert!(
+            connection <= self.connection,
+            "a reply from a connection not yet made"
+        );
+        let Entry::Occupied(slot) = self.backfill.pages.entry(agent) else {
+            return None;
+        };
+        if slot.get().connection != connection {
+            debug_assert!(
+                slot.get().connection > connection,
+                "a page in flight is never older than a reply it outlived"
+            );
+            return None;
+        }
+        Some(slot.remove())
     }
 
     /// Rebuild history without the current stream, then replay live frames in
@@ -371,7 +400,15 @@ impl App {
     }
 }
 
-fn page_request(agent: AgentId, before: Option<u64>) -> Effect {
+fn retry_hint(before: Option<u64>) -> &'static str {
+    if before.is_some() {
+        "scroll up to retry"
+    } else {
+        "reselect to retry"
+    }
+}
+
+fn page_request(agent: AgentId, before: Option<u64>, connection: u64) -> Effect {
     Effect::Request {
         command: Command::GetEvents {
             after: 0,
@@ -387,6 +424,6 @@ fn page_request(agent: AgentId, before: Option<u64>) -> Effect {
                 ..EventQuery::default()
             },
         },
-        then: Then::Backfill(agent),
+        then: Then::Backfill { agent, connection },
     }
 }

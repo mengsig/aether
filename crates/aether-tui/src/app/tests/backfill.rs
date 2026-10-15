@@ -19,7 +19,7 @@ fn backfill_preserves_live_delta_prefix() {
         },
     }));
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Ok(Reply::Events(vec![event(
             1,
             id,
@@ -42,7 +42,7 @@ fn failed_backfill_can_retry_after_reconnect() {
     app.transcripts.get_mut(&id).unwrap().loaded = false;
     app.select(id);
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Err(ClientError::Disconnected),
     });
     app.reduce(AppEvent::Disconnected { because: None });
@@ -51,7 +51,7 @@ fn failed_backfill_can_retry_after_reconnect() {
         effects.iter().any(|e| matches!(
             e,
             Effect::Request {
-                then: Then::Backfill(_),
+                then: Then::Backfill { .. },
                 ..
             }
         )),
@@ -80,7 +80,7 @@ fn parent_backfill_preserves_child_spawn_link() {
     created.parent_agent_id = Some(parent);
     deliver(&mut app, created.clone());
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(parent),
+        then: crate::testing::backfill_then(&app, parent),
         result: Ok(Reply::Events(vec![created])),
     });
     let mut task = event(
@@ -102,7 +102,7 @@ fn history_query(effect: Option<Effect>) -> EventQuery {
     match effect {
         Some(Effect::Request {
             command: Command::GetEvents { query, .. },
-            then: Then::Backfill(_),
+            then: Then::Backfill { .. },
         }) => query,
         other => panic!("a history request: {other:?}"),
     }
@@ -120,7 +120,7 @@ fn history_pages_ask_only_for_child_events_the_transcript_shows() {
     assert_eq!(first.child_types, shown);
     assert!(!shown.iter().any(|t| t.starts_with("tool.")), "{shown:?}");
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Ok(Reply::Events(vec![event(7, id, EventKind::AgentReady)])),
     });
     app.transcripts.get_mut(&id).unwrap().older_available = true;
@@ -182,7 +182,7 @@ fn archived_history_remains_readable_when_requested() {
     app.transcripts.get_mut(&id).unwrap().loaded = false;
     app.select(id);
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Ok(Reply::Events(vec![
             event(
                 1,
@@ -211,7 +211,7 @@ fn start(app: &mut App, id: AgentId) {
 
 fn finish(app: &mut App, id: AgentId, history: Vec<Event>) -> Vec<Effect> {
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(app, id),
         result: Ok(Reply::Events(history)),
     })
 }
@@ -410,7 +410,7 @@ fn unexpected_reply_keeps_live_cells_and_is_visible_and_retryable() {
         .map(|c| c.model)
         .collect::<Vec<_>>();
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Ok(Reply::Agents(vec![])),
     });
     assert!(!app.transcripts[&id].loaded);
@@ -536,18 +536,23 @@ fn reconnect_retries_when_an_old_request_finishes_after_connected() {
     let invocation = InvocationId::new();
     text(&mut app, id, invocation, "cut off prefix");
     start(&mut app, id);
+    let old_page = crate::testing::backfill_then(&app, id);
     app.reduce(AppEvent::Disconnected { because: None });
     assert!(app.transcripts[&id].stream.is_empty());
     app.reduce(AppEvent::Connected);
-    let effects = finish(
-        &mut app,
-        id,
-        vec![answer(1, id, invocation, "stale answer")],
-    );
+    let effects = app.reduce(AppEvent::Reply {
+        then: old_page,
+        result: Ok(Reply::Events(vec![answer(
+            1,
+            id,
+            invocation,
+            "stale answer",
+        )])),
+    });
     assert!(!app.transcripts[&id].loaded);
     assert!(app.transcripts[&id].stream.is_empty());
     assert!(models(&app).is_empty());
-    assert!(effects.iter().any(|effect| matches!(effect, Effect::Request { then: Then::Backfill(agent), .. } if *agent == id)));
+    assert!(effects.iter().any(|effect| matches!(effect, Effect::Request { then: Then::Backfill { agent, .. }, .. } if *agent == id)));
     finish(
         &mut app,
         id,
@@ -641,7 +646,7 @@ fn older_page_failure_preserves_current_window_and_can_retry() {
     );
     app.older_history_request(id).unwrap();
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Err(ClientError::TimedOut {
             command: "GetEvents".into(),
             timeout: std::time::Duration::from_secs(30),
@@ -777,7 +782,7 @@ fn trigger_backfill_sanitizes_payloads_and_deduplicates_live_delivery() {
         .model
         .clone();
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Ok(Reply::Events(vec![delivered])),
     });
     assert!(app.transcripts[&id].loaded);
@@ -984,7 +989,7 @@ fn expired_older_history_is_not_offered_again() {
     app.transcripts.get_mut(&id).unwrap().older_available = true;
     app.older_history_request(id).unwrap();
     let effects = app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Err(ClientError::Protocol(aether_protocol::ErrorReply::new(
             aether_protocol::ErrorCode::NotFound,
             aether_store::StoreError::HistoryExpired {

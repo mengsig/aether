@@ -46,13 +46,89 @@ pub(crate) enum LoopEvent {
     /// Suspend the UI and run `aether <args>` attached to the terminal.
     External(Vec<String>),
     App(AppEvent),
+    /// From daemon `instance`, over the loop's connection number `generation`.
     AppFrom {
         instance: String,
+        generation: u64,
         event: AppEvent,
     },
     Mouse(crossterm::event::MouseEvent),
     Reconnected(Client),
     VoiceControl(anyhow::Result<ControlRequest>),
+}
+
+/// The loop's daemon client, numbered from 1 per connection so an answer can
+/// tell whether it came back over the connection the view now reflects.
+#[derive(Clone)]
+pub(crate) struct Link {
+    pub(crate) client: Client,
+    generation: u64,
+    /// The first generation on this daemon identity. A change of identity
+    /// rebuilds the view, so nothing asked for before it has a route left.
+    since: u64,
+}
+
+impl Link {
+    pub(crate) fn new(client: Client) -> Self {
+        Self {
+            client,
+            generation: 1,
+            since: 1,
+        }
+    }
+
+    /// Matches `App::link` once the reducer has seen this link connect.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn reconnected(&self, client: Client) -> Self {
+        let generation = self.generation + 1;
+        let same_daemon = self.client.welcome().map(|welcome| &welcome.instance_id)
+            == client.welcome().map(|welcome| &welcome.instance_id);
+        let since = if same_daemon { self.since } else { generation };
+        debug_assert!(self.since <= since && since <= generation);
+        Self {
+            client,
+            generation,
+            since,
+        }
+    }
+
+    /// The reducer's event, or `None` when it came from another daemon, or from
+    /// a replaced connection and could only roll the view back.
+    pub(crate) fn admit(
+        &self,
+        instance: &str,
+        generation: u64,
+        event: AppEvent,
+    ) -> Option<AppEvent> {
+        debug_assert!(
+            generation <= self.generation,
+            "an event from a connection not yet made"
+        );
+        let same_daemon = self
+            .client
+            .welcome()
+            .is_some_and(|welcome| welcome.instance_id == instance);
+        debug_assert!(
+            same_daemon || generation < self.generation,
+            "a connection stamps its own daemon's identity"
+        );
+        // Back on a daemon after another one: the view was rebuilt in between.
+        if !same_daemon || generation < self.since {
+            return None;
+        }
+        if generation == self.generation || event.outlives_connection() {
+            return Some(event);
+        }
+        tracing::debug!(
+            generation,
+            current = self.generation,
+            "dropped a replaced connection's event"
+        );
+        None
+    }
 }
 
 /// Shared by signal, panic, suspension and normal exit. Keyboard pushes are
@@ -232,7 +308,7 @@ async fn run_inner(
     app.load_voice_prefs();
     let mut voice = crate::voice::Service::default();
     let mut voice_control = None;
-    let mut client = client;
+    let mut link = Link::new(client);
     let (tx, mut rx) = mpsc::unbounded_channel::<LoopEvent>();
     let mut term_events = EventStream::new();
     let mut frames = Frames::new(Instant::now());
@@ -240,7 +316,11 @@ async fn run_inner(
     let mut title = String::new();
     let mut auto_scroll_due = None;
 
-    let mut pending = app.reconnected(&client);
+    let mut pending = app.reconnected(&link.client);
+    debug_assert_eq!(
+        app.link, link.generation,
+        "effects carry the link they go out on"
+    );
     let result: anyhow::Result<()> = async {
         loop {
             pending.extend(frames.advance_clock(&mut app, Instant::now()));
@@ -252,13 +332,13 @@ async fn run_inner(
                     effect => regular.push(effect),
                 }
             }
-            execute_effects(&client, &tx, regular, terminal.backend_mut());
+            execute_effects(&link, &tx, regular, terminal.backend_mut());
             let now = Instant::now();
             if frames.should_draw(&app, now, !rx.is_empty()) {
                 draw(&mut terminal, &app, &mut cache)?;
                 for agent in std::mem::take(&mut cache.transcript.older_requests) {
                     let effects = app.older_history_request(agent).into_iter().collect();
-                    execute_effects(&client, &tx, effects, terminal.backend_mut());
+                    execute_effects(&link, &tx, effects, terminal.backend_mut());
                 }
                 frames.drew(&mut app, now);
                 let next = app.terminal_title();
@@ -309,8 +389,10 @@ async fn run_inner(
                 },
             };
             let event = match event {
-                LoopEvent::AppFrom { instance, event } if client.welcome().is_some_and(|welcome| welcome.instance_id == instance) => LoopEvent::App(event),
-                LoopEvent::AppFrom { .. } => continue,
+                LoopEvent::AppFrom { instance, generation, event } => match link.admit(&instance, generation, event) {
+                    Some(event) => LoopEvent::App(event),
+                    None => continue,
+                },
                 event => event,
             };
             #[cfg(test)]
@@ -345,7 +427,8 @@ async fn run_inner(
                 }
                 LoopEvent::Reconnected(new_client) => {
                     pending.extend(app.reconnected(&new_client));
-                    client = new_client;
+                    link = link.reconnected(new_client);
+                    debug_assert_eq!(app.link, link.generation, "effects carry the link they go out on");
                     reconnecting = false;
                 }
                 LoopEvent::VoiceControl(request) => {
@@ -578,7 +661,7 @@ fn spawn_image_read(tx: mpsc::UnboundedSender<LoopEvent>, source: ImageSource) {
 }
 
 pub(crate) fn execute_effects(
-    client: &Client,
+    link: &Link,
     tx: &mpsc::UnboundedSender<LoopEvent>,
     effects: Vec<Effect>,
     out: &mut impl std::io::Write,
@@ -604,10 +687,10 @@ pub(crate) fn execute_effects(
             }
             Effect::Quit => {}
             Effect::Request { command, then } => {
-                spawn_request(client.clone(), tx.clone(), command, then)
+                spawn_request(link.clone(), tx.clone(), command, then)
             }
-            Effect::Subscribe { after } => spawn_subscription(client.clone(), tx.clone(), after),
-            Effect::Outbox { settle } => spawn_outbox(client.clone(), tx.clone(), settle),
+            Effect::Subscribe { after } => spawn_subscription(link.clone(), tx.clone(), after),
+            Effect::Outbox { settle } => spawn_outbox(link.clone(), tx.clone(), settle),
             Effect::RunExternal { args } => {
                 let _ = tx.send(LoopEvent::External(args));
             }
@@ -664,30 +747,28 @@ fn spawn_copy(tx: mpsc::UnboundedSender<LoopEvent>, text: String, out: &mut impl
     });
 }
 
-pub(crate) fn protocol_event(client: &Client, event: AppEvent) -> LoopEvent {
-    match client.welcome() {
+pub(crate) fn protocol_event(link: &Link, event: AppEvent) -> LoopEvent {
+    match link.client.welcome() {
         Some(welcome) => LoopEvent::AppFrom {
             instance: welcome.instance_id.clone(),
+            generation: link.generation,
             event,
         },
         None => LoopEvent::App(event),
     }
 }
 
-fn spawn_request(
-    client: Client,
-    tx: mpsc::UnboundedSender<LoopEvent>,
-    command: Command,
-    then: Then,
-) {
+fn spawn_request(link: Link, tx: mpsc::UnboundedSender<LoopEvent>, command: Command, then: Then) {
     tokio::spawn(async move {
-        let result = client.request(command).await;
+        let result = link.client.request(command).await;
         let disconnected = matches!(result, Err(ClientError::Disconnected | ClientError::Ssh(_)));
-        let because = disconnected.then(|| client.disconnect_reason()).flatten();
-        let _ = tx.send(protocol_event(&client, AppEvent::Reply { then, result }));
+        let because = disconnected
+            .then(|| link.client.disconnect_reason())
+            .flatten();
+        let _ = tx.send(protocol_event(&link, AppEvent::Reply { then, result }));
         if disconnected {
             let _ = tx.send(protocol_event(
-                &client,
+                &link,
                 AppEvent::Disconnected {
                     because: because.map(|notice| notice.message),
                 },
@@ -697,27 +778,31 @@ fn spawn_request(
 }
 
 fn spawn_outbox(
-    client: Client,
+    link: Link,
     tx: mpsc::UnboundedSender<LoopEvent>,
     settle: Option<(String, aether_client::Settlement)>,
 ) {
     tokio::spawn(async move {
         let settled = match settle {
-            Some((key, choice)) => Some((choice, client.settle(&key, choice).await)),
+            Some((key, choice)) => Some((choice, link.client.settle(&key, choice).await)),
             None => None,
         };
-        let undecided = client.undecided().await;
+        let undecided = link.client.undecided().await;
         let event = AppEvent::Outbox { settled, undecided };
-        let _ = tx.send(protocol_event(&client, event));
+        let _ = tx.send(protocol_event(&link, event));
     });
 }
 
-fn spawn_subscription(client: Client, tx: mpsc::UnboundedSender<LoopEvent>, after: Option<u64>) {
+fn spawn_subscription(link: Link, tx: mpsc::UnboundedSender<LoopEvent>, after: Option<u64>) {
     tokio::spawn(async move {
-        match client.subscribe(after, subscription_query(), true).await {
+        match link
+            .client
+            .subscribe(after, subscription_query(), true)
+            .await
+        {
             Ok(mut sub) => {
                 let _ = tx.send(protocol_event(
-                    &client,
+                    &link,
                     AppEvent::Subscribed {
                         id: sub.id(),
                         last_seq: sub.last_seq(),
@@ -726,7 +811,7 @@ fn spawn_subscription(client: Client, tx: mpsc::UnboundedSender<LoopEvent>, afte
                 while let Some(frame) = sub.next().await {
                     let lagged = matches!(frame, SubscriptionFrame::Lagged { .. });
                     if tx
-                        .send(protocol_event(&client, AppEvent::Frame(frame)))
+                        .send(protocol_event(&link, AppEvent::Frame(frame)))
                         .is_err()
                     {
                         return;
@@ -736,12 +821,12 @@ fn spawn_subscription(client: Client, tx: mpsc::UnboundedSender<LoopEvent>, afte
                     }
                 }
                 let _ = tx.send(protocol_event(
-                    &client,
-                    if client.history_expired() {
+                    &link,
+                    if link.client.history_expired() {
                         AppEvent::HistoryExpired
                     } else {
                         AppEvent::Disconnected {
-                            because: client.disconnect_reason().map(|notice| notice.message),
+                            because: link.client.disconnect_reason().map(|notice| notice.message),
                         }
                     },
                 ));
@@ -749,15 +834,15 @@ fn spawn_subscription(client: Client, tx: mpsc::UnboundedSender<LoopEvent>, afte
             Err(ClientError::Protocol(error))
                 if after.is_some() && error.code == aether_protocol::ErrorCode::NotFound =>
             {
-                let _ = tx.send(protocol_event(&client, AppEvent::HistoryExpired));
+                let _ = tx.send(protocol_event(&link, AppEvent::HistoryExpired));
             }
-            Err(_) if client.history_expired() => {
-                let _ = tx.send(protocol_event(&client, AppEvent::HistoryExpired));
+            Err(_) if link.client.history_expired() => {
+                let _ = tx.send(protocol_event(&link, AppEvent::HistoryExpired));
             }
             Err(e) => {
                 tracing::warn!("subscribe failed: {e}");
                 let _ = tx.send(protocol_event(
-                    &client,
+                    &link,
                     AppEvent::Disconnected { because: None },
                 ));
             }
@@ -1010,3 +1095,7 @@ mod tests {
 #[cfg(test)]
 #[path = "runner/history_tests.rs"]
 mod history_tests;
+
+#[cfg(test)]
+#[path = "runner/reconnect_tests.rs"]
+mod reconnect_tests;

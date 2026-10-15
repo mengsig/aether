@@ -643,3 +643,24 @@ fn feedback_keys_cover_every_evidence_field_and_the_command_name() {
     }
     assert_eq!(features::MEMORY_FEEDBACK, "memory_feedback");
 }
+
+#[test]
+fn a_feedback_list_without_a_ranking_decodes_as_unranked() {
+    // An older daemon's reply: its feedback never moved recall.
+    let older = serde_json::json!({"reply":"memory_feedback_list",
+        "data":{"records":[], "truncated":false}});
+    let Reply::MemoryFeedbackList(list) = serde_json::from_value(older).unwrap() else {
+        panic!("expected a feedback list");
+    };
+    let ranking = aether_core::memory_feedback::FeedbackRanking {
+        helped: 0,
+        hurt: 0,
+        factor: 1.0,
+    };
+    assert_eq!(list.ranking, ranking);
+    let current = serde_json::to_value(Reply::MemoryFeedbackList(list)).unwrap();
+    assert_eq!(
+        current["data"]["ranking"],
+        serde_json::json!({"helped":0, "hurt":0, "factor":1.0})
+    );
+}

@@ -29,7 +29,7 @@ fn expire_history(path: &std::path::Path, retained: usize) {
     tx.commit().expect("commit");
 }
 
-async fn connect_when_ready(socket: &std::path::Path) -> Client {
+pub(super) async fn connect_when_ready(socket: &std::path::Path) -> Client {
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             match Client::connect(socket).await {
@@ -88,7 +88,7 @@ async fn replay_expired_history(retained: usize) {
 
 async fn consume_expired_replay(client: &Client, retained: usize) -> App {
     let (tx, mut rx) = mpsc::unbounded_channel();
-    spawn_subscription(client.clone(), tx, Some(0));
+    spawn_subscription(Link::new(client.clone()), tx, Some(0));
     let mut events = 0;
     let mut app = App::new(TuiOptions {
         auto_create_root: false,

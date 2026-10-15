@@ -106,7 +106,7 @@ fn open(app: &mut App, store: &SqliteStore, agent: AgentId) {
     let request = app.backfill_request(agent).expect("history request");
     let reply = serve(store, request);
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(agent),
+        then: crate::testing::backfill_then(app, agent),
         result: Ok(reply),
     });
     assert!(app.transcripts[&agent].loaded);

@@ -1,5 +1,6 @@
 use super::*;
 use aether_core::id::MemoryFeedbackId;
+use aether_core::memory_feedback::{FeedbackRanking, FeedbackTally};
 use aether_runtime::RuntimeError;
 
 #[tokio::test]
@@ -90,11 +91,8 @@ async fn feedback_lists_newest_first_including_retractions_and_reports_truncatio
     h.runtime.shutdown().await;
 }
 
-#[tokio::test]
-async fn feedback_does_not_change_retrieval_bytes_or_memory_records() {
-    let (h, spec, agent) = fixture().await;
-    show(&h, agent, spec.task, vec![spec.memory], true);
-    let request = aether_memory::RetrievalRequest {
+fn ranking_request(agent: AgentId) -> aether_memory::RetrievalRequest {
+    aether_memory::RetrievalRequest {
         scope: None,
         role: Some("worker".into()),
         agent: Some(agent),
@@ -103,23 +101,120 @@ async fn feedback_does_not_change_retrieval_bytes_or_memory_records() {
         tags: vec![],
         kinds: vec![],
         limit: 6,
-    };
-    let retrieve = || {
-        let results = h.runtime.memory().retrieve(&request).unwrap();
-        assert!(!results.is_empty());
-        assert_eq!(results[0].record.id, spec.memory);
-        results
-            .into_iter()
-            .map(|r| serde_json::to_vec(&(r.record, r.score)).unwrap())
-            .collect::<Vec<_>>()
-    };
-    let before = retrieve();
-    let record = record(&h, &spec);
-    assert_eq!(retrieve(), before);
-    h.runtime
-        .retract_memory_feedback(record.id, "Withdraw".into(), Actor::user())
+    }
+}
+
+/// Each result's record and score, serialized: the bytes recall hands on.
+fn retrieved(h: &Harness, agent: AgentId) -> Vec<(Vec<u8>, f32)> {
+    let results = h
+        .runtime
+        .memory()
+        .retrieve(&ranking_request(agent))
         .unwrap();
-    assert_eq!(retrieve(), before);
+    assert!(!results.is_empty());
+    results
+        .into_iter()
+        .map(|r| (serde_json::to_vec(&r.record).unwrap(), r.score))
+        .collect()
+}
+
+#[tokio::test]
+async fn feedback_moves_only_the_score_and_only_once_two_tasks_agree() {
+    let (h, spec, agent) = fixture().await;
+    show(&h, agent, spec.task, vec![spec.memory], true);
+    let before = retrieved(&h, agent);
+    let first = record(&h, &spec);
+    let latest = record(&h, &spec);
+    assert_eq!(
+        retrieved(&h, agent),
+        before,
+        "one task is below the threshold"
+    );
+    let (second_agent, second_task) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                start: false,
+                ..super::spec("Check the release again")
+            },
+            Actor::user(),
+        )
+        .unwrap();
+    let second = MemoryFeedbackSpec {
+        task: second_task.unwrap().id,
+        ..spec.clone()
+    };
+    show(&h, second_agent.id, second.task, vec![spec.memory], true);
+    record(&h, &second);
+    let after = retrieved(&h, agent);
+    let factor = FeedbackTally { helped: 2, hurt: 0 }.factor();
+    assert_eq!(after.len(), before.len());
+    assert_eq!(after[0].0, before[0].0, "the memory record is unchanged");
+    assert_eq!(after[0].1.to_bits(), (before[0].1 * factor).to_bits());
+    let listed = h
+        .runtime
+        .memory_feedback(spec.memory, None, &Actor::user())
+        .unwrap();
+    assert_eq!(
+        listed.ranking,
+        FeedbackRanking {
+            helped: 2,
+            hurt: 0,
+            factor
+        }
+    );
+    let retract = |id| {
+        h.runtime
+            .retract_memory_feedback(id, "Withdraw".into(), Actor::user())
+            .unwrap()
+    };
+    retract(latest.id);
+    assert_eq!(
+        retrieved(&h, agent),
+        after,
+        "the task's earlier vote counts"
+    );
+    retract(first.id);
+    assert_eq!(retrieved(&h, agent), before);
+    let listed = h
+        .runtime
+        .memory_feedback(spec.memory, None, &Actor::user())
+        .unwrap();
+    assert_eq!(
+        listed.ranking,
+        FeedbackRanking {
+            helped: 1,
+            hurt: 0,
+            factor: 1.0
+        }
+    );
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_failed_feedback_read_fails_retrieval_instead_of_ranking_without_it() {
+    let inner: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let store = Arc::new(CommitsMidPass::new(inner, Hook::FeedbackTallyRead));
+    let (h, spec, agent) = fixture_on(Some(store.clone())).await;
+    show(&h, agent, spec.task, vec![spec.memory], true);
+    store.arm(Box::new(|_| {
+        Err(aether_store::StoreError::Corrupt(
+            "simulated feedback read failure".into(),
+        ))
+    }));
+    let error = h
+        .runtime
+        .memory()
+        .retrieve(&ranking_request(agent))
+        .unwrap_err();
+    assert!(store.fired());
+    assert!(
+        error
+            .to_string()
+            .contains("simulated feedback read failure"),
+        "{error}"
+    );
+    assert!(!retrieved(&h, agent).is_empty());
     h.runtime.shutdown().await;
 }
 

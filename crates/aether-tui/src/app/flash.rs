@@ -99,7 +99,7 @@ mod tests {
         app.now += chrono::Duration::seconds(7);
         assert!(app.live_flash().is_none());
         app.reduce(AppEvent::Reply {
-            then: Then::Backfill(agent),
+            then: crate::testing::backfill_then(&app, agent),
             result: Ok(Reply::Events(Vec::new())),
         });
         for cell in &before {

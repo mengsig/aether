@@ -746,10 +746,11 @@ fn root_creation_waits_for_network_defaults_and_recovers_from_disconnect() {
             cwd: Some("/proj".into()),
             ..Default::default()
         });
+        app.reduce(AppEvent::Connected);
         let defaults = app.start_new_root(Some("hello".into()), Some("/proj".into()));
         let Effect::Request {
             command: Command::Status,
-            then: then @ Then::RootDefaults(_),
+            then: then @ Then::RootDefaults { .. },
         } = defaults
         else {
             panic!("{defaults:?}");

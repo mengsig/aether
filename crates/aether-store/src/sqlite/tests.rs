@@ -113,9 +113,12 @@ fn artifact_named(name: &str) -> Artifact {
 
 mod transactions;
 
+mod plans;
 mod queries;
 
 mod memories;
+
+mod memory_feedback;
 
 mod submissions;
 

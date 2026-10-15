@@ -58,8 +58,8 @@ impl App {
         if let Then::VoiceReply(id) = then {
             return self.voice_send_result(id, result);
         }
-        if let Then::Backfill(agent) = then {
-            return self.on_backfill(agent, result);
+        if let Then::Backfill { agent, connection } = then {
+            return self.on_backfill(agent, connection, result);
         }
         if let Then::QueuedSent(agent) = then {
             self.queued_sent(agent, result.err());
@@ -133,7 +133,7 @@ impl App {
             Ok(reply) => reply,
             Err(ClientError::Disconnected) => {
                 // One notice: the generic one or the runner's would replace it.
-                if let Then::AgentCreated(start) | Then::RootDefaults(start) = then
+                if let Then::AgentCreated(start) | Then::RootDefaults { start, .. } = then
                     && let Some(unsent) = self.root_start_failed(start)
                 {
                     self.disconnect_reply_noticed = true;
@@ -202,7 +202,7 @@ impl App {
                 }
                 // Creation failed: the next message tries again in the same
                 // workspace instead of queueing behind an agent that will never arrive.
-                if let Then::AgentCreated(start) | Then::RootDefaults(start) = then {
+                if let Then::AgentCreated(start) | Then::RootDefaults { start, .. } = then {
                     let message = explain(&self.theme, &e, then, &self.options.command_hint());
                     match self.root_start_failed(start) {
                         Some(kept) => self.flash_error(format!("{message}; {kept}")),
@@ -261,9 +261,8 @@ impl App {
             self.dirty = true;
         }
         match (then, reply) {
-            (Then::RootDefaults(start), Reply::Status(status)) => {
-                self.status = Some(status);
-                effects.extend(self.resume_root_start(start));
+            (Then::RootDefaults { start, link }, Reply::Status(status)) => {
+                effects.extend(self.root_defaults_arrived(start, link, status));
             }
             (Then::Tree, Reply::Tree(tree)) => {
                 self.tree_in_flight = false;
@@ -435,14 +434,18 @@ impl App {
                 }
             }
             (
-                Then::ArtifactBytes(id),
+                Then::ArtifactBytes { id, read },
                 Reply::ArtifactBytes {
                     artifact,
                     base64,
                     truncated,
                 },
             ) => {
-                if self.artifacts.pending_bytes == Some(id) {
+                debug_assert!(
+                    read <= self.artifact_reads,
+                    "a reply to a read not yet made"
+                );
+                if self.artifacts.pending_bytes == Some((id, read)) {
                     self.artifacts.pending_bytes = None;
                     // Authoritative: read from the store just now, unlike a
                     // cached list entry or an `artifact.created` snapshot.

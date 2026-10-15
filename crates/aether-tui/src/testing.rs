@@ -6,7 +6,8 @@ use aether_core::agent::{Agent, AgentConfig, AgentStats, AgentStatus, Role, Scop
 use aether_core::budget::RunSummary;
 use aether_core::event::{Actor, Event, EventDraft, EventKind};
 use aether_core::id::{
-    AgentId, ApprovalId, EventId, InboxItemId, InvocationId, MessageId, RunId, ToolCallId,
+    AgentId, ApprovalId, ArtifactId, EventId, InboxItemId, InvocationId, MessageId, RunId,
+    ToolCallId,
 };
 use aether_core::inbox::{InboxItem, InboxKind};
 use aether_core::model::{ContentBlock, MessageRole, ModelRef, Usage};
@@ -49,6 +50,22 @@ pub fn render_with(
         .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Routes a reply to `agent`'s history page asked for on the current connection.
+pub fn backfill_then(app: &App, agent: AgentId) -> Then {
+    Then::Backfill {
+        agent,
+        connection: app.connection,
+    }
+}
+
+/// Routes a reply to the latest read of `id`'s bytes.
+pub fn artifact_bytes_then(app: &App, id: ArtifactId) -> Then {
+    Then::ArtifactBytes {
+        id,
+        read: app.artifact_reads,
+    }
 }
 
 /// Feed `app` a daemon status report with a chosen suspended-agent count and
@@ -154,7 +171,7 @@ pub fn app_with_transcript(messages: &[&str]) -> App {
         })),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: backfill_then(&app, id),
         result: Ok(Reply::Events(vec![])),
     });
 
@@ -294,7 +311,7 @@ pub fn populated_app() -> App {
         })),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: backfill_then(&app, id),
         result: Ok(Reply::Events(vec![])),
     });
     // Fleet counts, provider load and run spend: the status bar segments only

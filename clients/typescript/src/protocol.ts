@@ -156,6 +156,7 @@ export * from "./protocol/types/ExhaustionClass.ts";
 export * from "./protocol/types/ExportSummary.ts";
 export * from "./protocol/types/FailureLine.ts";
 export * from "./protocol/types/FallbackRecord.ts";
+export * from "./protocol/types/FeedbackRanking.ts";
 export * from "./protocol/types/GitSummary.ts";
 export * from "./protocol/types/GithubDispatchMode.ts";
 export * from "./protocol/types/GithubRepositoryConfig.ts";
