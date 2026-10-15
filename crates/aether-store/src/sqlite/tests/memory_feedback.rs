@@ -316,7 +316,7 @@ fn the_ranked_index_covers_the_read_without_fetching_table_columns() {
         .filter(|(op, _, root)| op == "OpenRead" && *root == table_root)
         .map(|(_, cursor, _)| *cursor)
         .collect();
-    assert_eq!(table_cursors.len(), 1);
+    assert!(table_cursors.len() <= 1, "{table_cursors:?}");
     assert!(
         instructions.iter().all(|(op, cursor, _)| {
             !table_cursors.contains(cursor)

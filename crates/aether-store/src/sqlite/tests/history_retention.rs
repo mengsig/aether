@@ -802,7 +802,7 @@ fn retention_snapshot_rejects_a_database_over_the_memory_limit() {
 #[test]
 fn feedback_rows_survive_expiring_their_task_history() {
     use aether_core::memory_feedback::{
-        MemoryEvidence, MemoryFeedback, MemoryFeedbackSpec, MemoryVerdict,
+        FeedbackTally, MemoryEvidence, MemoryFeedback, MemoryFeedbackSpec, MemoryVerdict,
     };
     let f = Fixture::new();
     let record = MemoryFeedback {
@@ -810,7 +810,7 @@ fn feedback_rows_survive_expiring_their_task_history() {
         spec: MemoryFeedbackSpec {
             memory: MemoryId::new(),
             verdict: MemoryVerdict::Hurt,
-            evidence: MemoryEvidence::Outcome,
+            evidence: MemoryEvidence::Review,
             task: f.task.id,
             invocation: Some(InvocationId::new()),
             reason: "Review failed".into(),
@@ -828,11 +828,12 @@ fn feedback_rows_survive_expiring_their_task_history() {
         snapshot.memory_feedback_record(record.id).unwrap(),
         Some(record.clone())
     );
-    assert!(
+    assert_eq!(
         snapshot
             .memory_feedback_tallies(&[record.spec.memory])
             .unwrap()
-            .is_empty()
+            .get(&record.spec.memory),
+        Some(&FeedbackTally { helped: 0, hurt: 1 })
     );
     let task_id: String = f
         .store
