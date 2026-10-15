@@ -72,7 +72,7 @@ impl Runtime {
             truncated: scan.truncated,
             ..Default::default()
         };
-        let _hold = self.hold();
+        let _hold = (!dry_run).then(|| self.hold());
         let ownership = self.store.engine_session_ownerships()?;
         let current_paths = owned_paths(&ownership);
         let agents = self.store.agents(&AgentFilter::default())?;
@@ -96,6 +96,9 @@ impl Runtime {
             .chain(leases.iter().map(|lease| lease.agent_id))
             .chain(resources.iter().map(|holding| holding.agent))
             .collect();
+        // Preview is a point-in-time snapshot. Only deletion reserves admission
+        // while rechecking and unlinking files.
+        let _admission = (!dry_run).then_some((sched, engine_turns));
         let mut identities = HashMap::new();
         for (_, file) in &scan.files {
             if let Some(identity) = file.identity() {

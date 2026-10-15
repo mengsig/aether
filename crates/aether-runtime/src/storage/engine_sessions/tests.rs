@@ -684,3 +684,33 @@ async fn durable_lease_and_quarantined_resource_protect_native_log() {
     f.runtime.resources.release_quarantine(owner.id);
     assert!(f.sweep(14, false)["bytes_removed"].as_u64().unwrap() > 0);
 }
+
+#[tokio::test]
+async fn preview_of_eligible_native_log_does_not_wait_for_mutation_locks() {
+    let f = Fixture::new().await;
+    let owner = f.owner(AgentStatus::Completed { summary: None });
+    f.store(&owner);
+    let record = f.owned("codex", &owner);
+    let sweep = f.runtime.storage_gc_lock.lock();
+    let hold = f.runtime.hold();
+    let runtime = f.runtime.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        tx.send(runtime.storage_gc(true)).unwrap();
+    });
+    let result = rx.recv_timeout(Duration::from_secs(2));
+    drop(hold);
+    drop(sweep);
+    worker.join().unwrap();
+    let report = result
+        .expect("preview must not wait for mutation locks")
+        .unwrap();
+    assert!(
+        report["engine_sessions"]["bytes_eligible"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(report["engine_sessions"]["bytes_removed"], 0);
+    assert!(record.log_paths[0].exists());
+}
