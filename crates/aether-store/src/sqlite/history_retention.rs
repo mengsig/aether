@@ -176,6 +176,7 @@ impl SqliteStore {
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        conn.execute_batch(super::KEEP_TEMP_IN_MEMORY)?;
         read(&conn.transaction()?)
     }
 }

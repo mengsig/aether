@@ -32,6 +32,10 @@ mod repository_aliases;
 mod retention;
 mod store;
 
+/// Sorts, UNIONs and statement journals otherwise spill to unlinked files in
+/// `/var/tmp`: tens of MB/s of disk churn (#57). Each is bounded by what its query reads.
+const KEEP_TEMP_IN_MEMORY: &str = "PRAGMA temp_store = MEMORY;";
+
 /// A SQLite-backed store. Writes share one connection, serialized by a mutex:
 /// the daemon is the single writer. A file store reads on a second connection
 /// and checkpoints its WAL on a third, so neither waits behind a commit.
@@ -108,6 +112,7 @@ impl SqliteStore {
              PRAGMA busy_timeout = 5000;
              PRAGMA wal_autocheckpoint = 0;",
         )?;
+        conn.execute_batch(KEEP_TEMP_IN_MEMORY)?;
         crate::migration_backup::before_migration(&conn, path).map_err(|source| {
             StoreError::MigrationBackup {
                 database: path.to_path_buf(),
@@ -147,6 +152,7 @@ impl SqliteStore {
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         reader.busy_timeout(std::time::Duration::from_secs(5))?;
+        reader.execute_batch(KEEP_TEMP_IN_MEMORY)?;
         store.reader = Some(Mutex::new(reader));
         store.path = Some(path.to_path_buf());
         store.checkpointer = Some(checkpoint::Checkpointer::start(path, every)?);
@@ -157,6 +163,7 @@ impl SqliteStore {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        conn.execute_batch(KEEP_TEMP_IN_MEMORY)?;
         Self::init(conn, None)
     }
 
