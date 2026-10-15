@@ -2055,3 +2055,30 @@ fn terminal_agents_release_orphaned_calls_and_artifact_records() {
 
 #[path = "cancel_tests.rs"]
 mod cancellation;
+
+#[test]
+fn interrupted_tool_has_a_cause_in_live_and_replayed_transcripts() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "worker", "assistant");
+    let call = feed.tool(agent, "shell", json!({"command": "make ci"}));
+    feed.on(
+        agent,
+        EventKind::Custom {
+            name: "tool.interrupted".into(),
+            payload: json!({"call": call, "cause": "daemon stop or restart"}),
+        },
+    );
+    feed.on(agent, EventKind::ToolCancelled { call });
+    let check = |feed: &Feed| {
+        assert!(feed.models(agent).iter().any(|model| matches!(model,
+            CellModel::Exec { status: CallStatus::Cancelled, output, .. }
+            if output == "interrupted (daemon stop or restart)"
+        )));
+    };
+    check(&feed);
+    let mut replay = Feed::new();
+    for event in &feed.events {
+        replay.feed(event);
+    }
+    check(&replay);
+}

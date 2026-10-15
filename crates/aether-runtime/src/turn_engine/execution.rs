@@ -139,7 +139,11 @@ pub(crate) async fn execute(
         turn: ctx.turn,
         now: now(),
     };
-    let status = aether_context::render::engine_runtime_state(&context_inputs);
+    let mut status = aether_context::render::engine_runtime_state(&context_inputs);
+    status.push_str(&crate::tool_interruption::resume_notes(
+        runtime,
+        ctx.agent.id,
+    )?);
     let assembled = runtime.context.assemble(context_inputs);
     let mut snapshot = assembled.snapshot;
     // Explicit (or model-default) effort is independent of registry capability

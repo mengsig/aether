@@ -1498,6 +1498,21 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 format!("the disk refused {refused} write(s) for {during}: {error}").into(),
             );
         }
+        EventKind::Custom { name, payload } if name == "tool.interrupted" => {
+            if let (Ok(call), Some(cause)) = (
+                serde_json::from_value::<ToolCallId>(payload["call"].clone()),
+                payload["cause"].as_str(),
+            ) {
+                tool_settled(
+                    t,
+                    at,
+                    call,
+                    CallStatus::Cancelled,
+                    &format!("interrupted ({cause})"),
+                    None,
+                );
+            }
+        }
         EventKind::Custom { name, payload } if name == "engine.interrupted" => {
             let engine = payload["engine"].as_str().unwrap_or("engine");
             let text = match payload["reason"].as_str() {

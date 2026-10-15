@@ -272,6 +272,7 @@ pub(super) async fn drive(
                     receipt_seen = false;
                 }
                 activity_seen |= active;
+                state.interruption = interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref());
                 match ev {
                 None => break settled.take().unwrap_or_else(|| EngineOutcome {
                     is_error: true,
@@ -694,6 +695,7 @@ pub(super) async fn drive(
                         merge_cleanup_receipt(&mut outcome, receipt);
                     }
                     Some(event) => {
+                        state.interruption = interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref());
                         let active = event_has_activity(&event, ctx);
                         receipt_seen &= !event_may_start_request(&event);
                         activity_seen |= active;
@@ -714,6 +716,31 @@ pub(super) async fn drive(
     // that is no longer this turn's, and would misreport who stopped it.
     if let Some(park) = park.as_mut() {
         park.disarm();
+    }
+    if let Some(cause) =
+        interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref()).or_else(
+            || {
+                outcome.interrupted.then(|| {
+                    outcome
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "engine interruption".into())
+                })
+            },
+        )
+    {
+        let mut commit = Commit::new();
+        for call in state.calls.values() {
+            crate::tool_interruption::record(
+                &mut commit,
+                &ctx.agent,
+                call.id,
+                &call.tool,
+                &call.input,
+                &cause,
+            );
+        }
+        runtime.apply(commit)?;
     }
     let uncommitted = Uncommitted {
         invocation: Some(state.message_invocation),
@@ -899,4 +926,38 @@ mod receipt_tests {
         assert!(seen);
         assert_eq!(cursor, 7);
     }
+}
+
+fn interruption_cause(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    cancel: &CancellationToken,
+    park: Option<&Park>,
+    budget: Option<&Crossed>,
+) -> Option<String> {
+    if runtime.shutdown.is_cancelled() {
+        return Some("daemon stop or restart".into());
+    }
+    if let Some(request) = runtime
+        .sched
+        .lock()
+        .running
+        .get(&ctx.agent.id)
+        .and_then(|r| r.cancel_request.clone())
+    {
+        return Some(format!(
+            "agent cancellation: {}",
+            request.reason.as_deref().unwrap_or("cancel requested")
+        ));
+    }
+    if let Some(budget) = budget {
+        return Some(format!("budget stop: {}", budget.reason));
+    }
+    if cancel.is_cancelled() {
+        return Some("turn interrupt".into());
+    }
+    if park.is_some_and(|park| park.stop_requested || park.killed()) {
+        return Some("harness ended the turn".into());
+    }
+    None
 }

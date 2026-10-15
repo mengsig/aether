@@ -29,6 +29,7 @@ pub(super) fn disallowed_native_spawn_tool(
 pub(super) struct StreamState {
     /// Provider tool-use id → call id and observed start, for matching and timing results.
     pub(super) calls: BTreeMap<String, PendingCall>,
+    pub(super) interruption: Option<String>,
     /// Content-block index → tool name for input deltas.
     pub(super) tool_names: BTreeMap<usize, String>,
     /// The engine reported per-message usage at least once this turn.
@@ -85,6 +86,7 @@ impl StreamState {
     pub(super) fn new(pricing: TurnPricing, configured: ResolvedModel) -> Self {
         Self {
             calls: BTreeMap::new(),
+            interruption: None,
             tool_names: BTreeMap::new(),
             usage_seen: false,
             invoked: false,
@@ -494,6 +496,24 @@ pub(super) fn handle_event(
                 tracing::debug!(agent = %ctx.agent.id, %tool_use_id, "tool result for an unknown call");
                 return Ok(());
             };
+            // Claude synthesizes this denial when its process is interrupted.
+            // Only Aether's independent stop evidence can override that wording.
+            if is_error
+                && content.contains("The user doesn't want to proceed with this tool use")
+                && let Some(cause) = &state.interruption
+            {
+                let mut commit = Commit::new();
+                crate::tool_interruption::record(
+                    &mut commit,
+                    &ctx.agent,
+                    call.id,
+                    &call.tool,
+                    &call.input,
+                    cause,
+                );
+                runtime.apply(commit)?;
+                return Ok(());
+            }
             let (call, started) = (call.id, call.started);
             let outcome = ToolOutcome {
                 content: content.clone(),
@@ -505,21 +525,27 @@ pub(super) fn handle_event(
             // Also a transcript entry, exactly as the API path composes one:
             // without it the tool call the engine made dangles, and a handoff
             // would hand the next model a call that looks like it never ran.
-            runtime.apply(
-                Commit::new()
-                    .event(ctx.draft(EventKind::ToolSucceeded { call, outcome }))
-                    .event(ctx.draft(EventKind::AgentMessage {
-                        role: MessageRole::User,
-                        content: vec![ContentBlock::ToolResult {
-                            tool_use_id,
-                            content: vec![aether_core::model::ToolResultBlock::Text {
-                                text: content,
-                            }],
-                            is_error,
-                        }],
-                        invocation: None,
-                    })),
-            )?;
+            let settled = if is_error
+                && content.contains("The user doesn't want to proceed with this tool use")
+            {
+                EventKind::ToolDenied {
+                    call,
+                    reason: content.clone(),
+                }
+            } else {
+                EventKind::ToolSucceeded { call, outcome }
+            };
+            runtime.apply(Commit::new().event(ctx.draft(settled)).event(ctx.draft(
+                EventKind::AgentMessage {
+                    role: MessageRole::User,
+                    content: vec![ContentBlock::ToolResult {
+                        tool_use_id,
+                        content: vec![aether_core::model::ToolResultBlock::Text { text: content }],
+                        is_error,
+                    }],
+                    invocation: None,
+                },
+            )))?;
         }
         EngineEvent::RateLimit { payload } => {
             match aether_core::provider::ProviderUsage::from_engine_payload(

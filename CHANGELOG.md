@@ -8,6 +8,11 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- Interrupted native tool calls now carry their cause in transcripts and on resume.
+  Stopping or restarting the daemon, interrupting or cancelling an agent, and
+  ending a stage no longer leave a synthetic operator denial uncorrected.
+  Genuine approval denials retain their denial status.
+
 - **The daemon no longer churns the disk while agents work.** Reading a long
   agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
   of MB per read. With several agents running, that held host IO pressure
