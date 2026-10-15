@@ -432,6 +432,9 @@ not bill them. The receipt counts as $0 when all of these hold:
 - It is the process's first receipt, and no usage streamed before it. A
   result that closed queued work without running the model counts as a
   receipt.
+- No model output came before it, counted or not: no stream events, and no
+  assistant record except Claude Code's own message for the API error
+  (`is_api_error_message`, model `<synthetic>`).
 - It failed with one of those statuses as `api_error_status`.
 - It has zero dollars, an empty `modelUsage`, and every `usage` counter
   present as zero.
@@ -443,8 +446,9 @@ billed, so the receipt stays unknown. Claude Code also resends a refused 400
 in a reshaped form without an `api_retry` record, but only after the API
 refused it.
 
-Such a retry later in the same process, for example while background work
-keeps it open, withdraws the $0: the adapter reports an `Unreported` gap.
+Any `api_retry` later in the same process, for example while background work
+keeps it open, withdraws the $0 whatever its status. The retry starts an
+attempt the receipt cannot cover, so the adapter reports an `Unreported` gap.
 Unless a later receipt closes the turn, the runtime no longer counts the held
 receipt as covering it, and the turn ends with an `Interrupted` gap.
 

@@ -11,19 +11,32 @@ const UNBILLED_REJECTIONS: [u64; 5] = [400, 401, 403, 404, 413];
 
 impl ParseState {
     /// An `api_retry` record: the attempt before it is unbilled only when the
-    /// API refused it. Otherwise a $0 already proven in this process is withdrawn.
+    /// API refused it. The retry is a new attempt, so it withdraws a $0 already proven.
     pub(super) fn note_retry(&mut self, v: &Value) -> Vec<EngineEvent> {
         debug_assert_eq!(v.get("subtype").and_then(Value::as_str), Some("api_retry"));
         debug_assert!(!self.zero_proven || self.refusal_unprovable);
         let status = v.get("error_status").and_then(Value::as_u64);
-        if status.is_some_and(|status| UNBILLED_REJECTIONS.contains(&status)) {
-            return Vec::new();
+        if !status.is_some_and(|status| UNBILLED_REJECTIONS.contains(&status)) {
+            self.refusal_unprovable = true;
         }
-        self.refusal_unprovable = true;
         if std::mem::take(&mut self.zero_proven) {
             return vec![cost_gap()];
         }
         Vec::new()
+    }
+
+    /// Model output shows that inference ran, counted or not. Claude Code's own
+    /// message for an API error is the one assistant record the model did not write.
+    pub(super) fn note_output(&mut self, v: &Value) {
+        let kind = v.get("type").and_then(Value::as_str);
+        debug_assert!(
+            matches!(kind, Some("assistant" | "stream_event")),
+            "{kind:?}"
+        );
+        let api_error_message = kind == Some("assistant")
+            && v.get("is_api_error_message").and_then(Value::as_bool) == Some(true)
+            && v.pointer("/message/model").and_then(Value::as_str) == Some("<synthetic>");
+        self.refusal_unprovable |= !api_error_message;
     }
 
     /// A result that closed queued work without the model still ends a receipt,

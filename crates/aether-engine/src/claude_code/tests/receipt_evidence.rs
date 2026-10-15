@@ -276,17 +276,47 @@ fn a_skipped_queued_receipt_proves_nothing_for_a_later_rejection() {
 }
 
 #[test]
-fn a_billable_retry_after_a_proven_zero_withdraws_it() {
-    let mut state = ParseState::default();
-    let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
-    assert_eq!(receipt_cost(&events), Some(0.0));
-    assert!(parse_line(&retry(json!(401)), &mut state).is_empty());
-    let events = parse_line(&retry(Value::Null), &mut state);
-    assert!(
-        matches!(&events[..], [EngineEvent::UsageDelta { usage }]
-            if usage.cost_gap == Some(aether_core::model::CostGap::Unreported)
-                && usage.total_tokens() == 0),
-        "{events:?}"
-    );
-    assert!(parse_line(&retry(Value::Null), &mut state).is_empty());
+fn any_retry_after_a_proven_zero_withdraws_it() {
+    for status in [json!(401), Value::Null] {
+        let mut state = ParseState::default();
+        let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
+        assert_eq!(receipt_cost(&events), Some(0.0));
+        let events = parse_line(&retry(status.clone()), &mut state);
+        assert!(
+            matches!(&events[..], [EngineEvent::UsageDelta { usage }]
+                if usage.cost_gap == Some(aether_core::model::CostGap::Unreported)
+                    && usage.total_tokens() == 0),
+            "{status}: {events:?}"
+        );
+        assert!(parse_line(&retry(status), &mut state).is_empty());
+    }
+}
+
+#[test]
+fn model_output_before_a_rejection_rules_out_the_proof() {
+    let api_error = json!({"type":"assistant","session_id":"s","error":"unknown",
+        "is_api_error_message":true,"api_error_status":400,"message":{"id":"e",
+            "model":"<synthetic>","role":"assistant","usage":{"input_tokens":0,"output_tokens":0},
+            "content":[{"type":"text","text":"API Error: 400 refused"}]}});
+    let mut answer = api_error.clone();
+    answer["message"]["model"] = json!("claude-haiku-5-5");
+    answer["message"].as_object_mut().unwrap().remove("usage");
+    let mut unflagged = api_error.clone();
+    unflagged
+        .as_object_mut()
+        .unwrap()
+        .remove("is_api_error_message");
+    let started = json!({"type":"stream_event","session_id":"s","event":{"type":"message_start",
+        "message":{"id":"m","model":"claude-haiku-5-5","usage":{"input_tokens":0,"output_tokens":0}}}});
+    for (before, cost) in [
+        (&api_error, Some(0.0)),
+        (&answer, None),
+        (&unflagged, None),
+        (&started, None),
+    ] {
+        let mut state = ParseState::default();
+        parse_line(&before.to_string(), &mut state);
+        let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
+        assert_eq!(receipt_cost(&events), cost, "{before}");
+    }
 }

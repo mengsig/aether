@@ -244,13 +244,25 @@ async fn a_skipped_queued_receipt_keeps_a_later_refusal_incomplete() {
 }
 
 #[tokio::test]
-async fn a_billable_retry_after_a_proven_zero_reopens_the_gap() {
-    let background = json!({"type":"system","subtype":"task_started","task_id":"background"});
-    let engine = failed_after(vec![background]);
-    let retry = json!({"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,
-        "retry_delay_ms":600,"error_status":null,"error":"unknown","session_id":"fresh"});
-    engine.runs.lock().unwrap().front_mut().unwrap().push(retry);
-    let usage = failed_worker_usage(engine).await;
+async fn any_retry_after_a_proven_zero_reopens_the_gap() {
+    for status in [json!(401), Value::Null] {
+        let background = json!({"type":"system","subtype":"task_started","task_id":"background"});
+        let engine = failed_after(vec![background]);
+        let retry = json!({"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,
+            "retry_delay_ms":600,"error_status":status,"error":"unknown","session_id":"fresh"});
+        engine.runs.lock().unwrap().front_mut().unwrap().push(retry);
+        let usage = failed_worker_usage(engine).await;
+        assert!(!usage.cost_complete, "{status}: {usage:?}");
+        assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
+    }
+}
+
+#[tokio::test]
+async fn an_answer_without_counters_keeps_a_later_refusal_incomplete() {
+    let answer = json!({"type":"assistant","session_id":"fresh","message":{"id":"answer",
+        "model":"claude-haiku-5-5","role":"assistant",
+        "content":[{"type":"text","text":"Here is my answer."}]}});
+    let usage = failed_worker_usage(failed_after(vec![answer])).await;
     assert!(!usage.cost_complete, "{usage:?}");
-    assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
+    assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
 }

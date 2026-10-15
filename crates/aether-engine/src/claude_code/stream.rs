@@ -185,11 +185,14 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
         "rate_limit_event" => vec![EngineEvent::RateLimit {
             payload: v.get("rate_limit_info").cloned().unwrap_or(Value::Null),
         }],
-        "stream_event" => v
-            .get("event")
-            .map(|e| stream_deltas(e, state))
-            .unwrap_or_default(),
+        "stream_event" => {
+            state.note_output(&v);
+            v.get("event")
+                .map(|e| stream_deltas(e, state))
+                .unwrap_or_default()
+        }
         "assistant" => {
+            state.note_output(&v);
             let message = &v["message"];
             let content = parse_content(message.get("content"));
             // Usage rides the delta stream alone, keyed per message: attaching

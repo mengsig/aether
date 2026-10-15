@@ -34,10 +34,10 @@ release is also the text of its GitHub release.
   all-zero receipt was treated as unknown cost and the agent showed an
   incomplete $0. The API does not bill those statuses, so such a receipt now
   counts as $0 with no gap. This holds only for the process's first receipt,
-  with no usage streamed, every counter zero, and every earlier retry caused
-  by one of those statuses. Otherwise the gap stays. That includes a retry
-  after a dropped connection, a timeout, 429, 5xx or 529. Such a retry later
-  in the same process withdraws the $0.
+  with no usage streamed, no model output, every counter zero, and every
+  earlier retry caused by one of those statuses. Otherwise the gap stays.
+  That includes a retry after a dropped connection, a timeout, 429, 5xx or
+  529. Any retry later in the same process withdraws the $0.
 
 ## 1.0.9
 
