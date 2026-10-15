@@ -62,7 +62,20 @@ pub(crate) struct Pending {
 #[derive(Debug)]
 pub(crate) struct Claim {
     pub(crate) key: String,
-    _file: std::fs::File,
+    file: std::fs::File,
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        // A concurrent fork can keep the descriptor alive until the child execs.
+        // The claim's lifetime, not that unrelated child's, owns the lock.
+        if let Err(error) = self.file.unlock() {
+            // Closing remains safe: any inherited descriptors retain the lock
+            // until they close, delaying resolution rather than allowing overlap.
+            tracing::warn!(key = %self.key, %error,
+                "could not unlock outbox claim; closing it and awaiting any inherited descriptors");
+        }
+    }
 }
 
 pub(crate) enum Claimed {
@@ -150,7 +163,7 @@ impl Outbox {
             unconfirmed: None,
         };
         let file = self.publish(&key, &serde_json::to_vec(&entry)?).await?;
-        Ok(Claim { key, _file: file })
+        Ok(Claim { key, file })
     }
 
     async fn staged(&self, bytes: &[u8]) -> Result<(PathBuf, std::fs::File)> {
@@ -374,7 +387,7 @@ impl Outbox {
             Some(entry) => Ok(Claimed::Held(
                 Claim {
                     key: key.to_owned(),
-                    _file: file,
+                    file,
                 },
                 Box::new(entry),
             )),
