@@ -38,8 +38,9 @@ release is also the text of its GitHub release.
 - **Codex spend is an estimate, not billed dollars.** A Codex turn now
   records `cost_usd` of 0 and the list-price figure as `estimated_cost_usd`.
   Limits that read only billed dollars, a parent's `cost_budget` over Codex
-  children and `[scheduler] run_budget_usd`, no longer count Codex turns and
-  warn that the cost is a lower bound. Use token budgets for Codex work. An
+  children and `[scheduler] run_budget_usd`, no longer count Codex turns; a
+  `cost_budget` warns once that its cost is a lower bound, `run_budget_usd`
+  stays silent. Use token budgets for Codex work. An
   Archon with `count_estimated_cost` off sees $0 for Codex.
 
 - **Store schema 22.** Adds the table that keeps memory feedback. The
