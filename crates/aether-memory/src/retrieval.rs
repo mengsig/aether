@@ -11,14 +11,11 @@ impl MemoryService {
     /// match narrows the candidate set when a query is given. A repository
     /// named by an old alias is read where its memories now live.
     pub fn retrieve(&self, req: &RetrievalRequest) -> Result<Vec<Retrieved>> {
-        let scope = req
-            .scope
-            .clone()
-            .map(|scope| self.canonical_scope(scope))
-            .transpose()?;
-        self.retrieve_resolved(&RetrievalRequest {
-            scope,
-            ..req.clone()
+        self.read_resolved(req.scope.clone(), |scope| {
+            self.retrieve_resolved(&RetrievalRequest {
+                scope,
+                ..req.clone()
+            })
         })
     }
 

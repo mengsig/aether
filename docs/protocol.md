@@ -180,7 +180,8 @@ agent and subtree memories are not touched, and neither are agent rows: an
 agent created with the alias keeps it, and its reads and writes resolve to
 the target from then on. A new agent, or a child, naming the alias is created
 with the target id, so a child of an agent still carrying the alias passes
-the narrowing check. A `memories` query, `create_memory` and
+the narrowing check, and so do later checks against that agent: tightening,
+restarting or scheduling to the child. A `memories` query, `create_memory` and
 `aether memory list --scope` given the alias read and write the target. The
 row, the move and one `custom` event named `repository.aliased` are committed
 together, or not at all.

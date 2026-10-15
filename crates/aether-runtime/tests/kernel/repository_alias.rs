@@ -1,12 +1,14 @@
 //! An old repository name aliased to the id its checkout derives now.
 use super::memory_scope::memories_shown_after;
 use super::*;
+use aether_core::agent::NetworkPolicy;
 use aether_core::memory::{MemoryScope, OperatorMemoryScope, OperatorMemorySpec};
+use aether_core::schedule::{CreateScheduleSpec, Recurrence, ScheduleTarget};
 
-const CANONICAL: &str = "github.com/mengsig/archon";
+pub(super) const CANONICAL: &str = "github.com/mengsig/archon";
 
 /// What Archon up to 1.2.1 sends: the bare name, not a checkout.
-fn archon_agent(role: &str, parent: Option<AgentId>) -> CreateAgentSpec {
+pub(super) fn archon_agent(role: &str, parent: Option<AgentId>) -> CreateAgentSpec {
     CreateAgentSpec {
         scope: Some(Scope {
             repository: Some("archon".into()),
@@ -16,7 +18,7 @@ fn archon_agent(role: &str, parent: Option<AgentId>) -> CreateAgentSpec {
     }
 }
 
-fn filed(repository: &str, text: &str) -> OperatorMemorySpec {
+pub(super) fn filed(repository: &str, text: &str) -> OperatorMemorySpec {
     OperatorMemorySpec {
         text: text.into(),
         kind: aether_core::memory::MemoryKind::Fact,
@@ -43,7 +45,10 @@ fn alias_archon(h: &Harness, dry_run: bool) -> aether_core::repository::Reposito
         .expect("alias")
 }
 
-fn in_repository(h: &Harness, repository: &str) -> Vec<aether_core::memory::MemoryRecord> {
+pub(super) fn in_repository(
+    h: &Harness,
+    repository: &str,
+) -> Vec<aether_core::memory::MemoryRecord> {
     h.runtime
         .memories(aether_store::MemoryQuery {
             scope: Some(MemoryScope::Repository {
@@ -258,4 +263,69 @@ async fn an_alias_is_an_operators_and_a_conflicting_one_is_refused() {
         Err(aether_runtime::RuntimeError::Invalid(_))
     ));
     assert_eq!(h.runtime.repository_aliases().expect("aliases").len(), 1);
+}
+
+/// A child created after the alias stores the canonical id while its parent
+/// still names `archon`: tightening it, restarting it and scheduling to it
+/// compare the two as one repository.
+#[tokio::test]
+async fn a_child_in_the_canonical_scope_stays_within_a_parent_naming_the_alias() {
+    let h = harness(Vec::new()).await;
+    let mut parent = archon_agent("supervisor", None);
+    parent.start = false;
+    parent.scope.as_mut().expect("scope").network = NetworkPolicy::Allowed;
+    let (parent, _) = h
+        .runtime
+        .create_agent(parent, Actor::user())
+        .expect("old parent");
+    alias_archon(&h, false);
+    let child = CreateAgentSpec {
+        start: false,
+        ..long_lived("worker", Some(parent.id))
+    };
+    let (child, _) = h
+        .runtime
+        .create_agent(child, Actor::agent(parent.id))
+        .expect("child");
+    assert_eq!(child.scope.repository.as_deref(), Some(CANONICAL));
+    assert_eq!(child.scope.network, NetworkPolicy::Allowed);
+
+    let tightened = h
+        .runtime
+        .update_agent(
+            child.id,
+            AgentUpdate {
+                network: Some(NetworkPolicy::Denied),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("denying the network narrows the child");
+    assert_eq!(tightened.scope.network, NetworkPolicy::Denied);
+    h.runtime
+        .cancel_agent(child.id, None, Actor::user())
+        .expect("cancel");
+    let successor = h
+        .runtime
+        .restart_agent(child.id, Actor::user())
+        .expect("the parent was not tightened");
+    assert_eq!(successor.scope.repository.as_deref(), Some(CANONICAL));
+    let schedule = h
+        .runtime
+        .create_schedule(
+            CreateScheduleSpec {
+                name: "nightly".into(),
+                target: ScheduleTarget::Agent(successor.id),
+                recurrence: Recurrence::Interval {
+                    seconds: std::num::NonZeroU64::new(3600).expect("nonzero"),
+                },
+                missed: Default::default(),
+                busy: Default::default(),
+                payload: json!({"source": "timer"}),
+                max_deliveries: None,
+            },
+            Actor::agent(parent.id),
+        )
+        .expect("the child is within its creator's authority");
+    assert_eq!(schedule.target(), Some(successor.id));
 }

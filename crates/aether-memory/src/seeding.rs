@@ -48,12 +48,17 @@ impl MemoryService {
             // created in one workspace would otherwise both see an empty
             // scope and admit every note twice.
             let hold = self.gate.hold();
-            if self.already_seeded(&hold, candidate)? {
+            // Again under the gate the alias move takes: one may have moved
+            // this note since the name was resolved above.
+            let candidate = MemoryCandidate {
+                scope: self.canonical_scope(candidate.scope.clone())?,
+                ..candidate.clone()
+            };
+            if self.already_seeded(&hold, &candidate)? {
                 report.unchanged += 1;
                 continue;
             }
-            let (admission, commit) =
-                self.evaluate(&hold, candidate.clone(), actor.clone(), None, None)?;
+            let (admission, commit) = self.evaluate(&hold, candidate, actor.clone(), None, None)?;
             self.store.commit(commit)?;
             drop(hold);
             match &admission {
@@ -126,16 +131,20 @@ impl MemoryService {
         let Some(head) = repo::head_commit(root) else {
             return Ok(0);
         };
+        let scope = MemoryScope::Repository {
+            id: repository.to_owned(),
+        };
         let seeded: Vec<MemoryRecord> = self
-            .store
-            .memories(&MemoryQuery {
-                scope: Some(MemoryScope::Repository {
-                    id: repository.to_owned(),
-                }),
-                exact_scope: true,
-                nested_scopes: true,
-                limit: MAX_SEEDED_PER_SCOPE,
-                ..Default::default()
+            .read_resolved(Some(scope), |scope| {
+                self.store
+                    .memories(&MemoryQuery {
+                        scope,
+                        exact_scope: true,
+                        nested_scopes: true,
+                        limit: MAX_SEEDED_PER_SCOPE,
+                        ..Default::default()
+                    })
+                    .map_err(Into::into)
             })?
             .into_iter()
             .filter(|m| m.provenance.source.is_some() && !m.pinned)

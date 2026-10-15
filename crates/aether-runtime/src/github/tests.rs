@@ -989,6 +989,59 @@ async fn automatic_followup_refuses_an_agent_moved_out_of_its_checkout() {
     );
 }
 
+/// A thread agent created after its repository was aliased stores the
+/// canonical id; the follow-up check resolves the configured name the same way.
+#[tokio::test]
+async fn automatic_followup_reaches_an_agent_created_after_an_alias() {
+    let dir = tempfile::tempdir().unwrap();
+    managed_checkout(&dir, 5);
+    let rt = runtime(&dir).await;
+    rt.alias_repository(
+        "github.com/o/r",
+        None,
+        Some("github.com/o/renamed".into()),
+        false,
+        Actor::user(),
+    )
+    .unwrap();
+    rt.configure_github_watcher(
+        GithubWatcherConfig {
+            enabled: true,
+            repositories: vec![GithubRepositoryConfig::automatic("o/r".into())],
+            ..Default::default()
+        },
+        0,
+    )
+    .unwrap();
+    let mut source = Fake::new();
+    source.route(
+        "issues/comments",
+        json!([comment_on(2, 5, "maintainer", "@Aether first")]),
+    );
+    rt.github_poll(&source, at()).await.unwrap();
+    let id: AgentId = rt
+        .store
+        .meta(&automatic_agent_key("o/r", 5))
+        .unwrap()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let agent = rt.store.agent(id).unwrap().unwrap();
+    assert_eq!(
+        agent.scope.repository.as_deref(),
+        Some("github.com/o/renamed")
+    );
+
+    source.route(
+        "issues/comments",
+        json!([comment_on(3, 5, "maintainer", "@Aether second")]),
+    );
+    rt.github_poll(&source, at()).await.unwrap();
+    let status = &rt.github_watcher_status().unwrap().repositories[0];
+    assert_eq!(status.last_error, None);
+    assert_eq!(rt.store.inbox(id, 0).unwrap().len(), 2);
+}
+
 #[tokio::test]
 async fn automatic_checkout_rejects_a_symlink_without_touching_its_target() {
     let dir = tempfile::tempdir().unwrap();

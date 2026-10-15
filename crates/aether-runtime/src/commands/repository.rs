@@ -47,7 +47,7 @@ impl Runtime {
     /// `scope` with its repository resolved through the registered aliases.
     /// For a parent created before an alias: its children store the canonical
     /// id, and are narrowed against it.
-    pub(super) fn resolved_scope(&self, scope: &Scope) -> Result<Scope> {
+    pub(crate) fn resolved_scope(&self, scope: &Scope) -> Result<Scope> {
         let mut resolved = scope.clone();
         if let Some(id) = &scope.repository {
             resolved.repository = Some(self.store.resolve_repository(id)?);

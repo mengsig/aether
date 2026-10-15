@@ -291,6 +291,31 @@ impl MemoryService {
         Ok(resolved)
     }
 
+    /// `read` against `scope` resolved through the aliases, outside any hold.
+    /// An alias committing mid-read changes the resolution, so the read is
+    /// repeated once against the new target; aliases are permanent and never
+    /// chain, so a name's resolution changes at most once.
+    pub fn read_resolved<T>(
+        &self,
+        scope: Option<MemoryScope>,
+        read: impl Fn(Option<MemoryScope>) -> Result<T>,
+    ) -> Result<T> {
+        let resolve =
+            |scope: Option<MemoryScope>| scope.map(|s| self.canonical_scope(s)).transpose();
+        let first = resolve(scope.clone())?;
+        let found = read(first.clone())?;
+        let again = resolve(scope)?;
+        if again == first {
+            return Ok(found);
+        }
+        debug_assert_eq!(
+            resolve(again.clone())?,
+            again,
+            "an alias resolved to an alias"
+        );
+        read(again)
+    }
+
     /// Evaluate operator content under the caller's hold. Rejections have no commit.
     pub fn evaluate_operator(
         &self,

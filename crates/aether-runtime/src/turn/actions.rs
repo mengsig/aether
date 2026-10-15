@@ -124,7 +124,7 @@ pub(crate) async fn apply_action(
                         "isolated delegation requires the host execution backend: Git worktree metadata lives outside a container's workspace mount",
                     ));
                 }
-                if let Some(field) = requested.widened_field(&parent.scope) {
+                if let Some(field) = runtime.widened_field_resolved(&requested, &parent.scope)? {
                     return Ok(ToolOutcome::error(format!(
                         "delegation refused: child scope widens `{field}`"
                     )));

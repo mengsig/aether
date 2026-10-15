@@ -365,9 +365,14 @@ impl Runtime {
                 )
             })?;
             let workspace = checkout::verify(self, &repo.repository, number, generation).await?;
-            let repository = format!("github.com/{}", repo.repository);
-            if agent.scope.workspace_root.as_ref() != Some(&workspace)
-                || agent.scope.repository.as_deref() != Some(repository.as_str())
+            // Resolved like the agent's own id was at creation, so an alias
+            // registered for this repository does not orphan its thread agent.
+            let repository = self
+                .store
+                .resolve_repository(&format!("github.com/{}", repo.repository))?;
+            let scope = self.resolved_scope(&agent.scope)?;
+            if scope.workspace_root.as_ref() != Some(&workspace)
+                || scope.repository.as_deref() != Some(repository.as_str())
             {
                 return Err(RuntimeError::Invalid(format!(
                     "GitHub agent {} no longer has its managed checkout scope; delivery retained for retry",

@@ -170,12 +170,15 @@ impl Runtime {
 
     /// Memories matching `query`. A repository scope it names by an old alias
     /// is read where those memories were moved.
-    pub fn memories(&self, mut query: MemoryQuery) -> Result<Vec<MemoryRecord>> {
-        query.scope = query
-            .scope
-            .map(|scope| self.memory.canonical_scope(scope))
-            .transpose()?;
-        Ok(self.store.memories(&query)?)
+    pub fn memories(&self, query: MemoryQuery) -> Result<Vec<MemoryRecord>> {
+        let read = |scope| -> aether_memory::Result<_> {
+            let query = MemoryQuery {
+                scope,
+                ..query.clone()
+            };
+            Ok(self.store.memories(&query)?)
+        };
+        Ok(self.memory.read_resolved(query.scope.clone(), read)?)
     }
 
     /// Curate a memory out. The record stays; it is never retrieved again.
