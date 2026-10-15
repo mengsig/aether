@@ -30,6 +30,8 @@ pub(super) struct StreamState {
     /// Provider tool-use id → call id and observed start, for matching and timing results.
     pub(super) calls: BTreeMap<String, PendingCall>,
     pub(super) interruption: Option<String>,
+    /// Bridge replies can precede native announcements or outlive missing echoes.
+    bridge_replies: Vec<BridgeReply>,
     /// Content-block index → tool name for input deltas.
     pub(super) tool_names: BTreeMap<usize, String>,
     /// The engine reported per-message usage at least once this turn.
@@ -76,7 +78,39 @@ pub(super) struct StreamState {
     text_truncated: bool,
 }
 
+struct BridgeReply {
+    tool: String,
+    input: serde_json::Value,
+    result: (String, bool),
+}
+
+impl BridgeReply {
+    fn matches(&self, call: &PendingCall) -> bool {
+        self.tool == super::bridge::bridge_tool_name(&call.tool) && self.input == call.input
+    }
+}
+
 impl StreamState {
+    pub(super) fn remember_bridge_reply(
+        &mut self,
+        tool: String,
+        input: serde_json::Value,
+        result: (String, bool),
+    ) {
+        self.bridge_replies.push(BridgeReply {
+            tool,
+            input,
+            result,
+        });
+    }
+
+    pub(super) fn bridge_reply(&self, call: &PendingCall) -> Option<&(String, bool)> {
+        self.bridge_replies
+            .iter()
+            .find(|reply| reply.matches(call))
+            .map(|reply| &reply.result)
+    }
+
     pub(super) fn is_bridge_reply(&self, id: &str, name: &str, input: &serde_json::Value) -> bool {
         self.calls
             .get(id)
@@ -87,6 +121,7 @@ impl StreamState {
         Self {
             calls: BTreeMap::new(),
             interruption: None,
+            bridge_replies: Vec::new(),
             tool_names: BTreeMap::new(),
             usage_seen: false,
             invoked: false,
@@ -503,6 +538,26 @@ pub(super) fn handle_event(
             let Some(call) = state.calls.remove(&tool_use_id) else {
                 tracing::debug!(agent = %ctx.agent.id, %tool_use_id, "tool result for an unknown call");
                 return Ok(());
+            };
+            // The bridge's actual reply wins over a killed engine's synthetic
+            // rejection, and consumes one receipt even for identical calls.
+            let (content, is_error) = match state
+                .bridge_replies
+                .iter()
+                .position(|reply| reply.matches(&call))
+            {
+                Some(index) => {
+                    let reply = state.bridge_replies.remove(index).result;
+                    if is_error
+                        && (content.contains("The user doesn't want to proceed with this tool use")
+                            || content.trim() == "cancelled")
+                    {
+                        reply
+                    } else {
+                        (content, is_error)
+                    }
+                }
+                None => (content, is_error),
             };
             // Claude synthesizes this denial when its process is interrupted.
             // Only Aether's independent stop evidence can override that wording.

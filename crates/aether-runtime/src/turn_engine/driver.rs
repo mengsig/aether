@@ -240,8 +240,10 @@ pub(super) async fn drive(
             .as_ref()
             .is_some_and(|wait| wait.ready(runtime, ctx))
             && let Some(wait) = native_wait.take()
+            && let Some((input, reply)) =
+                wait.finish("a message arrived or the requested condition was satisfied")
         {
-            wait.finish("a message arrived or the requested condition was satisfied");
+            state.remember_bridge_reply("wait_for".into(), input, reply);
         }
         let native_deadline = native_wait.as_ref().and_then(|wait| wait.deadline());
         tokio::select! {
@@ -259,8 +261,9 @@ pub(super) async fn drive(
                 }
             }
             () = tokio::time::sleep_until(native_deadline.unwrap_or_else(tokio::time::Instant::now)), if native_deadline.is_some() => {
-                if let Some(wait) = native_wait.take() {
-                    wait.finish("the requested deadline was reached");
+                if let Some(wait) = native_wait.take()
+                    && let Some((input, reply)) = wait.finish("the requested deadline was reached") {
+                    state.remember_bridge_reply("wait_for".into(), input, reply);
                 }
             }
             ev = run.events.recv() => {
@@ -331,8 +334,9 @@ pub(super) async fn drive(
                     let id = clamp(&id, MAX_ENGINE_NAME);
                     if !running && background.contains(&id)
                         && let Some(wait) = native_wait.take()
+                        && let Some((input, reply)) = wait.finish(&format!("native background task {id} finished"))
                     {
-                        wait.finish(&format!("native background task {id} finished"));
+                        state.remember_bridge_reply("wait_for".into(), input, reply);
                     }
                     if running {
                         if background.len() < MAX_BACKGROUND_IDS {
@@ -573,9 +577,13 @@ pub(super) async fn drive(
                     } else {
                         let reply = (engine.kind() == super::EngineKind::CLAUDE_CODE && stop.is_some())
                             .then(|| (req.name.clone(), req.input.clone()));
+                        let (tool, tool_input) = (req.name.clone(), req.input.clone());
                         let served =
                             handle_request(runtime, ctx, tool_ctx, req, effects, cancel, park.is_some(), !background.is_empty())
                                 .await?;
+                        if let Served::Ran(Some(result)) = &served {
+                            state.remember_bridge_reply(tool, tool_input, result.clone());
+                        }
                         if let Served::NativeWait(wait) = served {
                             native_wait = Some(wait);
                             continue;
@@ -716,6 +724,29 @@ pub(super) async fn drive(
     // that is no longer this turn's, and would misreport who stopped it.
     if let Some(park) = park.as_mut() {
         park.disarm();
+    }
+    // Aether finished these calls even if the engine died before echoing
+    // their replies. Settle them before classifying genuinely unfinished work.
+    let pending: Vec<_> = state.calls.keys().cloned().collect();
+    for tool_use_id in pending {
+        let reply = state
+            .calls
+            .get(&tool_use_id)
+            .and_then(|call| state.bridge_reply(call))
+            .cloned();
+        if let Some((content, is_error)) = reply {
+            handle_event(
+                runtime,
+                ctx,
+                snapshot,
+                EngineEvent::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                },
+                &mut state,
+            )?;
+        }
     }
     if let Some(cause) =
         interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref()).or_else(

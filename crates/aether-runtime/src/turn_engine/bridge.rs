@@ -8,7 +8,8 @@ use super::{
 
 /// What the turn did with a bridge call, once its end was already decided.
 pub(super) enum Served {
-    Ran,
+    /// A completed reply, except permission prompts and interrupted executions.
+    Ran(Option<(String, bool)>),
     /// The call would have decided the turn's end a second time, or asked a
     /// person to authorize work in a turn that is over.
     Refused,
@@ -33,6 +34,7 @@ pub(super) async fn handle_request(
     parked: bool,
     native_jobs: bool,
 ) -> Result<Served> {
+    let mut completed = req.name != "permission";
     if parked && req.name == "permission" {
         // Nothing more may run in the turn, so the engine's own prompt is
         // denied without an approval and without blocking the wind-down.
@@ -79,11 +81,16 @@ pub(super) async fn handle_request(
                     let message = verdict
                         .message
                         .unwrap_or_else(|| "denied by the operator".to_owned());
-                    let _ = req.reply.send((message, true));
-                    return Ok(if parked { Served::Refused } else { Served::Ran });
+                    let reply = (message, true);
+                    let _ = req.reply.send(reply.clone());
+                    return Ok(if parked {
+                        Served::Refused
+                    } else {
+                        Served::Ran(Some(reply))
+                    });
                 }
                 match tool
-                    .execute(req.input, tool_ctx, cancel.child_token())
+                    .execute(req.input.clone(), tool_ctx, cancel.child_token())
                     .await
                 {
                     Ok(ToolExecution::Outcome(o)) => (o.content, o.is_error),
@@ -95,15 +102,16 @@ pub(super) async fn handle_request(
                             if let Some(error) =
                                 crate::turn::validate_wait(runtime, ctx, &condition, true)?
                             {
-                                let _ = req.reply.send((error.content, true));
-                                return Ok(Served::Ran);
+                                let reply = (error.content, true);
+                                let _ = req.reply.send(reply.clone());
+                                return Ok(Served::Ran(Some(reply)));
                             }
                             runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
                                 name: "engine.native_wait_started".into(),
                                 payload: json!({"condition": condition}),
                             })))?;
                             return Ok(Served::NativeWait(super::native_wait::NativeWait::new(
-                                condition, ctx, req.reply,
+                                condition, ctx, req.reply, req.input,
                             )));
                         }
                         if parked
@@ -118,7 +126,10 @@ pub(super) async fn handle_request(
                         let outcome = apply_action(runtime, ctx, action, effects).await?;
                         (outcome.content, outcome.is_error)
                     }
-                    Err(e) => (e.to_string(), true),
+                    Err(e) => {
+                        completed = !matches!(e, aether_tools::ToolError::Cancelled);
+                        (e.to_string(), true)
+                    }
                 }
             }
         }
@@ -132,8 +143,8 @@ pub(super) async fn handle_request(
         reply
     };
     // A dropped receiver means the bridge went away; nothing to do.
-    let _ = req.reply.send(reply);
-    Ok(Served::Ran)
+    let _ = req.reply.send(reply.clone());
+    Ok(Served::Ran(completed.then_some(reply)))
 }
 
 /// A permission prompt answered "no", in the shape the engine's
@@ -272,16 +283,19 @@ pub(super) fn engine_call_class(runtime: &Arc<Runtime>, name: &str) -> SideEffec
     // The contract tells the model both forms (`aether-engine`'s
     // `contract.rs`), so the dotted one has to be stripped too or the class
     // the gate used and the class the log records disagree.
-    let bare = name
-        .strip_prefix("mcp__aether__")
-        .or_else(|| name.strip_prefix("mcp__aether."))
-        .or_else(|| name.strip_prefix("aether__"))
-        .or_else(|| name.strip_prefix("aether."))
-        .unwrap_or(name);
+    let bare = bridge_tool_name(name);
     match runtime.tools.get(bare) {
         Some(tool) => tool.descriptor().side_effect,
         None => side_effect_of(name),
     }
+}
+
+pub(super) fn bridge_tool_name(name: &str) -> &str {
+    name.strip_prefix("mcp__aether__")
+        .or_else(|| name.strip_prefix("mcp__aether."))
+        .or_else(|| name.strip_prefix("aether__"))
+        .or_else(|| name.strip_prefix("aether."))
+        .unwrap_or(name)
 }
 
 /// Allow silently when the agent's policy does not require approval for the
