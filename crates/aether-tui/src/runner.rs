@@ -1010,3 +1010,7 @@ mod tests {
 #[cfg(test)]
 #[path = "runner/history_tests.rs"]
 mod history_tests;
+
+#[cfg(test)]
+#[path = "runner/reconnect_tests.rs"]
+mod reconnect_tests;

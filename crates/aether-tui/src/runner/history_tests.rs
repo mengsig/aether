@@ -29,7 +29,7 @@ fn expire_history(path: &std::path::Path, retained: usize) {
     tx.commit().expect("commit");
 }
 
-async fn connect_when_ready(socket: &std::path::Path) -> Client {
+pub(super) async fn connect_when_ready(socket: &std::path::Path) -> Client {
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             match Client::connect(socket).await {
