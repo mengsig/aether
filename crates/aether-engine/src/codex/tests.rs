@@ -379,6 +379,7 @@ fn turn_with_effort(effort: Option<Effort>) -> EngineTurn {
         system_prompt: "contract".into(),
         session: None,
         session_usage: Usage::default(),
+        session_model_usage: None,
         new_session_id: "n".into(),
         session_recorder: None,
         model: None,
@@ -516,7 +517,7 @@ fn parses_thread_items_and_usage() {
     );
     match &parse_line(completed, &mut st)[..] {
         [
-            EngineEvent::SessionUsage { session, total },
+            EngineEvent::SessionUsage { session, total, .. },
             EngineEvent::UsageDelta { usage: delta },
             EngineEvent::Done(o),
         ] => {
@@ -595,7 +596,7 @@ fn usage_is_the_increase_over_the_resumed_threads_persisted_counters() {
     };
     match &parse_line(&completed, &mut st)[..] {
         [
-            EngineEvent::SessionUsage { session, total },
+            EngineEvent::SessionUsage { session, total, .. },
             EngineEvent::UsageDelta { usage },
             EngineEvent::Done(o),
         ] => {
@@ -921,7 +922,7 @@ fn an_unreadable_counter_on_a_resumed_thread_does_not_rebill_its_history() {
     match &events[..] {
         [
             EngineEvent::ProtocolNote(note),
-            EngineEvent::SessionUsage { session, total },
+            EngineEvent::SessionUsage { session, total, .. },
             EngineEvent::UsageDelta { usage },
             EngineEvent::Done(_),
         ] => {

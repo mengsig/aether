@@ -414,7 +414,7 @@ fn parses_observed_stream() {
     let result = r#"{"type":"result","subtype":"success","is_error":false,"duration_api_ms":3591,"stop_reason":"end_turn","session_id":"0b1a","total_cost_usd":0.0547,"usage":{"input_tokens":2,"cache_creation_input_tokens":12495,"cache_read_input_tokens":18534,"output_tokens":8},"result":"aether engine ok","num_turns":1}"#;
     let result_events = parse_line(result, &mut st);
     assert!(
-        matches!(&result_events[0], EngineEvent::SessionUsage { session, total }
+        matches!(&result_events[0], EngineEvent::SessionUsage { session, total, .. }
         if session == "0b1a" && total.cost_usd == 0.0547)
     );
     assert_eq!(result_events.len(), 2);

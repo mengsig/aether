@@ -231,6 +231,12 @@ pub(crate) async fn execute(
         system_prompt,
         session: ctx.agent.engine_session.clone(),
         session_usage: ctx.agent.engine_session_usage(),
+        session_model_usage: ctx
+            .agent
+            .engine_usage
+            .as_ref()
+            .filter(|usage| Some(&usage.session) == ctx.agent.engine_session.as_ref())
+            .and_then(|usage| usage.models.clone()),
         new_session_id: aether_engine::new_session_id(),
         session_recorder: Some(super::session_recorder(runtime, ctx.agent.id)),
         model: Some(resolved.model.id.clone()),
@@ -331,6 +337,7 @@ pub(crate) async fn execute(
             tracing::warn!(agent = %ctx.agent.id, "engine session could not be resumed; starting a fresh one");
             turn.session = None;
             turn.session_usage = Usage::default();
+            turn.session_model_usage = None;
             ctx.agent.engine_session = None;
             // The refused session retained nothing, so anything left out of
             // this prompt because it already held it must go in after all.
@@ -444,6 +451,12 @@ pub(crate) async fn execute(
             turn.new_session_id = aether_engine::new_session_id();
         }
         turn.session_usage = ctx.agent.engine_session_usage();
+        turn.session_model_usage = ctx
+            .agent
+            .engine_usage
+            .as_ref()
+            .filter(|usage| Some(&usage.session) == turn.session.as_ref())
+            .and_then(|usage| usage.models.clone());
     };
     // A sharp context drop between turns is a cheap signal that the engine's
     // own compaction replaced retained turns with a summary -
@@ -786,15 +799,32 @@ fn price_closing_usage(usage: &mut Usage, run: &DriveResult, raised: bool) -> bo
             run.stream_usage.cost_basis
         };
     } else if raised {
-        return run.pricing.price_closing_shortfall(
-            usage,
-            run.outcome
-                .cost_usage
-                .as_deref()
-                .unwrap_or(&run.outcome.usage),
-        );
+        let covered = closing_cost_coverage(*usage, run);
+        return run.pricing.price_closing_shortfall(usage, &covered);
     }
     true
+}
+
+fn closing_cost_coverage(total: Usage, run: &DriveResult) -> Usage {
+    let closing = run.outcome.usage;
+    let Some(covered) = run.outcome.cost_usage.as_deref() else {
+        debug_assert!(
+            total.input_tokens >= closing.input_tokens
+                && total.output_tokens >= closing.output_tokens
+                && total.cache_read_tokens >= closing.cache_read_tokens
+                && total.cache_write_tokens >= closing.cache_write_tokens
+                && total.cache_write_1h_tokens >= closing.cache_write_1h_tokens
+                && total.reasoning_tokens.unwrap_or(0) >= closing.reasoning_tokens.unwrap_or(0),
+            "the raised closing counters must cover the receipt"
+        );
+        return closing;
+    };
+    debug_assert!(run.outcome.cost_usd.is_some());
+    debug_assert!(covered.cache_write_1h_tokens <= covered.cache_write_tokens);
+    let mut coverage = *covered;
+    // Both receipts prove coverage; neither can make the other's tokens unpriced.
+    raise_to(&mut coverage, closing);
+    coverage
 }
 
 fn closing_shortfall_description(
@@ -818,6 +848,29 @@ fn closing_shortfall_description(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_coverage_does_not_reprice_closing_tokens_that_never_streamed() {
+        let mut run = test_run();
+        run.outcome.cost_usd = Some(0.05);
+        run.outcome.usage = Usage {
+            input_tokens: 200,
+            output_tokens: 10,
+            ..Usage::default()
+        };
+        run.stream_usage = Usage {
+            input_tokens: 100,
+            output_tokens: 20,
+            ..Usage::default()
+        };
+        run.outcome.cost_usage = Some(Box::new(run.stream_usage));
+        let mut total = run.outcome.usage;
+        assert!(raise_to(&mut total, run.stream_usage));
+        let coverage = closing_cost_coverage(total, &run);
+        assert_eq!(coverage.input_tokens, 200);
+        assert_eq!(coverage.output_tokens, 20);
+        assert_eq!(coverage.total_tokens(), total.total_tokens());
+    }
 
     #[test]
     fn a_previous_receipt_keeps_its_dollars_without_covering_later_activity() {

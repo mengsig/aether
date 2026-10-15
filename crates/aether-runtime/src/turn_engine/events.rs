@@ -540,12 +540,19 @@ pub(super) fn handle_event(
                 }
             }
         }
-        EngineEvent::SessionUsage { session, total } => {
+        EngineEvent::SessionUsage {
+            session,
+            total,
+            models,
+        } => {
             // Not committed on its own: the row write that carries this turn's
             // next spend carries it too, so the persisted baseline and what
             // was billed against it can never disagree.
-            ctx.agent.engine_usage =
-                Some(aether_core::agent::EngineSessionUsage { session, total });
+            ctx.agent.engine_usage = Some(aether_core::agent::EngineSessionUsage {
+                session,
+                total,
+                models,
+            });
         }
         EngineEvent::ContextUsage { tokens } => {
             record_context_usage(runtime, ctx, tokens)?;

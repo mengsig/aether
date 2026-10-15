@@ -45,7 +45,8 @@ release is also the text of its GitHub release.
   although the session's counts already covered it, and the extra carried
   over every resume. Aether now prices only streamed tokens those counts do
   not cover, and the note on an interrupted turn says whether the missing
-  part was priced.
+  part was priced. A crash that reports zero cost or lower session counts
+  also keeps the last receipt as the baseline for the next resume.
 - **The daemon no longer churns the disk while agents work.** Reading a long
   agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
   of MB per read. With several agents running, that held host IO pressure

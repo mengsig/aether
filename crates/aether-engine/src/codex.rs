@@ -564,6 +564,7 @@ fn account(usage: &Value, state: &mut ParseState) -> Vec<EngineEvent> {
         // Ahead of the delta: whatever persists the spend persists the
         // baseline with it, so a resumed thread is never billed twice.
         events.push(EngineEvent::SessionUsage {
+            models: None,
             session,
             total: state.counted.into_usage(),
         });

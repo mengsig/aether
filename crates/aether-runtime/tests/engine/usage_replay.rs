@@ -152,6 +152,7 @@ impl Engine for SessionCounterEngine {
             };
             let _ = tx
                 .send(EngineEvent::SessionUsage {
+                    models: None,
                     session: "thread-1".into(),
                     total: counter,
                 })

@@ -59,7 +59,7 @@ fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
         | EngineEvent::Note(_)
         | EngineEvent::ProtocolNote(_)
         | EngineEvent::Done(_) => false,
-        EngineEvent::SessionUsage { session, total } => {
+        EngineEvent::SessionUsage { session, total, .. } => {
             let mut baseline = ctx
                 .agent
                 .engine_usage

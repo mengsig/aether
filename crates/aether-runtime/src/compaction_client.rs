@@ -408,6 +408,7 @@ mod tests {
                 system_prompt: String::new(),
                 session: None,
                 session_usage: aether_core::model::Usage::default(),
+                session_model_usage: None,
                 new_session_id: String::new(),
                 session_recorder: None,
                 model: None,

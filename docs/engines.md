@@ -395,11 +395,14 @@ Claude Code's [`result` fields have different scopes](https://code.claude.com/do
 `usage` covers one user turn, while `total_cost_usd` and `modelUsage` include
 earlier turns and the spend restored by `--resume`. Aether subtracts the
 persisted session baseline once per process. When `usage` is below the stream,
-it checks the invocation's increase in `modelUsage` before adding any price
-for missing tokens. Tokens absent from both receipts still retain their
-stream-derived charge; the agent total can then exceed the latest dollar
+it checks the invocation's increase in `modelUsage` for each streamed model
+before adding any price for missing tokens. Unstreamed helper-model usage
+cannot cover missing tokens from another model. Tokens absent from both
+receipts still retain their stream-derived charge; the agent total can then exceed the latest dollar
 receipt. A parked or interrupted run without proven closing coverage keeps
-its cost gap even when every observed token has a price.
+its cost gap even when every observed token has a price. Zeroed or regressed
+session receipts keep the previous baseline, so a crash cannot cause the
+next resume to bill earlier session history again.
 
 Three rules the runtime depends on:
 

@@ -297,6 +297,7 @@ impl TurnState {
             // Ahead of the delta: whatever writes the delta persists this with
             // it, so a turn cut short cannot bill a run twice on resume.
             events.push(EngineEvent::SessionUsage {
+                models: None,
                 session,
                 total: self.usage_last.into_usage(),
             });

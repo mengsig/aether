@@ -69,10 +69,10 @@ fn streamed_request(id: &str) -> Value {
             "cache_read_input_tokens":0,"cache_creation_input_tokens":0}}})
 }
 
-fn result(cost: f64, requests: u64, parked: bool) -> Value {
+fn result(cost: f64, requests: u64, parked: bool, helper: bool) -> Value {
     assert!(cost > 0.0 && cost.is_finite());
     assert!(requests > 0);
-    json!({"type":"result","session_id":"receipt-session",
+    let mut value = json!({"type":"result","session_id":"receipt-session",
         "subtype":if parked {"error_during_execution"} else {"success"},
         "is_error":parked,"result":if parked {""} else {"Done."},
         "errors":if parked {vec!["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use"]} else {vec![]},
@@ -80,7 +80,12 @@ fn result(cost: f64, requests: u64, parked: bool) -> Value {
         "usage":{"input_tokens":100,"output_tokens":10,
             "cache_read_input_tokens":0,"cache_creation_input_tokens":0},
         "modelUsage":{"claude-haiku-5-5":{"inputTokens":100 * requests,
-            "outputTokens":10 * requests,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}})
+            "outputTokens":10 * requests,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}});
+    if helper {
+        value["modelUsage"]["claude-helper"] = json!({"inputTokens":100,"outputTokens":10,
+            "cacheReadInputTokens":0,"cacheCreationInputTokens":0});
+    }
+    value
 }
 
 async fn resume_turn(
@@ -119,15 +124,21 @@ async fn resume_turn(
     .await
 }
 
-async fn parked_receipts(receipt_covers_stream: bool) -> (Harness, AgentId, Usage, Usage) {
+async fn parked_receipts(
+    receipt_covers_stream: bool,
+    helper: bool,
+) -> (Harness, AgentId, Usage, Usage) {
     let covered = if receipt_covers_stream { 2 } else { 1 };
     let runs = vec![
         vec![
             streamed_request("first"),
             streamed_request("second"),
-            result(0.05, covered, true),
+            result(0.05, covered, true, helper),
         ],
-        vec![streamed_request("third"), result(0.08, covered + 1, false)],
+        vec![
+            streamed_request("third"),
+            result(0.08, covered + 1, false, helper),
+        ],
     ];
     let (tx, mut ready) = mpsc::channel(2);
     let h = harness_with_engine_config(
@@ -141,7 +152,11 @@ async fn parked_receipts(receipt_covers_stream: bool) -> (Harness, AgentId, Usag
     let id = chat_agent(&h);
     let first = resume_turn(&h, id, &mut ready, true).await;
     assert_eq!(first.engine_session.as_deref(), Some("receipt-session"));
-    assert_eq!(first.engine_usage.as_ref().unwrap().total.cost_usd, 0.05);
+    let baseline = first.engine_usage.as_ref().unwrap();
+    assert_eq!(baseline.total.cost_usd, 0.05);
+    let models = baseline.models.as_ref().unwrap();
+    assert_eq!(models["claude-haiku-5-5"].input_tokens, 100 * covered);
+    assert_eq!(models.contains_key("claude-helper"), helper);
     let second = resume_turn(&h, id, &mut ready, false).await;
     assert_eq!(second.engine_session, first.engine_session);
     let events = h
@@ -161,7 +176,7 @@ async fn parked_receipts(receipt_covers_stream: bool) -> (Harness, AgentId, Usag
 
 #[tokio::test]
 async fn cumulative_dollars_are_not_rebilled_after_park_and_resume() {
-    let (h, id, first, second) = parked_receipts(true).await;
+    let (h, id, first, second) = parked_receipts(true, true).await;
     assert!((first.cost_usd - 0.05).abs() < 1e-12, "{first:?}");
     assert!((second.cost_usd - 0.08).abs() < 1e-12, "{second:?}");
     assert_eq!(first.total_tokens(), 220);
@@ -182,7 +197,16 @@ async fn cumulative_dollars_are_not_rebilled_after_park_and_resume() {
 
 #[tokio::test]
 async fn dollars_missing_from_model_usage_stay_billed_after_resume() {
-    let (h, id, first, second) = parked_receipts(false).await;
+    assert_missing_receipt(false).await;
+}
+
+#[tokio::test]
+async fn dollars_missing_from_model_usage_stay_billed_despite_unstreamed_helper_after_resume() {
+    assert_missing_receipt(true).await;
+}
+
+async fn assert_missing_receipt(helper: bool) {
+    let (h, id, first, second) = parked_receipts(false, helper).await;
     let rate = aether_model::Registry::builtin()
         .resolve(&ModelRef::new("claude-code", "haiku"))
         .unwrap()
