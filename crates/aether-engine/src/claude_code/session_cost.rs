@@ -89,14 +89,12 @@ impl SessionCost {
             events: Vec::new(),
         };
         if cost_usd.is_none() {
-            receipt.events.push(EngineEvent::ProtocolNote(
-                "Claude session cost baseline is missing or reset; this invocation's billed cost is unknown".into(),
+            receipt = unknown_receipt(Some(
+                "Claude session cost baseline is missing or reset; this invocation's billed cost is unknown",
             ));
         }
         if !accepted {
-            receipt
-                .events
-                .push(self.adopt_reset(session, total, models.clone()));
+            self.adopt_reset(session, total, models.clone());
         }
         if let Some(session) = session {
             receipt.events.push(self.persist(session, total, models));
@@ -106,12 +104,7 @@ impl SessionCost {
         receipt
     }
 
-    fn adopt_reset(
-        &mut self,
-        session: Option<&str>,
-        total: Usage,
-        models: Option<ModelUsage>,
-    ) -> EngineEvent {
+    fn adopt_reset(&mut self, session: Option<&str>, total: Usage, models: Option<ModelUsage>) {
         debug_assert!(total.cost_complete);
         debug_assert!(
             total.cost_usd > 0.0
@@ -122,9 +115,6 @@ impl SessionCost {
         self.before = Some(total);
         self.reset = true;
         self.before_models = models;
-        let mut usage = Usage::default();
-        usage.mark_cost_gap(aether_core::model::CostGap::Unreported);
-        EngineEvent::UsageDelta { usage }
     }
 
     fn persist(&mut self, session: &str, total: Usage, models: Option<ModelUsage>) -> EngineEvent {
@@ -227,13 +217,17 @@ impl SessionCost {
 }
 
 fn unknown_receipt(note: Option<&str>) -> Receipt {
+    let mut usage = Usage::default();
+    usage.mark_cost_gap(aether_core::model::CostGap::Unreported);
+    let mut events = Vec::new();
+    if let Some(note) = note {
+        events.push(EngineEvent::ProtocolNote(note.into()));
+    }
+    events.push(EngineEvent::UsageDelta { usage });
     Receipt {
         cost_usd: None,
         cost_usage: None,
-        events: note
-            .map(|note| EngineEvent::ProtocolNote(note.into()))
-            .into_iter()
-            .collect(),
+        events,
     }
 }
 

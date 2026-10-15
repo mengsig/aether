@@ -344,8 +344,11 @@ async fn a_claude_zero_cost_overload_receipt_is_metadata_and_can_retry() {
         &mut aether_engine::claude_code::ParseState::default(),
     );
     assert!(
-        matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::Done(outcome)]
-        if outcome.cost_usd.is_none() && outcome.cost_usage.is_none())
+        matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::UsageDelta { usage },
+            EngineEvent::Done(outcome)]
+        if outcome.cost_usd.is_none() && outcome.cost_usage.is_none()
+            && usage.total_tokens() == 0 && !usage.cost_complete
+            && usage.cost_gap == Some(aether_core::model::CostGap::Unreported))
     );
     assert!(
         !events

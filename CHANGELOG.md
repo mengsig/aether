@@ -4,6 +4,15 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Fixed
+
+- **Unusable Claude Code receipts keep a cost floor.** Missing or invalid
+  dollars, all-zero crash receipts, and missing session baselines now leave
+  the turn's cost incomplete even when every streamed token has a price.
+  Closing tokens that never streamed add their base-rate price to the floor.
+
 ## 1.0.9
 
 Cost figures are more accurate. A Claude Code agent that pauses and resumes

@@ -401,12 +401,17 @@ cannot cover missing tokens from another model. Tokens absent from both
 receipts still retain their stream-derived charge; the agent total can then
 exceed the latest dollar receipt. A parked or interrupted run without proven
 closing coverage keeps its cost gap even when every observed token has a price.
-An all-zero crash receipt keeps the previous baseline. A nonzero receipt with
-lower dollars, lower model counters, or a missing model has unknown cost, as
-do later receipts in the same run, and becomes the baseline the next run bills
-its increase from. A run whose cost stays incomplete without a dollar receipt
-keeps its cost gap and a floor: the stream's dollars plus base-rate prices for
-closing tokens that never streamed.
+An all-zero crash receipt keeps the previous baseline. Missing or invalid
+dollars, an all-zero crash receipt, or a missing session baseline leave an
+`Unreported` cost gap even when every streamed token has a price. The turn
+keeps a floor: the stream's dollars plus base-rate prices for closing tokens
+that never streamed, including turns with no streamed usage. A later usable
+cumulative receipt can cover that gap when the invocation's starting baseline
+is known. A missing baseline stays unknown throughout the run, but a nonzero
+reading is persisted for the next resume. A nonzero receipt with lower
+dollars, lower model counters, or a missing model has unknown cost, as do
+later receipts in the same run, and becomes the baseline the next run bills
+its increase from.
 After upgrading, a record without per-model counters gets no coverage on its
 first resume, so the streamed shortfall may be priced once more per session.
 A receipt without `modelUsage` keeps the dollars but drops the per-model

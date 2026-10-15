@@ -123,7 +123,11 @@ async fn one_hour_cache_writes_bill_at_the_one_hour_rate() {
         "priced ${:.7}, Claude Code billed ${expected:.7}",
         usage.cost_usd
     );
-    assert!(usage.cost_complete);
+    assert!(!usage.cost_complete);
+    assert_eq!(
+        usage.cost_gap,
+        Some(aether_core::model::CostGap::Unreported)
+    );
     assert_eq!(usage.cost_basis, CostBasis::ListPrice);
     h.runtime.shutdown().await;
 }

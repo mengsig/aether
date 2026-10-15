@@ -51,6 +51,7 @@ fn unknown_or_reset_baseline_does_not_charge_old_session_history() {
         let (cost, events) = bill(&mut state, &receipt("s", 0.5));
         assert_eq!(cost, None);
         assert!(matches!(events.first(), Some(EngineEvent::ProtocolNote(_))));
+        assert_unreported_gap(&events);
         assert!(
             matches!(events.last(), Some(EngineEvent::SessionUsage { total, .. })
             if total.cost_usd == 0.5)
@@ -73,10 +74,38 @@ fn replacement_session_starts_a_new_cost_history() {
 #[test]
 fn missing_or_invalid_receipt_never_invents_a_price() {
     let mut state = SessionCost::default();
-    assert_eq!(bill(&mut state, &json!({})), (None, vec![]));
+    let (cost, events) = bill(&mut state, &json!({}));
+    assert_eq!(cost, None);
+    assert_unreported_gap(&events);
     let (cost, events) = bill(&mut state, &receipt("s", -1.0));
     assert_eq!(cost, None);
-    assert!(matches!(&events[..], [EngineEvent::ProtocolNote(_)]));
+    assert!(matches!(events.first(), Some(EngineEvent::ProtocolNote(_))));
+    assert_unreported_gap(&events);
+}
+
+fn assert_unreported_gap(events: &[EngineEvent]) {
+    let gaps: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::UsageDelta { usage } => Some(*usage),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(gaps.len(), 1, "each unusable receipt needs one gap delta");
+    assert_eq!(gaps[0].total_tokens(), 0);
+    assert_eq!(gaps[0].cost_usd, 0.0);
+    assert!(!gaps[0].cost_complete);
+    assert_eq!(
+        gaps[0].cost_gap,
+        Some(aether_core::model::CostGap::Unreported)
+    );
+}
+
+#[test]
+fn invalid_receipt_marks_the_unreported_gap() {
+    let (cost, events) = bill(&mut SessionCost::default(), &receipt("s", -1.0));
+    assert_eq!(cost, None);
+    assert_unreported_gap(&events);
 }
 
 fn covered_usage(state: &mut SessionCost, value: &Value) -> Option<Usage> {
@@ -211,6 +240,7 @@ fn zeroed_crash_receipt_keeps_the_baseline_for_the_next_resume() {
         "total_cost_usd":0.0,"modelUsage":{}});
     let (cost, events) = bill(&mut state, &zeroed);
     assert_eq!(cost, None);
+    assert_unreported_gap(&events);
     for event in events {
         if let EngineEvent::SessionUsage { total, .. } = event {
             baseline = total;
@@ -251,10 +281,38 @@ fn bill(state: &mut SessionCost, value: &Value) -> (Option<f64>, Vec<EngineEvent
 #[test]
 fn an_all_zero_resumed_baseline_cannot_price_session_history() {
     let mut state = SessionCost::resumed(Some("s".into()), Usage::default());
-    let receipt = state.receipt(&receipt("s", 0.08), &BTreeMap::new());
-    assert_eq!(receipt.cost_usd, None);
-    assert_eq!(receipt.cost_usage, None);
-    assert!(matches!(receipt.events[0], EngineEvent::ProtocolNote(_)));
+    let result = state.receipt(&receipt("s", 0.08), &BTreeMap::new());
+    assert_eq!(result.cost_usd, None);
+    assert_eq!(result.cost_usage, None);
+    assert!(matches!(result.events[0], EngineEvent::ProtocolNote(_)));
+    assert_unreported_gap(&result.events);
+    let (cost, events) = bill(&mut state, &receipt("s", 0.1));
+    assert_eq!(cost, None);
+    assert_unreported_gap(&events);
+    let (cost, _) = bill(&mut next_run(&state), &receipt("s", 0.13));
+    assert!((cost.unwrap() - 0.03).abs() < 1e-12);
+}
+
+#[test]
+fn unusable_receipts_preserve_a_known_baseline_until_covered() {
+    let prior = Usage {
+        cost_usd: 0.05,
+        ..Usage::default()
+    };
+    for value in [
+        json!({}),
+        receipt("s", -1.0),
+        json!({"session_id":"s", "total_cost_usd":0.0, "modelUsage":{}}),
+    ] {
+        let mut state = resumed(Some("s".into()), prior);
+        let (cost, events) = bill(&mut state, &value);
+        assert_eq!(cost, None);
+        assert_unreported_gap(&events);
+        assert!(state.latest.is_none());
+        assert_eq!(state.before, Some(prior));
+        let (cost, _) = bill(&mut state, &receipt("s", 0.08));
+        assert!((cost.unwrap() - 0.03).abs() < 1e-12);
+    }
 }
 
 #[test]
