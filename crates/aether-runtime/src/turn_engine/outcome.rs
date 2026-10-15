@@ -164,20 +164,69 @@ pub(super) fn record_engine_cancelled(
 ) -> Result<()> {
     debug_assert_eq!(snapshot.agent_id, ctx.agent.id);
     // The partial goes first so it reads before the incident it was cut by.
-    if !partial.content.is_empty() {
-        runtime.apply(engine_failure_commit(
-            ctx,
-            snapshot,
-            "cancelled",
-            ModelErrorClass::Cancelled,
-            false,
-            partial,
-        ))?;
-    }
+    record_engine_partial(runtime, ctx, snapshot, "cancelled", partial)?;
     if detail.is_some_and(super::names_exhaustion) {
         record_engine_incident(runtime, ctx, snapshot, engine, detail)?;
     }
     Ok(())
+}
+
+/// Keep what streamed but never committed as a cancelled invocation: an
+/// operator record that is never billed and never read back as history.
+pub(super) fn record_engine_partial(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    snapshot: &InvocationSnapshot,
+    error: &str,
+    partial: Uncommitted,
+) -> Result<()> {
+    debug_assert!(!error.is_empty(), "a kept partial must say what cut it");
+    if partial.content.is_empty() {
+        return Ok(());
+    }
+    let commit = engine_failure_commit(
+        ctx,
+        snapshot,
+        error,
+        ModelErrorClass::Cancelled,
+        false,
+        partial,
+    );
+    debug_assert!(
+        commit
+            .events
+            .iter()
+            .all(|event| !matches!(event.kind, EventKind::AgentMessage { .. })),
+        "a kept partial must not become something the agent said"
+    );
+    runtime.apply(commit)?;
+    Ok(())
+}
+
+/// An adapter stopped the engine on its own authority. Its partial is kept
+/// before the notice that names why, and the turn reads as interrupted.
+pub(super) fn record_engine_interrupted(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    snapshot: &InvocationSnapshot,
+    engine: EngineKind,
+    reason: Option<&str>,
+    partial: Uncommitted,
+) -> Result<Next> {
+    debug_assert_eq!(snapshot.agent_id, ctx.agent.id, "another agent's snapshot");
+    // The sibling engine.parked event already clamps its reason; an adapter
+    // error string must not be let through unbounded here either.
+    let reason = reason.map(|e| super::clamp(e, super::MAX_ENGINE_ERROR));
+    let error = match reason.as_deref() {
+        Some(reason) => format!("{} interrupted: {reason}", engine.as_str()),
+        None => format!("{} interrupted", engine.as_str()),
+    };
+    record_engine_partial(runtime, ctx, snapshot, &error, partial)?;
+    runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
+        name: "engine.interrupted".into(),
+        payload: super::json!({ "engine": engine.as_str(), "reason": reason }),
+    })))?;
+    Ok(Next::Interrupted)
 }
 
 fn engine_failure_commit(

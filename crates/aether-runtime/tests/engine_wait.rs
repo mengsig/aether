@@ -538,5 +538,11 @@ mod accounting;
 #[path = "engine_wait/stream_failure.rs"]
 mod stream_failure;
 
+#[path = "support/tui_projection.rs"]
+mod tui_projection;
+
 #[path = "engine_wait/stream_cancel.rs"]
 mod stream_cancel;
+
+#[path = "engine_wait/stream_endings.rs"]
+mod stream_endings;

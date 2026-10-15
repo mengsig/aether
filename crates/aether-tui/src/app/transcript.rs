@@ -584,6 +584,7 @@ impl AgentTranscript {
         if self.stream.invocation != Some(invocation) {
             self.stream.reset();
             self.stream.invocation = Some(invocation);
+            self.retire_cut(invocation);
         }
         match delta {
             Delta::Text { text } => self.stream.text.push_str(text),

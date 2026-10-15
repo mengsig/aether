@@ -1,20 +1,17 @@
 //! Native cancellation keeps an operator record without adding model history.
+use super::tui_projection::{drain_through, models, projection, reduce};
 use super::*;
-use aether_client::SubscriptionFrame;
-use aether_core::agent::Agent;
 use aether_core::id::InvocationId;
 use aether_core::model::{MessageRole, ModelErrorClass, StreamEvent};
-use aether_protocol::{AgentTree, Delta, Reply, TreeNode};
 use aether_runtime::{BusMessage, DeltaKind};
-use aether_tui::app::Then;
+use aether_tui::App;
 use aether_tui::app::transcript::CellModel;
-use aether_tui::{App, AppEvent, TuiOptions};
 use tokio::sync::broadcast;
 
-const THINKING: &str = "Checking the unfinished answer";
-const TEXT: &str = "An unfinished answer";
+pub(super) const THINKING: &str = "Checking the unfinished answer";
+pub(super) const TEXT: &str = "An unfinished answer";
 
-async fn emit(turn: &TurnStarted, event: EngineEvent) {
+pub(super) async fn emit(turn: &TurnStarted, event: EngineEvent) {
     turn.events
         .upgrade()
         .expect("running engine")
@@ -23,92 +20,8 @@ async fn emit(turn: &TurnStarted, event: EngineEvent) {
         .expect("open stream");
 }
 
-fn frame(message: BusMessage) -> SubscriptionFrame {
-    match message {
-        BusMessage::Event(event) => SubscriptionFrame::Event(Box::new((*event).clone())),
-        BusMessage::Delta {
-            agent,
-            invocation,
-            delta,
-        } => SubscriptionFrame::Delta {
-            agent,
-            invocation,
-            delta: match delta {
-                DeltaKind::TurnStarted { turn } => Delta::TurnStarted { turn },
-                DeltaKind::Text { text } => Delta::Text { text },
-                DeltaKind::Thinking { text } => Delta::Thinking { text },
-                DeltaKind::ToolInput { name, partial_json } => {
-                    Delta::ToolInput { name, partial_json }
-                }
-                DeltaKind::TurnFinished => Delta::TurnFinished,
-            },
-        },
-    }
-}
-
-fn projection(agent: Agent, history: Vec<Event>) -> App {
-    let id = agent.id;
-    assert!(history.iter().all(|event| event.agent_id == Some(id)));
-    assert!(history.windows(2).all(|pair| pair[0].seq < pair[1].seq));
-    let mut app = App::new(TuiOptions {
-        focus: Some(id),
-        ..Default::default()
-    });
-    let node = TreeNode {
-        agent,
-        children: vec![],
-        task: None,
-        waiting_on: vec![],
-        lease: None,
-        subtree_usage: Usage::default(),
-    };
-    app.reduce(AppEvent::Connected);
-    app.reduce(AppEvent::Reply {
-        then: Then::Tree,
-        result: Ok(Reply::Tree(AgentTree {
-            roots: vec![id],
-            nodes: [(id, node)].into(),
-        })),
-    });
-    app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
-        result: Ok(Reply::Events(history)),
-    });
-    assert!(app.transcripts[&id].loaded);
-    app
-}
-
-fn models(app: &App, agent: AgentId) -> Vec<CellModel> {
-    app.transcripts[&agent]
-        .all_cells()
-        .map(|cell| cell.model.clone())
-        .collect()
-}
-
-/// Reduce live frames through the agent's event `last`. The store is written
-/// before the bus, so a store read can be ahead of the frames already sent.
-async fn drain_through(
-    bus: &mut broadcast::Receiver<BusMessage>,
-    app: &mut App,
-    agent: AgentId,
-    last: u64,
-) {
-    loop {
-        let message = tokio::time::timeout(Duration::from_secs(5), bus.recv())
-            .await
-            .expect("the agent's last event never reached the bus")
-            .expect("lost live events");
-        let reached = matches!(&message, BusMessage::Event(event)
-            if event.agent_id == Some(agent) && event.seq >= last);
-        app.reduce(AppEvent::Frame(frame(message)));
-        if reached {
-            return;
-        }
-    }
-}
-
 /// The agent's own history, with the live view brought up to its end.
-async fn settle(
+pub(super) async fn settle(
     h: &Harness,
     bus: &mut broadcast::Receiver<BusMessage>,
     live: &mut App,
@@ -123,7 +36,7 @@ async fn settle(
     history
 }
 
-async fn stream(
+pub(super) async fn stream(
     turn: &TurnStarted,
     bus: &mut broadcast::Receiver<BusMessage>,
     live: &mut App,
@@ -162,7 +75,7 @@ async fn stream(
     await_stream(bus, live, text).await
 }
 
-async fn await_stream(
+pub(super) async fn await_stream(
     bus: &mut broadcast::Receiver<BusMessage>,
     live: &mut App,
     text: bool,
@@ -182,7 +95,7 @@ async fn await_stream(
             }
             _ => None,
         };
-        live.reduce(AppEvent::Frame(frame(message)));
+        reduce(live, message);
         if let Some(id) = last {
             let agent = live.selected.expect("selected");
             assert_eq!(live.transcripts[&agent].stream.reasoning, THINKING);
@@ -269,7 +182,11 @@ async fn cancelled_case(interrupt: bool, text: bool, committed: bool) {
     h.runtime.shutdown().await;
 }
 
-async fn assert_resumed_prompt(h: &mut Harness, agent: AgentId, session: Option<String>) {
+pub(super) async fn assert_resumed_prompt(
+    h: &mut Harness,
+    agent: AgentId,
+    session: Option<String>,
+) {
     assert!(session.is_some());
     h.runtime
         .send_message(

@@ -62,6 +62,16 @@ pub(super) struct Private {
     /// The invocation whose reply is already drawn, by its message or by a
     /// stream cut short, so its cancelled partial is not drawn again.
     drawn: Option<InvocationId>,
+    /// What a stop drew from a stream it cut short, until a message for that
+    /// invocation lands: one adding nothing to it is not drawn again.
+    cut: Option<CutStream>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct CutStream {
+    invocation: InvocationId,
+    reasoning: String,
+    text: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +103,17 @@ struct Session {
 // ----- cell bookkeeping ---------------------------------------------------------
 
 impl AgentTranscript {
+    /// A stream for another invocation means the cut one's message never came.
+    pub(super) fn retire_cut(&mut self, streaming: InvocationId) {
+        self.private.cut.take_if(|cut| cut.invocation != streaming);
+        debug_assert!(
+            self.private
+                .cut
+                .as_ref()
+                .is_none_or(|cut| cut.invocation == streaming)
+        );
+    }
+
     /// A grouped call's own failure, as the call cell only named modes draw.
     fn mode_failure(&mut self, at: Timestamp, name: &str, status: CallStatus, error: &str) {
         self.push_named(
@@ -316,11 +337,16 @@ impl AgentTranscript {
     /// Keep what streamed when a turn stops before its message is committed.
     fn commit_stream(&mut self, at: Timestamp) {
         let stream = self.stream.take();
-        let shown = !stream.reasoning.trim().is_empty() || !stream.text.trim().is_empty();
-        if shown && stream.invocation.is_some() {
-            self.private.drawn = stream.invocation;
-        }
         self.push_reply(at, &stream.reasoning, &stream.text, stream.reasoning_since);
+        let shown = !stream.reasoning.trim().is_empty() || !stream.text.trim().is_empty();
+        if let (true, Some(invocation)) = (shown, stream.invocation) {
+            self.private.drawn = Some(invocation);
+            self.private.cut = Some(CutStream {
+                invocation,
+                reasoning: stream.reasoning,
+                text: stream.text,
+            });
+        }
     }
 
     fn push_reply(&mut self, at: Timestamp, reasoning: &str, text: &str, since: Option<Timestamp>) {
@@ -1185,6 +1211,14 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
         } => {
             t.private.drawn = *invocation;
             let thinking = thinking_of(content);
+            let text = text_of(content);
+            if shown_since_cut(t, *invocation, &thinking, &text) {
+                // A stop drew its start; only what streamed after that is new.
+                if t.stream.invocation == *invocation {
+                    t.commit_stream(at);
+                }
+                return;
+            }
             let since = if *invocation == t.stream.invocation {
                 let since = t.stream.reasoning_since;
                 t.stream.reset();
@@ -1192,7 +1226,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             } else {
                 None
             };
-            t.push_reply(at, &thinking, &text_of(content), since);
+            t.push_reply(at, &thinking, &text, since);
         }
         EventKind::TaskCreated { objective, .. } => {
             t.private.who.task = event.task_id;
@@ -1507,7 +1541,47 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
     }
 }
 
+/// A stop drew this invocation's stream before its message landed, as a
+/// sweep does. The message repeats it when it holds nothing the live view
+/// has not shown: the part the stop drew, then any tail streamed since.
+fn shown_since_cut(
+    t: &mut AgentTranscript,
+    invocation: Option<InvocationId>,
+    thinking: &str,
+    text: &str,
+) -> bool {
+    let Some(cut) = t
+        .private
+        .cut
+        .take_if(|cut| Some(cut.invocation) == invocation)
+    else {
+        return false;
+    };
+    debug_assert_eq!(t.private.drawn, invocation, "the message is drawn first");
+    debug_assert!(
+        !cut.reasoning.trim().is_empty() || !cut.text.trim().is_empty(),
+        "only a stop that drew something can have cut a stream"
+    );
+    let tail = (t.stream.invocation == invocation).then_some(&t.stream);
+    let shown = |part: &str, drawn: &str, tail: Option<&str>| {
+        part.trim().is_empty() || part.trim() == format!("{drawn}{}", tail.unwrap_or("")).trim()
+    };
+    shown(thinking, &cut.reasoning, tail.map(|s| s.reasoning.as_str()))
+        && shown(text, &cut.text, tail.map(|s| s.text.as_str()))
+}
+
 fn cancelled_partial(
+    t: &mut AgentTranscript,
+    at: Timestamp,
+    invocation: InvocationId,
+    partial: &[ContentBlock],
+) {
+    draw_cancelled_partial(t, at, invocation, partial);
+    // The invocation's last record: no message for it follows to read the cut.
+    t.private.cut.take_if(|cut| cut.invocation == invocation);
+}
+
+fn draw_cancelled_partial(
     t: &mut AgentTranscript,
     at: Timestamp,
     invocation: InvocationId,
@@ -2435,6 +2509,10 @@ impl AgentTranscript {
 
 #[cfg(test)]
 impl AgentTranscript {
+    pub(super) fn holds_cut(&self) -> bool {
+        self.private.cut.is_some()
+    }
+
     pub(super) fn assert_calls_closed(&self) {
         assert!(self.private.calls.is_empty());
         assert!(self.private.approvals.is_empty());
