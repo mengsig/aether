@@ -24,11 +24,10 @@ pub fn check_agent_temp(
             "set agents.temp_root in config.toml to an absolute path",
         );
     };
-    let inspected = aether_core::agent_temp::normalize_root(&root).and_then(|root| {
-        aether_core::agent_temp::inspect_root(&root, instance_id)?;
-        Ok(root)
-    });
-    let root = match (inspected, configured) {
+    let root = match (
+        aether_core::agent_temp::inspect_root(&root, instance_id),
+        configured,
+    ) {
         (Ok(root), _) => root,
         (Err(error), Some(_)) => {
             return Check::fail(

@@ -798,7 +798,7 @@ fn unsafe_credential_directory_warns_with_exact_repair() {
 fn the_agent_temp_root_is_judged_where_the_daemon_will_put_it() {
     use std::os::unix::fs::PermissionsExt as _;
     let dir = tempfile::tempdir().unwrap();
-    let paths = paths(dir.path());
+    let paths = paths(&std::fs::canonicalize(dir.path()).unwrap());
     let check = check_agent_temp(&paths, None, None);
     // Warns, rather than passes, when the test's temp dir is held in memory.
     assert_ne!(check.level, Level::Fail, "{check:?}");
@@ -873,4 +873,36 @@ fn an_unusable_default_root_warns_and_an_unusable_configured_one_fails() {
         assert_eq!(check.level, Level::Warn, "{check:?}");
         assert!(check.detail.contains("cannot create"), "{check:?}");
     }
+}
+
+#[test]
+fn the_agent_temp_root_is_judged_at_its_real_path() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(dir.path()).unwrap();
+    let paths = paths(&base);
+    let (shared, private) = (base.join("shared"), base.join("private"));
+    std::fs::create_dir(&shared).unwrap();
+    std::fs::create_dir(&private).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o777)).unwrap();
+    std::os::unix::fs::symlink(&private, shared.join("middle")).unwrap();
+    std::os::unix::fs::symlink(shared.join("middle"), base.join("alias")).unwrap();
+    let check = check_agent_temp(&paths, Some(&base.join("alias/t")), None);
+    assert_ne!(check.level, Level::Fail, "{check:?}");
+    assert!(
+        check
+            .detail
+            .contains(&private.join("t").display().to_string()),
+        "{check:?}"
+    );
+
+    let root = paths.data_dir.join("t");
+    aether_core::agent_temp::prepare_root(&root, "instance-a").unwrap();
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let default = check_agent_temp(&paths, None, Some("instance-a"));
+    let configured = check_agent_temp(&paths, Some(&root), Some("instance-a"));
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(default.level, Level::Warn, "{default:?}");
+    assert!(default.detail.contains("its owner"), "{default:?}");
+    assert_eq!(configured.level, Level::Fail, "{configured:?}");
 }

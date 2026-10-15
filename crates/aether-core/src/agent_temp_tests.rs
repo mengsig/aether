@@ -66,14 +66,10 @@ fn an_unsafe_root_is_refused() {
     let dir = tempfile::tempdir().expect("dir");
     let real = dir.path().join("real");
     fs::create_dir(&real).expect("real");
-    let link = dir.path().join("link");
-    std::os::unix::fs::symlink(&real, &link).expect("symlink");
-    let error = prepare_root(&link, "instance-a").expect_err("symlinked root");
-    assert!(
-        error.to_string().contains("not a real directory"),
-        "{error}"
-    );
-    assert!(!real.join(MARKER).exists());
+    let dangling = dir.path().join("dangling");
+    std::os::unix::fs::symlink(dir.path().join("absent"), &dangling).expect("symlink");
+    let error = prepare_root(&dangling, "instance-a").expect_err("dangling root");
+    assert!(error.to_string().contains("cannot resolve"), "{error}");
 
     let shared = dir.path().join("shared");
     fs::create_dir(&shared).expect("shared");
@@ -88,7 +84,7 @@ fn an_unsafe_root_is_refused() {
     let stat = rustix::fs::lstat(&real).expect("stat");
     let error = check_root(&real, &stat, our_uid() + 1).expect_err("foreign owner");
     assert!(error.to_string().contains("is owned by uid"), "{error}");
-    assert!(inspect_root(&link, None).is_err() && inspect_root(&shared, None).is_err());
+    assert!(inspect_root(&dangling, None).is_err() && inspect_root(&shared, None).is_err());
     assert!(inspect_root(&real, None).is_ok());
     assert!(inspect_root(&dir.path().join("absent"), None).is_ok());
     let marker_dir = dir.path().join("marked");
@@ -100,8 +96,7 @@ fn an_unsafe_root_is_refused() {
 #[test]
 fn a_leaf_is_created_lazily_and_recreated_after_deletion() {
     let dir = tempfile::tempdir().expect("dir");
-    let root = dir.path().join("t");
-    prepare_root(&root, "instance-a").expect("prepare");
+    let root = prepare_root(&dir.path().join("t"), "instance-a").expect("prepare");
     let agent = AgentId::new();
     let leaf = leaf_path(&root, agent);
     assert!(!leaf.exists(), "computing the path creates nothing");
@@ -241,22 +236,109 @@ fn leaf_name_of(leaf: &Path) -> &std::ffi::OsStr {
 }
 
 #[test]
-fn a_trailing_slash_does_not_hide_a_symlinked_root() {
+fn a_symlinked_root_is_pinned_to_its_real_path() {
     let dir = tempfile::tempdir().expect("dir");
-    let real = dir.path().join("real");
+    let base = fs::canonicalize(dir.path()).expect("canonical");
+    let real = base.join("real");
     fs::create_dir(&real).expect("real");
     fs::set_permissions(&real, fs::Permissions::from_mode(0o700)).expect("chmod");
-    let link = dir.path().join("link");
+    let link = base.join("link");
     std::os::unix::fs::symlink(&real, &link).expect("symlink");
-    for spelled in ["link/", "link/.", "link//"] {
-        let root = dir.path().join(spelled);
-        let error = prepare_root(&root, "instance-a").expect_err(spelled);
-        assert!(
-            error.to_string().contains("not a real directory"),
-            "{spelled}: {error}"
+    for spelled in ["link", "link/", "link/.", "link//"] {
+        let root = base.join(spelled);
+        assert_eq!(prepare_root(&root, "instance-a").expect(spelled), real);
+        assert_eq!(
+            inspect_root(&root, Some("instance-a")).expect(spelled),
+            real
         );
     }
-    assert!(!real.join(MARKER).exists());
+    assert_eq!(
+        fs::read_to_string(real.join(MARKER)).expect("marker"),
+        "instance-a"
+    );
+    assert_eq!(
+        resolve_root(&link.join("missing/t")).expect("missing"),
+        real.join("missing/t")
+    );
+}
+
+#[test]
+fn every_directory_a_linked_root_passes_through_is_checked() {
+    let dir = tempfile::tempdir().expect("dir");
+    let base = fs::canonicalize(dir.path()).expect("canonical");
+    let (safe, shared, private) = (base.join("safe"), base.join("shared"), base.join("private"));
+    for made in [&safe, &shared, &private] {
+        fs::create_dir(made).expect("dir");
+    }
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).expect("chmod");
+    let open = shared.join("open");
+    fs::create_dir(&open).expect("open");
+    std::os::unix::fs::symlink(&private, shared.join("middle")).expect("symlink");
+    std::os::unix::fs::symlink(shared.join("middle"), safe.join("alias")).expect("symlink");
+    let root = prepare_root(&safe.join("alias/t"), "instance-a").expect("a private real path");
+    assert_eq!(root, private.join("t"));
+
+    // The same chain ending under the shared directory is refused.
+    fs::remove_file(shared.join("middle")).expect("unlink");
+    std::os::unix::fs::symlink(&open, shared.join("middle")).expect("symlink");
+    let error = prepare_root(&safe.join("alias/t"), "instance-a").expect_err("shared parent");
+    assert!(error.to_string().contains("sticky"), "{error}");
+    assert!(inspect_root(&safe.join("alias/t"), None).is_err());
+    assert!(!open.join("t").exists(), "nothing is created under it");
+}
+
+#[test]
+fn a_parent_turned_into_a_link_stops_the_root_being_recreated() {
+    let dir = tempfile::tempdir().expect("dir");
+    let base = fs::canonicalize(dir.path()).expect("canonical");
+    let root = prepare_root(&base.join("a/t"), "instance-a").expect("prepare");
+    fs::remove_dir_all(&root).expect("delete root");
+    fs::rename(base.join("a"), base.join("moved")).expect("move");
+    std::os::unix::fs::symlink(base.join("moved"), base.join("a")).expect("symlink");
+    let error = ensure_leaf(&leaf_path(&root, AgentId::new()), "instance-a").expect_err("link");
+    assert!(
+        error.to_string().contains("not a real directory"),
+        "{error}"
+    );
+    assert!(
+        !base.join("moved/t").exists(),
+        "nothing is made through the link"
+    );
+}
+
+#[test]
+fn a_root_its_owner_cannot_write_is_refused() {
+    let dir = tempfile::tempdir().expect("dir");
+    let root = prepare_root(&dir.path().join("t"), "instance-a").expect("prepare");
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o500)).expect("chmod");
+    let prepared = prepare_root(&root, "instance-a");
+    let inspected = inspect_root(&root, Some("instance-a"));
+    let leaf = ensure_leaf(&leaf_path(&root, AgentId::new()), "instance-a");
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("chmod");
+    for result in [prepared.map(|_| ()), inspected.map(|_| ()), leaf] {
+        let error = result.expect_err("an owner without write");
+        assert!(error.to_string().contains("its owner"), "{error}");
+    }
+}
+
+#[test]
+fn only_leftover_staging_files_are_removed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let root = prepare_root(&dir.path().join("t"), "instance-a").expect("prepare");
+    let staged = format!("{MARKER}.{}", ulid::Ulid::generate());
+    fs::write(root.join(&staged), b"instance-a").expect("staged");
+    let kept = [
+        format!("{MARKER}.{}", ulid::Ulid::generate()),
+        format!("{MARKER}.notes"),
+        format!("{MARKER}x{}", ulid::Ulid::generate()),
+    ];
+    fs::create_dir(root.join(&kept[0])).expect("dir");
+    fs::write(root.join(&kept[1]), b"").expect("file");
+    fs::write(root.join(&kept[2]), b"").expect("file");
+    assert_eq!(remove_staged_markers(&root).expect("remove"), vec![staged]);
+    assert!(kept.iter().all(|name| root.join(name).exists()));
+    assert!(root.join(MARKER).is_file(), "the marker itself stays");
+    assert!(remove_staged_markers(&root).expect("again").is_empty());
 }
 
 #[test]
@@ -282,8 +364,10 @@ fn a_root_under_a_shared_parent_needs_the_sticky_bit() {
 fn racing_claims_on_a_fresh_root_all_agree() {
     const THREADS: usize = 16;
     let dir = tempfile::tempdir().expect("dir");
+    // A leaf's root is real, as `prepare_root` returns it.
+    let base = fs::canonicalize(dir.path()).expect("canonical");
     for round in 0..20 {
-        let root = dir.path().join(format!("t{round}"));
+        let root = base.join(format!("t{round}"));
         let barrier = std::sync::Barrier::new(THREADS);
         std::thread::scope(|scope| {
             let racers: Vec<_> = (0..THREADS)

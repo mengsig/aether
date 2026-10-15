@@ -52,8 +52,8 @@ pub struct RuntimeConfig {
     pub github_checkout_root: Option<PathBuf>,
     /// Private location for detached worktrees made by isolated delegation.
     pub delegated_workspace_root: Option<PathBuf>,
-    /// Root of the per-agent temp dirs, already prepared and claimed for
-    /// `instance_id`. `None` leaves agents the daemon's own temp dir.
+    /// Real path of the per-agent temp dirs' root, already prepared and claimed
+    /// for `instance_id`. `None` leaves agents the daemon's own temp dir.
     pub agent_temp_root: Option<PathBuf>,
     pub network_default: aether_core::agent::NetworkPolicy,
     pub execution: ExecutionPolicy,

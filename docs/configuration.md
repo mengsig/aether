@@ -318,13 +318,19 @@ background jobs it runs on the host.
 expanded. When unset, the root is `t` in the data directory, beside
 `aether.db`. Aether never picks `/tmp` as the root.
 
-The daemon creates the root with mode 0700. It refuses a root that is a
-symlink, belongs to another user, or is writable by group or others. It also
-refuses a root with a parent directory that belongs to a user other than you or
-root, or that others can write without the sticky bit. A `.aether-instance` file
+The daemon resolves the root to its real path once at startup, following any
+symlinks in it, and uses only that path from then on: it is what agents get as
+`TMPDIR` and what `aether doctor` and `aether storage` report. The daemon
+creates the root with mode 0700. It refuses a root that belongs to another
+user, that is writable by group or others, or that its owner cannot read, write
+and search. It also refuses a root with a parent directory on its real path
+that belongs to a user other than you or root, or that others can write without
+the sticky bit. A `.aether-instance` file
 in the root records the instance that owns it. A root claimed by another
 instance is refused, so give each daemon its own `temp_root`. These checks run
-again before each agent process starts.
+again before each agent process starts. At startup the daemon also removes
+staging files named `.aether-instance.<id>` that an interrupted claim left in
+the root.
 
 A configured `temp_root` that fails these checks stops the daemon from
 starting. The default root does not: if it cannot be created or fails a check,
@@ -338,7 +344,7 @@ existing directory is a symlink, belongs to another user, or has any mode
 other than 0700, the agent's turn or command fails until it is removed.
 
 Startup and `aether doctor` warn when the root is on tmpfs or ramfs, and when
-the root plus 13 bytes exceeds 50 bytes, which leaves tools too little room
+the root's real path plus 13 bytes exceeds 50 bytes, which leaves tools too little room
 for Unix socket paths. On macOS the default root,
 `~/Library/Application Support/aether/t`, plus an agent's directory is about
 62 bytes, so this warning always appears there. Set `temp_root` to a short,

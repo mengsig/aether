@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
+use rustix::io::Errno;
 
 use serde::Serialize;
 
-use super::{MAX_ENTRIES, read_directory};
+use super::MAX_ENTRIES;
 
 const POLICY: &str = "reported only; agent temp dirs are not cleaned up yet";
 
@@ -35,6 +36,8 @@ pub(super) struct AgentTempReport {
 
 /// Bytes and leaf count under `root`, stopping after a fixed number of
 /// entries. Agents' processes delete their files mid-walk; those are skipped.
+/// The root is opened once and each leaf in it, so a root swapped mid-walk
+/// is never left.
 pub(super) fn report(root: &Path) -> io::Result<AgentTempReport> {
     debug_assert!(root.is_absolute(), "{} is not absolute", root.display());
     let mut report = AgentTempReport {
@@ -45,44 +48,59 @@ pub(super) fn report(root: &Path) -> io::Result<AgentTempReport> {
         unreadable: 0,
         truncated: false,
     };
-    let Some(entries) = read_directory(root)? else {
-        return Ok(report);
+    let dir = match rustix::fs::open(root, DIR_FLAGS, Mode::empty()) {
+        Ok(dir) => dir,
+        Err(Errno::NOENT) => return Ok(report),
+        Err(Errno::LOOP | Errno::NOTDIR | Errno::MLINK) => {
+            return Err(io::Error::other(format!(
+                "{} is not a real directory",
+                root.display()
+            )));
+        }
+        Err(errno) => return Err(errno.into()),
     };
     let mut budget = MAX_ENTRIES;
-    for entry in entries {
+    for entry in Dir::read_from(&dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == c"." || name == c".." {
+            continue;
+        }
         if budget == 0 {
             report.truncated = true;
             break;
         }
         budget -= 1;
-        let entry = entry?;
-        let is_leaf = entry
-            .file_name()
+        if !name
             .to_str()
-            .is_some_and(aether_core::agent_temp::is_leaf_name);
-        // `file_type` does not follow a symlink, so a linked leaf is skipped.
-        if !is_leaf || !entry.file_type()?.is_dir() {
+            .is_ok_and(aether_core::agent_temp::is_leaf_name)
+        {
             continue;
         }
+        let opened = rustix::fs::openat(&dir, name, DIR_FLAGS, Mode::empty());
+        // A link or a file named as a leaf is not an agent's.
+        if matches!(opened, Err(Errno::LOOP | Errno::NOTDIR | Errno::MLINK)) {
+            continue;
+        }
+        let Some(leaf) = report.readable(opened.map_err(io::Error::from)) else {
+            continue;
+        };
         report.dirs += 1;
-        add_tree(&entry.path(), &mut report, &mut budget);
+        add_tree(leaf, &mut report, &mut budget);
     }
+    debug_assert!(budget <= MAX_ENTRIES, "{budget}");
     Ok(report)
 }
 
 /// A directory still to walk: its name in the already open `parent`.
 type Pending = (Rc<OwnedFd>, CString);
 
-/// Add the file bytes under `leaf` to `report`, spending one unit of
-/// `budget` per entry. Each directory is opened relative to its parent
+/// Add the file bytes under the open `leaf` to `report`, spending one unit
+/// of `budget` per entry. Each directory is opened relative to its parent
 /// without following links, so a link swapped in mid-walk is never entered.
-fn add_tree(leaf: &Path, report: &mut AgentTempReport, budget: &mut usize) {
-    let opened = rustix::fs::open(leaf, DIR_FLAGS, Mode::empty()).map_err(io::Error::from);
-    let Some(dir) = report.readable(opened) else {
-        return;
-    };
+fn add_tree(leaf: OwnedFd, report: &mut AgentTempReport, budget: &mut usize) {
     let mut pending = Vec::new();
-    let mut dir = Rc::new(dir);
+    let mut dir = Rc::new(leaf);
     loop {
         if !add_entries(&dir, &mut pending, report, budget) {
             return;
@@ -212,6 +230,46 @@ mod tests {
         let counted = counted.unwrap();
         assert_eq!(counted.bytes, 5);
         assert_eq!(counted.unreadable, expected);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_root_swapped_for_a_link_mid_walk_never_counts_what_it_points_at() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let (root, decoy, link) = (
+            dir.path().join("t"),
+            dir.path().join("decoy"),
+            dir.path().join("link"),
+        );
+        for (tree, bytes) in [(&root, 1), (&decoy, 1000)] {
+            fs::create_dir_all(tree.join("0123456789AB")).unwrap();
+            fs::write(tree.join("0123456789AB/f"), vec![0u8; bytes]).unwrap();
+        }
+        std::os::unix::fs::symlink(&decoy, &link).unwrap();
+        let stop = AtomicBool::new(false);
+        let miscounted = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !stop.load(Ordering::Relaxed) {
+                    let flags = rustix::fs::RenameFlags::EXCHANGE;
+                    rustix::fs::renameat_with(
+                        rustix::fs::CWD,
+                        &root,
+                        rustix::fs::CWD,
+                        &link,
+                        flags,
+                    )
+                    .unwrap();
+                }
+            });
+            // A walk that starts on the link fails; one that starts on the root counts it.
+            let miscounted = (0..5000)
+                .filter_map(|_| report(&root).ok())
+                .find(|counted| counted.bytes != 1);
+            stop.store(true, Ordering::Relaxed);
+            miscounted
+        });
+        assert!(miscounted.is_none(), "{miscounted:?}");
     }
 
     #[test]
