@@ -63,6 +63,9 @@ pub(crate) enum LoopEvent {
 pub(crate) struct Link {
     pub(crate) client: Client,
     generation: u64,
+    /// The first generation on this daemon identity. A change of identity
+    /// rebuilds the view, so nothing asked for before it has a route left.
+    since: u64,
 }
 
 impl Link {
@@ -70,6 +73,7 @@ impl Link {
         Self {
             client,
             generation: 1,
+            since: 1,
         }
     }
 
@@ -79,9 +83,15 @@ impl Link {
     }
 
     pub(crate) fn reconnected(&self, client: Client) -> Self {
+        let generation = self.generation + 1;
+        let same_daemon = self.client.welcome().map(|welcome| &welcome.instance_id)
+            == client.welcome().map(|welcome| &welcome.instance_id);
+        let since = if same_daemon { self.since } else { generation };
+        debug_assert!(self.since <= since && since <= generation);
         Self {
             client,
-            generation: self.generation + 1,
+            generation,
+            since,
         }
     }
 
@@ -105,7 +115,8 @@ impl Link {
             same_daemon || generation < self.generation,
             "a connection stamps its own daemon's identity"
         );
-        if !same_daemon {
+        // Back on a daemon after another one: the view was rebuilt in between.
+        if !same_daemon || generation < self.since {
             return None;
         }
         if generation == self.generation || event.outlives_connection() {
