@@ -346,7 +346,9 @@ other than 0700, the agent's turn or command fails until it is removed.
 
 Startup and `aether doctor` warn when the root is on tmpfs or ramfs, and when
 the root's real path plus 13 bytes exceeds 50 bytes, which leaves tools too little room
-for Unix socket paths. On macOS the default root,
+for Unix socket paths. Claude Code's sandbox sets `TMPDIR` to a `claude-<uid>`
+directory inside the agent's, 12 bytes longer for a four-digit uid, so the
+warning shows both lengths. On macOS the default root,
 `~/Library/Application Support/aether/t`, plus an agent's directory is about
 62 bytes, so this warning always appears there. Set `temp_root` to a short,
 absolute directory that only you can write, such as `/Users/<you>/.aether-t`. `aether storage` reports the total bytes and the number

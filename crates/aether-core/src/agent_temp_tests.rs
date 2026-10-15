@@ -178,6 +178,14 @@ fn a_long_root_warns_about_the_socket_budget() {
         budget.contains(&format!("{} bytes", PATH_BUDGET + 1)),
         "{budget}"
     );
+    let uid = our_uid();
+    let sandboxed = PATH_BUDGET + 1 + format!("/claude-{uid}").len();
+    assert!(
+        budget.contains(&format!(
+            "({sandboxed} inside Claude Code's claude-{uid} sandbox dir)"
+        )),
+        "{budget}"
+    );
     assert!(budget.contains("agents.temp_root"), "{budget}");
 }
 

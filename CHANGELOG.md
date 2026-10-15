@@ -18,8 +18,9 @@ release is also the text of its GitHub release.
   change, or that another instance has claimed. If the default root can't
   be used, it warns and agents keep the daemon's temp directory. Startup and
   `aether doctor` warn when the root is on tmpfs or too long for socket paths.
-  `aether storage` reports their size under `agent_temp`. Nothing is deleted
-  yet.
+  The length warning also gives the length inside Claude Code's sandbox
+  directory. `aether storage` reports their size under `agent_temp`. Nothing
+  is deleted yet.
 
 ### Fixed
 

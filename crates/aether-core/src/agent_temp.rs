@@ -213,12 +213,17 @@ pub fn ensure_leaf(leaf: &Path, instance_id: &str) -> io::Result<()> {
 /// What to tell an operator about `root` before agents use it: a path too
 /// long for the sockets tools make under it, or a filesystem held in memory.
 pub fn warnings(root: &Path) -> Vec<String> {
+    debug_assert!(root.is_absolute(), "warnings judge the resolved root");
     let mut warnings = Vec::new();
     let bytes = root.as_os_str().len() + 1 + LEAF_LEN;
     if bytes > PATH_BUDGET {
+        // Claude Code's sandbox points TMPDIR one level deeper, at claude-<uid>.
+        let uid = rustix::process::geteuid().as_raw();
+        let sandboxed = bytes + format!("/claude-{uid}").len();
         warnings.push(format!(
-            "agent temp dirs under {} are {bytes} bytes, over the {PATH_BUDGET}-byte budget \
-             that leaves Unix sockets room under TMPDIR; set a shorter agents.temp_root",
+            "agent temp dirs under {} are {bytes} bytes ({sandboxed} inside Claude Code's \
+             claude-{uid} sandbox dir), over the {PATH_BUDGET}-byte budget that leaves Unix \
+             sockets room under TMPDIR; set a shorter agents.temp_root",
             root.display()
         ));
     }
