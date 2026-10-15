@@ -18,6 +18,14 @@ release is also the text of its GitHub release.
   streamed is kept as a cancelled failure under the id it streamed under, so
   a reload matches the live view. It costs nothing, and a resumed turn does
   not see it as something the agent said.
+- **It also holds when the turn's own budget check, the engine adapter, or
+  an earlier decision ends it.** A turn that crossed its budget mid-answer,
+  an engine its adapter stopped (for example Codex reaching for its own
+  delegation tool), and text an engine kept streaming after the agent had
+  already chosen to wait or finish now keep what streamed the same way. An
+  adapter's stop still shows its reason and reads as an interruption, not a
+  cancel or a provider error. Text sent after a wait or a finish is shown
+  after it and never changes the wait or the task's result.
 
 ## 1.0.6
 

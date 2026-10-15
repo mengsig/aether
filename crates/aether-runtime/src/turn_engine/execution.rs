@@ -3,14 +3,16 @@ use super::outcome::{engine_failure_text, record_engine_incident};
 use super::{
     Actor, AgentFilter, ApprovalRequest, Arc, CancellationToken, Commit, CompletionSource,
     ContentBlock, ContextInputs, DriveResult, EngineLink, EngineTurn, EngineTurnGuard,
-    EngineTurnHandle, EngineVerdict, EventKind, MAX_ENGINE_ERROR, McpBridge, MessageRole,
-    ModelResponse, Mutation, Next, PROTOCOL_NOTE_EVENT, ResolvedModel, Result, Runtime,
-    RuntimeError, SHRUNK_CLOSING_USAGE, SubtreeUsage, Task, TaskFilter, ToolEffects, ToolSpec,
-    TurnCtx, Uncommitted, Usage, budget_crossed, clamp, contract, drive, engine_kind,
-    engine_verdict, json, mpsc, names_exhaustion, now, prose_only_next, raise_to,
-    recompute_snapshot_accounting, record_engine_failure, record_park, record_unanswered_prompt,
-    tool_context,
+    EngineTurnHandle, EngineVerdict, EventKind, McpBridge, MessageRole, ModelResponse, Mutation,
+    Next, PROTOCOL_NOTE_EVENT, ResolvedModel, Result, Runtime, RuntimeError, SHRUNK_CLOSING_USAGE,
+    SubtreeUsage, Task, TaskFilter, ToolEffects, ToolSpec, TurnCtx, Uncommitted, Usage,
+    budget_crossed, contract, drive, engine_kind, engine_verdict, json, mpsc, names_exhaustion,
+    now, prose_only_next, raise_to, recompute_snapshot_accounting, record_engine_failure,
+    record_park, record_unanswered_prompt, tool_context,
 };
+
+/// Why a parked turn's uncommitted partial was cut.
+const PARKED_PARTIAL: &str = "stopped after the turn ended";
 
 pub(crate) async fn execute(
     runtime: &Arc<Runtime>,
@@ -503,15 +505,15 @@ pub(crate) async fn execute(
     let hard_exhaustion = outcome.error.as_deref().is_some_and(names_exhaustion);
     match engine_verdict(budget_stop, park, next, cancel.is_cancelled()) {
         EngineVerdict::Budget(crossed, park) => {
-            if hard_exhaustion {
-                record_engine_incident(
-                    runtime,
-                    ctx,
-                    &snapshot,
-                    engine.kind(),
-                    outcome.error.as_deref(),
-                )?;
-            }
+            // Cut where it stood, like the sweep's stop: kept the same way.
+            super::outcome::record_engine_cancelled(
+                runtime,
+                ctx,
+                &snapshot,
+                engine.kind(),
+                outcome.error.as_deref(),
+                uncommitted,
+            )?;
             // The recorded end is gone - the budget stop is terminal - but
             // the wind-down still happened, and an engine that ignored it is
             // exactly what this event is for.
@@ -541,6 +543,15 @@ pub(crate) async fn execute(
             );
             // A late hard exhaustion overrides only an open decision (a wait).
             if !hard_exhaustion || decided || settled_this_turn || cancel.is_cancelled() {
+                // Said after the turn's end was decided: the operator's to see,
+                // never part of that decision or of model history.
+                super::outcome::record_engine_partial(
+                    runtime,
+                    ctx,
+                    &snapshot,
+                    PARKED_PARTIAL,
+                    uncommitted,
+                )?;
                 if hard_exhaustion {
                     record_engine_incident(
                         runtime,
@@ -567,17 +578,15 @@ pub(crate) async fn execute(
         EngineVerdict::Ran => {}
     }
     if outcome.interrupted && !hard_exhaustion {
-        runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
-            name: "engine.interrupted".into(),
-            payload: json!({
-                "engine": engine.kind().as_str(),
-                // The sibling engine.parked event already clamps its
-                // reason; an adapter error string must not be let through
-                // unbounded here just because this path renders it too.
-                "reason": outcome.error.as_deref().map(|e| clamp(e, MAX_ENGINE_ERROR)),
-            }),
-        })))?;
-        return Ok(EngineLink::Done(Next::Interrupted));
+        let next = super::outcome::record_engine_interrupted(
+            runtime,
+            ctx,
+            &snapshot,
+            engine.kind(),
+            outcome.error.as_deref(),
+            uncommitted,
+        )?;
+        return Ok(EngineLink::Done(next));
     }
     if outcome.is_error || hard_exhaustion {
         let mut error = engine_failure_text(engine.kind(), outcome.error.as_deref());
