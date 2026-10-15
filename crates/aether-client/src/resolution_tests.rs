@@ -25,10 +25,14 @@ fn host(
             let Some(result) = script(&command) else {
                 return;
             };
-            peer.outgoing
+            if peer
+                .outgoing
                 .send(ServerFrame::Reply { id, result })
                 .await
-                .expect("client waiting for the scripted reply");
+                .is_err()
+            {
+                return;
+            }
         }
     });
     seen
@@ -396,18 +400,24 @@ async fn every_operator_choice_settles_the_operation_and_is_recorded() {
 async fn sending_again_without_an_answer_keeps_the_operation_unconfirmed() {
     let lost = lost_send("ssh-silent");
     let fx = Fixture::holding(std::slice::from_ref(&lost)).await;
-    let (adopted, client, _) = fx
+    let (adopted, client, log) = fx
         .connect(Some(GREETED_WITH), |command| match command {
             Command::ResolveSubmission { .. } => unknown(UnprovenAbsence::Forgotten),
             _ => None,
         })
         .await;
     adopted.expect("connected");
+    log.lock().expect("log").clear();
 
     let again = client.settle("ssh-silent", Settlement::SendAgain).await;
     assert!(
         matches!(again, Err(ClientError::DeliveryUnconfirmed(_))),
         "{again:?}"
+    );
+    assert_eq!(
+        seen(&log),
+        std::slice::from_ref(&lost),
+        "the send reached the host"
     );
     assert_eq!(
         client

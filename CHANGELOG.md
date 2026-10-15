@@ -27,6 +27,11 @@ release is also the text of its GitHub release.
 - **One run's agent tree no longer reads every task in the store.** Listing a
   run's tasks walked the whole tasks table. In a test store of 20,000 tasks
   that took 22 ms per tree; it now reads only that run's tasks, in 0.06 ms.
+- **An SSH remote no longer mistakes a finished send for one in flight.** If
+  the client started another program just as a send ended, the send's outbox
+  entry stayed locked until that program had started. Resolving the outbox on
+  connect could skip the entry, and `/outbox` could refuse it as being sent
+  by another process. Each entry is now unlocked as soon as its send ends.
 
 ### Before updating
 
