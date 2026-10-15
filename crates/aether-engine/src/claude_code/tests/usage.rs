@@ -4,6 +4,52 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn dated_model_names_share_receipt_coverage_on_fresh_and_resumed_sessions() {
+    let short = "claude-haiku-4-5";
+    let dated = "claude-haiku-4-5-20251001";
+    for (streamed, reported) in [(dated, short), (short, dated)] {
+        for resumed in [false, true] {
+            let mut state = ParseState::default();
+            if resumed {
+                let before = Usage {
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    cost_usd: 8.0,
+                    ..Usage::default()
+                };
+                state = state.with_session_cost(Some("s".into()), before);
+                state.session_cost =
+                    state
+                        .session_cost
+                        .with_models(Some(std::collections::BTreeMap::from([(
+                            dated.into(),
+                            before,
+                        )])));
+            }
+            let message = json!({"type":"assistant","message":{"id":"m", "model":streamed,
+                "content":[{"type":"text","text":"Done."}],
+                "usage":{"input_tokens":100,"output_tokens":10}}});
+            parse_line(&message.to_string(), &mut state);
+            let factor = if resumed { 2 } else { 1 };
+            let result = json!({"type":"result","subtype":"success","session_id":"s",
+                "total_cost_usd":10.0,"modelUsage":{reported:{"inputTokens":100 * factor,
+                    "outputTokens":10 * factor,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}});
+            let events = parse_line(&result.to_string(), &mut state);
+            let Some(EngineEvent::Done(outcome)) = events.last() else {
+                panic!("missing result: {events:?}");
+            };
+            assert_eq!(outcome.cost_usd, Some(if resumed { 2.0 } else { 10.0 }));
+            let covered = outcome.cost_usage.as_ref().expect("same canonical model");
+            assert_eq!((covered.input_tokens, covered.output_tokens), (100, 10));
+            assert!(
+                matches!(events.first(), Some(EngineEvent::SessionUsage { models: Some(models), .. })
+                if models.contains_key(short) && models.len() == 1)
+            );
+        }
+    }
+}
+
+#[test]
 fn content_blocks_share_usage_and_final_stream_output_is_counted() {
     let mut state = ParseState::default();
     let mut total = Usage::default();

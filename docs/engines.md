@@ -398,11 +398,16 @@ persisted session baseline once per process. When `usage` is below the stream,
 it checks the invocation's increase in `modelUsage` for each streamed model
 before adding any price for missing tokens. Unstreamed helper-model usage
 cannot cover missing tokens from another model. Tokens absent from both
-receipts still retain their stream-derived charge; the agent total can then exceed the latest dollar
-receipt. A parked or interrupted run without proven closing coverage keeps
-its cost gap even when every observed token has a price. Zeroed or regressed
-session receipts keep the previous baseline, so a crash cannot cause the
-next resume to bill earlier session history again.
+receipts still retain their stream-derived charge; the agent total can then
+exceed the latest dollar receipt. A parked or interrupted run without proven
+closing coverage keeps its cost gap even when every observed token has a price.
+An all-zero crash receipt keeps the previous baseline. A nonzero receipt with
+lower dollars, lower model counters, or a missing model has unknown cost and
+becomes the new baseline, so later receipts bill only its increase.
+After upgrading, a record without per-model counters gets no coverage on its
+first resume, so the streamed shortfall may be priced once more per session.
+A receipt without `modelUsage` keeps the dollars but drops the per-model
+baseline, so the next resume loses coverage.
 
 Three rules the runtime depends on:
 

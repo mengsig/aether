@@ -49,6 +49,7 @@ impl SessionCost {
     }
 
     pub(super) fn with_models(mut self, models: Option<ModelUsage>) -> Self {
+        let models = models.map(canonical_model_usage);
         if let (Some(before), Some(models)) = (self.before, models.as_ref()) {
             let sum = sum_counters(models);
             debug_assert!(counters_cover(sum, before) && counters_cover(before, sum));
@@ -69,12 +70,13 @@ impl SessionCost {
         let models = model_counters(value);
         let mut total = models.as_ref().map(sum_counters).unwrap_or_default();
         total.set_cost(Some(dollars));
-        if !self.accepts(session, total, models.as_ref()) {
+        if dollars == 0.0 && total.total_tokens() == 0 && total.reasoning_tokens.unwrap_or(0) == 0 {
             return unknown_receipt(Some(
-                "Claude session receipt is zeroed or below its baseline; this invocation's billed cost is unknown",
+                "Claude session receipt is zeroed; this invocation's billed cost is unknown",
             ));
         }
-        let baseline = self.baseline(session);
+        let accepted = self.accepts(session, total, models.as_ref());
+        let baseline = self.baseline(session).filter(|_| accepted);
         let cost_usd = baseline.map(|before| dollars - before.cost_usd);
         let cost_usage =
             cost_usd.and_then(|_| self.cost_usage(session, models.as_ref()?, streamed));
@@ -85,33 +87,45 @@ impl SessionCost {
         };
         if cost_usd.is_none() {
             receipt.events.push(EngineEvent::ProtocolNote(
-                "Claude session cost baseline is missing; this invocation's billed cost is unknown"
-                    .into(),
+                "Claude session cost baseline is missing or reset; this invocation's billed cost is unknown".into(),
             ));
+        }
+        if !accepted {
+            receipt
+                .events
+                .push(self.adopt_reset(session, total, models.clone()));
         }
         if let Some(session) = session {
             receipt.events.push(self.persist(session, total, models));
         }
+        debug_assert!(receipt.cost_usd.is_none_or(|cost| cost >= 0.0));
+        debug_assert!(receipt.cost_usage.is_none() || receipt.cost_usd.is_some());
         receipt
     }
 
-    fn persist(
+    fn adopt_reset(
         &mut self,
-        session: &str,
-        mut total: Usage,
+        session: Option<&str>,
+        total: Usage,
         models: Option<ModelUsage>,
     ) -> EngineEvent {
-        let before = self.persisted_baseline(Some(session));
         debug_assert!(total.cost_complete);
-        debug_assert!(before.is_none_or(|before| total.cost_usd >= before.cost_usd));
-        // Missing counters cannot erase an earlier reading or prove token coverage.
-        if models.is_none()
-            && let Some(before) = before
-        {
-            let dollars = total.cost_usd;
-            total = before;
-            total.set_cost(Some(dollars));
-        }
+        debug_assert!(
+            total.cost_usd > 0.0
+                || total.total_tokens() > 0
+                || total.reasoning_tokens.unwrap_or(0) > 0
+        );
+        self.session = session.map(str::to_owned);
+        self.before = Some(total);
+        self.before_models = models;
+        let mut usage = Usage::default();
+        usage.mark_cost_gap(aether_core::model::CostGap::Unreported);
+        EngineEvent::UsageDelta { usage }
+    }
+
+    fn persist(&mut self, session: &str, total: Usage, models: Option<ModelUsage>) -> EngineEvent {
+        debug_assert!(total.cost_complete);
+        debug_assert!(total.cost_usd.is_finite() && total.cost_usd >= 0.0);
         self.latest = Some(EngineSessionUsage {
             session: session.to_owned(),
             total,
@@ -142,9 +156,6 @@ impl SessionCost {
     fn accepts(&self, session: Option<&str>, total: Usage, models: Option<&ModelUsage>) -> bool {
         debug_assert!(total.cost_complete);
         debug_assert!(total.cost_usd.is_finite() && total.cost_usd >= 0.0);
-        if total.cost_usd == 0.0 && total.total_tokens() == 0 {
-            return false;
-        }
         let Some(before) = self.persisted_baseline(session) else {
             return true;
         };
@@ -152,19 +163,22 @@ impl SessionCost {
         {
             return false;
         }
-        let prior_models = self
+        let prior_models = if let Some(latest) = self
             .latest
             .as_ref()
             .filter(|latest| Some(latest.session.as_str()) == session)
-            .and_then(|latest| latest.models.as_ref())
-            .or_else(|| {
-                (self.session.as_deref() == session)
-                    .then_some(self.before_models.as_ref())
-                    .flatten()
-            });
+        {
+            latest.models.as_ref()
+        } else {
+            (self.session.as_deref() == session)
+                .then_some(self.before_models.as_ref())
+                .flatten()
+        };
         match (models, prior_models) {
             (Some(models), Some(prior)) => prior.iter().all(|(model, before)| {
-                counters_cover(models.get(model).copied().unwrap_or_default(), *before)
+                models
+                    .get(model)
+                    .is_some_and(|total| counters_cover(*total, *before))
             }),
             _ => true,
         }
@@ -239,7 +253,30 @@ fn model_counters(value: &Value) -> Option<ModelUsage> {
                 },
             ))
         })
-        .collect()
+        .collect::<Option<ModelUsage>>()
+        .map(canonical_model_usage)
+}
+
+pub(super) fn canonical_model_name(name: &str) -> &str {
+    if let Some((base, date)) = name.rsplit_once('-')
+        && base.starts_with("claude-")
+        && date.len() == 8
+        && date.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return base;
+    }
+    name
+}
+
+fn canonical_model_usage(models: ModelUsage) -> ModelUsage {
+    models
+        .into_iter()
+        .fold(ModelUsage::new(), |mut canonical, (model, usage)| {
+            *canonical
+                .entry(canonical_model_name(&model).to_owned())
+                .or_default() += usage;
+            canonical
+        })
 }
 
 fn sum_counters(models: &ModelUsage) -> Usage {
@@ -257,6 +294,7 @@ fn counters_cover(total: Usage, before: Usage) -> bool {
         && total.output_tokens >= before.output_tokens
         && total.cache_read_tokens >= before.cache_read_tokens
         && total.cache_write_tokens >= before.cache_write_tokens
+        && total.reasoning_tokens.unwrap_or(0) >= before.reasoning_tokens.unwrap_or(0)
 }
 
 #[cfg(test)]

@@ -50,12 +50,11 @@ fn unknown_or_reset_baseline_does_not_charge_old_session_history() {
         let mut state = resumed(Some("s".into()), prior);
         let (cost, events) = bill(&mut state, &receipt("s", 0.5));
         assert_eq!(cost, None);
-        if prior.cost_complete {
-            assert!(matches!(&events[..], [EngineEvent::ProtocolNote(_)]));
-        } else {
-            assert!(matches!(&events[..], [EngineEvent::ProtocolNote(_),
-                EngineEvent::SessionUsage { total, .. }] if total.cost_usd == 0.5));
-        }
+        assert!(matches!(events.first(), Some(EngineEvent::ProtocolNote(_))));
+        assert!(
+            matches!(events.last(), Some(EngineEvent::SessionUsage { total, .. })
+            if total.cost_usd == 0.5)
+        );
     }
 }
 
@@ -249,21 +248,133 @@ fn an_all_zero_resumed_baseline_cannot_price_session_history() {
 }
 
 #[test]
-fn later_receipts_in_one_process_cannot_replace_a_higher_baseline() {
+fn reset_receipts_in_one_process_adopt_the_new_baseline() {
     let mut state = SessionCost::default();
     let (_, events) = bill(&mut state, &receipt("s", 0.05));
     assert!(matches!(&events[..], [EngineEvent::SessionUsage { .. }]));
     let mut lower = receipt("s", 0.04);
     let (cost, events) = bill(&mut state, &lower);
     assert_eq!(cost, None);
-    assert!(matches!(&events[..], [EngineEvent::ProtocolNote(_)]));
+    assert!(
+        matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::UsageDelta { .. },
+        EngineEvent::SessionUsage { total, .. }] if total.cost_usd == 0.04)
+    );
     lower["total_cost_usd"] = json!(0.06);
     lower["modelUsage"]["sonnet"]["outputTokens"] = json!(1);
     let (cost, events) = bill(&mut state, &lower);
     assert_eq!(cost, None);
-    assert!(matches!(&events[..], [EngineEvent::ProtocolNote(_)]));
-    assert_eq!(state.latest.as_ref().unwrap().total.cost_usd, 0.05);
-    assert_eq!(bill(&mut state, &receipt("s", 0.08)).0, Some(0.08));
+    assert!(
+        matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::UsageDelta { .. },
+        EngineEvent::SessionUsage { total, .. }] if total.output_tokens == 1)
+    );
+    assert_eq!(state.latest.as_ref().unwrap().total.cost_usd, 0.06);
+    assert!((bill(&mut state, &receipt("s", 0.08)).0.unwrap() - 0.02).abs() < 1e-12);
+    let covered = covered_usage(&mut state, &receipt("s", 0.08)).unwrap();
+    assert_eq!(covered.input_tokens, 0);
+    assert_eq!(covered.output_tokens, 383);
+}
+
+#[test]
+fn reset_dollars_are_adopted_across_resumes() {
+    let mut state = resumed(
+        Some("s".into()),
+        Usage {
+            cost_usd: 8.0,
+            ..Usage::default()
+        },
+    );
+    for (dollars, expected) in [(2.0, None), (5.0, Some(3.0)), (10.0, Some(5.0))] {
+        let (cost, _) = bill(&mut state, &receipt("s", dollars));
+        assert_eq!(cost, expected);
+        let saved = state
+            .latest
+            .as_ref()
+            .expect("every nonzero reading is persisted");
+        assert_eq!(saved.total.cost_usd, dollars);
+        state = SessionCost::resumed(Some(saved.session.clone()), saved.total)
+            .with_models(saved.models.clone());
+    }
+}
+
+#[test]
+fn a_missing_model_is_adopted_across_resumes() {
+    let mut prior = receipt("s", 8.0);
+    prior["modelUsage"]["opus"] = prior["modelUsage"]["sonnet"].clone();
+    let mut state = SessionCost::default();
+    bill(&mut state, &prior);
+    let saved = state.latest.as_ref().unwrap();
+    state = SessionCost::resumed(Some(saved.session.clone()), saved.total)
+        .with_models(saved.models.clone());
+    for (dollars, expected) in [(2.0, None), (20.0, Some(18.0)), (200.0, Some(180.0))] {
+        let (cost, _) = bill(&mut state, &receipt("s", dollars));
+        assert_eq!(cost, expected);
+        let saved = state.latest.as_ref().unwrap();
+        assert_eq!(saved.models.as_ref().unwrap().len(), 1);
+        state = SessionCost::resumed(Some(saved.session.clone()), saved.total)
+            .with_models(saved.models.clone());
+    }
+}
+
+#[test]
+fn a_missing_model_resets_even_when_remaining_counters_cover_the_prior_total() {
+    let mut prior = receipt("s", 8.0);
+    prior["modelUsage"]["opus"] = prior["modelUsage"]["sonnet"].clone();
+    let mut state = SessionCost::default();
+    bill(&mut state, &prior);
+    let mut next = receipt("s", 20.0);
+    for field in [
+        "inputTokens",
+        "outputTokens",
+        "cacheReadInputTokens",
+        "cacheCreationInputTokens",
+    ] {
+        next["modelUsage"]["sonnet"][field] =
+            json!(prior["modelUsage"]["sonnet"][field].as_u64().unwrap() * 3);
+    }
+    assert_eq!(bill(&mut state, &next).0, None);
+    assert_eq!(
+        state
+            .latest
+            .as_ref()
+            .unwrap()
+            .models
+            .as_ref()
+            .unwrap()
+            .len(),
+        1
+    );
+    next["total_cost_usd"] = json!(200.0);
+    assert_eq!(bill(&mut state, &next).0, Some(180.0));
+}
+
+#[test]
+fn each_model_counter_reset_is_unknown_even_when_session_totals_grow() {
+    for field in [
+        "inputTokens",
+        "outputTokens",
+        "cacheReadInputTokens",
+        "cacheCreationInputTokens",
+        "thinkingTokens",
+    ] {
+        let mut prior = receipt("s", 8.0);
+        prior["modelUsage"]["sonnet"]["thinkingTokens"] = json!(8);
+        let mut state = SessionCost::default();
+        bill(&mut state, &prior);
+        let mut value = prior.clone();
+        value["total_cost_usd"] = json!(10.0);
+        value["modelUsage"]["opus"] = prior["modelUsage"]["sonnet"].clone();
+        value["modelUsage"]["sonnet"][field] = json!(1);
+        let result = state.receipt(&value, &BTreeMap::new());
+        assert_eq!(result.cost_usd, None, "{field}");
+        assert_eq!(result.cost_usage, None, "{field}");
+        assert_eq!(
+            state.latest.as_ref().unwrap().total.cost_usd,
+            10.0,
+            "{field}"
+        );
+        value["total_cost_usd"] = json!(12.0);
+        assert_eq!(bill(&mut state, &value).0, Some(2.0), "{field}");
+    }
 }
 
 #[test]

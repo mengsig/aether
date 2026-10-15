@@ -205,6 +205,43 @@ async fn dollars_missing_from_model_usage_stay_billed_despite_unstreamed_helper_
     assert_missing_receipt(true).await;
 }
 
+#[tokio::test]
+async fn a_reset_receipt_persists_the_new_baseline_and_keeps_a_stream_floor_with_a_gap() {
+    let runs = vec![
+        vec![streamed_request("first"), result(0.05, 1, true, false)],
+        vec![streamed_request("second"), result(0.02, 1, false, false)],
+    ];
+    let (tx, mut ready) = mpsc::channel(2);
+    let h = harness_with_engine_config(
+        Arc::new(ReceiptReplayEngine {
+            runs: Mutex::new(runs.into()),
+            ready: tx,
+        }),
+        |config| config.engine_park_grace = Duration::from_millis(5),
+    )
+    .await;
+    let id = chat_agent(&h);
+    let first = resume_turn(&h, id, &mut ready, true).await;
+    let second = resume_turn(&h, id, &mut ready, false).await;
+    assert_eq!(second.engine_usage.as_ref().unwrap().total.cost_usd, 0.02);
+    let rate = aether_model::Registry::builtin()
+        .resolve(&ModelRef::new("claude-code", "haiku"))
+        .unwrap()
+        .model
+        .capabilities
+        .cost
+        .unwrap();
+    let floor = rate.cost_of(&Usage {
+        input_tokens: 100,
+        output_tokens: 10,
+        ..Usage::default()
+    });
+    assert!((second.stats.usage.cost_usd - first.stats.usage.cost_usd - floor).abs() < 1e-12);
+    assert!(!second.stats.usage.cost_complete);
+    assert_eq!(second.stats.usage.cost_gap, Some(CostGap::Mixed));
+    h.runtime.shutdown().await;
+}
+
 async fn assert_missing_receipt(helper: bool) {
     let (h, id, first, second) = parked_receipts(false, helper).await;
     let rate = aether_model::Registry::builtin()

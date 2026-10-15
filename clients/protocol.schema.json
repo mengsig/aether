@@ -5242,6 +5242,16 @@
     "EngineSessionUsage": {
       "description": "An engine session's own cumulative token counters, as it last reported\nthem, tagged with the session they belong to.\n\nCodex counts a *thread*, not a turn: the counters it reports on a resumed\nthread include every earlier turn. Persisting the last reading is what\nlets the next turn bill `total - this` instead of the thread's history.\nThe session id is part of the record so a cleared or replaced session\ncannot be billed against another session's counters.",
       "properties": {
+        "models": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Usage"
+          },
+          "description": "Cumulative counters by model, when the engine reports their scope.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "session": {
           "type": "string"
         },

@@ -1,6 +1,7 @@
 //! Retain request high-water marks and attribute streamed tokens to their model.
 use super::{EngineEvent, MAX_TRACKED_MESSAGES, ParseState, Usage, UsageRequestId, parse_usage};
 use crate::RequestUsage;
+use crate::claude_code::session_cost::canonical_model_name;
 use serde_json::Value;
 
 impl ParseState {
@@ -46,7 +47,7 @@ impl ParseState {
         if let Some(model) = model {
             self.message_models
                 .entry(key.clone())
-                .or_insert_with(|| model.to_owned());
+                .or_insert_with(|| canonical_model_name(model).to_owned());
         }
         if !self.message_usage.contains_key(key) {
             self.usage_order.push_back(key.clone());
