@@ -7,5 +7,6 @@ from .. import protocol as _protocol
 
 
 class MemoryFeedbackList(TypedDict, total=False):
+    ranking: _protocol.FeedbackRanking  # optional
     records: list[_protocol.MemoryFeedback]
     truncated: bool

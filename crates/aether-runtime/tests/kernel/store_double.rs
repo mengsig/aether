@@ -66,6 +66,8 @@ pub enum Hook {
     /// check and before its request would be committed.
     TaskBoundaryTranscriptRead,
     MemoryRetrievalRead,
+    /// The one read of counted feedback a retrieval with candidates makes.
+    FeedbackTallyRead,
     FeedbackContextRead,
     /// A repository id resolved through the aliases, fired after the
     /// resolution returns: an alias landing here makes that answer stale.
@@ -87,6 +89,7 @@ pub struct CommitsMidPass {
     read_failed: std::sync::atomic::AtomicBool,
     dependency_owner_read: std::sync::atomic::AtomicBool,
     skip: std::sync::atomic::AtomicUsize,
+    tally_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl CommitsMidPass {
@@ -99,6 +102,7 @@ impl CommitsMidPass {
             read_failed: std::sync::atomic::AtomicBool::new(false),
             dependency_owner_read: std::sync::atomic::AtomicBool::new(false),
             skip: std::sync::atomic::AtomicUsize::new(0),
+            tally_reads: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -115,6 +119,11 @@ impl CommitsMidPass {
     /// Whether an armed read failure actually fired.
     pub fn read_failed(&self) -> bool {
         self.read_failed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many counted-feedback reads have reached the store.
+    pub fn tally_reads(&self) -> usize {
+        self.tally_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Whether the armed write has run.
@@ -447,6 +456,18 @@ impl Store for CommitsMidPass {
         limit: usize,
     ) -> aether_store::Result<Vec<aether_core::memory_feedback::MemoryFeedback>> {
         self.inner.memory_feedback(memory, limit)
+    }
+
+    fn memory_feedback_tallies(
+        &self,
+        memories: &[MemoryId],
+    ) -> aether_store::Result<
+        std::collections::BTreeMap<MemoryId, aether_core::memory_feedback::FeedbackTally>,
+    > {
+        self.tally_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.fire(Hook::FeedbackTallyRead)?;
+        self.inner.memory_feedback_tallies(memories)
     }
 
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>> {

@@ -1,5 +1,8 @@
 use aether_core::id::{InvocationId, MemoryFeedbackId, MemoryId, TaskId};
-use aether_core::memory_feedback::{MemoryEvidence, MemoryFeedbackSpec, MemoryVerdict};
+use aether_core::memory_feedback::{
+    FeedbackRanking, MemoryEvidence, MemoryFeedbackSpec, MemoryVerdict, RANKING_MIN_VOTES,
+    RANKING_WINDOW,
+};
 use clap::{Args, Subcommand};
 
 #[derive(Debug, Subcommand)]
@@ -107,7 +110,6 @@ async fn list(client: &aether_client::Client, memory: MemoryId, json: bool) -> a
     }
     if found.records.is_empty() {
         println!("no feedback for {memory}.");
-        return Ok(());
     }
     for record in found.records {
         println!(
@@ -127,5 +129,28 @@ async fn list(client: &aether_client::Client, memory: MemoryId, json: bool) -> a
     if found.truncated {
         println!("(only the newest 100 feedback records are listed)");
     }
+    println!("{}", ranking_line(&found.ranking)?);
     Ok(())
+}
+
+/// "ranking factor 1.12 (3 helped, 1 hurt across the latest 20 tasks)".
+fn ranking_line(ranking: &FeedbackRanking) -> anyhow::Result<String> {
+    let votes = ranking.helped.saturating_add(ranking.hurt);
+    anyhow::ensure!(
+        votes as usize <= RANKING_WINDOW,
+        "daemon counted more than {RANKING_WINDOW} tasks"
+    );
+    anyhow::ensure!(
+        (0.75..=1.25).contains(&ranking.factor),
+        "daemon reported a ranking factor outside 0.75 to 1.25"
+    );
+    let inactive = if votes < RANKING_MIN_VOTES {
+        format!("; {RANKING_MIN_VOTES} needed to move recall")
+    } else {
+        String::new()
+    };
+    Ok(format!(
+        "ranking factor {:.2} ({} helped, {} hurt across the latest {RANKING_WINDOW} tasks{inactive})",
+        ranking.factor, ranking.helped, ranking.hurt
+    ))
 }

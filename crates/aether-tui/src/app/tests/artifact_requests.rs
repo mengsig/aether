@@ -57,7 +57,7 @@ fn closing_the_artifacts_view_disarms_a_pending_artifact_request() {
         )),
         "Enter must ask for the bytes: {effects:?}"
     );
-    assert_eq!(app.artifacts.pending_bytes, Some(art));
+    assert_eq!(app.artifacts.pending_bytes, Some((art, app.artifact_reads)));
 
     // Pager, then list, closed before the reply lands.
     app.reduce(key(KeyCode::Esc));
@@ -72,7 +72,7 @@ fn closing_the_artifacts_view_disarms_a_pending_artifact_request() {
 
     // The reply for the old request lands late.
     app.reduce(AppEvent::Reply {
-        then: Then::ArtifactBytes(art),
+        then: crate::testing::artifact_bytes_then(&app, art),
         result: Ok(Reply::ArtifactBytes {
             artifact: record,
             base64: base64_of("too late"),
@@ -114,7 +114,7 @@ fn artifact_created_adopts_only_for_the_agent_the_list_shows() {
         result: Ok(Reply::Tree(two)),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(b),
+        then: crate::testing::backfill_then(&app, b),
         result: Ok(Reply::Events(vec![])),
     });
 

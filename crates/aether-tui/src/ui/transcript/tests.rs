@@ -934,7 +934,7 @@ fn scroll_to_top_loads_the_evicted_window_through_the_reducer() {
         panic!("history request")
     };
     assert_eq!(query.before, Some(2_502));
-    assert!(matches!(then, Then::Backfill(id) if id == agent));
+    assert!(matches!(then, Then::Backfill { agent: id, .. } if id == agent));
     view.app.reduce(AppEvent::Reply {
         then,
         result: Ok(Reply::Events(

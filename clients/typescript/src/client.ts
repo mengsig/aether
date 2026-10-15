@@ -41,7 +41,7 @@ export class SubscriptionLaggedError extends Error {
 }
 
 const CLIENT_NAME = "aether-typescript";
-const CLIENT_VERSION = "1.0.7";
+const CLIENT_VERSION = "1.0.8";
 
 // Longest accepted line, matching the daemon's own cap (MAX_LINE in
 // crates/aether-daemon/src/connection.rs and aether-client/src/transport.rs).

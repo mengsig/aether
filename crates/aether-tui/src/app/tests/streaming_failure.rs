@@ -30,7 +30,7 @@ fn reload(store: &SqliteStore, row: Agent) -> App {
         .find_map(|effect| match effect {
             Effect::Request {
                 command: Command::GetEvents { query, limit, .. },
-                then: Then::Backfill(agent),
+                then: Then::Backfill { agent, .. },
             } if agent == id => Some((query, limit)),
             _ => None,
         })
@@ -42,7 +42,7 @@ fn reload(store: &SqliteStore, row: Agent) -> App {
         .expect("stored history");
     assert_eq!(events.len(), 3);
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(id),
+        then: crate::testing::backfill_then(&app, id),
         result: Ok(Reply::Events(events)),
     });
     assert!(app.transcripts[&id].loaded);

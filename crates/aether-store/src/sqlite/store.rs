@@ -576,6 +576,14 @@ impl Store for SqliteStore {
         self.latest_memory_feedback(memory, limit)
     }
 
+    fn memory_feedback_tallies(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<std::collections::BTreeMap<MemoryId, aether_core::memory_feedback::FeedbackTally>>
+    {
+        self.memory_feedback_tallies_for(memories)
+    }
+
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>> {
         self.read_one("SELECT body FROM memories WHERE id = ?1", &id.to_string())
     }

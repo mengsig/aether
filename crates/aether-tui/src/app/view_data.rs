@@ -38,7 +38,9 @@ pub struct ArtifactsState {
     /// once `Then::Artifacts` answers, not against the empty list.
     /// The artifact whose bytes were asked for. A reply naming anything else
     /// is stale and must not reopen a pager the person has closed.
-    pub pending_bytes: Option<ArtifactId>,
+    /// Paired with the read's number, so an earlier read's reply never
+    /// settles a pager reopened since.
+    pub pending_bytes: Option<(ArtifactId, u64)>,
     /// Bytes of the artifact the pager shows.
     pub open: Option<OpenArtifact>,
 }

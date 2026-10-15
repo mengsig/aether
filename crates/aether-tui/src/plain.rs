@@ -20,7 +20,7 @@ use crate::app::transcript::{Cell, CellId, CellModel};
 use crate::app::{App, AppEvent, Effect, IDLE_PERIOD_MS, TICKS_PER_SECOND, TuiOptions};
 use crate::commands::{InputAction, SlashCommand};
 use crate::format;
-use crate::runner::{LoopEvent, execute_effects};
+use crate::runner::{Link, LoopEvent, execute_effects};
 use crate::ui::cells::{ChatCell as _, plain_theme};
 use crate::ui::views::ViewKind;
 
@@ -81,14 +81,19 @@ async fn run_loop(
     options: TuiOptions,
     mut input: tokio::sync::mpsc::UnboundedReceiver<io::Result<String>>,
 ) -> anyhow::Result<()> {
-    let mut client = client;
+    let mut link = Link::new(client);
     let mut app = plain_app(options);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<LoopEvent>();
 
     let mut out = Printer::default();
     out.line("aether - plain mode - type a message, /help for commands, Ctrl+D or /quit to leave")?;
 
-    let mut pending = app.reconnected(&client);
+    let mut pending = app.reconnected(&link.client);
+    debug_assert_eq!(
+        app.link,
+        link.generation(),
+        "effects carry the link they go out on"
+    );
     let mut input_open = true;
     let mut reconnecting = false;
     let mut eof_at = Instant::now();
@@ -104,7 +109,7 @@ async fn run_loop(
             return Ok(());
         }
         execute_effects(
-            &client,
+            &link,
             &tx,
             std::mem::take(&mut pending),
             &mut std::io::stdout(),
@@ -132,8 +137,8 @@ async fn run_loop(
             event = rx.recv() => match event {
                 Some(LoopEvent::Mouse(_)) => continue,
                 None => return Ok(()),
-                Some(LoopEvent::AppFrom { instance, event }) => {
-                    if !client.welcome().is_some_and(|welcome| welcome.instance_id == instance) { continue; }
+                Some(LoopEvent::AppFrom { instance, generation, event }) => {
+                    let Some(event) = link.admit(&instance, generation, event) else { continue };
                     let lost = matches!(event, AppEvent::Disconnected { .. } | AppEvent::HistoryExpired);
                     let effects = app.reduce(event);
                     if lost && !reconnecting { reconnecting = true; crate::runner::spawn_reconnect(&app, tx.clone()); }
@@ -178,7 +183,8 @@ async fn run_loop(
                 }
                 Some(LoopEvent::Reconnected(new_client)) => {
                     let effects = app.reconnected(&new_client);
-                    client = new_client;
+                    link = link.reconnected(new_client);
+                    debug_assert_eq!(app.link, link.generation(), "effects carry the link they go out on");
                     reconnecting = false;
                     effects
                 }

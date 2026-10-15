@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use super::images::Outgoing;
 use super::{
-    Agent, AgentConfig, AgentId, AgentPatch, App, ApprovalPolicy, Command, CreateAgent, Effect,
-    Intent, ModelChain, Role, Scope, Then,
+    Agent, AgentConfig, AgentId, AgentPatch, App, ApprovalPolicy, Command, CreateAgent,
+    DaemonStatus, Effect, Intent, ModelChain, Role, Scope, Then,
 };
 use crate::workspace;
 
@@ -28,6 +28,8 @@ pub(super) struct RootStart {
     pub(super) model: Option<ModelChain>,
     /// Its last request failed and none is outstanding.
     failed: bool,
+    /// Its defaults arrived after the link was lost; the next connection resumes it.
+    parked: bool,
 }
 
 /// A new root whose messages wait for its model change.
@@ -167,7 +169,10 @@ impl App {
         let Some(status) = &self.status else {
             return Effect::Request {
                 command: Command::Status,
-                then: Then::RootDefaults(id),
+                then: Then::RootDefaults {
+                    start: id,
+                    link: self.link,
+                },
             };
         };
         let network = status.network_default;
@@ -202,10 +207,57 @@ impl App {
         }
     }
 
-    /// The daemon's defaults arrived: ask for start `id`'s root now.
-    pub(super) fn resume_root_start(&mut self, id: StartId) -> Option<Effect> {
-        let workspace = self.root_starts.get(&id)?.workspace.clone();
-        Some(self.request_root(id, workspace))
+    /// The daemon's defaults, read over `link`, arrived: ask for start `id`'s
+    /// root now. Defaults from before a reconnect may have changed since.
+    pub(super) fn root_defaults_arrived(
+        &mut self,
+        id: StartId,
+        link: u64,
+        status: DaemonStatus,
+    ) -> Option<Effect> {
+        debug_assert!(link <= self.link, "a reply over a link not yet made");
+        let start = self.root_starts.get_mut(&id)?;
+        debug_assert!(!start.parked, "a parked start has no request outstanding");
+        // Anything sent now would go out on the lost link; the next connection resumes it.
+        if !self.connected {
+            start.parked = true;
+            return None;
+        }
+        let workspace = start.workspace.clone();
+        if link == self.link {
+            self.status = Some(status);
+        }
+        let request = self.request_root(id, workspace);
+        debug_assert!(
+            !matches!(&request, Effect::Request { then: Then::RootDefaults { link, .. }, .. }
+                if *link != self.link),
+            "defaults are read again over the current link"
+        );
+        Some(request)
+    }
+
+    /// Starts parked while the link was lost, resumed once each on the new one.
+    pub(super) fn resume_parked_starts(&mut self) -> Vec<Effect> {
+        debug_assert!(self.connected, "resumed only once a link is up");
+        let parked: Vec<_> = self
+            .root_starts
+            .iter_mut()
+            .filter(|(_, start)| start.parked)
+            .map(|(id, start)| {
+                start.parked = false;
+                (*id, start.workspace.clone())
+            })
+            .collect();
+        let effects: Vec<_> = parked
+            .into_iter()
+            .map(|(id, workspace)| self.request_root(id, workspace))
+            .collect();
+        debug_assert!(
+            effects.iter().all(|effect| matches!(effect,
+                Effect::Request { then: Then::RootDefaults { link, .. }, .. } if *link == self.link)),
+            "a resumed start reads the new link's defaults, never creates from old ones"
+        );
+        effects
     }
 
     /// Start `id` failed. While the operator waits on it, it keeps its

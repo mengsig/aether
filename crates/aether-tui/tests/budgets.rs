@@ -21,7 +21,7 @@ use aether_core::event::{Actor, Event, EventDraft, EventKind};
 use aether_core::id::{AgentId, EventId, InvocationId};
 use aether_core::model::{ContentBlock, MessageRole};
 use aether_protocol::{Delta, Reply};
-use aether_tui::app::{App, AppEvent, IDLE_PERIOD_MS, Then, TuiOptions};
+use aether_tui::app::{App, AppEvent, IDLE_PERIOD_MS, TuiOptions};
 use aether_tui::motion;
 use aether_tui::testing::{app_with_transcript, loaded_app};
 use aether_tui::ui;
@@ -373,7 +373,7 @@ fn the_board_toggles_within_one_frame() {
 /// `count` assistant replies on `agent`, after its (empty) backfill.
 fn fill(app: &mut App, agent: AgentId, count: usize) {
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(agent),
+        then: aether_tui::testing::backfill_then(app, agent),
         result: Ok(Reply::Events(vec![])),
     });
     for i in 0..count {

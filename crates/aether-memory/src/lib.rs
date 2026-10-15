@@ -512,6 +512,9 @@ mod curation_tests;
 mod embedding_tests;
 
 #[cfg(test)]
+mod feedback_ranking_tests;
+
+#[cfg(test)]
 mod admission_tests;
 
 fn require_operator(actor: &Actor) -> Result<()> {

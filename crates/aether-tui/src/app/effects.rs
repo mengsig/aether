@@ -36,16 +36,22 @@ pub enum Then {
         next: Box<Then>,
     },
     VoiceReply(u64),
-    /// The daemon's defaults, fetched to start this root.
-    RootDefaults(StartId),
+    /// The daemon's defaults, fetched over `link` to start this root.
+    RootDefaults {
+        start: StartId,
+        link: u64,
+    },
     Ignore,
     CompactionAccepted(AgentId),
     Status,
     /// The periodic refresh: only its own answer frees the next poll.
     StatusPoll,
     Tree,
-    /// An agent's history, fetched once when it is first viewed.
-    Backfill(AgentId),
+    /// A page of an agent's history, asked for on `connection`.
+    Backfill {
+        agent: AgentId,
+        connection: u64,
+    },
     /// Reply to this root start's create request.
     AgentCreated(StartId),
     /// Reply to a restart: select the new agent and load what it inherited.
@@ -77,7 +83,11 @@ pub enum Then {
     RunReport(aether_core::id::RunId),
     Invocations(AgentId),
     Artifacts(AgentId),
-    ArtifactBytes(ArtifactId),
+    /// An artifact's bytes, for the pager's read numbered `read`.
+    ArtifactBytes {
+        id: ArtifactId,
+        read: u64,
+    },
     AgentPatched,
     ModelPatched(AgentId),
     PendingRootModelPatched(AgentId),
@@ -230,4 +240,37 @@ pub enum AppEvent {
         then: Then,
         result: Result<Reply, ClientError>,
     },
+}
+
+impl Then {
+    /// Reads every connection makes again: the connect snapshot asks for them
+    /// and the next poll re-reads status, so an older answer only rolls back.
+    pub(crate) fn superseded_on_reconnect(&self) -> bool {
+        matches!(
+            self,
+            Then::Status
+                | Then::StatusPoll
+                | Then::Tree
+                | Then::Approvals { .. }
+                | Then::Models
+                | Then::Auth
+        )
+    }
+}
+
+impl AppEvent {
+    /// Whether a protocol event still applies once the connection it came on
+    /// was replaced. Outcomes of what the person asked for always do.
+    pub(crate) fn outlives_connection(&self) -> bool {
+        match self {
+            AppEvent::Reply { then, .. } => !then.superseded_on_reconnect(),
+            AppEvent::Outbox { .. } => true,
+            // The new subscription replays from the cursor; the old stream's end is old news.
+            AppEvent::Subscribed { .. }
+            | AppEvent::Frame(_)
+            | AppEvent::Disconnected { .. }
+            | AppEvent::HistoryExpired => false,
+            _ => true,
+        }
+    }
 }

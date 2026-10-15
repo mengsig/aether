@@ -3,7 +3,7 @@ use super::memory_scope::memories_shown_after;
 use super::repository_alias::{CANONICAL, archon_agent, filed, in_repository};
 use super::store_double::Armed;
 use super::*;
-use aether_core::memory::MemoryScope;
+use aether_core::memory::{MemoryScope, OperatorMemoryScope, OperatorMemorySpec};
 use aether_core::repository::RepositoryAlias;
 
 async fn hooked_harness(
@@ -90,6 +90,57 @@ async fn a_turn_racing_the_alias_still_sees_the_repository_memories() {
         "the alias landed after the name was resolved"
     );
     assert!(shown.contains(&note.id), "{shown:?}");
+}
+
+#[tokio::test]
+async fn a_recall_racing_the_alias_reads_feedback_once() {
+    let (h, store) = hooked_harness(Vec::new()).await;
+    let mut old = archon_agent("worker", None);
+    old.start = false;
+    h.runtime
+        .create_agent(old, Actor::user())
+        .expect("old agent");
+    let note = h
+        .runtime
+        .create_memory(
+            filed("archon", "Archon's tests run under cargo nextest"),
+            Actor::user(),
+        )
+        .expect("filed under the old name");
+    // A global keeps the first, stale pass non-empty, so it would read feedback too.
+    let global = h
+        .runtime
+        .create_memory(
+            OperatorMemorySpec {
+                scope: OperatorMemoryScope::Global,
+                ..filed("archon", "Every repository builds with cargo --locked")
+            },
+            Actor::user(),
+        )
+        .expect("global note");
+
+    store.arm(aliases("archon", CANONICAL));
+    let found = h
+        .runtime
+        .memory()
+        .retrieve(&aether_memory::RetrievalRequest {
+            scope: Some(MemoryScope::Repository {
+                id: "archon".into(),
+            }),
+            limit: 10,
+            ..Default::default()
+        })
+        .expect("retrieve");
+    assert!(
+        store.fired(),
+        "the alias landed after the name was resolved"
+    );
+    let mut ids: Vec<_> = found.iter().map(|r| r.record.id).collect();
+    ids.sort();
+    let mut expected = vec![note.id, global.id];
+    expected.sort();
+    assert_eq!(ids, expected);
+    assert_eq!(store.tally_reads(), 1, "one recall, one feedback read");
 }
 
 /// A checkout whose `origin` derives `example.com/acme/legacy`, with one note.

@@ -255,7 +255,7 @@ fn an_artifact_recorded_before_its_outcome_is_named_and_listed() {
     );
     app.open_view(ViewKind::ArtifactPager(record.id));
     app.reduce(AppEvent::Reply {
-        then: Then::ArtifactBytes(record.id),
+        then: crate::testing::artifact_bytes_then(&app, record.id),
         result: Ok(Reply::ArtifactBytes {
             artifact: record,
             base64: "aGVsbG8=".into(),

@@ -802,7 +802,7 @@ fn retention_snapshot_rejects_a_database_over_the_memory_limit() {
 #[test]
 fn feedback_rows_survive_expiring_their_task_history() {
     use aether_core::memory_feedback::{
-        MemoryEvidence, MemoryFeedback, MemoryFeedbackSpec, MemoryVerdict,
+        FeedbackTally, MemoryEvidence, MemoryFeedback, MemoryFeedbackSpec, MemoryVerdict,
     };
     let f = Fixture::new();
     let record = MemoryFeedback {
@@ -810,7 +810,7 @@ fn feedback_rows_survive_expiring_their_task_history() {
         spec: MemoryFeedbackSpec {
             memory: MemoryId::new(),
             verdict: MemoryVerdict::Hurt,
-            evidence: MemoryEvidence::Outcome,
+            evidence: MemoryEvidence::Review,
             task: f.task.id,
             invocation: Some(InvocationId::new()),
             reason: "Review failed".into(),
@@ -823,6 +823,28 @@ fn feedback_rows_survive_expiring_their_task_history() {
     f.mutate(Mutation::RecordMemoryFeedback(record.clone()));
     assert!(matches!(f.expire().unwrap(), RunExpiry::Expired { .. }));
     assert!(f.store.task(f.task.id).unwrap().is_none());
+    let snapshot = f.store.retention_snapshot().unwrap();
+    assert_eq!(
+        snapshot.memory_feedback_record(record.id).unwrap(),
+        Some(record.clone())
+    );
+    assert_eq!(
+        snapshot
+            .memory_feedback_tallies(&[record.spec.memory])
+            .unwrap()
+            .get(&record.spec.memory),
+        Some(&FeedbackTally { helped: 0, hurt: 1 })
+    );
+    let task_id: String = f
+        .store
+        .read_conn()
+        .query_row(
+            "SELECT task_id FROM memory_feedback WHERE id = ?1",
+            [record.id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(task_id, record.spec.task.to_string());
     assert_eq!(
         f.store.memory_feedback_record(record.id).unwrap(),
         Some(record.clone())

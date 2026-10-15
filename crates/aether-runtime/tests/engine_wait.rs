@@ -546,3 +546,6 @@ mod stream_cancel;
 
 #[path = "engine_wait/stream_endings.rs"]
 mod stream_endings;
+
+#[path = "engine_wait/reconnect.rs"]
+mod reconnect;

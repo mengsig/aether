@@ -92,7 +92,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
         })),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(root_id),
+        then: super::backfill_then(&app, root_id),
         result: Ok(Reply::Events(vec![])),
     });
 
@@ -254,7 +254,7 @@ pub fn loaded_app_with_capped_subtree(cap: usize) -> App {
         })),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(root_id),
+        then: super::backfill_then(&app, root_id),
         result: Ok(Reply::Events(vec![])),
     });
     app
@@ -321,7 +321,7 @@ pub fn loaded_app_with_capped_subtree_under_finished_child(cap: usize) -> App {
         })),
     });
     app.reduce(AppEvent::Reply {
-        then: Then::Backfill(root_id),
+        then: super::backfill_then(&app, root_id),
         result: Ok(Reply::Events(vec![])),
     });
     app
