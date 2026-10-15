@@ -423,9 +423,12 @@ An unusable receipt (missing or invalid dollars, all-zero counters and
 cost, or a missing or reset baseline) opens an `Unreported` cost gap only
 when the invocation streamed usage or the receipt has nonzero per-turn
 usage. The turn keeps a floor: the stream's dollars plus base-rate prices
-for closing tokens that never streamed. Without that evidence, receipt
-handling is unchanged; the runtime decides any gap from its own evidence
-of work. A later usable cumulative receipt can cover the gap when the
+for closing tokens that never streamed. Without that evidence, an all-zero
+receipt is a complete $0 for the invocation: Aether streams each request's
+`message_start` usage, so nothing streamed means no request reached a model,
+as when the API rejects the first request. For the other unusable receipts
+without that evidence, the runtime decides any gap from its own evidence of
+work. A later usable cumulative receipt can cover the gap when the
 invocation's starting baseline is known.
 
 An all-zero receipt keeps the previous baseline without persisting a new

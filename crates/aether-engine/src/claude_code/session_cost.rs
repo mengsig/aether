@@ -79,6 +79,9 @@ impl SessionCost {
         let mut total = models.as_ref().map(sum_counters).unwrap_or_default();
         total.set_cost(Some(dollars));
         if dollars == 0.0 && total.total_tokens() == 0 && total.reasoning_tokens.unwrap_or(0) == 0 {
+            if !has_spend {
+                return zero_receipt();
+            }
             return unknown_receipt(
                 Some("Claude session receipt is zeroed; this invocation's billed cost is unknown"),
                 has_spend,
@@ -222,6 +225,16 @@ impl SessionCost {
             };
         }
         Some(coverage)
+    }
+}
+
+/// Partial messages stream every request's `message_start` usage, so a zeroed
+/// receipt with nothing streamed means no request reached a model.
+fn zero_receipt() -> Receipt {
+    Receipt {
+        cost_usd: Some(0.0),
+        cost_usage: None,
+        events: Vec::new(),
     }
 }
 

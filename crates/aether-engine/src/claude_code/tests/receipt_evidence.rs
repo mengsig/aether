@@ -7,6 +7,10 @@ fn closing(dollars: Value, usage: Value) -> Value {
 }
 
 fn assert_gap(events: &[EngineEvent], expected: bool) {
+    assert_receipt(events, expected, None);
+}
+
+fn assert_receipt(events: &[EngineEvent], expected: bool, cost: Option<f64>) {
     let deltas: Vec<_> = events
         .iter()
         .filter_map(|event| match event {
@@ -25,7 +29,7 @@ fn assert_gap(events: &[EngineEvent], expected: bool) {
         );
     }
     assert!(matches!(events.last(), Some(EngineEvent::Done(done))
-        if done.cost_usd.is_none() && done.cost_usage.is_none()));
+        if done.cost_usd == cost && done.cost_usage.is_none()));
 }
 
 #[test]
@@ -47,8 +51,16 @@ fn unusable_receipts_without_spend_evidence_emit_no_gap() {
                     .any(|event| matches!(event, EngineEvent::UsageRequest { .. }))
             );
             assert!(!state.streamed_usage_seen);
+            let zeroed = dollars == json!(0.0);
             let value = closing(dollars.clone(), usage);
-            assert_gap(&parse_line(&value.to_string(), &mut state), false);
+            let events = parse_line(&value.to_string(), &mut state);
+            assert_receipt(&events, false, zeroed.then_some(0.0));
+            assert_eq!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, EngineEvent::ProtocolNote(_))),
+                !zeroed && dollars != Value::Null
+            );
         }
     }
 }

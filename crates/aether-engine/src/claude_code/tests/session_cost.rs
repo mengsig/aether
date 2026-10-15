@@ -325,9 +325,9 @@ fn a_zero_receipt_without_spend_preserves_the_latest_reading() {
     let latest = state.latest.clone();
     let zero = json!({"session_id":"s","total_cost_usd":0.0,"modelUsage":{}});
     let result = state.receipt(&zero, &BTreeMap::new(), false);
-    assert_eq!(result.cost_usd, None);
+    assert_eq!(result.cost_usd, Some(0.0));
     assert_eq!(result.cost_usage, None);
-    assert!(matches!(&result.events[..], [EngineEvent::ProtocolNote(_)]));
+    assert!(result.events.is_empty());
     assert_eq!(state.latest, latest);
     assert_eq!(state.before, Some(Usage::default()));
     assert_eq!(
