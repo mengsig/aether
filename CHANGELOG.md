@@ -39,9 +39,9 @@ release is also the text of its GitHub release.
 - **Native engine turns write far fewer commits.** Claude Code and Codex
   report token usage and context size several times per message, and each
   report was its own commit. The daemon now keeps the latest figures
-  in memory, where budgets read them, and writes them with the next record
-  the turn makes anyway, or after at most 2 seconds. A turn's final usage is
-  written exactly as before; a crash can lose at most the last 2 seconds of
+  in memory for live subscribers and budgets, and writes them with the next
+  record the turn makes anyway, or after at most 2 seconds. Final usage is
+  written exactly as before; a daemon crash can lose the last 2 seconds of
   streamed usage, and nothing is counted twice.
 - **Stopping a background job no longer gives up when one of its processes
   is exiting.** On Linux before 7.2, a process that is exiting briefly hides
