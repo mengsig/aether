@@ -386,7 +386,7 @@ pub(super) async fn drive(
                             permission_verdict(
                                 runtime,
                                 ctx,
-                                GateSubject::from_prompt(runtime, ctx, &tool, &tool_input, class),
+                                GateSubject::from_prompt(runtime, ctx, &tool, &tool_input, class, tool_input["tool_use_id"].as_str())?,
                                 cancel,
                                 true,
                             )
@@ -731,6 +731,9 @@ pub(super) async fn drive(
     {
         let mut commit = Commit::new();
         for call in state.calls.values() {
+            if crate::tool_interruption::denial_reason(runtime, ctx.agent.id, call.id)?.is_some() {
+                continue;
+            }
             crate::tool_interruption::record(
                 &mut commit,
                 &ctx.agent,

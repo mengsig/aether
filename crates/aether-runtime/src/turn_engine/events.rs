@@ -502,7 +502,15 @@ pub(super) fn handle_event(
                 && (content.contains("The user doesn't want to proceed with this tool use")
                     || content.trim() == "cancelled"))
                 || (call.tool == "bash" && content.ends_with("[exit code ?]"));
-            if cancelled_result && let Some(cause) = &state.interruption {
+            let denied = if is_error || cancelled_result {
+                crate::tool_interruption::denial_reason(runtime, ctx.agent.id, call.id)?
+            } else {
+                None
+            };
+            if denied.is_none()
+                && cancelled_result
+                && let Some(cause) = &state.interruption
+            {
                 let mut commit = Commit::new();
                 crate::tool_interruption::record(
                     &mut commit,
@@ -536,17 +544,20 @@ pub(super) fn handle_event(
             } else {
                 EventKind::ToolSucceeded { call, outcome }
             };
-            runtime.apply(Commit::new().event(ctx.draft(settled)).event(ctx.draft(
-                EventKind::AgentMessage {
-                    role: MessageRole::User,
-                    content: vec![ContentBlock::ToolResult {
-                        tool_use_id,
-                        content: vec![aether_core::model::ToolResultBlock::Text { text: content }],
-                        is_error,
-                    }],
-                    invocation: None,
-                },
-            )))?;
+            let mut commit = Commit::new();
+            if denied.is_none() {
+                commit.push_event(ctx.draft(settled));
+            }
+            commit.push_event(ctx.draft(EventKind::AgentMessage {
+                role: MessageRole::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id,
+                    content: vec![aether_core::model::ToolResultBlock::Text { text: content }],
+                    is_error,
+                }],
+                invocation: None,
+            }));
+            runtime.apply(commit)?;
         }
         EngineEvent::RateLimit { payload } => {
             match aether_core::provider::ProviderUsage::from_engine_payload(

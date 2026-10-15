@@ -438,3 +438,201 @@ async fn completed_command_racing_an_interrupt_keeps_its_success() {
     ));
     h.runtime.shutdown().await;
 }
+
+struct DenyThenInterruptEngine {
+    first: std::sync::atomic::AtomicBool,
+    denied: Arc<tokio::sync::Notify>,
+    emit_result: bool,
+    sibling: bool,
+}
+
+#[async_trait::async_trait]
+impl Engine for DenyThenInterruptEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::CLAUDE_CODE
+    }
+    fn adapter(&self) -> String {
+        "deny-then-interrupt/1".into()
+    }
+    async fn run(
+        &self,
+        _turn: EngineTurn,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        let (tx, rx) = mpsc::channel(8);
+        if !self.first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            tx.send(EngineEvent::Assistant {
+                content: vec![ContentBlock::text("done")],
+                usage: None,
+                model: None,
+            })
+            .await
+            .unwrap();
+            tx.send(EngineEvent::Done(EngineOutcome {
+                text: Some("done".into()),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+            return Ok(EngineRun {
+                events: rx,
+                input: None,
+                decisions: None,
+                stop: None,
+            });
+        }
+        let (decisions, mut answers) = mpsc::channel::<aether_engine::PermissionDecision>(1);
+        let denied = self.denied.clone();
+        let (emit_result, sibling) = (self.emit_result, self.sibling);
+        tokio::spawn(async move {
+            let mut content = vec![ContentBlock::ToolUse {
+                id: "denied-call".into(),
+                name: "Bash".into(),
+                input: serde_json::json!({"command":"make ci"}),
+            }];
+            if sibling {
+                content.push(ContentBlock::ToolUse {
+                    id: "other-call".into(),
+                    name: "Bash".into(),
+                    input: serde_json::json!({"command":"make other"}),
+                });
+            }
+            tx.send(EngineEvent::Assistant {
+                content,
+                usage: None,
+                model: None,
+            })
+            .await
+            .unwrap();
+            tx.send(EngineEvent::Permission {
+                request_id: "approval".into(),
+                tool: "Bash".into(),
+                input: serde_json::json!({"command":"make ci", "tool_use_id":"denied-call"}),
+                side_effect: Some(aether_core::tool::SideEffectClass::External),
+            })
+            .await
+            .unwrap();
+            let answer = answers.recv().await.unwrap();
+            assert!(!answer.allow);
+            denied.notify_one();
+            cancel.cancelled().await;
+            if emit_result {
+                tx.send(EngineEvent::ToolResult {
+                    tool_use_id: "denied-call".into(),
+                    content: SYNTHETIC_DENIAL.into(),
+                    is_error: true,
+                })
+                .await
+                .unwrap();
+            }
+            let _ = tx
+                .send(EngineEvent::Done(EngineOutcome {
+                    interrupted: true,
+                    ..Default::default()
+                }))
+                .await;
+        });
+        Ok(EngineRun {
+            events: rx,
+            input: None,
+            decisions: Some(decisions),
+            stop: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn actual_denial_wins_over_later_interrupt_for_only_that_call() {
+    for emit_result in [false, true] {
+        for sibling in [false, true] {
+            let denied = Arc::new(tokio::sync::Notify::new());
+            let h = harness_with_engine(
+                Arc::new(DenyThenInterruptEngine {
+                    first: std::sync::atomic::AtomicBool::new(true),
+                    denied: denied.clone(),
+                    emit_result,
+                    sibling,
+                }),
+                Arc::default(),
+                Arc::default(),
+            )
+            .await;
+            let id = chat_agent(&h);
+            h.runtime
+                .update_agent(
+                    id,
+                    aether_runtime::AgentUpdate {
+                        approval: Some(ApprovalPolicy::default()),
+                        ..Default::default()
+                    },
+                    Actor::user(),
+                )
+                .unwrap();
+            h.runtime
+                .send_message(id, vec![ContentBlock::text("go")], Actor::user())
+                .unwrap();
+            let approval = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let Some(approval) = h
+                        .store
+                        .pending_approvals()
+                        .unwrap()
+                        .into_iter()
+                        .find(|a| a.agent_id == id)
+                    {
+                        break approval;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("approval raised within seconds");
+            h.runtime
+                .resolve_approval(
+                    approval.id,
+                    aether_core::tool::ApprovalDecision::Denied,
+                    Actor::user(),
+                    Some("do not run make ci".into()),
+                    None,
+                )
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(5), denied.notified())
+                .await
+                .expect("engine receives genuine deny before interrupt");
+            h.runtime.interrupt_agent(id, Actor::user()).unwrap();
+            wait_for(h.store.as_ref(), id, |a| {
+                a.status.kind() == AgentStatusKind::Waiting
+            })
+            .await;
+            let events = h
+                .store
+                .events(0, 1000, &EventFilter::own_events(id))
+                .unwrap();
+            assert!(events.iter().any(|event| matches!(event.kind, EventKind::ToolDenied { call, .. } if call == approval.call_id)));
+            let interruptions: Vec<_> = events
+                .iter()
+                .filter_map(|event| match &event.kind {
+                    EventKind::Custom { name, payload } if name == "tool.interrupted" => {
+                        Some(payload)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(interruptions.len(), usize::from(sibling));
+            assert!(
+                interruptions
+                    .iter()
+                    .all(|payload| payload["call"] != serde_json::json!(approval.call_id))
+            );
+            if sibling {
+                assert!(
+                    interruptions[0]["note"]
+                        .as_str()
+                        .unwrap()
+                        .contains("make other")
+                );
+            }
+            h.runtime.shutdown().await;
+        }
+    }
+}

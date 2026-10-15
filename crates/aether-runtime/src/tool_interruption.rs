@@ -96,3 +96,66 @@ pub(crate) fn resume_notes(runtime: &Runtime, agent: aether_core::id::AgentId) -
     }
     Ok(notes)
 }
+
+/// Native ids belong to the engine, while approvals and projections use Aether ids.
+/// Never guess from a tool name: several calls of the same tool can be in flight.
+pub(crate) fn native_call_id(
+    runtime: &Runtime,
+    agent: aether_core::id::AgentId,
+    provider_id: Option<&str>,
+) -> Result<Option<ToolCallId>> {
+    let Some(provider_id) = provider_id else {
+        return Ok(None);
+    };
+    let mut after = runtime
+        .store
+        .latest_events(
+            1,
+            &EventFilter {
+                types: vec!["agent.started".into()],
+                ..EventFilter::own_events(agent)
+            },
+        )?
+        .first()
+        .map_or(0, |event| event.seq);
+    loop {
+        let events = runtime.store.events(
+            after,
+            500,
+            &EventFilter {
+                types: vec!["tool.requested".into()],
+                ..EventFilter::own_events(agent)
+            },
+        )?;
+        let Some(last) = events.last() else {
+            return Ok(None);
+        };
+        after = last.seq;
+        if let Some(call) = events.iter().find_map(|event| match &event.kind {
+            EventKind::ToolRequested { call, .. } if call.provider_call_id == provider_id => {
+                Some(call.id)
+            }
+            _ => None,
+        }) {
+            return Ok(Some(call));
+        }
+        if events.len() < 500 {
+            return Ok(None);
+        }
+    }
+}
+
+pub(crate) fn denial_reason(
+    runtime: &Runtime,
+    agent: aether_core::id::AgentId,
+    call: ToolCallId,
+) -> Result<Option<String>> {
+    Ok(runtime
+        .store
+        .tool_events(agent, aether_store::ToolEventScope::Calls(&[call]))?
+        .into_iter()
+        .find_map(|event| match event.kind {
+            EventKind::ToolDenied { reason, .. } => Some(reason),
+            _ => None,
+        }))
+}

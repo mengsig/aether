@@ -397,6 +397,7 @@ impl TurnState {
                     tool: "bash".into(),
                     input: json!({
                         "command": p["command"],
+                        "tool_use_id": p["itemId"],
                         "cwd": p["cwd"],
                         "reason": p["reason"],
                     }),
@@ -409,7 +410,7 @@ impl TurnState {
                 ServerReply::Ask(EngineEvent::Permission {
                     request_id: key,
                     tool: "apply_patch".into(),
-                    input: json!({ "reason": p["reason"], "grant_root": p["grantRoot"] }),
+                    input: json!({ "reason": p["reason"], "grant_root": p["grantRoot"], "tool_use_id": p["itemId"] }),
                     side_effect: Some(SideEffectClass::External),
                 })
             }
