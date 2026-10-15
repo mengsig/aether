@@ -59,6 +59,7 @@ import type {
   McpServersCommand,
   MemoriesCommand,
   MemoriesInContextCommand,
+  MemoryFeedbackCommand,
   PauseCommand,
   PinMemoryCommand,
   PingCommand,
@@ -66,6 +67,7 @@ import type {
   ProvidersCommand,
   PublishArtifactCommand,
   ReadArtifactCommand,
+  RecordMemoryFeedbackCommand,
   RejectMemoryCommand,
   ReplayCommand,
   ReplyToQuestionCommand,
@@ -74,6 +76,7 @@ import type {
   RestartCommand,
   RestoreMemoryCommand,
   ResumeCommand,
+  RetractMemoryFeedbackCommand,
   RevokeApprovalRuleCommand,
   RevokeDeviceCommand,
   ScheduleHistoryCommand,
@@ -154,6 +157,7 @@ export type Command =
   | McpServersCommand
   | MemoriesCommand
   | MemoriesInContextCommand
+  | MemoryFeedbackCommand
   | PauseCommand
   | PinMemoryCommand
   | PingCommand
@@ -161,6 +165,7 @@ export type Command =
   | ProvidersCommand
   | PublishArtifactCommand
   | ReadArtifactCommand
+  | RecordMemoryFeedbackCommand
   | RejectMemoryCommand
   | ReplayCommand
   | ReplyToQuestionCommand
@@ -169,6 +174,7 @@ export type Command =
   | RestartCommand
   | RestoreMemoryCommand
   | ResumeCommand
+  | RetractMemoryFeedbackCommand
   | RevokeApprovalRuleCommand
   | RevokeDeviceCommand
   | ScheduleHistoryCommand

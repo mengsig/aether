@@ -3280,6 +3280,101 @@
           "type": "object"
         },
         {
+          "description": "Record host evidence on a memory a task saw. Needs `memory_feedback`.",
+          "properties": {
+            "cmd": {
+              "const": "record_memory_feedback",
+              "type": "string"
+            },
+            "evidence": {
+              "$ref": "#/$defs/MemoryEvidence"
+            },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "invocation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InvocationId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memory": {
+              "$ref": "#/$defs/MemoryId"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "task": {
+              "$ref": "#/$defs/TaskId"
+            },
+            "verdict": {
+              "$ref": "#/$defs/MemoryVerdict"
+            }
+          },
+          "required": [
+            "cmd",
+            "memory",
+            "verdict",
+            "evidence",
+            "task",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Withdraw evidence, preserving the record. Needs `memory_feedback`.",
+          "properties": {
+            "cmd": {
+              "const": "retract_memory_feedback",
+              "type": "string"
+            },
+            "feedback": {
+              "$ref": "#/$defs/MemoryFeedbackId"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "feedback",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Newest evidence first, including retractions. Needs `memory_feedback`.",
+          "properties": {
+            "cmd": {
+              "const": "memory_feedback",
+              "type": "string"
+            },
+            "limit": {
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "memory": {
+              "$ref": "#/$defs/MemoryId"
+            }
+          },
+          "required": [
+            "cmd",
+            "memory"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Curate a memory out. The record stays; it is never retrieved again.",
           "properties": {
             "cmd": {
@@ -8784,6 +8879,100 @@
       ],
       "type": "object"
     },
+    "MemoryEvidence": {
+      "enum": [
+        "operator",
+        "review",
+        "outcome"
+      ],
+      "type": "string"
+    },
+    "MemoryFeedback": {
+      "properties": {
+        "actor": {
+          "$ref": "#/$defs/Actor"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "evidence": {
+          "$ref": "#/$defs/MemoryEvidence"
+        },
+        "id": {
+          "$ref": "#/$defs/MemoryFeedbackId"
+        },
+        "invocation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InvocationId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "memory": {
+          "$ref": "#/$defs/MemoryId"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "retracted_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retraction_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task": {
+          "$ref": "#/$defs/TaskId"
+        },
+        "verdict": {
+          "$ref": "#/$defs/MemoryVerdict"
+        }
+      },
+      "required": [
+        "id",
+        "memory",
+        "verdict",
+        "evidence",
+        "task",
+        "reason",
+        "actor",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "MemoryFeedbackId": {
+      "description": "A mfb_ prefixed ULID.",
+      "pattern": "^mfb_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "MemoryFeedbackList": {
+      "properties": {
+        "records": {
+          "items": {
+            "$ref": "#/$defs/MemoryFeedback"
+          },
+          "type": "array"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "records",
+        "truncated"
+      ],
+      "type": "object"
+    },
     "MemoryId": {
       "description": "A mem_ prefixed ULID.",
       "pattern": "^mem_[0-9A-HJKMNP-TV-Z]{26}$",
@@ -9205,6 +9394,14 @@
         "file"
       ],
       "type": "object"
+    },
+    "MemoryVerdict": {
+      "enum": [
+        "helped",
+        "hurt",
+        "neutral"
+      ],
+      "type": "string"
     },
     "Message": {
       "description": "One turn of conversation as the model sees it.",
@@ -11653,6 +11850,38 @@
             },
             "reply": {
               "const": "memory",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/MemoryFeedback"
+            },
+            "reply": {
+              "const": "memory_feedback",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/MemoryFeedbackList"
+            },
+            "reply": {
+              "const": "memory_feedback_list",
               "type": "string"
             }
           },

@@ -272,3 +272,22 @@ fn memories_in_context_is_for_the_host_and_never_a_paired_device() {
         );
     }
 }
+
+#[test]
+fn memory_feedback_requires_host_authority_even_for_reading() {
+    let commands = [
+        serde_json::json!({"cmd":"record_memory_feedback", "memory":aether_core::id::MemoryId::new(),
+            "task":aether_core::id::TaskId::new(), "verdict":"neutral", "evidence":"operator", "reason":"No effect"}),
+        serde_json::json!({"cmd":"retract_memory_feedback", "feedback":aether_core::id::MemoryFeedbackId::new(), "reason":"Withdraw"}),
+        serde_json::json!({"cmd":"memory_feedback", "memory":aether_core::id::MemoryId::new()}),
+    ];
+    for value in commands {
+        let command: Command = serde_json::from_value(value).unwrap();
+        assert_eq!(command.access(), Access::HostOnly);
+        assert!(AuthContext::Local.authorize(&command).is_ok());
+        assert!(AuthContext::Token.authorize(&command).is_ok());
+        for role in [DeviceRole::Operator, DeviceRole::Observer] {
+            assert_eq!(code(&device(role), &command), Some(ErrorCode::Forbidden));
+        }
+    }
+}

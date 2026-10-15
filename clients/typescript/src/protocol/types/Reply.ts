@@ -22,6 +22,8 @@ import type {
   InvocationSnapshot,
   McpServerHealth,
   MemoriesInContext,
+  MemoryFeedback,
+  MemoryFeedbackList,
   MemoryRecord,
   ModelInfo,
   Pairing,
@@ -243,6 +245,16 @@ export interface ReplyMemory {
   "reply": "memory";
 }
 
+export interface ReplyMemoryFeedback {
+  "data": MemoryFeedback;
+  "reply": "memory_feedback";
+}
+
+export interface ReplyMemoryFeedbackList {
+  "data": MemoryFeedbackList;
+  "reply": "memory_feedback_list";
+}
+
 export interface ReplyMemorySeeded {
   "data": Record<string, unknown>;
   "reply": "memory_seeded";
@@ -395,6 +407,8 @@ export type Reply =
     ReplyRepositoryAliases |
     ReplyMemoriesInContext |
     ReplyMemory |
+    ReplyMemoryFeedback |
+    ReplyMemoryFeedbackList |
     ReplyMemorySeeded |
     ReplyRuns |
     ReplyRunReport |

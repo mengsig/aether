@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 21;
+pub const SCHEMA_VERSION: u32 = 22;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -398,8 +398,20 @@ ALTER TABLE memories ADD COLUMN proposed INTEGER NOT NULL DEFAULT 0 CHECK (propo
 CREATE INDEX memories_proposals ON memories(scope, proposed, superseded_by, forgotten_at);
 "#;
 
+const V22: &str = r#"
+CREATE TABLE memory_feedback (
+    id           TEXT PRIMARY KEY,
+    memory_id    TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    retracted_at TEXT,
+    body         TEXT NOT NULL
+);
+CREATE INDEX memory_feedback_memory_created ON memory_feedback(memory_id, created_at);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
+    V22,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the

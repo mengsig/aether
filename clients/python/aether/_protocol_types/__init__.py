@@ -252,6 +252,10 @@ from ._McpServerState import McpServerState
 from ._McpToolInfo import McpToolInfo
 from ._MemoriesInContext import MemoriesInContext
 from ._MemoryCandidate import MemoryCandidate
+from ._MemoryEvidence import MemoryEvidence
+from ._MemoryFeedback import MemoryFeedback
+from ._MemoryFeedbackId import MemoryFeedbackId
+from ._MemoryFeedbackList import MemoryFeedbackList
 from ._MemoryId import MemoryId
 from ._MemoryKind import MemoryKind
 from ._MemoryProvenance import MemoryProvenance
@@ -266,6 +270,7 @@ from ._MemoryScopeRepositoryRole import MemoryScopeRepositoryRole
 from ._MemoryScopeSubtree import MemoryScopeSubtree
 from ._MemoryScope import MemoryScope
 from ._MemorySource import MemorySource
+from ._MemoryVerdict import MemoryVerdict
 from ._Message import Message
 from ._MessageDelivery import MessageDelivery
 from ._MessageId import MessageId
@@ -365,6 +370,8 @@ from ._ReplyRepositoryAliased import ReplyRepositoryAliased
 from ._ReplyRepositoryAliases import ReplyRepositoryAliases
 from ._ReplyMemoriesInContext import ReplyMemoriesInContext
 from ._ReplyMemory import ReplyMemory
+from ._ReplyMemoryFeedback import ReplyMemoryFeedback
+from ._ReplyMemoryFeedbackList import ReplyMemoryFeedbackList
 from ._ReplyMemorySeeded import ReplyMemorySeeded
 from ._ReplyRuns import ReplyRuns
 from ._ReplyRunReport import ReplyRunReport
@@ -540,31 +547,31 @@ __all__ = [
     'HttpErrorBody', 'HttpErrorCode', 'IdempotencyKey', 'ImageAttachment', 'ImportSummary', 'InboxItem', 'InboxItemId', 'InboxKindTaskCompleted', 'InboxKindTaskFailed', 'InboxKindTaskCancelled',
     'InboxKindMessage', 'InboxKindApprovalResolved', 'InboxKindChildFailed', 'InboxKindChildSuspended', 'InboxKindChildResumed', 'InboxKindExternalTrigger', 'InboxKindWake', 'InboxKind', 'Invocation', 'InvocationId',
     'InvocationParams', 'InvocationSnapshot', 'LayerKind', 'LayerPlacement', 'Lease', 'LowDisk', 'McpServerHealth', 'McpServerState', 'McpToolInfo', 'MemoriesInContext',
-    'MemoryCandidate', 'MemoryId', 'MemoryKind', 'MemoryProvenance', 'MemoryQuerySpec', 'MemoryRecord', 'MemoryRecorder', 'MemoryScopeGlobal', 'MemoryScopeRepository', 'MemoryScopeRole',
-    'MemoryScopeAgent', 'MemoryScopeRepositoryRole', 'MemoryScopeSubtree', 'MemoryScope', 'MemorySource', 'Message', 'MessageDelivery', 'MessageId', 'MessageRole', 'Milestone',
-    'MissedRunPolicy', 'ModelCost', 'ModelCostTier', 'ModelErrorClass', 'ModelInfo', 'ModelRef', 'NetworkPolicy', 'NewApprovalRule', 'OpenLoopAgent', 'OpenLoopTask',
-    'OpenLoopApproval', 'OpenLoop', 'OperatorMemoryScopeAgent', 'OperatorMemoryScopeGlobal', 'OperatorMemoryScopeRepository', 'OperatorMemoryScopeRole', 'OperatorMemoryScopeRepositoryRole', 'OperatorMemoryScope', 'OperatorMemorySpec', 'OperatorOriginLocalSocket',
-    'OperatorOriginTcp', 'OperatorOriginDevice', 'OperatorOrigin', 'PairClaimRequest', 'PairClaimResponse', 'PairStatusRequest', 'PairStatusResponse', 'Pairing', 'PairingCandidate', 'PairingState',
-    'PathCompletion', 'PathCompletionKind', 'PathCompletions', 'PendingArtifactCleanup', 'PendingQuestion', 'Priority', 'Provenance', 'ProviderBackoff', 'ProviderHealth', 'ProviderInfo',
-    'ProviderUsage', 'PublishArtifact', 'PushConfig', 'PushPayload', 'PushSubscription', 'QuotaWindow', 'RecoveryClass', 'RecurrenceInterval', 'RecurrenceCron', 'Recurrence',
-    'RememberSpec', 'RemoteSettings', 'RemoteStatus', 'ReplayApproval', 'ReplayContext', 'ReplayFrame', 'ReplayMessage', 'ReplayTool', 'ReplyRetentionPreview', 'ReplyGithubWatcher',
-    'ReplySchedule', 'ReplySchedules', 'ReplyScheduleHistory', 'ReplyWelcome', 'ReplyStatus', 'ReplyOk', 'ReplyInterrupted', 'ReplyPaused', 'ReplyAgent', 'ReplyAgents',
-    'ReplyTree', 'ReplyTask', 'ReplyTasks', 'ReplyMessageSent', 'ReplyMessagesSent', 'ReplyApprovals', 'ReplyApprovalRule', 'ReplyApprovalRules', 'ReplySubscribed', 'ReplyEvents',
-    'ReplyTranscript', 'ReplyInbox', 'ReplySnapshot', 'ReplyInvocation', 'ReplyInvocations', 'ReplyCheckpoint', 'ReplyArtifact', 'ReplyArtifacts', 'ReplyArtifactBytes', 'ReplyMemories',
-    'ReplyRepositoryAliased', 'ReplyRepositoryAliases', 'ReplyMemoriesInContext', 'ReplyMemory', 'ReplyMemorySeeded', 'ReplyRuns', 'ReplyRunReport', 'ReplyReplay', 'ReplyRunExported', 'ReplyRunImported',
-    'ReplyMcpServers', 'ReplyModels', 'ReplyProviders', 'ReplyAuth', 'ReplyEngineTool', 'ReplyEngineTools', 'ReplyAttention', 'ReplyPathCompletions', 'ReplyWorkspaces', 'ReplyWorkspaceValidation',
-    'ReplyGitSummary', 'ReplyRemote', 'ReplyPairing', 'ReplyDevice', 'ReplyDevices', 'ReplyPushConfig', 'ReplySubmissionResolved', 'Reply', 'RepositoryAlias', 'RepositoryAliasCounts',
-    'RepositoryAliasReport', 'ResourceHolding', 'ResourceKey', 'Result_of_Reply_or_ErrorReply', 'RetentionPreview', 'Retraction', 'Revocation', 'Role', 'RuleMatch', 'RuleScopeEverywhere',
-    'RuleScopeAgent', 'RuleScopeSubtree', 'RuleScopeRun', 'RuleScope', 'RunBody', 'RunId', 'RunListing', 'RunOutcome', 'RunReport', 'RunRetentionDecisionEligible',
-    'RunRetentionDecisionProtected', 'RunRetentionDecision', 'RunRetentionPreview', 'RunSummary', 'Schedule', 'ScheduleAction', 'ScheduleId', 'ScheduleOccurrence', 'ScheduleOutcomeDelivered', 'ScheduleOutcomeSpawned',
-    'ScheduleOutcomeSkipped', 'ScheduleOutcomeFailed', 'ScheduleOutcome', 'ScheduleStatusActive', 'ScheduleStatusPaused', 'ScheduleStatusCancelled', 'ScheduleStatusExhausted', 'ScheduleStatusFailed', 'ScheduleStatus', 'Scope',
-    'SeedReport', 'ServerFrameReply', 'ServerFrameEvent', 'ServerFrameDelta', 'ServerFrameChallenge', 'ServerFrame', 'SideEffectClass', 'SnapshotId', 'SnapshotMemories', 'SpawnSpec',
-    'StopReasonEndTurn', 'StopReasonToolUse', 'StopReasonMaxTokens', 'StopReasonStopSequence', 'StopReasonRefusal', 'StopReasonPauseTurn', 'StopReasonOther', 'StopReason', 'SubmissionResolutionExecuted', 'SubmissionResolutionAbsentSafe',
-    'SubmissionResolutionUnknown', 'SubmissionResolution', 'Task', 'TaskId', 'TaskLine', 'TaskQuery', 'TaskResult', 'TaskStatusQueued', 'TaskStatusAssigned', 'TaskStatusActive',
-    'TaskStatusBlocked', 'TaskStatusCompleted', 'TaskStatusFailed', 'TaskStatusCancelled', 'TaskStatus', 'TaskStatusKind', 'ThinkingModeOff', 'ThinkingModeAdaptive', 'ThinkingModeBudget', 'ThinkingMode',
-    'ThinkingSupport', 'ToolCall', 'ToolCallId', 'ToolExposureAll', 'ToolExposureOnly', 'ToolExposureExcept', 'ToolExposure', 'ToolLine', 'ToolOutcome', 'ToolResultPending',
-    'ToolResultSucceeded', 'ToolResultFailed', 'ToolResultDenied', 'ToolResultCancelled', 'ToolResultReplayed', 'ToolResult', 'ToolResultBlockText', 'ToolResultBlockImage', 'ToolResultBlock', 'ToolSpec',
-    'TranscriptEntry', 'TreeNode', 'TurnOutcomeRunning', 'TurnOutcomeCompleted', 'TurnOutcomeFailed', 'TurnOutcomeInterrupted', 'TurnOutcome', 'UnprovenAbsence', 'Usage', 'UsageWindow',
-    'WaitConditionTask', 'WaitConditionApproval', 'WaitConditionMessageFrom', 'WaitConditionInbox', 'WaitConditionDeadline', 'WaitConditionAny', 'WaitConditionAll', 'WaitConditionAtLeast', 'WaitCondition', 'Welcome',
-    'Workspace', 'WorkspaceValidation',
+    'MemoryCandidate', 'MemoryEvidence', 'MemoryFeedback', 'MemoryFeedbackId', 'MemoryFeedbackList', 'MemoryId', 'MemoryKind', 'MemoryProvenance', 'MemoryQuerySpec', 'MemoryRecord',
+    'MemoryRecorder', 'MemoryScopeGlobal', 'MemoryScopeRepository', 'MemoryScopeRole', 'MemoryScopeAgent', 'MemoryScopeRepositoryRole', 'MemoryScopeSubtree', 'MemoryScope', 'MemorySource', 'MemoryVerdict',
+    'Message', 'MessageDelivery', 'MessageId', 'MessageRole', 'Milestone', 'MissedRunPolicy', 'ModelCost', 'ModelCostTier', 'ModelErrorClass', 'ModelInfo',
+    'ModelRef', 'NetworkPolicy', 'NewApprovalRule', 'OpenLoopAgent', 'OpenLoopTask', 'OpenLoopApproval', 'OpenLoop', 'OperatorMemoryScopeAgent', 'OperatorMemoryScopeGlobal', 'OperatorMemoryScopeRepository',
+    'OperatorMemoryScopeRole', 'OperatorMemoryScopeRepositoryRole', 'OperatorMemoryScope', 'OperatorMemorySpec', 'OperatorOriginLocalSocket', 'OperatorOriginTcp', 'OperatorOriginDevice', 'OperatorOrigin', 'PairClaimRequest', 'PairClaimResponse',
+    'PairStatusRequest', 'PairStatusResponse', 'Pairing', 'PairingCandidate', 'PairingState', 'PathCompletion', 'PathCompletionKind', 'PathCompletions', 'PendingArtifactCleanup', 'PendingQuestion',
+    'Priority', 'Provenance', 'ProviderBackoff', 'ProviderHealth', 'ProviderInfo', 'ProviderUsage', 'PublishArtifact', 'PushConfig', 'PushPayload', 'PushSubscription',
+    'QuotaWindow', 'RecoveryClass', 'RecurrenceInterval', 'RecurrenceCron', 'Recurrence', 'RememberSpec', 'RemoteSettings', 'RemoteStatus', 'ReplayApproval', 'ReplayContext',
+    'ReplayFrame', 'ReplayMessage', 'ReplayTool', 'ReplyRetentionPreview', 'ReplyGithubWatcher', 'ReplySchedule', 'ReplySchedules', 'ReplyScheduleHistory', 'ReplyWelcome', 'ReplyStatus',
+    'ReplyOk', 'ReplyInterrupted', 'ReplyPaused', 'ReplyAgent', 'ReplyAgents', 'ReplyTree', 'ReplyTask', 'ReplyTasks', 'ReplyMessageSent', 'ReplyMessagesSent',
+    'ReplyApprovals', 'ReplyApprovalRule', 'ReplyApprovalRules', 'ReplySubscribed', 'ReplyEvents', 'ReplyTranscript', 'ReplyInbox', 'ReplySnapshot', 'ReplyInvocation', 'ReplyInvocations',
+    'ReplyCheckpoint', 'ReplyArtifact', 'ReplyArtifacts', 'ReplyArtifactBytes', 'ReplyMemories', 'ReplyRepositoryAliased', 'ReplyRepositoryAliases', 'ReplyMemoriesInContext', 'ReplyMemory', 'ReplyMemoryFeedback',
+    'ReplyMemoryFeedbackList', 'ReplyMemorySeeded', 'ReplyRuns', 'ReplyRunReport', 'ReplyReplay', 'ReplyRunExported', 'ReplyRunImported', 'ReplyMcpServers', 'ReplyModels', 'ReplyProviders',
+    'ReplyAuth', 'ReplyEngineTool', 'ReplyEngineTools', 'ReplyAttention', 'ReplyPathCompletions', 'ReplyWorkspaces', 'ReplyWorkspaceValidation', 'ReplyGitSummary', 'ReplyRemote', 'ReplyPairing',
+    'ReplyDevice', 'ReplyDevices', 'ReplyPushConfig', 'ReplySubmissionResolved', 'Reply', 'RepositoryAlias', 'RepositoryAliasCounts', 'RepositoryAliasReport', 'ResourceHolding', 'ResourceKey',
+    'Result_of_Reply_or_ErrorReply', 'RetentionPreview', 'Retraction', 'Revocation', 'Role', 'RuleMatch', 'RuleScopeEverywhere', 'RuleScopeAgent', 'RuleScopeSubtree', 'RuleScopeRun',
+    'RuleScope', 'RunBody', 'RunId', 'RunListing', 'RunOutcome', 'RunReport', 'RunRetentionDecisionEligible', 'RunRetentionDecisionProtected', 'RunRetentionDecision', 'RunRetentionPreview',
+    'RunSummary', 'Schedule', 'ScheduleAction', 'ScheduleId', 'ScheduleOccurrence', 'ScheduleOutcomeDelivered', 'ScheduleOutcomeSpawned', 'ScheduleOutcomeSkipped', 'ScheduleOutcomeFailed', 'ScheduleOutcome',
+    'ScheduleStatusActive', 'ScheduleStatusPaused', 'ScheduleStatusCancelled', 'ScheduleStatusExhausted', 'ScheduleStatusFailed', 'ScheduleStatus', 'Scope', 'SeedReport', 'ServerFrameReply', 'ServerFrameEvent',
+    'ServerFrameDelta', 'ServerFrameChallenge', 'ServerFrame', 'SideEffectClass', 'SnapshotId', 'SnapshotMemories', 'SpawnSpec', 'StopReasonEndTurn', 'StopReasonToolUse', 'StopReasonMaxTokens',
+    'StopReasonStopSequence', 'StopReasonRefusal', 'StopReasonPauseTurn', 'StopReasonOther', 'StopReason', 'SubmissionResolutionExecuted', 'SubmissionResolutionAbsentSafe', 'SubmissionResolutionUnknown', 'SubmissionResolution', 'Task',
+    'TaskId', 'TaskLine', 'TaskQuery', 'TaskResult', 'TaskStatusQueued', 'TaskStatusAssigned', 'TaskStatusActive', 'TaskStatusBlocked', 'TaskStatusCompleted', 'TaskStatusFailed',
+    'TaskStatusCancelled', 'TaskStatus', 'TaskStatusKind', 'ThinkingModeOff', 'ThinkingModeAdaptive', 'ThinkingModeBudget', 'ThinkingMode', 'ThinkingSupport', 'ToolCall', 'ToolCallId',
+    'ToolExposureAll', 'ToolExposureOnly', 'ToolExposureExcept', 'ToolExposure', 'ToolLine', 'ToolOutcome', 'ToolResultPending', 'ToolResultSucceeded', 'ToolResultFailed', 'ToolResultDenied',
+    'ToolResultCancelled', 'ToolResultReplayed', 'ToolResult', 'ToolResultBlockText', 'ToolResultBlockImage', 'ToolResultBlock', 'ToolSpec', 'TranscriptEntry', 'TreeNode', 'TurnOutcomeRunning',
+    'TurnOutcomeCompleted', 'TurnOutcomeFailed', 'TurnOutcomeInterrupted', 'TurnOutcome', 'UnprovenAbsence', 'Usage', 'UsageWindow', 'WaitConditionTask', 'WaitConditionApproval', 'WaitConditionMessageFrom',
+    'WaitConditionInbox', 'WaitConditionDeadline', 'WaitConditionAny', 'WaitConditionAll', 'WaitConditionAtLeast', 'WaitCondition', 'Welcome', 'Workspace', 'WorkspaceValidation',
 ]

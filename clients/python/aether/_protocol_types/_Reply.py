@@ -29,6 +29,8 @@ from ._ReplyMcpServers import ReplyMcpServers
 from ._ReplyMemories import ReplyMemories
 from ._ReplyMemoriesInContext import ReplyMemoriesInContext
 from ._ReplyMemory import ReplyMemory
+from ._ReplyMemoryFeedback import ReplyMemoryFeedback
+from ._ReplyMemoryFeedbackList import ReplyMemoryFeedbackList
 from ._ReplyMemorySeeded import ReplyMemorySeeded
 from ._ReplyMessageSent import ReplyMessageSent
 from ._ReplyMessagesSent import ReplyMessagesSent
@@ -101,6 +103,8 @@ Reply = (
     ReplyRepositoryAliases |
     ReplyMemoriesInContext |
     ReplyMemory |
+    ReplyMemoryFeedback |
+    ReplyMemoryFeedbackList |
     ReplyMemorySeeded |
     ReplyRuns |
     ReplyRunReport |

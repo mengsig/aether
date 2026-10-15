@@ -8,6 +8,13 @@ release is also the text of its GitHub release.
 
 ### New
 
+- **You can record whether a memory helped or hurt a task.**
+  `aether memory feedback record` keeps a verdict, where the evidence came
+  from and a reason, and only for a memory the task's agents were given.
+  Feedback can be retracted and listed, keyed retries never record it twice,
+  and every change leaves an event. Agents and paired devices cannot use it;
+  clients detect support with `memory_feedback`. Recall and ranking are
+  unchanged for now.
 - **You can see which memories each model call was given.** The
   context record of every call now lists the memories it rendered, in the
   order the prompt shows them, for Claude Code and Codex turns too. The prompt
@@ -15,6 +22,14 @@ release is also the text of its GitHub release.
   `aether memory context --task <id>` or `--invocation <id>`; clients can
   detect support with `memory_context`. This is the first step toward judging
   memories by how the work they informed turned out.
+
+### Before updating
+
+- **Store schema 22.** Adds the table that keeps memory feedback. The
+  migration is one way: Aether saves the old database first (see
+  [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)), and a binary that predates
+  schema 22 refuses to open a migrated database. To go back, stop the daemon
+  and restore that backup with the older binary; changes made since are lost.
 
 ## 1.0.7
 

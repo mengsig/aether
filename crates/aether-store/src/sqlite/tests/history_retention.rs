@@ -798,3 +798,37 @@ fn retention_snapshot_rejects_a_database_over_the_memory_limit() {
         256 * 1024 * 1024
     );
 }
+
+#[test]
+fn feedback_rows_survive_expiring_their_task_history() {
+    use aether_core::memory_feedback::{
+        MemoryEvidence, MemoryFeedback, MemoryFeedbackSpec, MemoryVerdict,
+    };
+    let f = Fixture::new();
+    let record = MemoryFeedback {
+        id: aether_core::id::MemoryFeedbackId::new(),
+        spec: MemoryFeedbackSpec {
+            memory: MemoryId::new(),
+            verdict: MemoryVerdict::Hurt,
+            evidence: MemoryEvidence::Outcome,
+            task: f.task.id,
+            invocation: Some(InvocationId::new()),
+            reason: "Review failed".into(),
+        },
+        actor: Actor::user(),
+        created_at: now(),
+        retracted_at: None,
+        retraction_reason: None,
+    };
+    f.mutate(Mutation::RecordMemoryFeedback(record.clone()));
+    assert!(matches!(f.expire().unwrap(), RunExpiry::Expired { .. }));
+    assert!(f.store.task(f.task.id).unwrap().is_none());
+    assert_eq!(
+        f.store.memory_feedback_record(record.id).unwrap(),
+        Some(record.clone())
+    );
+    assert_eq!(
+        f.store.memory_feedback(record.spec.memory, 100).unwrap(),
+        vec![record]
+    );
+}

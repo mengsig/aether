@@ -1858,3 +1858,6 @@ fn memory_proposal_reject_requires_a_reason_before_connecting() {
 
 #[path = "cli_regressions/memory_proposals.rs"]
 mod proposal_lookup_tests;
+
+#[path = "cli_regressions/memory_feedback.rs"]
+mod feedback_cli_tests;

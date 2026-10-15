@@ -614,3 +614,32 @@ fn legacy_memory_creation_keeps_its_wire_shape_and_idempotency_fingerprint() {
             .is_none()
     );
 }
+
+#[test]
+fn feedback_keys_cover_every_evidence_field_and_the_command_name() {
+    let value = serde_json::json!({"cmd":"record_memory_feedback", "memory":MemoryId::new(),
+        "task":TaskId::new(), "invocation":InvocationId::new(), "verdict":"helped",
+        "evidence":"review", "reason":"Verified release", "idempotency_key":"feedback-review"});
+    let command: Command = serde_json::from_value(value.clone()).unwrap();
+    let keyed = command.keyed_request().unwrap().unwrap();
+    assert_eq!(keyed.key, "feedback-review");
+    assert_eq!(keyed.fields["cmd"], "record_memory_feedback");
+    for (field, changed) in [
+        ("memory", serde_json::json!(MemoryId::new())),
+        ("task", serde_json::json!(TaskId::new())),
+        ("invocation", serde_json::Value::Null),
+        ("verdict", serde_json::json!("hurt")),
+        ("evidence", serde_json::json!("outcome")),
+        ("reason", serde_json::json!("Failed release")),
+    ] {
+        let mut different = value.clone();
+        different[field] = changed;
+        let different: Command = serde_json::from_value(different).unwrap();
+        assert_ne!(
+            different.keyed_request().unwrap().unwrap().fields,
+            keyed.fields,
+            "{field}"
+        );
+    }
+    assert_eq!(features::MEMORY_FEEDBACK, "memory_feedback");
+}

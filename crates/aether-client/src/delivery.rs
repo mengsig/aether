@@ -58,6 +58,9 @@ fn key_slot(command: &mut Command) -> Option<&mut Option<String>> {
         | Command::UpdateSchedule {
             idempotency_key, ..
         }
+        | Command::RecordMemoryFeedback {
+            idempotency_key, ..
+        }
         | Command::CreateMemory {
             idempotency_key, ..
         } => idempotency_key,
@@ -81,6 +84,7 @@ pub(crate) fn is_mutating(command: &Command) -> bool {
             | Command::GetRemote
             | Command::GetPairing { .. }
             | Command::ResolveSubmission { .. }
+            | Command::MemoryFeedback { .. }
     )
 }
 

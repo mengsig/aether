@@ -33,6 +33,7 @@ mod resolution;
 pub use delivery::key_command;
 pub use outbox::{Unreadable, Unresolved};
 pub use resolution::{Settlement, Undecided};
+mod memory_feedback;
 mod operations;
 mod records;
 mod ssh;

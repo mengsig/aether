@@ -26,6 +26,8 @@ fn commands() -> Vec<Command> {
         json!({"cmd":"set_approvals", "agent":agent, "policy": aether_core::agent::ApprovalPolicy::default()}),
         json!({"cmd":"update_schedule", "id":schedule, "action":"pause"}),
         json!({"cmd":"create_memory", "spec":{"text":"remember", "kind":"fact", "scope":{"scope":"global"}}}),
+        json!({"cmd":"record_memory_feedback", "memory":aether_core::id::MemoryId::new(),
+            "task":aether_core::id::TaskId::new(), "verdict":"helped", "evidence":"review", "reason":"Verified"}),
         json!({"cmd":"add_approval_rule", "decision":"approved", "match":{}, "scope":{"scope":"everywhere"}}),
     ];
     wires

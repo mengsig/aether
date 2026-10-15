@@ -309,6 +309,29 @@ pub enum Command {
         id: MemoryId,
         reason: String,
     },
+    /// Record host evidence on a memory a task saw. Needs `memory_feedback`.
+    RecordMemoryFeedback {
+        memory: MemoryId,
+        verdict: aether_core::memory_feedback::MemoryVerdict,
+        evidence: aether_core::memory_feedback::MemoryEvidence,
+        task: TaskId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        invocation: Option<InvocationId>,
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Withdraw evidence, preserving the record. Needs `memory_feedback`.
+    RetractMemoryFeedback {
+        feedback: aether_core::id::MemoryFeedbackId,
+        reason: String,
+    },
+    /// Newest evidence first, including retractions. Needs `memory_feedback`.
+    MemoryFeedback {
+        memory: MemoryId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<usize>,
+    },
     /// Curate a memory out. The record stays; it is never retrieved again.
     ForgetMemory {
         id: MemoryId,
@@ -772,6 +795,20 @@ impl Command {
             } => (
                 idempotency_key.as_deref()?,
                 serde_json::json!({"cmd": "create_memory", "spec": spec}),
+            ),
+            Self::RecordMemoryFeedback {
+                memory,
+                verdict,
+                evidence,
+                task,
+                invocation,
+                reason,
+                idempotency_key,
+            } => (
+                idempotency_key.as_deref()?,
+                serde_json::json!({"cmd":"record_memory_feedback", "memory":memory,
+                    "verdict":verdict, "evidence":evidence, "task":task,
+                    "invocation":invocation, "reason":reason}),
             ),
             Self::AddApprovalRule(rule) => (
                 rule.idempotency_key.as_deref()?,

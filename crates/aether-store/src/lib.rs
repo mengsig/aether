@@ -23,7 +23,7 @@ use aether_core::event::{Event, EventDraft};
 use aether_core::id::ScheduleId;
 use aether_core::id::{
     AgentId, ApprovalId, ApprovalRuleId, ArtifactId, CheckpointId, DeviceId, EventId, InvocationId,
-    MemoryId, RunId, SnapshotId, TaskId, ToolCallId,
+    MemoryFeedbackId, MemoryId, RunId, SnapshotId, TaskId, ToolCallId,
 };
 use aether_core::idempotency::{
     IdempotencyKey, RecordedOutcome, RecordedSubmission, SubmissionLedger,
@@ -38,6 +38,8 @@ use aether_core::snapshot::{Invocation, InvocationSnapshot, SnapshotMemories};
 use aether_core::task::{Task, TaskStatusKind};
 use aether_core::time::Timestamp;
 use aether_core::tool::ApprovalRequest;
+
+use aether_core::memory_feedback::MemoryFeedback;
 
 pub use schema::SCHEMA_VERSION;
 pub use sqlite::{PushSubscriptionRow, RunExpiry, SqliteStore};
@@ -175,6 +177,12 @@ pub enum Mutation {
     /// the duplicate creation it belongs to must not become durable.
     RecordSubmission(RecordedSubmission),
     PutMemory(MemoryRecord),
+    RecordMemoryFeedback(MemoryFeedback),
+    RetractMemoryFeedback {
+        id: MemoryFeedbackId,
+        at: Timestamp,
+        reason: String,
+    },
     PutArtifact(Artifact),
     SetMeta {
         key: String,
@@ -626,6 +634,11 @@ pub trait Store: Send + Sync {
     fn device(&self, id: DeviceId) -> Result<Option<DeviceRow>>;
     /// Paired devices, oldest first. Revoked ones only when asked for.
     fn devices(&self, include_revoked: bool) -> Result<Vec<DeviceRow>>;
+
+    /// Uncapped membership check against this task's announced, stored snapshots.
+    fn memory_was_in_task_context(&self, memory: MemoryId, task: TaskId) -> Result<bool>;
+    fn memory_feedback_record(&self, id: MemoryFeedbackId) -> Result<Option<MemoryFeedback>>;
+    fn memory_feedback(&self, memory: MemoryId, limit: usize) -> Result<Vec<MemoryFeedback>>;
 
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>>;
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>>;

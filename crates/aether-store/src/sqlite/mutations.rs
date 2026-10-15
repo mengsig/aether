@@ -198,6 +198,10 @@ impl SqliteStore {
                     ],
                 )?;
             }
+            Mutation::RecordMemoryFeedback(record) => Self::insert_memory_feedback(tx, &record)?,
+            Mutation::RetractMemoryFeedback { id, at, reason } => {
+                Self::retract_memory_feedback(tx, id, at, &reason)?;
+            }
             Mutation::PutMemory(mem) => put_memory(tx, &mem)?,
             Mutation::PutArtifact(art) => {
                 tx.execute(

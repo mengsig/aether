@@ -23,6 +23,7 @@ mod history_retention;
 pub use history_retention::RunExpiry;
 mod ledger;
 mod memories;
+mod memory_feedback;
 mod mutations;
 mod publication;
 mod push_subscriptions;

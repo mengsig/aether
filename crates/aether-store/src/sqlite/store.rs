@@ -549,6 +549,28 @@ impl Store for SqliteStore {
         Self::read_devices(&self.read_conn(), include_revoked)
     }
 
+    fn memory_was_in_task_context(&self, memory: MemoryId, task: TaskId) -> Result<bool> {
+        self.task_context_contains(memory, task)
+    }
+
+    fn memory_feedback_record(
+        &self,
+        id: aether_core::id::MemoryFeedbackId,
+    ) -> Result<Option<aether_core::memory_feedback::MemoryFeedback>> {
+        self.read_one(
+            "SELECT body FROM memory_feedback WHERE id = ?1",
+            &id.to_string(),
+        )
+    }
+
+    fn memory_feedback(
+        &self,
+        memory: MemoryId,
+        limit: usize,
+    ) -> Result<Vec<aether_core::memory_feedback::MemoryFeedback>> {
+        self.latest_memory_feedback(memory, limit)
+    }
+
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>> {
         self.read_one("SELECT body FROM memories WHERE id = ?1", &id.to_string())
     }

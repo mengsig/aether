@@ -1026,3 +1026,37 @@ async fn memories_in_context_is_refused_without_the_feature_before_sending() {
     ));
     assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn memory_feedback_is_refused_without_the_feature_before_sending() {
+    use aether_core::id::{MemoryFeedbackId, MemoryId, TaskId};
+    let (transport, peer) = Transport::memory(16);
+    let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = sent.clone();
+    let _daemon = fake_daemon(peer, move |_, _| {
+        seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { true })
+    });
+    let client = Client::open(transport).await.unwrap();
+    let memory = MemoryId::new();
+    let spec = serde_json::from_value(serde_json::json!({
+        "memory":memory, "task":TaskId::new(), "verdict":"neutral",
+        "evidence":"operator", "reason":"No effect observed",
+    }))
+    .unwrap();
+    assert!(matches!(
+        client.record_memory_feedback(spec).await,
+        Err(ClientError::Incompatible(_))
+    ));
+    assert!(matches!(
+        client
+            .retract_memory_feedback(MemoryFeedbackId::new(), "Withdraw".into())
+            .await,
+        Err(ClientError::Incompatible(_))
+    ));
+    assert!(matches!(
+        client.memory_feedback(memory, None).await,
+        Err(ClientError::Incompatible(_))
+    ));
+    assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
+}

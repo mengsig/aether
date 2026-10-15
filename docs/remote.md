@@ -775,6 +775,9 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `alias_repository` | host_only | Moves memory between repository scopes, irreversibly. |
 | `list_repository_aliases` | observe | |
 | `memories_in_context` | host_only | Which memories each model call saw; for weighing them. |
+| `record_memory_feedback` | host_only | Records evidence on a memory the named task saw. |
+| `retract_memory_feedback` | host_only | Withdraws feedback while preserving the original record. |
+| `memory_feedback` | host_only | Reads recent feedback, including retractions. |
 | `list_runs` | observe | |
 | `get_run_report` | observe | |
 | `replay` | observe | |

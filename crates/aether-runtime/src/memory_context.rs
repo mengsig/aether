@@ -59,7 +59,7 @@ impl Runtime {
 
     /// The snapshot a failed call answered from, read from its
     /// `invocation.failed` event: daemon recovery and imports keep no row for it.
-    fn failed_call_snapshot(&self, id: InvocationId) -> Result<Option<SnapshotId>> {
+    pub(crate) fn failed_call_snapshot(&self, id: InvocationId) -> Result<Option<SnapshotId>> {
         let filter = EventFilter {
             types: vec!["invocation.failed".into()],
             ..Default::default()

@@ -6,7 +6,7 @@ fn previous_database(path: &std::path::Path) -> Connection {
 
 fn database_at(path: &std::path::Path, version: u32) -> Connection {
     assert!(version > 0);
-    assert!(version < SCHEMA_VERSION);
+    assert!(version <= SCHEMA_VERSION);
     let conn = Connection::open(path).expect("database");
     conn.execute_batch("PRAGMA journal_mode=WAL;").expect("WAL");
     for statement in &MIGRATIONS[..version as usize] {
@@ -778,7 +778,10 @@ fn v21_migrates_populated_v20_and_excludes_new_proposals_from_default_queries() 
     }
     drop(v20);
     let store = crate::SqliteStore::open(&path).unwrap();
-    assert_eq!(store.meta("schema_version").unwrap(), Some("21".into()));
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some(SCHEMA_VERSION.to_string())
+    );
     for record in &records {
         assert_eq!(store.memory(record.id).unwrap().as_ref(), Some(record));
     }
@@ -810,12 +813,78 @@ fn v21_migrates_populated_v20_and_excludes_new_proposals_from_default_queries() 
 }
 
 fn assert_v20_refuses_proposals(conn: &Connection) {
-    assert_eq!(version(conn), 21);
+    assert_eq!(version(conn), SCHEMA_VERSION);
     assert!(matches!(
         refuse_newer_store(current_version(conn).unwrap(), 20),
         Err(StoreError::SchemaTooNew {
-            found: 21,
+            found: SCHEMA_VERSION,
             supported: 20
         })
     ));
+}
+
+#[test]
+fn v22_feedback_migration_preserves_v21_memories_and_saves_a_readable_backup() {
+    use crate::Store;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let v21 = database_at(&path, 21);
+    let record: aether_core::memory::MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    insert_legacy_memory(&v21, &record);
+    assert_eq!(version(&v21), 21);
+    drop(v21);
+    let store = crate::SqliteStore::open(&path).unwrap();
+    assert_eq!(store.meta("schema_version").unwrap(), Some("22".into()));
+    assert_eq!(store.memory(record.id).unwrap(), Some(record.clone()));
+    let connection = Connection::open(&path).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM memory_feedback", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    drop(store);
+    let conn = Connection::open(&path).unwrap();
+    let index: String = conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'memory_feedback_memory_created'",
+        [], |row| row.get(0),
+    ).unwrap();
+    assert!(index.contains("memory_id, created_at"));
+    assert!(matches!(
+        refuse_newer_store(current_version(&conn).unwrap(), 21),
+        Err(StoreError::SchemaTooNew {
+            found: 22,
+            supported: 21
+        })
+    ));
+    let backups: Vec<_> = std::fs::read_dir(directory.path().join("migration-backups"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(backups.len(), 1);
+    assert!(
+        backups[0]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("schema-21-before-22-")
+    );
+    assert_feedback_backup(&backups[0], &record);
+}
+
+fn assert_feedback_backup(path: &std::path::Path, record: &aether_core::memory::MemoryRecord) {
+    let backup = Connection::open(path).unwrap();
+    assert_eq!(version(&backup), 21);
+    assert!(backup.prepare("SELECT * FROM memory_feedback").is_err());
+    assert_eq!(
+        backup
+            .query_row(
+                "SELECT body FROM memories WHERE id = ?1",
+                [record.id.to_string()],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+        serde_json::to_string(&record).unwrap()
+    );
 }

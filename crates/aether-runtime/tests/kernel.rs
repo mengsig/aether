@@ -183,6 +183,8 @@ mod lease_reads;
 mod leases;
 #[path = "kernel/memory_context.rs"]
 mod memory_context;
+#[path = "kernel/memory_feedback.rs"]
+mod memory_feedback;
 #[path = "kernel/memory_proposals.rs"]
 mod memory_proposals;
 #[path = "kernel/memory_scope.rs"]

@@ -171,6 +171,11 @@ typed_id!(
     "mem"
 );
 typed_id!(
+    /// Identifies one operator feedback record on a memory.
+    MemoryFeedbackId,
+    "mfb"
+);
+typed_id!(
     /// Identifies a stored artifact (file, output, diff, commit).
     ArtifactId,
     "art"

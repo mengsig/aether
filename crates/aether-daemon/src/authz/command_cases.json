@@ -681,5 +681,31 @@
       },
       "horizon": "00000000000000000000000000:0"
     }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "record_memory_feedback",
+      "memory": "mem_00000000000000000000000000",
+      "task": "tsk_00000000000000000000000000",
+      "verdict": "helped",
+      "evidence": "review",
+      "reason": "Validated"
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "retract_memory_feedback",
+      "feedback": "mfb_00000000000000000000000000",
+      "reason": "Incorrect evidence"
+    }
+  },
+  {
+    "access": "host_only",
+    "command": {
+      "cmd": "memory_feedback",
+      "memory": "mem_00000000000000000000000000"
+    }
   }
 ]

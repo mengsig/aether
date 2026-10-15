@@ -232,6 +232,29 @@ impl Store for CountingStore {
     fn devices(&self, include_revoked: bool) -> StoreResult<Vec<aether_store::DeviceRow>> {
         self.inner.devices(include_revoked)
     }
+    fn memory_was_in_task_context(
+        &self,
+        memory: MemoryId,
+        task: TaskId,
+    ) -> aether_store::Result<bool> {
+        self.inner.memory_was_in_task_context(memory, task)
+    }
+
+    fn memory_feedback_record(
+        &self,
+        id: aether_core::id::MemoryFeedbackId,
+    ) -> aether_store::Result<Option<aether_core::memory_feedback::MemoryFeedback>> {
+        self.inner.memory_feedback_record(id)
+    }
+
+    fn memory_feedback(
+        &self,
+        memory: MemoryId,
+        limit: usize,
+    ) -> aether_store::Result<Vec<aether_core::memory_feedback::MemoryFeedback>> {
+        self.inner.memory_feedback(memory, limit)
+    }
+
     fn memory(&self, id: MemoryId) -> StoreResult<Option<MemoryRecord>> {
         self.inner.memory(id)
     }

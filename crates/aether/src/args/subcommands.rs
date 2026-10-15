@@ -4,6 +4,11 @@ use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum MemoryCmd {
+    /// Record, retract or inspect host evidence about memories.
+    Feedback {
+        #[command(subcommand)]
+        command: cli::MemoryFeedbackCmd,
+    },
     /// Record an operator memory, optionally awaiting review.
     Add {
         #[command(flatten)]

@@ -583,6 +583,38 @@ pub(super) async fn dispatch_authorized(
         Command::RejectMemory { id, reason } => Ok(Reply::Memory(
             rt.reject_memory(id, reason, by).map_err(map_err)?,
         )),
+        Command::RecordMemoryFeedback {
+            memory,
+            verdict,
+            evidence,
+            task,
+            invocation,
+            reason,
+            ..
+        } => {
+            let rt = rt.clone();
+            let spec = aether_core::memory_feedback::MemoryFeedbackSpec {
+                memory,
+                verdict,
+                evidence,
+                task,
+                invocation,
+                reason,
+            };
+            let result =
+                blocking(move || rt.record_memory_feedback_keyed(spec, by, submission)).await?;
+            Ok(Reply::MemoryFeedback(result.map_err(map_err)?))
+        }
+        Command::RetractMemoryFeedback { feedback, reason } => {
+            let rt = rt.clone();
+            let result = blocking(move || rt.retract_memory_feedback(feedback, reason, by)).await?;
+            Ok(Reply::MemoryFeedback(result.map_err(map_err)?))
+        }
+        Command::MemoryFeedback { memory, limit } => {
+            let rt = rt.clone();
+            let result = blocking(move || rt.memory_feedback(memory, limit, &by)).await?;
+            Ok(Reply::MemoryFeedbackList(result.map_err(map_err)?))
+        }
         Command::ForgetMemory { id, reason } => Ok(Reply::Memory(
             rt.forget_memory(id, reason, by).map_err(map_err)?,
         )),

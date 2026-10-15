@@ -136,6 +136,10 @@ from ._protocol_commands.memories import (
     memories_in_context,
 )
 
+from ._protocol_commands.memory import (
+    memory_feedback,
+)
+
 from ._protocol_commands.pause import (
     pause,
 )
@@ -162,6 +166,10 @@ from ._protocol_commands.publish import (
 
 from ._protocol_commands.read import (
     read_artifact,
+)
+
+from ._protocol_commands.record import (
+    record_memory_feedback,
 )
 
 from ._protocol_commands.reject import (
@@ -191,6 +199,10 @@ from ._protocol_commands.restore import (
 
 from ._protocol_commands.resume import (
     resume,
+)
+
+from ._protocol_commands.retract import (
+    retract_memory_feedback,
 )
 
 from ._protocol_commands.revoke import (
