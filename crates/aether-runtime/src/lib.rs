@@ -28,6 +28,7 @@ pub mod scheduler;
 pub mod schedules;
 pub mod storage;
 pub mod submission;
+mod tool_interruption;
 pub mod transfer;
 pub mod turn;
 pub mod turn_engine;
@@ -120,6 +121,8 @@ pub(crate) struct RunningTurn {
     /// Tokens carry no actor or reason; retain the first explicit request
     /// until turn completion and its descendant cancellation walk.
     pub cancel_request: Option<CancelRequest>,
+    /// Reporting only: why the scheduler stopped this turn before its terminal commit.
+    pub stop_reason: Option<String>,
     /// Child of `cancel`: ends the turn only; the agent waits for its next
     /// message with what it has so far.
     pub interrupt: CancellationToken,

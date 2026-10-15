@@ -240,8 +240,10 @@ pub(super) async fn drive(
             .as_ref()
             .is_some_and(|wait| wait.ready(runtime, ctx))
             && let Some(wait) = native_wait.take()
+            && let Some((input, reply)) =
+                wait.finish("a message arrived or the requested condition was satisfied")
         {
-            wait.finish("a message arrived or the requested condition was satisfied");
+            state.remember_bridge_reply("wait_for".into(), input, reply);
         }
         let native_deadline = native_wait.as_ref().and_then(|wait| wait.deadline());
         tokio::select! {
@@ -259,8 +261,9 @@ pub(super) async fn drive(
                 }
             }
             () = tokio::time::sleep_until(native_deadline.unwrap_or_else(tokio::time::Instant::now)), if native_deadline.is_some() => {
-                if let Some(wait) = native_wait.take() {
-                    wait.finish("the requested deadline was reached");
+                if let Some(wait) = native_wait.take()
+                    && let Some((input, reply)) = wait.finish("the requested deadline was reached") {
+                    state.remember_bridge_reply("wait_for".into(), input, reply);
                 }
             }
             ev = run.events.recv() => {
@@ -272,6 +275,7 @@ pub(super) async fn drive(
                     receipt_seen = false;
                 }
                 activity_seen |= active;
+                state.interruption = interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref());
                 match ev {
                 None => break settled.take().unwrap_or_else(|| EngineOutcome {
                     is_error: true,
@@ -330,8 +334,9 @@ pub(super) async fn drive(
                     let id = clamp(&id, MAX_ENGINE_NAME);
                     if !running && background.contains(&id)
                         && let Some(wait) = native_wait.take()
+                        && let Some((input, reply)) = wait.finish(&format!("native background task {id} finished"))
                     {
-                        wait.finish(&format!("native background task {id} finished"));
+                        state.remember_bridge_reply("wait_for".into(), input, reply);
                     }
                     if running {
                         if background.len() < MAX_BACKGROUND_IDS {
@@ -385,7 +390,7 @@ pub(super) async fn drive(
                             permission_verdict(
                                 runtime,
                                 ctx,
-                                GateSubject::from_prompt(runtime, ctx, &tool, &tool_input, class),
+                                GateSubject::from_prompt(runtime, ctx, &tool, &tool_input, class, tool_input["tool_use_id"].as_str())?,
                                 cancel,
                                 true,
                             )
@@ -572,9 +577,13 @@ pub(super) async fn drive(
                     } else {
                         let reply = (engine.kind() == super::EngineKind::CLAUDE_CODE && stop.is_some())
                             .then(|| (req.name.clone(), req.input.clone()));
+                        let (tool, tool_input) = (req.name.clone(), req.input.clone());
                         let served =
                             handle_request(runtime, ctx, tool_ctx, req, effects, cancel, park.is_some(), !background.is_empty())
                                 .await?;
+                        if let Served::Ran(Some(result)) = &served {
+                            state.remember_bridge_reply(tool, tool_input, result.clone());
+                        }
                         if let Served::NativeWait(wait) = served {
                             native_wait = Some(wait);
                             continue;
@@ -694,6 +703,7 @@ pub(super) async fn drive(
                         merge_cleanup_receipt(&mut outcome, receipt);
                     }
                     Some(event) => {
+                        state.interruption = interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref());
                         let active = event_has_activity(&event, ctx);
                         receipt_seen &= !event_may_start_request(&event);
                         activity_seen |= active;
@@ -714,6 +724,57 @@ pub(super) async fn drive(
     // that is no longer this turn's, and would misreport who stopped it.
     if let Some(park) = park.as_mut() {
         park.disarm();
+    }
+    // Aether finished these calls even if the engine died before echoing
+    // their replies. Settle them before classifying genuinely unfinished work.
+    let pending: Vec<_> = state.calls.keys().cloned().collect();
+    for tool_use_id in pending {
+        let reply = state
+            .calls
+            .get(&tool_use_id)
+            .and_then(|call| state.bridge_reply(call))
+            .cloned();
+        if let Some((content, is_error)) = reply {
+            handle_event(
+                runtime,
+                ctx,
+                snapshot,
+                EngineEvent::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                },
+                &mut state,
+            )?;
+        }
+    }
+    if let Some(cause) =
+        interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref()).or_else(
+            || {
+                outcome.interrupted.then(|| {
+                    outcome
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "engine interruption".into())
+                })
+            },
+        )
+    {
+        let mut commit = Commit::new();
+        for call in state.calls.values() {
+            if crate::tool_interruption::denial_reason(runtime, ctx.agent.id, call.id)?.is_some() {
+                continue;
+            }
+            crate::tool_interruption::record(
+                &mut commit,
+                &ctx.agent,
+                call.id,
+                &call.tool,
+                &call.input,
+                &cause,
+            );
+        }
+        runtime.apply(commit)?;
     }
     let uncommitted = Uncommitted {
         invocation: Some(state.message_invocation),
@@ -827,6 +888,44 @@ fn merge_cleanup_receipt(outcome: &mut EngineOutcome, receipt: EngineOutcome) {
     }
     outcome.forced |= receipt.forced;
     outcome.interrupted |= receipt.interrupted;
+}
+
+fn interruption_cause(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    cancel: &CancellationToken,
+    park: Option<&Park>,
+    budget: Option<&Crossed>,
+) -> Option<String> {
+    let (stop_reason, request) = runtime
+        .sched
+        .lock()
+        .running
+        .get(&ctx.agent.id)
+        .map(|running| (running.stop_reason.clone(), running.cancel_request.clone()))
+        .unwrap_or_default();
+    if let Some(reason) = stop_reason {
+        return Some(format!("scheduler stop: {reason}"));
+    }
+    if let Some(request) = request {
+        return Some(format!(
+            "agent cancellation: {}",
+            request.reason.as_deref().unwrap_or("cancel requested")
+        ));
+    }
+    if runtime.shutdown.is_cancelled() {
+        return Some("daemon stop or restart".into());
+    }
+    if let Some(budget) = budget {
+        return Some(format!("budget stop: {}", budget.reason));
+    }
+    if cancel.is_cancelled() {
+        return Some("turn interrupt".into());
+    }
+    if park.is_some_and(|park| park.stop_requested || park.killed()) {
+        return Some("harness ended the turn".into());
+    }
+    None
 }
 
 #[cfg(test)]

@@ -21,6 +21,11 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- Interrupted native tool calls now carry their cause in transcripts and on resume.
+  Stopping or restarting the daemon, interrupting or cancelling an agent, and
+  ending a stage no longer leave a synthetic operator denial uncorrected.
+  Genuine approval denials retain their denial status.
+
 - **Clipboard images paste into the terminal UI with Ctrl+V.** Ctrl+V prefers
   offered plain text, otherwise attaches a supported image; Alt+V and `/image`
   force an image. Text keeps the usual long-text placeholders and image-path

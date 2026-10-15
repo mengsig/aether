@@ -243,6 +243,7 @@ fn native_prompt_rule_requests_route_through_aether_decisions() {
         };
         assert_eq!((request_id.as_str(), tool.as_str()), ("0", "bash"));
         assert_eq!(input["command"], "/usr/bin/zsh -lc gh pr merge 7");
+        assert_eq!(input["tool_use_id"], "exec-1");
         assert_eq!(input["reason"], request["reason"]);
         assert_eq!(side_effect, Some(SideEffectClass::External));
         let (id, result) = s.decision_result("0", allow, None).expect("stored");

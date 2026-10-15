@@ -29,6 +29,9 @@ pub(super) fn disallowed_native_spawn_tool(
 pub(super) struct StreamState {
     /// Provider tool-use id → call id and observed start, for matching and timing results.
     pub(super) calls: BTreeMap<String, PendingCall>,
+    pub(super) interruption: Option<String>,
+    /// Bridge replies can precede native announcements or outlive missing echoes.
+    bridge_replies: Vec<BridgeReply>,
     /// Content-block index → tool name for input deltas.
     pub(super) tool_names: BTreeMap<usize, String>,
     /// The engine reported per-message usage at least once this turn.
@@ -75,7 +78,39 @@ pub(super) struct StreamState {
     text_truncated: bool,
 }
 
+struct BridgeReply {
+    tool: String,
+    input: serde_json::Value,
+    result: (String, bool),
+}
+
+impl BridgeReply {
+    fn matches(&self, call: &PendingCall) -> bool {
+        self.tool == super::bridge::bridge_tool_name(&call.tool) && self.input == call.input
+    }
+}
+
 impl StreamState {
+    pub(super) fn remember_bridge_reply(
+        &mut self,
+        tool: String,
+        input: serde_json::Value,
+        result: (String, bool),
+    ) {
+        self.bridge_replies.push(BridgeReply {
+            tool,
+            input,
+            result,
+        });
+    }
+
+    pub(super) fn bridge_reply(&self, call: &PendingCall) -> Option<&(String, bool)> {
+        self.bridge_replies
+            .iter()
+            .find(|reply| reply.matches(call))
+            .map(|reply| &reply.result)
+    }
+
     pub(super) fn is_bridge_reply(&self, id: &str, name: &str, input: &serde_json::Value) -> bool {
         self.calls
             .get(id)
@@ -85,6 +120,8 @@ impl StreamState {
     pub(super) fn new(pricing: TurnPricing, configured: ResolvedModel) -> Self {
         Self {
             calls: BTreeMap::new(),
+            interruption: None,
+            bridge_replies: Vec::new(),
             tool_names: BTreeMap::new(),
             usage_seen: false,
             invoked: false,
@@ -448,6 +485,14 @@ pub(super) fn handle_event(
                         side_effect: class,
                     }));
                     commit.push_event(ctx.draft(EventKind::ToolStarted { call: call.id }));
+                    if let Some(reason) =
+                        crate::tool_interruption::pending_native_denial(runtime, ctx.agent.id, id)?
+                    {
+                        commit.push_event(ctx.draft(EventKind::ToolDenied {
+                            call: call.id,
+                            reason,
+                        }));
+                    }
                     ctx.agent.stats.tool_calls += 1;
                     state.ran_tools = true;
                 }
@@ -494,6 +539,53 @@ pub(super) fn handle_event(
                 tracing::debug!(agent = %ctx.agent.id, %tool_use_id, "tool result for an unknown call");
                 return Ok(());
             };
+            // The bridge's actual reply wins over a killed engine's synthetic
+            // rejection, and consumes one receipt even for identical calls.
+            let (content, is_error) = match state
+                .bridge_replies
+                .iter()
+                .position(|reply| reply.matches(&call))
+            {
+                Some(index) => {
+                    let reply = state.bridge_replies.remove(index).result;
+                    if is_error
+                        && (content.contains("The user doesn't want to proceed with this tool use")
+                            || content.trim() == "cancelled")
+                    {
+                        reply
+                    } else {
+                        (content, is_error)
+                    }
+                }
+                None => (content, is_error),
+            };
+            // Claude synthesizes this denial when its process is interrupted.
+            // Only Aether's independent stop evidence can override that wording.
+            let cancelled_result = (is_error
+                && (content.contains("The user doesn't want to proceed with this tool use")
+                    || content.trim() == "cancelled"))
+                || (call.tool == "bash" && content.ends_with("[exit code ?]"));
+            let denied = if is_error || cancelled_result {
+                crate::tool_interruption::denial_reason(runtime, ctx.agent.id, call.id)?
+            } else {
+                None
+            };
+            if denied.is_none()
+                && cancelled_result
+                && let Some(cause) = &state.interruption
+            {
+                let mut commit = Commit::new();
+                crate::tool_interruption::record(
+                    &mut commit,
+                    &ctx.agent,
+                    call.id,
+                    &call.tool,
+                    &call.input,
+                    cause,
+                );
+                runtime.apply(commit)?;
+                return Ok(());
+            }
             let (call, started) = (call.id, call.started);
             let outcome = ToolOutcome {
                 content: content.clone(),
@@ -505,21 +597,30 @@ pub(super) fn handle_event(
             // Also a transcript entry, exactly as the API path composes one:
             // without it the tool call the engine made dangles, and a handoff
             // would hand the next model a call that looks like it never ran.
-            runtime.apply(
-                Commit::new()
-                    .event(ctx.draft(EventKind::ToolSucceeded { call, outcome }))
-                    .event(ctx.draft(EventKind::AgentMessage {
-                        role: MessageRole::User,
-                        content: vec![ContentBlock::ToolResult {
-                            tool_use_id,
-                            content: vec![aether_core::model::ToolResultBlock::Text {
-                                text: content,
-                            }],
-                            is_error,
-                        }],
-                        invocation: None,
-                    })),
-            )?;
+            let settled = if is_error
+                && content.contains("The user doesn't want to proceed with this tool use")
+            {
+                EventKind::ToolDenied {
+                    call,
+                    reason: content.clone(),
+                }
+            } else {
+                EventKind::ToolSucceeded { call, outcome }
+            };
+            let mut commit = Commit::new();
+            if denied.is_none() {
+                commit.push_event(ctx.draft(settled));
+            }
+            commit.push_event(ctx.draft(EventKind::AgentMessage {
+                role: MessageRole::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id,
+                    content: vec![aether_core::model::ToolResultBlock::Text { text: content }],
+                    is_error,
+                }],
+                invocation: None,
+            }));
+            runtime.apply(commit)?;
         }
         EngineEvent::RateLimit { payload } => {
             match aether_core::provider::ProviderUsage::from_engine_payload(

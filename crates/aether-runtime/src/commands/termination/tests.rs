@@ -7,6 +7,7 @@ fn running(interrupt: CancellationToken) -> crate::RunningTurn {
         task: None,
         cancel: CancellationToken::new(),
         cancel_request: None,
+        stop_reason: None,
         interrupt,
         addressed: false,
         provider: "anthropic".into(),

@@ -8,7 +8,8 @@ use super::{
 
 /// What the turn did with a bridge call, once its end was already decided.
 pub(super) enum Served {
-    Ran,
+    /// A completed reply, except permission prompts and interrupted executions.
+    Ran(Option<(String, bool)>),
     /// The call would have decided the turn's end a second time, or asked a
     /// person to authorize work in a turn that is over.
     Refused,
@@ -33,6 +34,7 @@ pub(super) async fn handle_request(
     parked: bool,
     native_jobs: bool,
 ) -> Result<Served> {
+    let mut completed = req.name != "permission";
     if parked && req.name == "permission" {
         // Nothing more may run in the turn, so the engine's own prompt is
         // denied without an approval and without blocking the wind-down.
@@ -65,6 +67,8 @@ pub(super) async fn handle_request(
                 // argument a remembered rule would see on the API path.
                 let class = tool.descriptor().side_effect;
                 let gate = GateSubject {
+                    native_call: None,
+                    provider_call_id: None,
                     tool: &req.name,
                     input: &req.input,
                     class,
@@ -77,11 +81,16 @@ pub(super) async fn handle_request(
                     let message = verdict
                         .message
                         .unwrap_or_else(|| "denied by the operator".to_owned());
-                    let _ = req.reply.send((message, true));
-                    return Ok(if parked { Served::Refused } else { Served::Ran });
+                    let reply = (message, true);
+                    let _ = req.reply.send(reply.clone());
+                    return Ok(if parked {
+                        Served::Refused
+                    } else {
+                        Served::Ran(Some(reply))
+                    });
                 }
                 match tool
-                    .execute(req.input, tool_ctx, cancel.child_token())
+                    .execute(req.input.clone(), tool_ctx, cancel.child_token())
                     .await
                 {
                     Ok(ToolExecution::Outcome(o)) => (o.content, o.is_error),
@@ -93,15 +102,16 @@ pub(super) async fn handle_request(
                             if let Some(error) =
                                 crate::turn::validate_wait(runtime, ctx, &condition, true)?
                             {
-                                let _ = req.reply.send((error.content, true));
-                                return Ok(Served::Ran);
+                                let reply = (error.content, true);
+                                let _ = req.reply.send(reply.clone());
+                                return Ok(Served::Ran(Some(reply)));
                             }
                             runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
                                 name: "engine.native_wait_started".into(),
                                 payload: json!({"condition": condition}),
                             })))?;
                             return Ok(Served::NativeWait(super::native_wait::NativeWait::new(
-                                condition, ctx, req.reply,
+                                condition, ctx, req.reply, req.input,
                             )));
                         }
                         if parked
@@ -116,7 +126,10 @@ pub(super) async fn handle_request(
                         let outcome = apply_action(runtime, ctx, action, effects).await?;
                         (outcome.content, outcome.is_error)
                     }
-                    Err(e) => (e.to_string(), true),
+                    Err(e) => {
+                        completed = !matches!(e, aether_tools::ToolError::Cancelled);
+                        (e.to_string(), true)
+                    }
                 }
             }
         }
@@ -130,8 +143,8 @@ pub(super) async fn handle_request(
         reply
     };
     // A dropped receiver means the bridge went away; nothing to do.
-    let _ = req.reply.send(reply);
-    Ok(Served::Ran)
+    let _ = req.reply.send(reply.clone());
+    Ok(Served::Ran(completed.then_some(reply)))
 }
 
 /// A permission prompt answered "no", in the shape the engine's
@@ -183,7 +196,14 @@ async fn decide_permission(
     let verdict = permission_verdict(
         runtime,
         ctx,
-        GateSubject::from_prompt(runtime, ctx, &tool_name, &tool_input, class),
+        GateSubject::from_prompt(
+            runtime,
+            ctx,
+            &tool_name,
+            &tool_input,
+            class,
+            input["tool_use_id"].as_str(),
+        )?,
         cancel,
         true,
     )
@@ -212,6 +232,8 @@ pub(super) struct Verdict {
 /// resources so a remembered rule matches the same way it does on the API
 /// path; a call the engine ran itself can only offer what the prompt carried.
 pub(super) struct GateSubject<'a> {
+    pub(super) native_call: Option<ToolCallId>,
+    provider_call_id: Option<&'a str>,
     pub(super) tool: &'a str,
     pub(super) input: &'a Value,
     pub(super) class: SideEffectClass,
@@ -230,19 +252,26 @@ impl<'a> GateSubject<'a> {
         tool: &'a str,
         input: &'a Value,
         class: SideEffectClass,
-    ) -> Self {
+        provider_call_id: Option<&'a str>,
+    ) -> Result<Self> {
         // Derived through the very functions the built-in tools use, so a
         // rule matches the same call on either path. `None` means nothing
         // path-shaped and not a shell: unknown, so the gate fails closed.
         let resources = permission_resources(&tool_context(runtime, ctx), tool, input);
-        Self {
+        Ok(Self {
+            native_call: crate::tool_interruption::native_call_id(
+                runtime,
+                ctx.agent.id,
+                provider_call_id,
+            )?,
+            provider_call_id,
             tool,
             input,
             class,
             argument: permission_argument(input),
             resources_known: resources.is_some(),
             resources: resources.unwrap_or_default(),
-        }
+        })
     }
 }
 
@@ -254,16 +283,19 @@ pub(super) fn engine_call_class(runtime: &Arc<Runtime>, name: &str) -> SideEffec
     // The contract tells the model both forms (`aether-engine`'s
     // `contract.rs`), so the dotted one has to be stripped too or the class
     // the gate used and the class the log records disagree.
-    let bare = name
-        .strip_prefix("mcp__aether__")
-        .or_else(|| name.strip_prefix("mcp__aether."))
-        .or_else(|| name.strip_prefix("aether__"))
-        .or_else(|| name.strip_prefix("aether."))
-        .unwrap_or(name);
+    let bare = bridge_tool_name(name);
     match runtime.tools.get(bare) {
         Some(tool) => tool.descriptor().side_effect,
         None => side_effect_of(name),
     }
+}
+
+pub(super) fn bridge_tool_name(name: &str) -> &str {
+    name.strip_prefix("mcp__aether__")
+        .or_else(|| name.strip_prefix("mcp__aether."))
+        .or_else(|| name.strip_prefix("aether__"))
+        .or_else(|| name.strip_prefix("aether."))
+        .unwrap_or(name)
 }
 
 /// Allow silently when the agent's policy does not require approval for the
@@ -276,6 +308,8 @@ pub(super) async fn permission_verdict(
     may_ask: bool,
 ) -> Result<Verdict> {
     let GateSubject {
+        native_call,
+        provider_call_id,
         tool: tool_name,
         input: tool_input,
         class,
@@ -287,9 +321,25 @@ pub(super) async fn permission_verdict(
         allow: true,
         message: None,
     };
-    let deny = |msg: &str| Verdict {
+    let refuse = |msg: &str| Verdict {
         allow: false,
         message: Some(msg.to_owned()),
+    };
+    let deny = |msg: &str| -> Result<Verdict> {
+        if let Some(call) = native_call {
+            runtime.apply(Commit::new().event(ctx.draft(EventKind::ToolDenied {
+                call,
+                reason: msg.to_owned(),
+            })))?;
+        } else if let Some(provider_call_id) = provider_call_id {
+            // Claude's bridge can beat its stdout tool announcement. Keep the
+            // exact identity until that announcement can close the denied call.
+            runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
+                name: crate::tool_interruption::NATIVE_DENIED.into(),
+                payload: json!({"provider_call_id": provider_call_id, "reason": msg}),
+            })))?;
+        }
+        Ok(refuse(msg))
     };
     if !ctx.agent.config.approval.requires(class) {
         return Ok(allow());
@@ -298,7 +348,7 @@ pub(super) async fn permission_verdict(
         id: ApprovalId::new(),
         agent_id: ctx.agent.id,
         task_id: ctx.task.as_ref().map(|t| t.id),
-        call_id: ToolCallId::new(),
+        call_id: native_call.unwrap_or_else(ToolCallId::new),
         tool: tool_name.to_owned(),
         description: describe_permission(tool_name, tool_input),
         argument: argument.clone(),
@@ -325,16 +375,16 @@ pub(super) async fn permission_verdict(
             note.clone(),
         );
         runtime.apply(commit)?;
-        return Ok(match decision {
-            ApprovalDecision::Approved => allow(),
+        return match decision {
+            ApprovalDecision::Approved => Ok(allow()),
             ApprovalDecision::Denied => deny(&approval::describe_denial(rule, note.as_deref())),
-        });
+        };
     }
     // A turn whose end is already recorded may not authorize new work in
     // itself, and an approval wait is unbounded - awaiting one here would
     // suspend the wind-down for as long as nobody answers.
     if !may_ask {
-        return Ok(deny(TURN_IS_OVER));
+        return Ok(refuse(TURN_IS_OVER));
     }
     // Subscribe before committing so the resolution cannot slip past us.
     let mut rx = runtime.subscribe();
@@ -357,10 +407,10 @@ pub(super) async fn permission_verdict(
                     if let EventKind::ApprovalResolved { approval: id, decision, note, .. } = &e.kind
                         && *id == approval.id
                     {
-                        return Ok(match decision {
-                            ApprovalDecision::Approved => allow(),
+                        return match decision {
+                            ApprovalDecision::Approved => Ok(allow()),
                             ApprovalDecision::Denied => deny(note.as_deref().unwrap_or("denied by the operator")),
-                        });
+                        };
                     }
                 }
                 Ok(BusMessage::Delta { .. }) => {}
@@ -368,15 +418,22 @@ pub(super) async fn permission_verdict(
                     if let Some(a) = runtime.store.approval(approval.id)?
                         && let ApprovalStatus::Resolved { decision, note, .. } = a.status
                     {
-                        return Ok(match decision {
-                            ApprovalDecision::Approved => allow(),
+                        return match decision {
+                            ApprovalDecision::Approved => Ok(allow()),
                             ApprovalDecision::Denied => deny(note.as_deref().unwrap_or("denied")),
-                        });
+                        };
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(deny("runtime shutting down")),
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(refuse("runtime shutting down")),
             },
-            _ = cancel.cancelled() => return Ok(deny("cancelled")),
+            _ = cancel.cancelled() => {
+                if let Some(a) = runtime.store.approval(approval.id)?
+                    && let ApprovalStatus::Resolved { decision: ApprovalDecision::Denied, note, .. } = a.status
+                {
+                    return deny(note.as_deref().unwrap_or("denied by the operator"));
+                }
+                return Ok(refuse("cancelled"));
+            },
         }
     }
 }

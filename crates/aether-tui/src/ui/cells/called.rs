@@ -123,7 +123,7 @@ fn verb(status: CallStatus, (doing, done, bare): Forms) -> String {
         CallStatus::Succeeded => done.to_owned(),
         CallStatus::Failed => format!("Failed to {bare}"),
         CallStatus::Denied => format!("Not allowed to {bare}"),
-        CallStatus::Cancelled => format!("Cancelled {}", doing.to_lowercase()),
+        CallStatus::Cancelled => format!("Interrupted {}", doing.to_lowercase()),
     }
 }
 
