@@ -26,6 +26,11 @@ release is also the text of its GitHub release.
   adapter's stop still shows its reason and reads as an interruption, not a
   cancel or a provider error. Text sent after a wait or a finish is shown
   after it and never changes the wait or the task's result.
+- **An API reply cut short by a budget or deadline no longer shows twice.**
+  The stop drew the half-written reply, then the copy kept for the next turn
+  drew it again. Words still arriving when it stopped are shown once, after
+  it. A Claude Code or Codex message that completes the cut reply is still
+  shown.
 
 ## 1.0.6
 
