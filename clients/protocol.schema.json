@@ -3236,6 +3236,50 @@
           "type": "object"
         },
         {
+          "description": "Accept a pending proposal and apply its deferred replacement. Needs `memory_proposals`.",
+          "properties": {
+            "cmd": {
+              "const": "accept_memory",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/MemoryId"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reject a pending proposal with an explanation. Needs `memory_proposals`.",
+          "properties": {
+            "cmd": {
+              "const": "reject_memory",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/MemoryId"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Curate a memory out. The record stays; it is never retrieved again.",
           "properties": {
             "cmd": {
@@ -6324,6 +6368,12 @@
             "memory": {
               "$ref": "#/$defs/MemoryId"
             },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "const": "memory.accepted",
               "type": "string"
@@ -6419,6 +6469,12 @@
             },
             "old": {
               "$ref": "#/$defs/MemoryId"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "const": "memory.superseded",
@@ -8785,6 +8841,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "proposed": {
+          "description": "Select pending proposals instead of admitted memories. Needs `memory_proposals`.",
+          "type": "boolean"
+        },
         "provenance_agent": {
           "anyOf": [
             {
@@ -8836,6 +8896,13 @@
     "MemoryRecord": {
       "description": "A stored memory.",
       "properties": {
+        "accepted_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "confidence": {
           "format": "float",
           "type": "number"
@@ -8873,6 +8940,14 @@
           "default": false,
           "description": "Kept in front of the model: a pinned memory outranks the rest.",
           "type": "boolean"
+        },
+        "proposed_at": {
+          "description": "When review was requested; the proposer is the authenticated provenance actor.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "provenance": {
           "$ref": "#/$defs/MemoryProvenance"
@@ -9580,6 +9655,10 @@
         },
         "kind": {
           "$ref": "#/$defs/MemoryKind"
+        },
+        "proposed": {
+          "description": "Store for operator review without making it available to recall.",
+          "type": "boolean"
         },
         "scope": {
           "$ref": "#/$defs/OperatorMemoryScope"

@@ -9,4 +9,5 @@ from .. import protocol as _protocol
 class EventKindMemorySuperseded(TypedDict, total=False):
     new: _protocol.MemoryId
     old: _protocol.MemoryId
+    reason: str | None  # optional
     type: Literal["memory.superseded"]

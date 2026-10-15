@@ -1,14 +1,20 @@
 use super::*;
 
 fn previous_database(path: &std::path::Path) -> Connection {
+    database_at(path, SCHEMA_VERSION - 1)
+}
+
+fn database_at(path: &std::path::Path, version: u32) -> Connection {
+    assert!(version > 0);
+    assert!(version < SCHEMA_VERSION);
     let conn = Connection::open(path).expect("database");
     conn.execute_batch("PRAGMA journal_mode=WAL;").expect("WAL");
-    for statement in &MIGRATIONS[..SCHEMA_VERSION as usize - 1] {
+    for statement in &MIGRATIONS[..version as usize] {
         conn.execute_batch(statement).expect("previous schema");
     }
     conn.execute(
         "INSERT INTO meta(key,value) VALUES ('schema_version',?1)",
-        [(SCHEMA_VERSION - 1).to_string()],
+        [version.to_string()],
     )
     .expect("version");
     conn
@@ -645,8 +651,8 @@ fn v20_adds_repository_aliases_to_a_populated_v19_store() {
     use aether_core::memory::{MemoryCandidate, MemoryKind, MemoryRecord, MemoryScope};
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("aether.db");
-    let v19 = previous_database(&path);
-    assert_eq!(SCHEMA_VERSION, 20, "this test pins the v19 to v20 step");
+    let v19 = database_at(&path, 19);
+    assert_eq!(version(&v19), 19);
     let scope = MemoryScope::Repository {
         id: "archon".into(),
     };
@@ -680,7 +686,7 @@ fn v20_adds_repository_aliases_to_a_populated_v19_store() {
 
     let store = crate::SqliteStore::open(&path).expect("upgrade");
     let stamp = crate::Store::meta(&store, "schema_version").expect("version");
-    assert_eq!(stamp, Some("20".to_string()));
+    assert_eq!(stamp, Some(SCHEMA_VERSION.to_string()));
     assert!(
         crate::Store::repository_aliases(&store)
             .expect("aliases")
@@ -703,7 +709,7 @@ fn v20_adds_repository_aliases_to_a_populated_v19_store() {
     assert!(
         backups
             .iter()
-            .any(|name| name.starts_with("schema-19-before-20-")),
+            .any(|name| name.starts_with(&format!("schema-19-before-{SCHEMA_VERSION}-"))),
         "{backups:?}"
     );
 
@@ -731,4 +737,85 @@ fn v20_adds_repository_aliases_to_a_populated_v19_store() {
             id: alias.canonical
         }
     );
+}
+
+fn insert_legacy_memory(conn: &Connection, record: &aether_core::memory::MemoryRecord) {
+    assert!(record.proposed_at.is_none());
+    assert!(record.accepted_at.is_none());
+    conn.execute(
+        "INSERT INTO memories(id, scope, kind, text, tags, importance, created_at, body, pinned, forgotten_at, superseded_by)
+         VALUES (?1, 'global', 'fact', ?2, '', ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![record.id.to_string(), record.text, record.importance,
+            record.created_at.to_rfc3339(), serde_json::to_string(record).unwrap(),
+            record.pinned, record.forgotten_at.map(|at| at.to_rfc3339()),
+            record.superseded_by.map(|id| id.to_string())],
+    ).expect("legacy memory");
+}
+
+#[test]
+fn v21_migrates_populated_v20_and_excludes_new_proposals_from_default_queries() {
+    use crate::{Commit, MemoryQuery, Mutation, Store};
+    use aether_core::{
+        id::MemoryId,
+        memory::{MemoryRecord, MemoryScope},
+        time::now,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let v20 = database_at(&path, 20);
+    assert_eq!(version(&v20), 20);
+    let mut legacy: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    legacy.scope = MemoryScope::Global;
+    let mut records = Vec::new();
+    for state in ["active", "pinned", "forgotten", "superseded"] {
+        let mut record = legacy.clone();
+        record.id = MemoryId::new();
+        record.pinned = state == "pinned";
+        record.forgotten_at = (state == "forgotten").then(now);
+        record.superseded_by = (state == "superseded").then(MemoryId::new);
+        insert_legacy_memory(&v20, &record);
+        records.push(record);
+    }
+    drop(v20);
+    let store = crate::SqliteStore::open(&path).unwrap();
+    assert_eq!(store.meta("schema_version").unwrap(), Some("21".into()));
+    for record in &records {
+        assert_eq!(store.memory(record.id).unwrap().as_ref(), Some(record));
+    }
+    assert_eq!(store.memories(&MemoryQuery::default()).unwrap().len(), 2);
+    let mut proposal = legacy;
+    proposal.id = MemoryId::new();
+    proposal.proposed_at = Some(now());
+    store
+        .commit(Commit::new().mutate(Mutation::PutMemory(proposal.clone())))
+        .unwrap();
+    assert_eq!(store.memories(&MemoryQuery::default()).unwrap().len(), 2);
+    assert_eq!(
+        store
+            .memories(&MemoryQuery {
+                proposed: true,
+                ..Default::default()
+            })
+            .unwrap(),
+        vec![proposal]
+    );
+    let conn = Connection::open(&path).unwrap();
+    assert_v20_refuses_proposals(&conn);
+    let projection = conn
+        .query_row("SELECT count(*), sum(proposed) FROM memories", [], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
+        .unwrap();
+    assert_eq!(projection, (5, 1));
+}
+
+fn assert_v20_refuses_proposals(conn: &Connection) {
+    assert_eq!(version(conn), 21);
+    assert!(matches!(
+        refuse_newer_store(current_version(conn).unwrap(), 20),
+        Err(StoreError::SchemaTooNew {
+            found: 21,
+            supported: 20
+        })
+    ));
 }

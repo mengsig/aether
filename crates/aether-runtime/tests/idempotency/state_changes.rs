@@ -19,6 +19,7 @@ fn memory_spec(agent: AgentId) -> OperatorMemorySpec {
         confidence: None,
         tags: vec![],
         supersedes: None,
+        proposed: false,
     }
 }
 

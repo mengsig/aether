@@ -4,6 +4,29 @@ use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum MemoryCmd {
+    /// Record an operator memory, optionally awaiting review.
+    Add {
+        #[command(flatten)]
+        memory: cli::MemoryAddArgs,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Accept a proposed memory and apply its deferred replacement.
+    Accept {
+        id: String,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reject a proposed memory with an explanation.
+    Reject {
+        id: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// List durable memories, most important first.
     List {
         /// Only this scope: `global`, `role:<role>`, `agent:<id>`,
@@ -24,6 +47,9 @@ pub(crate) enum MemoryCmd {
         /// Include superseded and forgotten memories.
         #[arg(long)]
         all: bool,
+        /// Show pending proposals instead of admitted memories; --all includes rejected ones.
+        #[arg(long)]
+        proposed: bool,
         #[arg(long, default_value_t = 40)]
         limit: usize,
         #[arg(long)]

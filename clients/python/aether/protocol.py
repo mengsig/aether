@@ -13,6 +13,10 @@ MIN_PROTOCOL_VERSION = 17
 
 from ._protocol_types import *
 
+from ._protocol_commands.accept import (
+    accept_memory,
+)
+
 from ._protocol_commands.add import (
     add_approval_rule,
 )
@@ -157,6 +161,10 @@ from ._protocol_commands.publish import (
 
 from ._protocol_commands.read import (
     read_artifact,
+)
+
+from ._protocol_commands.reject import (
+    reject_memory,
 )
 
 from ._protocol_commands.replay import (

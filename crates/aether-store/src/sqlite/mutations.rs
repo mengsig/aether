@@ -198,28 +198,7 @@ impl SqliteStore {
                     ],
                 )?;
             }
-            Mutation::PutMemory(mem) => {
-                tx.execute(
-                    "INSERT INTO memories(id, scope, kind, text, tags, importance, superseded_by, created_at, body, pinned, forgotten_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                     ON CONFLICT(id) DO UPDATE SET text = excluded.text, tags = excluded.tags,
-                       importance = excluded.importance, superseded_by = excluded.superseded_by, body = excluded.body,
-                       pinned = excluded.pinned, forgotten_at = excluded.forgotten_at",
-                    params![
-                        mem.id.to_string(),
-                        scope_key(&mem.scope),
-                        serde_json::to_value(mem.kind)?.as_str().unwrap_or("fact").to_owned(),
-                        mem.text,
-                        mem.tags.join(" "),
-                        mem.importance as f64,
-                        mem.superseded_by.map(|m| m.to_string()),
-                        mem.created_at.to_rfc3339(),
-                        serde_json::to_string(&mem)?,
-                        mem.pinned as i64,
-                        mem.forgotten_at.map(|t| t.to_rfc3339()),
-                    ],
-                )?;
-            }
+            Mutation::PutMemory(mem) => put_memory(tx, &mem)?,
             Mutation::PutArtifact(art) => {
                 tx.execute(
                     "INSERT OR REPLACE INTO artifacts(id, agent_id, task_id, created_at, digest, evicted, body)
@@ -263,4 +242,28 @@ impl SqliteStore {
         }
         Ok(())
     }
+}
+
+fn put_memory(tx: &Transaction<'_>, mem: &aether_core::memory::MemoryRecord) -> Result<()> {
+    debug_assert!(mem.accepted_at.is_none() || mem.proposed_at.is_some());
+    debug_assert!(!mem.is_proposed() || mem.superseded_by.is_none());
+    let kind = serde_json::to_value(mem.kind)?;
+    let kind = kind
+        .as_str()
+        .ok_or_else(|| StoreError::Corrupt("MemoryKind is not a string".into()))?;
+    let written = tx.execute(
+        "INSERT INTO memories(id, scope, kind, text, tags, importance, superseded_by, created_at, body, pinned, forgotten_at, proposed)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         ON CONFLICT(id) DO UPDATE SET text = excluded.text, tags = excluded.tags,
+           importance = excluded.importance, superseded_by = excluded.superseded_by, body = excluded.body,
+           pinned = excluded.pinned, forgotten_at = excluded.forgotten_at, proposed = excluded.proposed",
+        params![
+            mem.id.to_string(), scope_key(&mem.scope), kind, mem.text, mem.tags.join(" "),
+            mem.importance as f64, mem.superseded_by.map(|m| m.to_string()),
+            mem.created_at.to_rfc3339(), serde_json::to_string(mem)?, mem.pinned as i64,
+            mem.forgotten_at.map(|t| t.to_rfc3339()), mem.is_proposed(),
+        ],
+    )?;
+    debug_assert_eq!(written, 1);
+    Ok(())
 }

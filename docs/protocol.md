@@ -121,6 +121,10 @@ sending the field: an older daemon ignores it and files the agent's memory
 under its workspace's repository instead. The Rust client refuses such a
 create itself.
 
+`memory_proposals` means operator memories can await review before recall; see
+[memory proposals](#memory-proposals). Check it before proposing, filtering or
+reviewing proposals. The Rust client refuses these requests to older daemons.
+
 `repository_aliases` means the daemon serves `alias_repository` and
 `list_repository_aliases` (see [repository aliases](#repository-aliases)). An
 older daemon refuses both commands as unknown; the Rust client refuses to send
@@ -419,3 +423,81 @@ No Welcome feature flag is needed: this is optional response metadata. Older
 daemons omit it, and clients must keep an absent reason unknown. Generated
 Python and TypeScript clients list the known reason strings; Rust readers map
 unrecognized strings to `unknown`.
+
+## Memory proposals
+
+Check `Welcome.features` for `memory_proposals` before sending these fields or
+commands. `create_memory` with `spec.proposed: true` stores an operator lesson
+for review. Admission policy, duplicate detection and scope validation still
+apply. It records `proposed_at` and the authenticated proposer in
+`provenance.actor`. A proposal is never recalled, rendered in context, indexed,
+or counted as an existing active memory by admission or repository seeding.
+Agent `remember` behavior is unchanged.
+
+```json
+{"cmd":"create_memory","spec":{"text":"Run the release verification script before publishing","kind":"lesson","scope":{"scope":"global"},"proposed":true,"supersedes":"mem_..."}}
+{"cmd":"memories","query":{"proposed":true,"limit":50}}
+{"cmd":"accept_memory","id":"mem_...","reason":"Confirmed by three successful releases"}
+{"cmd":"reject_memory","id":"mem_...","reason":"Not enough supporting evidence"}
+```
+
+`supersedes` is allowed when proposing. The old memory stays active until
+acceptance. Acceptance sets `accepted_at`, preserves `proposed_at`, and applies
+the replacement atomically. `reason` is optional on acceptance and is also
+recorded on `memory.superseded`. If the target was forgotten or superseded
+meanwhile, acceptance fails with `invalid_argument` and changes nothing;
+reject the stale proposal and submit a replacement against the current record.
+Acceptance also refuses an active memory with the same text in the canonical
+scope, except the predecessor being replaced. The error names that memory id
+and leaves records and events unchanged.
+Accepting an already accepted, still-current proposal returns the same record
+without another write or event. Missing ids return `not_found`; ordinary
+memories, rejected/forgotten proposals and subsequently superseded accepted
+proposals cannot be accepted.
+
+Rejection requires a nonblank reason. It sets `forgotten_at`, keeps the record
+and emits `memory.proposal_rejected` and `memory.forgotten`. Repeated rejection
+of a forgotten pending proposal returns it unchanged without more events.
+Accepted or ordinary memories cannot be rejected. `forget_memory` also curates
+a pending proposal out. `restore_memory` clears that curation and emits the
+usual `memory.restored`; the proposal still awaits acceptance and remains out
+of recall. Pinning never bypasses review.
+
+Creation emits `memory.candidate` and a `custom` event named `memory.proposed`.
+Its payload is `{"memory":"mem_...","scope":{"scope":"global"},"tags":["build"]}`,
+with the canonical scope serialized as on the memory record and an optional
+`"supersedes":"mem_..."` omitted when no predecessor exists. The authenticated
+actor is on the event envelope.
+Acceptance emits `memory.accepted` with an optional reason, plus
+`memory.superseded` when replacing a record. `memory.proposal_rejected` is
+also a `custom` event name. These existing event shapes keep older subscribers
+able to decode the stream.
+Curation reasons and authenticated actors remain in the durable event log.
+`memories` excludes pending proposals by default, even with
+`include_forgotten` or `include_superseded`. Set `proposed: true` to select
+pending proposals instead; add `include_forgotten: true` for rejected ones.
+Accepted proposals appear with ordinary active memories.
+
+Proposed creation, proposal listing, acceptance and rejection are host-only
+commands, served on the operator socket or authenticated shared-token
+transport. Paired devices cannot issue them. Agents have no proposal review
+MCP tools, and runtime review methods reject agent actors. Older clients keep
+their existing behavior. Schema version 21 adds an indexed proposal flag;
+existing v20 memories retain their state and an older binary refuses the new
+store.
+
+The CLI uses the same workflow:
+
+```sh
+aether memory add 'Run the release verification script before publishing' --kind lesson --proposed --supersedes mem_...
+aether memory list --proposed
+aether memory accept mem_... --reason 'Confirmed by three successful releases'
+aether memory reject mem_... --reason 'Not enough evidence'
+aether memory list --proposed --all
+```
+
+`add --scope` accepts `global` (the default), `agent:<id>`, `role:<role>`,
+`repo-role:<role>@<repository>`, or a repository id. `--root` instead derives
+the repository from a checkout. `memory show <id>` explicitly finds proposals
+as well as admitted records and marks them `proposed` or `rejected`.
+`memory list --all` alone never includes pending proposals.

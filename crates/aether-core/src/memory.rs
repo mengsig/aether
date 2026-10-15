@@ -185,6 +185,9 @@ pub struct OperatorMemorySpec {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supersedes: Option<MemoryId>,
+    /// Store for operator review without making it available to recall.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub proposed: bool,
 }
 
 /// What one pass of reading a repository's committed notes did.
@@ -251,6 +254,11 @@ pub struct MemoryRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_by: Option<MemoryId>,
     pub created_at: Timestamp,
+    /// When review was requested; the proposer is the authenticated provenance actor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_retrieved_at: Option<Timestamp>,
     #[serde(default)]
@@ -299,6 +307,8 @@ impl MemoryRecord {
             supersedes: candidate.supersedes,
             superseded_by: None,
             created_at: at,
+            proposed_at: None,
+            accepted_at: None,
             last_retrieved_at: None,
             retrieval_count: 0,
             pinned: false,
@@ -307,9 +317,13 @@ impl MemoryRecord {
         }
     }
 
-    /// Still in play: not replaced by a newer record and not forgotten.
+    pub fn is_proposed(&self) -> bool {
+        self.proposed_at.is_some() && self.accepted_at.is_none()
+    }
+
+    /// Available to recall: accepted, not replaced and not forgotten.
     pub fn is_current(&self) -> bool {
-        self.superseded_by.is_none() && self.forgotten_at.is_none()
+        !self.is_proposed() && self.superseded_by.is_none() && self.forgotten_at.is_none()
     }
 }
 
@@ -506,5 +520,34 @@ mod tests {
         ] {
             assert!(!is_role_family(bad), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod proposal_tests {
+    use super::*;
+
+    #[test]
+    fn proposal_state_is_preserved_in_records_and_excluded_from_current_memories() {
+        let wire = serde_json::json!({"id":"mem_01ARZ3NDEKTSV4RRFFQ69G5FAV", "kind":"lesson",
+            "scope":{"scope":"global"}, "text":"A durable build lesson", "importance":0.7,
+            "confidence":0.9, "provenance":{}, "created_at":"2026-10-15T00:00:00Z"});
+        let mut record: MemoryRecord = serde_json::from_value(wire).unwrap();
+        assert!(record.is_current());
+        assert!(!record.is_proposed());
+        record.proposed_at = Some(record.created_at);
+        assert!(record.is_proposed());
+        assert!(!record.is_current());
+        assert_eq!(
+            serde_json::from_str::<MemoryRecord>(&serde_json::to_string(&record).unwrap()).unwrap(),
+            record
+        );
+        record.forgotten_at = Some(record.created_at);
+        assert!(record.is_proposed());
+        assert!(!record.is_current());
+        record.forgotten_at = None;
+        record.accepted_at = Some(record.created_at);
+        assert!(!record.is_proposed());
+        assert!(record.is_current());
     }
 }

@@ -2,6 +2,7 @@
 // Do not edit: change the Rust types and regenerate.
 
 import type {
+  AcceptMemoryCommand,
   AddApprovalRuleCommand,
   AliasRepositoryCommand,
   ArchiveCommand,
@@ -64,6 +65,7 @@ import type {
   ProvidersCommand,
   PublishArtifactCommand,
   ReadArtifactCommand,
+  RejectMemoryCommand,
   ReplayCommand,
   ReplyToQuestionCommand,
   ResolveApprovalCommand,
@@ -94,6 +96,7 @@ import type {
 } from "../../protocol.ts";
 
 export type Command =
+  | AcceptMemoryCommand
   | AddApprovalRuleCommand
   | AliasRepositoryCommand
   | ArchiveCommand
@@ -156,6 +159,7 @@ export type Command =
   | ProvidersCommand
   | PublishArtifactCommand
   | ReadArtifactCommand
+  | RejectMemoryCommand
   | ReplayCommand
   | ReplyToQuestionCommand
   | ResolveApprovalCommand

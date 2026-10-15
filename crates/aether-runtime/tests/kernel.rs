@@ -181,6 +181,8 @@ mod held_waits;
 mod lease_reads;
 #[path = "kernel/leases.rs"]
 mod leases;
+#[path = "kernel/memory_proposals.rs"]
+mod memory_proposals;
 #[path = "kernel/memory_scope.rs"]
 mod memory_scope;
 #[path = "kernel/memory_support.rs"]

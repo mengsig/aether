@@ -12,6 +12,7 @@ impl App {
             text: None,
             include_superseded: true,
             include_forgotten: true,
+            proposed: false,
             id: None,
             limit: 200,
         }
@@ -55,6 +56,7 @@ impl App {
                     confidence: None,
                     tags: Vec::new(),
                     supersedes: None,
+                    proposed: false,
                 },
                 idempotency_key: None,
             },

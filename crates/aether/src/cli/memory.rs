@@ -55,6 +55,7 @@ pub struct MemoryFilter {
     pub recorded_by: Option<aether_core::memory::MemoryRecorder>,
     /// Include superseded and forgotten memories.
     pub all: bool,
+    pub proposed: bool,
     pub limit: usize,
 }
 
@@ -79,6 +80,7 @@ fn memory_query(filter: MemoryFilter) -> anyhow::Result<MemoryQuerySpec> {
         text: filter.text,
         include_superseded: filter.all,
         include_forgotten: filter.all,
+        proposed: filter.proposed,
         id: None,
         limit: filter.limit,
     })
@@ -86,6 +88,13 @@ fn memory_query(filter: MemoryFilter) -> anyhow::Result<MemoryQuerySpec> {
 
 /// One word for where a memory stands, which is what a person scans for.
 fn memory_state(m: &aether_core::memory::MemoryRecord) -> &'static str {
+    if m.is_proposed() {
+        return if m.forgotten_at.is_some() {
+            "rejected"
+        } else {
+            "proposed"
+        };
+    }
     match (
         m.forgotten_at.is_some(),
         m.superseded_by.is_some(),
@@ -149,7 +158,8 @@ pub async fn memory_list(
     let unfiltered = filter.scope.is_none()
         && filter.text.is_none()
         && filter.tag.is_empty()
-        && filter.recorded_by.is_none();
+        && filter.recorded_by.is_none()
+        && !filter.proposed;
     let all = filter.all;
     let query = memory_query(filter)?;
     let client = connect(&socket).await?;
@@ -190,6 +200,54 @@ pub async fn memory_list(
     Ok(())
 }
 
+async fn find_memory(
+    client: &aether_client::Client,
+    id: aether_core::id::MemoryId,
+) -> anyhow::Result<aether_core::memory::MemoryRecord> {
+    let mut query = memory_query(MemoryFilter {
+        scope: None,
+        text: None,
+        tag: Vec::new(),
+        recorded_by: None,
+        all: true,
+        proposed: false,
+        limit: 1,
+    })?;
+    query.id = Some(id);
+    let mut records = client.memories(query.clone()).await?;
+    if records.is_empty()
+        && client.welcome().is_some_and(|welcome| {
+            welcome
+                .features
+                .iter()
+                .any(|feature| feature == aether_protocol::features::MEMORY_PROPOSALS)
+        })
+    {
+        query.proposed = true;
+        records = match client.memories(query).await {
+            Ok(records) => records,
+            Err(aether_client::ClientError::Protocol(error))
+                if error.code == aether_protocol::ErrorCode::Forbidden =>
+            {
+                return Err(anyhow::anyhow!("no memory {id}"));
+            }
+            Err(error) => return Err(error.into()),
+        };
+    }
+    anyhow::ensure!(
+        records.len() <= 1,
+        "daemon returned several memories for {id}"
+    );
+    let record = records
+        .pop()
+        .ok_or_else(|| anyhow::anyhow!("no memory {id}"))?;
+    anyhow::ensure!(
+        record.id == id,
+        "daemon returned a different memory for {id}"
+    );
+    Ok(record)
+}
+
 pub async fn memory_show(
     socket: impl Into<aether_client::Endpoint>,
     id: String,
@@ -198,19 +256,7 @@ pub async fn memory_show(
     let socket = socket.into();
     let client = connect(&socket).await?;
     let id: aether_core::id::MemoryId = id.parse().context("invalid memory id")?;
-    let one = |list: Vec<aether_core::memory::MemoryRecord>| list.into_iter().next();
-    let everything = MemoryFilter {
-        scope: None,
-        text: None,
-        tag: Vec::new(),
-        recorded_by: None,
-        all: true,
-        limit: 1,
-    };
-    let mut query = memory_query(everything)?;
-    query.id = Some(id);
-    let record =
-        one(client.memories(query).await?).ok_or_else(|| anyhow::anyhow!("no memory {id}"))?;
+    let record = find_memory(&client, id).await?;
     if json {
         println!("{}", serde_json::to_string(&record)?);
         return Ok(());
@@ -239,21 +285,7 @@ pub async fn memory_show(
             .map(|t| format!(", last {}", t.to_rfc3339()))
             .unwrap_or_default()
     );
-    if let Some(source) = &record.provenance.source {
-        println!(
-            "from {}{}",
-            super::sane(&source.file),
-            source
-                .commit
-                .as_deref()
-                .map(|c| format!(" at commit {}", super::sane(c)))
-                .unwrap_or_default()
-        );
-    }
-    let origin = memory_origin(&record.provenance);
-    if !origin.is_empty() {
-        println!("provenance {}", super::sane(&origin.join(" · ")));
-    }
+    print_memory_provenance(&record.provenance);
     for (label, id) in [
         ("supersedes", record.supersedes),
         ("superseded by", record.superseded_by),
@@ -266,6 +298,24 @@ pub async fn memory_show(
         println!("forgotten {}", at.to_rfc3339());
     }
     Ok(())
+}
+
+fn print_memory_provenance(provenance: &aether_core::memory::MemoryProvenance) {
+    if let Some(source) = &provenance.source {
+        println!(
+            "from {}{}",
+            super::sane(&source.file),
+            source
+                .commit
+                .as_deref()
+                .map(|c| format!(" at commit {}", super::sane(c)))
+                .unwrap_or_default()
+        );
+    }
+    let origin = memory_origin(provenance);
+    if !origin.is_empty() {
+        println!("provenance {}", super::sane(&origin.join(" · ")));
+    }
 }
 
 pub async fn memory_forget(
@@ -298,7 +348,11 @@ pub async fn memory_restore(
     if json {
         println!("{}", serde_json::to_string(&record)?);
     } else {
-        println!("restored {id}; it is retrievable again");
+        if record.is_proposed() {
+            println!("restored {id}; it awaits acceptance before recall");
+        } else {
+            println!("restored {id}; it is retrievable again");
+        }
     }
     Ok(())
 }

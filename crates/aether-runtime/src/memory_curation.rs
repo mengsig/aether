@@ -27,22 +27,27 @@ impl Runtime {
         by: Actor,
         submission: Option<aether_core::idempotency::Submission>,
     ) -> Result<MemoryRecord> {
-        if let Some(hold) = self.hold_for(submission.as_ref())
-            && let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())?
-        {
-            return Ok(receipt);
-        }
         if !matches!(by, Actor::User { .. }) {
             return Err(RuntimeError::Invalid(
                 "only an operator can create operator memories".into(),
             ));
         }
+        if let Some(hold) = self.hold_for(submission.as_ref())
+            && let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())?
+        {
+            return Ok(receipt);
+        }
+        let proposed = spec.proposed;
         let candidate = self.operator_candidate(spec, by.clone())?;
+        debug_assert_eq!(candidate.provenance.actor.as_ref(), Some(&by));
+        debug_assert!(!candidate.text.trim().is_empty());
         let hold = self.hold();
         if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
             return Ok(receipt);
         }
-        let (admission, commit) = self.memory.evaluate_operator(&hold, candidate, by)?;
+        let (admission, commit) = self
+            .memory
+            .evaluate_operator(&hold, candidate, by, proposed)?;
         let record = match admission {
             Admission::Accepted { record } | Admission::Superseded { record, .. } => record,
             Admission::Rejected { reason } => {
@@ -179,6 +184,19 @@ impl Runtime {
             Ok(self.store.memories(&query)?)
         };
         Ok(self.memory.read_resolved(query.scope.clone(), read)?)
+    }
+
+    pub fn accept_memory(
+        &self,
+        id: MemoryId,
+        reason: Option<String>,
+        by: Actor,
+    ) -> Result<MemoryRecord> {
+        Ok(self.memory.accept(id, reason, by)?)
+    }
+
+    pub fn reject_memory(&self, id: MemoryId, reason: String, by: Actor) -> Result<MemoryRecord> {
+        Ok(self.memory.reject(id, reason, by)?)
     }
 
     /// Curate a memory out. The record stays; it is never retrieved again.

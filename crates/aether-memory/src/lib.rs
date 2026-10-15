@@ -24,6 +24,8 @@ use aether_store::{Commit, Hold, MemoryQuery, Mutation, Store, StoreError, Write
 pub enum MemoryError {
     #[error(transparent)]
     Store(#[from] StoreError),
+    #[error("{0}")]
+    Invalid(String),
     #[error("memory {0} not found")]
     NotFound(MemoryId),
     #[error("repository knowledge: {0}")]
@@ -162,118 +164,6 @@ impl MemoryService {
         self
     }
 
-    /// Evaluate a candidate and build the commit that records the decision.
-    /// Nothing is written; the caller commits, under the same hold - the
-    /// record this marks superseded is read here and written there.
-    pub fn evaluate(
-        &self,
-        hold: &Hold<'_>,
-        candidate: MemoryCandidate,
-        actor: Actor,
-        agent: Option<AgentId>,
-        task: Option<TaskId>,
-    ) -> Result<(Admission, Commit)> {
-        self.evaluate_batch(hold, candidate, actor, agent, task, &BTreeSet::new())
-    }
-
-    /// Evaluate against durable records and replacements already selected in this commit.
-    #[allow(clippy::too_many_arguments)]
-    pub fn evaluate_batch(
-        &self,
-        _hold: &Hold<'_>,
-        candidate: MemoryCandidate,
-        actor: Actor,
-        agent: Option<AgentId>,
-        task: Option<TaskId>,
-        superseded: &BTreeSet<MemoryId>,
-    ) -> Result<(Admission, Commit)> {
-        let candidate = MemoryCandidate {
-            scope: self.canonical_scope(candidate.scope)?,
-            ..candidate
-        };
-        let at = now();
-        let mut commit = Commit::new();
-        let base = |kind: EventKind| {
-            let mut d = EventDraft::new(actor.clone(), kind);
-            d.agent_id = agent;
-            d.task_id = task;
-            d
-        };
-        // The event row is durable and unretractable, so the length cap
-        // applies to what is recorded, not only to what is admitted: one long
-        // line in a committed file is otherwise an unbounded event.
-        commit.push_event(base(EventKind::MemoryCandidate {
-            candidate: self.bounded(&candidate),
-        }));
-
-        if let Some(reason) = self.reject_reason(&candidate) {
-            commit.push_event(base(EventKind::MemoryRejected {
-                reason: reason.clone(),
-            }));
-            return Ok((Admission::Rejected { reason }, commit));
-        }
-
-        // Explicit supersession wins; otherwise look for a duplicate.
-        let old = match candidate.supersedes {
-            Some(id) => Some(self.store.memory(id)?.ok_or(MemoryError::NotFound(id))?),
-            None => self.find_duplicate(&candidate)?,
-        };
-        if let Some(old) = &old
-            && let Some(reason) = if superseded.contains(&old.id) {
-                Some(format!(
-                    "memory {} is already superseded in this batch",
-                    old.id
-                ))
-            } else {
-                self.supersession_refused(old, &candidate.scope, &actor)
-            }
-        {
-            commit.push_event(base(EventKind::MemoryRejected {
-                reason: reason.clone(),
-            }));
-            return Ok((Admission::Rejected { reason }, commit));
-        }
-
-        if let Some(old) = &old
-            && candidate.supersedes.is_none()
-            && candidate.importance <= old.importance
-            && candidate.confidence <= old.confidence
-        {
-            let reason = format!("redundant with existing memory {}", old.id);
-            commit.push_event(base(EventKind::MemoryRejected {
-                reason: reason.clone(),
-            }));
-            return Ok((Admission::Rejected { reason }, commit));
-        }
-
-        let mut candidate = candidate;
-        if let Some(old) = &old {
-            candidate.supersedes = Some(old.id);
-        }
-        let record = MemoryRecord::from_candidate(candidate, at);
-        commit.push_mutation(Mutation::PutMemory(record.clone()));
-        commit.push_event(base(EventKind::MemoryAccepted { memory: record.id }));
-
-        match old {
-            Some(mut old) => {
-                old.superseded_by = Some(record.id);
-                commit.push_mutation(Mutation::PutMemory(old.clone()));
-                commit.push_event(base(EventKind::MemorySuperseded {
-                    old: old.id,
-                    new: record.id,
-                }));
-                Ok((
-                    Admission::Superseded {
-                        record,
-                        old: old.id,
-                    },
-                    commit,
-                ))
-            }
-            None => Ok((Admission::Accepted { record }, commit)),
-        }
-    }
-
     /// `scope` with its repository resolved through the registered aliases,
     /// so whoever still names an old repository reads and writes the scope its
     /// memories were moved to. Every other scope comes back as it went in.
@@ -316,22 +206,6 @@ impl MemoryService {
         read(again)
     }
 
-    /// Evaluate operator content under the caller's hold. Rejections have no commit.
-    pub fn evaluate_operator(
-        &self,
-        hold: &Hold<'_>,
-        candidate: MemoryCandidate,
-        actor: Actor,
-    ) -> Result<(Admission, Commit)> {
-        let (admission, commit) = self.evaluate(hold, candidate, actor, None, None)?;
-        let commit = if admission.record().is_some() {
-            commit
-        } else {
-            Commit::new()
-        };
-        Ok((admission, commit))
-    }
-
     /// Evaluate and commit, taking the hold itself. For a caller that has no
     /// commit of its own to fold the decision into.
     pub fn admit(
@@ -355,7 +229,9 @@ impl MemoryService {
 
     /// Index only after committing: the index must never expose an uncommitted record.
     pub fn index_committed(&self, record: &MemoryRecord) -> Result<()> {
-        if let Some(index) = &self.index {
+        if record.is_current()
+            && let Some(index) = &self.index
+        {
             index.index(record)?;
         }
         Ok(())
@@ -456,18 +332,24 @@ impl MemoryService {
 
     /// A changed word, number, path, case or punctuation mark may be a changed
     /// requirement, so only the same text, trimmed, can duplicate a memory.
-    fn find_duplicate(&self, c: &MemoryCandidate) -> Result<Option<MemoryRecord>> {
+    fn find_duplicate(
+        &self,
+        scope: &MemoryScope,
+        text: &str,
+        exclude: Option<MemoryId>,
+    ) -> Result<Option<MemoryRecord>> {
         let existing = self.store.memories(&MemoryQuery {
-            scope: Some(c.scope.clone()),
+            scope: Some(scope.clone()),
             exact_scope: true,
-            text: Some(c.text.clone()),
+            text: Some(text.into()),
             limit: 10,
             ..Default::default()
         })?;
-        let text = c.text.trim();
-        let candidate_tokens = tokens(&c.text);
+        let text = text.trim();
+        let candidate_tokens = tokens(text);
         let best = existing
             .into_iter()
+            .filter(|m| Some(m.id) != exclude)
             .filter(|m| m.text.trim() == text)
             .map(|m| {
                 let sim = jaccard(&candidate_tokens, &tokens(&m.text));
@@ -476,7 +358,7 @@ impl MemoryService {
             .filter(|(sim, _)| *sim >= self.policy.duplicate_threshold)
             .max_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, m)| m);
-        debug_assert!(best.as_ref().is_none_or(|m| m.scope == c.scope));
+        debug_assert!(best.as_ref().is_none_or(|m| &m.scope == scope));
         debug_assert!(best.as_ref().is_none_or(MemoryRecord::is_current));
         Ok(best)
     }
@@ -506,7 +388,10 @@ impl MemoryService {
             record.retracted = None;
             (was, EventKind::MemoryRestored { memory: id })
         })?;
-        if changed && let Some(index) = &self.index {
+        if changed
+            && record.is_current()
+            && let Some(index) = &self.index
+        {
             index.index(&record)?;
         }
         Ok(record)
@@ -609,6 +494,8 @@ fn jaccard(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f32 {
     inter / union
 }
 
+mod admission;
+mod proposals;
 mod retrieval;
 mod seeding;
 
@@ -626,3 +513,15 @@ mod embedding_tests;
 
 #[cfg(test)]
 mod admission_tests;
+
+fn require_operator(actor: &Actor) -> Result<()> {
+    if !matches!(actor, Actor::User { .. }) {
+        return Err(MemoryError::Invalid(
+            "only an operator can review memory proposals".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod proposal_tests;

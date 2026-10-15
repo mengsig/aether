@@ -591,3 +591,38 @@ fn memory_metadata_preserves_representative_budget_capacity() {
         );
     }
 }
+
+#[test]
+fn proposal_recall_exclusion_is_enforced_during_context_assembly() {
+    let a = agent();
+    let c = caps();
+    let mut proposal = recorded_memory(Default::default());
+    proposal.proposed_at = Some(now());
+    proposal.pinned = true;
+    let mut input = inputs(&a, None, &[], &[], &c);
+    input.memories = std::slice::from_ref(&proposal);
+    let assembled = ContextManager::new().assemble(input);
+    assert!(assembled.snapshot.memory_ids.is_empty());
+    assert!(
+        !serde_json::to_string(&assembled.snapshot)
+            .unwrap()
+            .contains(&proposal.text)
+    );
+    assert!(
+        !assembled
+            .snapshot
+            .layers
+            .iter()
+            .any(|layer| layer.kind == LayerKind::RetrievedMemory && layer.text.is_some())
+    );
+    proposal.accepted_at = Some(now());
+    let mut input = inputs(&a, None, &[], &[], &c);
+    input.memories = std::slice::from_ref(&proposal);
+    let accepted = ContextManager::new().assemble(input);
+    assert_eq!(accepted.snapshot.memory_ids, vec![proposal.id]);
+    assert!(
+        serde_json::to_string(&accepted.snapshot)
+            .unwrap()
+            .contains(&proposal.text)
+    );
+}

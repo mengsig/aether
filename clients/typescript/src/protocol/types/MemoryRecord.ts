@@ -13,6 +13,7 @@ import type {
  * A stored memory.
  */
 export interface MemoryRecord {
+  "accepted_at"?: string | null;
   "confidence": number;
   "created_at": string;
   "forgotten_at"?: string | null;
@@ -21,6 +22,7 @@ export interface MemoryRecord {
   "kind": MemoryKind;
   "last_retrieved_at"?: string | null;
   "pinned"?: boolean;
+  "proposed_at"?: string | null;
   "provenance": MemoryProvenance;
   "retracted"?: Retraction | null;
   "retrieval_count"?: number;

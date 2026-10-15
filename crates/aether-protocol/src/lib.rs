@@ -171,6 +171,8 @@ pub mod features {
     /// The daemon serves `alias_repository` and `list_repository_aliases`, and
     /// resolves a registered alias wherever a repository becomes a memory scope.
     pub const REPOSITORY_ALIASES: &str = "repository_aliases";
+    /// Operator review of stored memories before they can enter recall.
+    pub const MEMORY_PROPOSALS: &str = "memory_proposals";
 }
 
 mod handshake;

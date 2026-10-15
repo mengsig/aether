@@ -8,8 +8,6 @@ import type {
 } from "../../protocol.ts";
 
 
-// Commands. Each builds one frame; the client adds the request id.
-
 export interface AddApprovalRuleCommand {
   "cmd": "add_approval_rule";
   "decision": ApprovalDecision;

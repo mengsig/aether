@@ -248,6 +248,9 @@ pub struct MemoryQuerySpec {
     /// a model sees ever does.
     #[serde(default)]
     pub include_forgotten: bool,
+    /// Select pending proposals instead of admitted memories. Needs `memory_proposals`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub proposed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<MemoryId>,
     #[serde(default = "default_limit")]
@@ -278,6 +281,7 @@ impl From<MemoryQuerySpec> for aether_store::MemoryQuery {
             exact_text: None,
             include_superseded: q.include_superseded,
             include_forgotten: q.include_forgotten,
+            proposed: q.proposed,
             id: q.id,
             limit: q.limit,
         }

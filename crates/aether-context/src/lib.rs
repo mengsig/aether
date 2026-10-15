@@ -169,30 +169,7 @@ impl ContextManager {
             u32::from(inputs.checkpoint.is_some()),
         );
 
-        // Memory is capped by its own budget: drop the lowest-ranked extras.
-        // What a repository's own files said is kept apart from what the
-        // agent and the operator put there - see `render::memory_layer`.
-        let mut memory_ids = Vec::new();
-        let memory_text = {
-            let (mut own, mut from_files) = (Vec::new(), Vec::new());
-            let mut text = None;
-            for record in inputs.memories {
-                let line = render::memory_line(record);
-                let from_file = record.provenance.source.is_some();
-                if from_file {
-                    from_files.push(line);
-                } else {
-                    own.push(line);
-                }
-                let candidate = render::memory_layer(&own, &from_files);
-                if est.text(&candidate) > budget.memory_max {
-                    break;
-                }
-                memory_ids.push(record.id);
-                text = Some(candidate);
-            }
-            text
-        };
+        let (memory_text, memory_ids) = memory_layer(inputs.memories, est, budget.memory_max);
         push_text(
             LayerKind::RetrievedMemory,
             memory_text,
@@ -348,6 +325,36 @@ pub fn build_request(snapshot: &InvocationSnapshot) -> ModelRequest {
     request.temperature = snapshot.params.temperature;
     request.extensions = snapshot.params.extensions.clone();
     request
+}
+
+fn memory_layer(
+    records: &[MemoryRecord],
+    estimator: &TokenEstimator,
+    maximum: u32,
+) -> (Option<String>, Vec<aether_core::id::MemoryId>) {
+    let (mut own, mut from_files) = (Vec::new(), Vec::new());
+    let mut memory_ids = Vec::new();
+    let mut text = None;
+    for record in records.iter().filter(|record| record.is_current()) {
+        let line = render::memory_line(record);
+        if record.provenance.source.is_some() {
+            from_files.push(line);
+        } else {
+            own.push(line);
+        }
+        let candidate = render::memory_layer(&own, &from_files);
+        if estimator.text(&candidate) > maximum {
+            break;
+        }
+        memory_ids.push(record.id);
+        text = Some(candidate);
+    }
+    debug_assert!(
+        text.as_ref()
+            .is_none_or(|text| estimator.text(text) <= maximum)
+    );
+    debug_assert_eq!(text.is_some(), !memory_ids.is_empty());
+    (text, memory_ids)
 }
 
 #[cfg(test)]

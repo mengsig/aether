@@ -63,6 +63,7 @@ struct Stub {
     delegated: bool,
     stream: bool,
     forgotten: bool,
+    proposed: bool,
     memory_provenance: Option<aether_core::memory::MemoryProvenance>,
     hostile_text: bool,
     event_count: Option<u64>,
@@ -79,6 +80,7 @@ impl Default for Stub {
             delegated: false,
             stream: false,
             forgotten: false,
+            proposed: false,
             memory_provenance: None,
             hostile_text: false,
             event_count: None,
@@ -399,6 +401,30 @@ async fn cli_with_socket(
                         nodes: [(a.id, node)].into(),
                     }))
                 }
+                Command::CreateMemory { spec, .. } => {
+                    assert!(spec.proposed);
+                    assert_eq!(spec.supersedes.map(|id| id.to_string()).as_deref(), Some(MEMORY));
+                    let mut record = memory();
+                    record.text = spec.text.clone();
+                    record.proposed_at = Some(AT.parse().unwrap());
+                    Ok(Reply::Memory(record))
+                }
+                Command::AcceptMemory { id, reason } => {
+                    assert_eq!(id.to_string(), MEMORY);
+                    assert_eq!(reason.as_deref(), Some("Verified by releases"));
+                    let mut record = memory();
+                    record.proposed_at = Some(AT.parse().unwrap());
+                    record.accepted_at = record.proposed_at;
+                    Ok(Reply::Memory(record))
+                }
+                Command::RejectMemory { id, reason } => {
+                    assert_eq!(id.to_string(), MEMORY);
+                    assert_eq!(reason, "Insufficient evidence");
+                    let mut record = memory();
+                    record.proposed_at = Some(AT.parse().unwrap());
+                    record.forgotten_at = record.proposed_at;
+                    Ok(Reply::Memory(record))
+                }
                 Command::Memories { query } => {
                     let mut m = memory();
                     if let Some(provenance) = &stub.memory_provenance {
@@ -417,7 +443,8 @@ async fn cli_with_socket(
                     if stub.forgotten {
                         m.forgotten_at = Some(AT.parse().unwrap());
                     }
-                    let matches = query.text.as_ref().is_none_or(|t| m.text.contains(t))
+                    m.proposed_at = stub.proposed.then(|| AT.parse().unwrap());
+                    let matches = query.proposed == stub.proposed && query.text.as_ref().is_none_or(|t| m.text.contains(t))
                         && query
                             .recorded_by
                             .is_none_or(|recorder| recorder.recorded(&m.provenance));
@@ -1692,3 +1719,90 @@ fn json_error_with_a_closed_stdout_pipe_returns_failure_without_panicking() {
     assert!(stderr(&output).contains("Error:"), "{}", stderr(&output));
     assert!(!stderr(&output).contains("panicked"), "{}", stderr(&output));
 }
+
+#[tokio::test]
+async fn memory_proposal_cli_checks_support_and_sends_review_commands() {
+    let supported = || Stub {
+        features: vec![aether_protocol::features::MEMORY_PROPOSALS.into()],
+        ..Default::default()
+    };
+    let commands = [
+        vec![
+            "memory",
+            "add",
+            "A durable release verification lesson",
+            "--proposed",
+            "--kind",
+            "lesson",
+            "--supersedes",
+            MEMORY,
+        ],
+        vec![
+            "memory",
+            "accept",
+            MEMORY,
+            "--reason",
+            "Verified by releases",
+        ],
+        vec![
+            "memory",
+            "reject",
+            MEMORY,
+            "--reason",
+            "Insufficient evidence",
+        ],
+    ];
+    for args in commands {
+        let old = cli(&args, Stub::default()).await;
+        assert_eq!(old.status.code(), Some(1));
+        assert!(
+            stderr(&old).contains("cannot review memory proposals"),
+            "{}",
+            stderr(&old)
+        );
+        let current = cli(&args, supported()).await;
+        assert!(current.status.success(), "{}", stderr(&current));
+        assert!(stdout(&current).contains(MEMORY));
+    }
+}
+
+#[tokio::test]
+async fn memory_proposal_cli_lists_only_with_explicit_filter_and_marks_state() {
+    let pending = || Stub {
+        proposed: true,
+        features: vec![aether_protocol::features::MEMORY_PROPOSALS.into()],
+        ..Default::default()
+    };
+    let ordinary = cli(&["memory", "list", "--all"], pending()).await;
+    assert!(ordinary.status.success(), "{}", stderr(&ordinary));
+    assert!(!stdout(&ordinary).contains(MEMORY));
+    let listed = cli(&["memory", "list", "--proposed"], pending()).await;
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    assert!(stdout(&listed).contains("proposed") && stdout(&listed).contains(MEMORY));
+    let rejected = cli(
+        &["memory", "list", "--proposed", "--all"],
+        Stub {
+            forgotten: true,
+            ..pending()
+        },
+    )
+    .await;
+    assert!(rejected.status.success(), "{}", stderr(&rejected));
+    assert!(stdout(&rejected).contains("rejected"));
+    let shown = cli(&["memory", "show", MEMORY], pending()).await;
+    assert!(shown.status.success(), "{}", stderr(&shown));
+    assert!(stdout(&shown).contains("[proposed]"));
+}
+
+#[test]
+fn memory_proposal_reject_requires_a_reason_before_connecting() {
+    let root = tempfile::tempdir().unwrap();
+    let output = isolated_command(root.path(), &["memory", "reject", MEMORY])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("--reason"), "{}", stderr(&output));
+}
+
+#[path = "cli_regressions/memory_proposals.rs"]
+mod proposal_lookup_tests;

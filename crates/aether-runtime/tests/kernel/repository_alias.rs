@@ -30,6 +30,7 @@ pub(super) fn filed(repository: &str, text: &str) -> OperatorMemorySpec {
         confidence: None,
         tags: Vec::new(),
         supersedes: None,
+        proposed: false,
     }
 }
 

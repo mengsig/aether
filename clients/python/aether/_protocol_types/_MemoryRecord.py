@@ -10,6 +10,7 @@ class MemoryRecord(TypedDict, total=False):
     """
     A stored memory.
     """
+    accepted_at: str | None  # optional
     confidence: float
     created_at: str
     forgotten_at: str | None  # optional
@@ -18,6 +19,7 @@ class MemoryRecord(TypedDict, total=False):
     kind: _protocol.MemoryKind
     last_retrieved_at: str | None  # optional
     pinned: bool  # optional
+    proposed_at: str | None  # optional
     provenance: _protocol.MemoryProvenance
     retracted: _protocol.Retraction | None  # optional
     retrieval_count: int  # optional

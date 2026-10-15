@@ -541,3 +541,39 @@ fn seeding_the_same_tree_twice_writes_nothing_the_second_time() {
         "an unchanged tree is not even a candidate"
     );
 }
+
+#[test]
+fn proposal_does_not_count_as_an_already_seeded_note() {
+    let dir = fixture_repo();
+    let service = MemoryService::new(
+        Arc::new(SqliteStore::open_in_memory().unwrap()),
+        WriteGate::new(),
+    );
+    let mut candidate = repo::scan(dir.path(), "fixture").unwrap().remove(0);
+    candidate.provenance = aether_core::memory::MemoryProvenance {
+        actor: Some(Actor::user()),
+        ..Default::default()
+    };
+    let hold = service.gate.hold();
+    let (admission, commit) = service
+        .evaluate_operator(&hold, candidate, Actor::user(), true)
+        .unwrap();
+    let pending = admission.record().unwrap().clone();
+    assert!(pending.is_proposed());
+    assert!(!pending.is_current());
+    service.store.commit(commit).unwrap();
+    drop(hold);
+    let report = service
+        .seed_repository(dir.path(), "fixture", Actor::System)
+        .unwrap();
+    assert_eq!((report.admitted, report.unchanged), (3, 0));
+    assert_eq!(
+        service
+            .store
+            .memories(&MemoryQuery::default())
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(service.store.memory(pending.id).unwrap(), Some(pending));
+}

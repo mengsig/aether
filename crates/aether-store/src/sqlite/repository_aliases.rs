@@ -240,7 +240,7 @@ fn tally(
 fn holds_current_text(conn: &Connection, scope: &str, text: &str) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM memories WHERE scope = ?1 AND text = ?2
-             AND superseded_by IS NULL AND forgotten_at IS NULL)",
+             AND superseded_by IS NULL AND forgotten_at IS NULL AND proposed = 0)",
         params![scope, text],
         |row| row.get(0),
     )?)

@@ -215,6 +215,31 @@ fn a_duplicate_text_is_moved_beside_its_twin_not_merged() {
 }
 
 #[test]
+fn proposals_at_the_alias_target_do_not_count_as_current_duplicates() {
+    for rejected in [false, true] {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let text = "Use the repository build verification script";
+        let active = file(&store, repo("archon"), text);
+        let mut pending = file(&store, repo(CANONICAL), text);
+        pending.proposed_at = Some(pending.created_at);
+        pending.forgotten_at = rejected.then(now);
+        store
+            .commit(Commit::new().mutate(Mutation::PutMemory(pending.clone())))
+            .unwrap();
+        let archon = alias("archon", CANONICAL);
+        let preview = store.preview_repository_alias(&archon).unwrap();
+        assert_eq!(preview.counts.repository, 1);
+        assert_eq!(preview.counts.duplicates, 0);
+        let moved = store
+            .alias_repository(&archon, operator(), &crate::WriteGate::new().hold())
+            .unwrap();
+        assert_eq!(moved.counts, preview.counts);
+        assert!(store.memory(active.id).unwrap().unwrap().is_current());
+        assert_eq!(store.memory(pending.id).unwrap(), Some(pending));
+    }
+}
+
+#[test]
 fn registering_the_same_alias_again_moves_only_stragglers() {
     let store = SqliteStore::open_in_memory().unwrap();
     filed(&store);

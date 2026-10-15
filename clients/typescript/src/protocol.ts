@@ -4,6 +4,7 @@
 export const PROTOCOL_VERSION = 19;
 export const MIN_PROTOCOL_VERSION = 17;
 
+export * from "./protocol/commands/accept.ts";
 export * from "./protocol/commands/add.ts";
 export * from "./protocol/commands/alias.ts";
 export * from "./protocol/commands/archive.ts";
@@ -32,6 +33,7 @@ export * from "./protocol/commands/preview.ts";
 export * from "./protocol/commands/providers.ts";
 export * from "./protocol/commands/publish.ts";
 export * from "./protocol/commands/read.ts";
+export * from "./protocol/commands/reject.ts";
 export * from "./protocol/commands/replay.ts";
 export * from "./protocol/commands/reply.ts";
 export * from "./protocol/commands/resolve.ts";

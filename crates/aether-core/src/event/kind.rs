@@ -314,7 +314,11 @@ pub enum EventKind {
     #[serde(rename = "memory.candidate")]
     MemoryCandidate { candidate: MemoryCandidate },
     #[serde(rename = "memory.accepted")]
-    MemoryAccepted { memory: MemoryId },
+    MemoryAccepted {
+        memory: MemoryId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     #[serde(rename = "memory.rejected")]
     MemoryRejected { reason: String },
     /// Curated out by a person. The record stays; it is never retrieved again.
@@ -332,7 +336,12 @@ pub enum EventKind {
     #[serde(rename = "memory.pinned")]
     MemoryPinned { memory: MemoryId, pinned: bool },
     #[serde(rename = "memory.superseded")]
-    MemorySuperseded { old: MemoryId, new: MemoryId },
+    MemorySuperseded {
+        old: MemoryId,
+        new: MemoryId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
 
     // ----- messaging -------------------------------------------------------
     #[serde(rename = "message.sent")]
