@@ -271,6 +271,10 @@ pub(super) fn recognized_path(record: &EngineSessionOwnership, path: &Path) -> b
 }
 
 fn session_matches(file: File, record: &EngineSessionOwnership, bytes: u64) -> io::Result<bool> {
+    debug_assert!(
+        !record.session_id.is_empty(),
+        "only recognized paths are read"
+    );
     let mut header = Vec::new();
     file.take(HEADER_BYTES).read_to_end(&mut header)?;
     let complete = header.len() as u64 == bytes;
@@ -289,11 +293,12 @@ fn session_matches(file: File, record: &EngineSessionOwnership, bytes: u64) -> i
             return Ok(value["type"] == "session_meta"
                 && value["payload"]["id"].as_str() == Some(record.session_id.as_str()));
         }
+        // Claude Code 2.1.299 opens a log with queue records for its first prompt.
         if let Some(id) = value["sessionId"].as_str() {
             return Ok(id == record.session_id
                 && matches!(
                     value["type"].as_str(),
-                    Some("user" | "assistant" | "system" | "progress")
+                    Some("queue-operation" | "user" | "assistant" | "system" | "progress")
                 ));
         }
     }

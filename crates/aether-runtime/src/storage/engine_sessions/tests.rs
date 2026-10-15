@@ -134,6 +134,25 @@ fn write_log(path: &Path, engine: &str, id: &str) {
     set_modified(path, at(30));
 }
 
+/// The head of a Claude Code 2.1.299 log, whose queue records precede the first prompt.
+fn write_queued_claude_log(path: &Path, id: &str) {
+    let records = [
+        json!({"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-09-24T09:12:03.418Z", "sessionId": id}),
+        json!({"type": "queue-operation", "operation": "dequeue", "timestamp": "2026-09-24T09:12:03.419Z", "sessionId": id}),
+        json!({
+            "parentUuid": null, "isSidechain": false, "promptId": "3f6c1d2e-0a4b-4c5d-9e8f-1a2b3c4d5e6f",
+            "type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "hello"}]},
+            "uuid": "7b1e2c3d-4f5a-4b6c-8d7e-9f0a1b2c3d4e", "timestamp": "2026-09-24T09:12:03.425Z",
+            "permissionMode": "bypassPermissions", "promptSource": "sdk", "turnOrigin": "sdk",
+            "turnPosition": {"promptIndex": 0, "turnIndex": 1}, "userType": "external",
+            "entrypoint": "sdk-cli", "cwd": "/work", "sessionId": id, "version": "2.1.299", "gitBranch": "main"
+        }),
+    ];
+    let lines: String = records.iter().map(|record| format!("{record}\n")).collect();
+    fs::write(path, lines).unwrap();
+    set_modified(path, at(30));
+}
+
 fn set_modified(path: &Path, time: SystemTime) {
     fs::File::options()
         .write(true)
@@ -187,6 +206,31 @@ async fn owned_final_logs_preview_matches_deletion_and_user_logs_survive() {
         f.runtime.store.engine_session_ownerships().unwrap().len(),
         2
     );
+}
+
+#[tokio::test]
+async fn claude_logs_opening_with_queue_records_are_reclaimed() {
+    let f = Fixture::new().await;
+    let owner = f.owner(AgentStatus::Cancelled { reason: None });
+    f.store(&owner);
+    let queued = f.owned("claude-code", &owner);
+    write_queued_claude_log(&queued.log_paths[0], &queued.session_id);
+    let other = f.owned("claude-code", &owner);
+    write_queued_claude_log(&other.log_paths[0], "another-session");
+    let bytes = fs::metadata(&queued.log_paths[0]).unwrap().len();
+    let preview = f.sweep(14, true);
+    assert_eq!(
+        reason(&preview, &queued.log_paths[0]),
+        "owned final session older than retention"
+    );
+    assert_eq!(
+        reason(&preview, &other.log_paths[0]),
+        "native session identity missing or mismatched"
+    );
+    assert_eq!(preview["bytes_eligible"], bytes);
+    let actual = f.sweep(14, false);
+    assert_eq!(actual["bytes_removed"], bytes);
+    assert!(!queued.log_paths[0].exists() && other.log_paths[0].exists());
 }
 
 #[tokio::test]
