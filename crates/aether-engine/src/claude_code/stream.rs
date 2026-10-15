@@ -28,6 +28,8 @@ pub struct ParseState {
     /// An earlier receipt, or a retry after an attempt the API did not refuse,
     /// may have been billed without usage to show for it.
     refusal_unprovable: bool,
+    /// A receipt in this process was proven unbilled; a later billable retry withdraws it.
+    zero_proven: bool,
     /// The keys above in the order they were first seen, so the map can be
     /// bounded without evicting the message still being streamed.
     usage_order: VecDeque<UsageRequestId>,
@@ -157,10 +159,7 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
                     .to_owned(),
                 running: false,
             }],
-            Some("api_retry") => {
-                state.note_retry(&v);
-                Vec::new()
-            }
+            Some("api_retry") => state.note_retry(&v),
             Some("init") => {
                 vec![EngineEvent::Session {
                     id: v
@@ -260,6 +259,7 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             out
         }
         "result" if state.prompt.is_some() && is_queued_work_result(&v) => {
+            state.note_skipped_receipt();
             vec![EngineEvent::Note(
                 "claude-code ended a turn it queued ahead of the prompt; awaiting the prompt's own result"
                     .into(),

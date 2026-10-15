@@ -250,15 +250,20 @@ fn zero_receipt() -> Receipt {
     }
 }
 
+/// Marks the turn's cost as missing a reading the engine never reported.
+pub(super) fn cost_gap() -> EngineEvent {
+    let mut usage = Usage::default();
+    usage.mark_cost_gap(aether_core::model::CostGap::Unreported);
+    EngineEvent::UsageDelta { usage }
+}
+
 fn unknown_receipt(note: Option<&str>, has_spend: bool) -> Receipt {
     let mut events = Vec::new();
     if let Some(note) = note {
         events.push(EngineEvent::ProtocolNote(note.into()));
     }
     if has_spend {
-        let mut usage = Usage::default();
-        usage.mark_cost_gap(aether_core::model::CostGap::Unreported);
-        events.push(EngineEvent::UsageDelta { usage });
+        events.push(cost_gap());
     }
     Receipt {
         cost_usd: None,

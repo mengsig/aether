@@ -2,23 +2,35 @@
 //! inference, and nothing earlier in the process can have been billed.
 use serde_json::{Map, Value};
 
-use super::ParseState;
-use crate::claude_code::session_cost::SpendEvidence;
+use super::{EngineEvent, ParseState};
+use crate::claude_code::session_cost::{SpendEvidence, cost_gap};
 
-/// HTTP statuses the API answers before inference, which it does not bill.
-/// Claude Code resends a 400 reshaped without an `api_retry` record; it
-/// reports every other retry with the status that caused it.
+/// Statuses the API answers before inference and does not bill. Claude Code
+/// reports each retry's status, except a reshaped resend after a 400.
 const UNBILLED_REJECTIONS: [u64; 5] = [400, 401, 403, 404, 413];
 
 impl ParseState {
     /// An `api_retry` record: the attempt before it is unbilled only when the
-    /// API refused it with an unbilled status.
-    pub(super) fn note_retry(&mut self, v: &Value) {
+    /// API refused it. Otherwise a $0 already proven in this process is withdrawn.
+    pub(super) fn note_retry(&mut self, v: &Value) -> Vec<EngineEvent> {
         debug_assert_eq!(v.get("subtype").and_then(Value::as_str), Some("api_retry"));
+        debug_assert!(!self.zero_proven || self.refusal_unprovable);
         let status = v.get("error_status").and_then(Value::as_u64);
-        if !status.is_some_and(|status| UNBILLED_REJECTIONS.contains(&status)) {
-            self.refusal_unprovable = true;
+        if status.is_some_and(|status| UNBILLED_REJECTIONS.contains(&status)) {
+            return Vec::new();
         }
+        self.refusal_unprovable = true;
+        if std::mem::take(&mut self.zero_proven) {
+            return vec![cost_gap()];
+        }
+        Vec::new()
+    }
+
+    /// A result that closed queued work without the model still ends a receipt,
+    /// so no later receipt in the process is its first.
+    pub(super) fn note_skipped_receipt(&mut self) {
+        debug_assert!(self.prompt.is_some(), "only a pre-echo result is skipped");
+        self.refusal_unprovable = true;
     }
 
     /// What this process showed about spend before the receipt `v` closed it.
@@ -35,6 +47,7 @@ impl ParseState {
             return SpendEvidence::Seen;
         }
         if provable && flagged && refused_with_zero_receipt(v) {
+            self.zero_proven = true;
             SpendEvidence::Rejected
         } else {
             SpendEvidence::Unseen
@@ -64,13 +77,18 @@ fn refused_with_zero_receipt(v: &Value) -> bool {
         && counters_zero(usage)
 }
 
-/// Every number is zero, every list is empty, and every field named like a
-/// counter is a number. Depth is bounded by serde_json's recursion limit.
+/// Every field named like a counter is a zero number, every other number is
+/// zero, and every list is empty. Depth is bounded by serde_json's recursion limit.
 fn counters_zero(fields: &Map<String, Value>) -> bool {
-    fields.iter().all(|(key, value)| match value {
-        Value::Number(number) => number.as_u64() == Some(0),
-        Value::Object(inner) => counters_zero(inner),
-        Value::Array(items) => items.is_empty(),
-        _ => !key.ends_with("_tokens") && !key.ends_with("_requests"),
+    fields.iter().all(|(key, value)| {
+        if key.ends_with("_tokens") || key.ends_with("_requests") {
+            return value.as_u64() == Some(0);
+        }
+        match value {
+            Value::Number(number) => number.as_u64() == Some(0),
+            Value::Object(inner) => counters_zero(inner),
+            Value::Array(items) => items.is_empty(),
+            _ => true,
+        }
     })
 }

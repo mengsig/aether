@@ -232,3 +232,25 @@ async fn a_refusal_with_unreadable_counters_keeps_its_cost_gap() {
     assert!(!usage.cost_complete, "{usage:?}");
     assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
 }
+
+#[tokio::test]
+async fn a_skipped_queued_receipt_keeps_a_later_refusal_incomplete() {
+    let queued = json!({"type":"result","subtype":"success","is_error":false,
+        "num_turns":0,"origin":{"kind":"task-notification"},"session_id":"fresh",
+        "total_cost_usd":0.05,"modelUsage":{},"usage":{"input_tokens":0,"output_tokens":0}});
+    let usage = failed_worker_usage(failed_after(vec![queued])).await;
+    assert!(!usage.cost_complete, "{usage:?}");
+    assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
+}
+
+#[tokio::test]
+async fn a_billable_retry_after_a_proven_zero_reopens_the_gap() {
+    let background = json!({"type":"system","subtype":"task_started","task_id":"background"});
+    let engine = failed_after(vec![background]);
+    let retry = json!({"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,
+        "retry_delay_ms":600,"error_status":null,"error":"unknown","session_id":"fresh"});
+    engine.runs.lock().unwrap().front_mut().unwrap().push(retry);
+    let usage = failed_worker_usage(engine).await;
+    assert!(!usage.cost_complete, "{usage:?}");
+    assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
+}

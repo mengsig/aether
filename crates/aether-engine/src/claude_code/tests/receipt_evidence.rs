@@ -235,6 +235,9 @@ fn a_rejection_needs_every_counter_present_and_zero() {
         ("/usage", json!({"input_tokens":0})),
         ("/usage/input_tokens", json!("unknown")),
         ("/usage/cache_read_input_tokens", json!("0")),
+        ("/usage/cache_read_input_tokens", json!({})),
+        ("/usage/cache_read_input_tokens", json!([])),
+        ("/usage/server_tool_use/web_search_requests", Value::Null),
         (
             "/usage/output_tokens_details/thinking_tokens",
             json!("unknown"),
@@ -258,4 +261,32 @@ fn a_rejection_needs_every_counter_present_and_zero() {
         let events = parse_line(&value.to_string(), &mut ParseState::default());
         assert_eq!(receipt_cost(&events), None, "{pointer} = {replacement}");
     }
+}
+
+#[test]
+fn a_skipped_queued_receipt_proves_nothing_for_a_later_rejection() {
+    let mut state = ParseState::awaiting_prompt("new prompt");
+    let queued = json!({"type":"result","subtype":"success","is_error":false,"session_id":"s",
+        "num_turns":0,"origin":{"kind":"task-notification"},"total_cost_usd":0.05,
+        "modelUsage":{},"usage":{"input_tokens":0,"output_tokens":0}});
+    let events = parse_line(&queued.to_string(), &mut state);
+    assert!(matches!(&events[..], [EngineEvent::Note(_)]), "{events:?}");
+    let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
+    assert_eq!(receipt_cost(&events), None);
+}
+
+#[test]
+fn a_billable_retry_after_a_proven_zero_withdraws_it() {
+    let mut state = ParseState::default();
+    let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
+    assert_eq!(receipt_cost(&events), Some(0.0));
+    assert!(parse_line(&retry(json!(401)), &mut state).is_empty());
+    let events = parse_line(&retry(Value::Null), &mut state);
+    assert!(
+        matches!(&events[..], [EngineEvent::UsageDelta { usage }]
+            if usage.cost_gap == Some(aether_core::model::CostGap::Unreported)
+                && usage.total_tokens() == 0),
+        "{events:?}"
+    );
+    assert!(parse_line(&retry(Value::Null), &mut state).is_empty());
 }

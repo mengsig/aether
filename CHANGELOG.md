@@ -26,8 +26,9 @@ release is also the text of its GitHub release.
 - **Unusable Claude Code receipts keep a cost floor when spend is observed.**
   Missing or invalid dollars, all-zero receipts, and missing or reset
   baselines leave an `Unreported` gap when the invocation streams usage or
-  the receipt reports nonzero per-turn usage. Model-less streams count too.
-  Receipts without spend evidence keep their previous recovery behavior.
+  any receipt so far in the process reports nonzero per-turn usage.
+  Model-less streams count too. Receipts without spend evidence keep their
+  previous recovery behavior.
 - **A Claude Code request the API refuses costs a complete $0.** When the
   API refused an agent's request with HTTP 400, 401, 403, 404 or 413, its
   all-zero receipt was treated as unknown cost and the agent showed an
@@ -35,7 +36,8 @@ release is also the text of its GitHub release.
   counts as $0 with no gap. This holds only for the process's first receipt,
   with no usage streamed, every counter zero, and every earlier retry caused
   by one of those statuses. Otherwise the gap stays. That includes a retry
-  after a dropped connection, a timeout, 429, 5xx or 529.
+  after a dropped connection, a timeout, 429, 5xx or 529. Such a retry later
+  in the same process withdraws the $0.
 
 ## 1.0.9
 

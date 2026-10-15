@@ -421,15 +421,17 @@ exceed the latest dollar receipt. A parked or interrupted run without proven
 closing coverage keeps its cost gap even when every observed token has a price.
 An unusable receipt (missing or invalid dollars, all-zero counters and
 cost, or a missing or reset baseline) opens an `Unreported` cost gap only
-when the invocation streamed usage or the receipt has nonzero per-turn
-usage. The turn keeps a floor: the stream's dollars plus base-rate prices
-for closing tokens that never streamed.
+when the invocation streamed usage or a receipt so far in the same process
+had nonzero per-turn usage. The turn keeps a floor: the stream's dollars
+plus base-rate prices for closing tokens that never streamed.
 
 One case without that evidence is proven to cost a complete $0. The API
 refuses requests with HTTP 400, 401, 403, 404 or 413 before inference and does
 not bill them. The receipt counts as $0 when all of these hold:
 
-- It is the process's first receipt, and no usage streamed before it.
+- It is the process's first receipt, and no usage streamed before it. A
+  result that closed queued work without running the model counts as a
+  receipt.
 - It failed with one of those statuses as `api_error_status`.
 - It has zero dollars, an empty `modelUsage`, and every `usage` counter
   present as zero.
@@ -440,6 +442,11 @@ or 529 as an `api_retry` record. The attempt before such a retry may have been
 billed, so the receipt stays unknown. Claude Code also resends a refused 400
 in a reshaped form without an `api_retry` record, but only after the API
 refused it.
+
+Such a retry later in the same process, for example while background work
+keeps it open, withdraws the $0: the adapter reports an `Unreported` gap.
+Unless a later receipt closes the turn, the runtime no longer counts the held
+receipt as covering it, and the turn ends with an `Interrupted` gap.
 
 For the other unusable receipts without spend evidence, the runtime decides any
 gap from its own evidence of work. A later usable cumulative receipt can

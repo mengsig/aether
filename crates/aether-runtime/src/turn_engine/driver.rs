@@ -93,6 +93,11 @@ pub(super) fn is_cost_gap_only(usage: Usage) -> bool {
         && usage.estimated_cost_usd.is_none_or(|cost| cost == 0.0)
 }
 
+/// An unreported-cost marker after the held receipt names work that receipt cannot cover.
+fn uncovers_held_receipt(event: &EngineEvent) -> bool {
+    matches!(event, EngineEvent::UsageDelta { usage } if is_cost_gap_only(*usage))
+}
+
 /// Only evidence of a possible new model request invalidates closing accounting.
 fn event_may_start_request(event: &EngineEvent) -> bool {
     matches!(
@@ -303,7 +308,9 @@ pub(super) async fn drive(
                 if let Some(EngineEvent::Done(outcome)) = &ev {
                     let stopped = engine_cancel.is_cancelled() || park.as_ref().is_some_and(|park| park.stop_requested);
                     observe_closing(outcome, stopped, steering.sent_up_to, &mut receipt_seen, &mut receipt_input_cursor);
-                } else if ev.as_ref().is_some_and(event_may_start_request) {
+                } else if ev.as_ref().is_some_and(|event| {
+                    event_may_start_request(event) || (settled.is_some() && uncovers_held_receipt(event))
+                }) {
                     receipt_seen = false;
                 }
                 activity_seen |= active;
@@ -1082,6 +1089,32 @@ mod receipt_tests {
         );
         assert!(!seen);
         assert_eq!(cursor, 7);
+    }
+
+    #[test]
+    fn only_an_unreported_cost_marker_uncovers_a_held_receipt() {
+        let mut gap = Usage::default();
+        gap.mark_cost_gap(aether_core::model::CostGap::Unreported);
+        assert!(uncovers_held_receipt(&EngineEvent::UsageDelta {
+            usage: gap
+        }));
+        assert!(!event_may_start_request(&EngineEvent::UsageDelta {
+            usage: gap
+        }));
+        let counted = Usage {
+            input_tokens: 5,
+            ..gap
+        };
+        assert!(!uncovers_held_receipt(&EngineEvent::UsageDelta {
+            usage: counted
+        }));
+        let priced = Usage {
+            input_tokens: 5,
+            ..Usage::default()
+        };
+        assert!(!uncovers_held_receipt(&EngineEvent::UsageDelta {
+            usage: priced
+        }));
     }
 
     #[test]
