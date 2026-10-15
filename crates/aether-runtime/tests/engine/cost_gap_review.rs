@@ -275,20 +275,18 @@ fn receipt_outcome(ending: Ending) -> EngineOutcome {
 }
 
 #[tokio::test]
-async fn normal_codex_exec_receipt_stays_complete() {
+async fn normal_codex_exec_receipt_is_estimated_not_billed() {
     let usage = receipt_usage_for(Ending::Normal, EngineKind::CODEX, "codex/exec").await;
     assert_eq!(usage.total_tokens(), 110);
-    assert!(usage.cost_complete);
-    assert_eq!(usage.cost_gap, None);
+    assert_unbilled_estimate(usage, CostGap::Unpriced);
 }
 
 #[tokio::test]
-async fn normal_codex_app_server_receipt_stays_complete() {
+async fn normal_codex_app_server_receipt_is_estimated_not_billed() {
     let usage =
         receipt_usage_for(Ending::Normal, EngineKind::CODEX, "codex-app-server/review").await;
     assert_eq!(usage.total_tokens(), 110);
-    assert!(usage.cost_complete);
-    assert_eq!(usage.cost_gap, None);
+    assert_unbilled_estimate(usage, CostGap::Unpriced);
 }
 
 #[tokio::test]
@@ -300,8 +298,16 @@ async fn cancelled_codex_app_server_receipt_is_interrupted() {
     )
     .await;
     assert_eq!(usage.total_tokens(), 110);
+    assert_unbilled_estimate(usage, CostGap::Mixed);
+}
+
+/// A subscription turn carries no billed dollars, only the API-equivalent
+/// estimate; `gap` is why `cost_usd` is not a complete cost.
+fn assert_unbilled_estimate(usage: Usage, gap: CostGap) {
+    assert_eq!(usage.cost_usd, 0.0);
     assert!(!usage.cost_complete);
-    assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
+    assert_eq!(usage.cost_gap, Some(gap));
+    assert!(usage.estimated_cost_usd.is_some_and(|cost| cost > 0.0));
 }
 
 fn streamed_usage(ending: Ending) -> Usage {
@@ -330,8 +336,7 @@ async fn app_server_closed_mid_turn_is_interrupted() {
     )
     .await;
     assert_eq!(usage.total_tokens(), 110);
-    assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
-    assert!(!usage.cost_complete);
+    assert_unbilled_estimate(usage, CostGap::Mixed);
 }
 
 #[tokio::test]
@@ -343,8 +348,7 @@ async fn native_delegation_stop_is_interrupted() {
     )
     .await;
     assert_eq!(usage.total_tokens(), 110);
-    assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
-    assert!(!usage.cost_complete);
+    assert_unbilled_estimate(usage, CostGap::Mixed);
 }
 
 fn failed_result() -> EngineOutcome {

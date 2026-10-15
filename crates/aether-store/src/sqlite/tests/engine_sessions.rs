@@ -57,7 +57,7 @@ fn invalid_or_unknown_paths_never_expand_ownership() {
 }
 
 #[test]
-fn migration_does_not_claim_legacy_sessions() {
+fn v23_migration_does_not_claim_legacy_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let database = dir.path().join("store.sqlite");
     {
@@ -68,7 +68,7 @@ fn migration_does_not_claim_legacy_sessions() {
             .commit(Commit::new().mutate(Mutation::UpsertAgent(legacy)))
             .unwrap();
         store.conn.lock().execute_batch(
-            "DROP TABLE engine_session_ownership; UPDATE meta SET value='22' WHERE key='schema_version';"
+            "DROP TABLE engine_session_ownership; UPDATE meta SET value='23' WHERE key='schema_version';"
         ).unwrap();
     }
     let store = SqliteStore::open(database).unwrap();

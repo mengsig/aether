@@ -238,6 +238,59 @@ fn unreadable_proc_entries_preserve_the_record_without_failing_recovery() {
 }
 
 #[test]
+fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
+    use std::os::unix::fs::PermissionsExt;
+    // Root ignores the mode that makes the confirming open fail.
+    if geteuid().is_root() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let job = ProcessId::new();
+    let mut child = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .unwrap();
+    let record = Record {
+        pgid: child.id() as i32,
+        start_time: 1,
+        boot_id: journal.boot_id.clone(),
+        uid: geteuid().as_raw(),
+        job: Some(job),
+    };
+    let path = journal.directory.join(format!("{job}.json"));
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let proc_root = dir.path().join("proc");
+    let environ = proc_root.join(child.id().to_string()).join("environ");
+    std::fs::create_dir_all(environ.parent().unwrap()).unwrap();
+    nix::unistd::mkfifo(&environ, nix::sys::stat::Mode::S_IRWXU).unwrap();
+    // Before Linux 7.2 a process's environ turns root-owned once exit drops its
+    // memory, so the confirming read fails with EACCES; the FIFO replays that.
+    let writer = std::thread::spawn({
+        let environ = environ.clone();
+        move || {
+            let mut fifo = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&environ)
+                .unwrap();
+            fifo.write_all(format!("{JOB_ENV}={job}\0").as_bytes())
+                .unwrap();
+            std::fs::set_permissions(&environ, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+    });
+    journal.recover_record(&path, &proc_root).unwrap();
+    writer.join().unwrap();
+    let survived = child.try_wait().unwrap().is_none();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(survived, "an unconfirmed process must not be signalled");
+    assert!(
+        !path.exists(),
+        "a process gone mid-scan must not retain the record"
+    );
+}
+
+#[test]
 fn recovery_removes_unpublished_temporary_records() {
     let dir = tempfile::tempdir().unwrap();
     let journal = Journal::recover(dir.path().join("journal")).unwrap();

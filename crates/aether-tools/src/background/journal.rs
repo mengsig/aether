@@ -233,17 +233,10 @@ fn kill_job_at(job: ProcessId, proc_root: &Path) -> io::Result<()> {
         if metadata.uid() != geteuid().as_raw() {
             continue;
         }
-        let environment = match std::fs::read(entry.path().join("environ")) {
-            Ok(environment) => environment,
-            Err(error) if disappeared(&error) => continue,
-            // Same-uid non-dumpable processes can be unreadable; they aren't proven ours.
-            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => continue,
-            Err(error) => return Err(error),
+        let Some(environment) = readable_environ(&entry.path())? else {
+            continue;
         };
-        if environment
-            .split(|byte| *byte == 0)
-            .any(|entry| entry == token.as_bytes())
-        {
+        if carries(&environment, &token) {
             // A pidfd prevents signalling an unrelated process after PID reuse.
             let Some(pid) = ProcessPid::from_raw(pid) else {
                 continue;
@@ -253,14 +246,10 @@ fn kill_job_at(job: ProcessId, proc_root: &Path) -> io::Result<()> {
                 Err(rustix::io::Errno::SRCH) => continue,
                 Err(error) => return Err(error.into()),
             };
-            let confirmed = match std::fs::read(entry.path().join("environ")) {
-                Ok(environment) => environment
-                    .split(|byte| *byte == 0)
-                    .any(|entry| entry == token.as_bytes()),
-                Err(error) if disappeared(&error) => continue,
-                Err(error) => return Err(error),
+            let Some(environment) = readable_environ(&entry.path())? else {
+                continue;
             };
-            if confirmed {
+            if carries(&environment, &token) {
                 match pidfd_send_signal(&process, rustix::process::Signal::KILL) {
                     Ok(()) | Err(rustix::io::Errno::SRCH) => {}
                     Err(error) => return Err(error.into()),
@@ -269,6 +258,24 @@ fn kill_job_at(job: ProcessId, proc_root: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// A scanned process's environment, or None once it is gone or unreadable.
+fn readable_environ(process: &Path) -> io::Result<Option<Vec<u8>>> {
+    match std::fs::read(process.join("environ")) {
+        Ok(environment) => Ok(Some(environment)),
+        Err(error) if disappeared(&error) => Ok(None),
+        // Same-uid non-dumpable processes are unreadable and aren't proven ours. Before
+        // Linux 7.2 an exiting process's environ is root-owned too, so this also means gone.
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn carries(environment: &[u8], token: &str) -> bool {
+    environment
+        .split(|byte| *byte == 0)
+        .any(|entry| entry == token.as_bytes())
 }
 
 pub(crate) fn group_is_running(pgid: Pid) -> io::Result<bool> {

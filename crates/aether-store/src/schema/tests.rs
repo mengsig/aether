@@ -933,3 +933,38 @@ fn fresh_v22_feedback_requires_valid_ranking_columns() {
         1
     );
 }
+
+#[test]
+fn a_v22_store_gains_the_creation_order_listing_indexes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let v22 = database_at(&path, 22);
+    let indexes = |conn: &Connection| -> Vec<String> {
+        conn.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name IN ('agents', 'tasks') AND sql IS NOT NULL ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    let before = indexes(&v22);
+    assert!(before.contains(&"agents_run".to_owned()), "{before:?}");
+    assert!(!before.contains(&"agents_created".to_owned()), "{before:?}");
+    migrate(&v22).unwrap();
+    assert_eq!(version(&v22), SCHEMA_VERSION);
+    // `agents_run_created` answers every `run = ?` lookup `agents_run` did.
+    assert_eq!(
+        indexes(&v22),
+        [
+            "agents_created",
+            "agents_parent",
+            "agents_run_created",
+            "agents_status",
+            "tasks_created",
+            "tasks_owner",
+            "tasks_parent",
+            "tasks_run_created",
+            "tasks_status",
+        ]
+    );
+}
