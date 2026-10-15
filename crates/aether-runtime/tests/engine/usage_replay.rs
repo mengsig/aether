@@ -339,10 +339,10 @@ async fn codex_exec_agent_on<const N: usize>(
 
 /// The legacy `codex exec` fallback reports usage only when the turn ends,
 /// and as the thread's cumulative count. Each turn must still be billed at
-/// the API list price - never a floor of $0 - and a resumed thread only for
-/// what it added.
+/// the API list price - an estimate, never a floor of $0 - and a resumed
+/// thread only for what it added.
 #[tokio::test]
-async fn a_legacy_codex_exec_turn_is_billed_at_the_api_list_price() {
+async fn a_legacy_codex_exec_turn_is_estimated_at_the_api_list_price() {
     let runs = [
         codex_exec_run(
             serde_json::json!({"input_tokens":100_000,"cached_input_tokens":60_000,
@@ -355,13 +355,12 @@ async fn a_legacy_codex_exec_turn_is_billed_at_the_api_list_price() {
     ];
     let model = ModelRef::new("codex", "sol");
     let (h, agent) = codex_exec_agent(runs, &model).await;
-    let rate = aether_model::Registry::builtin()
-        .resolve(&model)
-        .expect("codex/sol")
-        .model
-        .capabilities
-        .cost
-        .expect("codex/sol is priced");
+    let registry = aether_model::Registry::builtin();
+    let resolved = registry.resolve(&model).expect("codex/sol");
+    assert_eq!(resolved.model.capabilities.cost, None, "a subscription");
+    let rate = registry
+        .api_equivalent_price(&resolved)
+        .expect("codex/sol has an API twin");
     // GPT-6.1 Sol: $2 input, $0.10 cached input, $10 output per MTok.
     assert_eq!(
         (
@@ -383,16 +382,10 @@ async fn a_legacy_codex_exec_turn_is_billed_at_the_api_list_price() {
     .usage;
     // 40k fresh input, 60k cached, 5k output with the reasoning inside it.
     let first = 0.04 * 2.0 + 0.06 * 0.10 + 0.005 * 10.0;
-    assert!(
-        (one.cost_usd - first).abs() < 1e-9,
-        "{} != {first}",
-        one.cost_usd
-    );
-    assert!(one.cost_complete, "billed dollars, not a floor");
-    assert_eq!(
-        one.estimated_cost_usd, None,
-        "a priced turn needs no estimate"
-    );
+    let estimate = one.estimated_cost_usd.expect("an estimated turn");
+    assert!((estimate - first).abs() < 1e-9, "{estimate} != {first}");
+    assert_eq!(one.cost_usd, 0.0, "nobody billed these dollars");
+    assert!(!one.cost_complete, "an estimate is not a billed cost");
     assert_eq!(one.reasoning_tokens, Some(2_000));
 
     h.runtime
@@ -406,13 +399,13 @@ async fn a_legacy_codex_exec_turn_is_billed_at_the_api_list_price() {
     .usage;
     // Only what the resumed thread added: 30k fresh input, 120k cached, 4k output.
     let second = 0.03 * 2.0 + 0.12 * 0.10 + 0.004 * 10.0;
+    let estimate = two.estimated_cost_usd.expect("an estimated turn");
     assert!(
-        (two.cost_usd - (first + second)).abs() < 1e-9,
-        "{} != {}",
-        two.cost_usd,
+        (estimate - (first + second)).abs() < 1e-9,
+        "{estimate} != {}",
         first + second
     );
-    assert!(two.cost_complete);
+    assert_eq!(two.cost_gap, Some(aether_core::model::CostGap::Unpriced));
     assert_eq!(
         (two.input_tokens, two.cache_read_tokens, two.output_tokens),
         (70_000, 180_000, 9_000),
@@ -520,11 +513,16 @@ async fn a_codex_exec_turn_with_a_stale_cache_write_counter_is_not_priced_as_exa
     ];
     let (h, agent) = codex_exec_agent(omitted, &ModelRef::new("codex", "sol")).await;
     let one = codex_exec_turn(&h, agent, 1).await;
-    assert!(one.cost_complete, "every counter read: billed");
-    assert!(one.cost_usd > 0.0);
+    assert_eq!(
+        one.cost_gap,
+        Some(aether_core::model::CostGap::Unpriced),
+        "every counter read: only the subscription's missing bill"
+    );
+    assert!(one.estimated_cost_usd.is_some_and(|cost| cost > 0.0));
     let two = codex_exec_turn(&h, agent, 2).await;
-    assert!(
-        !two.cost_complete,
+    assert_eq!(
+        two.cost_gap,
+        Some(aether_core::model::CostGap::Mixed),
         "the resumed thread's CLI sent cache writes before; leaving them out is unread"
     );
     assert_eq!(
@@ -580,10 +578,17 @@ async fn a_current_codex_exec_cli_cannot_leave_out_cache_writes_it_reported_as_z
     let current = aether_engine::EngineVersion::new(0, 159, 2);
     let (h, agent) = codex_exec_agent_on(Some(current), runs, &ModelRef::new("codex", "sol")).await;
     let one = codex_exec_turn(&h, agent, 1).await;
-    assert!(one.cost_complete, "every counter read: billed");
+    assert_eq!(
+        one.cost_gap,
+        Some(aether_core::model::CostGap::Unpriced),
+        "every counter read: only the subscription's missing bill"
+    );
     let two = codex_exec_turn(&h, agent, 2).await;
-    assert!(!two.cost_complete, "an unread cache write is not a price");
-    assert_eq!(two.cost_usd, one.cost_usd, "only the first turn is priced");
+    assert_eq!(
+        two.cost_gap,
+        Some(aether_core::model::CostGap::Mixed),
+        "an unread cache write is not a price"
+    );
     assert_eq!(
         (two.input_tokens, two.cache_read_tokens, two.output_tokens),
         (70_000, 180_000, 9_000),
@@ -602,7 +607,11 @@ async fn a_current_codex_exec_cli_cannot_leave_out_cache_writes_it_reported_as_z
     let (h, agent) = codex_exec_agent_on(Some(older), runs, &ModelRef::new("codex", "sol")).await;
     codex_exec_turn(&h, agent, 1).await;
     let two = codex_exec_turn(&h, agent, 2).await;
-    assert!(two.cost_complete, "a CLI without the counter lost nothing");
+    assert_eq!(
+        two.cost_gap,
+        Some(aether_core::model::CostGap::Unpriced),
+        "a CLI without the counter lost nothing"
+    );
     assert!(!noted(&h, agent, &["cache_write_input_tokens"]));
     h.runtime.shutdown().await;
 }

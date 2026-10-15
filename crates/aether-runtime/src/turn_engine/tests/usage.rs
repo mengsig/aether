@@ -416,8 +416,8 @@ async fn a_session_prices_a_default_turn_the_configured_model_could_not() {
         ..Default::default()
     };
 
-    // Codex is priced at the OpenAI API list price, so the session model
-    // it reports bills the turn rather than estimating it.
+    // Codex is a subscription with no price of its own, so the session model
+    // it reports estimates the turn at the OpenAI API list price.
     let mut ctx = started_agent_ctx(&runtime).await;
     let codex = configured(&runtime, "codex/default");
     let mut state = StreamState::new(TurnPricing::of(&runtime, &codex), codex);
@@ -426,16 +426,16 @@ async fn a_session_prices_a_default_turn_the_configured_model_could_not() {
         "`codex/default` is exactly the case nobody could price"
     );
     session_then_usage(&runtime, &mut ctx, &mut state, "gpt-6-astra", usage);
-    let astra = configured(&runtime, "codex/gpt-6-astra")
-        .model
-        .capabilities
-        .cost
-        .expect("codex prices gpt-6-astra");
+    let astra = runtime
+        .models
+        .registry()
+        .api_equivalent_price(&configured(&runtime, "codex/gpt-6-astra"))
+        .expect("codex/gpt-6-astra has an API twin");
     let total = ctx.agent.stats.usage;
-    assert_eq!(total.cost_usd, astra.cost_of(&usage));
+    assert_eq!(total.estimated_cost_usd, Some(astra.cost_of(&usage)));
+    assert_eq!(total.cost_usd, 0.0, "nobody billed these dollars");
     assert_eq!(total.cost_basis, aether_core::model::CostBasis::ListPrice);
-    assert!(total.cost_complete, "a billed turn is a confident sum");
-    assert_eq!(total.estimated_cost_usd, None, "and needs no estimate");
+    assert!(!total.cost_complete, "an estimate is not a billed cost");
 
     // Claude Code bills the subscription at the list price the registry
     // holds, so the same report produces a cost, not an estimate.
