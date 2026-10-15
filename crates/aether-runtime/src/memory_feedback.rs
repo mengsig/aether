@@ -51,8 +51,7 @@ impl Runtime {
             .store
             .task(spec.task)?
             .ok_or_else(|| RuntimeError::NotFound(format!("task {}", spec.task)))?;
-        debug_assert!(!spec.reason.trim().is_empty());
-        debug_assert!(spec.reason.chars().count() <= MAX_FEEDBACK_REASON_CHARS);
+        debug_assert_eq!(task.id, spec.task);
         let (record, commit) = feedback_commit(spec, by, task.run)?;
         self.commit_receipt(hold, commit, submission.as_ref(), &record)?;
         Ok(record)
