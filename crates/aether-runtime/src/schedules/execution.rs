@@ -36,7 +36,11 @@ pub(super) fn spawn_request(template: &SpawnSpec, objective: String) -> CreateAg
 
 /// The run a spawn occurrence due at `due` starts. One line after the
 /// template's objective names the schedule, the due time and any payload.
-fn prepare_spawn(runtime: &Runtime, job: &Schedule, due: Timestamp) -> Result<PreparedAgent> {
+pub(super) fn prepare_spawn(
+    runtime: &Runtime,
+    job: &Schedule,
+    due: Timestamp,
+) -> Result<PreparedAgent> {
     let ScheduleMode::Spawn { template, .. } = &job.mode else {
         return Err(RuntimeError::Internal(format!(
             "schedule {} does not spawn runs",
@@ -143,7 +147,7 @@ fn skipped(reason: impl Into<String>) -> Fired {
     )
 }
 
-fn prepare_occurrence(
+pub(super) fn prepare_occurrence(
     runtime: &Runtime,
     hold: &crate::CommitHold<'_>,
     commit: &mut Commit,
@@ -215,6 +219,10 @@ fn prepare_occurrence(
             } = spawn.ok_or_else(|| {
                 RuntimeError::Internal("spawn occurrence was not prepared".into())
             })??;
+            if runtime.workspace_gc_reserves(&agent.scope) {
+                return Ok(skipped("workspace maintenance in progress"));
+            }
+            runtime.recheck_workspace_gc_admission(&agent.scope)?;
             let task = task.ok_or_else(|| {
                 RuntimeError::Internal("a spawned run must carry its task".into())
             })?;

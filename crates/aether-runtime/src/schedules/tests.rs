@@ -24,6 +24,7 @@ async fn fixture() -> (Arc<Runtime>, tempfile::TempDir) {
     let runtime = Runtime::start_with_engines(
         RuntimeConfig {
             default_model: Some(ModelRef::new("anthropic", "claude-sonnet-5-5")),
+            delegated_workspace_root: Some(dir.path().join("managed")),
             ..Default::default()
         },
         Arc::new(SqliteStore::open_in_memory().unwrap()),

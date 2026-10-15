@@ -258,14 +258,16 @@ impl Runtime {
         Ok(())
     }
 
-    /// Called under the creation hold, after preparatory filesystem checks.
-    pub(crate) fn recheck_workspace_gc_admission(&self, scope: &Scope) -> Result<()> {
-        if self
-            .workspace_gc_active
+    pub(crate) fn workspace_gc_reserves(&self, scope: &Scope) -> bool {
+        self.workspace_gc_active
             .lock()
             .as_ref()
             .is_some_and(|workspace| scope_uses_workspace(scope, workspace))
-        {
+    }
+
+    /// Called under the creation hold, after preparatory filesystem checks.
+    pub(crate) fn recheck_workspace_gc_admission(&self, scope: &Scope) -> Result<()> {
+        if self.workspace_gc_reserves(scope) {
             return Err(invalid(
                 "managed workspace is being inspected for collection; retry",
             ));

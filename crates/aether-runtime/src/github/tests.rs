@@ -99,6 +99,7 @@ pub(super) async fn runtime(dir: &tempfile::TempDir) -> Arc<Runtime> {
             default_model: Some(ModelRef::new("anthropic", "claude-sonnet-5-5")),
             workspace_root: Some(dir.path().to_path_buf()),
             github_checkout_root: Some(dir.path().join("github-workspaces")),
+            delegated_workspace_root: Some(dir.path().join("managed")),
             ..Default::default()
         },
         Arc::new(SqliteStore::open(dir.path().join("store.db")).unwrap()),
@@ -1416,4 +1417,47 @@ async fn allowlist_applies_to_issue_pr_review_and_inline_mentions() {
         kinds,
         BTreeSet::from(["issue#1", "issue#2", "review#2", "review_comment#2"].map(String::from))
     );
+}
+
+#[tokio::test]
+async fn prepared_github_spawn_rechecks_workspace_gc_admission() {
+    for reserved in [true, false] {
+        let (rt, dir) = fixture_thread().await;
+        let workspace = dir.path().join("managed/collected");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let settings = rt.github_settings().unwrap();
+        let mut repo = settings.config.repositories[0].clone();
+        let GithubDispatchMode::Thread(template) = &mut repo.dispatch else {
+            panic!("thread");
+        };
+        template.scope = Some(aether_core::agent::Scope {
+            workspace_root: Some(workspace.clone()),
+            ..Default::default()
+        });
+        let prepared = rt.github_target(&repo, 5).unwrap();
+        if reserved {
+            *rt.workspace_gc_active.lock() = Some(workspace);
+        } else {
+            std::fs::remove_dir(&workspace).unwrap();
+        }
+        let error = rt
+            .github_commit_decision(
+                settings.revision,
+                &repo,
+                &thread_candidate(2),
+                Some(prepared),
+                &EXTERNAL,
+            )
+            .unwrap_err();
+        assert!(
+            error.to_string().contains(if reserved {
+                "being inspected"
+            } else {
+                "disappeared"
+            }),
+            "{error}"
+        );
+        assert!(rt.store.agents(&Default::default()).unwrap().is_empty());
+        assert!(rt.store.tasks(&Default::default()).unwrap().is_empty());
+    }
 }
