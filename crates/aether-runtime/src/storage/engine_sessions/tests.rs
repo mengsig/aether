@@ -375,6 +375,7 @@ async fn winding_down_turn_and_cross_agent_reference_protect_final_logs() {
             interrupt: cancel.child_token(),
             cancel,
             cancel_request: None,
+            stop_reason: None,
             addressed: false,
             provider: "mock".into(),
             engine: true,
