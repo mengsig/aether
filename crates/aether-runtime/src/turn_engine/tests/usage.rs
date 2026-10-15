@@ -779,6 +779,9 @@ async fn native_request_pricing_reaches_the_subtree_cost_budget_on_late_output()
             &mut state,
         )
         .unwrap();
+        // An ancestor reads the child's stored row, which the flush timer
+        // brings up to date within `ACCOUNTING_FLUSH`.
+        flush_accounting(&runtime, &child, &mut state.accounting).unwrap();
         let crossed = budget_crossed(&runtime, &parent, &mut subtree).unwrap();
         if current.output_tokens == 0 {
             assert!(crossed.is_none(), "the prompt alone is below the grant");

@@ -95,11 +95,30 @@ fn haiku_price() -> aether_core::model::ModelCost {
         .unwrap()
 }
 
-fn streamed_totals(h: &Harness, id: AgentId) -> Vec<Usage> {
-    h.store
+/// The first turn's usage updates: the streamed ones the flushes kept, then
+/// the settled one. Streamed readings are coalesced, so only the first and
+/// the last streamed figure are fixed points.
+fn first_turn_totals(h: &Harness, id: AgentId) -> Vec<Usage> {
+    let events = h
+        .store
         .events(0, 1000, &EventFilter::own_events(id))
-        .unwrap()
+        .unwrap();
+    let second_turn = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                &event.kind,
+                EventKind::AgentMessage {
+                    role: MessageRole::User,
+                    ..
+                }
+            )
+        })
+        .nth(1)
+        .map_or(u64::MAX, |event| event.seq);
+    events
         .into_iter()
+        .filter(|event| event.seq < second_turn)
         .filter_map(|event| match event.kind {
             EventKind::AgentUsageUpdated { total, .. } => Some(total),
             _ => None,
@@ -149,17 +168,15 @@ async fn native_request_pricing_bills_late_output_and_each_request_once() {
                 requests.len() as u64 * 2_000 * turn as u64
             );
         }
-        let updates = streamed_totals(&h, id);
+        let updates = first_turn_totals(&h, id);
         let mut input_only = requests[0];
         input_only.output_tokens = 0;
         assert!((updates[0].cost_usd - rate.cost_of(&input_only)).abs() < 1e-12);
-        assert!((updates[1].cost_usd - rate.cost_of(&requests[0])).abs() < 1e-12);
-        let settled = 2 * requests.len();
-        assert_eq!(
-            updates[settled],
-            updates[settled - 1],
-            "reconciliation charges nothing twice"
-        );
+        let [.., streamed, settled] = updates[..] else {
+            panic!("{updates:?}: a streamed and a settled update");
+        };
+        assert!((streamed.cost_usd - expected).abs() < 1e-12, "{streamed:?}");
+        assert_eq!(settled, streamed, "reconciliation charges nothing twice");
         h.runtime.shutdown().await;
     }
 }
@@ -201,9 +218,12 @@ async fn native_request_pricing_preserves_request_estimates_at_reconciliation() 
         assert!((usage.estimated_cost_usd.unwrap() - expected * turn as f64).abs() < 1e-12);
         assert_eq!(usage.cost_basis, aether_core::model::CostBasis::ListPrice);
     }
-    let updates = streamed_totals(&h, id);
+    let updates = first_turn_totals(&h, id);
+    let [.., streamed, settled] = updates[..] else {
+        panic!("{updates:?}: a streamed and a settled update");
+    };
     assert_eq!(
-        updates[6], updates[5],
+        settled, streamed,
         "request estimates survive closing totals"
     );
     h.runtime.shutdown().await;
@@ -297,11 +317,14 @@ async fn native_request_pricing_estimates_unstreamed_closing_tokens_at_base_rate
         assert_eq!(usage.cache_read_tokens, 219_961 * turn as u64);
         assert_eq!(usage.cache_write_tokens, 21_020 * turn as u64);
     }
-    let updates = streamed_totals(&h, id);
-    assert!((updates[3].estimated_cost_usd.unwrap() - streamed_estimate).abs() < 1e-12);
+    let updates = first_turn_totals(&h, id);
+    let [.., streamed, settled] = updates[..] else {
+        panic!("{updates:?}: a streamed and a settled update");
+    };
+    assert!((streamed.estimated_cost_usd.unwrap() - streamed_estimate).abs() < 1e-12);
     assert!(
-        (updates[4].estimated_cost_usd.unwrap()
-            - updates[3].estimated_cost_usd.unwrap()
+        (settled.estimated_cost_usd.unwrap()
+            - streamed.estimated_cost_usd.unwrap()
             - base_estimate)
             .abs()
             < 1e-12

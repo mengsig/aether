@@ -31,20 +31,26 @@ struct ChattyUsageEngine {
 }
 
 impl ChattyUsageEngine {
+    /// Half of each message's readings arrive after it, as a stream's final
+    /// output count does, so the turn ends with readings still held.
     fn script() -> Vec<EngineEvent> {
         let mut events = Vec::new();
-        for message in 0..MESSAGES {
-            for reading_no in 0..READINGS {
+        let mut context = 1_000;
+        let mut readings = |events: &mut Vec<EngineEvent>| {
+            for _ in 0..READINGS / 2 {
                 events.push(EngineEvent::UsageDelta { usage: reading() });
-                events.push(EngineEvent::ContextUsage {
-                    tokens: 1_000 + message * READINGS + reading_no,
-                });
+                events.push(EngineEvent::ContextUsage { tokens: context });
+                context += 1;
             }
+        };
+        for message in 0..MESSAGES {
+            readings(&mut events);
             events.push(EngineEvent::Assistant {
                 content: vec![ContentBlock::text(format!("message {message}"))],
                 usage: None,
                 model: None,
             });
+            readings(&mut events);
         }
         events
     }
