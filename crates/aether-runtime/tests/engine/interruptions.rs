@@ -157,6 +157,13 @@ impl Engine for InFlightEngine {
                     })
                     .await
                     .unwrap();
+                    tx.send(EngineEvent::Assistant {
+                        content: vec![ContentBlock::text("I will avoid running that command.")],
+                        usage: None,
+                        model: None,
+                    })
+                    .await
+                    .unwrap();
                 }
             } else {
                 tx.send(EngineEvent::Assistant {

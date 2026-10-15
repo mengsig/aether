@@ -40,22 +40,42 @@ pub(crate) fn record(
 /// A retained native session does not read Aether's transcript. Carry corrections
 /// until an assistant response proves that a subsequent input reached the model.
 pub(crate) fn resume_notes(runtime: &Runtime, agent: aether_core::id::AgentId) -> Result<String> {
-    let after = runtime
-        .store
-        .latest_events(
-            1,
-            &EventFilter {
-                types: vec!["invocation.completed".into()],
-                ..EventFilter::own_events(agent)
-            },
-        )?
-        .first()
-        .map_or(0, |event| event.seq);
+    let completed = runtime.store.latest_events(
+        1,
+        &EventFilter {
+            types: vec!["invocation.completed".into()],
+            ..EventFilter::own_events(agent)
+        },
+    )?;
+    let mut after = 0;
+    if let Some(EventKind::InvocationCompleted { snapshot, .. }) =
+        completed.first().map(|event| &event.kind)
+    {
+        // An engine can answer its own synthetic rejection before exiting.
+        // Only notes preceding that answer's input snapshot were delivered.
+        let mut limit = 1;
+        loop {
+            let snapshots = runtime.store.latest_events(
+                limit,
+                &EventFilter {
+                    types: vec!["snapshot.created".into()],
+                    ..EventFilter::own_events(agent)
+                },
+            )?;
+            if let Some(event) = snapshots.iter().find(|event| matches!(&event.kind, EventKind::SnapshotCreated { snapshot: id, .. } if id == snapshot)) {
+                after = event.seq;
+                break;
+            }
+            if snapshots.len() < limit {
+                break;
+            }
+            limit = limit.saturating_mul(2);
+        }
+    }
     let filter = EventFilter {
         types: vec!["custom".into()],
         ..EventFilter::own_events(agent)
     };
-    let mut after = after;
     let mut notes = String::new();
     loop {
         let events = runtime.store.events(after, 500, &filter)?;
