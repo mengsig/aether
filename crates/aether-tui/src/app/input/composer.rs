@@ -30,7 +30,7 @@ impl App {
             return Dispatch::Handled(Vec::new());
         }
         if self.keys.matches(KeyAction::PasteImage, key) {
-            return Dispatch::Handled(self.paste_clipboard_image());
+            return Dispatch::Handled(self.paste_clipboard());
         }
         if self.keys.matches(KeyAction::Shortcuts, key)
             && (self.input.text.is_empty() || self.bottom.shortcuts)

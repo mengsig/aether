@@ -242,7 +242,7 @@ fn the_image_command_and_its_key_ask_for_a_file_or_the_clipboard() {
     let alt_v = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT);
     assert_eq!(
         app.reduce(AppEvent::Key(alt_v)),
-        vec![Effect::AttachImage(ImageSource::Clipboard)]
+        vec![Effect::PasteClipboard]
     );
     assert_eq!(
         commands::parse("/attach --clear"),

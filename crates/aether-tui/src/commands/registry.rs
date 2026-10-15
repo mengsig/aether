@@ -81,7 +81,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         about: "attach an image file, or the clipboard image; --clear drops them",
         rank: 7,
         hidden_aliases: &["img", "attach"],
-        key: "Alt+V",
+        key: "Ctrl+V / Alt+V",
     },
     CommandSpec {
         name: "memory",

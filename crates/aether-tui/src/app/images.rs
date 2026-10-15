@@ -7,7 +7,7 @@ use aether_core::attachment::{
 
 use super::{App, Effect};
 use crate::commands::{ImageArg, InputAction};
-use crate::image_input::ImageSource;
+use crate::image_input::{ClipboardContent, ImageSource};
 use crate::workspace;
 
 /// A message on its way to an agent: its text and the images attached to it.
@@ -49,6 +49,38 @@ pub(crate) fn with_image_lines(text: &str, labels: impl Iterator<Item = String>)
 }
 
 impl App {
+    pub(crate) fn terminal_paste(&mut self, text: &str) -> Vec<Effect> {
+        if text.trim().is_empty() && self.paste_reaches_composer() {
+            return self.paste_clipboard_image();
+        }
+        self.dispatch_paste(text)
+    }
+
+    pub(crate) fn paste_clipboard(&mut self) -> Vec<Effect> {
+        self.input.image_reads += 1;
+        vec![Effect::PasteClipboard]
+    }
+
+    pub(crate) fn clipboard_read(
+        &mut self,
+        content: Result<ClipboardContent, String>,
+    ) -> Vec<Effect> {
+        debug_assert!(
+            self.input.image_reads > 0,
+            "a clipboard read nothing asked for"
+        );
+        self.input.image_reads = self.input.image_reads.saturating_sub(1);
+        match content {
+            Ok(ClipboardContent::Image(image)) => self.attach_image(image),
+            Ok(ClipboardContent::Text(text)) => return self.dispatch_paste(&text),
+            Ok(ClipboardContent::ImagePath { text, image }) => {
+                return self.image_path_pasted(&text, image);
+            }
+            Err(reason) => self.flash_error(format!("nothing pasted: {reason}")),
+        }
+        Vec::new()
+    }
+
     /// A paste that named an image file. The composer attaches the image;
     /// whatever else holds the paste (a view, find, an approval) gets the path.
     pub(crate) fn image_path_pasted(

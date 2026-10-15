@@ -8,6 +8,12 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Clipboard images paste into the terminal UI with Ctrl+V.** Ctrl+V and
+  Alt+V prefer an offered image, otherwise paste text with the usual long-text
+  placeholders and image-path detection. An empty terminal paste also tries
+  the clipboard image. Reads happen in the background; an empty clipboard,
+  missing helper or SSH session gets a one-line explanation without changing
+  the draft. Existing custom key bindings are preserved.
 - **The daemon no longer churns the disk while agents work.** Reading a long
   agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
   of MB per read. With several agents running, that held host IO pressure

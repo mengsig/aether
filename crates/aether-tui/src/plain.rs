@@ -332,7 +332,8 @@ fn submit_line<W: Write>(
         out.line("not sent: an approval is waiting; wait for its prompt before answering")?;
         return Ok(Vec::new());
     }
-    let mut effects = app.reduce(AppEvent::Paste(line.to_owned()));
+    // Lines stay text; only terminal bracketed paste probes images for empty input.
+    let mut effects = app.dispatch_paste(line);
     effects.extend(app.reduce(AppEvent::Key(KeyEvent::new(
         KeyCode::Enter,
         KeyModifiers::NONE,
@@ -877,6 +878,18 @@ mod tests {
 
     fn output(out: &Printer<Vec<u8>>) -> &str {
         std::str::from_utf8(&out.output).expect("plain output is UTF-8")
+    }
+
+    #[test]
+    fn blank_plain_lines_never_read_the_clipboard() {
+        for line in ["", " \t\n"] {
+            let mut app = app_with_transcript(&[]);
+            let mut out = Printer::new(Vec::new());
+            let effects = submit_line(&mut app, &mut out, line).expect("plain line");
+            assert!(effects.is_empty(), "{effects:?}");
+            assert_eq!(app.input.image_reads, 0);
+            assert!(app.input.images.is_empty());
+        }
     }
 
     #[test]

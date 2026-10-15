@@ -164,6 +164,8 @@ pub enum Effect {
     Copy(String),
     /// Read an image for the draft; it comes back as `AppEvent::ImageRead`.
     AttachImage(crate::image_input::ImageSource),
+    /// Read clipboard types, then an image or text, off the UI loop.
+    PasteClipboard,
     /// Ring the terminal bell (attention while the window is unfocused).
     Bell,
     /// Ask the terminal to raise a desktop notification. Terminals that do
@@ -190,6 +192,7 @@ pub enum AppEvent {
     },
     /// `Effect::AttachImage` finished; the error is one line for the status row.
     ImageRead(Result<aether_core::attachment::ImageAttachment, String>),
+    ClipboardRead(Result<crate::image_input::ClipboardContent, String>),
     Resize(u16, u16),
     /// The terminal window gained or lost focus.
     Focus(bool),

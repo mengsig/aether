@@ -225,16 +225,7 @@ fn the_key_table_covers_what_the_spec_promises() {
 /// Ctrl+O no longer folds tool output; it opens the workspace picker.
 #[test]
 fn removed_key_rows_stay_removed() {
-    for gone in [
-        "Ctrl+L",
-        "Ctrl+N",
-        "Ctrl+P",
-        "Ctrl+V",
-        "Ctrl+X twice",
-        "j",
-        "k",
-        "q",
-    ] {
+    for gone in ["Ctrl+L", "Ctrl+N", "Ctrl+P", "Ctrl+X twice", "j", "k", "q"] {
         assert!(
             KEYS.iter()
                 .all(|k| k.keys.split(" / ").all(|part| part != gone)),

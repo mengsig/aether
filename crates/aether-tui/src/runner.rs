@@ -660,6 +660,13 @@ fn spawn_image_read(tx: mpsc::UnboundedSender<LoopEvent>, source: ImageSource) {
     });
 }
 
+fn spawn_clipboard_paste(tx: mpsc::UnboundedSender<LoopEvent>) {
+    tokio::spawn(async move {
+        let content = crate::image_input::paste_clipboard().await;
+        let _ = tx.send(LoopEvent::App(AppEvent::ClipboardRead(content)));
+    });
+}
+
 pub(crate) fn execute_effects(
     link: &Link,
     tx: &mpsc::UnboundedSender<LoopEvent>,
@@ -707,6 +714,7 @@ pub(crate) fn execute_effects(
                 spawn_copy(tx.clone(), text, out);
             }
             Effect::AttachImage(source) => spawn_image_read(tx.clone(), source),
+            Effect::PasteClipboard => spawn_clipboard_paste(tx.clone()),
             Effect::Bell => {
                 use std::io::Write as _;
                 let mut out = stdout();

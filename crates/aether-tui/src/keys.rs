@@ -51,7 +51,7 @@ actions! {
     EraseStart, "erase_start", "Erase to line start", "ctrl+u";
     EraseEnd, "erase_end", "Erase to line end", "ctrl+k";
     Yank, "yank", "paste last erased", "ctrl+y";
-    PasteImage, "paste_image", "attach clipboard image", "alt+v";
+    PasteImage, "paste_image", "paste clipboard", "ctrl+v / alt+v";
     WordLeft, "word_left", "Move a word left", "alt+b / ctrl+left";
     WordRight, "word_right", "Move a word right", "alt+f / ctrl+right";
 }
@@ -394,6 +394,26 @@ impl KeyBindings {
             .collect()
     }
 
+    fn preserve_ctrl_v_override(&mut self, candidates: &BTreeMap<KeyAction, KeyChord>) {
+        let ctrl_v = KeyChord {
+            code: KeyCode::Char('v'),
+            modifiers: KeyModifiers::CONTROL,
+        };
+        if candidates.contains_key(&KeyAction::PasteImage)
+            || !candidates.values().any(|chord| *chord == ctrl_v)
+        {
+            return;
+        }
+        // Ctrl+V was previously free: keep an existing override that owns it.
+        self.bindings
+            .entry(KeyAction::PasteImage)
+            .and_modify(|chords| {
+                debug_assert!(chords.contains(&ctrl_v));
+                chords.retain(|chord| *chord != ctrl_v);
+                debug_assert!(!chords.is_empty(), "Alt+V remains available");
+            });
+    }
+
     pub fn load(raw: &BTreeMap<String, toml::Value>) -> (Self, Vec<String>) {
         let mut keys;
         let mut notices = Vec::new();
@@ -424,6 +444,7 @@ impl KeyBindings {
             for (a, chord) in &candidates {
                 keys.bindings.insert(*a, vec![*chord]);
             }
+            keys.preserve_ctrl_v_override(&candidates);
             let bad: Vec<_> = candidates
                 .iter()
                 .filter_map(|(a, chord)| keys.validate(*a, &[*chord]).err().map(|e| (*a, e)))
