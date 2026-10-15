@@ -27,8 +27,8 @@ pub(super) enum SpendEvidence {
     Seen,
     /// No usage arrived, but the invocation may still have answered.
     Unseen,
-    /// No usage arrived and the API refused the request with a status that is
-    /// never billed or retried.
+    /// No usage arrived, nothing earlier in the process can have been billed,
+    /// and the API refused the request with a status it does not bill.
     Rejected,
 }
 
@@ -92,7 +92,7 @@ impl SessionCost {
         let mut total = models.as_ref().map(sum_counters).unwrap_or_default();
         total.set_cost(Some(dollars));
         if dollars == 0.0 && total.total_tokens() == 0 && total.reasoning_tokens.unwrap_or(0) == 0 {
-            if spend == SpendEvidence::Rejected && counters_decoded(value, models.as_ref()) {
+            if spend == SpendEvidence::Rejected {
                 return zero_receipt();
             }
             return unknown_receipt(
@@ -265,20 +265,6 @@ fn unknown_receipt(note: Option<&str>, has_spend: bool) -> Receipt {
         cost_usage: None,
         events,
     }
-}
-
-/// Zero counters prove nothing when they are zero only because they failed to decode.
-fn counters_decoded(value: &Value, models: Option<&ModelUsage>) -> bool {
-    let empty = value
-        .get("modelUsage")
-        .and_then(Value::as_object)
-        .is_some_and(serde_json::Map::is_empty);
-    debug_assert!(
-        !(empty && models.is_some()),
-        "an empty modelUsage decodes to None"
-    );
-    debug_assert!(models.is_none_or(|models| !models.is_empty()));
-    empty || models.is_some()
 }
 
 fn model_counters(value: &Value) -> Option<ModelUsage> {

@@ -423,14 +423,25 @@ An unusable receipt (missing or invalid dollars, all-zero counters and
 cost, or a missing or reset baseline) opens an `Unreported` cost gap only
 when the invocation streamed usage or the receipt has nonzero per-turn
 usage. The turn keeps a floor: the stream's dollars plus base-rate prices
-for closing tokens that never streamed. One case without that evidence is
-proven: a failed result whose `api_error_status` is 400, 401, 403, 404 or 413,
-with zero dollars and empty or zero `modelUsage`, is a complete $0. The API
-refuses those requests before inference and Claude Code never retries them.
-Spend evidence from any earlier stream or receipt in the same process rules
-this out. Connection errors, timeouts, 429, 5xx and 529 failures stay
-unknown, since an attempt that never answered may still have been billed. For
-the other unusable receipts without spend evidence, the runtime decides any
+for closing tokens that never streamed.
+
+One case without that evidence is proven to cost a complete $0. The API
+refuses requests with HTTP 400, 401, 403, 404 or 413 before inference and does
+not bill them. The receipt counts as $0 when all of these hold:
+
+- It is the process's first receipt, and no usage streamed before it.
+- It failed with one of those statuses as `api_error_status`.
+- It has zero dollars, an empty `modelUsage`, and every `usage` counter
+  present as zero.
+- Every `api_retry` record before it carried one of those statuses.
+
+Claude Code reports a retry after a dropped connection, a timeout, 429, 5xx
+or 529 as an `api_retry` record. The attempt before such a retry may have been
+billed, so the receipt stays unknown. Claude Code also resends a refused 400
+in a reshaped form without an `api_retry` record, but only after the API
+refused it.
+
+For the other unusable receipts without spend evidence, the runtime decides any
 gap from its own evidence of work. A later usable cumulative receipt can
 cover the gap when the invocation's starting baseline is known.
 

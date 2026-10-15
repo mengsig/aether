@@ -528,19 +528,3 @@ fn a_rejected_request_with_a_zeroed_receipt_costs_zero_and_keeps_the_baseline() 
     assert_eq!(state.latest, latest);
     assert_eq!(state.before, before);
 }
-
-#[test]
-fn a_rejection_proves_nothing_from_counters_that_failed_to_decode() {
-    for models in [Value::Null, json!([]), json!({"haiku":{"inputTokens":0}})] {
-        let value = json!({"session_id":"s","total_cost_usd":0.0,"modelUsage":models});
-        let result =
-            SessionCost::default().receipt(&value, &BTreeMap::new(), SpendEvidence::Rejected);
-        assert_eq!(result.cost_usd, None, "{models}");
-        assert!(matches!(&result.events[..], [EngineEvent::ProtocolNote(_)]));
-    }
-    let zeros = json!({"haiku":{"inputTokens":0,"outputTokens":0,
-        "cacheReadInputTokens":0,"cacheCreationInputTokens":0}});
-    let value = json!({"session_id":"s","total_cost_usd":0.0,"modelUsage":zeros});
-    let result = SessionCost::default().receipt(&value, &BTreeMap::new(), SpendEvidence::Rejected);
-    assert_eq!(result.cost_usd, Some(0.0));
-}

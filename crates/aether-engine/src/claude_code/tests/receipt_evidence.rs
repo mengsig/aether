@@ -104,11 +104,22 @@ fn model_less_stream_evidence_survives_message_eviction() {
     }
 }
 
-/// A closing receipt as Claude Code writes it when the API refuses a request.
+/// The closing receipt Claude Code 2.1.299 wrote when a local server refused its request.
 fn rejected(status: Value) -> Value {
     json!({"type":"result","subtype":"success","is_error":true,"session_id":"s",
         "result":"API Error: refused","api_error_status":status,"terminal_reason":"api_error",
-        "total_cost_usd":0,"modelUsage":{},"usage":{"input_tokens":0,"output_tokens":0}})
+        "total_cost_usd":0,"modelUsage":{},"usage":{"output_tokens_details":{"thinking_tokens":0},
+            "input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,
+            "output_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},
+            "service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,
+                "ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],
+            "speed":"standard","fallback_credit":null}})
+}
+
+fn retry(status: Value) -> String {
+    json!({"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,
+        "retry_delay_ms":600,"error_status":status,"error":"unknown","session_id":"s"})
+    .to_string()
 }
 
 fn receipt_cost(events: &[EngineEvent]) -> Option<f64> {
@@ -176,4 +187,75 @@ fn earlier_usage_in_the_process_outweighs_a_later_rejection() {
         &parse_line(&rejected(json!(400)).to_string(), &mut state),
         true,
     );
+}
+
+#[test]
+fn a_retry_proves_nothing_unless_the_api_refused_the_attempt_before_it() {
+    for status in [
+        Value::Null,
+        json!(429),
+        json!(500),
+        json!(529),
+        json!("401"),
+    ] {
+        let mut state = ParseState::default();
+        assert!(parse_line(&retry(status.clone()), &mut state).is_empty());
+        let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
+        assert_eq!(receipt_cost(&events), None, "{status}");
+        assert_gap(&events, false);
+    }
+    let mut state = ParseState::default();
+    for _ in 0..3 {
+        parse_line(&retry(json!(401)), &mut state);
+    }
+    let events = parse_line(&rejected(json!(401)).to_string(), &mut state);
+    assert_eq!(receipt_cost(&events), Some(0.0));
+}
+
+#[test]
+fn an_earlier_receipt_proves_nothing_for_a_later_rejection() {
+    let dollars = json!({"type":"result","subtype":"success","session_id":"s",
+        "total_cost_usd":0.05,"modelUsage":{},"usage":{}});
+    let models = json!({"type":"result","subtype":"success","session_id":"s",
+        "total_cost_usd":0.05,"modelUsage":{"haiku":{"inputTokens":100,"outputTokens":20,
+            "cacheReadInputTokens":0,"cacheCreationInputTokens":0}},"usage":{}});
+    for earlier in [dollars, models, rejected(json!(400))] {
+        let mut state = ParseState::default();
+        parse_line(&earlier.to_string(), &mut state);
+        let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
+        assert_eq!(receipt_cost(&events), None, "{earlier}");
+    }
+}
+
+#[test]
+fn a_rejection_needs_every_counter_present_and_zero() {
+    let mut cases: Vec<(&str, Value)> = vec![
+        ("/usage", Value::Null),
+        ("/usage", json!([])),
+        ("/usage", json!({"input_tokens":0})),
+        ("/usage/input_tokens", json!("unknown")),
+        ("/usage/cache_read_input_tokens", json!("0")),
+        (
+            "/usage/output_tokens_details/thinking_tokens",
+            json!("unknown"),
+        ),
+        ("/usage/output_tokens_details/thinking_tokens", json!(5)),
+        ("/usage/server_tool_use/web_search_requests", json!(1)),
+        ("/usage/iterations", json!([{"input_tokens":0}])),
+        ("/usage/input_tokens", json!(-0.0)),
+        ("/total_cost_usd", json!("0")),
+        ("/modelUsage", Value::Null),
+        ("/modelUsage", json!([])),
+    ];
+    cases.push((
+        "/modelUsage",
+        json!({"haiku":{"inputTokens":0,"outputTokens":0,"cacheReadInputTokens":0,
+            "cacheCreationInputTokens":0,"thinkingTokens":"unknown"}}),
+    ));
+    for (pointer, replacement) in cases {
+        let mut value = rejected(json!(400));
+        *value.pointer_mut(pointer).expect("the field exists") = replacement.clone();
+        let events = parse_line(&value.to_string(), &mut ParseState::default());
+        assert_eq!(receipt_cost(&events), None, "{pointer} = {replacement}");
+    }
 }

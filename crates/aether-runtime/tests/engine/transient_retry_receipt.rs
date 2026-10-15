@@ -29,7 +29,10 @@ impl Engine for ClaudeReceiptEngine {
         let mut parser = ParseState::for_turn(&turn);
         self.turns.lock().unwrap().push(turn);
         let (tx, events) = mpsc::channel(64);
+        // An input channel keeps the run open past a receipt while background work runs.
+        let (input, messages) = mpsc::channel(1);
         tokio::spawn(async move {
+            let _messages = messages;
             for line in lines {
                 for event in parse_line(&line.to_string(), &mut parser) {
                     tx.send(event).await.unwrap();
@@ -38,7 +41,7 @@ impl Engine for ClaudeReceiptEngine {
         });
         Ok(EngineRun {
             events,
-            input: None,
+            input: Some(input),
             decisions: None,
             stop: None,
         })
@@ -181,4 +184,51 @@ async fn per_turn_usage_from_an_earlier_receipt_keeps_a_later_zero_receipt_incom
     assert!(!usage.cost_complete, "{usage:?}");
     assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
     h.runtime.shutdown().await;
+}
+
+/// `failed_first_request` with `lines` inserted after its init line.
+fn failed_after(lines: Vec<Value>) -> Arc<ClaudeReceiptEngine> {
+    let engine = failed_first_request(Some(400), "API Error: 400 refused");
+    let mut runs = engine.runs.lock().unwrap();
+    let run = runs.front_mut().expect("one scripted run");
+    for (offset, line) in lines.into_iter().enumerate() {
+        run.insert(1 + offset, line);
+    }
+    drop(runs);
+    engine
+}
+
+#[tokio::test]
+async fn a_retry_after_a_dropped_connection_keeps_a_later_refusal_incomplete() {
+    let retry = json!({"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,
+        "retry_delay_ms":600,"error_status":null,"error":"unknown","session_id":"fresh"});
+    let usage = failed_worker_usage(failed_after(vec![retry])).await;
+    assert!(!usage.cost_complete, "{usage:?}");
+    assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
+}
+
+#[tokio::test]
+async fn an_earlier_receipt_keeps_a_later_refusal_incomplete() {
+    let background = json!({"type":"system","subtype":"task_started","task_id":"background"});
+    let billed = json!({"type":"result","subtype":"success","session_id":"fresh",
+        "total_cost_usd":0.05,"modelUsage":{},"usage":{}});
+    let usage = failed_worker_usage(failed_after(vec![background, billed])).await;
+    assert!(!usage.cost_complete, "{usage:?}");
+    assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
+}
+
+#[tokio::test]
+async fn a_refusal_with_unreadable_counters_keeps_its_cost_gap() {
+    let engine = failed_first_request(Some(400), "API Error: 400 refused");
+    engine
+        .runs
+        .lock()
+        .unwrap()
+        .front_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()["usage"] = Value::Null;
+    let usage = failed_worker_usage(engine).await;
+    assert!(!usage.cost_complete, "{usage:?}");
+    assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
 }

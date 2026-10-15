@@ -29,12 +29,13 @@ release is also the text of its GitHub release.
   the receipt reports nonzero per-turn usage. Model-less streams count too.
   Receipts without spend evidence keep their previous recovery behavior.
 - **A Claude Code request the API refuses costs a complete $0.** When the
-  API rejected an agent's request with HTTP 400, 401, 403, 404 or 413, its
+  API refused an agent's request with HTTP 400, 401, 403, 404 or 413, its
   all-zero receipt was treated as unknown cost and the agent showed an
-  incomplete $0. Those statuses are never billed or retried, so such a
-  receipt now counts as $0 with no gap. Usage seen earlier in the same
-  process, malformed counters, and connection, timeout, 429, 5xx or 529
-  failures still leave the gap.
+  incomplete $0. The API does not bill those statuses, so such a receipt now
+  counts as $0 with no gap. This holds only for the process's first receipt,
+  with no usage streamed, every counter zero, and every earlier retry caused
+  by one of those statuses. Otherwise the gap stays. That includes a retry
+  after a dropped connection, a timeout, 429, 5xx or 529.
 
 ## 1.0.9
 
