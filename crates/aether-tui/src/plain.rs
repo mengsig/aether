@@ -146,10 +146,7 @@ async fn run_loop(
                 }
                 Some(LoopEvent::App(event)) => {
                     let lost = matches!(event, AppEvent::Disconnected { .. } | AppEvent::HistoryExpired);
-                    let effects = match event {
-                        AppEvent::Paste(line) => submit_line(&mut app, &mut out, &line)?,
-                        event => app.reduce(event),
-                    };
+                    let effects = app.reduce(event);
                     out.close_views(&mut app)?;
                     // The status line says "reconnecting", so something has
                     // to be reconnecting. Same backoff as the TUI's.
@@ -332,8 +329,7 @@ fn submit_line<W: Write>(
         out.line("not sent: an approval is waiting; wait for its prompt before answering")?;
         return Ok(Vec::new());
     }
-    // Lines stay text; only terminal bracketed paste probes images for empty input.
-    let mut effects = app.dispatch_paste(line);
+    let mut effects = app.reduce(AppEvent::Paste(line.to_owned()));
     effects.extend(app.reduce(AppEvent::Key(KeyEvent::new(
         KeyCode::Enter,
         KeyModifiers::NONE,
@@ -889,6 +885,8 @@ mod tests {
             assert!(effects.is_empty(), "{effects:?}");
             assert_eq!(app.input.image_reads, 0);
             assert!(app.input.images.is_empty());
+            assert!(app.reduce(AppEvent::Paste(line.into())).is_empty());
+            assert_eq!(app.input.image_reads, 0);
         }
     }
 

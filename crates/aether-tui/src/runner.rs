@@ -631,13 +631,18 @@ fn map_terminal_event(ev: Event) -> Option<AppEvent> {
     }
 }
 
-/// A paste as the app takes it: text, or the image file the text names.
+/// A terminal paste: empty image signal, text, or the image file the text names.
 pub(crate) fn paste_event(text: String) -> AppEvent {
+    if text.is_empty() {
+        return AppEvent::TerminalImagePaste;
+    }
     let home = crate::workspace::home_dir();
     let Some(path) = crate::image_input::pasted_image_path(&text, home.as_deref()) else {
         return AppEvent::Paste(text);
     };
     let image = aether_client::images::read_image_file(&path).map_err(|e| e.to_string());
+    debug_assert!(!text.trim().is_empty());
+    debug_assert!(path.extension().is_some());
     AppEvent::ImagePathPasted { text, image }
 }
 

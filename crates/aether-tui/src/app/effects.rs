@@ -185,6 +185,8 @@ pub enum AppEvent {
     Voice(crate::voice::Reply),
     Key(KeyEvent),
     Paste(String),
+    /// An empty bracketed paste delivered by the terminal.
+    TerminalImagePaste,
     /// A paste that was exactly the path of an image file, and the file as read.
     ImagePathPasted {
         text: String,

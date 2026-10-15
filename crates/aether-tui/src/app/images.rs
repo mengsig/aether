@@ -49,11 +49,11 @@ pub(crate) fn with_image_lines(text: &str, labels: impl Iterator<Item = String>)
 }
 
 impl App {
-    pub(crate) fn terminal_paste(&mut self, text: &str) -> Vec<Effect> {
-        if text.trim().is_empty() && self.paste_reaches_composer() {
+    pub(crate) fn terminal_image_paste(&mut self) -> Vec<Effect> {
+        if self.paste_reaches_composer() {
             return self.paste_clipboard_image();
         }
-        self.dispatch_paste(text)
+        Vec::new()
     }
 
     pub(crate) fn paste_clipboard(&mut self) -> Vec<Effect> {
@@ -70,6 +70,7 @@ impl App {
             "a clipboard read nothing asked for"
         );
         self.input.image_reads = self.input.image_reads.saturating_sub(1);
+        debug_assert!(self.input.images.len() <= MAX_IMAGES_PER_MESSAGE);
         match content {
             Ok(ClipboardContent::Image(image)) => self.attach_image(image),
             Ok(ClipboardContent::Text(text)) => return self.dispatch_paste(&text),
@@ -194,7 +195,7 @@ impl App {
         if matches!(self.parse_input(&self.input.text), InputAction::Command(_)) {
             return false;
         }
-        self.flash("an image is still being read: send again once it is attached");
+        self.flash("a paste or image is still being read: send again once it finishes");
         true
     }
 

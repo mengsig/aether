@@ -9,7 +9,7 @@ mod service;
 pub(crate) mod setup;
 mod sherpa;
 #[cfg(test)]
-mod test_script;
+pub(crate) mod test_script;
 #[cfg(test)]
 mod tests;
 pub(crate) mod ui;

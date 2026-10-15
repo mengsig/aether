@@ -1,13 +1,15 @@
 use super::*;
 
 #[cfg(unix)]
-pub(crate) fn fake_helper(script: &str) -> (tempfile::TempDir, String) {
-    use std::os::unix::fs::PermissionsExt;
+mod bounds;
+#[cfg(unix)]
+mod macos;
 
+#[cfg(unix)]
+pub(crate) fn fake_helper(script: &str) -> (tempfile::TempDir, String) {
     let dir = tempfile::tempdir().expect("helper directory");
     let path = dir.path().join("clipboard-helper");
-    std::fs::write(&path, format!("#!/bin/sh\nset -eu\n{script}\n")).expect("helper script");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).expect("executable");
+    crate::voice::test_script::write(&path, &format!("#!/bin/sh\nset -eu\n{script}\n"));
     assert!(path.is_file());
     assert!(path.is_absolute());
     (dir, path.to_str().expect("helper path").to_owned())
@@ -18,7 +20,7 @@ pub(crate) fn fake_wayland(listing: &str, data: &[u8]) -> (tempfile::TempDir, St
     let (dir, program) = fake_helper(
         r#"case "$*" in
         --list-types) cat "${0%/*}/types" ;;
-        '--type image/png'|'--no-newline --type text/plain;charset=utf-8'|'--no-newline --type text/plain')
+        '--type image/png'|--no-newline\ --type\ *)
             cat "${0%/*}/data" ;;
         *) exit 64 ;;
         esac"#,
@@ -32,18 +34,42 @@ pub(crate) fn fake_wayland(listing: &str, data: &[u8]) -> (tempfile::TempDir, St
 
 #[cfg(unix)]
 #[tokio::test]
-async fn smart_paste_prefers_an_offered_image_and_preserves_text_bytes() {
+async fn image_only_paste_ignores_offered_plain_text() {
     let png = b"\x89PNG\r\n\x1a\npixels";
     let (_dir, program) = fake_wayland("text/plain\nimage/png\n", png);
-    let content = paste_with(ClipboardTool::WlPaste, &program, &program).await;
-    let ClipboardContent::Image(image) = content.expect("image paste") else {
-        panic!("the offered image wins over text");
-    };
-    assert_eq!(image.media_type, "image/png");
-    assert_eq!(image.size_bytes(), png.len() as u64);
+    let bytes = clipboard_bytes(ClipboardTool::WlPaste, &program)
+        .await
+        .expect("forced clipboard image");
+    assert_eq!(bytes, png);
+    assert_eq!(
+        image_attachment(&bytes, None).expect("image").media_type,
+        "image/png"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn smart_paste_keeps_images_without_plain_text_and_preserves_text_bytes() {
+    let png = b"\x89PNG\r\n\x1a\npixels";
+    for listing in ["image/png\n", "text/html\nimage/png\n"] {
+        let (_dir, program) = fake_wayland(listing, png);
+        let content = paste_with(ClipboardTool::WlPaste, &program, &program).await;
+        let ClipboardContent::Image(image) = content.expect("image paste") else {
+            panic!("no plain text was offered");
+        };
+        assert_eq!(image.media_type, "image/png");
+        assert_eq!(image.size_bytes(), png.len() as u64);
+    }
 
     let text = "  leading\r\nλ and trailing\n\n";
-    for listing in ["text/plain;charset=utf-8\ntext/plain\n", "text/plain\n"] {
+    for listing in [
+        "text/plain;charset=utf-8\ntext/plain\n",
+        "text/plain\nimage/png\n",
+        "text/plain;charset=iso-8859-1\n",
+        "UTF8_STRING\n",
+        "TEXT\n",
+        "STRING\n",
+    ] {
         let (_dir, program) = fake_wayland(listing, text.as_bytes());
         let content = paste_with(ClipboardTool::WlPaste, &program, &program).await;
         assert!(matches!(content, Ok(ClipboardContent::Text(got)) if got == text));
@@ -66,7 +92,7 @@ async fn smart_paste_reports_empty_missing_broken_and_invalid_contents() {
         .expect_err("missing helper");
     assert!(missing.contains("install wl-clipboard"));
     assert!(missing.contains("/image <path>"));
-    let (_dir, program) = fake_wayland("image/png\ntext/plain\n", b"broken image");
+    let (_dir, program) = fake_wayland("image/png\n", b"broken image");
     let error = paste_with(ClipboardTool::WlPaste, &program, &program)
         .await
         .expect_err("bad image must not fall back to text");
@@ -83,7 +109,7 @@ async fn smart_paste_reports_empty_missing_broken_and_invalid_contents() {
 async fn smart_paste_uses_xclip_targets_and_its_default_text_output() {
     let (_dir, program) = fake_helper(
         r#"case "$*" in
-        '-selection clipboard -t TARGETS -o') printf 'TARGETS\nUTF8_STRING\n' ;;
+        '-selection clipboard -t TARGETS -o') printf 'TARGETS\nimage/png\nUTF8_STRING\n' ;;
         '-selection clipboard -o') printf '  text\n\n' ;;
         *) exit 64 ;;
         esac"#,
@@ -92,7 +118,7 @@ async fn smart_paste_uses_xclip_targets_and_its_default_text_output() {
     assert!(matches!(content, Ok(ClipboardContent::Text(text)) if text == "  text\n\n"));
     let (_dir, program) = fake_helper(
         r#"case "$*" in
-        '-selection clipboard -t TARGETS -o') printf 'image/png\nUTF8_STRING\n' ;;
+        '-selection clipboard -t TARGETS -o') printf 'image/png\ntext/html\n' ;;
         '-selection clipboard -o -t image/png') printf '\211PNG\r\n\032\npixels' ;;
         *) exit 64 ;;
         esac"#,
@@ -108,7 +134,7 @@ async fn smart_paste_uses_xclip_targets_and_its_default_text_output() {
 async fn smart_paste_probes_macos_before_using_png_or_pbpaste() {
     let (_dir, program) = fake_helper(
         r#"case "$*" in
-        '-e clipboard info') printf '{«class PNGf», 14}, {«class utf8», 4}' ;;
+        '-e clipboard info') printf '{«class PNGf», 14}' ;;
         '-e get the clipboard as «class PNGf»') printf '«data PNGf89504E470D0A1A0A706978656C73»' ;;
         *) exit 64 ;;
         esac"#,
@@ -117,7 +143,7 @@ async fn smart_paste_probes_macos_before_using_png_or_pbpaste() {
     assert!(matches!(content, Ok(ClipboardContent::Image(image)) if image.size_bytes() == 14));
     let (_dir, program) = fake_helper(
         r#"case "$*" in
-        '-e clipboard info') printf '{«class utf8», 7}' ;;
+        '-e clipboard info') printf '{«class utf8», 7}, {«class PNGf», 14}' ;;
         '') printf ' text\n\n' ;;
         *) exit 64 ;;
         esac"#,
@@ -168,7 +194,7 @@ fn the_offered_type_is_the_first_one_supported() {
 #[test]
 fn the_macos_hex_dump_decodes_to_its_bytes() {
     assert_eq!(
-        hex_payload("«data PNGf89504E470D0A1A0A»\n"),
+        hex_payload("«data PNGf89504E470D0A1A0A»\n", "PNGf"),
         Some(b"\x89PNG\r\n\x1a\n".to_vec())
     );
     for broken in [
@@ -178,7 +204,7 @@ fn the_macos_hex_dump_decodes_to_its_bytes() {
         "«data PNGfzz»",
         "«data PNGf89",
     ] {
-        assert_eq!(hex_payload(broken), None, "{broken:?}");
+        assert_eq!(hex_payload(broken, "PNGf"), None, "{broken:?}");
     }
 }
 

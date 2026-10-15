@@ -226,12 +226,14 @@ impl fmt::Display for KeyChord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyBindings {
     bindings: BTreeMap<KeyAction, Vec<KeyChord>>,
+    paste_image_fallback: bool,
 }
 
 impl Default for KeyBindings {
     fn default() -> Self {
         Self {
             bindings: KeyAction::ALL.iter().map(|a| (*a, defaults(*a))).collect(),
+            paste_image_fallback: false,
         }
     }
 }
@@ -251,6 +253,10 @@ impl KeyBindings {
     }
 
     pub fn customised(&self, action: KeyAction) -> bool {
+        if action == KeyAction::PasteImage && self.paste_image_fallback {
+            debug_assert_eq!(self.bindings[&action], defaults(action)[1..]);
+            return false;
+        }
         self.bindings[&action] != defaults(action)
     }
 
@@ -345,6 +351,9 @@ impl KeyBindings {
     pub fn assign(&mut self, action: KeyAction, chord: KeyChord) -> Result<(), String> {
         self.validate(action, &[chord])?;
         self.bindings.insert(action, vec![chord]);
+        if action == KeyAction::PasteImage {
+            self.paste_image_fallback = false;
+        }
         Ok(())
     }
 
@@ -352,6 +361,9 @@ impl KeyBindings {
         let chords = defaults(action);
         self.validate(action, &chords)?;
         self.bindings.insert(action, chords);
+        if action == KeyAction::PasteImage {
+            self.paste_image_fallback = false;
+        }
         Ok(())
     }
 
@@ -412,6 +424,7 @@ impl KeyBindings {
                 chords.retain(|chord| *chord != ctrl_v);
                 debug_assert!(!chords.is_empty(), "Alt+V remains available");
             });
+        self.paste_image_fallback = true;
     }
 
     pub fn load(raw: &BTreeMap<String, toml::Value>) -> (Self, Vec<String>) {

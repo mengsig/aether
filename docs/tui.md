@@ -198,26 +198,28 @@ are three ways to attach one, and each adds a chip above the draft,
   text.
 - **`/image <path>`** attaches a file by name; `~` and paths relative to the
   workspace resolve as they do elsewhere.
-- **Ctrl+V** (or **Alt+V**) pastes from the clipboard, preferring a supported
-  image when one is offered. Otherwise it pastes text, with the same long-text
-  placeholders and image-path detection as the terminal's paste. `/image` with
-  no path attaches only the clipboard image. Clipboard reads run in the
+- **Ctrl+V** pastes from the clipboard, preferring plain text when offered
+  alongside an image. Screenshots and browser “copy image” clipboards without
+  plain text attach the image. Text uses the same long-text placeholders and
+  image-path detection as the terminal's paste. **Alt+V** and `/image` with
+  no path attach only the clipboard image. Clipboard reads run in the
   background through `wl-paste` on Wayland, `xclip` on X11, or `osascript` and
   `pbpaste` on macOS. If the helper is missing or the clipboard is empty, the
   status row says so in one line and the draft is untouched. Over SSH the
   clipboard is on the other machine: copy the file across and use `/image <path>`.
 
 The terminal's own paste (usually **Ctrl+Shift+V**) normally delivers text.
-If it sends an empty or whitespace-only bracketed paste while the composer
-has focus, Aether tries to attach the clipboard image. Some terminals send
+If it sends a truly empty bracketed paste while the composer has focus,
+Aether tries to attach the clipboard image. Some terminals send
 nothing for an image; use **Ctrl+V** in that case. Existing custom key bindings
 take precedence over the new Ctrl+V default; `/keys` shows the active binding.
+Whitespace-only pastes keep their whitespace; plain-mode input stays text.
 
 Chips stay through slash commands and leave with the next message. Backspace
 at the very start of the draft removes the last chip, and `/image --clear`
 removes them all. An image needs no words: Enter sends it on its own. Enter
-while an image is still being read keeps the draft and says so. The queue
-(Tab) holds text only, so a draft with images is not queued; send it with
+while a paste or image is still being read keeps the draft and says so. The
+queue (Tab) holds text only, so a draft with images is not queued; send it with
 Enter.
 
 A sent image is one line of the transcript under the message's text,
@@ -500,7 +502,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+A / Ctrl+E` | start / end of the line |
 | `Ctrl+W / Ctrl+U / Ctrl+K` | delete word back / to line start / to line end |
 | `Ctrl+Y` | paste what was last deleted |
-| `Ctrl+V / Alt+V` | paste a clipboard image or text |
+| `Ctrl+V / Alt+V` | paste clipboard text or image / force an image |
 | `Alt+B / Alt+F / Ctrl+← / Ctrl+→` | move a word back / forward |
 
 **In the board (Ctrl+G)**
@@ -588,7 +590,7 @@ listed. A few take an argument directly: `/theme nord`, `/mouse scroll`,
 | `/agent [name]` | open the agents board, or view the named agent | `Ctrl+G` |
 | `/compact` | fold older context into a checkpoint |  |
 | `/copy` | copy the last reply to the clipboard |  |
-| `/image [path\|--clear]` | attach an image file, or the clipboard image; --clear drops them | `Ctrl+V / Alt+V` |
+| `/image [path\|--clear]` | attach an image file, or the clipboard image; --clear drops them | `Alt+V` |
 | `/memory` | browse durable memories; pin or forget one |  |
 | `/approvals` | remembered approval rules and the auto-approve toggle |  |
 | `/usage` | providers, sign-in, health and account limits |  |

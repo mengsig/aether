@@ -196,7 +196,7 @@ pub const KEYS: &[KeySpec] = &[
     key(
         Compose,
         "Ctrl+V / Alt+V",
-        "paste a clipboard image or text",
+        "paste clipboard text or image / force an image",
         "paste clipboard",
     )
     .bound(&[KeyAction::PasteImage])

@@ -23,7 +23,11 @@ async fn ctrl_v_attaches_an_offered_image_without_changing_the_draft() {
     request_clipboard(&mut app);
     assert!(app.reduce(key(KeyCode::Enter)).is_empty());
     assert_eq!(app.input.text, "explain this", "send waits for the read");
-    let (_dir, program) = fake_wayland("text/plain\nimage/png\n", PNG);
+    assert_eq!(
+        app.live_flash(),
+        Some("a paste or image is still being read: send again once it finishes")
+    );
+    let (_dir, program) = fake_wayland("image/png\n", PNG);
     let content = paste_with(ClipboardTool::WlPaste, &program, &program).await;
     assert!(app.reduce(AppEvent::ClipboardRead(content)).is_empty());
     assert_eq!(app.input.image_reads, 0);
@@ -46,7 +50,14 @@ async fn ctrl_v_text_uses_the_same_normalisation_and_placeholders_as_a_paste() {
         reference.input.cursor = app.input.cursor;
         reference.reduce(crate::runner::paste_event(text.clone()));
         request_clipboard(&mut app);
-        let (_dir, program) = fake_wayland("text/plain;charset=utf-8\n", text.as_bytes());
+        assert!(app.reduce(key(KeyCode::Enter)).is_empty());
+        assert!(
+            app.live_flash()
+                .expect("pending paste")
+                .contains("a paste or image")
+        );
+        let (_dir, program) =
+            fake_wayland("image/png\ntext/plain;charset=utf-8\n", text.as_bytes());
         let content = paste_with(ClipboardTool::WlPaste, &program, &program).await;
         assert!(app.reduce(AppEvent::ClipboardRead(content)).is_empty());
         assert_eq!(app.input.text, reference.input.text);
@@ -89,24 +100,24 @@ async fn ctrl_v_empty_or_missing_clipboard_flashes_and_preserves_the_draft() {
 
 #[tokio::test]
 async fn an_empty_terminal_paste_tries_the_clipboard_image() {
-    for text in ["", " \t\r\n"] {
-        let mut app = app_with_transcript(&[]);
-        app.input.set_text("keep this draft");
-        let effects = app.reduce(crate::runner::paste_event(text.into()));
-        assert_eq!(effects, vec![Effect::AttachImage(ImageSource::Clipboard)]);
-        assert_eq!(app.input.image_reads, 1);
-        let (_dir, program) = fake_wayland("image/png\n", PNG);
-        let content = paste_with(ClipboardTool::WlPaste, &program, &program)
-            .await
-            .expect("clipboard image");
-        let ClipboardContent::Image(image) = content else {
-            panic!("an image was offered");
-        };
-        app.reduce(AppEvent::ImageRead(Ok(image)));
-        assert_eq!(app.input.images.len(), 1);
-        assert_eq!(app.input.image_reads, 0);
-        assert_eq!(app.input.text, "keep this draft");
-    }
+    let mut app = app_with_transcript(&[]);
+    app.input.set_text("keep this draft");
+    let event = crate::runner::paste_event(String::new());
+    assert!(matches!(event, AppEvent::TerminalImagePaste));
+    let effects = app.reduce(event);
+    assert_eq!(effects, vec![Effect::AttachImage(ImageSource::Clipboard)]);
+    assert_eq!(app.input.image_reads, 1);
+    let (_dir, program) = fake_wayland("image/png\n", PNG);
+    let content = paste_with(ClipboardTool::WlPaste, &program, &program)
+        .await
+        .expect("clipboard image");
+    let ClipboardContent::Image(image) = content else {
+        panic!("an image was offered");
+    };
+    app.reduce(AppEvent::ImageRead(Ok(image)));
+    assert_eq!(app.input.images.len(), 1);
+    assert_eq!(app.input.image_reads, 0);
+    assert_eq!(app.input.text, "keep this draft");
 }
 
 #[test]
@@ -115,6 +126,7 @@ fn a_nonempty_terminal_paste_stays_text_without_reading_the_clipboard() {
         "ordinary text",
         "  leading\ntrailing  ",
         "/image is text until sent",
+        " \t\n",
     ] {
         let mut app = app_with_transcript(&[]);
         app.input.set_text("draft ");
@@ -164,7 +176,7 @@ fn clipboard_reads_do_not_start_when_a_view_find_or_board_owns_input() {
         }
         assert!(app.reduce(ctrl_key(KeyCode::Char('v'))).is_empty());
         assert!(
-            app.reduce(crate::runner::paste_event(" \t".into()))
+            app.reduce(crate::runner::paste_event(String::new()))
                 .is_empty()
         );
         assert_eq!(app.input.image_reads, 0);

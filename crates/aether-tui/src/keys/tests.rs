@@ -230,6 +230,9 @@ fn existing_ctrl_v_overrides_take_precedence_over_the_new_default() {
             KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT)
         ));
         assert_eq!(KeyBindings::load(&keys.overrides()).0, keys);
+        assert!(!keys.customised(KeyAction::PasteImage));
+        assert!(!keys.overrides().contains_key("paste_image"));
+        assert_eq!(keys.help_chord(&[KeyAction::PasteImage], true), "Alt+V");
     }
     let raw = [("paste_image".into(), "f6".into())].into();
     let (keys, notices) = KeyBindings::load(&raw);
@@ -246,6 +249,19 @@ fn existing_ctrl_v_overrides_take_precedence_over_the_new_default() {
         KeyAction::PasteImage,
         KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT)
     ));
+}
+
+#[test]
+fn an_explicit_paste_image_override_is_still_customised() {
+    let raw = [
+        ("details".into(), "ctrl+v".into()),
+        ("paste_image".into(), "alt+v".into()),
+    ]
+    .into();
+    let (keys, notices) = KeyBindings::load(&raw);
+    assert!(notices.is_empty(), "{notices:?}");
+    assert!(keys.customised(KeyAction::PasteImage));
+    assert_eq!(keys.overrides(), raw);
 }
 
 #[test]

@@ -62,8 +62,8 @@ fn every_palette_entry_parses_to_a_real_command() {
     }
 }
 
-/// §9.5: the palette lists every command with its key. KEYS stays the one
-/// binding set, so a command pointing at a chord must point at a row of it.
+/// A command may advertise a whole key row or one of its alternatives.
+/// Every advertised chord must still appear in KEYS.
 #[test]
 fn every_key_a_command_advertises_is_in_the_key_table() {
     let mut named = 0;
@@ -73,7 +73,9 @@ fn every_key_a_command_advertises_is_in_the_key_table() {
         }
         named += 1;
         assert!(
-            KEYS.iter().any(|k| k.keys == spec.key),
+            KEYS.iter().any(|k| {
+                k.keys == spec.key || k.keys.split(" / ").any(|chord| chord == spec.key)
+            }),
             "/{} advertises {:?}, which is not in the key table",
             spec.name,
             spec.key

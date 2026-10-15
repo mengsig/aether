@@ -4,7 +4,9 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use aether_client::images::image_attachment;
-use aether_core::attachment::{IMAGE_MEDIA_TYPES, ImageAttachment, MAX_IMAGE_BYTES};
+use aether_core::attachment::{
+    AttachmentError, IMAGE_MEDIA_TYPES, ImageAttachment, MAX_IMAGE_BYTES,
+};
 use tokio::io::AsyncReadExt;
 
 use super::ClipboardContent;
@@ -13,9 +15,7 @@ const HELPER_TIMEOUT: Duration = Duration::from_secs(3);
 const NO_IMAGE: &str = "the clipboard holds no image (PNG, JPEG, GIF or WebP)";
 const NO_CONTENT: &str = "the clipboard holds no text or supported image";
 const MAX_TEXT_BYTES: usize = 16 * 1024 * 1024;
-/// `osascript` prints the PNG as hex between these.
-const MACOS_PNG_OPEN: &str = "«data PNGf";
-const MACOS_PNG_CLOSE: &str = "»";
+const MACOS_IMAGE_TYPES: [&str; 4] = ["PNGf", "JPEG", "GIFf", "WebP"];
 
 /// The program that reads this session's clipboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +81,7 @@ enum HelperError {
 
 pub(super) async fn image() -> Result<ImageAttachment, String> {
     let tool = session_tool()?;
-    let bytes = clipboard_bytes(tool)
+    let bytes = clipboard_bytes(tool, tool.program())
         .await
         .map_err(|error| helper_reason(tool, error, NO_IMAGE))?;
     image_attachment(&bytes, None).map_err(|e| e.to_string())
@@ -136,29 +136,52 @@ async fn paste_bytes(
     debug_assert!(tool != ClipboardTool::Osascript || !pbpaste.is_empty());
     let offered = run_helper(program, list_args(tool), 64 * 1024).await?;
     let listing = String::from_utf8_lossy(&offered);
-    let media_type = offered_image_type(&listing);
-    let mac_image = tool == ClipboardTool::Osascript
-        && ["PNGf", "JPEG", "GIFf", "WebP"]
-            .iter()
-            .any(|class| listing.contains(&format!("«class {class}»")));
-    if media_type.is_some() || mac_image {
-        let bytes = image_bytes(tool, program, media_type).await?;
-        return image_attachment(&bytes, None)
-            .map(ClipboardContent::Image)
-            .map_err(|e| HelperError::Broken(e.to_string()));
+    if let Some(kind) = offered_text_type(tool, &listing) {
+        return read_text(tool, program, pbpaste, kind).await;
     }
-    let (program, args): (&str, &[&str]) = match tool {
-        ClipboardTool::WlPaste => {
-            let media_type = ["text/plain;charset=utf-8", "text/plain"]
-                .into_iter()
-                .find(|kind| listing.lines().any(|line| line.trim() == *kind))
-                .ok_or(HelperError::Refused)?;
-            return text_content(program, &["--no-newline", "--type", media_type]).await;
+    if let Some(kind) = offered_type(tool, &listing) {
+        match image_bytes(tool, program, kind).await {
+            Ok(bytes) => {
+                return image_attachment(&bytes, None)
+                    .map(ClipboardContent::Image)
+                    .map_err(|e| HelperError::Broken(e.to_string()));
+            }
+            Err(HelperError::Refused) if tool == ClipboardTool::Osascript => {}
+            Err(error) => return Err(error),
         }
-        ClipboardTool::Xclip => (program, &["-selection", "clipboard", "-o"]),
-        ClipboardTool::Osascript => (pbpaste, &[]),
-    };
-    text_content(program, args).await
+    }
+    if tool == ClipboardTool::WlPaste {
+        return Err(HelperError::Refused);
+    }
+    read_text(tool, program, pbpaste, "").await
+}
+
+async fn read_text(
+    tool: ClipboardTool,
+    program: &str,
+    pbpaste: &str,
+    kind: &str,
+) -> Result<ClipboardContent, HelperError> {
+    debug_assert!(!program.is_empty());
+    debug_assert!(tool != ClipboardTool::WlPaste || !kind.is_empty());
+    match tool {
+        ClipboardTool::WlPaste => text_content(program, &["--no-newline", "--type", kind]).await,
+        ClipboardTool::Xclip => text_content(program, &["-selection", "clipboard", "-o"]).await,
+        ClipboardTool::Osascript => text_content(pbpaste, &[]).await,
+    }
+}
+
+fn offered_text_type(tool: ClipboardTool, listing: &str) -> Option<&str> {
+    if tool == ClipboardTool::Osascript {
+        return ["utf8", "utxt", "TEXT"]
+            .into_iter()
+            .find(|class| listing.contains(&format!("«class {class}»")));
+    }
+    listing.lines().map(str::trim).find(|kind| {
+        *kind == "text/plain"
+            || kind.starts_with("text/plain;charset=")
+            || matches!(*kind, "UTF8_STRING" | "TEXT" | "STRING")
+    })
 }
 
 async fn text_content(program: &str, args: &[&str]) -> Result<ClipboardContent, HelperError> {
@@ -184,40 +207,65 @@ fn list_args(tool: ClipboardTool) -> &'static [&'static str] {
     }
 }
 
-async fn clipboard_bytes(tool: ClipboardTool) -> Result<Vec<u8>, HelperError> {
-    let program = tool.program();
-    if tool == ClipboardTool::Osascript {
-        return image_bytes(tool, program, None).await;
-    }
+async fn clipboard_bytes(tool: ClipboardTool, program: &str) -> Result<Vec<u8>, HelperError> {
+    debug_assert!(!program.is_empty());
     let offered = run_helper(program, list_args(tool), 64 * 1024).await?;
     let media_type =
-        offered_image_type(&String::from_utf8_lossy(&offered)).ok_or(HelperError::Refused)?;
-    image_bytes(tool, program, Some(media_type)).await
+        offered_type(tool, &String::from_utf8_lossy(&offered)).ok_or(HelperError::Refused)?;
+    debug_assert!(!media_type.is_empty());
+    image_bytes(tool, program, media_type).await
 }
 
 async fn image_bytes(
     tool: ClipboardTool,
     program: &str,
-    media_type: Option<&str>,
+    media_type: &str,
 ) -> Result<Vec<u8>, HelperError> {
-    debug_assert!(tool == ClipboardTool::Osascript || media_type.is_some());
-    debug_assert!(
-        media_type.is_none_or(|kind| IMAGE_MEDIA_TYPES.iter().any(|(known, _)| *known == kind))
-    );
+    debug_assert!(!program.is_empty());
+    debug_assert!(match tool {
+        ClipboardTool::Osascript => MACOS_IMAGE_TYPES.contains(&media_type),
+        _ => IMAGE_MEDIA_TYPES
+            .iter()
+            .any(|(known, _)| *known == media_type),
+    });
     // One byte over the limit is enough for the size check to refuse it.
     let limit = MAX_IMAGE_BYTES + 1;
     let read: &[&str] = match tool {
         ClipboardTool::Osascript => {
-            let script = ["-e", "get the clipboard as «class PNGf»"];
-            let printed = run_helper(program, &script, limit * 2 + 64).await?;
-            return hex_payload(&String::from_utf8_lossy(&printed)).ok_or(HelperError::Refused);
+            return macos_image_bytes(program, media_type).await;
         }
         ClipboardTool::WlPaste => &["--type"],
         ClipboardTool::Xclip => &["-selection", "clipboard", "-o", "-t"],
     };
-    let media_type = media_type.ok_or(HelperError::Refused)?;
     let args: Vec<&str> = read.iter().copied().chain([media_type]).collect();
     run_helper(program, &args, limit).await
+}
+
+async fn macos_image_bytes(program: &str, class: &str) -> Result<Vec<u8>, HelperError> {
+    debug_assert!(!program.is_empty());
+    debug_assert!(MACOS_IMAGE_TYPES.contains(&class));
+    let script = format!("get the clipboard as «class {class}»");
+    let limit = (MAX_IMAGE_BYTES + 1) * 2 + 64;
+    let printed = run_helper(program, &["-e", &script], limit).await?;
+    if printed.len() == limit {
+        return Err(HelperError::Broken(
+            AttachmentError::TooLarge {
+                label: "from the clipboard".into(),
+                size: MAX_IMAGE_BYTES + 1,
+            }
+            .to_string(),
+        ));
+    }
+    hex_payload(&String::from_utf8_lossy(&printed), class).ok_or(HelperError::Refused)
+}
+
+fn offered_type(tool: ClipboardTool, listing: &str) -> Option<&'static str> {
+    if tool == ClipboardTool::Osascript {
+        return MACOS_IMAGE_TYPES
+            .into_iter()
+            .find(|class| listing.contains(&format!("«class {class}»")));
+    }
+    offered_image_type(listing)
 }
 
 /// The first supported image type among the types a clipboard offers, one per line.
@@ -229,10 +277,13 @@ fn offered_image_type(listing: &str) -> Option<&'static str> {
 }
 
 /// The bytes `osascript` printed as `«data PNGf89504E47…»`.
-fn hex_payload(printed: &str) -> Option<Vec<u8>> {
-    let start = printed.find(MACOS_PNG_OPEN)? + MACOS_PNG_OPEN.len();
+fn hex_payload(printed: &str, class: &str) -> Option<Vec<u8>> {
+    debug_assert!(MACOS_IMAGE_TYPES.contains(&class));
+    debug_assert_eq!(class.len(), 4);
+    let open = format!("«data {class}");
+    let start = printed.find(&open)? + open.len();
     let hex = &printed[start..];
-    let hex = &hex[..hex.find(MACOS_PNG_CLOSE)?];
+    let hex = &hex[..hex.find('»')?];
     if hex.is_empty() || !hex.len().is_multiple_of(2) || !hex.is_ascii() {
         return None;
     }
@@ -246,6 +297,12 @@ fn hex_payload(printed: &str) -> Option<Vec<u8>> {
 async fn run_helper(program: &str, args: &[&str], limit: usize) -> Result<Vec<u8>, HelperError> {
     debug_assert!(!program.is_empty());
     debug_assert!(limit > 0);
+    #[cfg(test)]
+    if matches!(program, "wl-paste" | "xclip" | "osascript" | "pbpaste") {
+        return Err(HelperError::Broken(
+            "real clipboard helpers are disabled in tests".into(),
+        ));
+    }
     let broken = |reason: String| HelperError::Broken(format!("{program}: {reason}"));
     let mut child = match tokio::process::Command::new(program)
         .args(args)
