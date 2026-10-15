@@ -136,7 +136,7 @@ async fn harness_with_engine_and_providers_toml(
     systems: Arc<Mutex<Vec<String>>>,
     providers_toml: Option<&str>,
 ) -> Harness {
-    build_harness(engine, prompts, systems, providers_toml, None, |_| {}).await
+    build_harness(engine, prompts, systems, providers_toml, None, None, |_| {}).await
 }
 
 /// Like `harness_with_engine`, with the runtime config adjusted first.
@@ -150,6 +150,7 @@ async fn harness_with_engine_config(
         Arc::default(),
         None,
         None,
+        None,
         configure,
     )
     .await
@@ -161,6 +162,7 @@ async fn build_harness(
     systems: Arc<Mutex<Vec<String>>>,
     providers_toml: Option<&str>,
     config_toml: Option<&str>,
+    store: Option<Arc<dyn Store>>,
     configure: impl FnOnce(&mut RuntimeConfig),
 ) -> Harness {
     let workspace = tempfile::tempdir().expect("tempdir");
@@ -173,7 +175,7 @@ async fn build_harness(
     if let Some(toml) = config_toml {
         std::fs::write(config_dir.path().join("config.toml"), toml).expect("write config.toml");
     }
-    let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().expect("store"));
+    let store = store.unwrap_or_else(|| Arc::new(SqliteStore::open_in_memory().expect("store")));
     let models = Arc::new(Models::load(Some(config_dir.path().to_path_buf())).expect("models"));
     std::mem::forget(config_dir);
     let mut engines: HashMap<EngineKind, Arc<dyn Engine>> = HashMap::new();

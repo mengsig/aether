@@ -396,10 +396,12 @@ impl Engine for CancelledUsageEngine {
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
         let mut script = ChattyUsageEngine::script();
-        script.push(EngineEvent::Delta(aether_core::model::StreamEvent::TextDelta {
-            index: 0,
-            text: "ready".into(),
-        }));
+        script.push(EngineEvent::Delta(
+            aether_core::model::StreamEvent::TextDelta {
+                index: 0,
+                text: "ready".into(),
+            },
+        ));
         let (tx, rx) = mpsc::channel(script.len());
         for event in script {
             tx.send(event).await.expect("fixture channel capacity");
@@ -468,4 +470,187 @@ async fn a_cancelled_turn_flushes_held_readings() {
         Some(1_000 + MESSAGES * READINGS - 1)
     );
     h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn shutdown_flushes_held_usage_before_the_store_reopens() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("state.db");
+    let h = build_harness(
+        Arc::new(CancelledUsageEngine),
+        Arc::default(),
+        Arc::default(),
+        None,
+        None,
+        Some(Arc::new(SqliteStore::open(&path).expect("store"))),
+        |_| {},
+    )
+    .await;
+    let id = chat_agent(&h);
+    let mut bus = h.runtime.subscribe();
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("Stream usage")], Actor::user())
+        .expect("send");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(aether_runtime::BusMessage::Delta {
+                agent,
+                delta: aether_runtime::DeltaKind::Text { text },
+                ..
+            }) = bus.recv().await
+                && agent == id
+                && text == "ready"
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("readings streamed");
+    h.runtime.shutdown().await;
+    drop(h);
+    let store = SqliteStore::open(path).expect("reopen");
+    let row = store.agent(id).expect("read").expect("agent");
+    assert_eq!(
+        row.stats.usage.output_tokens,
+        streamed_total().output_tokens
+    );
+    assert_eq!(
+        row.stats.context_tokens,
+        Some(1_000 + MESSAGES * READINGS - 1)
+    );
+    assert_eq!(
+        *usage_totals(&store, id).last().expect("usage"),
+        row.stats.usage
+    );
+}
+
+struct CrashWindowEngine {
+    next: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl Engine for CrashWindowEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::CLAUDE_CODE
+    }
+    fn adapter(&self) -> String {
+        "crash-window/1".into()
+    }
+    async fn run(
+        &self,
+        _turn: EngineTurn,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        let (tx, events) = mpsc::channel(4);
+        tx.send(EngineEvent::UsageDelta { usage: reading() })
+            .await
+            .expect("first");
+        let next = self.next.clone();
+        tokio::spawn(async move {
+            next.notified().await;
+            tx.send(EngineEvent::UsageDelta { usage: reading() })
+                .await
+                .expect("second");
+            tx.send(EngineEvent::Delta(
+                aether_core::model::StreamEvent::TextDelta {
+                    index: 0,
+                    text: "pending".into(),
+                },
+            ))
+            .await
+            .expect("marker");
+            cancel.cancelled().await;
+        });
+        Ok(EngineRun {
+            events,
+            input: None,
+            decisions: None,
+            stop: None,
+        })
+    }
+}
+
+// Invoked in a separate process so termination cannot run Runtime::shutdown.
+#[tokio::test]
+async fn crash_window_fixture() {
+    let Some(dir) = std::env::var_os("AETHER_USAGE_CRASH_FIXTURE") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let next = Arc::new(tokio::sync::Notify::new());
+    let h = build_harness(
+        Arc::new(CrashWindowEngine { next: next.clone() }),
+        Arc::default(),
+        Arc::default(),
+        None,
+        None,
+        Some(Arc::new(
+            SqliteStore::open(dir.join("state.db")).expect("store"),
+        )),
+        |_| {},
+    )
+    .await;
+    let id = chat_agent(&h);
+    let mut bus = h.runtime.subscribe();
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("Stream")], Actor::user())
+        .expect("send");
+    wait_for(h.store.as_ref(), id, |a| a.stats.usage.output_tokens == 1).await;
+    next.notify_one();
+    loop {
+        if let Ok(aether_runtime::BusMessage::Delta {
+            delta: aether_runtime::DeltaKind::Text { text },
+            ..
+        }) = bus.recv().await
+            && text == "pending"
+        {
+            break;
+        }
+    }
+    std::fs::write(dir.join("ready"), serde_json::to_vec(&id).expect("id")).expect("ready");
+    std::future::pending::<()>().await;
+}
+
+#[tokio::test]
+async fn process_crash_loses_only_usage_since_the_last_flush() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "--exact",
+            "usage_coalescing::crash_window_fixture",
+            "--nocapture",
+        ])
+        .env("AETHER_USAGE_CRASH_FIXTURE", dir.path())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn fixture");
+    let ready = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if dir.path().join("ready").exists() {
+                break;
+            }
+            if let Some(status) = child.try_wait().expect("poll fixture") {
+                panic!("fixture exited before the crash: {status}");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    child.kill().expect("kill fixture");
+    child.wait().expect("reap fixture");
+    ready.expect("fixture reaches the unflushed window within 10 seconds");
+    let id = serde_json::from_slice(&std::fs::read(dir.path().join("ready")).expect("ready"))
+        .expect("id");
+    let store = SqliteStore::open(dir.path().join("state.db")).expect("recover WAL");
+    let row = store.agent(id).expect("read").expect("agent");
+    assert_eq!(
+        row.stats.usage.output_tokens, 1,
+        "only the second reading was lost"
+    );
+    assert_eq!(
+        usage_totals(&store, id),
+        vec![row.stats.usage],
+        "one absolute persisted total, no duplicate replay"
+    );
 }
