@@ -204,3 +204,112 @@ async fn a_held_reading_reaches_the_store_within_the_flush_window() {
     assert_eq!(agent.stats.usage.cost_usd, 0.25);
     h.runtime.shutdown().await;
 }
+
+/// Reports usage, then asks an operator before acting and waits for the answer.
+struct AskingEngine;
+
+#[async_trait::async_trait]
+impl Engine for AskingEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::CLAUDE_CODE
+    }
+    fn adapter(&self) -> String {
+        "asking-usage/1".into()
+    }
+    async fn run(
+        &self,
+        _turn: EngineTurn,
+        _cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        let (tx, rx) = mpsc::channel(8);
+        let (decisions, mut answers) = mpsc::channel(1);
+        for event in [
+            EngineEvent::UsageDelta { usage: reading() },
+            EngineEvent::Permission {
+                request_id: "ask-1".into(),
+                tool: "Bash".into(),
+                input: serde_json::json!({"command": "touch example"}),
+                side_effect: Some(aether_core::tool::SideEffectClass::Mutation),
+            },
+        ] {
+            tx.send(event).await.expect("fixture channel capacity");
+        }
+        tokio::spawn(async move {
+            if answers.recv().await.is_some() {
+                let _ = tx.send(Self::done()).await;
+            }
+        });
+        Ok(EngineRun {
+            events: rx,
+            input: None,
+            decisions: Some(decisions),
+            stop: None,
+        })
+    }
+}
+
+impl AskingEngine {
+    fn done() -> EngineEvent {
+        EngineEvent::Done(EngineOutcome {
+            closing_accounting: true,
+            text: Some("asked".into()),
+            usage: reading(),
+            ..Default::default()
+        })
+    }
+}
+
+/// An approval can wait on a person for as long as they take; what the engine
+/// spent before it asked must not wait with it.
+#[tokio::test]
+async fn readings_reach_the_store_before_a_permission_prompt_waits() {
+    let h = harness_with_engine(
+        Arc::new(AskingEngine),
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(Mutex::new(Vec::new())),
+    )
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "assistant".into(),
+                start: true,
+                config: Some(AgentConfig {
+                    long_lived: true,
+                    approval: ApprovalPolicy {
+                        require_for: [aether_core::tool::SideEffectClass::Mutation]
+                            .into_iter()
+                            .collect(),
+                    },
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("create");
+    let id = agent.id;
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("Ask first")], Actor::user())
+        .expect("send");
+    let asked = || {
+        h.store
+            .events(0, usize::MAX, &EventFilter::for_agent(id))
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::ApprovalRequested { .. }))
+    };
+    for _ in 0..750 {
+        if asked() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(asked(), "the prompt reached an operator");
+    // The drive loop is awaiting the verdict, so no timer can have flushed this.
+    let row = h.store.agent(id).unwrap().expect("row");
+    assert_eq!(row.stats.usage.output_tokens, reading().output_tokens);
+    assert_eq!(usage_totals(h.store.as_ref(), id).len(), 1);
+    h.runtime.shutdown().await;
+}

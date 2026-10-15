@@ -379,6 +379,8 @@ pub(super) async fn drive(
                     }
                 }
                 Some(EngineEvent::Permission { request_id, tool, input: tool_input, side_effect }) => {
+                    // The verdict can wait on an operator, past any flush window.
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
                     // Once the turn's end is committed nothing more may run in
                     // it, so a prompt is denied outright: no operator is asked,
                     // and the wind-down is never suspended on an answer.
@@ -678,7 +680,11 @@ pub(super) async fn drive(
         engine_cancel.cancel();
         let mut cleanup_grace = ReapGrace::start();
         loop {
+            let accounting_deadline = state.accounting.deadline();
             tokio::select! {
+                () = tokio::time::sleep_until(accounting_deadline.unwrap_or_else(tokio::time::Instant::now)), if accounting_deadline.is_some() => {
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
+                }
                 () = cancel.cancelled() => {
                     activity_seen = true;
                     break;
