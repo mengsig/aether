@@ -25,7 +25,7 @@ pub(super) fn recompute_snapshot_accounting(snapshot: &mut InvocationSnapshot) {
 pub(super) const ACCOUNTING_FLUSH: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Usage and context readings not yet on the record. An engine reports them
-/// several times per message; each its own commit was most of a turn's fsyncs.
+/// several times per message; each its own commit was most of a turn's WAL writes.
 #[derive(Debug, Default)]
 pub(super) struct PendingAccounting {
     usage: bool,
