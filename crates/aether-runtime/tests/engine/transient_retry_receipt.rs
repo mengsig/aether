@@ -102,40 +102,83 @@ async fn a_claude_zero_cost_overload_receipt_is_metadata_and_can_retry() {
     h.runtime.shutdown().await;
 }
 
-/// Claude reports a request the API refused before inference as a synthetic
-/// zero-usage message and an all-zero receipt.
-fn rejected_before_inference() -> Arc<ClaudeReceiptEngine> {
-    let error = "API Error: 400 rejected before inference";
+/// Claude Code's stream when its first request fails: a synthetic zero-usage
+/// message, then an all-zero receipt carrying the HTTP status if there was one.
+fn failed_first_request(status: Option<u64>, error: &str) -> Arc<ClaudeReceiptEngine> {
     let zero = json!({"input_tokens":0,"output_tokens":0,
         "cache_creation_input_tokens":0,"cache_read_input_tokens":0});
     let init = json!({"type":"system","subtype":"init","session_id":"fresh",
         "model":"claude-haiku-5-5"});
-    let synthetic = json!({"type":"assistant","session_id":"fresh","isApiErrorMessage":true,
-        "message":{"id":"err","model":"<synthetic>","role":"assistant","usage":zero,
-            "content":[{"type":"text","text":error}]}});
-    let rejected = json!({"type":"result","subtype":"success","is_error":true,"result":error,
-        "session_id":"fresh","total_cost_usd":0,"modelUsage":{},"usage":zero});
+    let synthetic = json!({"type":"assistant","session_id":"fresh","is_api_error_message":true,
+        "api_error_status":status,"message":{"id":"err","model":"<synthetic>",
+            "role":"assistant","usage":zero,"content":[{"type":"text","text":error}]}});
+    let failed = json!({"type":"result","subtype":"success","is_error":true,"result":error,
+        "api_error_status":status,"terminal_reason":"api_error","session_id":"fresh",
+        "total_cost_usd":0,"modelUsage":{},"usage":zero});
     Arc::new(ClaudeReceiptEngine {
-        runs: Mutex::new(vec![vec![init, synthetic, rejected]].into()),
+        runs: Mutex::new(vec![vec![init, synthetic, failed]].into()),
         turns: Mutex::new(Vec::new()),
     })
 }
 
-#[tokio::test]
-async fn a_claude_request_rejected_before_inference_costs_a_complete_zero() {
-    let engine = rejected_before_inference();
+async fn failed_worker_usage(engine: Arc<ClaudeReceiptEngine>) -> aether_core::model::Usage {
     let h = harness_with_engine(engine.clone(), Arc::default(), Arc::default()).await;
     let (id, _) = engine_worker(&h, "reply with one word");
     let agent = wait_for(h.store.as_ref(), id, |a| a.status.is_terminal()).await;
-    let AgentStatus::Failed { error } = &agent.status else {
-        panic!("expected a failure, got {:?}", agent.status);
-    };
-    assert!(error.contains("400"), "{error}");
+    assert!(
+        matches!(&agent.status, AgentStatus::Failed { .. }),
+        "expected a failure, got {:?}",
+        agent.status
+    );
     assert_eq!(engine.turns.lock().unwrap().len(), 1);
-    let usage = agent.stats.usage;
-    assert_eq!(usage.total_tokens(), 0);
-    assert_eq!(usage.cost_usd, 0.0);
+    h.runtime.shutdown().await;
+    assert_eq!(agent.stats.usage.total_tokens(), 0);
+    assert_eq!(agent.stats.usage.cost_usd, 0.0);
+    agent.stats.usage
+}
+
+#[tokio::test]
+async fn a_claude_request_rejected_before_inference_costs_a_complete_zero() {
+    let error = "API Error: 400 rejected before inference";
+    let usage = failed_worker_usage(failed_first_request(Some(400), error)).await;
     assert!(usage.cost_complete, "{usage:?}");
     assert_eq!(usage.cost_gap, None);
+}
+
+#[tokio::test]
+async fn a_dropped_claude_connection_keeps_its_cost_gap() {
+    let error = "API Error: Connection error.";
+    let usage = failed_worker_usage(failed_first_request(None, error)).await;
+    assert!(!usage.cost_complete, "{usage:?}");
+    assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
+}
+
+#[tokio::test]
+async fn per_turn_usage_from_an_earlier_receipt_keeps_a_later_zero_receipt_incomplete() {
+    let init = json!({"type":"system","subtype":"init","session_id":"same",
+        "model":"claude-haiku-5-5"});
+    let counted = json!({"type":"result","subtype":"error_during_execution","is_error":true,
+        "result":"API Error: 529 Model is overloaded","api_error_status":529,
+        "session_id":"same","total_cost_usd":0,"modelUsage":{},
+        "usage":{"input_tokens":100,"output_tokens":20}});
+    let mut zeroed = counted.clone();
+    zeroed["result"] = json!("API Error: 400 refused");
+    zeroed["api_error_status"] = json!(400);
+    zeroed["usage"] = json!({"input_tokens":0,"output_tokens":0});
+    let engine = Arc::new(ClaudeReceiptEngine {
+        runs: Mutex::new(vec![vec![init, counted, zeroed]].into()),
+        turns: Mutex::new(Vec::new()),
+    });
+    let h = harness_with_engine_config(engine.clone(), |config| {
+        config.engine_transient_retry_window = Duration::ZERO;
+    })
+    .await;
+    let (id, _) = engine_worker(&h, "reply with one word");
+    let agent = wait_for(h.store.as_ref(), id, |a| a.status.is_terminal()).await;
+    assert_eq!(engine.turns.lock().unwrap().len(), 1);
+    let usage = agent.stats.usage;
+    assert_eq!(usage.total_tokens(), 120);
+    assert!(!usage.cost_complete, "{usage:?}");
+    assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
     h.runtime.shutdown().await;
 }

@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use aether_core::model::{BlockStart, ContentBlock, StreamEvent, Usage};
 use serde_json::Value;
 
+use super::session_cost::SpendEvidence;
 use crate::{EngineEvent, EngineOutcome, UsageRequestId};
 
 mod accounting;
@@ -22,6 +23,8 @@ pub struct ParseState {
     message_models: std::collections::BTreeMap<UsageRequestId, String>,
     streamed_models: std::collections::BTreeMap<String, Usage>,
     streamed_usage_seen: bool,
+    /// A closing receipt in this process counted usage, streamed or not.
+    receipt_usage_seen: bool,
     /// The keys above in the order they were first seen, so the map can be
     /// bounded without evicting the message still being streamed.
     usage_order: VecDeque<UsageRequestId>,
@@ -261,12 +264,12 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
                 v.get("is_error").and_then(Value::as_bool).unwrap_or(false) || subtype != "success";
             let text = v.get("result").and_then(Value::as_str).map(str::to_owned);
             let usage = v.get("usage").map(parse_usage).unwrap_or_default();
-            let has_spend = state.streamed_usage_seen
-                || usage.total_tokens() > 0
-                || usage.reasoning_tokens.is_some_and(|tokens| tokens > 0);
+            state.receipt_usage_seen |=
+                usage.total_tokens() > 0 || usage.reasoning_tokens.is_some_and(|tokens| tokens > 0);
+            let spend = spend_evidence(&v, state, is_error);
             let receipt = state
                 .session_cost
-                .receipt(&v, &state.streamed_models, has_spend);
+                .receipt(&v, &state.streamed_models, spend);
             let cost_usd = receipt.cost_usd;
             let cost_usage = receipt.cost_usage;
             let mut events = receipt.events;
@@ -317,6 +320,29 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             events
         }
         _ => Vec::new(),
+    }
+}
+
+/// HTTP statuses the API answers before inference and Claude Code never retries,
+/// so no earlier attempt of the request can have been billed.
+const UNBILLED_REJECTIONS: [u64; 5] = [400, 401, 403, 404, 413];
+
+/// Whether this process showed spend, or failed with an unbilled rejection.
+fn spend_evidence(v: &Value, state: &ParseState, is_error: bool) -> SpendEvidence {
+    debug_assert_eq!(v.get("type").and_then(Value::as_str), Some("result"));
+    if state.streamed_usage_seen || state.receipt_usage_seen {
+        return SpendEvidence::Seen;
+    }
+    let flagged = v.get("is_error").and_then(Value::as_bool) == Some(true);
+    debug_assert!(
+        !flagged || is_error,
+        "an explicit error flag fails the result"
+    );
+    let status = v.get("api_error_status").and_then(Value::as_u64);
+    if flagged && status.is_some_and(|status| UNBILLED_REJECTIONS.contains(&status)) {
+        SpendEvidence::Rejected
+    } else {
+        SpendEvidence::Unseen
     }
 }
 

@@ -7,10 +7,6 @@ fn closing(dollars: Value, usage: Value) -> Value {
 }
 
 fn assert_gap(events: &[EngineEvent], expected: bool) {
-    assert_receipt(events, expected, None);
-}
-
-fn assert_receipt(events: &[EngineEvent], expected: bool, cost: Option<f64>) {
     let deltas: Vec<_> = events
         .iter()
         .filter_map(|event| match event {
@@ -29,7 +25,7 @@ fn assert_receipt(events: &[EngineEvent], expected: bool, cost: Option<f64>) {
         );
     }
     assert!(matches!(events.last(), Some(EngineEvent::Done(done))
-        if done.cost_usd == cost && done.cost_usage.is_none()));
+        if done.cost_usd.is_none() && done.cost_usage.is_none()));
 }
 
 #[test]
@@ -51,16 +47,8 @@ fn unusable_receipts_without_spend_evidence_emit_no_gap() {
                     .any(|event| matches!(event, EngineEvent::UsageRequest { .. }))
             );
             assert!(!state.streamed_usage_seen);
-            let zeroed = dollars == json!(0.0);
             let value = closing(dollars.clone(), usage);
-            let events = parse_line(&value.to_string(), &mut state);
-            assert_receipt(&events, false, zeroed.then_some(0.0));
-            assert_eq!(
-                events
-                    .iter()
-                    .any(|event| matches!(event, EngineEvent::ProtocolNote(_))),
-                !zeroed && dollars != Value::Null
-            );
+            assert_gap(&parse_line(&value.to_string(), &mut state), false);
         }
     }
 }
@@ -114,4 +102,78 @@ fn model_less_stream_evidence_survives_message_eviction() {
         let value = closing(json!(0.0), json!({"input_tokens":0,"output_tokens":0}));
         assert_gap(&parse_line(&value.to_string(), &mut state), true);
     }
+}
+
+/// A closing receipt as Claude Code writes it when the API refuses a request.
+fn rejected(status: Value) -> Value {
+    json!({"type":"result","subtype":"success","is_error":true,"session_id":"s",
+        "result":"API Error: refused","api_error_status":status,"terminal_reason":"api_error",
+        "total_cost_usd":0,"modelUsage":{},"usage":{"input_tokens":0,"output_tokens":0}})
+}
+
+fn receipt_cost(events: &[EngineEvent]) -> Option<f64> {
+    match events.last() {
+        Some(EngineEvent::Done(done)) => done.cost_usd,
+        other => panic!("a receipt must end in Done, got {other:?}"),
+    }
+}
+
+#[test]
+fn only_an_unbilled_rejection_proves_a_zeroed_receipt() {
+    for (status, proven) in [
+        (json!(400), true),
+        (json!(401), true),
+        (json!(403), true),
+        (json!(404), true),
+        (json!(413), true),
+        (json!(429), false),
+        (json!(500), false),
+        (json!(529), false),
+        (json!("400"), false),
+        (Value::Null, false),
+    ] {
+        let events = parse_line(
+            &rejected(status.clone()).to_string(),
+            &mut ParseState::default(),
+        );
+        assert_eq!(receipt_cost(&events), proven.then_some(0.0), "{status}");
+        let noted = events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::ProtocolNote(_)));
+        assert_eq!(noted, !proven, "{status}");
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, EngineEvent::UsageDelta { .. }))
+        );
+    }
+    for flag in [json!(false), Value::Null] {
+        let mut unflagged = rejected(json!(400));
+        unflagged["is_error"] = flag;
+        unflagged["subtype"] = json!("error_during_execution");
+        let events = parse_line(&unflagged.to_string(), &mut ParseState::default());
+        assert_eq!(receipt_cost(&events), None);
+    }
+}
+
+#[test]
+fn earlier_usage_in_the_process_outweighs_a_later_rejection() {
+    let mut state = ParseState::default();
+    let counted = json!({"type":"result","subtype":"success","session_id":"s",
+        "total_cost_usd":0.0,"modelUsage":{},"usage":{"input_tokens":100,"output_tokens":20}});
+    assert_gap(&parse_line(&counted.to_string(), &mut state), true);
+    assert!(!state.streamed_usage_seen);
+    assert_gap(
+        &parse_line(&rejected(json!(400)).to_string(), &mut state),
+        true,
+    );
+    let mut state = ParseState::default();
+    let delta = json!({"type":"stream_event","event":{"type":"message_delta",
+        "usage":{"input_tokens":1}}});
+    parse_line(&delta.to_string(), &mut state);
+    assert!(state.streamed_usage_seen);
+    assert_gap(
+        &parse_line(&rejected(json!(400)).to_string(), &mut state),
+        true,
+    );
 }

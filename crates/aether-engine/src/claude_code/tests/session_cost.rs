@@ -113,7 +113,7 @@ fn invalid_receipt_marks_the_unreported_gap() {
 
 fn covered_usage(state: &mut SessionCost, value: &Value) -> Option<Usage> {
     let streamed = model_counters(value).unwrap_or_default();
-    let receipt = state.receipt(value, &streamed, true);
+    let receipt = state.receipt(value, &streamed, SpendEvidence::Seen);
     assert!(
         receipt
             .cost_usd
@@ -277,14 +277,14 @@ fn next_run(state: &SessionCost) -> SessionCost {
 }
 
 fn bill_after_spend(state: &mut SessionCost, value: &Value) -> (Option<f64>, Vec<EngineEvent>) {
-    let receipt = state.receipt(value, &BTreeMap::new(), true);
+    let receipt = state.receipt(value, &BTreeMap::new(), SpendEvidence::Seen);
     (receipt.cost_usd, receipt.events)
 }
 
 #[test]
 fn an_all_zero_resumed_baseline_cannot_price_session_history() {
     let mut state = SessionCost::resumed(Some("s".into()), Usage::default());
-    let result = state.receipt(&receipt("s", 0.08), &BTreeMap::new(), true);
+    let result = state.receipt(&receipt("s", 0.08), &BTreeMap::new(), SpendEvidence::Seen);
     assert_eq!(result.cost_usd, None);
     assert_eq!(result.cost_usage, None);
     assert!(matches!(result.events[0], EngineEvent::ProtocolNote(_)));
@@ -324,10 +324,10 @@ fn a_zero_receipt_without_spend_preserves_the_latest_reading() {
     bill_after_spend(&mut state, &receipt("s", 0.05));
     let latest = state.latest.clone();
     let zero = json!({"session_id":"s","total_cost_usd":0.0,"modelUsage":{}});
-    let result = state.receipt(&zero, &BTreeMap::new(), false);
-    assert_eq!(result.cost_usd, Some(0.0));
+    let result = state.receipt(&zero, &BTreeMap::new(), SpendEvidence::Unseen);
+    assert_eq!(result.cost_usd, None);
     assert_eq!(result.cost_usage, None);
-    assert!(result.events.is_empty());
+    assert!(matches!(&result.events[..], [EngineEvent::ProtocolNote(_)]));
     assert_eq!(state.latest, latest);
     assert_eq!(state.before, Some(Usage::default()));
     assert_eq!(
@@ -469,7 +469,7 @@ fn each_model_counter_reset_is_unknown_even_when_session_totals_grow() {
         value["total_cost_usd"] = json!(10.0);
         value["modelUsage"]["opus"] = prior["modelUsage"]["sonnet"].clone();
         value["modelUsage"]["sonnet"][field] = json!(1);
-        let result = state.receipt(&value, &BTreeMap::new(), true);
+        let result = state.receipt(&value, &BTreeMap::new(), SpendEvidence::Seen);
         assert_eq!(result.cost_usd, None, "{field}");
         assert_eq!(result.cost_usage, None, "{field}");
         assert_eq!(
@@ -510,7 +510,37 @@ fn resumed_model_coverage_cannot_borrow_unstreamed_helper_counters() {
             "helper":{"inputTokens":1000,"outputTokens":1000,
                 "cacheReadInputTokens":1000,"cacheCreationInputTokens":1000}}});
     let streamed = BTreeMap::from([("main".into(), model_usage(200))]);
-    let receipt = state.receipt(&value, &streamed, true);
+    let receipt = state.receipt(&value, &streamed, SpendEvidence::Seen);
     assert!((receipt.cost_usd.unwrap() - 0.03).abs() < 1e-12);
     assert_eq!(receipt.cost_usage, Some(model_usage(100)));
+}
+
+#[test]
+fn a_rejected_request_with_a_zeroed_receipt_costs_zero_and_keeps_the_baseline() {
+    let mut state = SessionCost::default();
+    bill_after_spend(&mut state, &receipt("s", 0.05));
+    let (latest, before) = (state.latest.clone(), state.before);
+    let zero = json!({"session_id":"s","total_cost_usd":0.0,"modelUsage":{}});
+    let result = state.receipt(&zero, &BTreeMap::new(), SpendEvidence::Rejected);
+    assert_eq!(result.cost_usd, Some(0.0));
+    assert_eq!(result.cost_usage, None);
+    assert!(result.events.is_empty());
+    assert_eq!(state.latest, latest);
+    assert_eq!(state.before, before);
+}
+
+#[test]
+fn a_rejection_proves_nothing_from_counters_that_failed_to_decode() {
+    for models in [Value::Null, json!([]), json!({"haiku":{"inputTokens":0}})] {
+        let value = json!({"session_id":"s","total_cost_usd":0.0,"modelUsage":models});
+        let result =
+            SessionCost::default().receipt(&value, &BTreeMap::new(), SpendEvidence::Rejected);
+        assert_eq!(result.cost_usd, None, "{models}");
+        assert!(matches!(&result.events[..], [EngineEvent::ProtocolNote(_)]));
+    }
+    let zeros = json!({"haiku":{"inputTokens":0,"outputTokens":0,
+        "cacheReadInputTokens":0,"cacheCreationInputTokens":0}});
+    let value = json!({"session_id":"s","total_cost_usd":0.0,"modelUsage":zeros});
+    let result = SessionCost::default().receipt(&value, &BTreeMap::new(), SpendEvidence::Rejected);
+    assert_eq!(result.cost_usd, Some(0.0));
 }

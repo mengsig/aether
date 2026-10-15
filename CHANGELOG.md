@@ -28,12 +28,13 @@ release is also the text of its GitHub release.
   baselines leave an `Unreported` gap when the invocation streams usage or
   the receipt reports nonzero per-turn usage. Model-less streams count too.
   Receipts without spend evidence keep their previous recovery behavior.
-- **A Claude Code request the API rejects before inference costs a complete
-  $0.** An all-zero receipt with no streamed usage was marked as unknown
-  cost, so an agent whose first request failed (for example with HTTP 400)
-  showed an incomplete $0. Every request streams its usage once it reaches a
-  model, so such a receipt now counts as $0 with no gap. Any streamed or
-  per-turn usage still leaves the gap.
+- **A Claude Code request the API refuses costs a complete $0.** When the
+  API rejected an agent's request with HTTP 400, 401, 403, 404 or 413, its
+  all-zero receipt was treated as unknown cost and the agent showed an
+  incomplete $0. Those statuses are never billed or retried, so such a
+  receipt now counts as $0 with no gap. Usage seen earlier in the same
+  process, malformed counters, and connection, timeout, 429, 5xx or 529
+  failures still leave the gap.
 
 ## 1.0.9
 

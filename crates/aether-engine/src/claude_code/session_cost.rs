@@ -20,6 +20,18 @@ pub(super) struct SessionCost {
     reset: bool,
 }
 
+/// What an invocation showed about spend before its closing receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SpendEvidence {
+    /// Streamed or per-turn usage shows a model ran.
+    Seen,
+    /// No usage arrived, but the invocation may still have answered.
+    Unseen,
+    /// No usage arrived and the API refused the request with a status that is
+    /// never billed or retried.
+    Rejected,
+}
+
 pub(super) struct Receipt {
     pub cost_usd: Option<f64>,
     pub cost_usage: Option<Usage>,
@@ -66,8 +78,9 @@ impl SessionCost {
         &mut self,
         value: &Value,
         streamed: &ModelUsage,
-        has_spend: bool,
+        spend: SpendEvidence,
     ) -> Receipt {
+        let has_spend = spend == SpendEvidence::Seen;
         let Some(dollars) = value.get("total_cost_usd").and_then(Value::as_f64) else {
             return unknown_receipt(None, has_spend);
         };
@@ -79,7 +92,7 @@ impl SessionCost {
         let mut total = models.as_ref().map(sum_counters).unwrap_or_default();
         total.set_cost(Some(dollars));
         if dollars == 0.0 && total.total_tokens() == 0 && total.reasoning_tokens.unwrap_or(0) == 0 {
-            if !has_spend {
+            if spend == SpendEvidence::Rejected && counters_decoded(value, models.as_ref()) {
                 return zero_receipt();
             }
             return unknown_receipt(
@@ -228,8 +241,7 @@ impl SessionCost {
     }
 }
 
-/// Partial messages stream every request's `message_start` usage, so a zeroed
-/// receipt with nothing streamed means no request reached a model.
+/// A refused request with no usage streamed or counted billed nothing.
 fn zero_receipt() -> Receipt {
     Receipt {
         cost_usd: Some(0.0),
@@ -253,6 +265,20 @@ fn unknown_receipt(note: Option<&str>, has_spend: bool) -> Receipt {
         cost_usage: None,
         events,
     }
+}
+
+/// Zero counters prove nothing when they are zero only because they failed to decode.
+fn counters_decoded(value: &Value, models: Option<&ModelUsage>) -> bool {
+    let empty = value
+        .get("modelUsage")
+        .and_then(Value::as_object)
+        .is_some_and(serde_json::Map::is_empty);
+    debug_assert!(
+        !(empty && models.is_some()),
+        "an empty modelUsage decodes to None"
+    );
+    debug_assert!(models.is_none_or(|models| !models.is_empty()));
+    empty || models.is_some()
 }
 
 fn model_counters(value: &Value) -> Option<ModelUsage> {
