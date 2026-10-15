@@ -23,6 +23,14 @@ release is also the text of its GitHub release.
   detect support with `memory_context`. This is the first step toward judging
   memories by how the work they informed turned out.
 
+### Fixed
+
+- **The daemon no longer churns the disk while agents work.** Reading a long
+  agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
+  of MB per read. With several agents running, that held host IO pressure
+  high enough to stall other programs' syncs. Those sorts now stay in memory,
+  and what the store keeps, and when it syncs, is unchanged.
+
 ### Before updating
 
 - **Store schema 22.** Adds the table that keeps memory feedback. The
