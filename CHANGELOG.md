@@ -8,13 +8,22 @@ release is also the text of its GitHub release.
 
 Cost figures are more accurate. A Claude Code agent that pauses and resumes
 is no longer charged twice for the same tokens, and Codex spend is shown as
-an estimate. The daemon no longer churns the disk, and by default it now
-cleans up finished workspaces, old backups and old logs. An interrupted tool
-call no longer reads as a denial, and clipboard images paste into the
-terminal with Ctrl+V.
+an estimate. Every model now reports a capability tier. The daemon no longer
+churns the disk, writes far fewer commits while agents stream, and by default
+it now cleans up finished workspaces, old backups and old logs. An
+interrupted tool call no longer reads as a denial, and clipboard images paste
+into the terminal with Ctrl+V.
 
 ### New
 
+- **Every model reports its capability tier.** `list_models`, the daemon
+  catalog and the generated clients now give each model a `tier`: `fast`,
+  `balanced`, `strong` or `frontier`, or null when it can't be ranked. The
+  tier is set by `[models.tiers]` in `config.toml`, then by the catalog
+  entry, and otherwise by the price of the provider's nearest tiered model.
+  The legacy name `strongest` is read as `strong`, and an unknown tier is a
+  config error. The model guidance the agent tool returns no longer names
+  specific models, so a new model release needs no prompt changes.
 - **Storage maintenance has a single configurable policy and visible decisions.**
   `[storage]` defaults to fourteen-day filesystem retention, with per-kind
   overrides, a one-hour grace for safely saved final delegated workspaces,
