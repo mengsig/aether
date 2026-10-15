@@ -179,3 +179,49 @@ fn the_legacy_strongest_name_is_accepted_as_strong() {
     let models = load("[models.tiers]\n\"codex/gpt-6-luna\" = \"strongest\"\n", "");
     assert_eq!(tier(&models, "codex", "luna"), Some(ModelTier::Strong));
 }
+
+#[test]
+fn the_model_list_applies_overrides_and_leaves_pass_through_models_unranked() {
+    let models = load("[models.tiers]\n\"codex/luna\" = \"strongest\"\n", "");
+    for info in models.list() {
+        assert_eq!(info.tier, models.tier(&info.model), "{}", info.model);
+        if info.model.provider == "codex" && info.model.model == "gpt-6-luna" {
+            assert_eq!(info.tier, Some(ModelTier::Strong));
+        }
+        if ["groq", "openrouter", "xai", "google"].contains(&info.model.provider.as_str())
+            || info.model.model == "default"
+        {
+            assert_eq!(info.tier, None, "{}", info.model);
+        }
+    }
+}
+
+#[test]
+fn an_override_beats_the_price_fallback() {
+    let models = load("[models.tiers]\n\"acme/near-strong\" = \"fast\"\n", &acme());
+    assert_eq!(tier(&models, "acme", "near-strong"), Some(ModelTier::Fast));
+}
+
+#[test]
+fn subscription_price_fallback_uses_the_api_equivalent() {
+    let models = load(
+        "",
+        r#"
+[[providers.anthropic.add_models]]
+id = "new-model"
+capabilities_from = "sonnet"
+[providers.anthropic.add_models.capabilities.cost]
+input_per_mtok = 2.0
+output_per_mtok = 18.0
+cache_read_per_mtok = 0.0
+cache_write_per_mtok = 0.0
+
+[[providers.claude-code.add_models]]
+id = "new-model"
+"#,
+    );
+    assert_eq!(
+        tier(&models, "claude-code", "new-model"),
+        Some(ModelTier::Strong)
+    );
+}

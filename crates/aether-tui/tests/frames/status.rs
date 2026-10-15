@@ -134,6 +134,7 @@ fn the_hint_row_shows_the_keys_the_run_cost_and_the_context_left() {
             };
             let model = node.agent.model.clone();
             app.models.push(ModelInfo {
+                tier: None,
                 aliases: Vec::new(),
                 name: model.model.clone(),
                 provider_name: "anthropic".into(),

@@ -9724,6 +9724,14 @@
         },
         "provider_name": {
           "type": "string"
+        },
+        "tier": {
+          "default": null,
+          "description": "Capability band within the provider; null when unranked.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

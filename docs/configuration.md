@@ -32,8 +32,11 @@ completed_run_days = 10
   accepted; the legacy `strongest` reads as `strong`; an unknown tier is a load
   error), a `tier` on the catalog entry (also settable per model in
   `providers.toml`), then, for a priced model without one, the tier of the
-  provider's tiered model nearest in output price. Unpriced models, such as
-  `default`, stay null.
+  provider's tiered model nearest in output price ratio (a tie takes the lower
+  tier). Subscription models use their API equivalent's price. A priced model
+  with no tiered reference in its provider stays null, as do unpriced models
+  such as `default`. The daemon catalog and generated clients expose the same
+  tier as the agent tool.
 - **Models and effort:** choose them per agent; switch with `/model` or
   `aether set`. A running turn finishes on its original model; the new choice
   applies when the agent starts its next turn. Fallback chains are explicit

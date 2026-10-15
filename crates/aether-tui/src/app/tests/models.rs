@@ -5,6 +5,7 @@ use super::*;
 fn catalogue_lookup_respects_provider_and_case_and_remembers_aliases_canonically() {
     let (mut app, _) = app_with_agent();
     let entry = |provider: &str| ModelInfo {
+        tier: None,
         model: ModelRef::new(provider, "claude-opus-5-5"),
         aliases: vec!["opus".into(), "opus-5-5".into()],
         name: "Claude Opus 5.5".into(),
@@ -100,6 +101,7 @@ fn model_switches_the_current_agent_and_default_moves_only_the_session() {
             ["mock/a", "anthropic/opus", "claude-code/haiku"]
                 .into_iter()
                 .map(|m| ModelInfo {
+                    tier: None,
                     aliases: Vec::new(),
                     model: ModelChain::parse(m).expect("model").primary,
                     name: m.to_owned(),

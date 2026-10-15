@@ -322,6 +322,7 @@ async fn cli_with_socket(
                 Command::ListModels if stub.invalid_models => Err(ErrorReply::invalid("model selection refused")),
                 Command::ListModels if stub.reject_models => Err(ErrorReply::new(ErrorCode::NotFound, HOSTILE)),
                 Command::ListModels => Ok(Reply::Models(vec![aether_protocol::ModelInfo {
+                    tier: None,
                     model: aether_core::model::ModelRef::new(
                         "mock",
                         if stub.hostile_text { HOSTILE } else { "m1" },

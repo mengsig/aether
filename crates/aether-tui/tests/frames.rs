@@ -261,6 +261,7 @@ fn stocked_app() -> App {
     app.models = [current, ModelRef::new("google", "gemini")]
         .into_iter()
         .map(|model| ModelInfo {
+            tier: None,
             aliases: Vec::new(),
             name: model.model.clone(),
             provider_name: format!("{} cloud", model.provider),

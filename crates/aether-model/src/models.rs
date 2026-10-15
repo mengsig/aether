@@ -44,6 +44,7 @@ pub enum ModelsError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelInfo {
+    pub tier: Option<ModelTier>,
     pub model: ModelRef,
     pub aliases: Vec<String>,
     pub name: String,
@@ -167,6 +168,7 @@ impl Models {
             .filter(|p| p.enabled)
             .flat_map(|p| {
                 p.models.iter().map(move |m| ModelInfo {
+                    tier: self.tier(&ModelRef::new(&p.id, &m.id)),
                     model: ModelRef::new(&p.id, &m.id),
                     aliases: m.aliases.clone(),
                     name: if m.name.is_empty() {

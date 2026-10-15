@@ -115,7 +115,7 @@ pub(super) async fn list_models(
             .capabilities
             .cost
             .or_else(|| runtime.models.registry().api_equivalent_price(&resolved));
-        let entry = serde_json::json!({"model": info.model, "name": info.name, "provider_name": info.provider_name, "configured": configured, "available": available, "context_window": info.capabilities.context_window, "effort_supported": info.capabilities.effort, "tier": runtime.models.tier(&info.model), "api_equivalent_cost": cost});
+        let entry = serde_json::json!({"model": info.model, "name": info.name, "provider_name": info.provider_name, "configured": configured, "available": available, "context_window": info.capabilities.context_window, "effort_supported": info.capabilities.effort, "tier": info.tier, "api_equivalent_cost": cost});
         if selected {
             models.push(entry);
         } else if available {

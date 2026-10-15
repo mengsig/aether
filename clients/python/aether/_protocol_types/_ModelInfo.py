@@ -15,3 +15,4 @@ class ModelInfo(TypedDict, total=False):
     model: _protocol.ModelRef
     name: str
     provider_name: str
+    tier: str | None  # optional

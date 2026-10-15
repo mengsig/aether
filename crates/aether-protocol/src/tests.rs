@@ -12,11 +12,16 @@ fn model_info_aliases_are_optional_and_roundtrip() {
     });
     let mut info: ModelInfo = serde_json::from_value(legacy.clone()).unwrap();
     assert!(info.aliases.is_empty());
-    assert_eq!(serde_json::to_value(&info).unwrap(), legacy);
+    assert!(info.tier.is_none());
+    let mut expected = legacy;
+    expected["tier"] = serde_json::Value::Null;
+    assert_eq!(serde_json::to_value(&info).unwrap(), expected);
     assert_eq!(decode::<ModelInfo>(&encode(&info).unwrap()).unwrap(), info);
 
+    info.tier = Some("strong".into());
     info.aliases = vec!["opus".into(), "opus-5-5".into()];
     let wire = serde_json::to_value(&info).unwrap();
+    assert_eq!(wire["tier"], "strong");
     assert_eq!(wire["aliases"], serde_json::json!(["opus", "opus-5-5"]));
     assert_eq!(decode::<ModelInfo>(&encode(&info).unwrap()).unwrap(), info);
 }

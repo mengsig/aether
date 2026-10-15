@@ -148,6 +148,9 @@ impl From<aether_store::TranscriptEntry> for TranscriptEntry {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelInfo {
+    /// Capability band within the provider; null when unranked.
+    #[serde(default)]
+    pub tier: Option<String>,
     pub model: ModelRef,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub aliases: Vec<String>,

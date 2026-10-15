@@ -15,4 +15,5 @@ export interface ModelInfo {
   "model": ModelRef;
   "name": string;
   "provider_name": string;
+  "tier"?: string | null;
 }
