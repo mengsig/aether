@@ -75,3 +75,115 @@ fn missing_or_invalid_receipt_never_invents_a_price() {
     assert_eq!(cost, None);
     assert!(matches!(&events[..], [EngineEvent::ProtocolNote(_)]));
 }
+
+fn covered_usage(state: &SessionCost, value: &Value) -> Option<Usage> {
+    let (cost, events) = state.receipt(value);
+    assert!(cost.is_some());
+    let [EngineEvent::SessionUsage { total, .. }] = &events[..] else {
+        panic!("expected session counters: {events:?}");
+    };
+    state.cost_usage(value, *total)
+}
+
+#[test]
+fn model_usage_subtracts_the_process_start_on_every_result() {
+    let before = Usage {
+        input_tokens: 4,
+        output_tokens: 80,
+        cache_read_tokens: 1000,
+        cache_write_tokens: 2000,
+        cost_usd: 0.02,
+        ..Usage::default()
+    };
+    let state = SessionCost::resumed(Some("s".into()), before);
+    for cost in [0.0712778, 0.08] {
+        let usage = covered_usage(&state, &receipt("s", cost)).unwrap();
+        assert_eq!((usage.input_tokens, usage.output_tokens), (6, 304));
+        assert_eq!(
+            (usage.cache_read_tokens, usage.cache_write_tokens),
+            (77969, 10906)
+        );
+    }
+}
+
+#[test]
+fn absent_malformed_or_regressed_model_usage_cannot_prove_coverage() {
+    let state = SessionCost::resumed(
+        Some("s".into()),
+        Usage {
+            input_tokens: 5,
+            cost_usd: 0.02,
+            ..Usage::default()
+        },
+    );
+    for field in [
+        "inputTokens",
+        "outputTokens",
+        "cacheReadInputTokens",
+        "cacheCreationInputTokens",
+    ] {
+        let mut value = receipt("s", 0.08);
+        value["modelUsage"]["sonnet"][field] = Value::Null;
+        assert_eq!(covered_usage(&state, &value), None);
+    }
+    let mut value = receipt("s", 0.08);
+    value["modelUsage"]["sonnet"]["inputTokens"] = json!(4);
+    assert_eq!(covered_usage(&state, &value), None);
+    value.as_object_mut().unwrap().remove("modelUsage");
+    assert_eq!(covered_usage(&state, &value), None);
+}
+
+#[test]
+fn a_dollar_only_baseline_cannot_prove_a_resumed_tokens_scope() {
+    let state = SessionCost::resumed(
+        Some("s".into()),
+        Usage {
+            cost_usd: 0.02,
+            ..Usage::default()
+        },
+    );
+    assert_eq!(covered_usage(&state, &receipt("s", 0.08)), None);
+    let usage = covered_usage(&state, &receipt("new", 0.08)).unwrap();
+    assert_eq!(usage.input_tokens, 10);
+    assert_eq!(usage.output_tokens, 384);
+}
+
+#[test]
+fn native_interrupt_receipt_includes_restored_session_spend() {
+    // Claude Code 2.1.299, three Haiku 5.5 processes: reply, interrupt at tool_use, resume.
+    // The native receipts were $0.000491, $0.00069573 and $0.00077314.
+    let state = SessionCost::resumed(
+        Some("s".into()),
+        Usage {
+            input_tokens: 2,
+            output_tokens: 4,
+            cache_write_tokens: 2444,
+            cost_usd: 0.000491,
+            ..Usage::default()
+        },
+    );
+    let value = json!({"session_id":"s","total_cost_usd":0.00069573,
+        "modelUsage":{"claude-haiku-5-5":{"inputTokens":4,"outputTokens":86,
+            "cacheReadInputTokens":1793,"cacheCreationInputTokens":3172}}});
+    let usage = covered_usage(&state, &value).unwrap();
+    assert_eq!((usage.input_tokens, usage.output_tokens), (2, 82));
+    assert_eq!(
+        (usage.cache_read_tokens, usage.cache_write_tokens),
+        (1793, 728)
+    );
+    assert!((state.receipt(&value).0.unwrap() - 0.00020473).abs() < 1e-12);
+}
+
+#[test]
+fn an_unread_counter_cannot_become_a_known_zero_baseline_on_resume() {
+    let mut value = receipt("s", 0.05);
+    value["modelUsage"]["sonnet"]["outputTokens"] = Value::Null;
+    let (_, events) = SessionCost::default().receipt(&value);
+    let [EngineEvent::SessionUsage { total, .. }] = &events[..] else {
+        panic!("expected the dollar baseline: {events:?}");
+    };
+    assert_eq!(total.cost_usd, 0.05);
+    assert_eq!(total.total_tokens(), 0);
+    let state = SessionCost::resumed(Some("s".into()), *total);
+    assert_eq!(covered_usage(&state, &receipt("s", 0.08)), None);
+}

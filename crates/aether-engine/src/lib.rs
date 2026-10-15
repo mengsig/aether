@@ -291,6 +291,9 @@ pub struct EngineOutcome {
     /// Parsed from the engine's own final usage message, never synthesized.
     pub closing_accounting: bool,
     pub cost_usd: Option<f64>,
+    /// Invocation counters covered by `cost_usd`, when its scope differs from `usage`.
+    /// Boxed so optional receipt detail does not enlarge every streamed event.
+    pub cost_usage: Option<Box<Usage>>,
     pub stop_reason: Option<String>,
     pub duration_ms: Option<u64>,
     pub is_error: bool,

@@ -34,6 +34,12 @@ pub struct ParseState {
 const MAX_TRACKED_MESSAGES: usize = 256;
 
 impl ParseState {
+    /// Initialize the prompt acknowledgement and the resumed session's cost baseline.
+    pub fn for_turn(turn: &crate::EngineTurn) -> Self {
+        Self::awaiting_prompt(&turn.prompt)
+            .with_session_cost(turn.session.clone(), turn.session_usage)
+    }
+
     pub(super) fn with_session_cost(mut self, session: Option<String>, usage: Usage) -> Self {
         self.session_cost = super::session_cost::SessionCost::resumed(session, usage);
         self
@@ -301,10 +307,19 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
                 v.get("is_error").and_then(Value::as_bool).unwrap_or(false) || subtype != "success";
             let text = v.get("result").and_then(Value::as_str).map(str::to_owned);
             let (cost_usd, mut events) = state.session_cost.receipt(&v);
+            let cost_usage = cost_usd.and_then(|_| {
+                events.iter().find_map(|event| match event {
+                    EngineEvent::SessionUsage { total, .. } => {
+                        state.session_cost.cost_usage(&v, *total)
+                    }
+                    _ => None,
+                })
+            });
             events.push(EngineEvent::Done(EngineOutcome {
                 closing_accounting: true,
                 usage: v.get("usage").map(parse_usage).unwrap_or_default(),
                 cost_usd,
+                cost_usage: cost_usage.map(Box::new),
                 stop_reason: v
                     .get("stop_reason")
                     .and_then(Value::as_str)

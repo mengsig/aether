@@ -741,6 +741,25 @@ fn closing_usage(runtime: &Arc<Runtime>, ctx: &TurnCtx, run: &DriveResult) -> Re
     // The engine is untrusted: a closing receipt below the stream must not
     // shrink a turn back under a grant it already crossed.
     let raised = raise_to(&mut usage, run.stream_usage);
+    let cost_shortfall = price_closing_usage(&mut usage, run, raised);
+    let missing = closing_shortfall_description(usage, closing_tokens, cost_shortfall);
+    if interrupted_accounting(run) {
+        usage.mark_cost_gap(aether_core::model::CostGap::Interrupted);
+    }
+    if raised {
+        let note = format!("{SHRUNK_CLOSING_USAGE}; {missing}");
+        tracing::warn!(agent = %ctx.agent.id, "{note}");
+        runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
+            name: PROTOCOL_NOTE_EVENT.into(),
+            payload: json!({ "note": note }),
+        })))?;
+    }
+    Ok(usage)
+}
+
+fn price_closing_usage(usage: &mut Usage, run: &DriveResult, raised: bool) -> bool {
+    debug_assert!(run.usage_seen);
+    debug_assert!(run.outcome.cost_usage.is_none() || run.outcome.cost_usd.is_some());
     let billed = run.outcome.cost_usd.or_else(|| {
         run.stream_usage
             .cost_complete
@@ -757,10 +776,8 @@ fn closing_usage(runtime: &Arc<Runtime>, ctx: &TurnCtx, run: &DriveResult) -> Re
     // Preserve request estimates; merged counters cannot select prompt tiers.
     usage.estimated_cost_usd = match billed {
         Some(_) => None,
-        None if run.request_usage_seen => {
-            run.pricing.request_estimate_of(&usage, &run.stream_usage)
-        }
-        None => run.pricing.estimate_of(&usage),
+        None if run.request_usage_seen => run.pricing.request_estimate_of(usage, &run.stream_usage),
+        None => run.pricing.estimate_of(usage),
     };
     if run.outcome.cost_usd.is_none() {
         usage.cost_basis = if usage.estimated_cost_usd.is_some() {
@@ -769,40 +786,33 @@ fn closing_usage(runtime: &Arc<Runtime>, ctx: &TurnCtx, run: &DriveResult) -> Re
             run.stream_usage.cost_basis
         };
     } else if raised {
-        run.pricing
-            .price_closing_shortfall(&mut usage, &run.outcome.usage);
+        return run.pricing.price_closing_shortfall(
+            usage,
+            run.outcome
+                .cost_usage
+                .as_deref()
+                .unwrap_or(&run.outcome.usage),
+        );
     }
-    if interrupted_accounting(run) {
-        usage.mark_cost_gap(aether_core::model::CostGap::Interrupted);
-    }
-    if raised {
-        record_closing_shortfall(runtime, ctx, usage, closing_tokens)?;
-    }
-    Ok(usage)
+    true
 }
 
-fn record_closing_shortfall(
-    runtime: &Arc<Runtime>,
-    ctx: &TurnCtx,
+fn closing_shortfall_description(
     usage: Usage,
     closing_tokens: u64,
-) -> Result<()> {
+    cost_shortfall: bool,
+) -> &'static str {
     debug_assert!(usage.total_tokens() >= closing_tokens);
     debug_assert!(usage.cost_complete || usage.cost_gap.is_some());
-    let missing = if usage.total_tokens() == closing_tokens {
+    if usage.total_tokens() == closing_tokens {
         "only reasoning detail was missing, the cost is unaffected"
+    } else if !cost_shortfall {
+        "the cumulative dollar receipt covers the streamed usage"
     } else if usage.cost_complete {
         "the missing part is priced from the stream"
     } else {
         "the missing part is left out of the billed cost"
-    };
-    let note = format!("{SHRUNK_CLOSING_USAGE}; {missing}");
-    tracing::warn!(agent = %ctx.agent.id, "{note}");
-    runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
-        name: PROTOCOL_NOTE_EVENT.into(),
-        payload: json!({ "note": note }),
-    })))?;
-    Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -38,6 +38,14 @@ release is also the text of its GitHub release.
   without a price already was, and show as `≈ $X API-equivalent` next to a
   cost of `not reported`. Dollar caps on Codex agents are still refused. Older
   records keep the figures they were stored with.
+- **A Claude Code agent that pauses and resumes no longer costs more than its
+  receipt.** Claude Code reports a turn's tokens for that turn alone, but its
+  dollars and per-model token counts for the whole session. When the turn's
+  tokens fell short of what had streamed, Aether priced the difference again
+  although the session's counts already covered it, and the extra carried
+  over every resume. Aether now prices only streamed tokens those counts do
+  not cover, and the note on an interrupted turn says whether the missing
+  part was priced.
 - **The daemon no longer churns the disk while agents work.** Reading a long
   agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
   of MB per read. With several agents running, that held host IO pressure

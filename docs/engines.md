@@ -391,6 +391,16 @@ turn's totals, which reconcile what streamed. An engine turn's
 and its spend arrives as `agent.usage_updated` with the agent's and the turn's
 totals.
 
+Claude Code's [`result` fields have different scopes](https://code.claude.com/docs/en/agent-sdk/cost-tracking#track-costs-in-streaming-input-mode):
+`usage` covers one user turn, while `total_cost_usd` and `modelUsage` include
+earlier turns and the spend restored by `--resume`. Aether subtracts the
+persisted session baseline once per process. When `usage` is below the stream,
+it checks the invocation's increase in `modelUsage` before adding any price
+for missing tokens. Tokens absent from both receipts still retain their
+stream-derived charge; the agent total can then exceed the latest dollar
+receipt. A parked or interrupted run without proven closing coverage keeps
+its cost gap even when every observed token has a price.
+
 Three rules the runtime depends on:
 
 1. **`Done` is always last, and always arrives.** A CLI that dies mid-stream
