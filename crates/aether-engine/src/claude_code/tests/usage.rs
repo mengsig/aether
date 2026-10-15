@@ -401,3 +401,37 @@ fn a_split_beyond_its_total_is_bounded_by_the_total() {
     assert_eq!(parsed.cache_write_tokens, 100);
     assert_eq!(parsed.cache_write_1h_tokens, 100);
 }
+
+/// Writes first reported without a split, then split on an otherwise identical
+/// line, must still reach pricing: the request is repriced at the 1-hour rate.
+#[test]
+fn a_split_reported_after_its_writes_still_reprices_the_request() {
+    let block = |usage: Value| {
+        json!({"type":"assistant","message":{"id":"msg_a",
+            "content":[{"type":"text","text":"x"}],"usage":usage}})
+    };
+    let mut state = ParseState::default();
+    let mut requests = Vec::new();
+    for line in [
+        block(split_usage(100, None)),
+        block(split_usage(100, Some(100))),
+    ] {
+        for event in parse_line(&line.to_string(), &mut state) {
+            if let EngineEvent::UsageRequest { request } = event {
+                requests.push(request);
+            }
+        }
+    }
+    assert_eq!(
+        requests.len(),
+        2,
+        "the late split was never sent for pricing"
+    );
+    assert_eq!(requests[1].previous.cache_write_1h_tokens, 0);
+    assert_eq!(requests[1].total.cache_write_1h_tokens, 100);
+    assert_eq!(
+        requests[1].delta().total_tokens(),
+        0,
+        "no token is counted twice"
+    );
+}

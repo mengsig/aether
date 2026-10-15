@@ -131,8 +131,11 @@ impl ParseState {
             total: *total,
         };
         let delta = request.delta();
+        // A split reported after its writes adds no tokens, but reprices the request.
+        let reclassified = total.cache_write_1h_tokens > previous.cache_write_1h_tokens;
         let mut events = Vec::new();
-        if delta.total_tokens() > 0 || delta.reasoning_tokens.is_some_and(|n| n > 0) {
+        if delta.total_tokens() > 0 || delta.reasoning_tokens.is_some_and(|n| n > 0) || reclassified
+        {
             events.push(EngineEvent::UsageRequest { request });
         }
         events.push(EngineEvent::ContextUsage {

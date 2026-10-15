@@ -179,3 +179,24 @@ async fn one_hour_writes_estimate_at_the_one_hour_rate() {
     assert!(!usage.cost_complete);
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_split_reported_after_its_writes_still_bills_the_one_hour_rate() {
+    let mut unsplit = one_hour_usage();
+    unsplit.as_object_mut().unwrap().remove("cache_creation");
+    let mut lines = turn_lines(one_hour_usage(), result_line(one_hour_usage(), None));
+    lines[0]["event"]["message"]["usage"] = unsplit;
+    let engine = NativeLinesEngine { lines };
+    let h = harness_with_engine_config(Arc::new(engine), |config| {
+        config.default_model = Some(ModelRef::new("claude-code", "opus"));
+    })
+    .await;
+    let usage = settled_usage(&h).await;
+    assert!(
+        (usage.cost_usd - 0.1193228).abs() < 1e-12,
+        "priced ${:.7}, Claude Code billed $0.1193228",
+        usage.cost_usd
+    );
+    assert_eq!(usage.cost_basis, CostBasis::ListPrice);
+    h.runtime.shutdown().await;
+}
