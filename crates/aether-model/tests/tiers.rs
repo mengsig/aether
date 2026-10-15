@@ -169,7 +169,7 @@ fn an_unpriced_or_unreferenced_model_stays_unranked() {
     // No tiered model in groq to rank against.
     let models = load(
         "",
-        "[[providers.groq.add_models]]\nid = \"priced\"\n[providers.groq.add_models.capabilities]\ncost = { input_per_mtok = 1.0, output_per_mtok = 2.0, cache_read_per_mtok = 0.0, cache_write_per_mtok = 0.0 }\n",
+        "[[providers.groq.add_models]]\nid = \"priced\"\n[providers.groq.add_models.capabilities]\ncontext_window = 1000\nmax_output_tokens = 100\ncost = { input_per_mtok = 1.0, output_per_mtok = 2.0, cache_read_per_mtok = 0.0, cache_write_per_mtok = 0.0 }\n",
     );
     assert_eq!(tier(&models, "groq", "priced"), None);
 }
