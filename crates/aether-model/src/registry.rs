@@ -496,8 +496,8 @@ impl Registry {
     }
 
     /// The capability band of a model: its declared tier, else its output
-    /// price (own, or its API equivalent's) ranked against the dearest tiered
-    /// model of the same provider. `None` when neither says. Operator
+    /// price (own, or its API equivalent's) matched to the nearest tiered model
+    /// of the same provider. `None` when neither says. Operator
     /// overrides sit above this, in `Models::tier`.
     pub fn catalog_tier(&self, provider: &str, model: &str) -> Option<ModelTier> {
         let provider = self.provider(provider)?;
@@ -506,13 +506,12 @@ impl Registry {
             return def.tier;
         }
         let output = self.output_price(provider, &def)?;
-        let reference = provider
+        let references: Vec<_> = provider
             .models
             .iter()
-            .filter(|m| m.tier.is_some())
-            .filter_map(|m| self.output_price(provider, m))
-            .fold(0.0_f64, f64::max);
-        tier_by_price(output, reference)
+            .filter_map(|m| Some((self.output_price(provider, m)?, m.tier?)))
+            .collect();
+        tier_by_price(output, &references)
     }
 
     fn output_price(&self, provider: &ProviderDef, model: &ModelDef) -> Option<f64> {

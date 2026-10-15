@@ -2,14 +2,17 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A capability band within one provider. The vocabulary is shared with
-/// Archon's catalog tiers: keep the three names stable.
+/// A capability band within one provider, weakest first. The vocabulary is
+/// shared with Archon's catalog tiers: keep the names stable. `strongest` is
+/// the legacy name of `strong` and is still accepted when reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelTier {
     Fast,
     Balanced,
-    Strongest,
+    #[serde(alias = "strongest")]
+    Strong,
+    Frontier,
 }
 
 impl ModelTier {
@@ -17,34 +20,32 @@ impl ModelTier {
         match self {
             Self::Fast => "fast",
             Self::Balanced => "balanced",
-            Self::Strongest => "strongest",
+            Self::Strong => "strong",
+            Self::Frontier => "frontier",
         }
     }
 }
 
-/// Output price at or above this share of the provider's dearest tiered model
-/// ranks `strongest`; below it but at or above [`BALANCED_SHARE`], `balanced`.
-/// Chosen so the built-in families land in their declared bands (Opus 0.4,
-/// Sonnet 0.2, Haiku 0.01 of Fable's $50): price gaps alone cannot separate them.
-const STRONGEST_SHARE: f64 = 0.35;
-const BALANCED_SHARE: f64 = 0.1;
-
-/// Rank a model by its output price relative to `reference`, the highest
-/// output price among tiered models of the same provider. `None` when either
-/// price is not a positive finite number: an unpriced model stays unranked.
-pub fn tier_by_price(output_per_mtok: f64, reference: f64) -> Option<ModelTier> {
+/// Rank an unranked model by output price: the tier of the nearest priced,
+/// tiered model of the same provider (`references`), nearest in price ratio.
+/// A tie takes the lower tier. Gaps alone cannot separate tiers, so only the
+/// tiered models' own prices anchor the bands. `None` when the price or every
+/// reference is not a positive finite number: an unpriced model stays unranked.
+pub fn tier_by_price(output_per_mtok: f64, references: &[(f64, ModelTier)]) -> Option<ModelTier> {
     let usable = |price: f64| price.is_finite() && price > 0.0;
-    if !usable(output_per_mtok) || !usable(reference) {
+    if !usable(output_per_mtok) {
         return None;
     }
-    let share = output_per_mtok / reference;
-    Some(if share >= STRONGEST_SHARE {
-        ModelTier::Strongest
-    } else if share >= BALANCED_SHARE {
-        ModelTier::Balanced
-    } else {
-        ModelTier::Fast
-    })
+    let distance = |price: f64| (output_per_mtok / price).ln().abs();
+    references
+        .iter()
+        .filter(|(price, _)| usable(*price))
+        .min_by(|(pa, ta), (pb, tb)| {
+            distance(*pa)
+                .total_cmp(&distance(*pb))
+                .then_with(|| ta.cmp(tb))
+        })
+        .map(|&(_, tier)| tier)
 }
 
 #[cfg(test)]

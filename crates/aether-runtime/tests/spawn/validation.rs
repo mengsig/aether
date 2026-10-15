@@ -103,6 +103,7 @@ async fn delegation_refuses_an_unregistered_engine_before_creating_a_child() {
         entry["tier"].clone()
     };
     assert_eq!(tier_of("claude-haiku-5-5"), "fast");
+    assert_eq!(tier_of("claude-opus-5-5"), "strong");
     let guidance = catalog["guidance"]
         .as_str()
         .expect("guidance")

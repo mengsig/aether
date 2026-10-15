@@ -550,8 +550,8 @@ pub struct ModelSection {
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ModelsSection {
-    /// `"provider/model" = "fast" | "balanced" | "strongest"`; beats the
-    /// catalog's own tier.
+    /// `"provider/model" = "fast" | "balanced" | "strong" | "frontier"`
+    /// (`strongest` is read as `strong`); beats the catalog's own tier.
     pub tiers: BTreeMap<String, crate::tier::ModelTier>,
 }
 

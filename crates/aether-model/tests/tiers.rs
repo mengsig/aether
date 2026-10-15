@@ -21,8 +21,8 @@ fn tier(models: &Models, provider: &str, model: &str) -> Option<ModelTier> {
 fn every_builtin_model_has_its_declared_tier() {
     let models = load("", "");
     let expected = [
-        ("claude-opus-5-5", ModelTier::Strongest),
-        ("claude-fable-5-1", ModelTier::Strongest),
+        ("claude-opus-5-5", ModelTier::Strong),
+        ("claude-fable-5-1", ModelTier::Frontier),
         ("claude-sonnet-5-5", ModelTier::Balanced),
         ("claude-haiku-5-5", ModelTier::Fast),
     ];
@@ -36,7 +36,7 @@ fn every_builtin_model_has_its_declared_tier() {
         }
     }
     let expected = [
-        ("gpt-6-astra", ModelTier::Strongest),
+        ("gpt-6-astra", ModelTier::Strong),
         ("gpt-6.1-sol", ModelTier::Balanced),
         ("gpt-6-luna", ModelTier::Fast),
     ];
@@ -59,16 +59,16 @@ fn every_builtin_model_has_its_declared_tier() {
 #[test]
 fn a_config_override_beats_the_catalog_tier() {
     let models = load(
-        "[models.tiers]\n\"claude-code/sonnet\" = \"strongest\"\n\"codex/gpt-6-luna\" = \"balanced\"\n",
+        "[models.tiers]\n\"claude-code/sonnet\" = \"frontier\"\n\"codex/gpt-6-luna\" = \"balanced\"\n",
         "",
     );
     assert_eq!(
         tier(&models, "claude-code", "claude-sonnet-5-5"),
-        Some(ModelTier::Strongest)
+        Some(ModelTier::Frontier)
     );
     assert_eq!(
         tier(&models, "claude-code", "sonnet"),
-        Some(ModelTier::Strongest)
+        Some(ModelTier::Frontier)
     );
     assert_eq!(tier(&models, "codex", "luna"), Some(ModelTier::Balanced));
     assert_eq!(
@@ -102,7 +102,7 @@ fn an_unknown_tier_name_is_a_config_error_naming_the_choices() {
         .to_string();
     assert!(error.contains("config.toml"), "{error}");
     assert!(error.contains("cheap"), "{error}");
-    assert!(error.contains("strongest"), "{error}");
+    assert!(error.contains("frontier"), "{error}");
 }
 
 #[test]
@@ -119,75 +119,63 @@ fn an_override_key_must_be_provider_slash_model() {
     assert!(error.contains("models.tiers key `opus`"), "{error}");
 }
 
-/// A provider with one declared tier and unlisted-tier priced siblings: the
-/// siblings rank by output price against the dearest tiered model.
-const LOCAL: &str = r#"
-[providers.acme]
-name = "Acme"
-protocol = "openai-chat-completions"
-base_url = "http://localhost:1/v1"
-
-[[providers.acme.models]]
-id = "acme-top"
-tier = "strongest"
-[providers.acme.models.capabilities]
-context_window = 1000
-max_output_tokens = 100
-cost = { input_per_mtok = 5.0, output_per_mtok = 40.0, cache_read_per_mtok = 0.0, cache_write_per_mtok = 0.0 }
-
-[[providers.acme.models]]
-id = "acme-mid"
-[providers.acme.models.capabilities]
-context_window = 1000
-max_output_tokens = 100
-cost = { input_per_mtok = 1.0, output_per_mtok = 8.0, cache_read_per_mtok = 0.0, cache_write_per_mtok = 0.0 }
-
-[[providers.acme.models]]
-id = "acme-near-top"
-[providers.acme.models.capabilities]
-context_window = 1000
-max_output_tokens = 100
-cost = { input_per_mtok = 4.0, output_per_mtok = 20.0, cache_read_per_mtok = 0.0, cache_write_per_mtok = 0.0 }
-
-[[providers.acme.models]]
-id = "acme-small"
-[providers.acme.models.capabilities]
-context_window = 1000
-max_output_tokens = 100
-cost = { input_per_mtok = 0.1, output_per_mtok = 0.4, cache_read_per_mtok = 0.0, cache_write_per_mtok = 0.0 }
-
-[[providers.acme.models]]
-id = "acme-unpriced"
-[providers.acme.models.capabilities]
-context_window = 1000
-max_output_tokens = 100
-"#;
+/// Four tiered models anchor the bands; the rest are ranked by output price.
+fn acme() -> String {
+    let model = |id: &str, output: f64, tier: Option<&str>| {
+        let tier = tier.map_or(String::new(), |t| format!("tier = \"{t}\"\n"));
+        format!(
+            "[[providers.acme.models]]\nid = \"{id}\"\n{tier}[providers.acme.models.capabilities]\ncontext_window = 1000\nmax_output_tokens = 100\ncost = {{ input_per_mtok = 1.0, output_per_mtok = {output}, cache_read_per_mtok = 0.0, cache_write_per_mtok = 0.0 }}\n\n"
+        )
+    };
+    let mut toml = String::from(
+        "[providers.acme]\nname = \"Acme\"\nprotocol = \"openai-chat-completions\"\nbase_url = \"http://localhost:1/v1\"\n\n",
+    );
+    for (id, output, tier) in [
+        ("ref-frontier", 40.0, Some("frontier")),
+        ("ref-strong", 16.0, Some("strong")),
+        ("ref-balanced", 6.0, Some("balanced")),
+        ("ref-fast", 0.4, Some("fast")),
+        ("near-frontier", 30.0, None),
+        ("near-strong", 20.0, None),
+        ("near-balanced", 7.0, None),
+        ("near-fast", 0.1, None),
+    ] {
+        toml.push_str(&model(id, output, tier));
+    }
+    toml.push_str(
+        "[[providers.acme.models]]\nid = \"unpriced\"\n[providers.acme.models.capabilities]\ncontext_window = 1000\nmax_output_tokens = 100\n",
+    );
+    toml
+}
 
 #[test]
-fn a_priced_model_without_a_tier_ranks_against_its_providers_dearest_tiered_model() {
-    let models = load("", LOCAL);
-    assert_eq!(
-        tier(&models, "acme", "acme-top"),
-        Some(ModelTier::Strongest)
-    );
-    assert_eq!(
-        tier(&models, "acme", "acme-near-top"),
-        Some(ModelTier::Strongest)
-    );
-    assert_eq!(tier(&models, "acme", "acme-mid"), Some(ModelTier::Balanced));
-    assert_eq!(tier(&models, "acme", "acme-small"), Some(ModelTier::Fast));
+fn a_priced_model_without_a_tier_takes_the_nearest_tiered_models_band() {
+    let models = load("", &acme());
+    for (id, want) in [
+        ("ref-strong", ModelTier::Strong),
+        ("near-frontier", ModelTier::Frontier),
+        ("near-strong", ModelTier::Strong),
+        ("near-balanced", ModelTier::Balanced),
+        ("near-fast", ModelTier::Fast),
+    ] {
+        assert_eq!(tier(&models, "acme", id), Some(want), "{id}");
+    }
 }
 
 #[test]
 fn an_unpriced_or_unreferenced_model_stays_unranked() {
-    let models = load("", LOCAL);
-    assert_eq!(tier(&models, "acme", "acme-unpriced"), None);
+    let models = load("", &acme());
+    assert_eq!(tier(&models, "acme", "unpriced"), None);
     // No tiered model in groq to rank against.
     let models = load(
         "",
-        "[[providers.groq.add_models]]\nid = \"priced\"\n[providers.groq.add_models.capabilities]\ncontext_window = 1000
-max_output_tokens = 100
-cost = { input_per_mtok = 1.0, output_per_mtok = 2.0, cache_read_per_mtok = 0.0, cache_write_per_mtok = 0.0 }\n",
+        "[[providers.groq.add_models]]\nid = \"priced\"\n[providers.groq.add_models.capabilities]\ncost = { input_per_mtok = 1.0, output_per_mtok = 2.0, cache_read_per_mtok = 0.0, cache_write_per_mtok = 0.0 }\n",
     );
     assert_eq!(tier(&models, "groq", "priced"), None);
+}
+
+#[test]
+fn the_legacy_strongest_name_is_accepted_as_strong() {
+    let models = load("[models.tiers]\n\"codex/gpt-6-luna\" = \"strongest\"\n", "");
+    assert_eq!(tier(&models, "codex", "luna"), Some(ModelTier::Strong));
 }

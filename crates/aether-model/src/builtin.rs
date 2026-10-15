@@ -114,7 +114,7 @@ fn anthropic() -> ProviderDef {
                 adaptive(1_000_000, 128_000, opus_cost()),
             )
             .with_aliases(["opus", "opus-5-5", "opus-5.5"])
-            .with_tier(ModelTier::Strongest),
+            .with_tier(ModelTier::Strong),
             ModelDef::new(
                 "claude-sonnet-5-5",
                 "Claude Sonnet 5.5",
@@ -135,7 +135,7 @@ fn anthropic() -> ProviderDef {
                 adaptive(1_000_000, 128_000, fable_cost()),
             )
             .with_aliases(["fable", "fable-5-1"])
-            .with_tier(ModelTier::Strongest),
+            .with_tier(ModelTier::Frontier),
         ],
         default_capabilities: Some(claude(
             200_000,
@@ -207,7 +207,7 @@ fn openai_current_models() -> Vec<ModelDef> {
     vec![
         ModelDef::new("gpt-6-astra", "GPT-6 Astra", gpt6(10.0, 50.0))
             .with_aliases(["astra"])
-            .with_tier(ModelTier::Strongest),
+            .with_tier(ModelTier::Strong),
         ModelDef::new("gpt-6.1-sol", "GPT-6.1 Sol", gpt61_sol)
             .with_aliases(["sol"])
             .with_default_effort(GPT_6_1_SOL_EFFORT)
@@ -392,7 +392,7 @@ fn codex_models() -> Vec<ModelDef> {
     let models = vec![
         engine_model("gpt-6-astra", "GPT-6 Astra", CODEX_CONTEXT, 128_000)
             .with_aliases(["astra"])
-            .with_tier(ModelTier::Strongest),
+            .with_tier(ModelTier::Strong),
         engine_model("gpt-6.1-sol", "GPT-6.1 Sol", CODEX_CONTEXT, 128_000)
             .with_aliases(["sol"])
             .with_default_effort(GPT_6_1_SOL_EFFORT)
@@ -434,7 +434,7 @@ fn claude_code() -> ProviderDef {
             priced(
                 engine_model("claude-opus-5-5", "Claude Opus 5.5", 200_000, 128_000)
                     .with_aliases(["opus", "opus-5-5", "opus-5.5"])
-                    .with_tier(ModelTier::Strongest),
+                    .with_tier(ModelTier::Strong),
                 opus_cost(),
             ),
             // No price: `default` is whatever the CLI picks, so pricing it
@@ -443,7 +443,7 @@ fn claude_code() -> ProviderDef {
             priced(
                 engine_model("claude-fable-5-1", "Claude Fable 5.1", 200_000, 128_000)
                     .with_aliases(["fable", "fable-5-1"])
-                    .with_tier(ModelTier::Strongest),
+                    .with_tier(ModelTier::Frontier),
                 fable_cost(),
             ),
             priced(
