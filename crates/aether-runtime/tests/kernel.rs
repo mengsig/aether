@@ -109,6 +109,8 @@ use std::path::PathBuf;
 
 #[path = "kernel/agent_support.rs"]
 mod agent_support;
+#[path = "kernel/api_budget_stop.rs"]
+mod api_budget_stop;
 #[path = "kernel/approval_dispatch.rs"]
 mod approval_dispatch;
 #[path = "kernel/approval_policy.rs"]
@@ -257,6 +259,8 @@ mod task_dependencies;
 mod task_lifecycle;
 #[path = "kernel/tool_idempotency.rs"]
 mod tool_idempotency;
+#[path = "support/tui_projection.rs"]
+mod tui_projection;
 #[path = "kernel/turn_robustness.rs"]
 mod turn_robustness;
 #[path = "kernel/unanswered_turns.rs"]
