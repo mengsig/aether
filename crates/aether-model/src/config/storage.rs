@@ -55,11 +55,13 @@ mod tests {
         let config: AetherConfig = toml::from_str("").unwrap();
         assert_eq!(config.storage.retention_days, 14);
         assert_eq!(config.storage.backups_keep.get(), 3);
+        assert_eq!(config.storage.days(config.storage.engine_sessions_days), 14);
         let config: AetherConfig = toml::from_str(
-            "[storage]\nworkspaces_days = 0\nbackups_days = 21\nworkspace_grace_seconds = 0",
+            "[storage]\nworkspaces_days = 0\nengine_sessions_days = 0\nbackups_days = 21\nworkspace_grace_seconds = 0",
         )
         .unwrap();
         assert_eq!(config.storage.days(config.storage.workspaces_days), 0);
+        assert_eq!(config.storage.days(config.storage.engine_sessions_days), 0);
         assert_eq!(config.storage.days(config.storage.backups_days), 21);
         assert_eq!(config.storage.days(config.storage.logs_days), 14);
     }

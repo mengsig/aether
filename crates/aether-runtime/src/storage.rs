@@ -1,4 +1,4 @@
-//! Bounded, observable filesystem maintenance. Engine logs remain owned but unpruned.
+//! Bounded, observable filesystem maintenance.
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 use crate::{Result, Runtime, RuntimeError};
 
 const MAX_ENTRIES: usize = 10_000;
+
+mod engine_sessions;
 
 #[derive(Debug, Clone)]
 pub struct StoragePaths {
@@ -65,7 +67,7 @@ impl Runtime {
         let mut report = json!({
             "at": aether_core::time::now(), "dry_run": dry_run,
             "workspaces": workspaces,
-            "engine_sessions": {"deletion_deferred": true, "reason": "ownership recorded; session deletion requires follow-up"},
+            "engine_sessions": self.gc_engine_sessions(config.days(config.engine_sessions_days), SystemTime::now(), dry_run)?,
             "artifacts": {"policy": "existing payload retention; storage.artifacts_days overrides age",
                 "retention_days": self.config.retention.max_age_days, "max_total_bytes": self.config.retention.max_total_bytes},
             "event_history": {"policy": "existing completed-run retention; storage.event_history_days overrides age",
@@ -92,37 +94,6 @@ impl Runtime {
             report["database_bytes"] = json!(fs::metadata(&paths.store).map_err(invalid)?.len());
             report["available_bytes"] = json!(fs4::available_space(root).map_err(invalid)?);
         }
-        report["engine_sessions"]["retention_days"] =
-            json!(config.days(config.engine_sessions_days));
-        let ownership = self.store.engine_session_ownerships()?;
-        let mut session_bytes = 0_u64;
-        let mut unknown_paths = 0;
-        let mut unavailable_paths = 0;
-        let mut paths_seen = std::collections::HashSet::new();
-        for session in ownership.iter().take(MAX_ENTRIES) {
-            if session.log_paths.is_empty() {
-                unknown_paths += 1;
-            }
-            for path in &session.log_paths {
-                if !paths_seen.insert(path) {
-                    continue;
-                }
-                match fs::symlink_metadata(path) {
-                    Ok(meta) if meta.is_file() => session_bytes += meta.len(),
-                    Ok(_) => unavailable_paths += 1,
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => {
-                        unavailable_paths += 1;
-                        tracing::warn!(path = %path.display(), %error, "cannot measure owned engine log");
-                    }
-                }
-            }
-        }
-        report["engine_sessions"]["bytes"] = json!(session_bytes);
-        report["engine_sessions"]["owned_sessions"] = json!(ownership.len());
-        report["engine_sessions"]["unknown_paths"] = json!(unknown_paths);
-        report["engine_sessions"]["unavailable_paths"] = json!(unavailable_paths);
-        report["engine_sessions"]["truncated"] = json!(ownership.len() > MAX_ENTRIES);
         let artifacts = self.store.live_artifacts()?;
         let mut digests = std::collections::HashSet::new();
         report["artifacts"]["bytes"] = json!(

@@ -1,5 +1,6 @@
 use super::*;
-use crate::EngineSessionOwnership;
+use crate::{EngineSessionOwnership, ExpiredEngineSessionOwner};
+use aether_core::agent::AgentStatusKind;
 
 fn ownership(engine: &str, agent_id: AgentId) -> EngineSessionOwnership {
     EngineSessionOwnership {
@@ -8,6 +9,7 @@ fn ownership(engine: &str, agent_id: AgentId) -> EngineSessionOwnership {
         agent_id,
         log_paths: Vec::new(),
         created_at: now(),
+        expired_owner: None,
     }
 }
 
@@ -73,4 +75,54 @@ fn v23_migration_does_not_claim_legacy_sessions() {
     }
     let store = SqliteStore::open(database).unwrap();
     assert!(store.engine_session_ownerships().unwrap().is_empty());
+}
+
+#[test]
+fn legacy_ownership_without_expired_owner_remains_unknown_after_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let database = dir.path().join("store.sqlite");
+    let record = ownership("codex", AgentId::new());
+    let body = serde_json::to_value(&record).unwrap();
+    assert!(body.get("expired_owner").is_none());
+    {
+        let store = SqliteStore::open(&database).unwrap();
+        store.conn.lock().execute(
+            "INSERT INTO engine_session_ownership(engine, session_id, body) VALUES (?1, ?2, ?3)",
+            params![record.engine, record.session_id, body.to_string()],
+        ).unwrap();
+    }
+    let store = SqliteStore::open(database).unwrap();
+    assert_eq!(store.engine_session_ownerships().unwrap(), vec![record]);
+}
+
+#[test]
+fn supplied_expired_owner_is_rejected_even_for_idempotent_creation() {
+    for existing in [false, true] {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let record = ownership("codex", AgentId::new());
+        if existing {
+            store
+                .commit(
+                    Commit::new().mutate(Mutation::RecordEngineSessionOwnership(record.clone())),
+                )
+                .unwrap();
+        }
+        let mut forged = record.clone();
+        forged.expired_owner = Some(ExpiredEngineSessionOwner {
+            status: AgentStatusKind::Completed,
+            updated_at: record.created_at,
+        });
+        let new_agent = agent();
+        assert!(matches!(
+            store.commit(
+                Commit::new()
+                    .mutate(Mutation::UpsertAgent(new_agent.clone()))
+                    .mutate(Mutation::RecordEngineSessionOwnership(forged))
+            ),
+            Err(StoreError::Corrupt(_))
+        ));
+        assert!(store.agent(new_agent.id).unwrap().is_none());
+        let expected = if existing { vec![record] } else { vec![] };
+        assert_eq!(store.engine_session_ownerships().unwrap(), expected);
+    }
 }
