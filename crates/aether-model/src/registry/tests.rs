@@ -183,22 +183,22 @@ fn a_session_prices_the_default_model_the_engine_actually_picked() {
         );
     }
 
-    // Codex is priced at the OpenAI API list price the same way, so the
-    // same report bills the session model rather than estimating it.
+    // Codex is a subscription with no price of its own: the session model is
+    // estimated from the OpenAI API list price, never billed.
     let codex = resolve("codex/default");
-    let astra = resolve("codex/gpt-6-astra")
+    let astra = resolve("openai/gpt-6-astra")
         .model
         .capabilities
         .cost
-        .expect("codex prices gpt-6-astra");
+        .expect("openai prices gpt-6-astra");
     assert_eq!(
         reg.session_model_price(&codex, "gpt-6-astra"),
-        Some(ModelPrice::Billed(astra)),
-        "the session named a model this engine prices"
+        Some(ModelPrice::ApiEquivalent(astra)),
+        "the session named a model with an API twin"
     );
     assert_eq!(
         reg.session_model_price(&codex, "astra"),
-        Some(ModelPrice::Billed(astra)),
+        Some(ModelPrice::ApiEquivalent(astra)),
         "an alias is the same model, so it prices the same way"
     );
 
