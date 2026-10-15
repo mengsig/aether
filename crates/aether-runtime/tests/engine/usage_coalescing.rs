@@ -377,3 +377,95 @@ async fn readings_precede_a_question_and_do_not_wait_for_its_reply() {
     .await;
     h.runtime.shutdown().await;
 }
+
+/// Streams its readings, says so live, then holds its stream open until the
+/// turn is cancelled: only the turn's own end can flush what is held.
+struct CancelledUsageEngine;
+
+#[async_trait::async_trait]
+impl Engine for CancelledUsageEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::CLAUDE_CODE
+    }
+    fn adapter(&self) -> String {
+        "cancelled-usage/1".into()
+    }
+    async fn run(
+        &self,
+        _turn: EngineTurn,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        let mut script = ChattyUsageEngine::script();
+        script.push(EngineEvent::Delta(aether_core::model::StreamEvent::TextDelta {
+            index: 0,
+            text: "ready".into(),
+        }));
+        let (tx, rx) = mpsc::channel(script.len());
+        for event in script {
+            tx.send(event).await.expect("fixture channel capacity");
+        }
+        tokio::spawn(async move {
+            cancel.cancelled().await;
+            drop(tx);
+        });
+        Ok(EngineRun {
+            events: rx,
+            input: None,
+            decisions: None,
+            stop: None,
+        })
+    }
+}
+
+/// A cancel ends the turn well inside the flush window; what was held is on
+/// the record as the turn's last usage, equal to the row.
+#[tokio::test]
+async fn a_cancelled_turn_flushes_held_readings() {
+    let h = harness_with_engine(
+        Arc::new(CancelledUsageEngine),
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(Mutex::new(Vec::new())),
+    )
+    .await;
+    let id = chat_agent(&h);
+    let mut bus = h.runtime.subscribe();
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("Stream usage")], Actor::user())
+        .expect("send");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(aether_runtime::BusMessage::Delta {
+                agent,
+                delta: aether_runtime::DeltaKind::Text { text },
+                ..
+            }) = bus.recv().await
+                && agent == id
+                && text == "ready"
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the engine streamed its readings");
+    h.runtime
+        .cancel_agent(id, Some("stop".into()), Actor::user())
+        .expect("cancel");
+    let agent = wait_for(h.store.as_ref(), id, |a| {
+        a.status.kind() == AgentStatusKind::Cancelled
+    })
+    .await;
+    let expected = streamed_total();
+    assert_eq!(agent.stats.usage.output_tokens, expected.output_tokens);
+    let totals = usage_totals(h.store.as_ref(), id);
+    assert_eq!(
+        *totals.last().expect("a usage update"),
+        agent.stats.usage,
+        "the held readings reached the log, not only the row"
+    );
+    assert_eq!(
+        agent.stats.context_tokens,
+        Some(1_000 + MESSAGES * READINGS - 1)
+    );
+    h.runtime.shutdown().await;
+}
