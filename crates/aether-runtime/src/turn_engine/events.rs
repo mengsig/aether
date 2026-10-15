@@ -2,9 +2,9 @@
 use super::{
     Arc, BTreeMap, Commit, ContentBlock, DeltaKind, EngineEvent, EngineKind, EventKind,
     IdempotencyKey, Instant, Invocation, InvocationId, InvocationSnapshot, MAX_ENGINE_ERROR,
-    MessageRole, Mutation, ResolvedModel, Result, Runtime, StreamEvent, ToolCall, ToolCallId,
-    ToolOutcome, TurnCtx, TurnPricing, Usage, clamp, engine_call_class, json, now,
-    record_context_usage,
+    MessageRole, Mutation, PendingAccounting, ResolvedModel, Result, Runtime, StreamEvent,
+    ToolCall, ToolCallId, ToolOutcome, TurnCtx, TurnPricing, Usage, clamp, engine_call_class,
+    flush_accounting, json, now,
 };
 
 /// The native spawn tool an engine's own `Session` init advertises despite
@@ -76,6 +76,8 @@ pub(super) struct StreamState {
     /// if the engine never commits it.
     pub(super) text: String,
     text_truncated: bool,
+    /// Usage and context readings the store has not seen yet.
+    pub(super) accounting: PendingAccounting,
 }
 
 struct BridgeReply {
@@ -139,6 +141,7 @@ impl StreamState {
             thinking_truncated: false,
             text: String::new(),
             text_truncated: false,
+            accounting: PendingAccounting::default(),
         }
     }
 
@@ -230,6 +233,7 @@ fn protocol_note(
     if state.protocol_notes > MAX_PROTOCOL_NOTES {
         return Ok(());
     }
+    flush_accounting(runtime, ctx, &mut state.accounting)?;
     let note: String = text.chars().take(PROTOCOL_NOTE_CHARS).collect();
     runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
         name: PROTOCOL_NOTE_EVENT.into(),
@@ -254,6 +258,10 @@ pub(super) fn handle_event(
     event: EngineEvent,
     state: &mut StreamState,
 ) -> Result<()> {
+    if writes_record(&event) {
+        // Readings land before what followed them, as when each committed alone.
+        flush_accounting(runtime, ctx, &mut state.accounting)?;
+    }
     match event {
         EngineEvent::Session { id, model, tools } => {
             // For a `default` model the CLI picks what answers, so this report
@@ -390,7 +398,7 @@ pub(super) fn handle_event(
             // cost unset rather than claim $0, so the turn total can stand in.
             let reported = usage.filter(|u| u.total_tokens() > 0);
             if let Some(usage) = reported {
-                record_context_usage(runtime, ctx, usage.context_tokens())?;
+                note_context_usage(runtime, ctx, state, usage.context_tokens());
             }
             let mut usage = reported.unwrap_or_default();
             if reported.is_some() {
@@ -506,9 +514,12 @@ pub(super) fn handle_event(
             commit.push_mutation(Mutation::UpsertAgent(crate::turn::agent_row(
                 runtime, ctx, &hold,
             )?));
+            // Last, so their absolute figures include this message's usage.
+            state.accounting.drain_into(ctx, &mut commit);
             let answered = snapshot.model.clone();
             crate::turn::close_exhaustion_episode(runtime, ctx, &hold, &mut commit, &answered)?;
             runtime.apply_held(hold, commit)?;
+            publish_accounting(runtime, ctx, state);
         }
         EngineEvent::UsageDelta { mut usage } => {
             // The engine could not read every counter behind these tokens, so
@@ -656,7 +667,7 @@ pub(super) fn handle_event(
             });
         }
         EngineEvent::ContextUsage { tokens } => {
-            record_context_usage(runtime, ctx, tokens)?;
+            note_context_usage(runtime, ctx, state, tokens);
         }
         EngineEvent::Note(text) => {
             tracing::debug!(agent = %ctx.agent.id, "{}", clamp(&text, MAX_ENGINE_ERROR))
@@ -674,7 +685,7 @@ pub(super) fn handle_event(
 }
 
 fn record_usage(
-    runtime: &Arc<Runtime>,
+    runtime: &Runtime,
     ctx: &mut TurnCtx,
     state: &mut StreamState,
     usage: Usage,
@@ -687,13 +698,163 @@ fn record_usage(
     state.stream_usage += usage;
     ctx.add_usage(usage);
     ctx.agent.updated_at = now();
-    // Billing updates publish absolute totals without creating another invocation.
-    let commit = Commit::new().event(ctx.draft(EventKind::AgentUsageUpdated {
-        total: ctx.agent.stats.usage,
-        turn_usage: ctx.turn_usage,
-    }));
-    let hold = runtime.hold();
-    let row = crate::turn::agent_row(runtime, ctx, &hold)?;
-    runtime.apply_held(hold, commit.mutate(Mutation::UpsertAgent(row)))?;
+    state.accounting.usage();
+    publish_accounting(runtime, ctx, state);
+    if super::accounting::has_budgeted_lineage(runtime, ctx.agent.id)? {
+        flush_accounting(runtime, ctx, &mut state.accounting)?;
+    }
     Ok(())
+}
+
+fn note_context_usage(runtime: &Runtime, ctx: &mut TurnCtx, state: &mut StreamState, tokens: u64) {
+    ctx.agent.stats.context_tokens = Some(tokens);
+    state.accounting.context(tokens);
+    publish_accounting(runtime, ctx, state);
+}
+
+fn publish_accounting(runtime: &Runtime, ctx: &TurnCtx, state: &StreamState) {
+    runtime.bus.publish_delta(
+        ctx.agent.id,
+        state.message_invocation,
+        DeltaKind::Accounting {
+            after_seq: runtime.bus.last_seq(),
+            total: ctx.agent.stats.usage,
+            turn_usage: ctx.turn_usage,
+            context_tokens: ctx.agent.stats.context_tokens,
+        },
+    );
+}
+
+/// Whether `event` may commit anything or wait on someone, which pending
+/// readings must then precede. Usage, context and stream deltas only update memory.
+pub(super) fn writes_record(event: &EngineEvent) -> bool {
+    !matches!(
+        event,
+        EngineEvent::Delta(_)
+            | EngineEvent::UsageDelta { .. }
+            | EngineEvent::UsageRequest { .. }
+            | EngineEvent::ContextUsage { .. }
+            | EngineEvent::SessionUsage { .. }
+            | EngineEvent::Note(_)
+            // Folds what is pending into its own commit.
+            | EngineEvent::Assistant { .. }
+    )
+}
+
+#[cfg(test)]
+mod live_accounting_tests {
+    use super::*;
+    use crate::BusMessage;
+    use aether_core::id::SnapshotId;
+    use aether_core::model::{ModelCost, ModelRef};
+    use aether_core::snapshot::InvocationParams;
+    use aether_engine::{RequestUsage, UsageRequestId};
+
+    #[tokio::test(start_paused = true)]
+    async fn readings_publish_absolute_live_accounting_without_committing() {
+        let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+        let mut ctx = super::super::tests::started_agent_ctx(&runtime).await;
+        let configured = runtime
+            .models
+            .registry()
+            .resolve(&ModelRef::new("claude-code", "haiku"))
+            .unwrap();
+        let mut state = StreamState::new(
+            TurnPricing {
+                billed: None,
+                estimate: Some(ModelCost {
+                    input_per_mtok: 2.0,
+                    output_per_mtok: 4.0,
+                    ..Default::default()
+                }),
+            },
+            configured,
+        );
+        let snapshot = InvocationSnapshot {
+            id: SnapshotId::new(),
+            agent_id: ctx.agent.id,
+            task_id: None,
+            turn: 0,
+            model: ModelRef::new("claude-code", "haiku"),
+            adapter: None,
+            capabilities: None,
+            memory_ids: vec![],
+            layers: vec![],
+            messages: vec![],
+            tools: vec![],
+            params: InvocationParams::default(),
+            token_estimate: 0,
+            created_at: now(),
+        };
+        let commits = runtime.store.commits();
+        let last_seq = runtime.store.last_seq().unwrap();
+        let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
+        let mut bus = runtime.subscribe();
+        let usage = Usage {
+            input_tokens: 100,
+            output_tokens: 20,
+            ..Default::default()
+        };
+        for event in [
+            EngineEvent::UsageDelta { usage },
+            EngineEvent::ContextUsage { tokens: 0 },
+            EngineEvent::UsageRequest {
+                request: RequestUsage {
+                    id: UsageRequestId::Engine("request".into()),
+                    previous: Usage::default(),
+                    total: usage,
+                },
+            },
+            EngineEvent::ContextUsage { tokens: 412 },
+        ] {
+            handle_event(&runtime, &mut ctx, &snapshot, event, &mut state).unwrap();
+            match bus.try_recv().expect("a reading publishes immediately") {
+                BusMessage::Delta {
+                    agent,
+                    invocation,
+                    delta:
+                        DeltaKind::Accounting {
+                            after_seq,
+                            total,
+                            turn_usage,
+                            context_tokens,
+                        },
+                } => {
+                    assert_eq!(after_seq, last_seq);
+                    assert_eq!(agent, ctx.agent.id);
+                    assert_eq!(invocation, state.message_invocation);
+                    assert_eq!(total, ctx.agent.stats.usage);
+                    assert_eq!(turn_usage, ctx.turn_usage);
+                    assert_eq!(context_tokens, ctx.agent.stats.context_tokens);
+                }
+                message => panic!("expected transient accounting, got {message:?}"),
+            }
+            assert!(
+                bus.try_recv().is_err(),
+                "no sequenced event for a held reading"
+            );
+            assert_eq!(runtime.store.commits(), commits);
+            assert_eq!(runtime.store.last_seq().unwrap(), last_seq);
+            assert_eq!(runtime.store.agent(ctx.agent.id).unwrap().unwrap(), stored);
+        }
+        assert_eq!(ctx.agent.stats.usage.input_tokens, 200);
+        assert!(ctx.agent.stats.usage.estimated_cost_usd.is_some());
+        flush_accounting(&runtime, &ctx, &mut state.accounting).unwrap();
+        let BusMessage::Event(event) = bus.try_recv().unwrap() else {
+            panic!("durable usage")
+        };
+        assert!(
+            matches!(event.kind, EventKind::AgentUsageUpdated { total, turn_usage }
+            if total == ctx.agent.stats.usage && turn_usage == ctx.turn_usage)
+        );
+        let BusMessage::Event(event) = bus.try_recv().unwrap() else {
+            panic!("durable context")
+        };
+        assert!(matches!(&event.kind, EventKind::Custom { name, payload }
+            if name == "context.usage" && payload["tokens"] == 412));
+        let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
+        assert_eq!(stored.stats.usage, ctx.agent.stats.usage);
+        assert_eq!(stored.stats.context_tokens, Some(412));
+        runtime.shutdown().await;
+    }
 }

@@ -20,22 +20,96 @@ pub(super) fn recompute_snapshot_accounting(snapshot: &mut InvocationSnapshot) {
     snapshot.token_estimate = snapshot.layers.iter().map(|layer| layer.tokens).sum();
 }
 
-pub(super) fn record_context_usage(
+/// Longest a streamed usage or context reading waits in memory before it is
+/// committed: what a crash can lose. Budgets read the in-memory figure.
+pub(super) const ACCOUNTING_FLUSH: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Usage and context readings not yet on the record. An engine reports them
+/// several times per message; each its own commit was most of a turn's WAL writes.
+#[derive(Debug, Default)]
+pub(super) struct PendingAccounting {
+    usage: bool,
+    context_tokens: Option<u64>,
+    since: Option<tokio::time::Instant>,
+}
+
+impl PendingAccounting {
+    pub(super) fn usage(&mut self) {
+        self.usage = true;
+        self.since.get_or_insert_with(tokio::time::Instant::now);
+    }
+
+    pub(super) fn context(&mut self, tokens: u64) {
+        self.context_tokens = Some(tokens);
+        self.since.get_or_insert_with(tokio::time::Instant::now);
+    }
+
+    /// When what is pending must be committed, or `None` when nothing is.
+    pub(super) fn deadline(&self) -> Option<tokio::time::Instant> {
+        self.since.map(|since| since + ACCOUNTING_FLUSH)
+    }
+
+    /// Move what is pending into `commit` as the agent's current absolute
+    /// figures, so one event stands for every reading it replaces.
+    pub(super) fn drain_into(&mut self, ctx: &TurnCtx, commit: &mut Commit) -> bool {
+        let taken = std::mem::take(self);
+        debug_assert_eq!(
+            taken.since.is_some(),
+            taken.usage || taken.context_tokens.is_some()
+        );
+        if taken.usage {
+            commit.push_event(ctx.draft(EventKind::AgentUsageUpdated {
+                total: ctx.agent.stats.usage,
+                turn_usage: ctx.turn_usage,
+            }));
+        }
+        if let Some(tokens) = taken.context_tokens {
+            commit.push_event(ctx.draft(EventKind::Custom {
+                name: "context.usage".into(),
+                payload: json!({"tokens": tokens}),
+            }));
+        }
+        taken.since.is_some()
+    }
+}
+
+/// Commit what is pending with the agent's row, which carries the same figures.
+pub(super) fn flush_accounting(
     runtime: &Runtime,
-    ctx: &mut TurnCtx,
-    tokens: u64,
+    ctx: &TurnCtx,
+    pending: &mut PendingAccounting,
 ) -> Result<()> {
-    ctx.agent.stats.context_tokens = Some(tokens);
-    let mut commit = Commit::new().event(ctx.draft(EventKind::Custom {
-        name: "context.usage".into(),
-        payload: json!({"tokens": tokens}),
-    }));
+    let mut commit = Commit::new();
+    if !pending.drain_into(ctx, &mut commit) {
+        return Ok(());
+    }
     let hold = runtime.hold();
     commit.push_mutation(Mutation::UpsertAgent(crate::turn::agent_row(
         runtime, ctx, &hold,
     )?));
     runtime.apply_held(hold, commit)?;
     Ok(())
+}
+
+/// Scheduler warnings and ancestor grants read stored rows. Preserve their
+/// original visibility when any grant covers this agent, including grants
+/// changed during the turn. Unbudgeted streams can still coalesce writes.
+pub(super) fn has_budgeted_lineage(runtime: &Runtime, agent: AgentId) -> Result<bool> {
+    let mut next = Some(agent);
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(id) = next {
+        if !seen.insert(id) {
+            return Err(RuntimeError::Invalid("cyclic budget ancestry".into()));
+        }
+        let row = runtime.store.agent(id)?.ok_or_else(|| {
+            RuntimeError::NotFound(format!("agent {id} while checking budget ancestry"))
+        })?;
+        if row.config.token_budget.is_some() || row.config.cost_budget.is_some() {
+            return Ok(true);
+        }
+        next = row.parent;
+    }
+    Ok(false)
 }
 
 /// How one engine turn is priced: the registry's price for the model where it

@@ -1,6 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-//! Version skew against a real daemon: N and the two before it are served,
+//! Version skew against a real daemon: the supported version window is served,
 //! anything else is refused at hello with both bounds named.
 
 mod support;
@@ -52,10 +52,9 @@ async fn previous_version_preserves_watcher_allowlists() {
     daemon.stop().await;
 }
 
-/// The same stored image, read at every served version: the current one gets
-/// the reference, each older one a line of text it can decode.
+/// Image references arrived in v19; only earlier clients need a text fallback.
 #[tokio::test]
-async fn an_older_client_reads_a_stored_image_as_text() {
+async fn served_clients_read_images_according_to_their_protocol_version() {
     const PNG_BASE64: &str = "iVBORw0KGgpwaXhlbHM=";
     let daemon = TestDaemon::start().await;
     let mut current = RawConn::connect(&daemon.socket).await.expect("connect");
@@ -83,16 +82,20 @@ async fn an_older_client_reads_a_stored_image_as_text() {
     assert_eq!(blocks[1]["name"], "shot.png", "{now}");
     assert_eq!(blocks[1]["size_bytes"], 14, "{now}");
 
-    for version in MIN_PROTOCOL_VERSION..PROTOCOL_VERSION {
+    for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
         let mut old = RawConn::connect(&daemon.socket).await.expect("connect");
         old.hello(version).await.expect("served");
         let before = old.call(inbox.clone()).await;
         assert_eq!(
             before["result"]["Ok"]["data"][0]["kind"]["content"],
-            json!([
-                {"type": "text", "text": "look"},
-                {"type": "text", "text": "[image: shot.png, 14 B]"}
-            ]),
+            if version < 19 {
+                json!([
+                    {"type": "text", "text": "look"},
+                    {"type": "text", "text": "[image: shot.png, 14 B]"}
+                ])
+            } else {
+                blocks.clone()
+            },
             "v{version}: {before}"
         );
     }

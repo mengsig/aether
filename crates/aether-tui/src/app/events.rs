@@ -19,7 +19,21 @@ impl App {
         self.last_seq = Some(event.seq.max(self.last_seq.unwrap_or(0)));
         let family = event.kind.family();
         let agent = event.agent_id;
+        if matches!(
+            event.kind,
+            EventKind::InvocationCompleted { .. } | EventKind::InvocationFailed { .. }
+        ) && let Some(agent) = agent
+        {
+            self.live_accounting.remove(&agent);
+        }
         match &event.kind {
+            EventKind::AgentUsageUpdated { total, .. } => {
+                if let Some(agent) = agent {
+                    let context = self.context_tokens.get(&agent).copied();
+                    self.project_accounting(agent, *total, context);
+                    self.live_accounting.remove(&agent);
+                }
+            }
             EventKind::ArtifactCreated { artifact } => {
                 // Adopt into the list `/artifacts` shows when it is on this
                 // agent, so a link names its target the moment it appears.
@@ -107,6 +121,12 @@ impl App {
                     && let Some(tokens) = payload["tokens"].as_u64()
                 {
                     self.context_tokens.insert(agent, tokens);
+                    if let Some(reading) = self.live_accounting.get_mut(&agent) {
+                        reading.context_tokens = Some(tokens);
+                    }
+                    if let Some(node) = self.tree.nodes.get_mut(&agent) {
+                        node.agent.stats.context_tokens = Some(tokens);
+                    }
                 }
             }
             EventKind::ProviderQuota {

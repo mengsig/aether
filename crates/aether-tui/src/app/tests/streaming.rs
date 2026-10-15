@@ -421,3 +421,326 @@ fn a_transcript_recreated_after_archiving_lays_out_afresh() {
         "a stale layout was reused:\n{text}"
     );
 }
+
+#[test]
+fn live_accounting_projects_immediately_and_durable_usage_converges_once() {
+    let (mut live, id) = app_with_agent();
+    let (mut replay, replay_id) = app_with_agent();
+    // Use the same identity so both reducers see the same transcript history.
+    replay.tree = live.tree.clone();
+    replay.transcripts.remove(&replay_id);
+    replay.selected = Some(id);
+    let invocation = InvocationId::new();
+    let started = event(2, id, EventKind::AgentStarted { turn: 1 });
+    live.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(
+        started.clone(),
+    ))));
+    replay.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(started))));
+    delta(
+        &mut live,
+        id,
+        invocation,
+        Delta::Text {
+            text: "working".into(),
+        },
+    );
+    let stream = live.transcripts[&id].stream.clone();
+    let provisional = Usage {
+        input_tokens: 120,
+        output_tokens: 20,
+        estimated_cost_usd: Some(0.5),
+        cost_basis: aether_core::model::CostBasis::ListPrice,
+        ..Default::default()
+    };
+    let seq = live.last_seq;
+    for _ in 0..2 {
+        delta(
+            &mut live,
+            id,
+            InvocationId::new(),
+            Delta::Accounting {
+                total: provisional,
+                turn_usage: provisional,
+                context_tokens: Some(0),
+            },
+        );
+    }
+    assert_eq!(
+        live.last_seq, seq,
+        "transient accounting has no event sequence"
+    );
+    assert_eq!(
+        live.transcripts[&id].stream, stream,
+        "accounting cannot retire text"
+    );
+    assert_eq!(live.context_tokens[&id], 0, "zero is a context reading");
+    assert_eq!(live.tree.nodes[&id].agent.stats.usage, provisional);
+    assert_eq!(live.tree.nodes[&id].subtree_usage, provisional);
+    assert_eq!(live.tree.nodes[&id].agent.stats.context_tokens, Some(0));
+    // A stored-tree refresh during the coalescing window must not erase readings.
+    live.apply_tree(replay.tree.clone(), &mut Vec::new());
+    assert_eq!(live.tree.nodes[&id].agent.stats.usage, provisional);
+    assert_eq!(live.tree.nodes[&id].agent.stats.context_tokens, Some(0));
+
+    let settled = Usage {
+        cost_usd: 0.25,
+        cost_complete: true,
+        estimated_cost_usd: None,
+        cost_basis: aether_core::model::CostBasis::ProviderReported,
+        ..provisional
+    };
+    let events = [
+        EventKind::AgentUsageUpdated {
+            total: provisional,
+            turn_usage: provisional,
+        },
+        EventKind::AgentMessage {
+            role: MessageRole::Assistant,
+            content: vec![ContentBlock::text("working")],
+            invocation: Some(invocation),
+        },
+        EventKind::AgentUsageUpdated {
+            total: settled,
+            turn_usage: settled,
+        },
+        EventKind::Custom {
+            name: "context.usage".into(),
+            payload: serde_json::json!({"tokens": 412}),
+        },
+        EventKind::AgentTurnCompleted {
+            turn: 1,
+            invocation: None,
+            next: aether_core::agent::AgentStatusKind::Waiting,
+        },
+    ];
+    for (index, kind) in events.into_iter().enumerate() {
+        let event = event(index as u64 + 3, id, kind);
+        live.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(
+            event.clone(),
+        ))));
+        replay.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(event))));
+    }
+    assert_eq!(live.tree.nodes[&id].agent.stats.usage, settled);
+    assert_eq!(live.tree.nodes[&id].subtree_usage, settled);
+    assert_eq!(live.context_tokens[&id], 412);
+    assert_eq!(
+        models(&live),
+        models(&replay),
+        "durable spend is not counted twice"
+    );
+    live.apply_tree(replay.tree.clone(), &mut Vec::new());
+    assert_eq!(live.tree.nodes[&id].agent.stats.usage, settled);
+}
+
+#[test]
+fn background_accounting_rolls_up_ancestors_and_disconnect_discards_the_overlay() {
+    let (mut app, root) = app_with_agent();
+    let child = AgentId::new();
+    let mut child_agent = agent(child, "child");
+    child_agent.parent = Some(root);
+    child_agent.stats.context_tokens = Some(64);
+    app.tree.nodes.get_mut(&root).unwrap().children.push(child);
+    let child_tree = tree(child_agent);
+    app.tree.nodes.extend(child_tree.nodes);
+    app.dirty = false;
+    app.background_dirty = false;
+    let stored = app.tree.clone();
+    let total = Usage {
+        input_tokens: 80,
+        cost_usd: 0.4,
+        cost_complete: true,
+        ..Default::default()
+    };
+    delta(
+        &mut app,
+        child,
+        InvocationId::new(),
+        Delta::Accounting {
+            total,
+            turn_usage: total,
+            context_tokens: Some(512),
+        },
+    );
+    assert!(!app.dirty);
+    assert!(app.background_dirty);
+    assert_eq!(app.tree.nodes[&root].subtree_usage.input_tokens, 80);
+    assert_eq!(app.tree.nodes[&root].subtree_usage.cost_usd, 0.4);
+    app.apply_tree(stored.clone(), &mut Vec::new());
+    assert_eq!(app.tree.nodes[&root].subtree_usage.cost_usd, 0.4);
+    app.reduce(AppEvent::Disconnected { because: None });
+    app.apply_tree(stored, &mut Vec::new());
+    assert_eq!(app.tree.nodes[&child].agent.stats.usage.input_tokens, 0);
+    assert_eq!(app.tree.nodes[&root].subtree_usage.cost_usd, 0.0);
+    assert_eq!(app.context_tokens[&child], 64);
+}
+
+#[test]
+fn live_accounting_preserves_hidden_usage_through_saturation_and_cost_corrections() {
+    let (mut app, root) = app_with_agent();
+    let hidden = Usage {
+        input_tokens: u64::MAX - 20,
+        cost_usd: 0.2,
+        cost_complete: true,
+        cost_basis: aether_core::model::CostBasis::ProviderReported,
+        ..Default::default()
+    };
+    let node = app.tree.nodes.get_mut(&root).unwrap();
+    node.hidden_usage = Some(hidden);
+    node.subtree_usage = hidden;
+    let provisional = Usage {
+        input_tokens: 30,
+        estimated_cost_usd: Some(0.4),
+        cost_basis: aether_core::model::CostBasis::ListPrice,
+        ..Default::default()
+    };
+    delta(
+        &mut app,
+        root,
+        InvocationId::new(),
+        Delta::Accounting {
+            total: provisional,
+            turn_usage: provisional,
+            context_tokens: None,
+        },
+    );
+    assert_eq!(app.tree.nodes[&root].subtree_usage.input_tokens, u64::MAX);
+    let settled = Usage {
+        input_tokens: 10,
+        cost_usd: 0.25,
+        cost_complete: true,
+        cost_basis: aether_core::model::CostBasis::ProviderReported,
+        ..Default::default()
+    };
+    delta(
+        &mut app,
+        root,
+        InvocationId::new(),
+        Delta::Accounting {
+            total: settled,
+            turn_usage: settled,
+            context_tokens: None,
+        },
+    );
+    let mut expected = settled;
+    expected += hidden;
+    assert_eq!(app.tree.nodes[&root].subtree_usage, expected);
+    assert_eq!(expected.input_tokens, u64::MAX - 10);
+    assert_eq!(expected.cost_usd, 0.45);
+    assert!(expected.cost_complete);
+    assert_eq!(expected.estimated_cost_usd, None);
+    assert_eq!(
+        expected.cost_basis,
+        aether_core::model::CostBasis::ProviderReported
+    );
+}
+
+#[test]
+fn settled_accounting_cannot_mask_a_later_api_turn_on_refresh() {
+    let (mut app, id) = app_with_agent();
+    let invocation = InvocationId::new();
+    let prior = Usage {
+        input_tokens: 100,
+        ..Default::default()
+    };
+    feed(
+        &mut app,
+        2,
+        id,
+        EventKind::AgentUsageUpdated {
+            total: prior,
+            turn_usage: prior,
+        },
+    );
+    feed(
+        &mut app,
+        3,
+        id,
+        EventKind::InvocationCompleted {
+            invocation,
+            snapshot: aether_core::id::SnapshotId::new(),
+            model: ModelRef::new("mock", "m"),
+            usage: Usage {
+                input_tokens: 200,
+                ..Default::default()
+            },
+            stop_reason: None,
+            duration_ms: 1,
+        },
+    );
+    let mut newer = app.tree.clone();
+    let total = Usage {
+        input_tokens: 300,
+        ..Default::default()
+    };
+    let node = newer.nodes.get_mut(&id).unwrap();
+    node.agent.stats.usage = total;
+    node.subtree_usage = total;
+    app.apply_tree(newer, &mut Vec::new());
+    assert_eq!(app.tree.nodes[&id].agent.stats.usage, total);
+    assert_eq!(app.tree.nodes[&id].subtree_usage, total);
+}
+
+#[test]
+fn durable_usage_and_turn_end_retire_provisional_accounting() {
+    for boundary in 0..4 {
+        let (mut app, id) = app_with_agent();
+        let invocation = InvocationId::new();
+        let total = Usage {
+            input_tokens: 100,
+            ..Default::default()
+        };
+        delta(
+            &mut app,
+            id,
+            invocation,
+            Delta::Accounting {
+                total,
+                turn_usage: total,
+                context_tokens: None,
+            },
+        );
+        match boundary {
+            0 => feed(
+                &mut app,
+                2,
+                id,
+                EventKind::AgentUsageUpdated {
+                    total,
+                    turn_usage: total,
+                },
+            ),
+            1 => feed(
+                &mut app,
+                2,
+                id,
+                EventKind::InvocationCompleted {
+                    invocation,
+                    snapshot: aether_core::id::SnapshotId::new(),
+                    model: ModelRef::new("mock", "m"),
+                    usage: total,
+                    stop_reason: None,
+                    duration_ms: 1,
+                },
+            ),
+            2 => feed(
+                &mut app,
+                2,
+                id,
+                EventKind::InvocationFailed {
+                    invocation,
+                    snapshot: aether_core::id::SnapshotId::new(),
+                    error: "interrupted".into(),
+                    class: None,
+                    retryable: false,
+                    cancelled: true,
+                    partial: vec![],
+                },
+            ),
+            _ => delta(&mut app, id, invocation, Delta::TurnFinished),
+        }
+        assert!(
+            !app.live_accounting.contains_key(&id),
+            "boundary {boundary}"
+        );
+    }
+}

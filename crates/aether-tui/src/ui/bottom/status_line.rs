@@ -261,6 +261,7 @@ pub(crate) mod tests {
                     waiting_on: vec![],
                     lease: None,
                     subtree_usage: Default::default(),
+                    hidden_usage: None,
                 },
             );
         }

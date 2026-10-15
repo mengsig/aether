@@ -396,6 +396,7 @@ async fn cli_with_socket(
                         waiting_on: vec![],
                         lease: None,
                         subtree_usage: usage,
+                        hidden_usage: None,
                     };
                     Ok(Reply::Tree(aether_protocol::AgentTree {
                         roots: vec![a.id],

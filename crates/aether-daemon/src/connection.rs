@@ -400,6 +400,7 @@ where
                             query.into(),
                             deltas,
                             SubscriptionControl {
+                                protocol_version: version.load(Ordering::SeqCst),
                                 cancel: cancel.clone(),
                                 failure: replay_failure_tx.clone(),
                                 auth: auth.clone(),

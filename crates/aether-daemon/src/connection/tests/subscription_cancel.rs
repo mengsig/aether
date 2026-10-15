@@ -23,6 +23,7 @@ async fn unsubscribe_stops_replay_with_a_full_output_queue() {
         Default::default(),
         false,
         SubscriptionControl {
+            protocol_version: aether_protocol::PROTOCOL_VERSION,
             auth: AuthContext::Local,
             cancel: cancel.clone(),
             failure,
@@ -66,6 +67,7 @@ async fn subscription_accounting_is_released_when_a_task_ends_itself() {
         Default::default(),
         false,
         SubscriptionControl {
+            protocol_version: aether_protocol::PROTOCOL_VERSION,
             auth: AuthContext::Local,
             cancel: cancel.clone(),
             failure,

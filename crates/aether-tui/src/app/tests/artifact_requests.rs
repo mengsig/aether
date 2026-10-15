@@ -107,6 +107,7 @@ fn artifact_created_adopts_only_for_the_agent_the_list_shows() {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
     app.reduce(AppEvent::Reply {

@@ -149,8 +149,12 @@ use serde::{Deserialize, Serialize};
 /// with images then carries. A v18 daemon would drop the images in silence,
 /// so it is refused at hello. An older client cannot decode the block; `compat`
 /// hands it the same line of text a newer client prints for the image. This
-/// build serves two versions back, 17 and 18.
-pub const PROTOCOL_VERSION: u32 = 19;
+/// build also serves 17 and 18.
+///
+/// 20: transient `accounting` deltas carry absolute live usage and context.
+/// Tree nodes retain omitted descendants separately in optional `hidden_usage`.
+/// Older clients receive durable accounting events and the existing stream deltas.
+pub const PROTOCOL_VERSION: u32 = 20;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
@@ -176,9 +180,9 @@ pub mod features {
     /// The daemon serves `memories_in_context`, and the retrieved-memory layer
     /// of `snapshot.created` names the memories it rendered.
     pub const MEMORY_CONTEXT: &str = "memory_context";
-    /// Host evidence about memories a task saw, with append-only records and retractions.
     /// Storage inventory and host-only filesystem garbage collection.
     pub const STORAGE: &str = "storage";
+    /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
 }
 

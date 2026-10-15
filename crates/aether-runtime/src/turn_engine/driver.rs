@@ -6,9 +6,10 @@ use super::{
     PermissionDecision, REFUSAL_GRACE, ReapGrace, ResolvedModel, Result, Runtime, STEER_GRACE,
     Served, Steering, StreamState, SubtreeUsage, TURN_IS_OVER, ToolContext, ToolEffects, TurnCtx,
     TurnPricing, Uncommitted, Usage, Verdict, answer_question, budget_crossed, budget_outcome,
-    clamp, disallowed_native_spawn_tool, gated_call, handle_event, handle_request, json, mpsc,
-    names_exhaustion, park_grace, permission_verdict, raise_to, record_consumed,
-    record_refused_call, refusal, side_effect_of, start_park, steer, stop_for_crossing, stopping,
+    clamp, disallowed_native_spawn_tool, flush_accounting, gated_call, handle_event,
+    handle_request, json, mpsc, names_exhaustion, park_grace, permission_verdict, raise_to,
+    record_consumed, record_refused_call, refusal, side_effect_of, start_park, steer,
+    stop_for_crossing, stopping, writes_record,
 };
 
 /// Legacy per-message streams use turn totals as a fallback. Incremental
@@ -246,6 +247,7 @@ pub(super) async fn drive(
             state.remember_bridge_reply("wait_for".into(), input, reply);
         }
         let native_deadline = native_wait.as_ref().and_then(|wait| wait.deadline());
+        let accounting_deadline = state.accounting.deadline();
         tokio::select! {
             ready = async {
                 match input.as_ref() {
@@ -254,6 +256,7 @@ pub(super) async fn drive(
                 }
             }, if steering.retry && input.is_some() && park.is_none() && question.is_none() => {
                 if ready {
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
                     steer(runtime, ctx, &mut steering, &mut input).await?;
                 } else {
                     input = None;
@@ -266,7 +269,19 @@ pub(super) async fn drive(
                     state.remember_bridge_reply("wait_for".into(), input, reply);
                 }
             }
+            () = tokio::time::sleep_until(accounting_deadline.unwrap_or_else(tokio::time::Instant::now)), if accounting_deadline.is_some() => {
+                let commits_before = runtime.store.commits();
+                flush_accounting(runtime, ctx, &mut state.accounting)?;
+                subtree.note_own_commits(runtime.store.commits().saturating_sub(commits_before));
+            }
             ev = run.events.recv() => {
+                if ev.as_ref().is_some_and(writes_record) {
+                    // Held readings precede what this commits, and are never
+                    // left behind a wait on an operator or the engine.
+                    let commits_before = runtime.store.commits();
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
+                    subtree.note_own_commits(runtime.store.commits().saturating_sub(commits_before));
+                }
                 let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
                 if let Some(EngineEvent::Done(outcome)) = &ev {
                     let stopped = engine_cancel.is_cancelled() || park.as_ref().is_some_and(|park| park.stop_requested);
@@ -525,6 +540,9 @@ pub(super) async fn drive(
                 if let Some(req) = req {
                     receipt_seen = false;
                     activity_seen = true;
+                    // What the engine spent before it asked is on the record
+                    // before whatever the request commits.
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
                     if native_wait.is_some() && req.name == "wait_for" {
                         let _ = req.reply.send(("A native background wait is already pending in this session.".into(), true));
                         continue;
@@ -635,6 +653,7 @@ pub(super) async fn drive(
                     _ => false,
                 };
                 if delivered {
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
                     match question.take() {
                         Some(request_id) => match steering.pending(runtime, ctx)? {
                             Some(pending) => answer_question(runtime, ctx, decisions.as_ref(), request_id, pending, &mut steering, &engine_cancel).await?,
@@ -677,7 +696,11 @@ pub(super) async fn drive(
         engine_cancel.cancel();
         let mut cleanup_grace = ReapGrace::start();
         loop {
+            let accounting_deadline = state.accounting.deadline();
             tokio::select! {
+                () = tokio::time::sleep_until(accounting_deadline.unwrap_or_else(tokio::time::Instant::now)), if accounting_deadline.is_some() => {
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
+                }
                 () = cancel.cancelled() => {
                     activity_seen = true;
                     break;
@@ -725,6 +748,7 @@ pub(super) async fn drive(
     if let Some(park) = park.as_mut() {
         park.disarm();
     }
+    flush_accounting(runtime, ctx, &mut state.accounting)?;
     // Aether finished these calls even if the engine died before echoing
     // their replies. Settle them before classifying genuinely unfinished work.
     let pending: Vec<_> = state.calls.keys().cloned().collect();

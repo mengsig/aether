@@ -31,6 +31,16 @@ fn frame(message: BusMessage) -> SubscriptionFrame {
                 DeltaKind::ToolInput { name, partial_json } => {
                     Delta::ToolInput { name, partial_json }
                 }
+                DeltaKind::Accounting {
+                    total,
+                    turn_usage,
+                    context_tokens,
+                    ..
+                } => Delta::Accounting {
+                    total,
+                    turn_usage,
+                    context_tokens,
+                },
                 DeltaKind::TurnFinished => Delta::TurnFinished,
             },
         },
@@ -57,6 +67,7 @@ pub(crate) fn projection(agent: Agent, history: Vec<Event>) -> App {
         waiting_on: vec![],
         lease: None,
         subtree_usage: Usage::default(),
+        hidden_usage: None,
     };
     app.reduce(AppEvent::Connected);
     app.reduce(AppEvent::Reply {

@@ -12,6 +12,7 @@ class TreeNode(TypedDict, total=False):
     """
     agent: _protocol.Agent
     children: list[_protocol.AgentId]
+    hidden_usage: _protocol.Usage | None  # optional
     lease: _protocol.Lease | None  # optional
     subtree_usage: _protocol.Usage
     task: _protocol.Task | None  # optional

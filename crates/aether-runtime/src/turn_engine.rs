@@ -135,7 +135,8 @@ pub(crate) use ownership::session_recorder;
 mod accounting;
 pub(crate) use accounting::TurnPricing;
 use accounting::{
-    SubtreeUsage, budget_crossed, raise_to, recompute_snapshot_accounting, record_context_usage,
+    PendingAccounting, SubtreeUsage, budget_crossed, flush_accounting, raise_to,
+    recompute_snapshot_accounting,
 };
 mod execution;
 pub(crate) use execution::execute;
@@ -167,7 +168,7 @@ use steering::{Steering, answer_question, record_consumed, steer};
 mod events;
 use events::{
     PROTOCOL_NOTE_EVENT, PendingCall, SHRUNK_CLOSING_USAGE, StreamState,
-    disallowed_native_spawn_tool, handle_event,
+    disallowed_native_spawn_tool, handle_event, writes_record,
 };
 mod bridge;
 use bridge::{GateSubject, Served, Verdict, engine_call_class, handle_request, permission_verdict};

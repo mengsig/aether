@@ -106,6 +106,7 @@ impl App {
             default_effort: None,
             terminal_focused: true,
             context_tokens: HashMap::new(),
+            live_accounting: HashMap::new(),
             quotas: HashMap::new(),
             branches: HashMap::new(),
             details: false,

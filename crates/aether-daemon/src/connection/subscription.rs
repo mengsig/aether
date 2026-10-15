@@ -54,6 +54,7 @@ fn delta_matches(
 }
 
 pub(super) struct SubscriptionControl {
+    pub protocol_version: u32,
     pub cancel: CancellationToken,
     pub failure: mpsc::Sender<ErrorReply>,
     pub auth: crate::authz::AuthContext,
@@ -61,6 +62,17 @@ pub(super) struct SubscriptionControl {
 
 impl SubscriptionControl {
     async fn send(&self, out: &mpsc::Sender<ServerFrame>, mut frame: ServerFrame) -> bool {
+        if self.protocol_version < 20
+            && matches!(
+                frame,
+                ServerFrame::Delta {
+                    delta: Delta::Accounting { .. },
+                    ..
+                }
+            )
+        {
+            return true;
+        }
         self.auth.redact_frame(&mut frame);
         tokio::select! {
             biased;
@@ -99,6 +111,7 @@ struct Subscription {
     deltas: bool,
     control: SubscriptionControl,
     last: u64,
+    replayed_through: u64,
 }
 
 impl Subscription {
@@ -121,6 +134,7 @@ impl Subscription {
                 }
             };
             if page.is_empty() {
+                self.replayed_through = self.last;
                 return true;
             }
             for event in page {
@@ -161,6 +175,13 @@ impl Subscription {
                 invocation,
                 delta,
             } => {
+                if let DeltaKind::Accounting { after_seq, .. } = &delta
+                    && *after_seq < self.replayed_through
+                {
+                    // Replay already includes a later durable reading; this queued
+                    // snapshot must not replace it with older in-memory figures.
+                    return true;
+                }
                 if !self.deltas
                     || !delta_matches(
                         self.store.as_ref(),
@@ -179,6 +200,16 @@ impl Subscription {
                     DeltaKind::ToolInput { name, partial_json } => {
                         Delta::ToolInput { name, partial_json }
                     }
+                    DeltaKind::Accounting {
+                        total,
+                        turn_usage,
+                        context_tokens,
+                        ..
+                    } => Delta::Accounting {
+                        total,
+                        turn_usage,
+                        context_tokens,
+                    },
                     DeltaKind::TurnFinished => Delta::TurnFinished,
                 };
                 ServerFrame::Delta {
@@ -247,6 +278,7 @@ pub(super) fn spawn_subscription(
             deltas,
             control,
             last,
+            replayed_through: last,
         }
         .run(rx),
     );
@@ -258,6 +290,125 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn replayed_durable_events_supersede_queued_accounting() {
+        let (daemon, _config) = crate::connection::tests::daemon().await;
+        let (out, mut received) = mpsc::channel(4);
+        let (failure, _failures) = mpsc::channel(1);
+        let mut subscription = Subscription {
+            store: daemon.runtime.store().clone(),
+            out,
+            sub: 1,
+            filter: EventFilter::default(),
+            deltas: true,
+            control: SubscriptionControl {
+                protocol_version: aether_protocol::PROTOCOL_VERSION,
+                cancel: CancellationToken::new(),
+                failure,
+                auth: crate::authz::AuthContext::Local,
+            },
+            last: 20,
+            replayed_through: 20,
+        };
+        let usage = aether_core::model::Usage {
+            output_tokens: 5,
+            ..Default::default()
+        };
+        for after_seq in [19, 20] {
+            assert!(
+                subscription
+                    .deliver(BusMessage::Delta {
+                        agent: aether_core::id::AgentId::new(),
+                        invocation: aether_core::id::InvocationId::new(),
+                        delta: DeltaKind::Accounting {
+                            after_seq,
+                            total: usage,
+                            turn_usage: usage,
+                            context_tokens: Some(15),
+                        },
+                    })
+                    .await
+            );
+            if after_seq < 20 {
+                assert!(
+                    received.try_recv().is_err(),
+                    "replay has already passed this reading"
+                );
+            } else {
+                assert!(matches!(received.try_recv().unwrap(), ServerFrame::Delta {
+                    delta: Delta::Accounting { total, context_tokens: Some(15), .. }, ..
+                } if total == usage));
+            }
+        }
+        assert_eq!(
+            subscription.last, 20,
+            "deltas never advance replay position"
+        );
+        daemon.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn legacy_subscribers_keep_existing_frames_and_skip_live_accounting() {
+        for protocol_version in 17..=aether_protocol::PROTOCOL_VERSION {
+            let (out, mut received) = mpsc::channel(4);
+            let (failure, _failures) = mpsc::channel(1);
+            let control = SubscriptionControl {
+                protocol_version,
+                cancel: CancellationToken::new(),
+                failure,
+                auth: crate::authz::AuthContext::Local,
+            };
+            let agent = aether_core::id::AgentId::new();
+            let invocation = aether_core::id::InvocationId::new();
+            let usage = aether_core::model::Usage {
+                input_tokens: 20,
+                ..Default::default()
+            };
+            let accounting = ServerFrame::Delta {
+                sub: 1,
+                agent,
+                invocation,
+                delta: Delta::Accounting {
+                    total: usage,
+                    turn_usage: usage,
+                    context_tokens: Some(300),
+                },
+            };
+            assert!(control.send(&out, accounting.clone()).await);
+            if protocol_version >= 20 {
+                assert_eq!(received.try_recv().unwrap(), accounting);
+            } else {
+                assert!(received.try_recv().is_err(), "v{protocol_version}");
+            }
+            let text = ServerFrame::Delta {
+                sub: 1,
+                agent,
+                invocation,
+                delta: Delta::Text {
+                    text: "working".into(),
+                },
+            };
+            let event = aether_core::event::Event::from_draft(
+                aether_core::event::EventDraft::new(
+                    aether_core::event::Actor::System,
+                    aether_core::event::EventKind::AgentUsageUpdated {
+                        total: usage,
+                        turn_usage: usage,
+                    },
+                )
+                .agent(agent),
+                aether_core::id::EventId::new(),
+                1,
+                aether_core::time::now(),
+            );
+            let durable = ServerFrame::Event { sub: 1, event };
+            for frame in [text, durable] {
+                assert!(control.send(&out, frame.clone()).await);
+                assert_eq!(received.try_recv().unwrap(), frame, "v{protocol_version}");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn cancellation_interrupts_blocked_delivery() {
         let (out, mut received) = mpsc::channel(1);
         let frame = || ServerFrame::Reply {
@@ -267,6 +418,7 @@ mod tests {
         out.send(frame()).await.unwrap();
         let (failure, _failures) = mpsc::channel(1);
         let control = SubscriptionControl {
+            protocol_version: aether_protocol::PROTOCOL_VERSION,
             cancel: CancellationToken::new(),
             failure,
             auth: crate::authz::AuthContext::Local,
@@ -285,6 +437,7 @@ mod tests {
         let (out, mut received) = mpsc::channel(1);
         let (failure, _failures) = mpsc::channel(1);
         let control = SubscriptionControl {
+            protocol_version: aether_protocol::PROTOCOL_VERSION,
             cancel: CancellationToken::new(),
             failure,
             auth: crate::authz::AuthContext::Local,
@@ -308,6 +461,7 @@ mod tests {
     fn simultaneous_replay_failures_do_not_block_connection_cleanup() {
         let (failure, mut received) = mpsc::channel(1);
         let control = SubscriptionControl {
+            protocol_version: aether_protocol::PROTOCOL_VERSION,
             cancel: CancellationToken::new(),
             failure,
             auth: crate::authz::AuthContext::Local,
@@ -345,6 +499,7 @@ mod device_tests {
     fn control() -> SubscriptionControl {
         let (failure, _) = mpsc::channel(1);
         SubscriptionControl {
+            protocol_version: aether_protocol::PROTOCOL_VERSION,
             cancel: CancellationToken::new(),
             failure,
             auth: crate::authz::AuthContext::Device(DeviceSession {

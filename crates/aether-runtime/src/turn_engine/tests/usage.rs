@@ -636,11 +636,35 @@ async fn a_partial_cut_by_the_cap_is_taken_whole() {
         TurnPricing::default(),
         configured(&runtime, "codex/default"),
     );
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        EngineEvent::UsageDelta {
+            usage: one_reading(),
+        },
+        &mut state,
+    )
+    .unwrap();
     let over_cap = EngineEvent::Delta(StreamEvent::TextDelta {
         index: 0,
         text: "a".repeat(4 * 1024 * 1024 + 1),
     });
     handle_event(&runtime, &mut ctx, &snapshot, over_cap, &mut state).unwrap();
+    let events = runtime
+        .store
+        .events(0, usize::MAX, &EventFilter::for_agent(ctx.agent.id))
+        .unwrap();
+    let usage_seq = events
+        .iter()
+        .find(|event| matches!(event.kind, EventKind::AgentUsageUpdated { .. }))
+        .unwrap()
+        .seq;
+    let note_seq = events.iter().find(|event| matches!(&event.kind, EventKind::Custom { name, .. } if name == PROTOCOL_NOTE_EVENT)).unwrap().seq;
+    assert!(
+        usage_seq < note_seq,
+        "held usage precedes the truncation note"
+    );
     let partial = state.take_partial();
     let [ContentBlock::Text { text }] = partial.as_slice() else {
         panic!("expected one text block, got {partial:?}");
@@ -1126,4 +1150,212 @@ async fn live_usage_without_counters_or_reason_is_unreported() {
     );
     assert!(!state.stream_usage.cost_complete);
     runtime.shutdown().await;
+}
+
+fn stored_usage_events(runtime: &Arc<Runtime>, agent: AgentId) -> Vec<(u64, Usage)> {
+    runtime
+        .store
+        .events(0, usize::MAX, &EventFilter::for_agent(agent))
+        .expect("events")
+        .into_iter()
+        .filter_map(|event| match event.kind {
+            EventKind::AgentUsageUpdated { total, .. } => Some((event.seq, total)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn one_reading() -> Usage {
+    Usage {
+        input_tokens: 3,
+        output_tokens: 1,
+        ..Default::default()
+    }
+}
+
+/// Readings update memory, where budgets read them, and reach the store as
+/// one commit; a crash loses only what came after the last flush, and nothing
+/// is counted twice.
+#[tokio::test(start_paused = true)]
+async fn streamed_readings_wait_in_memory_and_a_crash_loses_only_the_window() {
+    let (runtime, _dir) = test_runtime(|_| {}).await;
+    let mut ctx = started_agent_ctx(&runtime).await;
+    let agent_id = ctx.agent.id;
+    let snapshot = bare_snapshot(agent_id);
+    let mut state = StreamState::new(
+        TurnPricing::default(),
+        configured(&runtime, "claude-code/default"),
+    );
+    let start = tokio::time::Instant::now();
+    let commits = runtime.store.commits();
+    for n in 0..10 {
+        for event in [
+            EngineEvent::UsageDelta {
+                usage: one_reading(),
+            },
+            EngineEvent::ContextUsage { tokens: 500 + n },
+        ] {
+            handle_event(&runtime, &mut ctx, &snapshot, event, &mut state).expect("reading");
+        }
+    }
+    assert_eq!(
+        runtime.store.commits(),
+        commits,
+        "readings only update memory"
+    );
+    assert_eq!(ctx.agent.stats.usage.output_tokens, 10, "budgets see them");
+    assert_eq!(ctx.agent.stats.context_tokens, Some(509));
+    assert_eq!(
+        state.accounting.deadline(),
+        Some(start + super::super::accounting::ACCOUNTING_FLUSH),
+        "the window opens at the first held reading"
+    );
+
+    flush_accounting(&runtime, &ctx, &mut state.accounting).expect("flush");
+    assert_eq!(runtime.store.commits(), commits + 1, "one commit for all");
+    assert_eq!(state.accounting.deadline(), None);
+    let flushed = ctx.agent.stats.usage;
+    let row = runtime.store.agent(agent_id).unwrap().expect("row");
+    assert_eq!(row.stats.usage, flushed);
+    assert_eq!(row.stats.context_tokens, Some(509));
+    let events = stored_usage_events(&runtime, agent_id);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].1, flushed, "the absolute figure, not a delta");
+    let contexts: Vec<_> = runtime
+        .store
+        .events(0, usize::MAX, &EventFilter::for_agent(agent_id))
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            EventKind::Custom { name, payload } if name == "context.usage" => Some(payload),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(contexts, vec![json!({"tokens": 509})]);
+
+    // The process dies with readings still held: they never reach the store.
+    for _ in 0..5 {
+        handle_event(
+            &runtime,
+            &mut ctx,
+            &snapshot,
+            EngineEvent::UsageDelta {
+                usage: one_reading(),
+            },
+            &mut state,
+        )
+        .expect("reading");
+    }
+    drop(state);
+    let row = runtime.store.agent(agent_id).unwrap().expect("row");
+    assert_eq!(
+        row.stats.usage, flushed,
+        "lost the window, counted nothing twice"
+    );
+    assert_eq!(stored_usage_events(&runtime, agent_id).len(), 1);
+    runtime.shutdown().await;
+}
+
+/// A held reading lands before an event that followed it; one held through an
+/// assistant message rides in that message's commit, after its invocation.
+#[tokio::test]
+async fn held_readings_keep_their_place_in_the_log() {
+    let (runtime, _dir) = test_runtime(|_| {}).await;
+    let mut ctx = started_agent_ctx(&runtime).await;
+    let agent_id = ctx.agent.id;
+    let snapshot = bare_snapshot(agent_id);
+    let mut state = StreamState::new(
+        TurnPricing::default(),
+        configured(&runtime, "claude-code/default"),
+    );
+    let reading = EngineEvent::UsageDelta {
+        usage: one_reading(),
+    };
+    handle_event(&runtime, &mut ctx, &snapshot, reading.clone(), &mut state).expect("reading");
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        EngineEvent::ProtocolNote("a counter went backwards".into()),
+        &mut state,
+    )
+    .expect("note");
+    handle_event(&runtime, &mut ctx, &snapshot, reading, &mut state).expect("reading");
+    let commits = runtime.store.commits();
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        assistant_saying("done"),
+        &mut state,
+    )
+    .expect("assistant");
+    assert_eq!(
+        runtime.store.commits(),
+        commits + 1,
+        "folded, not flushed apart"
+    );
+    assert_eq!(state.accounting.deadline(), None);
+
+    let events = runtime
+        .store
+        .events(0, usize::MAX, &EventFilter::for_agent(agent_id))
+        .unwrap();
+    let seq_of = |pred: &dyn Fn(&EventKind) -> bool| {
+        events
+            .iter()
+            .find(|e| pred(&e.kind))
+            .map(|e| e.seq)
+            .expect("event present")
+    };
+    let note =
+        seq_of(&|k| matches!(k, EventKind::Custom { name, .. } if name == PROTOCOL_NOTE_EVENT));
+    let invocation = seq_of(&|k| matches!(k, EventKind::InvocationCompleted { .. }));
+    let usage = stored_usage_events(&runtime, agent_id);
+    assert_eq!(usage.len(), 2);
+    assert!(usage[0].0 < note, "the first reading precedes the note");
+    assert!(
+        usage[1].0 > invocation,
+        "the second rides after the invocation"
+    );
+    assert_eq!(usage[1].1, ctx.agent.stats.usage);
+    assert_eq!(usage[1].1.output_tokens, 2);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_new_budget_in_the_lineage_makes_usage_immediately_durable() {
+    for depth in [0, 2] {
+        let (runtime, _dir) = test_runtime(|_| {}).await;
+        let mut ctx = started_agent_ctx(&runtime).await;
+        let mut root = ctx.agent.clone();
+        for _ in 0..depth {
+            let mut child = started_agent_ctx(&runtime).await;
+            child.agent.parent = Some(ctx.agent.id);
+            runtime
+                .apply(Commit::new().mutate(Mutation::UpsertAgent(child.agent.clone())))
+                .unwrap();
+            ctx = child;
+        }
+        let snapshot = bare_snapshot(ctx.agent.id);
+        let mut state = StreamState::new(
+            TurnPricing::default(),
+            configured(&runtime, "claude-code/default"),
+        );
+        let reading = EngineEvent::UsageDelta {
+            usage: one_reading(),
+        };
+        handle_event(&runtime, &mut ctx, &snapshot, reading.clone(), &mut state).unwrap();
+        assert!(state.accounting.deadline().is_some());
+        root.config.token_budget = Some(100);
+        runtime
+            .apply(Commit::new().mutate(Mutation::UpsertAgent(root)))
+            .unwrap();
+        handle_event(&runtime, &mut ctx, &snapshot, reading, &mut state).unwrap();
+        assert!(state.accounting.deadline().is_none());
+        let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
+        assert_eq!(stored.stats.usage.output_tokens, 2);
+        assert_eq!(stored.stats.usage, ctx.agent.stats.usage);
+        runtime.shutdown().await;
+    }
 }

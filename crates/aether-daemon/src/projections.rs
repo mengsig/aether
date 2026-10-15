@@ -82,6 +82,7 @@ pub fn build_tree(
     } else {
         all_agents.into_iter().filter(|a| !a.archived).collect()
     };
+    let visible: std::collections::BTreeSet<_> = agents.iter().map(|agent| agent.id).collect();
 
     let mut nodes: BTreeMap<AgentId, TreeNode> = BTreeMap::new();
     let mut children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
@@ -100,6 +101,14 @@ pub fn build_tree(
             .and_then(|id| tasks.iter().find(|t| t.id == id).cloned());
         let waiting_on = Runtime::waiting_on(&agent).into_iter().collect();
         let subtree = subtree_usage.get(&agent.id).copied().unwrap_or_default();
+        let hidden_usage = all_children.get(&agent.id).and_then(|children| {
+            let mut hidden = children.iter().filter(|id| !visible.contains(*id));
+            let mut total = subtree_usage[hidden.next()?];
+            for child in hidden {
+                total += subtree_usage[child];
+            }
+            Some(total)
+        });
         nodes.insert(
             agent.id,
             TreeNode {
@@ -108,6 +117,7 @@ pub fn build_tree(
                 waiting_on,
                 lease: leases.get(&agent.id).cloned(),
                 subtree_usage: subtree,
+                hidden_usage,
                 agent,
             },
         );
@@ -269,6 +279,7 @@ mod tests {
 
         assert!(!tree.nodes.contains_key(&child.id), "archived child hidden");
         let parent_node = tree.nodes.get(&parent.id).expect("parent visible");
+        assert_eq!(parent_node.hidden_usage, Some(child.stats.usage));
         assert_eq!(
             parent_node.subtree_usage.input_tokens, 150,
             "archived child's usage still rolls up into the live parent"
@@ -287,6 +298,7 @@ mod tests {
         let tree = build_tree(&store, Some(run), true).expect("tree");
 
         assert!(tree.nodes.contains_key(&child.id));
+        assert_eq!(tree.nodes[&parent.id].hidden_usage, None);
         assert_eq!(tree.nodes[&parent.id].subtree_usage.input_tokens, 150);
     }
 

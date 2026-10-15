@@ -305,6 +305,7 @@ async fn codex_engine_compaction_is_estimated_from_its_api_twin() {
         Arc::default(),
         None,
         Some("[model]\ncompactor = \"codex/gpt-6.1-sol\"\n"),
+        None,
         |c| {
             c.default_model = Some(ModelRef::new("codex", "gpt-6.1-sol"));
         },

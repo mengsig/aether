@@ -28,8 +28,7 @@ protocol version.
 
 ## Versions
 
-The protocol is version 19 and the daemon serves versions 17, 18 and 19: its
-own and two back, because 18 and 19 were released days apart. The window is
+The protocol is version 20 and the daemon serves versions 17 through 20. The window is
 `MIN_PROTOCOL_VERSION` to `PROTOCOL_VERSION` in `aether-protocol`; the
 `compat` module translates replies for the older versions.
 A hello outside the window is refused with `incompatible`, naming both bounds.
@@ -40,6 +39,16 @@ Only the daemon's answers are rewritten. Every field a newer version added to
 a command is optional, so an older client's requests decode unchanged; the
 test `no_command_requires_a_field_an_older_client_would_not_send` holds that
 against the live schema.
+
+Version 20 adds transient `accounting` deltas with absolute agent usage,
+turn usage and the latest context token count. Live subscribers receive these
+readings before coalesced accounting is committed. They replace prior figures;
+they do not add spend to the later durable usage event. These deltas have no
+sequence number and are not replayed. Clients on versions 17 through 19 keep
+receiving durable accounting events and existing stream deltas; the daemon
+withholds `accounting` deltas they cannot decode. Tree nodes also carry optional
+`hidden_usage` for omitted child subtrees, so replacing visible live usage
+preserves archived spend and its cost coverage.
 
 Version 19 adds [images on a message](#images-on-a-message):
 `send_message.attachments` and the `image_ref` content block. A version 17 or

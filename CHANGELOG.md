@@ -85,6 +85,15 @@ terminal with Ctrl+V.
 - **One run's agent tree no longer reads every task in the store.** Listing a
   run's tasks walked the whole tasks table. In a test store of 20,000 tasks
   that took 22 ms per tree; it now reads only that run's tasks, in 0.06 ms.
+- **Native engine turns write far fewer commits.** Claude Code and Codex
+  report token usage and context size several times per message, and each
+  report was its own commit. The daemon now keeps the latest figures
+  in memory for live subscribers and budgets, and writes them with the next
+  record the turn makes anyway, or after at most 2 seconds. Final usage is
+  written exactly as before; a daemon crash can lose the last 2 seconds of
+  streamed usage, and nothing is counted twice. Agents covered by their own
+  or an ancestor's token or cost budget still persist each usage reading, so
+  budget enforcement and warnings keep their existing timing.
 - **Stopping a background job no longer gives up when one of its processes
   is exiting.** On Linux before 7.2, a process that is exiting briefly hides
   its environment, and the search for a job's escaped processes stopped there

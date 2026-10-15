@@ -74,6 +74,7 @@ impl TreeBuilder {
                 waiting_on: Vec::new(),
                 lease: None,
                 subtree_usage: Usage::default(),
+                hidden_usage: None,
             },
         );
         match parent.and_then(|p| self.tree.nodes.get_mut(&p)) {

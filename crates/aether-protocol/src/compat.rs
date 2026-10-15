@@ -5,8 +5,8 @@ use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, ServerFrame};
 use aether_core::model::ContentBlock;
 use serde_json::Value;
 
-/// Oldest protocol version this build still serves. Two back, not one: 18
-/// and 19 were released days apart, and both rewrites are small.
+/// Oldest protocol version this build still serves. Existing frame rewrites
+/// remain small; v20 accounting deltas are withheld from older subscriptions.
 pub const MIN_PROTOCOL_VERSION: u32 = 17;
 
 const _: () = assert!(MIN_PROTOCOL_VERSION >= 1 && MIN_PROTOCOL_VERSION < PROTOCOL_VERSION);
@@ -471,8 +471,8 @@ mod tests {
     }
 
     #[test]
-    fn the_window_is_this_version_and_two_back() {
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 19));
+    fn the_window_retains_existing_versions() {
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 20));
         for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
             let mut hello = Hello::new("t", "0");
             hello.protocol_version = version;
@@ -715,7 +715,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 19));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 20));
     }
 
     #[test]

@@ -137,6 +137,7 @@ fn insert(app: &mut App, agent: Agent, children: Vec<AgentId>) {
             waiting_on: vec![],
             lease: None,
             subtree_usage: Usage::default(),
+            hidden_usage: None,
         },
     );
 }

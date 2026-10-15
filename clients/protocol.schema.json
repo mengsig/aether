@@ -4892,7 +4892,7 @@
       ]
     },
     "Delta": {
-      "description": "Transient streaming signal. Not persisted; the completed message is the event.",
+      "description": "Transient streaming signal. Not persisted; durable events reconcile it.",
       "oneOf": [
         {
           "properties": {
@@ -4961,6 +4961,35 @@
             "delta",
             "name",
             "partial_json"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Absolute in-memory figures. Replace prior totals; never add these to durable usage.",
+          "properties": {
+            "context_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "delta": {
+              "const": "accounting",
+              "type": "string"
+            },
+            "total": {
+              "$ref": "#/$defs/Usage"
+            },
+            "turn_usage": {
+              "$ref": "#/$defs/Usage"
+            }
+          },
+          "required": [
+            "delta",
+            "total",
+            "turn_usage"
           ],
           "type": "object"
         },
@@ -14840,6 +14869,17 @@
           },
           "type": "array"
         },
+        "hidden_usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Usage of child subtrees omitted from this tree (for example archived children).\nKept separately so live clients can replace visible usage without losing it."
+        },
         "lease": {
           "anyOf": [
             {
@@ -15396,7 +15436,7 @@
     "$ref": "#/$defs/ClientFrame"
   },
   "min_protocol_version": 17,
-  "protocol_version": 19,
+  "protocol_version": 20,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },

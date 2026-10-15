@@ -6,7 +6,7 @@ from typing import Any, Literal, TypedDict
 from .. import protocol as _protocol
 
 
-# Transient streaming signal. Not persisted; the completed message is the event.
+# Transient streaming signal. Not persisted; durable events reconcile it.
 # Tagged by `delta`.
 class DeltaTurnStarted(TypedDict, total=False):
     delta: Literal["turn_started"]

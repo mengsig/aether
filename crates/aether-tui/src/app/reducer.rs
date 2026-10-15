@@ -157,6 +157,10 @@ impl App {
                 self.backfill_disconnected();
                 self.connected = false;
                 self.subscription = None;
+                for agent in self.live_accounting.keys() {
+                    self.context_tokens.remove(agent);
+                }
+                self.live_accounting.clear();
                 // Deltas are not replayed: a stream cut off here would resume
                 // with a hole, so the reconnect's events supply the reply instead.
                 for transcript in self.transcripts.values_mut() {
@@ -221,6 +225,18 @@ impl App {
                     invocation,
                     delta,
                 } => {
+                    if let aether_protocol::Delta::Accounting {
+                        total,
+                        context_tokens,
+                        ..
+                    } = delta
+                    {
+                        self.project_accounting(agent, total, context_tokens);
+                        return Vec::new();
+                    }
+                    if matches!(delta, aether_protocol::Delta::TurnFinished) {
+                        self.live_accounting.remove(&agent);
+                    }
                     self.backfill_delta(agent, invocation, &delta);
                     // Only the viewed agent's stream is drawn; another's is no frame.
                     if self.selected == Some(agent) {
