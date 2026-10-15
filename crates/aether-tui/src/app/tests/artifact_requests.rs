@@ -57,7 +57,7 @@ fn closing_the_artifacts_view_disarms_a_pending_artifact_request() {
         )),
         "Enter must ask for the bytes: {effects:?}"
     );
-    assert_eq!(app.artifacts.pending_bytes, Some((art, app.connection)));
+    assert_eq!(app.artifacts.pending_bytes, Some((art, app.artifact_reads)));
 
     // Pager, then list, closed before the reply lands.
     app.reduce(key(KeyCode::Esc));

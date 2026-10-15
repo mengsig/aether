@@ -454,7 +454,7 @@ fn artifact_pager_arms_the_bytes_reply_and_is_fullscreen() {
             crate::testing::artifact_bytes_then(&app, id)
         )]
     );
-    assert_eq!(app.artifacts.pending_bytes, Some((id, app.connection)));
+    assert_eq!(app.artifacts.pending_bytes, Some((id, app.artifact_reads)));
     assert!(app.bottom.top_view().expect("pushed").fullscreen());
 }
 

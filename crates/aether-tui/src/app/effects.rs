@@ -83,10 +83,10 @@ pub enum Then {
     RunReport(aether_core::id::RunId),
     Invocations(AgentId),
     Artifacts(AgentId),
-    /// An artifact's bytes, asked for on `connection`.
+    /// An artifact's bytes, for the pager's read numbered `read`.
     ArtifactBytes {
         id: ArtifactId,
-        connection: u64,
+        read: u64,
     },
     AgentPatched,
     ModelPatched(AgentId),

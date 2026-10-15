@@ -434,7 +434,7 @@ impl App {
                 }
             }
             (
-                Then::ArtifactBytes { id, connection },
+                Then::ArtifactBytes { id, read },
                 Reply::ArtifactBytes {
                     artifact,
                     base64,
@@ -442,10 +442,10 @@ impl App {
                 },
             ) => {
                 debug_assert!(
-                    connection <= self.connection,
-                    "a reply from a connection not yet made"
+                    read <= self.artifact_reads,
+                    "a reply to a read not yet made"
                 );
-                if self.artifacts.pending_bytes == Some((id, connection)) {
+                if self.artifacts.pending_bytes == Some((id, read)) {
                     self.artifacts.pending_bytes = None;
                     // Authoritative: read from the store just now, unlike a
                     // cached list entry or an `artifact.created` snapshot.

@@ -74,6 +74,7 @@ impl App {
             remote_snapshot_pending: false,
             connection: 0,
             link: 0,
+            artifact_reads: 0,
             motion,
             size: (0, 0),
             input: InputState::default(),

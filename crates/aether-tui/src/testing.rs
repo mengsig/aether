@@ -60,11 +60,11 @@ pub fn backfill_then(app: &App, agent: AgentId) -> Then {
     }
 }
 
-/// Routes a reply to the bytes of `id` asked for on the current connection.
+/// Routes a reply to the latest read of `id`'s bytes.
 pub fn artifact_bytes_then(app: &App, id: ArtifactId) -> Then {
     Then::ArtifactBytes {
         id,
-        connection: app.connection,
+        read: app.artifact_reads,
     }
 }
 

@@ -306,11 +306,8 @@ fn bytes_reply(then: Then, artifact: &aether_core::artifact::Artifact, text: &st
     }
 }
 
-#[test]
-fn reconnect_old_artifact_read_must_not_hide_a_new_eviction_reply() {
-    use crate::ui::views::ViewKind;
-    let mut app = crate::testing::app_with_transcript(&[]);
-    let mut record = aether_core::artifact::Artifact {
+fn retained_artifact() -> aether_core::artifact::Artifact {
+    aether_core::artifact::Artifact {
         id: aether_core::id::ArtifactId::new(),
         kind: aether_core::artifact::ArtifactKind::CommandOutput,
         name: "retained.log".into(),
@@ -324,7 +321,74 @@ fn reconnect_old_artifact_read_must_not_hide_a_new_eviction_reply() {
         task_id: None,
         created_at: now(),
         evicted_at: None,
-    };
+    }
+}
+
+/// The first read's reply lands after the pager was reopened, then the second
+/// read finds `record` evicted: only the second may settle the pager.
+fn first_read_lands_after_the_reopen(
+    app: &mut App,
+    mut record: aether_core::artifact::Artifact,
+    first: Then,
+    second: Then,
+) {
+    assert_ne!(first, second, "each read has its own route");
+    app.reduce(bytes_reply(first, &record, "before eviction"));
+    assert!(
+        app.artifacts.pending_bytes.is_some(),
+        "the reopened read still waits"
+    );
+    assert!(
+        app.artifacts.open.is_none(),
+        "the first read's bytes are not shown"
+    );
+    record.evicted_at = Some(now());
+    record.path = None;
+    app.reduce(bytes_reply(second, &record, ""));
+    let pager_open = app.bottom.top_view().is_some_and(|view| view.fullscreen());
+    assert!(
+        !pager_open,
+        "the current read's eviction reply closes the pager"
+    );
+    assert!(
+        app.live_flash()
+            .is_some_and(|notice| notice.contains("dropped"))
+    );
+}
+
+#[test]
+fn reopening_a_pager_in_one_connection_is_not_settled_by_the_first_read() {
+    use crate::ui::views::ViewKind;
+    let mut app = crate::testing::app_with_transcript(&[]);
+    let record = retained_artifact();
+    let first = bytes_route(app.open_view(ViewKind::ArtifactPager(record.id)), record.id);
+    app.reduce(AppEvent::Key(crossterm::event::KeyEvent::from(
+        crossterm::event::KeyCode::Esc,
+    )));
+    let second = bytes_route(app.open_view(ViewKind::ArtifactPager(record.id)), record.id);
+    first_read_lands_after_the_reopen(&mut app, record, first, second);
+}
+
+#[test]
+fn reconnect_read_asked_while_disconnected_does_not_settle_a_pager_reopened_after() {
+    use crate::ui::views::ViewKind;
+    let mut app = crate::testing::app_with_transcript(&[]);
+    let record = retained_artifact();
+    app.reduce(AppEvent::Disconnected { because: None });
+    let first = bytes_route(app.open_view(ViewKind::ArtifactPager(record.id)), record.id);
+    app.reduce(AppEvent::Connected);
+    app.reduce(AppEvent::Key(crossterm::event::KeyEvent::from(
+        crossterm::event::KeyCode::Esc,
+    )));
+    let second = bytes_route(app.open_view(ViewKind::ArtifactPager(record.id)), record.id);
+    first_read_lands_after_the_reopen(&mut app, record, first, second);
+}
+
+#[test]
+fn reconnect_old_artifact_read_must_not_hide_a_new_eviction_reply() {
+    use crate::ui::views::ViewKind;
+    let mut app = crate::testing::app_with_transcript(&[]);
+    let mut record = retained_artifact();
     let old = bytes_route(app.open_view(ViewKind::ArtifactPager(record.id)), record.id);
     app.reduce(AppEvent::Disconnected { because: None });
     app.reduce(AppEvent::Connected);
