@@ -232,6 +232,9 @@ impl App {
                         self.project_accounting(agent, total, context_tokens);
                         return Vec::new();
                     }
+                    if matches!(delta, aether_protocol::Delta::TurnFinished) {
+                        self.live_accounting.remove(&agent);
+                    }
                     self.backfill_delta(agent, invocation, &delta);
                     // Only the viewed agent's stream is drawn; another's is no frame.
                     if self.selected == Some(agent) {

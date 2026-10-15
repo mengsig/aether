@@ -275,7 +275,9 @@ pub(super) async fn drive(
                 if ev.as_ref().is_some_and(writes_record) {
                     // Held readings precede what this commits, and are never
                     // left behind a wait on an operator or the engine.
+                    let commits_before = runtime.store.commits();
                     flush_accounting(runtime, ctx, &mut state.accounting)?;
+                    subtree.note_own_commits(runtime.store.commits().saturating_sub(commits_before));
                 }
                 let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
                 if let Some(EngineEvent::Done(outcome)) = &ev {

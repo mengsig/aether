@@ -636,11 +636,35 @@ async fn a_partial_cut_by_the_cap_is_taken_whole() {
         TurnPricing::default(),
         configured(&runtime, "codex/default"),
     );
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        EngineEvent::UsageDelta {
+            usage: one_reading(),
+        },
+        &mut state,
+    )
+    .unwrap();
     let over_cap = EngineEvent::Delta(StreamEvent::TextDelta {
         index: 0,
         text: "a".repeat(4 * 1024 * 1024 + 1),
     });
     handle_event(&runtime, &mut ctx, &snapshot, over_cap, &mut state).unwrap();
+    let events = runtime
+        .store
+        .events(0, usize::MAX, &EventFilter::for_agent(ctx.agent.id))
+        .unwrap();
+    let usage_seq = events
+        .iter()
+        .find(|event| matches!(event.kind, EventKind::AgentUsageUpdated { .. }))
+        .unwrap()
+        .seq;
+    let note_seq = events.iter().find(|event| matches!(&event.kind, EventKind::Custom { name, .. } if name == PROTOCOL_NOTE_EVENT)).unwrap().seq;
+    assert!(
+        usage_seq < note_seq,
+        "held usage precedes the truncation note"
+    );
     let partial = state.take_partial();
     let [ContentBlock::Text { text }] = partial.as_slice() else {
         panic!("expected one text block, got {partial:?}");
@@ -779,9 +803,6 @@ async fn native_request_pricing_reaches_the_subtree_cost_budget_on_late_output()
             &mut state,
         )
         .unwrap();
-        // An ancestor reads the child's stored row, which the flush timer
-        // brings up to date within `ACCOUNTING_FLUSH`.
-        flush_accounting(&runtime, &child, &mut state.accounting).unwrap();
         let crossed = budget_crossed(&runtime, &parent, &mut subtree).unwrap();
         if current.output_tokens == 0 {
             assert!(crossed.is_none(), "the prompt alone is below the grant");
@@ -1300,4 +1321,41 @@ async fn held_readings_keep_their_place_in_the_log() {
     assert_eq!(usage[1].1, ctx.agent.stats.usage);
     assert_eq!(usage[1].1.output_tokens, 2);
     runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_new_budget_in_the_lineage_makes_usage_immediately_durable() {
+    for depth in [0, 2] {
+        let (runtime, _dir) = test_runtime(|_| {}).await;
+        let mut ctx = started_agent_ctx(&runtime).await;
+        let mut root = ctx.agent.clone();
+        for _ in 0..depth {
+            let mut child = started_agent_ctx(&runtime).await;
+            child.agent.parent = Some(ctx.agent.id);
+            runtime
+                .apply(Commit::new().mutate(Mutation::UpsertAgent(child.agent.clone())))
+                .unwrap();
+            ctx = child;
+        }
+        let snapshot = bare_snapshot(ctx.agent.id);
+        let mut state = StreamState::new(
+            TurnPricing::default(),
+            configured(&runtime, "claude-code/default"),
+        );
+        let reading = EngineEvent::UsageDelta {
+            usage: one_reading(),
+        };
+        handle_event(&runtime, &mut ctx, &snapshot, reading.clone(), &mut state).unwrap();
+        assert!(state.accounting.deadline().is_some());
+        root.config.token_budget = Some(100);
+        runtime
+            .apply(Commit::new().mutate(Mutation::UpsertAgent(root)))
+            .unwrap();
+        handle_event(&runtime, &mut ctx, &snapshot, reading, &mut state).unwrap();
+        assert!(state.accounting.deadline().is_none());
+        let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
+        assert_eq!(stored.stats.usage.output_tokens, 2);
+        assert_eq!(stored.stats.usage, ctx.agent.stats.usage);
+        runtime.shutdown().await;
+    }
 }

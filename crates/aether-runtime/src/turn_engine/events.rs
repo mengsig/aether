@@ -196,6 +196,7 @@ fn protocol_note(
     if state.protocol_notes > MAX_PROTOCOL_NOTES {
         return Ok(());
     }
+    flush_accounting(runtime, ctx, &mut state.accounting)?;
     let note: String = text.chars().take(PROTOCOL_NOTE_CHARS).collect();
     runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
         name: PROTOCOL_NOTE_EVENT.into(),
@@ -488,12 +489,12 @@ pub(super) fn handle_event(
                         .unwrap_or(aether_core::model::CostGap::Unreported),
                 );
             }
-            record_usage(runtime, ctx, state, usage);
+            record_usage(runtime, ctx, state, usage)?;
         }
         EngineEvent::UsageRequest { request } => {
             let usage = state.pricing.request_delta(&request);
             state.request_usage_seen = true;
-            record_usage(runtime, ctx, state, usage);
+            record_usage(runtime, ctx, state, usage)?;
         }
         EngineEvent::ToolResult {
             tool_use_id,
@@ -575,7 +576,12 @@ pub(super) fn handle_event(
     Ok(())
 }
 
-fn record_usage(runtime: &Runtime, ctx: &mut TurnCtx, state: &mut StreamState, usage: Usage) {
+fn record_usage(
+    runtime: &Runtime,
+    ctx: &mut TurnCtx,
+    state: &mut StreamState,
+    usage: Usage,
+) -> Result<()> {
     state.priced |= usage.cost_complete;
     state.usage_seen = true;
     state
@@ -586,6 +592,10 @@ fn record_usage(runtime: &Runtime, ctx: &mut TurnCtx, state: &mut StreamState, u
     ctx.agent.updated_at = now();
     state.accounting.usage();
     publish_accounting(runtime, ctx, state);
+    if super::accounting::has_budgeted_lineage(runtime, ctx.agent.id)? {
+        flush_accounting(runtime, ctx, &mut state.accounting)?;
+    }
+    Ok(())
 }
 
 fn note_context_usage(runtime: &Runtime, ctx: &mut TurnCtx, state: &mut StreamState, tokens: u64) {

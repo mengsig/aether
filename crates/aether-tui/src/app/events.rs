@@ -19,11 +19,19 @@ impl App {
         self.last_seq = Some(event.seq.max(self.last_seq.unwrap_or(0)));
         let family = event.kind.family();
         let agent = event.agent_id;
+        if matches!(
+            event.kind,
+            EventKind::InvocationCompleted { .. } | EventKind::InvocationFailed { .. }
+        ) && let Some(agent) = agent
+        {
+            self.live_accounting.remove(&agent);
+        }
         match &event.kind {
             EventKind::AgentUsageUpdated { total, .. } => {
                 if let Some(agent) = agent {
                     let context = self.context_tokens.get(&agent).copied();
                     self.project_accounting(agent, *total, context);
+                    self.live_accounting.remove(&agent);
                 }
             }
             EventKind::ArtifactCreated { artifact } => {

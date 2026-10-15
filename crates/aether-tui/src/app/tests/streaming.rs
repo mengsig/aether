@@ -633,3 +633,114 @@ fn live_accounting_preserves_hidden_usage_through_saturation_and_cost_correction
         aether_core::model::CostBasis::ProviderReported
     );
 }
+
+#[test]
+fn settled_accounting_cannot_mask_a_later_api_turn_on_refresh() {
+    let (mut app, id) = app_with_agent();
+    let invocation = InvocationId::new();
+    let prior = Usage {
+        input_tokens: 100,
+        ..Default::default()
+    };
+    feed(
+        &mut app,
+        2,
+        id,
+        EventKind::AgentUsageUpdated {
+            total: prior,
+            turn_usage: prior,
+        },
+    );
+    feed(
+        &mut app,
+        3,
+        id,
+        EventKind::InvocationCompleted {
+            invocation,
+            snapshot: aether_core::id::SnapshotId::new(),
+            model: ModelRef::new("mock", "m"),
+            usage: Usage {
+                input_tokens: 200,
+                ..Default::default()
+            },
+            stop_reason: None,
+            duration_ms: 1,
+        },
+    );
+    let mut newer = app.tree.clone();
+    let total = Usage {
+        input_tokens: 300,
+        ..Default::default()
+    };
+    let node = newer.nodes.get_mut(&id).unwrap();
+    node.agent.stats.usage = total;
+    node.subtree_usage = total;
+    app.apply_tree(newer, &mut Vec::new());
+    assert_eq!(app.tree.nodes[&id].agent.stats.usage, total);
+    assert_eq!(app.tree.nodes[&id].subtree_usage, total);
+}
+
+#[test]
+fn durable_usage_and_turn_end_retire_provisional_accounting() {
+    for boundary in 0..4 {
+        let (mut app, id) = app_with_agent();
+        let invocation = InvocationId::new();
+        let total = Usage {
+            input_tokens: 100,
+            ..Default::default()
+        };
+        delta(
+            &mut app,
+            id,
+            invocation,
+            Delta::Accounting {
+                total,
+                turn_usage: total,
+                context_tokens: None,
+            },
+        );
+        match boundary {
+            0 => feed(
+                &mut app,
+                2,
+                id,
+                EventKind::AgentUsageUpdated {
+                    total,
+                    turn_usage: total,
+                },
+            ),
+            1 => feed(
+                &mut app,
+                2,
+                id,
+                EventKind::InvocationCompleted {
+                    invocation,
+                    snapshot: aether_core::id::SnapshotId::new(),
+                    model: ModelRef::new("mock", "m"),
+                    usage: total,
+                    stop_reason: None,
+                    duration_ms: 1,
+                },
+            ),
+            2 => feed(
+                &mut app,
+                2,
+                id,
+                EventKind::InvocationFailed {
+                    invocation,
+                    snapshot: aether_core::id::SnapshotId::new(),
+                    error: "interrupted".into(),
+                    class: None,
+                    retryable: false,
+                    cancelled: true,
+                    partial: vec![],
+                },
+            ),
+            _ => delta(&mut app, id, invocation, Delta::TurnFinished),
+        }
+        assert!(
+            !app.live_accounting.contains_key(&id),
+            "boundary {boundary}"
+        );
+    }
+}

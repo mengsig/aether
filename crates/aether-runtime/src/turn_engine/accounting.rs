@@ -91,6 +91,27 @@ pub(super) fn flush_accounting(
     Ok(())
 }
 
+/// Scheduler warnings and ancestor grants read stored rows. Preserve their
+/// original visibility when any grant covers this agent, including grants
+/// changed during the turn. Unbudgeted streams can still coalesce writes.
+pub(super) fn has_budgeted_lineage(runtime: &Runtime, agent: AgentId) -> Result<bool> {
+    let mut next = Some(agent);
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(id) = next {
+        if !seen.insert(id) {
+            return Err(RuntimeError::Invalid("cyclic budget ancestry".into()));
+        }
+        let row = runtime.store.agent(id)?.ok_or_else(|| {
+            RuntimeError::NotFound(format!("agent {id} while checking budget ancestry"))
+        })?;
+        if row.config.token_budget.is_some() || row.config.cost_budget.is_some() {
+            return Ok(true);
+        }
+        next = row.parent;
+    }
+    Ok(false)
+}
+
 /// How one engine turn is priced: the registry's price for the model where it
 /// has one, and otherwise the list price of the API model behind the
 /// subscription, which can only ever produce an *estimate*. Never both - a
