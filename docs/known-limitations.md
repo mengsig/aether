@@ -119,6 +119,11 @@ looks like a boundary and is not one.
   temp directory. Agent temp directories are not cleaned up automatically
   yet: `aether storage` shows their size, and you can remove a finished
   agent's directory by hand.
+- On macOS the default agent temp root is long enough that a tool's Unix
+  socket path under `TMPDIR` can exceed the 104-byte limit, and startup always
+  warns about it. Set `[agents] temp_root` to a short, absolute directory that
+  only you can write. If the default root cannot be used at all, agents keep
+  the daemon's temp directory and only a warning says so.
 
 - Images sent with a message are stored under `aether.attachments/` in the
   data directory and are never removed automatically, including when their

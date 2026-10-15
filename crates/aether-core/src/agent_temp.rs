@@ -5,10 +5,15 @@
 //! the random tail of the agent's id, so it greps against the id. Processes
 //! an agent starts get the leaf as `TMPDIR`, `TMP` and `TEMP`.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read as _, Write as _};
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
-use std::path::{Path, PathBuf};
+use std::os::fd::OwnedFd;
+use std::os::unix::fs::DirBuilderExt as _;
+use std::path::{Component, Path, PathBuf};
+
+use rustix::fs::{AtFlags, FileType, Mode, OFlags, Stat};
+use rustix::io::Errno;
 
 use crate::id::AgentId;
 
@@ -27,6 +32,12 @@ pub const PATH_BUDGET: usize = 50;
 
 /// An instance id is a short token; anything longer is not a marker we wrote.
 const MAX_MARKER_BYTES: u64 = 256;
+
+/// A directory opened this way is the directory itself, never a link to one.
+const DIR_FLAGS: OFlags = OFlags::RDONLY
+    .union(OFlags::DIRECTORY)
+    .union(OFlags::NOFOLLOW)
+    .union(OFlags::CLOEXEC);
 
 /// `<store directory>/t`, beside the store whose instance owns it.
 pub fn default_root(store: &Path) -> Option<PathBuf> {
@@ -58,61 +69,103 @@ pub fn leaf_path(root: &Path, agent: AgentId) -> PathBuf {
     root.join(leaf_name(agent))
 }
 
-/// Create `root` if missing, refuse it unless it is private to us, and claim
-/// it for `instance_id`. A root another instance claimed is refused.
-pub fn prepare_root(root: &Path, instance_id: &str) -> io::Result<()> {
-    debug_assert!(!instance_id.trim().is_empty(), "an instance id is required");
-    if !root.is_absolute() {
-        return Err(io::Error::new(
+/// `root` rebuilt from its components, so a trailing `/` or `.` cannot make a
+/// symlinked root pass for a directory. It must be absolute, UTF-8 and plain.
+pub fn normalize_root(root: &Path) -> io::Result<PathBuf> {
+    let invalid = |why: &str| {
+        io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("agents.temp_root {} is not absolute", root.display()),
-        ));
+            format!("agents.temp_root {} {why}", root.display()),
+        )
+    };
+    if root.to_str().is_none() {
+        return Err(invalid("is not valid UTF-8"));
     }
-    if let Some(parent) = root.parent() {
-        fs::create_dir_all(parent).map_err(|e| context(e, "cannot create", parent))?;
+    if !root.is_absolute() {
+        return Err(invalid("is not absolute"));
     }
-    create_private_dir(root).map_err(|e| context(e, "cannot create agents.temp_root", root))?;
-    let meta = fs::symlink_metadata(root).map_err(|e| context(e, "cannot inspect", root))?;
-    check_root(root, &meta, rustix::process::geteuid().as_raw())?;
-    claim_root(root, instance_id)
+    if root.components().any(|c| c == Component::ParentDir) {
+        return Err(invalid("must not contain `..`"));
+    }
+    let normalized: PathBuf = root.components().collect();
+    if normalized.parent().is_none() {
+        return Err(invalid("is the filesystem root"));
+    }
+    debug_assert!(normalized.is_absolute(), "{}", normalized.display());
+    debug_assert!(normalized.as_os_str().len() <= root.as_os_str().len());
+    Ok(normalized)
 }
 
-/// Refuse an existing `root` that is not private to us, creating and claiming
-/// nothing. A missing root passes: the daemon creates it.
-pub fn inspect_root(root: &Path) -> io::Result<()> {
-    match fs::symlink_metadata(root) {
-        Ok(meta) => check_root(root, &meta, rustix::process::geteuid().as_raw()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(context(error, "cannot inspect", root)),
+/// Create `root` if missing, refuse it unless it and its ancestors are safe,
+/// and claim it for `instance_id`. A root another instance claimed is refused.
+pub fn prepare_root(root: &Path, instance_id: &str) -> io::Result<()> {
+    debug_assert!(!instance_id.trim().is_empty(), "an instance id is required");
+    let root = normalize_root(root)?;
+    let uid = rustix::process::geteuid().as_raw();
+    check_ancestors(&root, uid)?;
+    if let Some(parent) = root.parent() {
+        // Ancestors made here are private, so the check above still holds.
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .map_err(|e| context(e, "cannot create", parent))?;
+    }
+    let dir = create_root(&root, uid)?;
+    claim_root(&dir, &root, instance_id)
+}
+
+/// Refuse a `root` the daemon would refuse, creating and claiming nothing. A
+/// missing root passes if it could be made; the claim is compared when known.
+pub fn inspect_root(root: &Path, instance_id: Option<&str>) -> io::Result<()> {
+    let root = normalize_root(root)?;
+    let uid = rustix::process::geteuid().as_raw();
+    check_ancestors(&root, uid)?;
+    let dir = match open_root(&root, uid) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return check_creatable(&root),
+        opened => opened?,
+    };
+    let claimed = match read_marker(&dir, &root) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        read => read?,
+    };
+    match instance_id {
+        Some(instance_id) if claimed.trim() != instance_id => {
+            Err(claimed_elsewhere(&root, &claimed))
+        }
+        _ => Ok(()),
     }
 }
 
 /// Create `leaf` if missing (recreating the root first if it went too), and
-/// refuse it unless it is a real 0700 directory we own.
+/// refuse it unless it is our own 0700 directory in a root this instance
+/// still holds. Everything is checked again on every call.
 pub fn ensure_leaf(leaf: &Path, instance_id: &str) -> io::Result<()> {
-    let root = leaf.parent().ok_or_else(|| {
-        io::Error::new(
+    let (Some(root), Some(name)) = (leaf.parent(), leaf.file_name()) else {
+        return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "an agent temp dir needs a root",
-        )
-    })?;
+        ));
+    };
     debug_assert!(
-        leaf.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(is_leaf_name),
+        name.to_str().is_some_and(is_leaf_name),
         "{} is not a leaf",
         leaf.display()
     );
-    let created = match create_private_dir(leaf) {
+    debug_assert!(!instance_id.trim().is_empty(), "an instance id is required");
+    let uid = rustix::process::geteuid().as_raw();
+    let dir = match open_root(root, uid) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             prepare_root(root, instance_id)?;
-            create_private_dir(leaf)
+            open_root(root, uid)?
         }
-        created => created,
+        opened => opened?,
     };
-    created.map_err(|e| context(e, "cannot create agent temp dir", leaf))?;
-    let meta = fs::symlink_metadata(leaf).map_err(|e| context(e, "cannot inspect", leaf))?;
-    check_leaf(leaf, &meta, rustix::process::geteuid().as_raw())
+    claim_root(&dir, root, instance_id)?;
+    create_leaf(&dir, leaf, name)?;
+    let stat = rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|e| context(e, "cannot inspect", leaf))?;
+    check_leaf(leaf, &stat, uid)
 }
 
 /// What to tell an operator about `root` before agents use it: a path too
@@ -166,102 +219,213 @@ fn volatile_filesystem(_path: &Path) -> io::Result<Option<&'static str>> {
     Ok(None)
 }
 
-/// Make `path` as a 0700 directory. One that already exists is left as it is
-/// for the caller to inspect; the mode is set only on what this call made.
-fn create_private_dir(path: &Path) -> io::Result<()> {
-    match fs::DirBuilder::new().mode(0o700).create(path) {
-        // The umask may have narrowed the mode below what the owner needs.
-        Ok(()) => fs::set_permissions(path, fs::Permissions::from_mode(0o700)),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(error),
+/// The nearest ancestor of `root` that exists, or may: one that cannot be
+/// inspected is returned so that the caller's own access reports why.
+fn nearest_ancestor(root: &Path) -> io::Result<&Path> {
+    root.ancestors()
+        .skip(1)
+        .find(|dir| !matches!(dir.try_exists(), Ok(false)))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("no ancestor of {} exists", root.display()),
+            )
+        })
+}
+
+/// Whoever can rename an ancestor of `root` can swap the root, so each one
+/// that exists, as written and as resolved, must be ours or root's.
+fn check_ancestors(root: &Path, uid: u32) -> io::Result<()> {
+    let existing = nearest_ancestor(root)?;
+    let resolved =
+        fs::canonicalize(existing).map_err(|e| context(e, "cannot resolve", existing))?;
+    debug_assert!(resolved.is_absolute(), "{}", resolved.display());
+    for dir in existing.ancestors().chain(resolved.ancestors()) {
+        let stat = rustix::fs::lstat(dir).map_err(|e| context(e, "cannot inspect", dir))?;
+        check_ancestor(root, dir, &stat, uid)?;
     }
+    Ok(())
+}
+
+/// One `dir` above `root`: a shared one needs the sticky bit, so that only
+/// an entry's owner can rename it.
+fn check_ancestor(root: &Path, dir: &Path, stat: &Stat, uid: u32) -> io::Result<()> {
+    let fix = "point agents.temp_root at a directory under parents only you or root can change";
+    if stat.st_uid != uid && stat.st_uid != 0 {
+        return Err(refused(format!(
+            "agents.temp_root {}: its parent {} is owned by uid {}, not {uid} or root; {fix}",
+            root.display(),
+            dir.display(),
+            stat.st_uid
+        )));
+    }
+    let mode = mode_bits(stat);
+    // A link's own mode means nothing; the directory holding it is checked too.
+    if file_type(stat) != FileType::Symlink && mode & 0o022 != 0 && mode & 0o1000 == 0 {
+        return Err(refused(format!(
+            "agents.temp_root {}: its parent {} is writable by group or others without the \
+             sticky bit (mode {mode:o}); {fix}",
+            root.display(),
+            dir.display()
+        )));
+    }
+    Ok(())
+}
+
+/// A missing root is made by the daemon, which needs to write and search its
+/// nearest existing ancestor.
+fn check_creatable(root: &Path) -> io::Result<()> {
+    let existing = nearest_ancestor(root)?;
+    rustix::fs::accessat(
+        rustix::fs::CWD,
+        existing,
+        rustix::fs::Access::WRITE_OK | rustix::fs::Access::EXEC_OK,
+        AtFlags::EACCESS,
+    )
+    .map_err(|e| context(e, "cannot create agents.temp_root under", existing))
+}
+
+/// Make `root` a 0700 directory if missing, then open it as `open_root`
+/// does. The mode is set only on what this call made.
+fn create_root(root: &Path, uid: u32) -> io::Result<OwnedFd> {
+    let created = match rustix::fs::mkdirat(rustix::fs::CWD, root, Mode::RWXU) {
+        Ok(()) => true,
+        Err(Errno::EXIST) => false,
+        Err(errno) => return Err(context(errno, "cannot create agents.temp_root", root)),
+    };
+    let dir = open_root(root, uid)?;
+    if created {
+        // The umask may have narrowed the mode below what the owner needs.
+        rustix::fs::fchmod(&dir, Mode::RWXU).map_err(|e| context(e, "cannot chmod", root))?;
+    }
+    Ok(dir)
+}
+
+/// Open `root` itself, never a link in its place, and refuse it unless it is
+/// private to us. A missing root is reported as `NotFound`.
+fn open_root(root: &Path, uid: u32) -> io::Result<OwnedFd> {
+    let dir = rustix::fs::open(root, DIR_FLAGS, Mode::empty()).map_err(|errno| match errno {
+        // What O_NOFOLLOW and O_DIRECTORY report for a link or a non-directory.
+        Errno::LOOP | Errno::NOTDIR | Errno::MLINK => not_a_directory(root),
+        errno => context(errno, "cannot open agents.temp_root", root),
+    })?;
+    let stat = rustix::fs::fstat(&dir).map_err(|e| context(e, "cannot inspect", root))?;
+    check_root(root, &stat, uid)?;
+    Ok(dir)
+}
+
+/// Make `name` a 0700 directory in the root `dir`. One that already exists
+/// is left as it is for the caller to inspect.
+fn create_leaf(dir: &OwnedFd, leaf: &Path, name: &OsStr) -> io::Result<()> {
+    match rustix::fs::mkdirat(dir, name, Mode::RWXU) {
+        Ok(()) => {}
+        Err(Errno::EXIST) => return Ok(()),
+        Err(errno) => return Err(context(errno, "cannot create agent temp dir", leaf)),
+    }
+    let created = rustix::fs::openat(dir, name, DIR_FLAGS, Mode::empty())
+        .map_err(|e| context(e, "cannot open", leaf))?;
+    // The umask may have narrowed the mode below what the owner needs.
+    rustix::fs::fchmod(&created, Mode::RWXU).map_err(|e| context(e, "cannot chmod", leaf))
 }
 
 /// A root is shared by every agent; anyone else able to write in it could
 /// plant or swap their directories.
-fn check_root(root: &Path, meta: &fs::Metadata, uid: u32) -> io::Result<()> {
+fn check_root(root: &Path, stat: &Stat, uid: u32) -> io::Result<()> {
     let fix = "point agents.temp_root at a private directory you own";
-    if meta.file_type().is_symlink() || !meta.is_dir() {
-        return Err(refused(format!(
-            "agents.temp_root {} is not a real directory; {fix}",
-            root.display()
-        )));
+    if file_type(stat) != FileType::Directory {
+        return Err(not_a_directory(root));
     }
-    if meta.uid() != uid {
+    if stat.st_uid != uid {
         return Err(refused(format!(
             "agents.temp_root {} is owned by uid {}, not {uid}; {fix}",
             root.display(),
-            meta.uid()
+            stat.st_uid
         )));
     }
-    if meta.mode() & 0o022 != 0 {
+    let mode = mode_bits(stat);
+    if mode & 0o022 != 0 {
         return Err(refused(format!(
-            "agents.temp_root {} is writable by group or others (mode {:o}); run `chmod go-w` \
+            "agents.temp_root {} is writable by group or others (mode {mode:o}); run `chmod go-w` \
              on it or {fix}",
-            root.display(),
-            meta.mode() & 0o7777
+            root.display()
         )));
     }
     Ok(())
 }
 
 /// A leaf is never adopted: anything but our own 0700 directory is refused.
-fn check_leaf(leaf: &Path, meta: &fs::Metadata, uid: u32) -> io::Result<()> {
+fn check_leaf(leaf: &Path, stat: &Stat, uid: u32) -> io::Result<()> {
     let fix = "remove it so Aether can recreate it";
-    if meta.file_type().is_symlink() || !meta.is_dir() {
+    if file_type(stat) != FileType::Directory {
         return Err(refused(format!(
             "agent temp dir {} is not a real directory; {fix}",
             leaf.display()
         )));
     }
-    if meta.uid() != uid {
+    if stat.st_uid != uid {
         return Err(refused(format!(
             "agent temp dir {} is owned by uid {}, not {uid}; {fix}",
             leaf.display(),
-            meta.uid()
+            stat.st_uid
         )));
     }
-    if meta.mode() & 0o777 != 0o700 {
+    if mode_bits(stat) & 0o777 != 0o700 {
         return Err(refused(format!(
             "agent temp dir {} has mode {:o}, not 700; {fix}",
             leaf.display(),
-            meta.mode() & 0o777
+            mode_bits(stat) & 0o777
         )));
     }
     Ok(())
 }
 
-/// Write the marker if absent; refuse a root another instance claimed.
-fn claim_root(root: &Path, instance_id: &str) -> io::Result<()> {
-    let marker = root.join(MARKER);
-    match crate::private_file::create_new(&marker) {
-        Ok(mut file) => {
-            file.write_all(instance_id.as_bytes())?;
-            return file.sync_all();
+/// Publish the marker if absent; refuse a root another instance claimed.
+fn claim_root(dir: &OwnedFd, root: &Path, instance_id: &str) -> io::Result<()> {
+    let claimed = match read_marker(dir, root) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            publish_marker(dir, root, instance_id)?
         }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(error) => return Err(context(error, "cannot write", &marker)),
-    }
-    let claimed = read_marker(&marker)?;
+        read => read?,
+    };
     if claimed.trim() == instance_id {
         return Ok(());
     }
-    Err(refused(format!(
-        "agents.temp_root {} is used by another Aether instance ({:?} in {}); give each \
-         instance its own agents.temp_root, or remove the marker if that instance is gone",
-        root.display(),
-        claimed.trim(),
-        marker.display()
-    )))
+    Err(claimed_elsewhere(root, &claimed))
 }
 
-fn read_marker(marker: &Path) -> io::Result<String> {
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-        .open(marker)
-        .map_err(|e| context(e, "cannot read", marker))?;
+/// Write the claim to a private file of our own and link it in as the
+/// marker, so no reader sees it half written. Returns the claim that landed.
+fn publish_marker(dir: &OwnedFd, root: &Path, instance_id: &str) -> io::Result<String> {
+    let staged = format!("{MARKER}.{}", ulid::Ulid::generate());
+    let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let fd = rustix::fs::openat(dir, staged.as_str(), flags, Mode::RUSR | Mode::WUSR)
+        .map_err(|e| context(e, "cannot create", &root.join(&staged)))?;
+    let mut file = fs::File::from(fd);
+    let published = file
+        .write_all(instance_id.as_bytes())
+        .and_then(|()| file.sync_all())
+        .and_then(|()| {
+            rustix::fs::linkat(dir, staged.as_str(), dir, MARKER, AtFlags::empty())
+                .map_err(io::Error::from)
+        });
+    rustix::fs::unlinkat(dir, staged.as_str(), AtFlags::empty())
+        .map_err(|e| context(e, "cannot remove", &root.join(&staged)))?;
+    match published {
+        Ok(()) => Ok(instance_id.to_owned()),
+        // Another claim landed first; it decides, whoever made it.
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => read_marker(dir, root),
+        Err(error) => Err(context(error, "cannot write", &root.join(MARKER))),
+    }
+}
+
+/// The claim in the marker of the root `dir`. Opening never blocks, so a
+/// FIFO planted as the marker is refused rather than waited on.
+fn read_marker(dir: &OwnedFd, root: &Path) -> io::Result<String> {
+    let marker = root.join(MARKER);
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let fd = rustix::fs::openat(dir, MARKER, flags, Mode::empty())
+        .map_err(|e| context(e, "cannot read", &marker))?;
+    let file = fs::File::from(fd);
     if !file.metadata()?.is_file() {
         return Err(refused(format!(
             "{} is not a regular file",
@@ -271,15 +435,46 @@ fn read_marker(marker: &Path) -> io::Result<String> {
     let mut claimed = String::new();
     file.take(MAX_MARKER_BYTES)
         .read_to_string(&mut claimed)
-        .map_err(|e| context(e, "cannot read", marker))?;
+        .map_err(|e| context(e, "cannot read", &marker))?;
     Ok(claimed)
+}
+
+fn claimed_elsewhere(root: &Path, claimed: &str) -> io::Error {
+    refused(format!(
+        "agents.temp_root {} is used by another Aether instance ({:?} in {}); give each \
+         instance its own agents.temp_root, or remove the marker if that instance is gone",
+        root.display(),
+        claimed.trim(),
+        root.join(MARKER).display()
+    ))
+}
+
+fn not_a_directory(root: &Path) -> io::Error {
+    refused(format!(
+        "agents.temp_root {} is not a real directory; point agents.temp_root at a private \
+         directory you own",
+        root.display()
+    ))
+}
+
+fn file_type(stat: &Stat) -> FileType {
+    FileType::from_raw_mode(stat.st_mode)
+}
+
+/// The permission bits, sticky bit included.
+fn mode_bits(stat: &Stat) -> u32 {
+    // `st_mode` is narrower than u32 on some platforms.
+    #[allow(clippy::unnecessary_cast)]
+    let mode = stat.st_mode as u32;
+    mode & 0o7777
 }
 
 fn refused(message: String) -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, message)
 }
 
-fn context(error: io::Error, what: &str, path: &Path) -> io::Error {
+fn context(error: impl Into<io::Error>, what: &str, path: &Path) -> io::Error {
+    let error = error.into();
     io::Error::new(error.kind(), format!("{what} {}: {error}", path.display()))
 }
 

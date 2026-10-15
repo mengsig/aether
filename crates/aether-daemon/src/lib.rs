@@ -299,7 +299,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             delegated_workspace_root: Some(
                 config.store_path.with_extension("delegated-workspaces"),
             ),
-            agent_temp_root: Some(agent_temp_root),
+            agent_temp_root,
             bridge: std::env::current_exe()
                 .ok()
                 .map(|command| aether_runtime::BridgeConfig {

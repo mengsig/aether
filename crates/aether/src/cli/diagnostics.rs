@@ -91,6 +91,7 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
         doctor::check_agent_temp(
             &paths,
             config.as_ref().and_then(|c| c.agents.temp_root.as_deref()),
+            status.as_ref().map(|s| s.instance_id.as_str()),
         ),
         doctor::check_logs(&crate::logging::log_file("aetherd.log")),
         providers,

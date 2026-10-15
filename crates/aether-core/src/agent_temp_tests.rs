@@ -1,3 +1,4 @@
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::Path;
 
 use super::*;
@@ -84,11 +85,12 @@ fn an_unsafe_root_is_refused() {
     );
     assert_eq!(mode(&shared), 0o777, "an existing root is never chmodded");
 
-    let meta = fs::symlink_metadata(&real).expect("metadata");
-    let error = check_root(&real, &meta, our_uid() + 1).expect_err("foreign owner");
+    let stat = rustix::fs::lstat(&real).expect("stat");
+    let error = check_root(&real, &stat, our_uid() + 1).expect_err("foreign owner");
     assert!(error.to_string().contains("is owned by uid"), "{error}");
-    assert!(inspect_root(&link).is_err() && inspect_root(&shared).is_err());
-    assert!(inspect_root(&real).is_ok() && inspect_root(&dir.path().join("absent")).is_ok());
+    assert!(inspect_root(&link, None).is_err() && inspect_root(&shared, None).is_err());
+    assert!(inspect_root(&real, None).is_ok());
+    assert!(inspect_root(&dir.path().join("absent"), None).is_ok());
     let marker_dir = dir.path().join("marked");
     fs::create_dir(&marker_dir).expect("marked");
     fs::create_dir(marker_dir.join(MARKER)).expect("marker dir");
@@ -155,8 +157,8 @@ fn a_leaf_that_is_not_our_private_directory_is_refused() {
 
     let ours = leaf_path(&root, AgentId::new());
     ensure_leaf(&ours, "instance-a").expect("create");
-    let meta = fs::symlink_metadata(&ours).expect("metadata");
-    let error = check_leaf(&ours, &meta, our_uid() + 1).expect_err("foreign owner");
+    let stat = rustix::fs::lstat(&ours).expect("stat");
+    let error = check_leaf(&ours, &stat, our_uid() + 1).expect_err("foreign owner");
     assert!(error.to_string().contains("is owned by uid"), "{error}");
 }
 
@@ -199,5 +201,176 @@ fn a_root_held_in_memory_warns() {
         warned.iter().any(|w| w.contains("tmpfs")),
         tmpfs,
         "{warned:?}"
+    );
+}
+
+#[test]
+fn a_root_swapped_after_startup_is_refused() {
+    let dir = tempfile::tempdir().expect("dir");
+    let root = dir.path().join("t");
+    prepare_root(&root, "instance-a").expect("prepare");
+    ensure_leaf(&leaf_path(&root, AgentId::new()), "instance-a").expect("leaf");
+
+    let elsewhere = dir.path().join("elsewhere");
+    fs::rename(&root, &elsewhere).expect("move the root away");
+    std::os::unix::fs::symlink(&elsewhere, &root).expect("symlink");
+    let leaf = leaf_path(&root, AgentId::new());
+    let error = ensure_leaf(&leaf, "instance-a").expect_err("symlinked root");
+    assert!(
+        error.to_string().contains("not a real directory"),
+        "{error}"
+    );
+    assert!(!elsewhere.join(leaf_name_of(&leaf)).exists());
+
+    fs::remove_file(&root).expect("unlink");
+    let foreign = dir.path().join("foreign");
+    prepare_root(&foreign, "instance-b").expect("another instance's root");
+    fs::rename(&foreign, &root).expect("swap in");
+    let error = ensure_leaf(&leaf, "instance-a").expect_err("foreign root");
+    assert!(
+        error
+            .to_string()
+            .contains("used by another Aether instance"),
+        "{error}"
+    );
+    assert!(!leaf.exists(), "nothing is created in a foreign root");
+}
+
+fn leaf_name_of(leaf: &Path) -> &std::ffi::OsStr {
+    leaf.file_name().expect("leaf name")
+}
+
+#[test]
+fn a_trailing_slash_does_not_hide_a_symlinked_root() {
+    let dir = tempfile::tempdir().expect("dir");
+    let real = dir.path().join("real");
+    fs::create_dir(&real).expect("real");
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o700)).expect("chmod");
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).expect("symlink");
+    for spelled in ["link/", "link/.", "link//"] {
+        let root = dir.path().join(spelled);
+        let error = prepare_root(&root, "instance-a").expect_err(spelled);
+        assert!(
+            error.to_string().contains("not a real directory"),
+            "{spelled}: {error}"
+        );
+    }
+    assert!(!real.join(MARKER).exists());
+}
+
+#[test]
+fn a_root_under_a_shared_parent_needs_the_sticky_bit() {
+    let dir = tempfile::tempdir().expect("dir");
+    let open = dir.path().join("open");
+    fs::create_dir(&open).expect("open");
+    fs::set_permissions(&open, fs::Permissions::from_mode(0o777)).expect("chmod");
+    let error = prepare_root(&open.join("t"), "instance-a").expect_err("non-sticky parent");
+    assert!(error.to_string().contains("sticky"), "{error}");
+    assert!(!open.join("t").exists(), "nothing is created under it");
+
+    let nested = open.join("a/b");
+    fs::create_dir_all(&nested).expect("nested");
+    fs::set_permissions(open.join("a"), fs::Permissions::from_mode(0o700)).expect("chmod");
+    assert!(prepare_root(&nested.join("t"), "instance-a").is_err());
+
+    fs::set_permissions(&open, fs::Permissions::from_mode(0o1777)).expect("sticky");
+    prepare_root(&open.join("t"), "instance-a").expect("a sticky parent is fine");
+}
+
+#[test]
+fn racing_claims_on_a_fresh_root_all_agree() {
+    const THREADS: usize = 16;
+    let dir = tempfile::tempdir().expect("dir");
+    for round in 0..20 {
+        let root = dir.path().join(format!("t{round}"));
+        let barrier = std::sync::Barrier::new(THREADS);
+        std::thread::scope(|scope| {
+            let racers: Vec<_> = (0..THREADS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let leaf = leaf_path(&root, AgentId::new());
+                        barrier.wait();
+                        ensure_leaf(&leaf, "instance-a")
+                    })
+                })
+                .collect();
+            for racer in racers {
+                racer.join().expect("join").expect("every racer claims");
+            }
+        });
+        let names: Vec<_> = fs::read_dir(&root)
+            .expect("root")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(names.len(), THREADS + 1, "{names:?}");
+        assert_eq!(
+            fs::read_to_string(root.join(MARKER)).expect("marker"),
+            "instance-a"
+        );
+    }
+}
+
+#[test]
+fn a_fifo_marker_is_refused_without_blocking() {
+    let dir = tempfile::tempdir().expect("dir");
+    let root = dir.path().join("t");
+    fs::create_dir(&root).expect("root");
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).expect("chmod");
+    let status = std::process::Command::new("mkfifo")
+        .arg(root.join(MARKER))
+        .status()
+        .expect("mkfifo");
+    assert!(status.success());
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let probe = root.clone();
+    std::thread::spawn(move || sender.send(prepare_root(&probe, "instance-a")));
+    let claimed = receiver
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("a FIFO marker must not block the claim");
+    let error = claimed.expect_err("a FIFO is not a marker");
+    assert!(error.to_string().contains("not a regular file"), "{error}");
+}
+
+#[test]
+fn a_root_is_normalized_from_its_components() {
+    assert_eq!(
+        normalize_root(Path::new("/srv//at/./t/")).expect("plain"),
+        PathBuf::from("/srv/at/t")
+    );
+    for bad in ["relative/t", "/srv/../t", "/", "//"] {
+        assert!(normalize_root(Path::new(bad)).is_err(), "{bad}");
+    }
+    use std::os::unix::ffi::OsStrExt as _;
+    let latin1 = Path::new(std::ffi::OsStr::from_bytes(b"/srv/\xe9t\xe9"));
+    let error = normalize_root(latin1).expect_err("not UTF-8");
+    assert!(error.to_string().contains("UTF-8"), "{error}");
+}
+
+#[test]
+fn inspecting_a_root_reports_what_preparing_it_would_refuse() {
+    let dir = tempfile::tempdir().expect("dir");
+    let root = dir.path().join("t");
+    prepare_root(&root, "instance-a").expect("prepare");
+    inspect_root(&root, Some("instance-a")).expect("our own claim");
+    let error = inspect_root(&root, Some("instance-b")).expect_err("another claim");
+    assert!(
+        error
+            .to_string()
+            .contains("used by another Aether instance"),
+        "{error}"
+    );
+
+    let locked = dir.path().join("locked");
+    fs::create_dir(&locked).expect("locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).expect("chmod");
+    let inspected = inspect_root(&locked.join("t"), None);
+    let prepared = prepare_root(&locked.join("t"), "instance-a");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).expect("chmod");
+    // A superuser writes there regardless, and then both pass.
+    assert_eq!(
+        inspected.is_err(),
+        prepared.is_err(),
+        "{inspected:?} {prepared:?}"
     );
 }

@@ -218,10 +218,11 @@ Each engine run gets the agent's own temp directory (see
   `claude-<uid>` subdirectory inside that directory. Network-denied runs are
   sandboxed, and their sandbox may also write to the agent's temp directory.
 - **Codex** gets the variables in the app-server's environment, the loopback
-  sandbox's environment, and `shell_environment_policy.set`. That way its
-  commands get them even when the operator's policy would not pass them
-  through. The directory is also added to the workspace-write sandbox's
-  writable roots.
+  sandbox's environment, and `shell_environment_policy.set`. Codex applies
+  `include_only` after `set`, so if your `shell_environment_policy` allowlists
+  variables, add `TMPDIR`, `TMP` and `TEMP` to it or its commands will not get
+  them. Aether does not add include filters itself. The directory is also added
+  to the workspace-write sandbox's writable roots.
 - **Container backends** keep the container's own `/tmp`.
 
 ## Codex credentials and trust boundary

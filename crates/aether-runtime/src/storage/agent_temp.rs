@@ -1,13 +1,24 @@
 //! What the agents' temp dirs hold. Reported only; nothing is removed yet.
 
+use std::ffi::CString;
+use std::io;
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::{fs, io};
+use std::rc::Rc;
+
+use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags};
 
 use serde::Serialize;
 
 use super::{MAX_ENTRIES, read_directory};
 
 const POLICY: &str = "reported only; agent temp dirs are not cleaned up yet";
+
+/// A directory opened this way is the directory itself, never a link to one.
+const DIR_FLAGS: OFlags = OFlags::RDONLY
+    .union(OFlags::DIRECTORY)
+    .union(OFlags::NOFOLLOW)
+    .union(OFlags::CLOEXEC);
 
 #[derive(Debug, Serialize)]
 pub(super) struct AgentTempReport {
@@ -59,31 +70,79 @@ pub(super) fn report(root: &Path) -> io::Result<AgentTempReport> {
     Ok(report)
 }
 
+/// A directory still to walk: its name in the already open `parent`.
+type Pending = (Rc<OwnedFd>, CString);
+
 /// Add the file bytes under `leaf` to `report`, spending one unit of
-/// `budget` per entry, without following symlinks.
+/// `budget` per entry. Each directory is opened relative to its parent
+/// without following links, so a link swapped in mid-walk is never entered.
 fn add_tree(leaf: &Path, report: &mut AgentTempReport, budget: &mut usize) {
-    let mut pending = vec![leaf.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let Some(entries) = report.readable(fs::read_dir(&dir)) else {
+    let opened = rustix::fs::open(leaf, DIR_FLAGS, Mode::empty()).map_err(io::Error::from);
+    let Some(dir) = report.readable(opened) else {
+        return;
+    };
+    let mut pending = Vec::new();
+    let mut dir = Rc::new(dir);
+    loop {
+        if !add_entries(&dir, &mut pending, report, budget) {
+            return;
+        }
+        dir = loop {
+            let Some((parent, name)) = pending.pop() else {
+                return;
+            };
+            let opened = rustix::fs::openat(&*parent, &name, DIR_FLAGS, Mode::empty());
+            if let Some(next) = report.readable(opened.map_err(io::Error::from)) {
+                break Rc::new(next);
+            }
+        };
+    }
+}
+
+/// Count the files directly in `dir` and queue its subdirectories. False
+/// once the budget is spent.
+fn add_entries(
+    dir: &Rc<OwnedFd>,
+    pending: &mut Vec<Pending>,
+    report: &mut AgentTempReport,
+    budget: &mut usize,
+) -> bool {
+    let Some(entries) = report.readable(Dir::read_from(&**dir).map_err(io::Error::from)) else {
+        return true;
+    };
+    for entry in entries {
+        let Some(entry) = report.readable(entry.map_err(io::Error::from)) else {
             continue;
         };
-        for entry in entries {
-            if *budget == 0 {
-                report.truncated = true;
-                return;
+        let name = entry.file_name();
+        if name == c"." || name == c".." {
+            continue;
+        }
+        if *budget == 0 {
+            report.truncated = true;
+            return false;
+        }
+        *budget -= 1;
+        // `d_type` describes the entry itself; only an unknown one needs a stat.
+        let kind = match entry.file_type() {
+            FileType::Unknown | FileType::RegularFile => {
+                let stat = rustix::fs::statat(&**dir, name, AtFlags::SYMLINK_NOFOLLOW);
+                let Some(stat) = report.readable(stat.map_err(io::Error::from)) else {
+                    continue;
+                };
+                let kind = FileType::from_raw_mode(stat.st_mode);
+                if kind == FileType::RegularFile {
+                    report.bytes += u64::try_from(stat.st_size).unwrap_or(0);
+                }
+                kind
             }
-            *budget -= 1;
-            let found = entry.and_then(|entry| Ok((entry.path(), entry.metadata()?)));
-            let Some((path, meta)) = report.readable(found) else {
-                continue;
-            };
-            if meta.is_dir() {
-                pending.push(path);
-            } else if meta.is_file() {
-                report.bytes += meta.len();
-            }
+            kind => kind,
+        };
+        if kind == FileType::Directory {
+            pending.push((Rc::clone(dir), name.to_owned()));
         }
     }
+    true
 }
 
 impl AgentTempReport {
@@ -103,6 +162,8 @@ impl AgentTempReport {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -124,6 +185,7 @@ mod tests {
         fs::write(root.join("not-a-leaf/c"), [0u8; 1000]).unwrap();
         std::os::unix::fs::symlink(root.join("not-a-leaf"), root.join("0123456789AD")).unwrap();
         std::os::unix::fs::symlink(root.join("not-a-leaf/c"), leaf.join("link")).unwrap();
+        std::os::unix::fs::symlink(root.join("not-a-leaf"), leaf.join("dir-link")).unwrap();
 
         let counted = report(&root).unwrap();
         assert_eq!(counted.bytes, 123);
