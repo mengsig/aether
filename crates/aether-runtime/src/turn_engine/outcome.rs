@@ -1,7 +1,8 @@
 //! Native engine outcome.
 use super::{
-    Arc, Commit, Crossed, EngineKind, EventKind, Invocation, InvocationId, InvocationSnapshot,
-    ModelErrorClass, Mutation, Next, Park, Result, Runtime, TurnCtx, Usage, now,
+    Arc, Commit, ContentBlock, Crossed, EngineKind, EventKind, Invocation, InvocationId,
+    InvocationSnapshot, ModelErrorClass, Mutation, Next, Park, Result, Runtime, TurnCtx, Usage,
+    now,
 };
 
 /// The engine ended the turn without running the model, so the prompt went
@@ -104,6 +105,14 @@ pub(super) fn engine_verdict(
     }
 }
 
+/// What streamed for a message the engine never committed, under the id
+/// its deltas carried, so a failure record can keep what was shown live.
+#[derive(Debug, Default)]
+pub(super) struct Uncommitted {
+    pub(super) invocation: Option<InvocationId>,
+    pub(super) content: Vec<ContentBlock>,
+}
+
 pub(super) fn record_engine_failure(
     runtime: &Runtime,
     ctx: &TurnCtx,
@@ -111,9 +120,10 @@ pub(super) fn record_engine_failure(
     error: &str,
     class: ModelErrorClass,
     retryable: bool,
+    partial: Uncommitted,
 ) -> Result<()> {
     runtime.apply(engine_failure_commit(
-        ctx, snapshot, error, class, retryable,
+        ctx, snapshot, error, class, retryable, partial,
     ))?;
     Ok(())
 }
@@ -129,7 +139,8 @@ pub(super) fn record_engine_incident(
     let class = crate::exhaustion::engine_error_class(detail.unwrap_or("unknown error"));
     crate::scheduler::record_error(runtime, &snapshot.model.provider, class);
     let hold = runtime.hold();
-    let mut commit = engine_failure_commit(ctx, snapshot, &error, class, false);
+    let mut commit =
+        engine_failure_commit(ctx, snapshot, &error, class, false, Uncommitted::default());
     crate::exhaustion::record_incident(
         runtime,
         &hold,
@@ -149,17 +160,24 @@ fn engine_failure_commit(
     error: &str,
     class: ModelErrorClass,
     retryable: bool,
+    partial: Uncommitted,
 ) -> Commit {
+    debug_assert_eq!(snapshot.agent_id, ctx.agent.id, "another agent's snapshot");
+    debug_assert!(
+        partial.content.is_empty() || partial.invocation.is_some(),
+        "a partial without the id its deltas streamed under would show twice"
+    );
     let at = now();
     let invocation = Invocation {
-        id: InvocationId::new(),
+        // With no streamed message to retire, `Default` mints a fresh id.
+        id: partial.invocation.unwrap_or_default(),
         snapshot_id: snapshot.id,
         agent_id: ctx.agent.id,
         turn: ctx.turn,
         model: snapshot.model.clone(),
         started_at: at,
         finished_at: Some(at),
-        content: Vec::new(),
+        content: partial.content.clone(),
         usage: Usage::default(),
         stop_reason: None,
         error: Some(error.into()),
@@ -173,7 +191,7 @@ fn engine_failure_commit(
             class: Some(class),
             retryable,
             cancelled: false,
-            partial: Vec::new(),
+            partial: partial.content,
         }))
         .mutate(Mutation::PutInvocation(invocation))
 }

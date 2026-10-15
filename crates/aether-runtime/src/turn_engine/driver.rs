@@ -5,8 +5,8 @@ use super::{
     GateSubject, InvocationSnapshot, MAX_BACKGROUND_IDS, MAX_ENGINE_NAME, MessageRole, Park,
     PermissionDecision, REFUSAL_GRACE, ReapGrace, ResolvedModel, Result, Runtime, STEER_GRACE,
     Served, Steering, StreamState, SubtreeUsage, TURN_IS_OVER, ToolContext, ToolEffects, TurnCtx,
-    TurnPricing, Usage, Verdict, answer_question, budget_crossed, budget_outcome, clamp,
-    disallowed_native_spawn_tool, gated_call, handle_event, handle_request, json, mpsc,
+    TurnPricing, Uncommitted, Usage, Verdict, answer_question, budget_crossed, budget_outcome,
+    clamp, disallowed_native_spawn_tool, gated_call, handle_event, handle_request, json, mpsc,
     names_exhaustion, park_grace, permission_verdict, raise_to, record_consumed,
     record_refused_call, refusal, side_effect_of, start_park, steer, stop_for_crossing, stopping,
 };
@@ -46,6 +46,9 @@ pub(super) struct DriveResult {
     /// The failed run's process was seen to exit, or never started: its
     /// session is free for another run to resume.
     pub(super) cleaned_up: bool,
+    /// Streamed after the engine's last committed message; shown live, so a
+    /// failure record keeps it.
+    pub(super) uncommitted: Uncommitted,
 }
 
 fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
@@ -127,6 +130,7 @@ fn failed_launch(
         budget_stop: None,
         pricing,
         cleaned_up: true,
+        uncommitted: Uncommitted::default(),
     }
 }
 
@@ -711,6 +715,10 @@ pub(super) async fn drive(
     if let Some(park) = park.as_mut() {
         park.disarm();
     }
+    let uncommitted = Uncommitted {
+        invocation: Some(state.message_invocation),
+        content: state.take_partial(),
+    };
     // Under the id of a message left uncommitted, if any: its streamed text
     // stays live until the interrupt or failure that ends the turn keeps it.
     runtime.bus.publish_delta(
@@ -736,6 +744,7 @@ pub(super) async fn drive(
         budget_stop,
         pricing: state.pricing,
         cleaned_up,
+        uncommitted,
     })
 }
 

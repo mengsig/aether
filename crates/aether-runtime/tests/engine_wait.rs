@@ -534,3 +534,6 @@ mod budgets;
 
 #[path = "engine_wait/accounting.rs"]
 mod accounting;
+
+#[path = "engine_wait/stream_failure.rs"]
+mod stream_failure;

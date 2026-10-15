@@ -565,6 +565,69 @@ async fn streaming_reasoning_is_bounded_on_utf8_boundaries_with_one_note() {
 }
 
 #[tokio::test]
+async fn streamed_text_is_kept_bounded_until_its_message_commits() {
+    let (runtime, _dir) = test_runtime(|_| {}).await;
+    let mut ctx = started_agent_ctx(&runtime).await;
+    let snapshot = bare_snapshot(ctx.agent.id);
+    let mut state = StreamState::new(
+        TurnPricing::default(),
+        configured(&runtime, "codex/default"),
+    );
+    let text_delta = |text: &str| {
+        EngineEvent::Delta(StreamEvent::TextDelta {
+            index: 0,
+            text: text.into(),
+        })
+    };
+    let text = "é".repeat(2 * 1024 * 1024 + 1);
+    for _ in 0..3 {
+        handle_event(&runtime, &mut ctx, &snapshot, text_delta(&text), &mut state).unwrap();
+    }
+    assert_eq!(state.text.len(), 4 * 1024 * 1024);
+    assert!(state.text.ends_with('é'));
+    let notes = runtime
+        .store
+        .events(0, 100, &EventFilter::own_events(ctx.agent.id))
+        .unwrap()
+        .into_iter()
+        .filter(|event| {
+            matches!(&event.kind, EventKind::Custom { name, payload }
+                if name == "engine.protocol_note"
+                    && payload["note"].as_str().unwrap().contains("streamed text"))
+        })
+        .count();
+    assert_eq!(notes, 1);
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        assistant_saying("done"),
+        &mut state,
+    )
+    .unwrap();
+    assert!(state.text.is_empty(), "a committed message is no partial");
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        text_delta("next"),
+        &mut state,
+    )
+    .unwrap();
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        thinking_delta(" "),
+        &mut state,
+    )
+    .unwrap();
+    assert_eq!(state.take_partial(), vec![ContentBlock::text("next")]);
+    assert!(state.text.is_empty() && state.thinking.is_empty());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn engine_context_occupancy_saturates_large_provider_counters() {
     let (runtime, _dir) = test_runtime(|_| {}).await;
     let mut ctx = started_agent_ctx(&runtime).await;

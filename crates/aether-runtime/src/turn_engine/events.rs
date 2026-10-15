@@ -69,6 +69,10 @@ pub(super) struct StreamState {
     /// only as deltas, so its commit carries none unless folded in from here.
     pub(super) thinking: String,
     thinking_truncated: bool,
+    /// Text streamed for the in-flight message, kept for a failure record
+    /// if the engine never commits it.
+    pub(super) text: String,
+    text_truncated: bool,
 }
 
 impl StreamState {
@@ -96,14 +100,75 @@ impl StreamState {
             message_invocation: InvocationId::new(),
             thinking: String::new(),
             thinking_truncated: false,
+            text: String::new(),
+            text_truncated: false,
         }
     }
+
+    /// Keep streamed reasoning; true only the first time the cap drops some.
+    fn keep_thinking(&mut self, text: &str) -> bool {
+        push_capped(&mut self.thinking, text)
+            && !std::mem::replace(&mut self.thinking_truncated, true)
+    }
+
+    /// Keep streamed text; true only the first time the cap drops some.
+    fn keep_text(&mut self, text: &str) -> bool {
+        push_capped(&mut self.text, text) && !std::mem::replace(&mut self.text_truncated, true)
+    }
+
+    /// The in-flight message is committed: its streamed text is on the record,
+    /// and its thinking is returned to fold into the commit.
+    fn take_for_commit(&mut self) -> String {
+        // A buffer the cap cut is full to within one character.
+        debug_assert!(!self.thinking_truncated || self.thinking.len() + 4 > MAX_STREAMED_BYTES);
+        debug_assert!(!self.text_truncated || self.text.len() + 4 > MAX_STREAMED_BYTES);
+        self.text.clear();
+        self.text_truncated = false;
+        self.thinking_truncated = false;
+        std::mem::take(&mut self.thinking)
+    }
+
+    /// What streamed for a message the engine never committed, as the blocks
+    /// a failed invocation records. Leaves the stream empty.
+    pub(super) fn take_partial(&mut self) -> Vec<ContentBlock> {
+        debug_assert!(self.text.len() <= MAX_STREAMED_BYTES);
+        let text = std::mem::take(&mut self.text);
+        let thinking = self.take_for_commit();
+        debug_assert!(self.text.is_empty() && self.thinking.is_empty());
+        let mut partial = Vec::new();
+        if !thinking.trim().is_empty() {
+            // Unsigned, as on commit: kept for the record, never replayed.
+            partial.push(ContentBlock::Thinking {
+                text: thinking,
+                signature: None,
+                redacted: false,
+            });
+        }
+        if !text.trim().is_empty() {
+            partial.push(ContentBlock::text(text));
+        }
+        partial
+    }
+}
+
+/// Append `text` up to the per-message cap, on a character boundary. True
+/// when some of it was dropped.
+fn push_capped(buf: &mut String, text: &str) -> bool {
+    let remaining = MAX_STREAMED_BYTES.saturating_sub(buf.len());
+    let mut end = remaining.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    buf.push_str(&text[..end]);
+    debug_assert!(buf.len() <= MAX_STREAMED_BYTES);
+    debug_assert!(end <= text.len());
+    end < text.len()
 }
 
 /// Protocol notes one turn may put on the record, and how much of one is
 /// kept. Both bounds are on the engine's own text, which is untrusted.
 const MAX_PROTOCOL_NOTES: u32 = 8;
-const MAX_THINKING_BYTES: usize = 4 * 1024 * 1024;
+const MAX_STREAMED_BYTES: usize = 4 * 1024 * 1024;
 
 const PROTOCOL_NOTE_CHARS: usize = 300;
 
@@ -206,17 +271,18 @@ pub(super) fn handle_event(
                     if !text.trim().is_empty() {
                         ctx.user_reply_pending = false;
                     }
+                    if state.keep_text(&text) {
+                        protocol_note(
+                            runtime,
+                            ctx,
+                            state,
+                            "streamed text exceeded 4 MiB; its failure record copy was truncated",
+                        )?;
+                    }
                     Some(DeltaKind::Text { text })
                 }
                 StreamEvent::ThinkingDelta { text, .. } => {
-                    let remaining = MAX_THINKING_BYTES.saturating_sub(state.thinking.len());
-                    let mut end = remaining.min(text.len());
-                    while !text.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    state.thinking.push_str(&text[..end]);
-                    if end < text.len() && !state.thinking_truncated {
-                        state.thinking_truncated = true;
+                    if state.keep_thinking(&text) {
                         protocol_note(
                             runtime,
                             ctx,
@@ -256,8 +322,7 @@ pub(super) fn handle_event(
             usage,
             model: _,
         } => {
-            let thinking = std::mem::take(&mut state.thinking);
-            state.thinking_truncated = false;
+            let thinking = state.take_for_commit();
             if !thinking.trim().is_empty()
                 && !content
                     .iter()

@@ -137,7 +137,9 @@ use accounting::{
 mod execution;
 pub(crate) use execution::execute;
 mod outcome;
-use outcome::{EngineVerdict, engine_verdict, record_engine_failure, record_unanswered_prompt};
+use outcome::{
+    EngineVerdict, Uncommitted, engine_verdict, record_engine_failure, record_unanswered_prompt,
+};
 mod driver;
 mod native_wait;
 mod transient;

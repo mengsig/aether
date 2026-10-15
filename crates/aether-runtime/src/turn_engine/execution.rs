@@ -6,9 +6,10 @@ use super::{
     EngineTurnHandle, EngineVerdict, EventKind, MAX_ENGINE_ERROR, McpBridge, MessageRole,
     ModelResponse, Mutation, Next, PROTOCOL_NOTE_EVENT, ResolvedModel, Result, Runtime,
     RuntimeError, SHRUNK_CLOSING_USAGE, SubtreeUsage, Task, TaskFilter, ToolEffects, ToolSpec,
-    TurnCtx, Usage, budget_crossed, clamp, contract, drive, engine_kind, engine_verdict, json,
-    mpsc, names_exhaustion, now, prose_only_next, raise_to, recompute_snapshot_accounting,
-    record_engine_failure, record_park, record_unanswered_prompt, tool_context,
+    TurnCtx, Uncommitted, Usage, budget_crossed, clamp, contract, drive, engine_kind,
+    engine_verdict, json, mpsc, names_exhaustion, now, prose_only_next, raise_to,
+    recompute_snapshot_accounting, record_engine_failure, record_park, record_unanswered_prompt,
+    tool_context,
 };
 
 pub(crate) async fn execute(
@@ -386,7 +387,16 @@ pub(crate) async fn execute(
             break run;
         }
         let error = engine_failure_text(engine.kind(), run.outcome.error.as_deref());
-        record_engine_failure(runtime, ctx, &snapshot, &error, class, true)?;
+        // Not this run's partial: a retry streams anew, and only the terminal record keeps one.
+        record_engine_failure(
+            runtime,
+            ctx,
+            &snapshot,
+            &error,
+            class,
+            true,
+            Uncommitted::default(),
+        )?;
         let failure = super::transient::Failure {
             engine: engine.kind(),
             class,
@@ -471,6 +481,7 @@ pub(crate) async fn execute(
         invoked,
         ran_tools,
         budget_stop,
+        uncommitted,
         ..
     } = run;
 
@@ -577,7 +588,7 @@ pub(crate) async fn execute(
         let class = crate::exhaustion::engine_error_class(
             outcome.error.as_deref().unwrap_or("unknown error"),
         );
-        record_engine_failure(runtime, ctx, &snapshot, &error, class, false)?;
+        record_engine_failure(runtime, ctx, &snapshot, &error, class, false, uncommitted)?;
         if crate::exhaustion::recoverable_by_fallback(class) {
             return Ok(EngineLink::Exhausted { class, error });
         }
@@ -943,5 +954,6 @@ pub(super) fn test_run() -> DriveResult {
         budget_stop: None,
         pricing: super::TurnPricing::default(),
         cleaned_up: true,
+        uncommitted: Uncommitted::default(),
     }
 }
