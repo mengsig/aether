@@ -327,7 +327,7 @@ fn an_agents_latest_event_of_one_type_is_a_seek() {
     filter.types = vec!["agent.message".into()];
     let mut args = Vec::new();
     let predicate = super::event_queries::filter_predicate(&filter, &mut args);
-    let sql = super::event_queries::page_sql(&predicate, 0, None, 1, false, &mut args);
+    let sql = super::event_queries::page_sql("body", &predicate, 0, None, 1, false, &mut args);
     let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|arg| arg.as_ref()).collect();
     let conn = store.conn.lock();
     let plan: Vec<String> = conn
@@ -497,7 +497,7 @@ fn before_cursor_uses_the_agent_sequence_index() {
     let mut args = Vec::new();
     let predicate =
         super::event_queries::filter_predicate(&EventFilter::own_events(AgentId::new()), &mut args);
-    let sql = super::event_queries::page_sql(&predicate, 0, Some(123), 5, false, &mut args);
+    let sql = super::event_queries::page_sql("body", &predicate, 0, Some(123), 5, false, &mut args);
     let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
     let conn = store.conn.lock();
     let plan: Vec<String> = conn

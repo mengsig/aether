@@ -834,7 +834,10 @@ fn v22_feedback_migration_preserves_v21_memories_and_saves_a_readable_backup() {
     assert_eq!(version(&v21), 21);
     drop(v21);
     let store = crate::SqliteStore::open(&path).unwrap();
-    assert_eq!(store.meta("schema_version").unwrap(), Some("22".into()));
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some(SCHEMA_VERSION.to_string())
+    );
     assert_eq!(store.memory(record.id).unwrap(), Some(record.clone()));
     let connection = Connection::open(&path).unwrap();
     assert_feedback_columns(&connection);
@@ -855,7 +858,7 @@ fn v22_feedback_migration_preserves_v21_memories_and_saves_a_readable_backup() {
     assert!(matches!(
         refuse_newer_store(current_version(&conn).unwrap(), 21),
         Err(StoreError::SchemaTooNew {
-            found: 22,
+            found: SCHEMA_VERSION,
             supported: 21
         })
     ));
@@ -869,7 +872,7 @@ fn v22_feedback_migration_preserves_v21_memories_and_saves_a_readable_backup() {
             .file_name()
             .unwrap()
             .to_string_lossy()
-            .starts_with("schema-21-before-22-")
+            .starts_with(&format!("schema-21-before-{SCHEMA_VERSION}-"))
     );
     assert_feedback_backup(&backups[0], &record);
 }
@@ -907,7 +910,7 @@ fn assert_feedback_columns(conn: &Connection) {
 fn fresh_v22_feedback_requires_valid_ranking_columns() {
     let conn = Connection::open_in_memory().unwrap();
     migrate(&conn).unwrap();
-    assert_eq!(version(&conn), 22);
+    assert_eq!(version(&conn), SCHEMA_VERSION);
     assert_feedback_columns(&conn);
     let sql = "INSERT INTO memory_feedback
         (id, memory_id, task_id, verdict, evidence, created_at, body)
@@ -928,5 +931,40 @@ fn fresh_v22_feedback_requires_valid_ranking_columns() {
     assert_eq!(
         conn.execute(sql, ["task", "neutral", "outcome"]).unwrap(),
         1
+    );
+}
+
+#[test]
+fn a_v22_store_gains_the_creation_order_listing_indexes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let v22 = database_at(&path, 22);
+    let indexes = |conn: &Connection| -> Vec<String> {
+        conn.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name IN ('agents', 'tasks') AND sql IS NOT NULL ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    let before = indexes(&v22);
+    assert!(before.contains(&"agents_run".to_owned()), "{before:?}");
+    assert!(!before.contains(&"agents_created".to_owned()), "{before:?}");
+    migrate(&v22).unwrap();
+    assert_eq!(version(&v22), SCHEMA_VERSION);
+    // `agents_run_created` answers every `run = ?` lookup `agents_run` did.
+    assert_eq!(
+        indexes(&v22),
+        [
+            "agents_created",
+            "agents_parent",
+            "agents_run_created",
+            "agents_status",
+            "tasks_created",
+            "tasks_owner",
+            "tasks_parent",
+            "tasks_run_created",
+            "tasks_status",
+        ]
     );
 }
