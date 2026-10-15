@@ -589,7 +589,12 @@ async fn actual_denial_wins_over_later_interrupt_for_only_that_call() {
                     .update_agent(
                         id,
                         aether_runtime::AgentUpdate {
-                            approval: Some(ApprovalPolicy::default()),
+                            approval: Some(ApprovalPolicy {
+                                require_for: std::collections::BTreeSet::from([
+                                    aether_core::tool::SideEffectClass::External,
+                                    aether_core::tool::SideEffectClass::Mutation,
+                                ]),
+                            }),
                             ..Default::default()
                         },
                         Actor::user(),
