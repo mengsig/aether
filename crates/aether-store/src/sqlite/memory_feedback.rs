@@ -6,14 +6,32 @@ use aether_core::time::Timestamp;
 use rusqlite::{Transaction, params};
 
 impl SqliteStore {
-    pub(super) fn task_context_contains(&self, memory: MemoryId, task: TaskId) -> Result<bool> {
+    pub(super) fn task_context_contains(
+        &self,
+        memory: MemoryId,
+        task: TaskId,
+        through: Option<Timestamp>,
+    ) -> Result<bool> {
         let conn = self.read_conn();
         let found: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM events AS e INDEXED BY events_task
              JOIN snapshots AS s ON s.id = json_extract(e.body, '$.kind.snapshot')
-             JOIN json_each(s.body, '$.memory_ids') AS m
-             WHERE e.task_id = ?1 AND e.type = 'snapshot.created' AND m.value = ?2)",
-            params![task.to_string(), memory.to_string()],
+             JOIN json_each(e.body, '$.kind.layers') AS layer
+             WHERE e.task_id = ?1 AND e.type = 'snapshot.created'
+               AND (?3 IS NULL OR s.created_at <= ?3)
+               AND json_extract(layer.value, '$.kind') = 'retrieved_memory'
+               AND CASE WHEN json_type(layer.value, '$.memories') IS NULL
+                         AND json_extract(layer.value, '$.items') > 0
+                   THEN EXISTS(SELECT 1 FROM json_each(s.body, '$.memory_ids') AS m
+                               WHERE m.value = ?2)
+                   ELSE EXISTS(SELECT 1 FROM json_each(layer.value, '$.memories') AS m
+                               WHERE m.value = ?2)
+                   END)",
+            params![
+                task.to_string(),
+                memory.to_string(),
+                through.map(|at| at.to_rfc3339())
+            ],
             |row| row.get(0),
         )?;
         Ok(found)

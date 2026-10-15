@@ -549,8 +549,13 @@ impl Store for SqliteStore {
         Self::read_devices(&self.read_conn(), include_revoked)
     }
 
-    fn memory_was_in_task_context(&self, memory: MemoryId, task: TaskId) -> Result<bool> {
-        self.task_context_contains(memory, task)
+    fn memory_was_in_task_context(
+        &self,
+        memory: MemoryId,
+        task: TaskId,
+        through: Option<Timestamp>,
+    ) -> Result<bool> {
+        self.task_context_contains(memory, task, through)
     }
 
     fn memory_feedback_record(

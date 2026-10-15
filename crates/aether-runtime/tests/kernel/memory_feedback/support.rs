@@ -2,7 +2,13 @@ use super::*;
 use aether_core::memory_feedback::{MemoryEvidence, MemoryVerdict};
 
 pub(super) async fn fixture() -> (Harness, MemoryFeedbackSpec, AgentId) {
-    let h = harness(Vec::new()).await;
+    fixture_on(None).await
+}
+
+pub(super) async fn fixture_on(
+    store: Option<Arc<dyn Store>>,
+) -> (Harness, MemoryFeedbackSpec, AgentId) {
+    let h = harness_full(Vec::new(), |_| {}, |_| {}, None, None, store, |_| {}).await;
     let mut agent_spec = spec("Verify feedback evidence");
     agent_spec.start = false;
     let (agent, task) = h.runtime.create_agent(agent_spec, Actor::user()).unwrap();
@@ -57,20 +63,7 @@ pub(super) fn show(
     assert_eq!(snapshot.task_id, Some(task));
     let mut commit = Commit::new().mutate(Mutation::PutSnapshot(snapshot.clone()));
     if announce {
-        commit.push_event(
-            EventDraft::new(
-                Actor::System,
-                EventKind::SnapshotCreated {
-                    snapshot: snapshot.id,
-                    turn: 1,
-                    model: snapshot.model.clone(),
-                    token_estimate: 0,
-                    layers: vec![],
-                },
-            )
-            .agent(agent)
-            .task(task),
-        );
+        commit.push_event(announcement(&snapshot));
     }
     h.store.commit(commit).unwrap();
     assert_eq!(
@@ -136,4 +129,36 @@ pub(super) fn record(h: &Harness, spec: &MemoryFeedbackSpec) -> MemoryFeedback {
     assert_eq!(&found.spec, spec);
     assert!(found.retracted_at.is_none());
     found
+}
+
+pub(super) fn announcement(snapshot: &InvocationSnapshot) -> EventDraft {
+    use aether_core::snapshot::{ContextLayer, LayerPlacement};
+    assert!(snapshot.task_id.is_some());
+    assert_eq!(
+        snapshot
+            .memory_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        snapshot.memory_ids.len()
+    );
+    EventDraft::new(
+        Actor::System,
+        EventKind::SnapshotCreated {
+            snapshot: snapshot.id,
+            turn: snapshot.turn,
+            model: snapshot.model.clone(),
+            token_estimate: snapshot.token_estimate,
+            layers: vec![ContextLayer {
+                kind: LayerKind::RetrievedMemory,
+                text: None,
+                tokens: 0,
+                items: snapshot.memory_ids.len() as u32,
+                placement: LayerPlacement::System,
+                memories: snapshot.memory_ids.clone(),
+            }],
+        },
+    )
+    .agent(snapshot.agent_id)
+    .task(snapshot.task_id.unwrap())
 }

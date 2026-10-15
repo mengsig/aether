@@ -66,6 +66,7 @@ pub enum Hook {
     /// check and before its request would be committed.
     TaskBoundaryTranscriptRead,
     MemoryRetrievalRead,
+    FeedbackContextRead,
     /// A repository id resolved through the aliases, fired after the
     /// resolution returns: an alias landing here makes that answer stale.
     RepositoryResolved,
@@ -307,6 +308,12 @@ impl Store for CommitsMidPass {
         self.inner.commits()
     }
     fn events(&self, after: u64, limit: usize, filter: &EventFilter) -> Result<Vec<Event>> {
+        if self.hook == Hook::FeedbackContextRead && filter.types == ["invocation.failed"] {
+            assert!(filter.agent.is_some());
+            assert!(filter.exclude_children);
+            assert!(filter.task.is_none());
+            self.fire(Hook::FeedbackContextRead)?;
+        }
         self.inner.events(after, limit, filter)
     }
     fn event_by_id(&self, id: EventId) -> Result<Option<Event>> {
@@ -389,6 +396,16 @@ impl Store for CommitsMidPass {
     fn snapshot(&self, id: SnapshotId) -> Result<Option<InvocationSnapshot>> {
         self.inner.snapshot(id)
     }
+    fn snapshot_memories(
+        &self,
+        ids: &[SnapshotId],
+    ) -> Result<Vec<aether_core::snapshot::SnapshotMemories>> {
+        self.fire(Hook::FeedbackContextRead)?;
+        let found = self.inner.snapshot_memories(ids)?;
+        assert!(found.len() <= ids.len());
+        assert!(found.iter().all(|entry| ids.contains(&entry.snapshot)));
+        Ok(found)
+    }
     fn invocation(&self, id: InvocationId) -> Result<Option<Invocation>> {
         self.inner.invocation(id)
     }
@@ -411,8 +428,10 @@ impl Store for CommitsMidPass {
         &self,
         memory: MemoryId,
         task: TaskId,
+        through: Option<aether_core::time::Timestamp>,
     ) -> aether_store::Result<bool> {
-        self.inner.memory_was_in_task_context(memory, task)
+        self.fire(Hook::FeedbackContextRead)?;
+        self.inner.memory_was_in_task_context(memory, task, through)
     }
 
     fn memory_feedback_record(

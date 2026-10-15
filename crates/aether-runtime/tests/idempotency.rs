@@ -480,8 +480,9 @@ impl Store for CommitLog {
         &self,
         memory: MemoryId,
         task: TaskId,
+        through: Option<aether_core::time::Timestamp>,
     ) -> aether_store::Result<bool> {
-        self.inner.memory_was_in_task_context(memory, task)
+        self.inner.memory_was_in_task_context(memory, task, through)
     }
 
     fn memory_feedback_record(

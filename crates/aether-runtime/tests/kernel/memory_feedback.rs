@@ -163,7 +163,7 @@ async fn feedback_agent_refusal_precedes_even_keyed_replay_and_reads() {
 }
 
 #[tokio::test]
-async fn feedback_accepts_any_call_after_the_context_query_cap_and_after_forgetting() {
+async fn feedback_accepts_earlier_context_beyond_the_query_cap_and_after_forgetting() {
     let (h, mut spec, agent) = fixture().await;
     let first = show(&h, agent, spec.task, vec![], true);
     for _ in 0..256 {
@@ -177,6 +177,15 @@ async fn feedback_accepts_any_call_after_the_context_query_cap_and_after_forgett
     assert!(answer.truncated);
     assert!(answer.snapshots.iter().all(|s| s.memories.is_empty()));
     spec.invocation = Some(call(&h, &first, false));
+    assert!(
+        h.runtime
+            .record_memory_feedback(spec.clone(), Actor::user())
+            .unwrap_err()
+            .to_string()
+            .contains("was not in context")
+    );
+    let later = show(&h, agent, spec.task, vec![], true);
+    spec.invocation = Some(call(&h, &later, false));
     h.runtime
         .forget_memory(
             spec.memory,
@@ -227,3 +236,12 @@ mod validation;
 
 #[path = "memory_feedback/transfer.rs"]
 mod transfer;
+
+#[path = "memory_feedback/eligibility.rs"]
+mod eligibility;
+
+#[path = "memory_feedback/event_membership.rs"]
+mod event_membership;
+
+#[path = "memory_feedback/locking.rs"]
+mod locking;

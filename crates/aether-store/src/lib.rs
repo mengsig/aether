@@ -635,8 +635,14 @@ pub trait Store: Send + Sync {
     /// Paired devices, oldest first. Revoked ones only when asked for.
     fn devices(&self, include_revoked: bool) -> Result<Vec<DeviceRow>>;
 
-    /// Uncapped membership check against this task's announced, stored snapshots.
-    fn memory_was_in_task_context(&self, memory: MemoryId, task: TaskId) -> Result<bool>;
+    /// Uncapped membership in this task's announced, stored snapshots.
+    /// When supplied, `through` includes only snapshots created at or before it.
+    fn memory_was_in_task_context(
+        &self,
+        memory: MemoryId,
+        task: TaskId,
+        through: Option<Timestamp>,
+    ) -> Result<bool>;
     fn memory_feedback_record(&self, id: MemoryFeedbackId) -> Result<Option<MemoryFeedback>>;
     fn memory_feedback(&self, memory: MemoryId, limit: usize) -> Result<Vec<MemoryFeedback>>;
 

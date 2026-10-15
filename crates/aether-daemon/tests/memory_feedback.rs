@@ -5,9 +5,9 @@ mod phone;
 mod support;
 
 use aether_core::event::{Actor, EventDraft, EventKind};
-use aether_core::id::{AgentId, SnapshotId};
+use aether_core::id::{AgentId, MemoryId, SnapshotId, TaskId};
 use aether_core::model::ModelRef;
-use aether_core::snapshot::InvocationSnapshot;
+use aether_core::snapshot::{ContextLayer, InvocationSnapshot, LayerKind, LayerPlacement};
 use aether_core::time::now;
 use aether_store::{Commit, Mutation, SqliteStore, Store};
 use phone::{Host, Phone};
@@ -27,47 +27,64 @@ async fn feedback_request(host: &mut Host, shown: bool) -> Value {
     let request = json!({"cmd":"record_memory_feedback", "memory":memory["id"],
         "task":task["id"], "verdict":"helped", "evidence":"review", "reason":"Release passed"});
     if shown {
-        let snapshot = InvocationSnapshot {
-            id: SnapshotId::new(),
-            agent_id: AgentId::new(),
-            task_id: Some(serde_json::from_value(task["id"].clone()).unwrap()),
-            turn: 1,
-            model: ModelRef::new("mock", "m"),
-            adapter: None,
-            capabilities: None,
-            memory_ids: vec![serde_json::from_value(memory["id"].clone()).unwrap()],
-            layers: vec![],
-            messages: vec![],
-            tools: vec![],
-            params: Default::default(),
-            token_estimate: 0,
-            created_at: now(),
-        };
-        let task_id = snapshot.task_id.unwrap();
-        let store = SqliteStore::open(host.daemon.store_path()).unwrap();
-        store
-            .commit(
-                Commit::new()
-                    .event(
-                        EventDraft::new(
-                            Actor::System,
-                            EventKind::SnapshotCreated {
-                                snapshot: snapshot.id,
-                                turn: 1,
-                                model: snapshot.model.clone(),
-                                token_estimate: 0,
-                                layers: vec![],
-                            },
-                        )
-                        .task(task_id),
-                    )
-                    .mutate(Mutation::PutSnapshot(snapshot)),
-            )
-            .unwrap();
+        show_memory(
+            host,
+            serde_json::from_value(memory["id"].clone()).unwrap(),
+            serde_json::from_value(task["id"].clone()).unwrap(),
+        );
     }
     assert!(request["memory"].is_string());
     assert!(request["task"].is_string());
     request
+}
+
+fn show_memory(host: &Host, memory: MemoryId, task: TaskId) {
+    let snapshot = InvocationSnapshot {
+        id: SnapshotId::new(),
+        agent_id: AgentId::new(),
+        task_id: Some(task),
+        turn: 1,
+        model: ModelRef::new("mock", "m"),
+        adapter: None,
+        capabilities: None,
+        memory_ids: vec![memory],
+        layers: vec![ContextLayer {
+            kind: LayerKind::RetrievedMemory,
+            text: None,
+            tokens: 0,
+            items: 1,
+            placement: LayerPlacement::System,
+            memories: vec![memory],
+        }],
+        messages: vec![],
+        tools: vec![],
+        params: Default::default(),
+        token_estimate: 0,
+        created_at: now(),
+    };
+    let id = snapshot.id;
+    let event = EventDraft::new(
+        Actor::System,
+        EventKind::SnapshotCreated {
+            snapshot: id,
+            turn: 1,
+            model: snapshot.model.clone(),
+            token_estimate: 0,
+            layers: snapshot.layers.clone(),
+        },
+    )
+    .task(task);
+    let store = SqliteStore::open(host.daemon.store_path()).unwrap();
+    store
+        .commit(
+            Commit::new()
+                .event(event)
+                .mutate(Mutation::PutSnapshot(snapshot)),
+        )
+        .unwrap();
+    let found = store.snapshot_memories(&[id]).unwrap();
+    assert_eq!(found[0].memories, vec![memory]);
+    assert_eq!(found[0].task, Some(task));
 }
 
 #[tokio::test]

@@ -589,13 +589,17 @@ must resolve to a snapshot of that task, through its invocation row or its
 `invocation.failed` event when no row exists. A different task is
 `invalid_argument`.
 
-The memory must occur in the stored `memory_ids` of at least one announced
-snapshot of the task. This checks all calls directly in storage, including
-calls beyond the 256-snapshot `memories_in_context` limit. It need not appear
-in the particular invocation named: that field identifies the evidence's
-call, while eligibility covers the whole task. A never-shown proposal is
-refused with `invalid_argument`. Memories forgotten or superseded after
-being shown remain eligible. Expired history cannot prove new eligibility.
+Without an invocation, the memory must occur in the retrieved-memory layer of
+an announced, stored snapshot of the task (legacy events use the snapshot's
+stored `memory_ids`). With an invocation, the memory must have been given to
+that call or an earlier call of the same task: resumed Claude Code and Codex
+sessions retain earlier context. The named call's own stored memory list
+qualifies directly; earlier context uses the announced, stored snapshots.
+A memory seen only by a later call or another task does not qualify. This
+checks all calls directly in storage, including calls beyond the 256-snapshot
+`memories_in_context` limit. A never-shown proposal is refused with
+`invalid_argument`. Memories forgotten or superseded after being shown remain
+eligible. Expired history cannot prove new eligibility.
 
 The reply is `MemoryFeedback`:
 
@@ -605,9 +609,10 @@ The reply is `MemoryFeedback`:
 
 Each unkeyed submission appends a distinct record, including repeated verdicts
 on the same task. An `idempotency_key` replays the original reply and writes
-neither a second record nor a second event. Reusing the key with different
-fields is refused. Receipt retention follows the existing keyed-submission
-rules. Recording emits a custom `memory.feedback` event whose payload has
+neither a second record nor a second event, even after a later retraction.
+Read `memory_feedback` for the current state; a keyed retry returns the original
+receipt. Reusing the key with different fields is refused. Receipt retention
+follows the existing keyed-submission rules. Recording emits a custom `memory.feedback` event whose payload has
 `feedback` (the new id), `memory`, `verdict`, `evidence`, `task`, optional
 `invocation`, and `reason`; the envelope also carries the task.
 
@@ -620,7 +625,9 @@ Retraction preserves every original field and sets `retracted_at` and
 `memory.feedback_retracted` with `{feedback, memory, reason}`. An unknown id
 is `not_found`. The reason has the same bound as recording. Retrying a
 retraction returns the first retracted record and emits no second event;
-a different retry reason does not overwrite the first reason.
+a different retry reason does not overwrite the first reason. If the task's
+history has expired, the retraction event carries neither a task nor a run in
+its envelope.
 
 ```json
 {"cmd":"memory_feedback","memory":"mem_...","limit":100}

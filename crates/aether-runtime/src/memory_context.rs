@@ -45,11 +45,12 @@ impl Runtime {
         let snapshot = match self.store.invocation(id)? {
             Some(invocation) => invocation.snapshot_id,
             None => self
-                .failed_call_snapshot(id)?
+                .failed_call_snapshot(id, EventFilter::default())?
                 .ok_or_else(|| RuntimeError::NotFound(id.to_string()))?,
         };
         let mut snapshots = self.stored_memories(&[snapshot])?;
         debug_assert_eq!(snapshots.len(), 1);
+        debug_assert_eq!(snapshots[0].snapshot, snapshot);
         snapshots[0].invocations.push(id);
         Ok(MemoriesInContext {
             snapshots,
@@ -59,14 +60,16 @@ impl Runtime {
 
     /// The snapshot a failed call answered from, read from its
     /// `invocation.failed` event: daemon recovery and imports keep no row for it.
-    pub(crate) fn failed_call_snapshot(&self, id: InvocationId) -> Result<Option<SnapshotId>> {
-        let filter = EventFilter {
-            types: vec!["invocation.failed".into()],
-            ..Default::default()
-        };
+    pub(crate) fn failed_call_snapshot(
+        &self,
+        id: InvocationId,
+        mut filter: EventFilter,
+    ) -> Result<Option<SnapshotId>> {
+        filter.types = vec!["invocation.failed".into()];
         let mut after = 0;
         loop {
             let page = self.store.events(after, PAGE, &filter)?;
+            debug_assert!(page.len() <= PAGE);
             for event in &page {
                 debug_assert!(event.seq > after, "events arrive in sequence order");
                 after = event.seq;

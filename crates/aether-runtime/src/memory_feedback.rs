@@ -1,14 +1,16 @@
 //! Host evidence is append-only and separate from retrieval scores.
 
 use aether_core::event::{Actor, EventDraft, EventKind};
-use aether_core::id::{InvocationId, MemoryFeedbackId, MemoryId, TaskId};
-use aether_core::idempotency::Submission;
+use aether_core::id::{InvocationId, MemoryFeedbackId, MemoryId};
+use aether_core::idempotency::{Submission, SubmissionOutcome};
 use aether_core::memory_feedback::{
     MAX_FEEDBACK_REASON_CHARS, MEMORY_FEEDBACK_LIMIT, MemoryFeedback, MemoryFeedbackList,
     MemoryFeedbackSpec,
 };
+use aether_core::snapshot::SnapshotMemories;
+use aether_core::task::Task;
 use aether_core::time::now;
-use aether_store::{Commit, Mutation};
+use aether_store::{Commit, EventFilter, Mutation};
 
 use crate::{Result, Runtime, RuntimeError};
 
@@ -28,7 +30,16 @@ impl Runtime {
         submission: Option<Submission>,
     ) -> Result<MemoryFeedback> {
         require_operator(&by)?;
+        if let Some(outcome) = self.recorded_submission(submission.as_ref())? {
+            let SubmissionOutcome::Receipt { value } = outcome else {
+                return Err(crate::submission::wrong_shape(&outcome, "receipt"));
+            };
+            return serde_json::from_value(value).map_err(|error| {
+                RuntimeError::Internal(format!("decode feedback receipt: {error}"))
+            });
+        }
         validate_reason(&spec.reason)?;
+        self.check_feedback_context(&spec)?;
         let hold = self.hold();
         if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
             return Ok(receipt);
@@ -40,44 +51,71 @@ impl Runtime {
             .store
             .task(spec.task)?
             .ok_or_else(|| RuntimeError::NotFound(format!("task {}", spec.task)))?;
-        if let Some(invocation) = spec.invocation {
-            self.feedback_invocation_task(invocation, spec.task)?;
+        debug_assert!(!spec.reason.trim().is_empty());
+        debug_assert!(spec.reason.chars().count() <= MAX_FEEDBACK_REASON_CHARS);
+        let (record, commit) = feedback_commit(spec, by, task.run)?;
+        self.commit_receipt(hold, commit, submission.as_ref(), &record)?;
+        Ok(record)
+    }
+
+    fn check_feedback_context(&self, spec: &MemoryFeedbackSpec) -> Result<()> {
+        self.store
+            .memory(spec.memory)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("memory {}", spec.memory)))?;
+        let task = self
+            .store
+            .task(spec.task)?
+            .ok_or_else(|| RuntimeError::NotFound(format!("task {}", spec.task)))?;
+        let context = spec
+            .invocation
+            .map(|id| self.feedback_invocation_context(id, &task))
+            .transpose()?;
+        if context
+            .as_ref()
+            .is_some_and(|entry| entry.memories.contains(&spec.memory))
+        {
+            return Ok(());
         }
+        let through = context.map(|entry| entry.at);
         if !self
             .store
-            .memory_was_in_task_context(spec.memory, spec.task)?
+            .memory_was_in_task_context(spec.memory, spec.task, through)?
         {
             return Err(RuntimeError::Invalid(format!(
                 "memory {} was not in context for task {}",
                 spec.memory, spec.task
             )));
         }
-        debug_assert_eq!(task.id, spec.task);
-        debug_assert!(!spec.reason.trim().is_empty());
-        let (record, commit) = feedback_commit(spec, by, task.run)?;
-        self.commit_receipt(hold, commit, submission.as_ref(), &record)?;
-        Ok(record)
+        Ok(())
     }
 
-    fn feedback_invocation_task(&self, id: InvocationId, task: TaskId) -> Result<()> {
+    fn feedback_invocation_context(
+        &self,
+        id: InvocationId,
+        task: &Task,
+    ) -> Result<SnapshotMemories> {
+        let owner = task
+            .owner
+            .ok_or_else(|| RuntimeError::NotFound(format!("invocation {id}")))?;
         let snapshot = match self.store.invocation(id)? {
             Some(call) => call.snapshot_id,
             None => self
-                .failed_call_snapshot(id)?
+                .failed_call_snapshot(id, EventFilter::own_events(owner))?
                 .ok_or_else(|| RuntimeError::NotFound(format!("invocation {id}")))?,
         };
-        let found = self.store.snapshot_memories(&[snapshot])?;
-        let entry = found.first().ok_or_else(|| {
+        let mut found = self.store.snapshot_memories(&[snapshot])?;
+        let entry = found.pop().ok_or_else(|| {
             RuntimeError::NotFound(format!("snapshot {snapshot} of invocation {id}"))
         })?;
-        debug_assert_eq!(found.len(), 1);
+        debug_assert!(found.is_empty());
         debug_assert_eq!(entry.snapshot, snapshot);
-        if entry.task != Some(task) {
+        if entry.task != Some(task.id) {
             return Err(RuntimeError::Invalid(format!(
-                "invocation {id} is not a call of task {task}"
+                "invocation {id} is not a call of task {}",
+                task.id
             )));
         }
-        Ok(())
+        Ok(entry)
     }
 
     pub fn retract_memory_feedback(
@@ -101,11 +139,17 @@ impl Runtime {
         let at = now();
         record.retracted_at = Some(at);
         record.retraction_reason = Some(reason.clone());
-        let mut event = EventDraft::new(by, EventKind::Custom {
-            name: "memory.feedback_retracted".into(),
-            payload: serde_json::json!({"feedback":id, "memory":record.spec.memory, "reason":reason}),
-        }).task(record.spec.task);
-        event.run = self.store.task(record.spec.task)?.map(|task| task.run);
+        let mut event = EventDraft::new(
+            by,
+            EventKind::Custom {
+                name: "memory.feedback_retracted".into(),
+                payload: serde_json::json!({"feedback":id, "memory":record.spec.memory, "reason":reason}),
+            },
+        );
+        if let Some(task) = self.store.task(record.spec.task)? {
+            event.task_id = Some(task.id);
+            event.run = Some(task.run);
+        }
         self.commit_receipt(
             hold,
             Commit::new()
