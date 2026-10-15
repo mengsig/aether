@@ -27,6 +27,12 @@ release is also the text of its GitHub release.
 - **One run's agent tree no longer reads every task in the store.** Listing a
   run's tasks walked the whole tasks table. In a test store of 20,000 tasks
   that took 22 ms per tree; it now reads only that run's tasks, in 0.06 ms.
+- **Stopping a background job no longer gives up when one of its processes
+  is exiting.** On Linux before 7.2, a process that is exiting briefly hides
+  its environment, and the search for a job's escaped processes stopped there
+  with an error. Escaped processes later in the search stayed alive, and a
+  restarted daemon kept retrying the cleanup instead of finishing it. A
+  process exiting mid-search is now skipped like one that has gone.
 - **An SSH remote no longer mistakes a finished send for one in flight.** If
   the client started another program just as a send ended, the send's outbox
   entry stayed locked until that program had started. Resolving the outbox on
