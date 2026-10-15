@@ -36,10 +36,10 @@ pub enum Then {
         next: Box<Then>,
     },
     VoiceReply(u64),
-    /// The daemon's defaults, fetched on `connection` to start this root.
+    /// The daemon's defaults, fetched over `link` to start this root.
     RootDefaults {
         start: StartId,
-        connection: u64,
+        link: u64,
     },
     Ignore,
     CompactionAccepted(AgentId),
@@ -83,7 +83,11 @@ pub enum Then {
     RunReport(aether_core::id::RunId),
     Invocations(AgentId),
     Artifacts(AgentId),
-    ArtifactBytes(ArtifactId),
+    /// An artifact's bytes, asked for on `connection`.
+    ArtifactBytes {
+        id: ArtifactId,
+        connection: u64,
+    },
     AgentPatched,
     ModelPatched(AgentId),
     PendingRootModelPatched(AgentId),

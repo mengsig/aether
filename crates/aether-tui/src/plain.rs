@@ -89,6 +89,11 @@ async fn run_loop(
     out.line("aether - plain mode - type a message, /help for commands, Ctrl+D or /quit to leave")?;
 
     let mut pending = app.reconnected(&link.client);
+    debug_assert_eq!(
+        app.link,
+        link.generation(),
+        "effects carry the link they go out on"
+    );
     let mut input_open = true;
     let mut reconnecting = false;
     let mut eof_at = Instant::now();
@@ -179,6 +184,7 @@ async fn run_loop(
                 Some(LoopEvent::Reconnected(new_client)) => {
                     let effects = app.reconnected(&new_client);
                     link = link.reconnected(new_client);
+                    debug_assert_eq!(app.link, link.generation(), "effects carry the link they go out on");
                     reconnecting = false;
                     effects
                 }

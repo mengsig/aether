@@ -261,8 +261,8 @@ impl App {
             self.dirty = true;
         }
         match (then, reply) {
-            (Then::RootDefaults { start, connection }, Reply::Status(status)) => {
-                effects.extend(self.root_defaults_arrived(start, connection, status));
+            (Then::RootDefaults { start, link }, Reply::Status(status)) => {
+                effects.extend(self.root_defaults_arrived(start, link, status));
             }
             (Then::Tree, Reply::Tree(tree)) => {
                 self.tree_in_flight = false;
@@ -434,14 +434,18 @@ impl App {
                 }
             }
             (
-                Then::ArtifactBytes(id),
+                Then::ArtifactBytes { id, connection },
                 Reply::ArtifactBytes {
                     artifact,
                     base64,
                     truncated,
                 },
             ) => {
-                if self.artifacts.pending_bytes == Some(id) {
+                debug_assert!(
+                    connection <= self.connection,
+                    "a reply from a connection not yet made"
+                );
+                if self.artifacts.pending_bytes == Some((id, connection)) {
                     self.artifacts.pending_bytes = None;
                     // Authoritative: read from the store just now, unlike a
                     // cached list entry or an `artifact.created` snapshot.

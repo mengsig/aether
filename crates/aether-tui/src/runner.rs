@@ -57,8 +57,8 @@ pub(crate) enum LoopEvent {
     VoiceControl(anyhow::Result<ControlRequest>),
 }
 
-/// The loop's daemon client, numbered per reconnect so an answer can tell
-/// whether it came back over the connection the view now reflects.
+/// The loop's daemon client, numbered from 1 per connection so an answer can
+/// tell whether it came back over the connection the view now reflects.
 #[derive(Clone)]
 pub(crate) struct Link {
     pub(crate) client: Client,
@@ -69,8 +69,13 @@ impl Link {
     pub(crate) fn new(client: Client) -> Self {
         Self {
             client,
-            generation: 0,
+            generation: 1,
         }
+    }
+
+    /// Matches `App::link` once the reducer has seen this link connect.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub(crate) fn reconnected(&self, client: Client) -> Self {
@@ -301,6 +306,10 @@ async fn run_inner(
     let mut auto_scroll_due = None;
 
     let mut pending = app.reconnected(&link.client);
+    debug_assert_eq!(
+        app.link, link.generation,
+        "effects carry the link they go out on"
+    );
     let result: anyhow::Result<()> = async {
         loop {
             pending.extend(frames.advance_clock(&mut app, Instant::now()));
@@ -408,6 +417,7 @@ async fn run_inner(
                 LoopEvent::Reconnected(new_client) => {
                     pending.extend(app.reconnected(&new_client));
                     link = link.reconnected(new_client);
+                    debug_assert_eq!(app.link, link.generation, "effects carry the link they go out on");
                     reconnecting = false;
                 }
                 LoopEvent::VoiceControl(request) => {

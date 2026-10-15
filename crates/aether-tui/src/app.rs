@@ -115,6 +115,8 @@ pub struct App {
     remote_snapshot_pending: bool,
     /// Bumped on each disconnect; a reply tagged with an older value came from a dead connection.
     pub(crate) connection: u64,
+    /// Connections made: the runner's `Link` generation every effect from now goes out on.
+    pub(crate) link: u64,
     /// Every animation's timing comes from here.
     pub motion: Motion,
     pub size: (u16, u16),

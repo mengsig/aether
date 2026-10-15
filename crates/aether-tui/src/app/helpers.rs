@@ -260,7 +260,7 @@ pub(super) fn then_operation(then: &Then) -> &'static str {
         Then::RunReport(_) => "loading the run report",
         Then::Invocations(_) => "loading tool calls",
         Then::Artifacts(_) => "loading artifacts",
-        Then::ArtifactBytes(_) => "downloading the artifact",
+        Then::ArtifactBytes { .. } => "downloading the artifact",
         Then::AgentPatched => "updating the agent",
         Then::ModelPatched(_) => "changing the model",
         Then::PendingRootModelPatched(_) => "changing the new agent's model",

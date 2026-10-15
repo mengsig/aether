@@ -297,9 +297,11 @@ impl App {
             {
                 options.prefs_dir = Some(endpoint.state_dir(instance));
             }
-            let size = self.size;
+            let (size, link) = (self.size, self.link);
             *self = App::new(options);
             self.size = size;
+            // The runner's links keep counting across daemons.
+            self.link = link;
         } else {
             self.options.instance_id = instance;
         }
@@ -364,6 +366,7 @@ impl App {
 
     pub(super) fn on_connected(&mut self) -> Vec<Effect> {
         self.approvals_revision = self.approvals_revision.wrapping_add(1);
+        self.link += 1;
         self.connected = true;
         self.status = None;
         // The runner drops the old connection's answers to these; nothing waits on them.
@@ -387,6 +390,7 @@ impl App {
         if !self.remote_snapshot_pending {
             effects.extend(self.snapshot_requests());
         }
+        effects.extend(self.resume_parked_starts());
         debug_assert!(!self.status_poll_in_flight, "the next tick polls status");
         debug_assert_eq!(
             self.tree_in_flight, !self.remote_snapshot_pending,

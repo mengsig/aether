@@ -6,7 +6,8 @@ use aether_core::agent::{Agent, AgentConfig, AgentStats, AgentStatus, Role, Scop
 use aether_core::budget::RunSummary;
 use aether_core::event::{Actor, Event, EventDraft, EventKind};
 use aether_core::id::{
-    AgentId, ApprovalId, EventId, InboxItemId, InvocationId, MessageId, RunId, ToolCallId,
+    AgentId, ApprovalId, ArtifactId, EventId, InboxItemId, InvocationId, MessageId, RunId,
+    ToolCallId,
 };
 use aether_core::inbox::{InboxItem, InboxKind};
 use aether_core::model::{ContentBlock, MessageRole, ModelRef, Usage};
@@ -55,6 +56,14 @@ pub fn render_with(
 pub fn backfill_then(app: &App, agent: AgentId) -> Then {
     Then::Backfill {
         agent,
+        connection: app.connection,
+    }
+}
+
+/// Routes a reply to the bytes of `id` asked for on the current connection.
+pub fn artifact_bytes_then(app: &App, id: ArtifactId) -> Then {
+    Then::ArtifactBytes {
+        id,
         connection: app.connection,
     }
 }
