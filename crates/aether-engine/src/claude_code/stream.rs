@@ -186,13 +186,14 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             payload: v.get("rate_limit_info").cloned().unwrap_or(Value::Null),
         }],
         "stream_event" => {
-            state.note_output(&v);
-            v.get("event")
-                .map(|e| stream_deltas(e, state))
-                .unwrap_or_default()
+            let mut events = state.note_output(&v);
+            if let Some(event) = v.get("event") {
+                events.extend(stream_deltas(event, state));
+            }
+            events
         }
         "assistant" => {
-            state.note_output(&v);
+            let mut events = state.note_output(&v);
             let message = &v["message"];
             let content = parse_content(message.get("content"));
             // Usage rides the delta stream alone, keyed per message: attaching
@@ -205,14 +206,14 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
                 None => Vec::new(),
             };
             state.tool_names.clear();
-            let mut events = vec![EngineEvent::Assistant {
+            events.push(EngineEvent::Assistant {
                 content,
                 usage: None,
                 model: message
                     .get("model")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
-            }];
+            });
             events.extend(accounting);
             events
         }

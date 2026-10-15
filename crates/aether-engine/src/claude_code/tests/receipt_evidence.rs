@@ -292,8 +292,7 @@ fn any_retry_after_a_proven_zero_withdraws_it() {
     }
 }
 
-#[test]
-fn model_output_before_a_rejection_rules_out_the_proof() {
+fn output_records() -> [Value; 4] {
     let api_error = json!({"type":"assistant","session_id":"s","error":"unknown",
         "is_api_error_message":true,"api_error_status":400,"message":{"id":"e",
             "model":"<synthetic>","role":"assistant","usage":{"input_tokens":0,"output_tokens":0},
@@ -308,6 +307,12 @@ fn model_output_before_a_rejection_rules_out_the_proof() {
         .remove("is_api_error_message");
     let started = json!({"type":"stream_event","session_id":"s","event":{"type":"message_start",
         "message":{"id":"m","model":"claude-haiku-5-5","usage":{"input_tokens":0,"output_tokens":0}}}});
+    [api_error, answer, unflagged, started]
+}
+
+#[test]
+fn model_output_before_a_rejection_rules_out_the_proof() {
+    let [api_error, answer, unflagged, started] = output_records();
     for (before, cost) in [
         (&api_error, Some(0.0)),
         (&answer, None),
@@ -318,5 +323,28 @@ fn model_output_before_a_rejection_rules_out_the_proof() {
         parse_line(&before.to_string(), &mut state);
         let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
         assert_eq!(receipt_cost(&events), cost, "{before}");
+    }
+}
+
+#[test]
+fn any_output_after_a_proven_zero_withdraws_it() {
+    for after in output_records() {
+        let mut state = ParseState::default();
+        let events = parse_line(&rejected(json!(400)).to_string(), &mut state);
+        assert_eq!(receipt_cost(&events), Some(0.0));
+        let events = parse_line(&after.to_string(), &mut state);
+        assert!(
+            matches!(events.first(), Some(EngineEvent::UsageDelta { usage })
+                if usage.cost_gap == Some(aether_core::model::CostGap::Unreported)
+                    && usage.total_tokens() == 0),
+            "{after}: {events:?}"
+        );
+        let again = parse_line(&after.to_string(), &mut state);
+        assert!(
+            !again
+                .iter()
+                .any(|event| matches!(event, EngineEvent::UsageDelta { .. })),
+            "{after}: {again:?}"
+        );
     }
 }

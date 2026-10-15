@@ -27,16 +27,22 @@ impl ParseState {
 
     /// Model output shows that inference ran, counted or not. Claude Code's own
     /// message for an API error is the one assistant record the model did not write.
-    pub(super) fn note_output(&mut self, v: &Value) {
+    /// Any output after a proven $0 belongs to a new request, so it withdraws the $0.
+    pub(super) fn note_output(&mut self, v: &Value) -> Vec<EngineEvent> {
         let kind = v.get("type").and_then(Value::as_str);
         debug_assert!(
             matches!(kind, Some("assistant" | "stream_event")),
             "{kind:?}"
         );
+        debug_assert!(!self.zero_proven || self.refusal_unprovable);
         let api_error_message = kind == Some("assistant")
             && v.get("is_api_error_message").and_then(Value::as_bool) == Some(true)
             && v.pointer("/message/model").and_then(Value::as_str) == Some("<synthetic>");
         self.refusal_unprovable |= !api_error_message;
+        if std::mem::take(&mut self.zero_proven) {
+            return vec![cost_gap()];
+        }
+        Vec::new()
     }
 
     /// A result that closed queued work without the model still ends a receipt,
@@ -71,6 +77,8 @@ impl ParseState {
 /// A receipt Claude Code writes for a request the API refused: an unbilled
 /// status, zero dollars, no models, and every per-turn counter present as zero.
 fn refused_with_zero_receipt(v: &Value) -> bool {
+    debug_assert_eq!(v.get("type").and_then(Value::as_str), Some("result"));
+    debug_assert_eq!(v.get("is_error").and_then(Value::as_bool), Some(true));
     let status = v.get("api_error_status").and_then(Value::as_u64);
     let refused = status.is_some_and(|status| UNBILLED_REJECTIONS.contains(&status));
     let no_models = v

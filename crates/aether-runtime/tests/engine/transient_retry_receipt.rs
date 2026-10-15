@@ -266,3 +266,15 @@ async fn an_answer_without_counters_keeps_a_later_refusal_incomplete() {
     assert!(!usage.cost_complete, "{usage:?}");
     assert_eq!(usage.cost_gap, Some(CostGap::Unreported));
 }
+
+#[tokio::test]
+async fn a_message_start_after_a_proven_zero_reopens_the_gap() {
+    let background = json!({"type":"system","subtype":"task_started","task_id":"background"});
+    let engine = failed_after(vec![background]);
+    let start = json!({"type":"stream_event","session_id":"fresh","event":{"type":"message_start",
+        "message":{"id":"new","model":"claude-haiku-5-5","usage":{"input_tokens":0,"output_tokens":0}}}});
+    engine.runs.lock().unwrap().front_mut().unwrap().push(start);
+    let usage = failed_worker_usage(engine).await;
+    assert!(!usage.cost_complete, "{usage:?}");
+    assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
+}
