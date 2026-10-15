@@ -148,6 +148,7 @@ impl TurnPricing {
             cache_write_tokens: total
                 .cache_write_tokens
                 .saturating_sub(streamed.cache_write_tokens),
+            cache_write_1h_tokens: total.cache_write_1h_since(streamed),
             ..Usage::default()
         };
         Some(streamed.estimated_cost_usd.unwrap_or(0.0) + rate.cost_of(&extra))
@@ -164,6 +165,7 @@ impl TurnPricing {
                 && total.output_tokens >= closing.output_tokens
                 && total.cache_read_tokens >= closing.cache_read_tokens
                 && total.cache_write_tokens >= closing.cache_write_tokens
+                && total.cache_write_1h_tokens >= closing.cache_write_1h_tokens
                 && total.reasoning_tokens.unwrap_or(0) >= closing.reasoning_tokens.unwrap_or(0),
             "the raised closing counters must cover the receipt"
         );
@@ -176,6 +178,7 @@ impl TurnPricing {
             cache_write_tokens: total
                 .cache_write_tokens
                 .saturating_sub(closing.cache_write_tokens),
+            cache_write_1h_tokens: total.cache_write_1h_since(closing),
             ..Usage::default()
         };
         if shortfall.total_tokens() == 0 {
@@ -206,6 +209,8 @@ pub(super) fn raise_to(usage: &mut Usage, floor: Usage) -> bool {
     usage.output_tokens = usage.output_tokens.max(floor.output_tokens);
     usage.cache_read_tokens = usage.cache_read_tokens.max(floor.cache_read_tokens);
     usage.cache_write_tokens = usage.cache_write_tokens.max(floor.cache_write_tokens);
+    usage.cache_write_1h_tokens = usage.cache_write_1h_tokens.max(floor.cache_write_1h_tokens);
+    debug_assert!(usage.cache_write_1h_tokens <= usage.cache_write_tokens);
     usage.reasoning_tokens = match (usage.reasoning_tokens, floor.reasoning_tokens) {
         (None, None) => None,
         (a, b) => Some(a.unwrap_or(0).max(b.unwrap_or(0))),
@@ -316,12 +321,14 @@ mod tests {
             output_per_mtok: 2_000_000.0,
             cache_read_per_mtok: 3_000_000.0,
             cache_write_per_mtok: 4_000_000.0,
+            cache_write_1h_per_mtok: None,
             above_threshold: Some(ModelCostTier {
                 prompt_tokens: 1,
                 input_per_mtok: 10_000_000.0,
                 output_per_mtok: 20_000_000.0,
                 cache_read_per_mtok: 30_000_000.0,
                 cache_write_per_mtok: 40_000_000.0,
+                cache_write_1h_per_mtok: None,
             }),
         }
     }

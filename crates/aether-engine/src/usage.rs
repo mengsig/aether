@@ -52,6 +52,7 @@ impl RequestUsage {
                 .total
                 .cache_write_tokens
                 .saturating_sub(self.previous.cache_write_tokens),
+            cache_write_1h_tokens: self.total.cache_write_1h_since(&self.previous),
             reasoning_tokens: self
                 .total
                 .reasoning_tokens

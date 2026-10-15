@@ -12,6 +12,7 @@ class ModelCost(TypedDict, total=False):
     """
     above_threshold: _protocol.ModelCostTier | None  # optional
     cache_read_per_mtok: float  # optional
+    cache_write_1h_per_mtok: float | None  # optional
     cache_write_per_mtok: float  # optional
     input_per_mtok: float
     output_per_mtok: float

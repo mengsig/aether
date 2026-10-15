@@ -18,6 +18,16 @@ release is also the text of its GitHub release.
   streamed is kept as a cancelled failure under the id it streamed under, so
   a reload matches the live view. It costs nothing, and a resumed turn does
   not see it as something the agent said.
+- **1-hour prompt-cache writes are priced at their own rate.** Claude Code
+  writes 1-hour cache entries, which Anthropic bills at twice the input
+  price, but Aether priced every cache write at the 5-minute rate (1.25x).
+  Costs and API-equivalent estimates that Aether works out itself were too
+  low: across one Haiku benchmark, pricing the tokens that way came to 16%
+  less than Claude Code reported.
+  Usage now carries `cache_write_1h_tokens`, the 1-hour part of
+  `cache_write_tokens`, and model prices carry `cache_write_1h_per_mtok`.
+  Claude Code's own reported cost was already right and is unchanged. Older
+  records, and engines that do not report the split, are priced as before.
 
 ## 1.0.6
 

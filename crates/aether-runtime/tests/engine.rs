@@ -51,6 +51,8 @@ mod handoff;
 mod interruptions;
 #[path = "engine/memory.rs"]
 mod memory;
+#[path = "engine/native_cache_ttl_pricing.rs"]
+mod native_cache_ttl_pricing;
 #[path = "engine/native_compaction.rs"]
 mod native_compaction;
 #[path = "engine/native_completion.rs"]

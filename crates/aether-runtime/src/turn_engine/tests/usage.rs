@@ -806,6 +806,7 @@ fn native_request_pricing_reprices_earlier_fragments_when_the_prompt_crosses_the
                 output_per_mtok: 10.0,
                 cache_read_per_mtok: 0.5,
                 cache_write_per_mtok: 6.25,
+                cache_write_1h_per_mtok: None,
             }),
             ..Default::default()
         }),
@@ -838,6 +839,7 @@ fn closing_test_rate() -> ModelCost {
         output_per_mtok: 2_000_000.0,
         cache_read_per_mtok: 3_000_000.0,
         cache_write_per_mtok: 4_000_000.0,
+        cache_write_1h_per_mtok: None,
         above_threshold: None,
     }
 }

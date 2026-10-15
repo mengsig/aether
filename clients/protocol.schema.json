@@ -9176,6 +9176,14 @@
           "format": "double",
           "type": "number"
         },
+        "cache_write_1h_per_mtok": {
+          "description": "Rate for 1-hour cache writes; absent prices them at `cache_write_per_mtok`.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "cache_write_per_mtok": {
           "default": 0.0,
           "format": "double",
@@ -9204,6 +9212,13 @@
           "default": 0.0,
           "format": "double",
           "type": "number"
+        },
+        "cache_write_1h_per_mtok": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "cache_write_per_mtok": {
           "default": 0.0,
@@ -14434,6 +14449,12 @@
       "description": "Token accounting for one invocation, or a running total.\n\n`cost_usd` sums invocations with a configured price or provider-reported\ncost; `cost_basis` distinguishes those sources and `cost_complete` says\nwhether any invocations were left out. List prices are estimates, even\nwhen every invocation was priced. A budget enforces on this accounting\nbound - an unpriced invocation\ncannot make what was already spent smaller - so nothing silently stops\nfiring when a model or engine reports no price.",
       "properties": {
         "cache_read_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cache_write_1h_tokens": {
+          "description": "The part of `cache_write_tokens` written to the 1-hour cache tier. Zero\nwhere the engine did not report the split; those writes price as 5-minute ones.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"

@@ -383,6 +383,13 @@ the engine reports a final cost: an aborted stream can omit output. Proven pre-l
 failures, including unsupported engine configuration, remain complete zero.
 An absent start acknowledgement or usage receipt is not proof of zero spend.
 
+`cache_write_1h_tokens`, when present, is the part of `cache_write_tokens`
+written to Anthropic's 1-hour prompt cache. It is never larger than
+`cache_write_tokens`, and is omitted when zero. A model price's optional
+`cache_write_1h_per_mtok` prices those tokens (2x input for Claude models;
+5-minute writes are 1.25x). Writes from an engine that does not report the
+split, and prices without that rate, use `cache_write_per_mtok` as before.
+
 An API request becomes possibly billed once its stream starts. A stream
 failure without closing accounting keeps observed tokens and priced dollars
 as a floor with an `interrupted` gap. An error response before stream start adds no spend.

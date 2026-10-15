@@ -165,6 +165,51 @@ fn builtin_ids_are_unique_and_anthropic_costs_match_the_sheet() {
 }
 
 #[test]
+fn claude_one_hour_cache_writes_cost_twice_input_and_no_other_family_has_them() {
+    let all = providers();
+    let mut claude = 0;
+    for provider in &all {
+        let anthropic = matches!(provider.id.as_str(), "anthropic" | "claude-code");
+        for model in &provider.models {
+            let Some(cost) = model.capabilities.cost else {
+                continue;
+            };
+            if !anthropic {
+                assert_eq!(cost.cache_write_1h_per_mtok, None, "{}", model.id);
+                continue;
+            }
+            claude += 1;
+            assert_eq!(
+                cost.cache_write_1h_per_mtok,
+                Some(cost.input_per_mtok * 2.0),
+                "{}",
+                model.id
+            );
+            if let Some(tier) = cost.above_threshold {
+                assert_eq!(
+                    tier.cache_write_1h_per_mtok,
+                    Some(tier.input_per_mtok * 2.0)
+                );
+            }
+        }
+    }
+    assert_eq!(claude, 8, "four API models and four priced engine models");
+    let haiku = all
+        .iter()
+        .find(|p| p.id == "claude-code")
+        .and_then(|p| p.model("haiku"))
+        .and_then(|m| m.capabilities.cost)
+        .expect("claude-code/haiku is priced");
+    assert_eq!(haiku.cache_write_1h_per_mtok, Some(0.20));
+    assert_eq!(
+        haiku
+            .above_threshold
+            .and_then(|t| t.cache_write_1h_per_mtok),
+        Some(1.0)
+    );
+}
+
+#[test]
 fn current_openai_and_engine_models_resolve_by_alias() {
     let all = providers();
     let by_id = |id: &str| all.iter().find(|p| p.id == id).expect(id);

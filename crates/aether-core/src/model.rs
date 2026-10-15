@@ -119,3 +119,7 @@ impl fmt::Display for ModelChain {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "model/tests_cache_ttl.rs"]
+mod tests_cache_ttl;

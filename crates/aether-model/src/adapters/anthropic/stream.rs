@@ -38,6 +38,22 @@ impl AnthropicMapper {
         if let Some(v) = get("cache_creation_input_tokens") {
             self.usage.cache_write_tokens = v;
         }
+        if let Some(v) = usage
+            .get("cache_creation")
+            .and_then(|split| split.get("ephemeral_1h_input_tokens"))
+            .and_then(Value::as_u64)
+        {
+            self.usage.cache_write_1h_tokens = v;
+        }
+        // An untrusted split beyond its total cannot be priced; bill the total at the 1-hour rate.
+        if self.usage.cache_write_1h_tokens > self.usage.cache_write_tokens {
+            tracing::warn!(
+                one_hour = self.usage.cache_write_1h_tokens,
+                cache_write_tokens = self.usage.cache_write_tokens,
+                "Anthropic reported more 1-hour cache writes than cache writes"
+            );
+            self.usage.cache_write_1h_tokens = self.usage.cache_write_tokens;
+        }
     }
 }
 
@@ -282,7 +298,7 @@ mod tests {
         vec![
             sse(
                 "message_start",
-                json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5","content":[],"stop_reason":null,"usage":{"input_tokens":25,"cache_creation_input_tokens":10,"cache_read_input_tokens":5,"output_tokens":1}}}),
+                json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5","content":[],"stop_reason":null,"usage":{"input_tokens":25,"cache_creation_input_tokens":10,"cache_read_input_tokens":5,"output_tokens":1,"cache_creation":{"ephemeral_5m_input_tokens":6,"ephemeral_1h_input_tokens":4}}}}),
             ),
             sse(
                 "content_block_start",
@@ -351,6 +367,7 @@ mod tests {
         assert_eq!(resp.usage.output_tokens, 42);
         assert_eq!(resp.usage.cache_read_tokens, 5);
         assert_eq!(resp.usage.cache_write_tokens, 10);
+        assert_eq!(resp.usage.cache_write_1h_tokens, 4);
         let calls: Vec<_> = resp.tool_uses().collect();
         assert_eq!(
             calls,
