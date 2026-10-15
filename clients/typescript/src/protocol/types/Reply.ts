@@ -29,6 +29,8 @@ import type {
   PushConfig,
   RemoteStatus,
   ReplayFrame,
+  RepositoryAlias,
+  RepositoryAliasReport,
   RetentionPreview,
   RunListing,
   RunReport,
@@ -220,6 +222,16 @@ export interface ReplyMemories {
   "reply": "memories";
 }
 
+export interface ReplyRepositoryAliased {
+  "data": RepositoryAliasReport;
+  "reply": "repository_aliased";
+}
+
+export interface ReplyRepositoryAliases {
+  "data": Array<RepositoryAlias>;
+  "reply": "repository_aliases";
+}
+
 export interface ReplyMemory {
   "data": MemoryRecord;
   "reply": "memory";
@@ -373,6 +385,8 @@ export type Reply =
     ReplyArtifacts |
     ReplyArtifactBytes |
     ReplyMemories |
+    ReplyRepositoryAliased |
+    ReplyRepositoryAliases |
     ReplyMemory |
     ReplyMemorySeeded |
     ReplyRuns |

@@ -569,9 +569,9 @@ pub(super) async fn dispatch_authorized(
                 truncated,
             })
         }
-        Command::Memories { query } => Ok(Reply::Memories(
-            store.memories(&query.into()).map_err(store_err)?,
-        )),
+        Command::Memories { query } => {
+            Ok(Reply::Memories(rt.memories(query.into()).map_err(map_err)?))
+        }
         Command::CreateMemory { spec, .. } => {
             let rt = rt.clone();
             let result = blocking(move || rt.create_memory_keyed(spec, by, submission)).await?;
@@ -595,6 +595,23 @@ pub(super) async fn dispatch_authorized(
             let (repository, report) = synced.map_err(map_err)?;
             Ok(Reply::MemorySeeded { repository, report })
         }
+        // Off the async worker: a root runs git, and the move rewrites every
+        // memory filed under the alias in one transaction.
+        Command::AliasRepository {
+            alias,
+            root,
+            repository,
+            dry_run,
+        } => {
+            let rt = rt.clone();
+            let aliased =
+                blocking(move || rt.alias_repository(&alias, root, repository, dry_run, by))
+                    .await?;
+            Ok(Reply::RepositoryAliased(aliased.map_err(map_err)?))
+        }
+        Command::ListRepositoryAliases => Ok(Reply::RepositoryAliases(
+            rt.repository_aliases().map_err(map_err)?,
+        )),
         Command::ListModels => providers::list_models(daemon).await,
         Command::AuthStatus => providers::auth_status(daemon).await,
 

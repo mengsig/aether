@@ -187,6 +187,10 @@ impl MemoryService {
         task: Option<TaskId>,
         superseded: &BTreeSet<MemoryId>,
     ) -> Result<(Admission, Commit)> {
+        let candidate = MemoryCandidate {
+            scope: self.canonical_scope(candidate.scope)?,
+            ..candidate
+        };
         let at = now();
         let mut commit = Commit::new();
         let base = |kind: EventKind| {
@@ -268,6 +272,23 @@ impl MemoryService {
             }
             None => Ok((Admission::Accepted { record }, commit)),
         }
+    }
+
+    /// `scope` with its repository resolved through the registered aliases,
+    /// so whoever still names an old repository reads and writes the scope its
+    /// memories were moved to. Every other scope comes back as it went in.
+    pub fn canonical_scope(&self, scope: MemoryScope) -> Result<MemoryScope> {
+        let resolved = match scope {
+            MemoryScope::Repository { id } => MemoryScope::Repository {
+                id: self.store.resolve_repository(&id)?,
+            },
+            MemoryScope::RepositoryRole { id, role } => MemoryScope::RepositoryRole {
+                id: self.store.resolve_repository(&id)?,
+                role,
+            },
+            other => other,
+        };
+        Ok(resolved)
     }
 
     /// Evaluate operator content under the caller's hold. Rejections have no commit.

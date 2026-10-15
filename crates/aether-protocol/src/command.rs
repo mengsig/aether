@@ -327,6 +327,24 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         root: Option<std::path::PathBuf>,
     },
+    /// Make `alias`, an old repository id, resolve to the repository at
+    /// `root` or to the id `repository`, and move every memory filed under
+    /// the alias there. The move is one-way. Needs `repository_aliases`.
+    AliasRepository {
+        alias: String,
+        /// A checkout whose derived id is the canonical one, derived as for
+        /// `create_agent.repository_root`. Exclusive with `repository`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root: Option<std::path::PathBuf>,
+        /// The canonical id, named outright. Exclusive with `root`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repository: Option<String>,
+        /// Report what would move without moving it.
+        #[serde(default)]
+        dry_run: bool,
+    },
+    /// Registered repository aliases. Needs `repository_aliases`.
+    ListRepositoryAliases,
 
     /// Runs this store knows about, newest first.
     ListRuns {

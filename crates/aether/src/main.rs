@@ -445,6 +445,17 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                     cli::memory_pin(endpoint, id, unpin, json).await
                 }
                 MemoryCmd::Sync { root, json } => cli::memory_sync(endpoint, root, json).await,
+                MemoryCmd::Alias {
+                    alias,
+                    root,
+                    repository,
+                    dry_run,
+                    json,
+                } => {
+                    let target = cli::AliasTarget { root, repository };
+                    cli::memory_alias(endpoint, alias, target, dry_run, json).await
+                }
+                MemoryCmd::Aliases { json } => cli::memory_aliases(endpoint, json).await,
             },
             Cmd::Remote { command } => cli::remote::run(socket, command).await,
             Cmd::Bridge { stdio } => cli::bridge::bridge(socket, stdio).await,

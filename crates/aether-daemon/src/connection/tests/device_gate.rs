@@ -327,6 +327,7 @@ async fn remote_field_escalations_are_refused_before_mutation() {
         serde_json::json!({"cmd":"engine_tool", "agent":id, "token":"guess", "name":"bash", "input":{}}),
         serde_json::json!({"cmd":"export_run", "run":aether_core::id::RunId::new(), "path":"/sensitive"}),
         serde_json::json!({"cmd":"import_run", "path":"/sensitive"}),
+        serde_json::json!({"cmd":"alias_repository", "alias":"archon", "root":"/sensitive"}),
     ];
     let seq = carrier.runtime.store().last_seq().unwrap();
     for (index, case) in cases.into_iter().enumerate() {

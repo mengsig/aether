@@ -293,6 +293,7 @@ mod tests {
         // (cmd tag, the fields the wire requires beyond `cmd` itself)
         const REQUIRED: &[(&str, &[&str])] = &[
             ("add_approval_rule", &["decision", "match", "scope"]),
+            ("alias_repository", &["alias"]),
             ("archive", &["target"]),
             ("auth_status", &[]),
             ("cancel", &["agent"]),
@@ -342,6 +343,7 @@ mod tests {
             ("list_devices", &[]),
             ("list_invocations", &["agent"]),
             ("list_models", &[]),
+            ("list_repository_aliases", &[]),
             ("list_runs", &["limit"]),
             ("list_schedules", &[]),
             ("list_tasks", &["query"]),

@@ -128,6 +128,7 @@ mod disk_full;
 mod expired_history;
 mod history_retention;
 mod outcomes;
+mod repository_aliases;
 mod retention_growth;
 
 #[test]

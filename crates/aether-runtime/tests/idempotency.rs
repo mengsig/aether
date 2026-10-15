@@ -384,6 +384,26 @@ impl Store for CommitLog {
     fn any_agent_in_repository(&self, repository: &str) -> StoreResult<bool> {
         self.inner.any_agent_in_repository(repository)
     }
+    fn resolve_repository(&self, repository: &str) -> StoreResult<String> {
+        self.inner.resolve_repository(repository)
+    }
+    fn repository_aliases(&self) -> StoreResult<Vec<aether_core::repository::RepositoryAlias>> {
+        self.inner.repository_aliases()
+    }
+    fn preview_repository_alias(
+        &self,
+        alias: &aether_core::repository::RepositoryAlias,
+    ) -> StoreResult<aether_store::RepositoryAliasMove> {
+        self.inner.preview_repository_alias(alias)
+    }
+    fn alias_repository(
+        &self,
+        alias: &aether_core::repository::RepositoryAlias,
+        by: aether_core::event::Actor,
+        hold: &aether_store::Hold<'_>,
+    ) -> StoreResult<aether_store::RepositoryAliasMove> {
+        self.inner.alias_repository(alias, by, hold)
+    }
     fn agents(&self, filter: &AgentFilter) -> StoreResult<Vec<Agent>> {
         self.inner.agents(filter)
     }

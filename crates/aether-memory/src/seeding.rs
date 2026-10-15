@@ -34,6 +34,10 @@ impl MemoryService {
         repository: &str,
         actor: Actor,
     ) -> Result<SeedReport> {
+        // Resolved first: the presence check and the sweep ask by scope, and a
+        // checkout whose remote is an alias must find the notes moved away.
+        let repository = self.store.resolve_repository(repository)?;
+        let repository = repository.as_str();
         let candidates = repo::scan(root, repository)?;
         let mut report = SeedReport {
             found: candidates.len(),

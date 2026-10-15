@@ -5,6 +5,7 @@ export const PROTOCOL_VERSION = 19;
 export const MIN_PROTOCOL_VERSION = 17;
 
 export * from "./protocol/commands/add.ts";
+export * from "./protocol/commands/alias.ts";
 export * from "./protocol/commands/archive.ts";
 export * from "./protocol/commands/auth.ts";
 export * from "./protocol/commands/cancel.ts";
@@ -238,6 +239,9 @@ export * from "./protocol/types/ReplayFrame.ts";
 export * from "./protocol/types/ReplayMessage.ts";
 export * from "./protocol/types/ReplayTool.ts";
 export * from "./protocol/types/Reply.ts";
+export * from "./protocol/types/RepositoryAlias.ts";
+export * from "./protocol/types/RepositoryAliasCounts.ts";
+export * from "./protocol/types/RepositoryAliasReport.ts";
 export * from "./protocol/types/ResourceHolding.ts";
 export * from "./protocol/types/ResourceKey.ts";
 export * from "./protocol/types/Result_of_Reply_or_ErrorReply.ts";

@@ -121,6 +121,11 @@ sending the field: an older daemon ignores it and files the agent's memory
 under its workspace's repository instead. The Rust client refuses such a
 create itself.
 
+`repository_aliases` means the daemon serves `alias_repository` and
+`list_repository_aliases` (see [repository aliases](#repository-aliases)). An
+older daemon refuses both commands as unknown; the Rust client refuses to send
+them to one.
+
 ## Naming a checkout
 
 An agent's memory is scoped by `scope.repository`. Left unset, the daemon
@@ -148,6 +153,54 @@ derived from the path given, so a subdirectory of a checkout with no `origin`
 names a different scope than the checkout itself. Check the
 `repository_root` feature first.
 
+## Repository aliases
+
+An agent created with a bare `scope.repository`, such as `archon`, files its
+memory under that name, apart from agents whose id was derived from the
+checkout, such as `github.com/mengsig/archon`. An operator joins the two by
+aliasing the old name to the derived one:
+
+```json
+{"cmd": "alias_repository", "alias": "archon", "root": "/src/archon"}
+{"cmd": "alias_repository", "alias": "archon",
+  "repository": "github.com/mengsig/archon", "dry_run": true}
+```
+
+Name exactly one of `root` and `repository`. A `root` is an absolute path to
+a checkout, and the id is derived from it exactly as for `repository_root`. A
+`repository` is taken as given. Both ids are normalized like
+`scope.repository`, and must differ.
+
+What moves: every memory scoped `repository` or `repository_role` under the
+alias, in any state, including forgotten and superseded ones. Each keeps its
+id, text, role, provenance, supersession links, pin and curation; only its
+scope changes. A memory whose text is already current in the target scope is
+moved beside it, not merged, and counted under `duplicates`. Global, role,
+agent and subtree memories are not touched, and neither are agent rows: an
+agent created with the alias keeps it, and its reads and writes resolve to
+the target from then on. A new agent, or a child, naming the alias is created
+with the target id, so a child of an agent still carrying the alias passes
+the narrowing check. A `memories` query, `create_memory` and
+`aether memory list --scope` given the alias read and write the target. The
+row, the move and one `custom` event named `repository.aliased` are committed
+together, or not at all.
+
+The reply, `RepositoryAliased`, carries the alias, the target, `existing`
+(the alias was already registered) and `counts`: memories by scope kind
+(`repository`, `repository_role`), `duplicates`, and the `agents` still
+carrying the alias. With `dry_run` the counts are what a real run would move
+now, and nothing is written.
+
+Registering the same pair again is accepted, and moves anything filed under
+the alias since, such as an imported run's memories. Aliasing a name to a
+different target is refused, and so is a chain: an alias cannot point at
+another alias, and a target cannot itself become an alias. There is no command
+to remove an alias. Moved memories do not move back, and a removed alias would
+put an old agent's new memories under the old name again, so an alias is
+permanent. `list_repository_aliases` answers `RepositoryAliases`, every alias
+ordered by name. `alias_repository` is host only, so a paired device cannot
+send it; it can list them. Check the `repository_aliases` feature first.
+
 ## Operator memory scopes
 
 `create_memory` is operator-only. Its `spec.scope` describes which agents
@@ -173,7 +226,9 @@ or canonical path. An explicit root must be the daemon's workspace, a live
 agent's workspace, or a directory within one. `repository` targets agents
 created with an explicit `scope.repository` (as Archon does). The name is
 normalized using the same rules as agent creation and must already be carried
-by at least one agent, including terminal or archived agents. For example,
+by at least one agent, including terminal or archived agents, or be the
+target of a [repository alias](#repository-aliases); an alias names its
+target. For example,
 `{"scope": "repository", "repository": "aether"}` targets that explicit scope
 rather than the workspace's derived id. When neither field is set, the daemon's
 workspace root is used. Unknown scope fields and invalid roles, roots or

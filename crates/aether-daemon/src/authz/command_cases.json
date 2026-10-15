@@ -449,6 +449,20 @@
     }
   },
   {
+    "access": "host_only",
+    "command": {
+      "cmd": "alias_repository",
+      "alias": "fixture",
+      "repository": "fixture"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_repository_aliases"
+    }
+  },
+  {
     "access": "observe",
     "command": {
       "cmd": "list_runs",

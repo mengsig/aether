@@ -40,6 +40,8 @@ from ._ReplyProviders import ReplyProviders
 from ._ReplyPushConfig import ReplyPushConfig
 from ._ReplyRemote import ReplyRemote
 from ._ReplyReplay import ReplyReplay
+from ._ReplyRepositoryAliased import ReplyRepositoryAliased
+from ._ReplyRepositoryAliases import ReplyRepositoryAliases
 from ._ReplyRetentionPreview import ReplyRetentionPreview
 from ._ReplyRunExported import ReplyRunExported
 from ._ReplyRunImported import ReplyRunImported
@@ -94,6 +96,8 @@ Reply = (
     ReplyArtifacts |
     ReplyArtifactBytes |
     ReplyMemories |
+    ReplyRepositoryAliased |
+    ReplyRepositoryAliases |
     ReplyMemory |
     ReplyMemorySeeded |
     ReplyRuns |

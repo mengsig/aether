@@ -8,8 +8,21 @@ use std::collections::BTreeSet;
 
 impl MemoryService {
     /// Rank memories for a request. Structural signals dominate; lexical
-    /// match narrows the candidate set when a query is given.
+    /// match narrows the candidate set when a query is given. A repository
+    /// named by an old alias is read where its memories now live.
     pub fn retrieve(&self, req: &RetrievalRequest) -> Result<Vec<Retrieved>> {
+        let scope = req
+            .scope
+            .clone()
+            .map(|scope| self.canonical_scope(scope))
+            .transpose()?;
+        self.retrieve_resolved(&RetrievalRequest {
+            scope,
+            ..req.clone()
+        })
+    }
+
+    fn retrieve_resolved(&self, req: &RetrievalRequest) -> Result<Vec<Retrieved>> {
         let limit = if req.limit == 0 { 5 } else { req.limit };
         let mut pool = Vec::new();
         let mut seen = BTreeSet::new();

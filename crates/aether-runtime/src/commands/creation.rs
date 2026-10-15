@@ -1,7 +1,4 @@
-use super::{
-    CreateAgentSpec, Preflight, PreparedAgent, repository::repository_id,
-    validation::check_narrows_parent,
-};
+use super::{CreateAgentSpec, Preflight, PreparedAgent, validation::check_narrows_parent};
 use crate::submission::{created_work_gone, wrong_shape};
 use crate::{CommitHold, Result, Runtime, RuntimeError};
 use aether_core::agent::{Agent, AgentStats, AgentStatus, ApprovalPolicy, Role};
@@ -198,14 +195,7 @@ impl Runtime {
             ));
         }
         if scope.repository.is_none() {
-            scope.repository = match &parent {
-                // Inherited, never re-derived: a child narrowed to a
-                // subdirectory of a workspace with no `origin` would derive a
-                // different id from its own path and be unable to read the
-                // repository's notes or write memory its siblings can see.
-                Some(p) => p.scope.repository.clone(),
-                None => scope.workspace_root.as_deref().and_then(repository_id),
-            };
+            scope.repository = self.unnamed_repository(&scope, parent.as_ref())?;
         }
         self.check_backend_supported(&model, &fallbacks, &scope)?;
         let mut config = spec.config.unwrap_or_default();

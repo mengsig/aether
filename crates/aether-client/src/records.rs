@@ -238,6 +238,54 @@ impl Client {
         }
     }
 
+    /// Alias `alias`, an old repository id, to the repository at `root` or to
+    /// the id `repository`, moving every memory filed under it. A dry run
+    /// reports what would move and moves nothing.
+    pub async fn alias_repository(
+        &self,
+        alias: String,
+        root: Option<std::path::PathBuf>,
+        repository: Option<String>,
+        dry_run: bool,
+    ) -> Result<aether_core::repository::RepositoryAliasReport> {
+        self.require_repository_aliases()?;
+        let command = Command::AliasRepository {
+            alias,
+            root,
+            repository,
+            dry_run,
+        };
+        match self.request(command).await? {
+            Reply::RepositoryAliased(report) => Ok(report),
+            other => Err(unexpected("repository aliased", &other)),
+        }
+    }
+
+    /// Every registered repository alias, ordered by alias.
+    pub async fn repository_aliases(
+        &self,
+    ) -> Result<Vec<aether_core::repository::RepositoryAlias>> {
+        self.require_repository_aliases()?;
+        match self.request(Command::ListRepositoryAliases).await? {
+            Reply::RepositoryAliases(aliases) => Ok(aliases),
+            other => Err(unexpected("repository aliases", &other)),
+        }
+    }
+
+    fn require_repository_aliases(&self) -> Result<()> {
+        let served = self.welcome().is_some_and(|w| {
+            w.features
+                .iter()
+                .any(|f| f == aether_protocol::features::REPOSITORY_ALIASES)
+        });
+        if served {
+            return Ok(());
+        }
+        Err(ClientError::Incompatible(
+            "daemon cannot alias repositories; update Aether".into(),
+        ))
+    }
+
     /// Read a repository's committed notes into memory scoped to it.
     pub async fn sync_repository_knowledge(
         &self,

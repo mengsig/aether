@@ -77,6 +77,17 @@ export function listModels(): ListModelsCommand {
 }
 
 /**
+ * Registered repository aliases. Needs `repository_aliases`.
+ */
+export interface ListRepositoryAliasesCommand {
+  "cmd": "list_repository_aliases";
+}
+
+export function listRepositoryAliases(): ListRepositoryAliasesCommand {
+  return { cmd: "list_repository_aliases" };
+}
+
+/**
  * Runs this store knows about, newest first.
  */
 export interface ListRunsCommand {

@@ -98,7 +98,8 @@ impl Command {
             | Self::ListArtifacts { .. } | Self::ReadArtifact { .. } | Self::Memories { .. }
             | Self::ListRuns { .. } | Self::GetRunReport { .. } | Self::Replay { .. }
             | Self::ListModels | Self::AuthStatus | Self::Providers | Self::GetAttention
-            | Self::ListWorkspaces { .. } | Self::GetPushConfig => Access::Observe,
+            | Self::ListWorkspaces { .. } | Self::GetPushConfig
+            | Self::ListRepositoryAliases => Access::Observe,
 
             Self::CreateAgent(_) | Self::ReplyToQuestion { .. } | Self::SendMessage { .. }
             | Self::Cancel { .. } | Self::Interrupt { .. } | Self::ConfigureGithubWatcher { .. }
@@ -112,7 +113,8 @@ impl Command {
             | Self::ValidateWorkspace { .. } | Self::GetGitSummary { .. } => Access::Operate,
 
             Self::Shutdown | Self::EngineTool { .. } | Self::EngineTools { .. }
-            | Self::ExportRun { .. } | Self::ImportRun { .. } => Access::HostOnly,
+            | Self::ExportRun { .. } | Self::ImportRun { .. }
+            | Self::AliasRepository { .. } => Access::HostOnly,
 
             Self::GetRemote | Self::ConfigureRemote { .. } | Self::StartPairing { .. }
             | Self::GetPairing { .. } | Self::ConfirmPairing { .. }

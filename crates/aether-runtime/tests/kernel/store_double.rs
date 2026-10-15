@@ -161,6 +161,26 @@ impl Store for CommitsMidPass {
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool> {
         self.inner.any_agent_in_repository(repository)
     }
+    fn resolve_repository(&self, repository: &str) -> Result<String> {
+        self.inner.resolve_repository(repository)
+    }
+    fn repository_aliases(&self) -> Result<Vec<aether_core::repository::RepositoryAlias>> {
+        self.inner.repository_aliases()
+    }
+    fn preview_repository_alias(
+        &self,
+        alias: &aether_core::repository::RepositoryAlias,
+    ) -> Result<aether_store::RepositoryAliasMove> {
+        self.inner.preview_repository_alias(alias)
+    }
+    fn alias_repository(
+        &self,
+        alias: &aether_core::repository::RepositoryAlias,
+        by: aether_core::event::Actor,
+        hold: &aether_store::Hold<'_>,
+    ) -> Result<aether_store::RepositoryAliasMove> {
+        self.inner.alias_repository(alias, by, hold)
+    }
     fn agents(&self, filter: &AgentFilter) -> Result<Vec<Agent>> {
         if self.hook == Hook::CancelDescendantRead
             && filter.parent.is_some()

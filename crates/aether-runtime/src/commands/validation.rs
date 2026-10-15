@@ -191,7 +191,8 @@ impl Runtime {
         let Some(parent) = parent else {
             return Ok(requested.unwrap_or_else(|| self.default_root_scope()));
         };
-        let scope = requested.unwrap_or_else(|| parent.scope.clone());
+        let parent_scope = self.resolved_scope(&parent.scope)?;
+        let scope = requested.unwrap_or_else(|| parent_scope.clone());
         let checked = if let Some(workspace) = isolated_workspace {
             if scope.workspace_root.as_deref() != Some(workspace) {
                 return Err(RuntimeError::Invalid(
@@ -216,9 +217,9 @@ impl Runtime {
             scope.clone()
         };
         let parent_scope = if isolated_workspace.is_some() {
-            Self::canonical_workspace_scope(&parent.scope)?
+            Self::canonical_workspace_scope(&parent_scope)?
         } else {
-            parent.scope.clone()
+            parent_scope
         };
         match checked.widened_field(&parent_scope) {
             Some(field) => Err(RuntimeError::Invalid(format!(

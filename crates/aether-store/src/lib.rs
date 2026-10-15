@@ -32,6 +32,7 @@ use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::{MemoryKind, MemoryRecord, MemoryRecorder, MemoryScope};
 use aether_core::model::{Message, ModelRef};
+use aether_core::repository::{RepositoryAlias, RepositoryAliasCounts};
 use aether_core::schedule::{Schedule, ScheduleOccurrence};
 use aether_core::snapshot::{Invocation, InvocationSnapshot};
 use aether_core::task::{Task, TaskStatusKind};
@@ -120,6 +121,10 @@ pub enum StoreError {
     HistoryExpired { first_seq: u64, last_seq: u64 },
     #[error("artifact bytes unavailable: no artifact directory configured")]
     NoArtifactDir,
+    /// A repository alias that would break its invariants: a different
+    /// canonical for a registered alias, or a chain of aliases.
+    #[error("{0}")]
+    AliasRefused(String),
 }
 
 impl StoreError {
@@ -426,6 +431,16 @@ impl Default for MemoryQuery {
     }
 }
 
+/// What registering a repository alias moved, or a preview of it would.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepositoryAliasMove {
+    pub counts: RepositoryAliasCounts,
+    /// The alias was already registered to the same canonical id.
+    pub existing: bool,
+    /// The committed event; empty for a preview, or when nothing changed.
+    pub events: Vec<Event>,
+}
+
 /// One transcript entry rebuilt from the `agent.message` events.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptEntry {
@@ -530,6 +545,25 @@ pub trait Store: Send + Sync {
     fn agents(&self, filter: &AgentFilter) -> Result<Vec<Agent>>;
     /// Whether any agent, including archived and terminal agents, carries this repository scope.
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool>;
+
+    /// The id `repository`'s memory is kept under: the canonical id when it
+    /// is a registered alias, else `repository` itself.
+    fn resolve_repository(&self, repository: &str) -> Result<String>;
+    /// Every registered repository alias, ordered by alias.
+    fn repository_aliases(&self) -> Result<Vec<RepositoryAlias>>;
+    /// What [`Store::alias_repository`] would move now, refused as it would
+    /// be refused. Writes nothing.
+    fn preview_repository_alias(&self, alias: &RepositoryAlias) -> Result<RepositoryAliasMove>;
+    /// Register `alias` and rescope every memory filed under it to the
+    /// canonical id, in one transaction with its event. Re-registering the
+    /// same pair moves whatever was filed under the alias since; a different
+    /// canonical, or a chain of aliases, is [`StoreError::AliasRefused`].
+    fn alias_repository(
+        &self,
+        alias: &RepositoryAlias,
+        by: aether_core::event::Actor,
+        hold: &Hold<'_>,
+    ) -> Result<RepositoryAliasMove>;
 
     fn task(&self, id: TaskId) -> Result<Option<Task>>;
     fn tasks(&self, filter: &TaskFilter) -> Result<Vec<Task>>;

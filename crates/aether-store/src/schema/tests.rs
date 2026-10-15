@@ -604,7 +604,7 @@ fn v19_backs_up_a_v18_store_and_keeps_binaries_without_image_refs_out() {
 
     let upgraded = crate::SqliteStore::open(&path).expect("upgrade");
     let stamp = crate::Store::meta(&upgraded, "schema_version").expect("version");
-    assert_eq!(stamp, Some("19".to_string()));
+    assert_eq!(stamp, Some(SCHEMA_VERSION.to_string()));
     drop(upgraded);
 
     let backups: Vec<_> = std::fs::read_dir(directory.path().join("migration-backups"))
@@ -613,7 +613,8 @@ fn v19_backs_up_a_v18_store_and_keeps_binaries_without_image_refs_out() {
         .collect();
     assert_eq!(backups.len(), 1, "one snapshot of the version 18 store");
     let name = backups[0].file_name().expect("name").to_string_lossy();
-    assert!(name.starts_with("schema-18-before-19-"), "{name}");
+    let prefix = format!("schema-18-before-{SCHEMA_VERSION}-");
+    assert!(name.starts_with(&prefix), "{name}");
     let backup =
         Connection::open_with_flags(&backups[0], rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .expect("backup");
@@ -631,8 +632,103 @@ fn v19_backs_up_a_v18_store_and_keeps_binaries_without_image_refs_out() {
     assert!(matches!(
         refusal,
         Err(StoreError::SchemaTooNew {
-            found: 19,
+            found: SCHEMA_VERSION,
             supported: 18
         })
     ));
+}
+
+/// A memory filed under an old name before aliases existed is kept, and can
+/// be moved once the store holds the alias table.
+#[test]
+fn v20_adds_repository_aliases_to_a_populated_v19_store() {
+    use aether_core::memory::{MemoryCandidate, MemoryKind, MemoryRecord, MemoryScope};
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let v19 = previous_database(&path);
+    assert_eq!(SCHEMA_VERSION, 20, "this test pins the v19 to v20 step");
+    let scope = MemoryScope::Repository {
+        id: "archon".into(),
+    };
+    let record = MemoryRecord::from_candidate(
+        MemoryCandidate {
+            scope: scope.clone(),
+            kind: MemoryKind::Fact,
+            text: "filed before aliases".into(),
+            structured: None,
+            importance: 0.5,
+            confidence: 0.5,
+            tags: Vec::new(),
+            provenance: Default::default(),
+            supersedes: None,
+        },
+        aether_core::time::now(),
+    );
+    v19.execute(
+        "INSERT INTO memories(id, scope, kind, text, tags, importance, created_at, body)
+         VALUES (?1, ?2, 'fact', ?3, '', 0.5, ?4, ?5)",
+        rusqlite::params![
+            record.id.to_string(),
+            "repo:archon",
+            record.text,
+            record.created_at.to_rfc3339(),
+            serde_json::to_string(&record).expect("body"),
+        ],
+    )
+    .expect("v19 memory");
+    drop(v19);
+
+    let store = crate::SqliteStore::open(&path).expect("upgrade");
+    let stamp = crate::Store::meta(&store, "schema_version").expect("version");
+    assert_eq!(stamp, Some("20".to_string()));
+    assert!(
+        crate::Store::repository_aliases(&store)
+            .expect("aliases")
+            .is_empty()
+    );
+    assert_eq!(
+        crate::Store::memory(&store, record.id).expect("read"),
+        Some(record.clone())
+    );
+    let backups: Vec<_> = std::fs::read_dir(directory.path().join("migration-backups"))
+        .expect("backups")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert!(
+        backups
+            .iter()
+            .any(|name| name.starts_with("schema-19-before-20-")),
+        "{backups:?}"
+    );
+
+    let alias = aether_core::repository::RepositoryAlias::new(
+        "archon",
+        "github.com/mengsig/archon",
+        aether_core::time::now(),
+    )
+    .expect("alias");
+    let gate = crate::WriteGate::new();
+    let moved = crate::Store::alias_repository(
+        &store,
+        &alias,
+        aether_core::event::Actor::System,
+        &gate.hold(),
+    )
+    .expect("alias the migrated store");
+    assert_eq!(moved.counts.repository, 1);
+    let after = crate::Store::memory(&store, record.id)
+        .expect("read")
+        .expect("kept");
+    assert_eq!(
+        after.scope,
+        MemoryScope::Repository {
+            id: alias.canonical
+        }
+    );
 }

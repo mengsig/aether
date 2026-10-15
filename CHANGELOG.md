@@ -31,6 +31,15 @@ release is also the text of its GitHub release.
   `aether run --repository-root` does the same. Daemons advertise
   `repository_root`; an older daemon would ignore the field, so clients check
   for it first and the Rust client refuses to send it to one.
+- **An old repository name can be aliased to the id its checkout derives.**
+  Memories filed under a bare name such as `archon` (what Archon up to 1.2.1
+  sends) can now join the id direct sessions and `repository_root` use, such
+  as `github.com/mengsig/archon`. `aether memory alias archon --root PATH`
+  (or `--repository ID`) moves every memory filed under the old name, and
+  agents still naming it read and write the new scope from then on;
+  `--dry-run` reports what would move first, and `aether memory aliases`
+  lists them. The move is one transaction and cannot be undone. Daemons
+  advertise `repository_aliases`, and paired devices cannot register one.
 
 ### Fixed
 

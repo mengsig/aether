@@ -25,7 +25,7 @@ mod update;
 mod validation;
 
 pub(crate) use recovery::COMPACTION_WAKE;
-pub(crate) use repository::repository_id;
+pub(crate) use repository::{checkout_repository_id, repository_id};
 
 /// How many transcript messages a restarted agent inherits: enough to see
 /// what it was in the middle of, while the checkpoint carries everything

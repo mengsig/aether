@@ -8,6 +8,14 @@
 //! to host and path first, and anything that still looks like it carries
 //! userinfo is refused rather than guessed at.
 
+use serde::{Deserialize, Serialize};
+
+use crate::event::{Actor, EventDraft, EventKind};
+use crate::time::Timestamp;
+
+/// The `custom` event name registering a repository alias is recorded under.
+pub const ALIASED_EVENT: &str = "repository.aliased";
+
 /// Host plus path for `remote`, with userinfo, port, query, fragment and a
 /// `.git` suffix removed and the host lowercased, so every clone of one
 /// repository - ssh, https, with or without a token - names one scope.
@@ -70,6 +78,95 @@ pub fn normalize_id(id: &str) -> Option<String> {
         true => normalize_remote(id),
         false => Some(id.to_owned()),
     }
+}
+
+/// An old repository name memory used to be filed under, and the id it now
+/// resolves to. Registered by an operator; never guessed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RepositoryAlias {
+    pub alias: String,
+    pub canonical: String,
+    pub created_at: Timestamp,
+}
+
+impl RepositoryAlias {
+    /// Both ids normalized and distinct, or why not. Chains are the store's
+    /// to refuse: only it knows which ids are already aliases.
+    pub fn new(alias: &str, canonical: &str, created_at: Timestamp) -> Result<Self, String> {
+        let alias = normalize_id(alias)
+            .ok_or_else(|| format!("alias `{alias}` is not a valid repository id"))?;
+        let canonical = normalize_id(canonical)
+            .ok_or_else(|| format!("repository `{canonical}` is not a valid repository id"))?;
+        if alias == canonical {
+            return Err(format!("`{alias}` cannot be an alias of itself"));
+        }
+        Ok(Self {
+            alias,
+            canonical,
+            created_at,
+        })
+    }
+
+    /// The record of registering this alias. A `custom` event, so a client
+    /// of every served protocol version still decodes the log.
+    pub fn event(&self, moved: &RepositoryAliasCounts, by: Actor) -> EventDraft {
+        debug_assert!(self.is_valid(), "an alias event for an invalid alias");
+        EventDraft::new(
+            by,
+            EventKind::Custom {
+                name: ALIASED_EVENT.to_owned(),
+                payload: serde_json::json!({
+                    "alias": self.alias,
+                    "canonical": self.canonical,
+                    "moved": moved,
+                }),
+            },
+        )
+    }
+
+    /// Whether this record holds what [`Self::new`] would have built.
+    pub fn is_valid(&self) -> bool {
+        normalize_id(&self.alias).as_deref() == Some(self.alias.as_str())
+            && normalize_id(&self.canonical).as_deref() == Some(self.canonical.as_str())
+            && self.alias != self.canonical
+    }
+}
+
+/// What registering an alias moves, or moved: every memory under the alias,
+/// in any state, and the agents whose stored scope still names it.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub struct RepositoryAliasCounts {
+    /// Memories in the alias's repository scope.
+    pub repository: usize,
+    /// Memories in the alias's repository-role scopes.
+    pub repository_role: usize,
+    /// Current memories whose text a current memory of the scope they move
+    /// into already holds. Both are kept: nothing is merged or superseded.
+    pub duplicates: usize,
+    /// Agents, archived and finished ones included, whose stored
+    /// `scope.repository` is the alias. Their rows are not rewritten.
+    pub agents: usize,
+}
+
+impl RepositoryAliasCounts {
+    pub fn memories(&self) -> usize {
+        self.repository + self.repository_role
+    }
+}
+
+/// The answer to registering an alias, or to a dry run of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RepositoryAliasReport {
+    pub alias: String,
+    pub canonical: String,
+    /// Nothing was written; the counts are what a real run would move now.
+    pub dry_run: bool,
+    /// The alias was already registered to this canonical id. A real run
+    /// still moves anything filed under the alias since.
+    pub existing: bool,
+    pub counts: RepositoryAliasCounts,
 }
 
 /// The authority and path of a remote, for every shape git accepts.
@@ -234,5 +331,54 @@ mod tests {
             normalize_remote("git@github.com:org/repo#frag").as_deref(),
             Some("github.com/org/repo")
         );
+    }
+
+    #[test]
+    fn an_alias_holds_two_normalized_distinct_ids() {
+        let at = crate::time::now();
+        let alias =
+            RepositoryAlias::new(" archon ", "https://github.com/mengsig/archon.git", at).unwrap();
+        assert_eq!(alias.alias, "archon");
+        assert_eq!(alias.canonical, "github.com/mengsig/archon");
+        assert!(alias.is_valid());
+
+        for (old, new) in [("archon", " archon"), ("", "x"), ("x", "a\nb")] {
+            assert!(
+                RepositoryAlias::new(old, new, at).is_err(),
+                "{old:?} -> {new:?}"
+            );
+        }
+        let forged = RepositoryAlias {
+            canonical: "archon".into(),
+            ..alias.clone()
+        };
+        assert!(!forged.is_valid(), "an alias of itself read back from disk");
+    }
+
+    #[test]
+    fn the_alias_event_names_both_ids_and_what_moved() {
+        let alias = RepositoryAlias::new("archon", "github.com/mengsig/archon", crate::time::now())
+            .unwrap();
+        let counts = RepositoryAliasCounts {
+            repository: 2,
+            repository_role: 1,
+            duplicates: 1,
+            agents: 3,
+        };
+        let draft = alias.event(
+            &counts,
+            Actor::User {
+                name: None,
+                origin: None,
+            },
+        );
+        let EventKind::Custom { name, payload } = draft.kind else {
+            panic!("an alias is recorded as a custom event");
+        };
+        assert_eq!(name, ALIASED_EVENT);
+        assert_eq!(payload["alias"], "archon");
+        assert_eq!(payload["canonical"], "github.com/mengsig/archon");
+        assert_eq!(payload["moved"]["repository_role"], 1);
+        assert_eq!(counts.memories(), 3);
     }
 }

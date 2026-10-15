@@ -168,6 +168,9 @@ pub mod features {
     /// The daemon derives `scope.repository` from `CreateAgent.repository_root`.
     /// A daemon without it ignores the field, so check this first.
     pub const REPOSITORY_ROOT: &str = "repository_root";
+    /// The daemon serves `alias_repository` and `list_repository_aliases`, and
+    /// resolves a registered alias wherever a repository becomes a memory scope.
+    pub const REPOSITORY_ALIASES: &str = "repository_aliases";
 }
 
 mod handshake;

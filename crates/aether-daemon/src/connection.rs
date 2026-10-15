@@ -306,6 +306,7 @@ where
                                                     features::OPERATOR_MEMORY_ROLES.into(),
                                                     features::MEMORY_RECORDED_BY.into(),
                                                     features::REPOSITORY_ROOT.into(),
+                                                    features::REPOSITORY_ALIASES.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,

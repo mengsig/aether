@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 19;
+pub const SCHEMA_VERSION: u32 = 20;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -381,8 +381,20 @@ ALTER TABLE submissions ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 0;
 // which a binary before this cannot read: the version alone keeps it out.
 const V19: &str = "";
 
+// An old repository name and the id its memory now lives under. One hop by
+// construction: the store refuses an alias of an alias, or of one's canonical.
+const V20: &str = r#"
+CREATE TABLE repository_aliases (
+    alias      TEXT PRIMARY KEY,
+    canonical  TEXT NOT NULL CHECK(canonical <> alias),
+    created_at TEXT NOT NULL,
+    body       TEXT NOT NULL
+);
+CREATE INDEX repository_aliases_canonical ON repository_aliases(canonical);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the

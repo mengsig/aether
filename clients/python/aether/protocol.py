@@ -17,6 +17,10 @@ from ._protocol_commands.add import (
     add_approval_rule,
 )
 
+from ._protocol_commands.alias import (
+    alias_repository,
+)
+
 from ._protocol_commands.archive import (
     archive,
 )
@@ -112,6 +116,7 @@ from ._protocol_commands.list import (
     list_devices,
     list_invocations,
     list_models,
+    list_repository_aliases,
     list_runs,
     list_schedules,
     list_tasks,

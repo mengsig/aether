@@ -3317,6 +3317,55 @@
           "type": "object"
         },
         {
+          "description": "Make `alias`, an old repository id, resolve to the repository at\n`root` or to the id `repository`, and move every memory filed under\nthe alias there. The move is one-way. Needs `repository_aliases`.",
+          "properties": {
+            "alias": {
+              "type": "string"
+            },
+            "cmd": {
+              "const": "alias_repository",
+              "type": "string"
+            },
+            "dry_run": {
+              "default": false,
+              "description": "Report what would move without moving it.",
+              "type": "boolean"
+            },
+            "repository": {
+              "description": "The canonical id, named outright. Exclusive with `root`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "root": {
+              "description": "A checkout whose derived id is the canonical one, derived as for\n`create_agent.repository_root`. Exclusive with `repository`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "alias"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Registered repository aliases. Needs `repository_aliases`.",
+          "properties": {
+            "cmd": {
+              "const": "list_repository_aliases",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Runs this store knows about, newest first.",
           "properties": {
             "cmd": {
@@ -11366,6 +11415,41 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/RepositoryAliasReport"
+            },
+            "reply": {
+              "const": "repository_aliased",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "items": {
+                "$ref": "#/$defs/RepositoryAlias"
+              },
+              "type": "array"
+            },
+            "reply": {
+              "const": "repository_aliases",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "$ref": "#/$defs/MemoryRecord"
             },
             "reply": {
@@ -11807,6 +11891,93 @@
           "type": "object"
         }
       ]
+    },
+    "RepositoryAlias": {
+      "description": "An old repository name memory used to be filed under, and the id it now\nresolves to. Registered by an operator; never guessed.",
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "canonical": {
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "alias",
+        "canonical",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "RepositoryAliasCounts": {
+      "description": "What registering an alias moves, or moved: every memory under the alias,\nin any state, and the agents whose stored scope still names it.",
+      "properties": {
+        "agents": {
+          "description": "Agents, archived and finished ones included, whose stored\n`scope.repository` is the alias. Their rows are not rewritten.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duplicates": {
+          "description": "Current memories whose text a current memory of the scope they move\ninto already holds. Both are kept: nothing is merged or superseded.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repository": {
+          "description": "Memories in the alias's repository scope.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repository_role": {
+          "description": "Memories in the alias's repository-role scopes.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "repository",
+        "repository_role",
+        "duplicates",
+        "agents"
+      ],
+      "type": "object"
+    },
+    "RepositoryAliasReport": {
+      "description": "The answer to registering an alias, or to a dry run of it.",
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "canonical": {
+          "type": "string"
+        },
+        "counts": {
+          "$ref": "#/$defs/RepositoryAliasCounts"
+        },
+        "dry_run": {
+          "description": "Nothing was written; the counts are what a real run would move now.",
+          "type": "boolean"
+        },
+        "existing": {
+          "description": "The alias was already registered to this canonical id. A real run\nstill moves anything filed under the alias since.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "alias",
+        "canonical",
+        "dry_run",
+        "existing",
+        "counts"
+      ],
+      "type": "object"
     },
     "ResourceHolding": {
       "description": "Resource keys one agent's mutating tool call holds for the length of that\ncall. Two agents never hold conflicting keys at once (VISION §3.6 limit 5).",

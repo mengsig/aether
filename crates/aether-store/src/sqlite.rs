@@ -27,6 +27,7 @@ mod mutations;
 mod publication;
 mod push_subscriptions;
 pub use push_subscriptions::PushSubscriptionRow;
+mod repository_aliases;
 mod retention;
 mod store;
 

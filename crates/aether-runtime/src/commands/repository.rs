@@ -21,19 +21,20 @@ impl Runtime {
                     "give either repository_root or scope.repository, not both".into(),
                 ));
             }
-            s.repository = Some(aether_core::repository::normalize_id(&named).ok_or_else(
-                || {
-                    RuntimeError::Invalid(format!(
-                        "repository `{named}` cannot be stored as a memory scope; expected a plain \
+            let normal = aether_core::repository::normalize_id(&named).ok_or_else(|| {
+                RuntimeError::Invalid(format!(
+                    "repository `{named}` cannot be stored as a memory scope; expected a plain \
                      name, an absolute path, or a URL/SSH remote without embedded credentials"
-                    ))
-                },
-            )?);
+                ))
+            })?;
+            s.repository = Some(self.store.resolve_repository(&normal)?);
         }
         let Some(root) = repository_root else {
             return Ok(requested);
         };
-        let id = checkout_repository_id(root)?;
+        let id = self
+            .store
+            .resolve_repository(&checkout_repository_id(root)?)?;
         let mut scope = requested.unwrap_or_else(|| match parent {
             Some(parent) => parent.scope.clone(),
             None => self.default_root_scope(),
@@ -41,6 +42,40 @@ impl Runtime {
         debug_assert!(scope.repository.is_none() || parent.is_some());
         scope.repository = Some(id);
         Ok(Some(scope))
+    }
+
+    /// `scope` with its repository resolved through the registered aliases.
+    /// For a parent created before an alias: its children store the canonical
+    /// id, and are narrowed against it.
+    pub(super) fn resolved_scope(&self, scope: &Scope) -> Result<Scope> {
+        let mut resolved = scope.clone();
+        if let Some(id) = &scope.repository {
+            resolved.repository = Some(self.store.resolve_repository(id)?);
+        }
+        debug_assert_eq!(resolved.workspace_root, scope.workspace_root);
+        debug_assert_eq!(resolved.repository.is_some(), scope.repository.is_some());
+        Ok(resolved)
+    }
+
+    /// The repository of an agent whose scope names none: its parent's, else
+    /// the one its workspace derives. Resolved either way, so it stores the canonical id.
+    pub(super) fn unnamed_repository(
+        &self,
+        scope: &Scope,
+        parent: Option<&Agent>,
+    ) -> Result<Option<String>> {
+        debug_assert!(scope.repository.is_none(), "only for a scope naming none");
+        // Inherited, never re-derived: a child narrowed to a subdirectory of a
+        // workspace with no `origin` would derive a different id from its own
+        // path and be unable to read the repository's notes or write memory its
+        // siblings can see.
+        let id = match parent {
+            Some(p) => p.scope.repository.clone(),
+            None => scope.workspace_root.as_deref().and_then(repository_id),
+        };
+        id.map(|id| self.store.resolve_repository(&id))
+            .transpose()
+            .map_err(RuntimeError::from)
     }
 
     /// §6.4: the notes a repository carries in its own tree become memory the
@@ -120,7 +155,7 @@ pub(crate) fn repository_id(root: &std::path::Path) -> Option<String> {
 /// Not bounded to known workspaces: a paired device is refused before this,
 /// and it reads no more than creating an agent with `root` as its workspace
 /// would - the `origin` remote and the canonical path.
-fn checkout_repository_id(root: &Path) -> Result<String> {
+pub(crate) fn checkout_repository_id(root: &Path) -> Result<String> {
     if !root.is_absolute() {
         return Err(RuntimeError::Invalid(format!(
             "repository_root `{}` must be an absolute path",

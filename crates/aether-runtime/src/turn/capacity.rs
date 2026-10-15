@@ -52,6 +52,7 @@ pub(super) fn store_error_class(e: &StoreError) -> &'static str {
         StoreError::RetentionSnapshotTooLarge { .. } => {
             "retention snapshot exceeds its memory limit"
         }
+        StoreError::AliasRefused(_) => "a refused repository alias",
     }
 }
 

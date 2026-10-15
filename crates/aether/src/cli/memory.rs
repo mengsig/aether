@@ -359,3 +359,86 @@ pub async fn memory_sync(
     }
     Ok(())
 }
+
+/// What an alias resolves to: a checkout's derived id, or an id named outright.
+pub struct AliasTarget {
+    pub root: Option<PathBuf>,
+    pub repository: Option<String>,
+}
+
+pub async fn memory_alias(
+    socket: impl Into<aether_client::Endpoint>,
+    alias: String,
+    target: AliasTarget,
+    dry_run: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        target.root.is_some() != target.repository.is_some(),
+        "name exactly one of --root and --repository"
+    );
+    let socket = socket.into();
+    let root = target.root.map(std::path::absolute).transpose()?;
+    let client = connect(&socket).await?;
+    let report = client
+        .alias_repository(alias, root, target.repository, dry_run)
+        .await?;
+    if json {
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
+    let counts = &report.counts;
+    let verb = if report.dry_run {
+        "would move"
+    } else {
+        "moved"
+    };
+    println!(
+        "{} -> {}: {verb} {} repository and {} repository-role memor{} ({} already held by the target)",
+        super::sane(&report.alias),
+        super::sane(&report.canonical),
+        counts.repository,
+        counts.repository_role,
+        if counts.memories() == 1 { "y" } else { "ies" },
+        counts.duplicates,
+    );
+    println!(
+        "{} agent(s) name {}; their repository memory is read and written under {}",
+        counts.agents,
+        super::sane(&report.alias),
+        super::sane(&report.canonical),
+    );
+    if report.dry_run {
+        println!("dry run: nothing moved. Moved memories do not move back.");
+    } else if report.existing {
+        println!("the alias was already registered");
+    }
+    Ok(())
+}
+
+pub async fn memory_aliases(
+    socket: impl Into<aether_client::Endpoint>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let socket = socket.into();
+    let client = connect(&socket).await?;
+    let aliases = client.repository_aliases().await?;
+    if json {
+        println!("{}", serde_json::to_string(&aliases)?);
+        return Ok(());
+    }
+    if aliases.is_empty() {
+        println!("no repository aliases.");
+        return Ok(());
+    }
+    println!("{:<32} {:<48} created", "alias", "resolves to");
+    for a in aliases {
+        println!(
+            "{:<32} {:<48} {}",
+            short(&a.alias, 32),
+            short(&a.canonical, 48),
+            a.created_at.to_rfc3339()
+        );
+    }
+    Ok(())
+}

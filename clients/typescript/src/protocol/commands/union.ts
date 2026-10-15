@@ -3,6 +3,7 @@
 
 import type {
   AddApprovalRuleCommand,
+  AliasRepositoryCommand,
   ArchiveCommand,
   AuthStatusCommand,
   CancelCommand,
@@ -49,6 +50,7 @@ import type {
   ListDevicesCommand,
   ListInvocationsCommand,
   ListModelsCommand,
+  ListRepositoryAliasesCommand,
   ListRunsCommand,
   ListSchedulesCommand,
   ListTasksCommand,
@@ -93,6 +95,7 @@ import type {
 
 export type Command =
   | AddApprovalRuleCommand
+  | AliasRepositoryCommand
   | ArchiveCommand
   | AuthStatusCommand
   | CancelCommand
@@ -139,6 +142,7 @@ export type Command =
   | ListDevicesCommand
   | ListInvocationsCommand
   | ListModelsCommand
+  | ListRepositoryAliasesCommand
   | ListRunsCommand
   | ListSchedulesCommand
   | ListTasksCommand

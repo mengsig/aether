@@ -12,6 +12,7 @@ use aether_core::memory::{
     OperatorMemoryScope, OperatorMemorySpec, SeedReport,
 };
 use aether_memory::Admission;
+use aether_store::MemoryQuery;
 
 use crate::{Result, Runtime, RuntimeError};
 
@@ -146,16 +147,35 @@ impl Runtime {
         let Some(repository) = repository else {
             return self.memory_repository(root).map(|(_, id)| id);
         };
-        let id = aether_core::repository::normalize_id(&repository).ok_or_else(|| {
+        let named = aether_core::repository::normalize_id(&repository).ok_or_else(|| {
             RuntimeError::Invalid("scope.repository is not a valid repository id".into())
         })?;
-        if !self.store.any_agent_in_repository(&id)? {
+        let id = self.store.resolve_repository(&named)?;
+        // A registered alias names a repository as surely as an agent does.
+        let known = id != named
+            || self.store.any_agent_in_repository(&id)?
+            || self
+                .store
+                .repository_aliases()?
+                .iter()
+                .any(|a| a.canonical == id);
+        if !known {
             return Err(RuntimeError::Invalid(
                 "scope.repository names no agent's repository; name a root or a repository an agent works in"
                     .into(),
             ));
         }
         Ok(id)
+    }
+
+    /// Memories matching `query`. A repository scope it names by an old alias
+    /// is read where those memories were moved.
+    pub fn memories(&self, mut query: MemoryQuery) -> Result<Vec<MemoryRecord>> {
+        query.scope = query
+            .scope
+            .map(|scope| self.memory.canonical_scope(scope))
+            .transpose()?;
+        Ok(self.store.memories(&query)?)
     }
 
     /// Curate a memory out. The record stays; it is never retrieved again.
@@ -214,7 +234,7 @@ impl Runtime {
         let id = crate::commands::repository_id(&root).ok_or_else(|| {
             RuntimeError::Invalid(format!("cannot name the repository at {}", root.display()))
         })?;
-        Ok((root, id))
+        Ok((root, self.store.resolve_repository(&id)?))
     }
 
     /// `root`, if it is a workspace this daemon works in - its own, or a live

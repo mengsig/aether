@@ -19,6 +19,7 @@ pub mod github;
 mod inspection;
 pub mod memory_curation;
 pub mod recovery;
+mod repository_aliases;
 pub mod resources;
 mod retention;
 pub mod scheduler;

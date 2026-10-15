@@ -67,6 +67,32 @@ pub(crate) enum MemoryCmd {
         #[arg(long)]
         json: bool,
     },
+    /// File an old repository name under the id its checkout derives now,
+    /// moving its memories there. Moved memories do not move back.
+    Alias {
+        /// The old repository id, e.g. `archon`.
+        alias: String,
+        /// The checkout whose derived id the alias resolves to.
+        #[arg(
+            long,
+            required_unless_present = "repository",
+            conflicts_with = "repository"
+        )]
+        root: Option<PathBuf>,
+        /// The repository id the alias resolves to, named outright.
+        #[arg(long)]
+        repository: Option<String>,
+        /// Report what would move; move nothing.
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List repository aliases and the id each resolves to.
+    Aliases {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Keep an answer as a durable rule. Without `--remember` nothing is kept.

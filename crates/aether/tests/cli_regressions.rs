@@ -429,6 +429,42 @@ async fn cli_with_socket(
                         },
                     ))
                 }
+                Command::AliasRepository {
+                    alias,
+                    root,
+                    repository,
+                    dry_run,
+                } => {
+                    let canonical = match root {
+                        Some(root) => {
+                            assert!(root.is_absolute(), "the CLI sends an absolute root");
+                            root.display().to_string()
+                        }
+                        None => repository.clone().expect("a root or a repository"),
+                    };
+                    Ok(Reply::RepositoryAliased(
+                        aether_core::repository::RepositoryAliasReport {
+                            alias: alias.clone(),
+                            canonical,
+                            dry_run: *dry_run,
+                            existing: false,
+                            counts: aether_core::repository::RepositoryAliasCounts {
+                                repository: 2,
+                                repository_role: 1,
+                                duplicates: 1,
+                                agents: 3,
+                            },
+                        },
+                    ))
+                }
+                Command::ListRepositoryAliases => Ok(Reply::RepositoryAliases(vec![
+                    aether_core::repository::RepositoryAlias::new(
+                        "archon",
+                        "github.com/mengsig/archon",
+                        AT.parse().unwrap(),
+                    )
+                    .unwrap(),
+                ])),
                 other => panic!("unexpected request: {other:?}"),
             };
             write_frame(
@@ -974,6 +1010,73 @@ async fn memory_list_by_recorder_needs_a_daemon_that_filters() {
         "{}",
         stderr(&unknown)
     );
+}
+
+/// An older daemon cannot alias, and is told so before anything is sent;
+/// a dry run says what would move and that nothing did.
+#[tokio::test]
+async fn memory_alias_needs_a_daemon_that_aliases_and_previews_the_move() {
+    let dry = [
+        "memory",
+        "alias",
+        "archon",
+        "--repository",
+        "github.com/mengsig/archon",
+        "--dry-run",
+    ];
+    let old = cli(&dry, Stub::default()).await;
+    assert_eq!(old.status.code(), Some(1));
+    assert!(
+        stderr(&old).contains("cannot alias repositories"),
+        "{}",
+        stderr(&old)
+    );
+    let aliasing = || Stub {
+        features: vec![aether_protocol::features::REPOSITORY_ALIASES.into()],
+        ..Default::default()
+    };
+    let preview = cli(&dry, aliasing()).await;
+    assert!(preview.status.success(), "{}", stderr(&preview));
+    let text = stdout(&preview);
+    assert!(
+        text.contains("archon -> github.com/mengsig/archon: would move 2 repository and 1 repository-role memories (1 already held by the target)"),
+        "{text}"
+    );
+    assert!(text.contains("3 agent(s) name archon"), "{text}");
+    assert!(text.contains("dry run: nothing moved"), "{text}");
+
+    let relative = cli(
+        &["memory", "alias", "archon", "--root", "src/archon"],
+        aliasing(),
+    )
+    .await;
+    assert!(relative.status.success(), "{}", stderr(&relative));
+    assert!(
+        stdout(&relative).contains(": moved 2 repository"),
+        "{}",
+        stdout(&relative)
+    );
+    assert!(!stdout(&relative).contains("dry run"));
+
+    let listed = cli(&["memory", "aliases"], aliasing()).await;
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    assert!(stdout(&listed).contains("github.com/mengsig/archon"));
+    let root = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["memory", "alias", "archon"],
+        vec![
+            "memory",
+            "alias",
+            "archon",
+            "--root",
+            "/a",
+            "--repository",
+            "b",
+        ],
+    ] {
+        let refused = isolated_command(root.path(), &args).output().unwrap();
+        assert_eq!(refused.status.code(), Some(2), "{args:?}");
+    }
 }
 
 #[tokio::test]

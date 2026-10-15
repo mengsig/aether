@@ -18,6 +18,7 @@ use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::MemoryRecord;
 use aether_core::model::Message;
+use aether_core::repository::RepositoryAlias;
 use aether_core::schedule::{Schedule, ScheduleOccurrence};
 use aether_core::snapshot::{Invocation, InvocationSnapshot};
 use aether_core::task::Task;
@@ -27,7 +28,7 @@ use rusqlite::{OptionalExtension, params};
 
 use crate::{
     AgentFilter, ArtifactFilter, Commit, DeviceRow, EventFilter, ImportedEvent, MemoryQuery,
-    Mutation, Result, Store, StoreError, TaskFilter, TranscriptEntry,
+    Mutation, RepositoryAliasMove, Result, Store, StoreError, TaskFilter, TranscriptEntry,
 };
 
 use super::{SqliteStore, schedule_time};
@@ -273,6 +274,27 @@ impl Store for SqliteStore {
             [repository],
             |row| row.get(0),
         )?)
+    }
+
+    fn resolve_repository(&self, repository: &str) -> Result<String> {
+        self.resolve_repository_id(repository)
+    }
+
+    fn repository_aliases(&self) -> Result<Vec<RepositoryAlias>> {
+        self.list_repository_aliases()
+    }
+
+    fn preview_repository_alias(&self, alias: &RepositoryAlias) -> Result<RepositoryAliasMove> {
+        self.preview_alias(alias)
+    }
+
+    fn alias_repository(
+        &self,
+        alias: &RepositoryAlias,
+        by: aether_core::event::Actor,
+        _hold: &crate::Hold<'_>,
+    ) -> Result<RepositoryAliasMove> {
+        self.register_alias(alias, by)
     }
 
     fn agents(&self, filter: &AgentFilter) -> Result<Vec<Agent>> {

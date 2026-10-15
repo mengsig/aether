@@ -296,6 +296,8 @@ pub enum Reply {
         truncated: bool,
     },
     Memories(Vec<MemoryRecord>),
+    RepositoryAliased(aether_core::repository::RepositoryAliasReport),
+    RepositoryAliases(Vec<aether_core::repository::RepositoryAlias>),
     Memory(MemoryRecord),
     MemorySeeded {
         repository: String,
