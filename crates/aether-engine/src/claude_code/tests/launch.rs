@@ -12,6 +12,7 @@ fn turn() -> EngineTurn {
         system_prompt: "contract".into(),
         session: None,
         session_usage: Usage::default(),
+        session_model_usage: None,
         new_session_id: "11111111-2222-4333-8444-555555555555".into(),
         session_recorder: None,
         model: Some("sonnet".into()),

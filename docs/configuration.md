@@ -11,6 +11,9 @@ are the source for supported keys and defaults.
 [model]
 default = "claude-code/opus"
 
+[models.tiers]
+"openrouter/openai/gpt-5" = "strong"
+
 [scheduler]
 max_concurrent_turns = 8
 max_concurrent_engine_turns = 4
@@ -20,6 +23,20 @@ run_budget_usd = 25.0
 completed_run_days = 10
 ```
 
+- **Model tiers:** every model carries a capability band within its provider,
+  reported as `tier` by `list_models`: `fast` (Haiku, Luna), `balanced`
+  (Sonnet, Sol), `strong` (Opus, Astra) or `frontier` (Fable; Codex has none
+  today), or null when it cannot be ranked. A provider may lack a tier. The
+  tier comes from, in order: `[models.tiers]` in `config.toml`
+  (`"provider/model" = "fast" | "balanced" | "strong" | "frontier"`, aliases
+  accepted; the legacy `strongest` reads as `strong`; an unknown tier is a load
+  error), a `tier` on the catalog entry (also settable per model in
+  `providers.toml`), then, for a priced model without one, the tier of the
+  provider's tiered model nearest in output price ratio (a tie takes the lower
+  tier). Subscription models use their API equivalent's price. A priced model
+  with no tiered reference in its provider stays null, as do unpriced models
+  such as `default`. The daemon catalog and generated clients expose the same
+  tier as the agent tool.
 - **Models and effort:** choose them per agent; switch with `/model` or
   `aether set`. A running turn finishes on its original model; the new choice
   applies when the agent starts its next turn. Fallback chains are explicit
@@ -217,9 +234,14 @@ size bounds still apply. Day values must be integers from 0 through 65535;
 invalid values fail configuration loading. A zero grace period is allowed.
 
 Eligible clean delegated workspaces are removed after the grace period, without
-waiting fourteen days. A live or resumable agent, integration journal, dirty
-files, or commits not saved on another source-repository ref protect the
-workspace regardless of age. GC rechecks admission under the runtime locks.
+waiting fourteen days. Ownership comes from an agent's workspace root at or
+inside that workspace, the manifest delegator's ancestor/descendant chain,
+or an explicit resource lease or integration. A broad ancestor scope or
+`allowed_paths` permission alone does not establish ownership. A live,
+Failed or Cancelled workspace owner, integration journal, dirty files, or
+commits not saved on another source-repository ref protect the workspace
+regardless of age. Read-only Git probes run before the runtime gate; GC
+rechecks filesystem identity and admission under the runtime locks.
 Ignored files and paths it cannot safely inspect may also protect a workspace;
 retention never overrides the work-preservation checks. Inventory and cleanup
 are bounded per pass, so large directories may take several sweeps and byte
@@ -240,11 +262,43 @@ wait below the floor, and optional log writes wait in a bounded memory buffer;
 required recovery/database writes are still attempted.
 
 New native engine sessions get durable ownership records independent of
-completed-run history. **Engine session deletion is deferred in this release**:
-no Claude or Codex logs, including user sessions and pre-upgrade sessions, are
-deleted. Unknown engine log paths are left unknown, never inferred from a
-similar filename. A later release can prune proven-owned, final sessions under
-resume admission locks. Engine logs, protected workspaces, legacy logs, and
-explicitly disabled retention therefore remain possible sources of growth;
-this policy is not a hard disk quota. SQLite reuses expired history pages rather
-than necessarily shrinking its file.
+completed-run history. `engine_sessions_days` inherits `retention_days` (14 by
+default); zero disables deletion. Only exact recorded Claude Code or Codex log
+files qualify. Their native session identity must match the record within the
+first 64 KiB, and the file modification time, ownership creation time and latest
+owner state must all be outside the retention window. Completed and Cancelled
+owners qualify once their turns have ended. Failed owners remain resumable,
+including when archived or blocked by limits, unless a durable restart successor
+permanently prevents waking the original agent. Restart uses a fresh native
+session, so it does not require the predecessor's native log. When history
+expiry removes an agent, that same transaction records its terminal status and
+latest state time in session ownership. This evidence permits later native-log
+cleanup even with the default seven-day history and fourteen-day log windows:
+an expired agent cannot be woken or restarted. A currently present agent row
+always takes precedence over earlier expiry evidence.
+
+Engine GC preserves user sessions, pre-upgrade sessions without ownership,
+unknown paths, missing owner history without expiry evidence, shared or ambiguous
+paths, references from
+another agent, active turns, symlinks in any path component, hard links, files
+owned by another user, and files writable by another user or group. Unsupported
+or mismatched native headers are retained. No directory scan or filename alone
+establishes ownership. Native headers identify a session, not the provenance of
+every byte; see [filesystem limitations](known-limitations.md#files). Admission
+is rechecked under the runtime gate and scheduler locks before unlinking; file
+identity, size, permissions and modification/change times must still match the
+inspection. Unexpected inspection or unlink errors fail the sweep visibly.
+
+Engine reports include per-path actions and reasons, measured bytes, eligible
+bytes and removed bytes. At most 10,000 recorded paths are inspected per sweep;
+all ownership records participate in ambiguity checks. A daemon-local cursor
+advances only on successful real sweeps, so retained or missing records do not
+starve later paths. A dry run previews the next real sweep without advancing
+that cursor. Byte totals are lower bounds when `truncated` is true. Ownership
+records survive deletion; missing files are reported without rediscovery.
+
+Protected engine logs and workspaces, legacy logs, and explicitly disabled
+retention remain possible sources of growth; this policy is not a hard disk
+quota. Logs whose owner history expired before final-state evidence was recorded
+are retained. SQLite reuses expired history pages rather than necessarily
+shrinking its file.

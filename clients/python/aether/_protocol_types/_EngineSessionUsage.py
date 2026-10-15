@@ -17,5 +17,6 @@ class EngineSessionUsage(TypedDict, total=False):
     The session id is part of the record so a cleared or replaced session
     cannot be billed against another session's counters.
     """
+    models: dict[str, _protocol.Usage] | None  # optional
     session: str
     total: _protocol.Usage

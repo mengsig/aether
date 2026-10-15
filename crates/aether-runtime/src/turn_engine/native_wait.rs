@@ -7,6 +7,7 @@ use super::{Runtime, TurnCtx};
 pub(super) struct NativeWait {
     condition: WaitCondition,
     inbox_cursor: u64,
+    input: serde_json::Value,
     reply: oneshot::Sender<(String, bool)>,
 }
 
@@ -15,10 +16,12 @@ impl NativeWait {
         condition: WaitCondition,
         ctx: &TurnCtx,
         reply: oneshot::Sender<(String, bool)>,
+        input: serde_json::Value,
     ) -> Self {
         Self {
             condition,
             inbox_cursor: ctx.agent.inbox_cursor,
+            input,
             reply,
         }
     }
@@ -42,10 +45,18 @@ impl NativeWait {
         oracle.has_unconsumed_inbox() || self.condition.is_satisfied(&oracle)
     }
 
-    pub(super) fn finish(self, reason: &str) {
+    pub(super) fn finish(self, reason: &str) -> Option<(serde_json::Value, (String, bool))> {
         // A closed MCP client needs no reply; the engine still owns its jobs.
-        let _ = self.reply.send((format!(
-            "Wait ended: {reason}. Handle this event now: if a job finished, collect its result using the native tools. The native session and any remaining background jobs are still alive. Do not wait again for the job that just finished."
-        ), false));
+        if self.reply.is_closed() {
+            return None;
+        }
+        let result = (
+            format!(
+                "Wait ended: {reason}. Handle this event now: if a job finished, collect its result using the native tools. The native session and any remaining background jobs are still alive. Do not wait again for the job that just finished."
+            ),
+            false,
+        );
+        let _ = self.reply.send(result.clone());
+        Some((self.input, result))
     }
 }

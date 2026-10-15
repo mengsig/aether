@@ -40,6 +40,7 @@ fn context_window(app: &mut App, window: u32) {
     use aether_protocol::ModelInfo;
     let model = app.selected_agent().expect("a viewed agent").model.clone();
     app.models.push(ModelInfo {
+        tier: None,
         aliases: Vec::new(),
         name: model.model.clone(),
         provider_name: "anthropic".into(),

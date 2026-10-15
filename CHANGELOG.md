@@ -21,6 +21,11 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- Interrupted native tool calls now carry their cause in transcripts and on resume.
+  Stopping or restarting the daemon, interrupting or cancelling an agent, and
+  ending a stage no longer leave a synthetic operator denial uncorrected.
+  Genuine approval denials retain their denial status.
+
 - **Clipboard images paste into the terminal UI with Ctrl+V.** Ctrl+V prefers
   offered plain text, otherwise attaches a supported image; Alt+V and `/image`
   force an image. Text keeps the usual long-text placeholders and image-path
@@ -38,6 +43,17 @@ release is also the text of its GitHub release.
   without a price already was, and show as `≈ $X API-equivalent` next to a
   cost of `not reported`. Dollar caps on Codex agents are still refused. Older
   records keep the figures they were stored with.
+- **A Claude Code agent that pauses and resumes no longer costs more than its
+  receipt.** Claude Code reports a turn's tokens for that turn alone, but its
+  dollars and per-model token counts for the whole session. When the turn's
+  tokens fell short of what had streamed, Aether priced the difference again
+  although the session's counts already covered it, and the extra carried
+  over every resume. Aether now prices only streamed tokens those counts do
+  not cover, and the note on an interrupted turn says whether the missing
+  part was priced. An all-zero crash receipt keeps the last baseline;
+  lower nonzero receipts leave a cost gap and become the next turn's
+  baseline. Such a turn still counts its tokens at list price as a lower
+  bound beside that gap.
 - **The daemon no longer churns the disk while agents work.** Reading a long
   agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
   of MB per read. With several agents running, that held host IO pressure

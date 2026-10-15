@@ -287,8 +287,7 @@ impl Engine for ClaudeCodeEngine {
         }
         let args = self.args(&turn);
         let cwd: PathBuf = turn.cwd.clone();
-        let mut state = ParseState::awaiting_prompt(&turn.prompt)
-            .with_session_cost(turn.session.clone(), turn.session_usage);
+        let mut state = ParseState::for_turn(&turn);
         let outstanding = state.outstanding.clone();
         let mut process = run_process(
             &self.program,

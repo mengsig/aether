@@ -4,6 +4,52 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn dated_model_names_share_receipt_coverage_on_fresh_and_resumed_sessions() {
+    let short = "claude-haiku-4-5";
+    let dated = "claude-haiku-4-5-20251001";
+    for (streamed, reported) in [(dated, short), (short, dated)] {
+        for resumed in [false, true] {
+            let mut state = ParseState::default();
+            if resumed {
+                let before = Usage {
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    cost_usd: 8.0,
+                    ..Usage::default()
+                };
+                state = state.with_session_cost(Some("s".into()), before);
+                state.session_cost =
+                    state
+                        .session_cost
+                        .with_models(Some(std::collections::BTreeMap::from([(
+                            dated.into(),
+                            before,
+                        )])));
+            }
+            let message = json!({"type":"assistant","message":{"id":"m", "model":streamed,
+                "content":[{"type":"text","text":"Done."}],
+                "usage":{"input_tokens":100,"output_tokens":10}}});
+            parse_line(&message.to_string(), &mut state);
+            let factor = if resumed { 2 } else { 1 };
+            let result = json!({"type":"result","subtype":"success","session_id":"s",
+                "total_cost_usd":10.0,"modelUsage":{reported:{"inputTokens":100 * factor,
+                    "outputTokens":10 * factor,"cacheReadInputTokens":0,"cacheCreationInputTokens":0}}});
+            let events = parse_line(&result.to_string(), &mut state);
+            let Some(EngineEvent::Done(outcome)) = events.last() else {
+                panic!("missing result: {events:?}");
+            };
+            assert_eq!(outcome.cost_usd, Some(if resumed { 2.0 } else { 10.0 }));
+            let covered = outcome.cost_usage.as_ref().expect("same canonical model");
+            assert_eq!((covered.input_tokens, covered.output_tokens), (100, 10));
+            assert!(
+                matches!(events.first(), Some(EngineEvent::SessionUsage { models: Some(models), .. })
+                if models.contains_key(short) && models.len() == 1)
+            );
+        }
+    }
+}
+
+#[test]
 fn content_blocks_share_usage_and_final_stream_output_is_counted() {
     let mut state = ParseState::default();
     let mut total = Usage::default();
@@ -434,4 +480,49 @@ fn a_split_reported_after_its_writes_still_reprices_the_request() {
         0,
         "no token is counted twice"
     );
+}
+
+#[test]
+fn model_totals_retain_late_names_final_output_and_evicted_messages() {
+    let mut state = ParseState::default();
+    let start = json!({"type":"stream_event","event":{"type":"message_start",
+        "message":{"id":"late","usage":{"input_tokens":100,"output_tokens":1}}}});
+    parse_line(&start.to_string(), &mut state);
+    let named = json!({"type":"assistant","message":{"id":"late","model":"main",
+        "usage":{"input_tokens":100,"output_tokens":1}}});
+    parse_line(&named.to_string(), &mut state);
+    let delta = json!({"type":"stream_event","event":{"type":"message_delta",
+        "usage":{"output_tokens":10}}});
+    parse_line(&delta.to_string(), &mut state);
+    parse_line(&named.to_string(), &mut state);
+    assert_eq!(state.streamed_models["main"].input_tokens, 100);
+    assert_eq!(state.streamed_models["main"].output_tokens, 10);
+    let extra = bill(
+        (0..MAX_TRACKED_MESSAGES).map(|n| {
+            json!({"type":"assistant",
+        "message":{"id":format!("msg-{n}"),"model":"main",
+            "usage":{"input_tokens":1,"output_tokens":1}}})
+        }),
+        &mut state,
+    );
+    assert_eq!(extra.total_tokens(), MAX_TRACKED_MESSAGES as u64 * 2);
+    assert_eq!(
+        state.streamed_models["main"].total_tokens(),
+        110 + extra.total_tokens()
+    );
+    assert!(state.message_models.len() <= MAX_TRACKED_MESSAGES);
+}
+
+#[test]
+fn model_totals_keep_a_cache_ttl_split_reported_after_its_writes() {
+    let mut state = ParseState::default();
+    let mut message = json!({"type":"assistant","message":{"id":"ttl","model":"main",
+        "usage":{"cache_creation_input_tokens":100}}});
+    let before = bill([message.clone()], &mut state);
+    assert_eq!(before.cache_write_tokens, 100);
+    message["message"]["usage"]["cache_creation"] = json!({"ephemeral_1h_input_tokens":100});
+    let after = bill([message], &mut state);
+    assert_eq!(after.total_tokens(), 0);
+    assert_eq!(state.streamed_models["main"].cache_write_tokens, 100);
+    assert_eq!(state.streamed_models["main"].cache_write_1h_tokens, 100);
 }

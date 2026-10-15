@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use aether_core::model::{BlockStart, ContentBlock, StreamEvent, Usage};
 use serde_json::Value;
 
-use crate::{EngineEvent, EngineOutcome, RequestUsage, UsageRequestId};
+use crate::{EngineEvent, EngineOutcome, UsageRequestId};
+
+mod accounting;
 
 /// Per-process parser state: tool names by content-block index for the
 /// message being streamed (so input deltas carry the name), and the steered
@@ -17,6 +19,8 @@ pub struct ParseState {
     tool_names: std::collections::BTreeMap<usize, String>,
     pub(super) outstanding: Arc<Mutex<VecDeque<String>>>,
     message_usage: std::collections::BTreeMap<UsageRequestId, Usage>,
+    message_models: std::collections::BTreeMap<UsageRequestId, String>,
+    streamed_models: std::collections::BTreeMap<String, Usage>,
     /// The keys above in the order they were first seen, so the map can be
     /// bounded without evicting the message still being streamed.
     usage_order: VecDeque<UsageRequestId>,
@@ -34,6 +38,16 @@ pub struct ParseState {
 const MAX_TRACKED_MESSAGES: usize = 256;
 
 impl ParseState {
+    /// Initialize the prompt acknowledgement and the resumed session's cost baseline.
+    pub fn for_turn(turn: &crate::EngineTurn) -> Self {
+        let mut state = Self::awaiting_prompt(&turn.prompt)
+            .with_session_cost(turn.session.clone(), turn.session_usage);
+        state.session_cost = state
+            .session_cost
+            .with_models(turn.session_model_usage.clone());
+        state
+    }
+
     pub(super) fn with_session_cost(mut self, session: Option<String>, usage: Usage) -> Self {
         self.session_cost = super::session_cost::SessionCost::resumed(session, usage);
         self
@@ -90,61 +104,6 @@ impl ParseState {
         let key = self.mint();
         self.streaming_message = Some(key.clone());
         key
-    }
-
-    // Claude repeats message usage on each content block, then supplies the
-    // final output count in message_delta. Retain high-water marks per key so
-    // late blocks cannot count the same input again or undo the final count.
-    fn account_usage(&mut self, key: UsageRequestId, value: &Value) -> Vec<EngineEvent> {
-        let reported = parse_usage(value);
-        if !self.message_usage.contains_key(&key) {
-            self.usage_order.push_back(key.clone());
-        }
-        if self.usage_order.len() > MAX_TRACKED_MESSAGES
-            && let Some(pos) = self
-                .usage_order
-                .iter()
-                .position(|k| Some(k) != self.streaming_message.as_ref())
-            && let Some(evicted) = self.usage_order.remove(pos)
-        {
-            self.message_usage.remove(&evicted);
-        }
-        let total = self.message_usage.entry(key.clone()).or_default();
-        let previous = *total;
-        macro_rules! advance {
-            ($field:ident) => {
-                total.$field = total.$field.max(reported.$field);
-            };
-        }
-        advance!(input_tokens);
-        advance!(output_tokens);
-        advance!(cache_read_tokens);
-        advance!(cache_write_tokens);
-        advance!(cache_write_1h_tokens);
-        debug_assert!(total.cache_write_1h_tokens <= total.cache_write_tokens);
-        if let Some(reasoning) = reported.reasoning_tokens {
-            total.reasoning_tokens = Some(total.reasoning_tokens.unwrap_or(0).max(reasoning));
-        }
-        let request = RequestUsage {
-            id: key,
-            previous,
-            total: *total,
-        };
-        let delta = request.delta();
-        // A split reported after its writes adds no tokens, but reprices the request.
-        let reclassified = total.cache_write_1h_tokens > previous.cache_write_1h_tokens;
-        let mut events = Vec::new();
-        if delta.total_tokens() > 0 || delta.reasoning_tokens.is_some_and(|n| n > 0) || reclassified
-        {
-            events.push(EngineEvent::UsageRequest { request });
-        }
-        events.push(EngineEvent::ContextUsage {
-            tokens: total
-                .input_tokens
-                .saturating_add(total.cache_read_tokens)
-                .saturating_add(total.cache_write_tokens),
-        });
-        events
     }
 
     /// Remember a message handed to the CLI, so its echo is recognised.
@@ -228,7 +187,7 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             let accounting = match message.get("usage") {
                 Some(usage) => {
                     let key = state.assistant_key(message.get("id").and_then(Value::as_str));
-                    state.account_usage(key, usage)
+                    state.account_usage(key, usage, message.get("model").and_then(Value::as_str))
                 }
                 None => Vec::new(),
             };
@@ -300,11 +259,15 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             let is_error =
                 v.get("is_error").and_then(Value::as_bool).unwrap_or(false) || subtype != "success";
             let text = v.get("result").and_then(Value::as_str).map(str::to_owned);
-            let (cost_usd, mut events) = state.session_cost.receipt(&v);
+            let receipt = state.session_cost.receipt(&v, &state.streamed_models);
+            let cost_usd = receipt.cost_usd;
+            let cost_usage = receipt.cost_usage;
+            let mut events = receipt.events;
             events.push(EngineEvent::Done(EngineOutcome {
                 closing_accounting: true,
                 usage: v.get("usage").map(parse_usage).unwrap_or_default(),
                 cost_usd,
+                cost_usage: cost_usage.map(Box::new),
                 stop_reason: v
                     .get("stop_reason")
                     .and_then(Value::as_str)
@@ -385,7 +348,9 @@ fn stream_deltas(event: &Value, state: &mut ParseState) -> Vec<EngineEvent> {
             };
             state.streaming_message = Some(key.clone());
             match message.get("usage") {
-                Some(usage) => state.account_usage(key, usage),
+                Some(usage) => {
+                    state.account_usage(key, usage, message.get("model").and_then(Value::as_str))
+                }
                 None => Vec::new(),
             }
         }
@@ -395,7 +360,7 @@ fn stream_deltas(event: &Value, state: &mut ParseState) -> Vec<EngineEvent> {
         "message_delta" => match event.get("usage") {
             Some(usage) => {
                 let key = state.open_key();
-                state.account_usage(key, usage)
+                state.account_usage(key, usage, None)
             }
             None => Vec::new(),
         },

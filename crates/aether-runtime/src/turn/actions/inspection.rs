@@ -115,7 +115,7 @@ pub(super) async fn list_models(
             .capabilities
             .cost
             .or_else(|| runtime.models.registry().api_equivalent_price(&resolved));
-        let entry = serde_json::json!({"model": info.model, "name": info.name, "provider_name": info.provider_name, "configured": configured, "available": available, "context_window": info.capabilities.context_window, "effort_supported": info.capabilities.effort, "api_equivalent_cost": cost});
+        let entry = serde_json::json!({"model": info.model, "name": info.name, "provider_name": info.provider_name, "configured": configured, "available": available, "context_window": info.capabilities.context_window, "effort_supported": info.capabilities.effort, "tier": info.tier, "api_equivalent_cost": cost});
         if selected {
             models.push(entry);
         } else if available {
@@ -128,7 +128,7 @@ pub(super) async fn list_models(
         ));
     }
     let data = serde_json::json!({"providers": statuses, "models": models, "configured_alternatives": alternatives, "current_model": ctx.agent.model,
-        "guidance": "Choose a connection with available=true. configured reports credentials; available also checks the engine and your current network policy. Inspect configured_alternatives before declaring a model family unavailable. Prefer capability first, then cost within a suitable tier. Preferred Codex order: gpt-6-astra (highest capability), gpt-6.1-sol (demanding work), gpt-6-luna (focused, low-cost work). Respect explicit model choices and budgets. API-equivalent prices are not subscription charges. GPT-6 reasoning with tools requires openai-responses on the API path."});
+        "guidance": "Choose a connection with available=true. configured reports credentials; available also checks the engine and your current network policy. Inspect configured_alternatives before declaring a model family unavailable. Each model has a tier (fast, balanced, strong, frontier; null when unranked), a capability band within its provider; a provider may lack a tier. Prefer capability first, then cost within a suitable tier: frontier or strong for the hardest work, balanced for demanding work, fast for focused, low-cost work. Select by tier, never by model name. Respect explicit model choices and budgets. API-equivalent prices are not subscription charges. Reasoning with tools on an OpenAI model requires the openai-responses provider on the API path."});
     Ok(ToolOutcome {
         content: data.to_string(),
         structured: Some(data),

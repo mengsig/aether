@@ -44,6 +44,7 @@ pub(super) fn turn(session: Option<&str>, bypass: bool) -> EngineTurn {
         system_prompt: "# Aether".into(),
         session: session.map(str::to_owned),
         session_usage: Usage::default(),
+        session_model_usage: None,
         new_session_id: "n".into(),
         session_recorder: None,
         model: Some("gpt-5.3-codex-spark".into()),

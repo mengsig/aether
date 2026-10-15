@@ -43,6 +43,8 @@ export function createAgentSheet(host, context) {
   dialog.append(top, title, detail, actions); host.append(dialog);
   dialog.addEventListener('close', () => {
     selected = '';
+    // The close event is queued after close(), so focus the browser restored or moved since is kept.
+    const active = document.activeElement; if (active && active !== document.body && !dialog.contains(active)) return;
     if (previous instanceof HTMLElement || previous instanceof SVGElement) {
       if (previous.isConnected) previous.focus({ preventScroll: true });
     }

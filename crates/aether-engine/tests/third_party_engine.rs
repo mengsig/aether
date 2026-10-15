@@ -24,6 +24,7 @@ fn turn(cwd: PathBuf) -> EngineTurn {
         system_prompt: "You are inside Aether.".into(),
         session: None,
         session_usage: aether_core::model::Usage::default(),
+        session_model_usage: None,
         new_session_id: "sess-1".into(),
         session_recorder: None,
         model: Some("demo".into()),

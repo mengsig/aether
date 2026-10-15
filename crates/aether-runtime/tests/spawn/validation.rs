@@ -89,6 +89,33 @@ async fn delegation_refuses_an_unregistered_engine_before_creating_a_child() {
     assert_eq!(catalog["providers"]["codex"]["configured"], true);
     assert_eq!(catalog["providers"]["codex"]["available"], false);
     assert_eq!(catalog["providers"]["claude-code"]["available"], true);
+    for entry in catalog["models"].as_array().expect("models") {
+        assert!(entry.get("tier").is_some(), "tier key missing: {entry}");
+    }
+    let tier_of = |id: &str| {
+        let entry = catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(catalog["configured_alternatives"].as_array().unwrap())
+            .find(|e| e["model"]["model"] == id)
+            .unwrap_or_else(|| panic!("{id} missing"));
+        entry["tier"].clone()
+    };
+    assert_eq!(tier_of("claude-haiku-5-5"), "fast");
+    assert_eq!(tier_of("claude-opus-5-5"), "strong");
+    let guidance = catalog["guidance"]
+        .as_str()
+        .expect("guidance")
+        .to_lowercase();
+    for info in h.runtime.models().list() {
+        for name in std::iter::once(&info.model.model).chain(&info.aliases) {
+            assert!(
+                !guidance.contains(&name.to_lowercase()),
+                "guidance names model `{name}`: {guidance}"
+            );
+        }
+    }
     let (reply, is_error) = h.runtime.engine_tool(
         coordinator, &bridge.token, "delegate".into(),
         json!({"model":"claude-code/haiku", "effort":"low", "role": "worker", "objective": "offline check", "network": false, "wait": false}),

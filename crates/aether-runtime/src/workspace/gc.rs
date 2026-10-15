@@ -5,6 +5,10 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::time::SystemTime;
 
+mod snapshot;
+#[cfg(test)]
+mod tests;
+
 const MAX_ENTRIES: usize = 16_384;
 const MAX_DEPTH: usize = 64;
 
@@ -48,6 +52,7 @@ pub(crate) struct Candidate {
     pub modified: SystemTime,
     permissions: Vec<(File, fs::Permissions)>,
     git_state: Option<GitState>,
+    snapshot: Option<snapshot::Snapshot>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -66,6 +71,7 @@ impl Candidate {
             modified: SystemTime::UNIX_EPOCH,
             permissions: vec![],
             git_state: None,
+            snapshot: None,
         }
     }
 
@@ -163,20 +169,27 @@ impl Candidate {
     }
 
     pub fn inspect(&mut self, root: &Path) -> crate::Result<WorkspaceManifest> {
+        self.snapshot = None;
+        self.git_state = None;
         self.check_metadata()?;
+        let expected: WorkspaceManifest = read_json(&self.directory.join(MANIFEST))?;
+        let snapshot = snapshot::Snapshot::capture(&self.directory, &expected)?;
+        snapshot::check_configuration(&expected)?;
         let manifest = load_timeout(
             root,
             &self.directory.join(WORKSPACE),
             Duration::from_secs(2),
         )?;
-        if manifest.workspace != self.directory.join(WORKSPACE) {
+        if manifest != expected || manifest.workspace != self.directory.join(WORKSPACE) {
             return Err(invalid("workspace manifest names a different GC candidate"));
         }
         verify_saved_files(&manifest.workspace)?;
         check_status(&manifest.workspace)?;
         let state = git_state(&manifest)?;
         check_commits(&manifest, &self.directory, &state)?;
+        snapshot.recheck(&manifest)?;
         self.git_state = Some(state);
+        self.snapshot = Some(snapshot);
         Ok(manifest)
     }
 
@@ -213,6 +226,7 @@ impl Candidate {
     }
 
     pub fn recheck(&self, manifest: &WorkspaceManifest) -> crate::Result<()> {
+        self.recheck_unchanged(manifest)?;
         self.check_metadata()?;
         let current: WorkspaceManifest = read_json(&self.directory.join(MANIFEST))?;
         if &current != manifest || self.git_state.as_ref() != Some(&git_state(manifest)?) {
@@ -220,7 +234,18 @@ impl Candidate {
                 "workspace manifest, HEAD, or source refs changed during GC",
             ));
         }
-        check_status(&manifest.workspace)
+        check_status(&manifest.workspace)?;
+        self.recheck_unchanged(manifest)
+    }
+
+    /// Revalidate the state bracketed by the Git probes without starting Git.
+    /// Call under the removal locks after `recheck` has run outside them.
+    pub fn recheck_unchanged(&self, manifest: &WorkspaceManifest) -> crate::Result<()> {
+        let snapshot = self
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| invalid("workspace GC has no validated filesystem snapshot"))?;
+        snapshot.recheck(manifest)
     }
 
     pub fn remove(&mut self, manifest: &WorkspaceManifest) -> crate::Result<()> {

@@ -1,5 +1,6 @@
 use super::*;
-use crate::{RunExpiry, WriteGate};
+use crate::{EngineSessionOwnership, ExpiredEngineSessionOwner, RunExpiry, WriteGate};
+use aether_core::agent::AgentStatusKind;
 use aether_core::task::TaskStatus;
 
 mod provenance;
@@ -11,13 +12,8 @@ fn engine_session_ownership_survives_history_expiry_and_reopen() {
     let log = dir.path().join("native-session.jsonl");
     std::fs::write(&log, "native log").expect("log");
     let f = Fixture::on(SqliteStore::open(&database).expect("store"));
-    let record = crate::EngineSessionOwnership {
-        engine: "codex".into(),
-        session_id: "new-thread".into(),
-        agent_id: f.agent.id,
-        log_paths: vec![log.clone()],
-        created_at: f.agent.created_at,
-    };
+    let mut record = f.ownership();
+    record.log_paths.push(log.clone());
     f.mutate(Mutation::RecordEngineSessionOwnership(record.clone()));
     assert!(matches!(
         f.expire().expect("expiry"),
@@ -26,14 +22,196 @@ fn engine_session_ownership_survives_history_expiry_and_reopen() {
     assert!(f.store.agent(f.agent.id).expect("agent").is_none());
     drop(f);
     let store = SqliteStore::open(database).expect("reopen");
+    let mut expected = record.clone();
+    expected.expired_owner = Some(ExpiredEngineSessionOwner {
+        status: AgentStatusKind::Completed,
+        updated_at: record.created_at,
+    });
     assert_eq!(
         store.engine_session_ownerships().expect("ownership"),
-        vec![record]
+        vec![expected.clone()]
+    );
+    let mut repeated = record.clone();
+    repeated.created_at += chrono::Duration::seconds(1);
+    store
+        .commit(Commit::new().mutate(Mutation::RecordEngineSessionOwnership(repeated)))
+        .expect("idempotent ownership");
+    for change_owner in [true, false] {
+        let mut conflicting = record.clone();
+        if change_owner {
+            conflicting.agent_id = AgentId::new();
+        } else {
+            conflicting.log_paths.push(dir.path().join("other.jsonl"));
+        }
+        assert!(
+            store
+                .commit(Commit::new().mutate(Mutation::RecordEngineSessionOwnership(conflicting)))
+                .is_err()
+        );
+    }
+    assert_eq!(
+        store
+            .engine_session_ownerships()
+            .expect("preserved ownership"),
+        vec![expected]
     );
     assert_eq!(
         std::fs::read_to_string(log).expect("log remains"),
         "native log"
     );
+}
+
+#[test]
+fn expiry_captures_final_status_and_latest_owner_state_timestamp() {
+    let statuses = [
+        AgentStatus::Completed { summary: None },
+        AgentStatus::Cancelled { reason: None },
+        AgentStatus::Failed {
+            error: "failed".into(),
+        },
+        AgentStatus::Imported {
+            was: AgentStatusKind::Completed,
+        },
+    ];
+    for status in statuses {
+        for since_offset in [None, Some(-1), Some(1)] {
+            let f = Fixture::new();
+            let mut owner = f.agent.clone();
+            owner.status = status.clone();
+            owner.status_since =
+                since_offset.map(|days| owner.updated_at + chrono::Duration::days(days));
+            f.mutate(Mutation::UpsertAgent(owner.clone()));
+            let mut expected = f.ownership();
+            f.mutate(Mutation::RecordEngineSessionOwnership(expected.clone()));
+            assert!(matches!(f.expire().unwrap(), RunExpiry::Expired { .. }));
+            expected.expired_owner = Some(ExpiredEngineSessionOwner {
+                status: status.kind(),
+                updated_at: if since_offset == Some(1) {
+                    owner.updated_at + chrono::Duration::days(1)
+                } else {
+                    owner.updated_at
+                },
+            });
+            assert_eq!(f.store.engine_session_ownerships().unwrap(), vec![expected]);
+        }
+    }
+}
+
+#[test]
+fn expiry_marks_only_sessions_of_agents_in_the_expired_run() {
+    let f = Fixture::new();
+    let mut expected = Vec::new();
+    for engine in ["claude-code", "codex"] {
+        let mut record = f.ownership();
+        record.engine = engine.into();
+        f.mutate(Mutation::RecordEngineSessionOwnership(record.clone()));
+        record.expired_owner = Some(ExpiredEngineSessionOwner {
+            status: AgentStatusKind::Completed,
+            updated_at: f.agent.updated_at,
+        });
+        expected.push(record);
+    }
+    let mut other_owner = f.agent.clone();
+    other_owner.id = AgentId::new();
+    other_owner.status = AgentStatus::Failed {
+        error: "finished with failure".into(),
+    };
+    f.mutate(Mutation::UpsertAgent(other_owner.clone()));
+    let mut record = f.ownership();
+    record.session_id = "other-expired-owner".into();
+    record.agent_id = other_owner.id;
+    f.mutate(Mutation::RecordEngineSessionOwnership(record.clone()));
+    record.expired_owner = Some(ExpiredEngineSessionOwner {
+        status: AgentStatusKind::Failed,
+        updated_at: other_owner.updated_at,
+    });
+    expected.push(record);
+    for present in [false, true] {
+        let owner = agent();
+        if present {
+            f.mutate(Mutation::UpsertAgent(owner.clone()));
+        }
+        let mut record = f.ownership();
+        record.agent_id = owner.id;
+        record.session_id = format!("other-{present}");
+        f.mutate(Mutation::RecordEngineSessionOwnership(record.clone()));
+        expected.push(record);
+    }
+    expected.sort_by(|a, b| (&a.engine, &a.session_id).cmp(&(&b.engine, &b.session_id)));
+    assert!(matches!(f.expire().unwrap(), RunExpiry::Expired { .. }));
+    assert_eq!(f.store.engine_session_ownerships().unwrap(), expected);
+    assert_eq!(f.expire().unwrap(), RunExpiry::Missing);
+    assert_eq!(f.store.engine_session_ownerships().unwrap(), expected);
+}
+
+#[test]
+fn protected_history_never_acquires_expired_owner_evidence() {
+    for protection in 0..4 {
+        let f = Fixture::new();
+        let record = f.ownership();
+        f.mutate(Mutation::RecordEngineSessionOwnership(record.clone()));
+        let expected_reason = match protection {
+            0 => {
+                let mut owner = f.agent.clone();
+                owner.status = AgentStatus::Ready;
+                f.mutate(Mutation::UpsertAgent(owner));
+                "unfinished work"
+            }
+            1 => {
+                let mut task = f.task.clone();
+                task.status = TaskStatus::Queued;
+                f.mutate(Mutation::UpsertTask(task));
+                "unfinished work"
+            }
+            2 => {
+                let mut owner = f.agent.clone();
+                owner.updated_at = f.cutoff;
+                f.mutate(Mutation::UpsertAgent(owner));
+                "recent state change"
+            }
+            _ => {
+                f.mutate(Mutation::SetLease(Lease::new(
+                    f.agent.id,
+                    "retained",
+                    1,
+                    f.agent.created_at,
+                    std::time::Duration::from_secs(1),
+                )));
+                "lease"
+            }
+        };
+        assert_eq!(f.expire().unwrap(), RunExpiry::Protected(expected_reason));
+        f.assert_preserved();
+        assert_eq!(f.store.engine_session_ownerships().unwrap(), vec![record]);
+    }
+}
+
+#[test]
+fn owner_evidence_write_failure_rolls_back_history_expiry() {
+    let f = Fixture::new();
+    let record = f.ownership();
+    f.mutate(Mutation::RecordEngineSessionOwnership(record.clone()));
+    f.store
+        .conn
+        .lock()
+        .execute_batch(
+            "CREATE TRIGGER refuse_owner_evidence BEFORE UPDATE ON engine_session_ownership \
+         BEGIN SELECT RAISE(ABORT,'injected evidence failure'); END;",
+        )
+        .unwrap();
+    assert!(f.expire().is_err());
+    f.assert_preserved();
+    assert_eq!(f.store.engine_session_ownerships().unwrap(), vec![record]);
+    assert_eq!(f.store.last_seq().unwrap(), 1);
+    let spans: i64 = f
+        .store
+        .conn
+        .lock()
+        .query_row("SELECT COUNT(*) FROM expired_event_spans", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(spans, 0);
 }
 
 struct Fixture {
@@ -148,6 +326,17 @@ impl Fixture {
         self.store
             .commit(Commit::new().mutate(mutation))
             .expect("mutation");
+    }
+
+    fn ownership(&self) -> EngineSessionOwnership {
+        EngineSessionOwnership {
+            engine: "codex".into(),
+            session_id: "new-thread".into(),
+            agent_id: self.agent.id,
+            log_paths: vec![],
+            created_at: self.agent.created_at,
+            expired_owner: None,
+        }
     }
 
     fn assert_preserved(&self) {
@@ -398,6 +587,8 @@ fn external_task_dependencies_and_artifacts_are_protected() {
 #[test]
 fn deletion_failure_rolls_back_payloads_and_expiry_spans_together() {
     let f = Fixture::new();
+    let ownership = f.ownership();
+    f.mutate(Mutation::RecordEngineSessionOwnership(ownership.clone()));
     f.store.conn.lock().execute_batch("CREATE TRIGGER refuse_expiry BEFORE DELETE ON agents BEGIN SELECT RAISE(ABORT,'injected failure'); END;").unwrap();
     assert!(f.expire().is_err());
     f.assert_preserved();
@@ -411,6 +602,10 @@ fn deletion_failure_rolls_back_payloads_and_expiry_spans_together() {
         .unwrap();
     assert_eq!(spans, 0);
     assert_eq!(f.store.last_seq().unwrap(), 1);
+    assert_eq!(
+        f.store.engine_session_ownerships().unwrap(),
+        vec![ownership]
+    );
 }
 
 #[test]

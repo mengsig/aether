@@ -444,3 +444,42 @@ fn detecting_a_reboot_requires_two_known_boot_ids() {
         assert!(!host_restarted(previous, current));
     }
 }
+
+#[tokio::test]
+async fn recovery_carries_an_interruption_correction_only_for_in_flight_tools() {
+    let (runtime, _dir, agent) = fixture().await;
+    assert!(
+        crate::tool_interruption::resume_notes(&runtime, agent.id)
+            .unwrap()
+            .is_empty()
+    );
+    let call = request(&runtime, &agent, "Read", SideEffectClass::ReadOnly);
+    recover(&runtime).unwrap();
+    let note = crate::tool_interruption::resume_notes(&runtime, agent.id).unwrap();
+    assert!(note.contains("Read"));
+    assert!(note.contains("recovery.classified"));
+    assert!(note.contains("not denied"));
+    assert!(note.contains("Re-run"));
+    let events = runtime
+        .store
+        .events(0, 1000, &EventFilter::own_events(agent.id))
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::ToolCancelled { call: id } if id == call))
+    );
+    recover(&runtime).unwrap();
+    assert_eq!(
+        crate::tool_interruption::resume_notes(&runtime, agent.id).unwrap(),
+        note
+    );
+
+    let (runtime, _dir, agent) = fixture().await;
+    recover(&runtime).unwrap();
+    assert!(
+        crate::tool_interruption::resume_notes(&runtime, agent.id)
+            .unwrap()
+            .is_empty()
+    );
+}

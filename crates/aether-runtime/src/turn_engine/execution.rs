@@ -139,7 +139,11 @@ pub(crate) async fn execute(
         turn: ctx.turn,
         now: now(),
     };
-    let status = aether_context::render::engine_runtime_state(&context_inputs);
+    let mut status = aether_context::render::engine_runtime_state(&context_inputs);
+    status.push_str(&crate::tool_interruption::resume_notes(
+        runtime,
+        ctx.agent.id,
+    )?);
     let assembled = runtime.context.assemble(context_inputs);
     let mut snapshot = assembled.snapshot;
     // Explicit (or model-default) effort is independent of registry capability
@@ -231,6 +235,12 @@ pub(crate) async fn execute(
         system_prompt,
         session: ctx.agent.engine_session.clone(),
         session_usage: ctx.agent.engine_session_usage(),
+        session_model_usage: ctx
+            .agent
+            .engine_usage
+            .as_ref()
+            .filter(|usage| Some(&usage.session) == ctx.agent.engine_session.as_ref())
+            .and_then(|usage| usage.models.clone()),
         new_session_id: aether_engine::new_session_id(),
         session_recorder: Some(super::session_recorder(runtime, ctx.agent.id)),
         model: Some(resolved.model.id.clone()),
@@ -331,6 +341,7 @@ pub(crate) async fn execute(
             tracing::warn!(agent = %ctx.agent.id, "engine session could not be resumed; starting a fresh one");
             turn.session = None;
             turn.session_usage = Usage::default();
+            turn.session_model_usage = None;
             ctx.agent.engine_session = None;
             // The refused session retained nothing, so anything left out of
             // this prompt because it already held it must go in after all.
@@ -444,6 +455,12 @@ pub(crate) async fn execute(
             turn.new_session_id = aether_engine::new_session_id();
         }
         turn.session_usage = ctx.agent.engine_session_usage();
+        turn.session_model_usage = ctx
+            .agent
+            .engine_usage
+            .as_ref()
+            .filter(|usage| Some(&usage.session) == turn.session.as_ref())
+            .and_then(|usage| usage.models.clone());
     };
     // A sharp context drop between turns is a cheap signal that the engine's
     // own compaction replaced retained turns with a summary -
@@ -741,73 +758,134 @@ fn closing_usage(runtime: &Arc<Runtime>, ctx: &TurnCtx, run: &DriveResult) -> Re
     // The engine is untrusted: a closing receipt below the stream must not
     // shrink a turn back under a grant it already crossed.
     let raised = raise_to(&mut usage, run.stream_usage);
+    let cost_shortfall = price_closing_usage(&mut usage, run, raised);
+    let missing = closing_shortfall_description(usage, closing_tokens, cost_shortfall);
+    if interrupted_accounting(run) {
+        usage.mark_cost_gap(aether_core::model::CostGap::Interrupted);
+    }
+    if raised {
+        let note = format!("{SHRUNK_CLOSING_USAGE}; {missing}");
+        tracing::warn!(agent = %ctx.agent.id, "{note}");
+        runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
+            name: PROTOCOL_NOTE_EVENT.into(),
+            payload: json!({ "note": note }),
+        })))?;
+    }
+    Ok(usage)
+}
+
+fn price_closing_usage(usage: &mut Usage, run: &DriveResult, raised: bool) -> bool {
+    debug_assert!(run.usage_seen);
+    debug_assert!(run.outcome.cost_usage.is_none() || run.outcome.cost_usd.is_some());
     let billed = run.outcome.cost_usd.or_else(|| {
         run.stream_usage
             .cost_complete
             .then_some(run.stream_usage.cost_usd)
     });
     usage.set_cost(billed);
-    if billed.is_none() {
-        usage.cost_usd = run.stream_usage.cost_usd;
-        usage.cost_gap = run
-            .stream_usage
-            .cost_gap
-            .or(Some(aether_core::model::CostGap::Unreported));
-    }
     // Preserve request estimates; merged counters cannot select prompt tiers.
     usage.estimated_cost_usd = match billed {
         Some(_) => None,
-        None if run.request_usage_seen => {
-            run.pricing.request_estimate_of(&usage, &run.stream_usage)
-        }
-        None => run.pricing.estimate_of(&usage),
+        None if run.request_usage_seen => run.pricing.request_estimate_of(usage, &run.stream_usage),
+        None => run.pricing.estimate_of(usage),
     };
-    if run.outcome.cost_usd.is_none() {
-        usage.cost_basis = if usage.estimated_cost_usd.is_some() {
-            aether_core::model::CostBasis::ListPrice
-        } else {
-            run.stream_usage.cost_basis
-        };
+    if billed.is_none() {
+        floor_unbilled_cost(usage, run);
+    } else if run.outcome.cost_usd.is_none() {
+        usage.cost_basis = run.stream_usage.cost_basis;
     } else if raised {
-        run.pricing
-            .price_closing_shortfall(&mut usage, &run.outcome.usage);
+        let covered = closing_cost_coverage(*usage, run);
+        return run.pricing.price_closing_shortfall(usage, &covered);
     }
-    if interrupted_accounting(run) {
-        usage.mark_cost_gap(aether_core::model::CostGap::Interrupted);
-    }
-    if raised {
-        record_closing_shortfall(runtime, ctx, usage, closing_tokens)?;
-    }
-    Ok(usage)
+    true
 }
 
-fn record_closing_shortfall(
-    runtime: &Arc<Runtime>,
-    ctx: &TurnCtx,
+/// Without a dollar receipt, the stream's dollars plus base-rate prices for
+/// closing tokens it never carried are a floor; the cost gap stays.
+fn floor_unbilled_cost(usage: &mut Usage, run: &DriveResult) {
+    use aether_core::model::CostBasis;
+    let streamed = run.stream_usage;
+    debug_assert!(run.outcome.cost_usd.is_none() && !streamed.cost_complete);
+    debug_assert!(!usage.cost_complete && usage.cost_usd == 0.0);
+    let unstreamed = run.pricing.unstreamed_cost(usage, &streamed);
+    usage.cost_usd = streamed.cost_usd + unstreamed;
+    usage.cost_gap = streamed
+        .cost_gap
+        .or(Some(aether_core::model::CostGap::Unreported));
+    usage.cost_basis = match (usage.estimated_cost_usd, unstreamed > 0.0) {
+        (Some(_), _) => CostBasis::ListPrice,
+        (None, false) => streamed.cost_basis,
+        (None, true) if streamed.cost_usd == 0.0 => CostBasis::ListPrice,
+        (None, true) => streamed.cost_basis.combine(CostBasis::ListPrice),
+    };
+}
+
+fn closing_cost_coverage(total: Usage, run: &DriveResult) -> Usage {
+    let closing = run.outcome.usage;
+    let Some(covered) = run.outcome.cost_usage.as_deref() else {
+        debug_assert!(
+            total.input_tokens >= closing.input_tokens
+                && total.output_tokens >= closing.output_tokens
+                && total.cache_read_tokens >= closing.cache_read_tokens
+                && total.cache_write_tokens >= closing.cache_write_tokens
+                && total.cache_write_1h_tokens >= closing.cache_write_1h_tokens
+                && total.reasoning_tokens.unwrap_or(0) >= closing.reasoning_tokens.unwrap_or(0),
+            "the raised closing counters must cover the receipt"
+        );
+        return closing;
+    };
+    debug_assert!(run.outcome.cost_usd.is_some());
+    debug_assert!(covered.cache_write_1h_tokens <= covered.cache_write_tokens);
+    let mut coverage = *covered;
+    // Both receipts prove coverage; neither can make the other's tokens unpriced.
+    raise_to(&mut coverage, closing);
+    coverage
+}
+
+fn closing_shortfall_description(
     usage: Usage,
     closing_tokens: u64,
-) -> Result<()> {
+    cost_shortfall: bool,
+) -> &'static str {
     debug_assert!(usage.total_tokens() >= closing_tokens);
     debug_assert!(usage.cost_complete || usage.cost_gap.is_some());
-    let missing = if usage.total_tokens() == closing_tokens {
+    if usage.total_tokens() == closing_tokens {
         "only reasoning detail was missing, the cost is unaffected"
+    } else if !cost_shortfall {
+        "the cumulative dollar receipt covers the streamed usage"
     } else if usage.cost_complete {
         "the missing part is priced from the stream"
     } else {
         "the missing part is left out of the billed cost"
-    };
-    let note = format!("{SHRUNK_CLOSING_USAGE}; {missing}");
-    tracing::warn!(agent = %ctx.agent.id, "{note}");
-    runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
-        name: PROTOCOL_NOTE_EVENT.into(),
-        payload: json!({ "note": note }),
-    })))?;
-    Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_coverage_does_not_reprice_closing_tokens_that_never_streamed() {
+        let mut run = test_run();
+        run.outcome.cost_usd = Some(0.05);
+        run.outcome.usage = Usage {
+            input_tokens: 200,
+            output_tokens: 10,
+            ..Usage::default()
+        };
+        run.stream_usage = Usage {
+            input_tokens: 100,
+            output_tokens: 20,
+            ..Usage::default()
+        };
+        run.outcome.cost_usage = Some(Box::new(run.stream_usage));
+        let mut total = run.outcome.usage;
+        assert!(raise_to(&mut total, run.stream_usage));
+        let coverage = closing_cost_coverage(total, &run);
+        assert_eq!(coverage.input_tokens, 200);
+        assert_eq!(coverage.output_tokens, 20);
+        assert_eq!(coverage.total_tokens(), total.total_tokens());
+    }
 
     #[test]
     fn a_previous_receipt_keeps_its_dollars_without_covering_later_activity() {

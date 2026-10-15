@@ -22,6 +22,7 @@ pub(super) async fn list_models(daemon: &Daemon) -> Result<Reply, ErrorReply> {
         }
         let (configured, source) = auth_cache.get(&provider).cloned().unwrap_or((false, None));
         out.push(ModelInfo {
+            tier: info.tier.map(|tier| tier.as_str().to_owned()),
             is_default: default.as_ref() == Some(&info.model),
             model: info.model,
             aliases: info.aliases,

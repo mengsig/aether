@@ -16,6 +16,7 @@ import type {
  * cannot be billed against another session's counters.
  */
 export interface EngineSessionUsage {
+  "models"?: Record<string, Usage> | null;
   "session": string;
   "total": Usage;
 }

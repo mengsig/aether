@@ -71,6 +71,8 @@ mod prefix;
 mod pricing;
 #[path = "engine/questions.rs"]
 mod questions;
+#[path = "engine/receipt_parity.rs"]
+mod receipt_parity;
 #[path = "engine/scripted.rs"]
 mod scripted;
 #[path = "engine/session_recovery.rs"]

@@ -90,6 +90,7 @@ impl SqliteStore {
             )?;
         }
         rows += tx.execute("DELETE FROM tasks WHERE run=?1", [&id])?;
+        engine_sessions::preserve_expired_owners(&tx, &id)?;
         rows += tx.execute("DELETE FROM agents WHERE run=?1", [&id])?;
         // last_seq is deliberately unchanged: expiry can never recycle an event cursor.
         tx.commit()?;

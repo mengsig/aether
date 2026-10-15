@@ -210,6 +210,16 @@ pub struct EngineSessionOwnership {
     /// Confirmed absolute native log paths. Empty when the adapter cannot identify them.
     pub log_paths: Vec<PathBuf>,
     pub created_at: Timestamp,
+    /// Final owner state, captured only when history expiry deletes the agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expired_owner: Option<ExpiredEngineSessionOwner>,
+}
+
+/// Owner evidence preserved atomically with deletion of its agent history.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExpiredEngineSessionOwner {
+    pub status: AgentStatusKind,
+    pub updated_at: Timestamp,
 }
 
 /// One paired remote device as the store keeps it. The store indexes the

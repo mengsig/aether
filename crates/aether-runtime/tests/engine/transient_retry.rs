@@ -343,7 +343,15 @@ async fn a_claude_zero_cost_overload_receipt_is_metadata_and_can_retry() {
         .to_string(),
         &mut aether_engine::claude_code::ParseState::default(),
     );
-    assert!(matches!(events[0], EngineEvent::SessionUsage { .. }));
+    assert!(
+        matches!(&events[..], [EngineEvent::ProtocolNote(_), EngineEvent::Done(outcome)]
+        if outcome.cost_usd.is_none() && outcome.cost_usage.is_none())
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::SessionUsage { .. }))
+    );
     let (h, engine) = queued(vec![events, answered("recovered")]).await;
     let id = chat_agent(&h);
     engine_turn(&h, id, "go").await;

@@ -27,6 +27,7 @@ impl SessionRecorder for OwnershipRecorder {
                     agent_id: self.agent_id,
                     log_paths,
                     created_at: now(),
+                    expired_owner: None,
                 },
             )))
             .map(|_| ())

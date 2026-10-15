@@ -205,7 +205,7 @@ async fn recheck_preserves_edits_hidden_by_new_index_flags() {
         fs::write(manifest.workspace.join("tracked"), "concurrent edit\n").unwrap();
         assert!(git(&manifest.workspace, &["status", "--porcelain"]).is_empty());
         let error = candidate.recheck(&manifest).unwrap_err();
-        assert!(error.to_string().contains("workspace index"), "{error}");
+        assert!(error.to_string().contains("changed during GC"), "{error}");
         assert_eq!(
             fs::read_to_string(manifest.workspace.join("tracked")).unwrap(),
             "concurrent edit\n"
@@ -249,6 +249,7 @@ async fn completed_projection_with_running_turn_is_preserved() {
             interrupt: cancel.child_token(),
             cancel,
             cancel_request: None,
+            stop_reason: None,
             addressed: false,
             provider: "mock".into(),
             engine: true,
@@ -614,5 +615,126 @@ async fn preview_does_not_reserve_admission_or_take_maintenance_locks() {
         *f.runtime.workspace_gc_active.lock(),
         Some(existing_reservation)
     );
+    assert!(f.manifest.workspace.exists());
+}
+
+#[tokio::test]
+async fn unrelated_home_scope_does_not_own_completed_workspace() {
+    let f = fixture().await;
+    f.store(f.owner(AgentStatus::Completed { summary: None }));
+    let mut broad = f.owner(AgentStatus::Created);
+    broad.parent = None;
+    broad.scope.workspace_root = Some(f._temp.path().to_path_buf());
+    broad.scope.allowed_paths = vec![f.manifest.workspace.clone()];
+    f.store(broad);
+    assert_eq!(
+        f.collect(true).workspaces[0].action,
+        WorkspaceGcAction::WouldRemove
+    );
+    assert_eq!(
+        f.collect(false).workspaces[0].action,
+        WorkspaceGcAction::Removed
+    );
+}
+
+#[tokio::test]
+async fn live_agent_inside_workspace_protects_it_without_delegation_relation() {
+    let f = fixture().await;
+    let mut agent = f.owner(AgentStatus::Created);
+    agent.parent = None;
+    // A missing descendant is still a scoped path, resolved by existing prefix.
+    agent.scope.workspace_root = Some(f.manifest.workspace.join("nested"));
+    f.store(agent);
+    f.assert_kept("live or resumable");
+}
+
+#[tokio::test]
+async fn manifest_parent_and_delegation_chain_protect_workspace() {
+    let f = fixture().await;
+    let mut parent = f.owner(AgentStatus::Created);
+    parent.id = f.manifest.parent;
+    parent.parent = None;
+    parent.scope.workspace_root = Some(f.source.clone());
+    f.store(parent.clone());
+    f.assert_kept("live or resumable");
+    parent.status = AgentStatus::Completed { summary: None };
+    f.store(parent.clone());
+    let mut descendant = f.owner(AgentStatus::Created);
+    descendant.scope.workspace_root = Some(f.source.clone());
+    f.store(descendant.clone());
+    f.assert_kept("live or resumable");
+    descendant.status = AgentStatus::Completed { summary: None };
+    f.store(descendant);
+    let mut ancestor = f.owner(AgentStatus::Created);
+    ancestor.parent = None;
+    ancestor.scope.workspace_root = Some(f.source.clone());
+    parent.parent = Some(ancestor.id);
+    f.store(parent);
+    f.store(ancestor);
+    f.assert_kept("live or resumable");
+}
+
+#[tokio::test]
+async fn explicit_workspace_resource_lease_protects_unrelated_owner() {
+    let f = fixture().await;
+    let mut broad = f.owner(AgentStatus::Completed { summary: None });
+    broad.parent = None;
+    broad.scope.workspace_root = Some(f._temp.path().to_path_buf());
+    f.store(broad.clone());
+    f.runtime.resources.quarantine(
+        broad.id,
+        vec![aether_core::tool::ResourceKey::file(
+            f.manifest.workspace.join("tracked"),
+        )],
+    );
+    f.assert_kept("explicit resource lease");
+    f.runtime.resources.release_quarantine(broad.id);
+    assert_eq!(
+        f.collect(false).workspaces[0].action,
+        WorkspaceGcAction::Removed
+    );
+}
+
+#[tokio::test]
+async fn completed_workspace_owner_with_durable_turn_lease_is_kept() {
+    let f = fixture().await;
+    let owner = f.owner(AgentStatus::Completed { summary: None });
+    f.store(owner.clone());
+    let lease = aether_core::lease::Lease::new(
+        owner.id,
+        "test-holder",
+        1,
+        aether_core::time::now(),
+        Duration::from_secs(60),
+    );
+    f.runtime
+        .apply(Commit::new().mutate(Mutation::SetLease(lease)))
+        .unwrap();
+    f.assert_kept("live or resumable");
+}
+
+#[tokio::test]
+async fn preview_reports_each_workspace_protection_reason() {
+    let f = fixture().await;
+    let mut owner = f.owner(AgentStatus::Created);
+    f.store(owner.clone());
+    let report = f.collect(true);
+    assert_eq!(report.workspaces[0].action, WorkspaceGcAction::Kept);
+    assert!(report.workspaces[0].reason.contains("live or resumable"));
+    owner.status = AgentStatus::Completed { summary: None };
+    f.store(owner);
+    fs::write(f.manifest.workspace.join("ignored"), "precious").unwrap();
+    let report = f.collect(true);
+    assert!(
+        report.workspaces[0]
+            .reason
+            .contains("dirty, untracked, or ignored")
+    );
+    fs::remove_file(f.manifest.workspace.join("ignored")).unwrap();
+    fs::write(f.manifest.workspace.join("tracked"), "unique\n").unwrap();
+    git(&f.manifest.workspace, &["commit", "-qam", "unique work"]);
+    let report = f.collect(true);
+    assert_eq!(report.workspaces[0].action, WorkspaceGcAction::Kept);
+    assert!(report.workspaces[0].reason.contains("commits missing"));
     assert!(f.manifest.workspace.exists());
 }

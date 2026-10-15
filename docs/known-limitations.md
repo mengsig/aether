@@ -88,6 +88,29 @@ looks like a boundary and is not one.
   final symlink but still follow parent directories. These controls are not a
   complete hostile-filesystem sandbox. An existing export `.partial` is
   refused; inspect and remove it to retry.
+- Engine log retention needs durable creation ownership, a matching native
+  session header and a retained owner row or transactional history-expiry record
+  proving finality. User and legacy
+  sessions, unknown paths, ambiguous ownership and unsupported native formats
+  are preserved. A Failed agent can still resume its original native session;
+  a durable restart successor or deletion of its history closes that route.
+  History expiry now records final-state evidence before deleting the owner.
+  Previously expired history without that evidence still protects native logs
+  indefinitely; inspect `aether storage` for each path's decision and reason.
+- Engine log ownership records do not persist the original inode or a content
+  digest. GC rejects a different native session identity and rechecks the inode,
+  size, permissions and modification/change times after inspection. A copied
+  or externally edited log that still has the recorded session header cannot
+  be distinguished from the original. Component-by-component directory handles
+  prevent following symlink swaps, but GC is not an atomic conditional unlink
+  against a hostile same-user filesystem writer. Keep native session storage
+  private and avoid externally rewriting it during a sweep.
+- Delegated workspace cleanup preserves Git layouts it cannot safely prove,
+  including reftable, config includes, alternate object databases, symlinked
+  metadata, cross-worktree symbolic refs and parent-traversal `gitdir` pointers.
+  Ordinary linked source worktrees are supported. Broad ancestor scopes and
+  `allowed_paths` permission alone do not establish workspace ownership;
+  explicit workspace roots, manifest relationships and resource leases do.
 
 - Images sent with a message are stored under `aether.attachments/` in the
   data directory and are never removed automatically, including when their

@@ -38,6 +38,15 @@ async fn model_catalogue_carries_aliases_and_marks_an_aliased_default() {
     assert_eq!(opus.aliases, ["opus", "opus-5-5", "opus-5.5"]);
     assert_eq!(opus.capabilities.context_window, 200_000);
     assert!(opus.is_default);
+    assert_eq!(opus.tier.as_deref(), Some("strong"));
+    let default = models
+        .iter()
+        .find(|info| info.model.provider == "claude-code" && info.model.model == "default")
+        .expect("default model");
+    assert_eq!(
+        serde_json::to_value(default).unwrap()["tier"],
+        serde_json::Value::Null
+    );
     assert_eq!(models.iter().filter(|info| info.is_default).count(), 1);
     daemon.runtime.shutdown().await;
 }

@@ -1,10 +1,12 @@
 //! Conservative, bounded collection of private delegated Git worktrees.
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use aether_core::agent::{Agent, AgentStatusKind, Scope};
+use aether_core::id::AgentId;
 use aether_store::AgentFilter;
 use serde::{Deserialize, Serialize};
 
@@ -211,6 +213,7 @@ impl Runtime {
         let result = (|| {
             candidate.measure(dry_run)?;
             let manifest = candidate.inspect(root)?;
+            candidate.recheck(&manifest)?;
             let _hold = (!dry_run).then(|| self.hold());
             let agents = self.store.agents(&AgentFilter::default())?;
             let sched = self.sched.lock();
@@ -221,15 +224,19 @@ impl Runtime {
             } else {
                 Some(sched)
             };
+            let owners = manifest_owners(&agents, Some(manifest.parent));
             let latest = agents
                 .iter()
-                .filter(|agent| scope_uses_workspace(&agent.scope, &workspace_path))
+                .filter(|agent| {
+                    owners.contains(&agent.id)
+                        || scope_owns_workspace(&agent.scope, &workspace_path)
+                })
                 .map(|agent| SystemTime::from(agent.updated_at))
                 .fold(candidate.modified, SystemTime::max);
             if !grace_elapsed(now, latest, grace) {
                 return Err(invalid("workspace is within the grace period"));
             }
-            candidate.recheck(&manifest)?;
+            candidate.recheck_unchanged(&manifest)?;
             if dry_run {
                 return Ok(WorkspaceGcAction::WouldRemove);
             }
@@ -258,15 +265,42 @@ impl Runtime {
         let engine_turns: std::collections::HashSet<_> =
             self.engine_turns.lock().keys().copied().collect();
         let resources = self.resources.holdings();
+        let owners = manifest_owners(agents, parent);
+        let leases: HashSet<_> = self
+            .store
+            .leases()?
+            .iter()
+            .map(|lease| lease.agent_id)
+            .collect();
+        // A path lease is explicit use, even when its holder has a broad scope
+        // or its agent row has already disappeared.
+        if resources
+            .iter()
+            .flat_map(|holding| &holding.keys)
+            .any(|key| {
+                key.0
+                    .strip_prefix("file:")
+                    .or_else(|| key.0.strip_prefix("dir:"))
+                    .or_else(|| key.0.strip_prefix("repo:"))
+                    .is_some_and(|path| paths_overlap(Path::new(path), workspace))
+            })
+        {
+            return Err(invalid("workspace has an explicit resource lease"));
+        }
         if parent.is_some_and(|id| sched.running.contains_key(&id) || engine_turns.contains(&id)) {
             return Err(invalid("workspace parent has an in-flight turn"));
         }
         for agent in agents {
-            let using = scope_uses_workspace(&agent.scope, workspace);
+            let using = owners.contains(&agent.id) || scope_owns_workspace(&agent.scope, workspace);
             let in_flight =
                 sched.running.contains_key(&agent.id) || engine_turns.contains(&agent.id);
             let held_resources = resources.iter().any(|holding| holding.agent == agent.id);
-            if using && (in_flight || held_resources || !final_status(agent.status.kind())) {
+            if using
+                && (in_flight
+                    || held_resources
+                    || leases.contains(&agent.id)
+                    || !final_status(agent.status.kind()))
+            {
                 return Err(invalid(format!(
                     "workspace has live or resumable agent {}",
                     agent.id
@@ -280,7 +314,13 @@ impl Runtime {
         self.workspace_gc_active
             .lock()
             .as_ref()
-            .is_some_and(|workspace| scope_uses_workspace(scope, workspace))
+            .is_some_and(|workspace| {
+                scope
+                    .workspace_root
+                    .iter()
+                    .chain(&scope.allowed_paths)
+                    .any(|path| paths_overlap(path, workspace))
+            })
     }
 
     /// Called under the creation hold, after preparatory filesystem checks.
@@ -313,15 +353,49 @@ fn final_status(status: AgentStatusKind) -> bool {
     )
 }
 
-fn scope_uses_workspace(scope: &Scope, workspace: &Path) -> bool {
+fn scope_owns_workspace(scope: &Scope, workspace: &Path) -> bool {
     scope
         .workspace_root
-        .iter()
-        .chain(&scope.allowed_paths)
-        .any(|path| {
-            let path = normalized_path(path);
-            path.starts_with(workspace) || workspace.starts_with(path)
-        })
+        .as_ref()
+        .is_some_and(|path| normalized_path(path).starts_with(workspace))
+}
+
+fn paths_overlap(path: &Path, workspace: &Path) -> bool {
+    let path = normalized_path(path);
+    path.starts_with(workspace) || workspace.starts_with(path)
+}
+
+/// The manifest's delegator and its direct ancestry/descendancy own the
+/// workspace even when their current scopes no longer name it. Missing
+/// intermediate rows must not sever a recorded parent-child edge.
+fn manifest_owners(agents: &[Agent], parent: Option<AgentId>) -> HashSet<AgentId> {
+    let Some(parent) = parent else {
+        return HashSet::new();
+    };
+    let by_id: HashMap<_, _> = agents.iter().map(|agent| (agent.id, agent)).collect();
+    let mut children: HashMap<_, Vec<_>> = HashMap::new();
+    for agent in agents {
+        if let Some(parent) = agent.parent {
+            children.entry(parent).or_default().push(agent.id);
+        }
+    }
+    let mut owners = HashSet::from([parent]);
+    let mut pending = VecDeque::from([parent]);
+    while let Some(id) = pending.pop_front() {
+        for child in children.get(&id).into_iter().flatten() {
+            if owners.insert(*child) {
+                pending.push_back(*child);
+            }
+        }
+    }
+    let mut ancestor = by_id.get(&parent).and_then(|agent| agent.parent);
+    while let Some(id) = ancestor {
+        if !owners.insert(id) {
+            break;
+        }
+        ancestor = by_id.get(&id).and_then(|agent| agent.parent);
+    }
+    owners
 }
 
 fn normalized_path(path: &Path) -> PathBuf {

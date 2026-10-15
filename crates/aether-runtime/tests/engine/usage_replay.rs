@@ -152,6 +152,7 @@ impl Engine for SessionCounterEngine {
             };
             let _ = tx
                 .send(EngineEvent::SessionUsage {
+                    models: None,
                     session: "thread-1".into(),
                     total: counter,
                 })
@@ -471,7 +472,7 @@ async fn codex_exec_turn(h: &Harness, agent: AgentId, n: u32) -> aether_core::mo
 }
 
 /// Whether `agent`'s ledger holds a protocol note naming every one of `keys`.
-fn noted(h: &Harness, agent: AgentId, keys: &[&str]) -> bool {
+pub(super) fn noted(h: &Harness, agent: AgentId, keys: &[&str]) -> bool {
     let events = h
         .store
         .events(0, 1000, &EventFilter::for_agent(agent))

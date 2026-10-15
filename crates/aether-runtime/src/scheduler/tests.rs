@@ -75,6 +75,7 @@ async fn operator_admission_survives_backoff_only_for_its_reserved_link() {
             task: None,
             cancel: CancellationToken::new(),
             cancel_request: None,
+            stop_reason: None,
             interrupt: CancellationToken::new(),
             addressed: true,
             provider: "claude-code".into(),

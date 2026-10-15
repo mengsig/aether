@@ -8,6 +8,7 @@ use aether_core::model::{CapabilityProfile, Effort, ModelCost, ModelCostTier, Th
 use crate::auth::{AuthMethods, CredentialImport, OAuthKind};
 use crate::profile::ModelFamily;
 use crate::registry::{ModelDef, Protocol, ProviderDef, ProviderFlags};
+use crate::tier::ModelTier;
 
 fn cost(input: f64, output: f64) -> ModelCost {
     // Cache writes 1.25x input, cache reads 0.1x input.
@@ -112,25 +113,29 @@ fn anthropic() -> ProviderDef {
                 "Claude Opus 5.5",
                 adaptive(1_000_000, 128_000, opus_cost()),
             )
-            .with_aliases(["opus", "opus-5-5", "opus-5.5"]),
+            .with_aliases(["opus", "opus-5-5", "opus-5.5"])
+            .with_tier(ModelTier::Strong),
             ModelDef::new(
                 "claude-sonnet-5-5",
                 "Claude Sonnet 5.5",
                 adaptive(1_000_000, 128_000, sonnet_cost()),
             )
-            .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"]),
+            .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"])
+            .with_tier(ModelTier::Balanced),
             ModelDef::new(
                 "claude-haiku-5-5",
                 "Claude Haiku 5.5",
                 adaptive(1_000_000, 128_000, haiku_cost()),
             )
-            .with_aliases(["haiku", "haiku-5-5", "haiku-5.5"]),
+            .with_aliases(["haiku", "haiku-5-5", "haiku-5.5"])
+            .with_tier(ModelTier::Fast),
             ModelDef::new(
                 "claude-fable-5-1",
                 "Claude Fable 5.1",
                 adaptive(1_000_000, 128_000, fable_cost()),
             )
-            .with_aliases(["fable", "fable-5-1"]),
+            .with_aliases(["fable", "fable-5-1"])
+            .with_tier(ModelTier::Frontier),
         ],
         default_capabilities: Some(claude(
             200_000,
@@ -200,11 +205,16 @@ fn openai_current_models() -> Vec<ModelDef> {
         }),
     );
     vec![
-        ModelDef::new("gpt-6-astra", "GPT-6 Astra", gpt6(10.0, 50.0)).with_aliases(["astra"]),
+        ModelDef::new("gpt-6-astra", "GPT-6 Astra", gpt6(10.0, 50.0))
+            .with_aliases(["astra"])
+            .with_tier(ModelTier::Strong),
         ModelDef::new("gpt-6.1-sol", "GPT-6.1 Sol", gpt61_sol)
             .with_aliases(["sol"])
-            .with_default_effort(GPT_6_1_SOL_EFFORT),
-        ModelDef::new("gpt-6-luna", "GPT-6 Luna", gpt6(0.10, 0.50)).with_aliases(["luna"]),
+            .with_default_effort(GPT_6_1_SOL_EFFORT)
+            .with_tier(ModelTier::Balanced),
+        ModelDef::new("gpt-6-luna", "GPT-6 Luna", gpt6(0.10, 0.50))
+            .with_aliases(["luna"])
+            .with_tier(ModelTier::Fast),
     ]
 }
 
@@ -352,6 +362,7 @@ fn engine_model(id: &str, name: &str, context: u32, max_out: u32) -> ModelDef {
         capabilities: engine_profile(context, max_out),
         family: None,
         default_effort: None,
+        tier: None,
     }
 }
 
@@ -374,11 +385,16 @@ const CODEX_CONTEXT: u32 = 272_000;
 /// ([`crate::Registry::api_equivalent_price`]) and reports it as an estimate.
 fn codex_models() -> Vec<ModelDef> {
     vec![
-        engine_model("gpt-6-astra", "GPT-6 Astra", CODEX_CONTEXT, 128_000).with_aliases(["astra"]),
+        engine_model("gpt-6-astra", "GPT-6 Astra", CODEX_CONTEXT, 128_000)
+            .with_aliases(["astra"])
+            .with_tier(ModelTier::Strong),
         engine_model("gpt-6.1-sol", "GPT-6.1 Sol", CODEX_CONTEXT, 128_000)
             .with_aliases(["sol"])
-            .with_default_effort(GPT_6_1_SOL_EFFORT),
-        engine_model("gpt-6-luna", "GPT-6 Luna", CODEX_CONTEXT, 128_000).with_aliases(["luna"]),
+            .with_default_effort(GPT_6_1_SOL_EFFORT)
+            .with_tier(ModelTier::Balanced),
+        engine_model("gpt-6-luna", "GPT-6 Luna", CODEX_CONTEXT, 128_000)
+            .with_aliases(["luna"])
+            .with_tier(ModelTier::Fast),
         engine_model("default", "Codex default model", CODEX_CONTEXT, 128_000),
     ]
 }
@@ -425,7 +441,8 @@ fn claude_code() -> ProviderDef {
         models: vec![
             priced(
                 engine_model("claude-opus-5-5", "Claude Opus 5.5", 200_000, 128_000)
-                    .with_aliases(["opus", "opus-5-5", "opus-5.5"]),
+                    .with_aliases(["opus", "opus-5-5", "opus-5.5"])
+                    .with_tier(ModelTier::Strong),
                 opus_cost(),
             ),
             // No price: `default` is whatever the CLI picks, so pricing it
@@ -433,17 +450,20 @@ fn claude_code() -> ProviderDef {
             engine_model("default", "Claude Code default model", 200_000, 64_000),
             priced(
                 engine_model("claude-fable-5-1", "Claude Fable 5.1", 200_000, 128_000)
-                    .with_aliases(["fable", "fable-5-1"]),
+                    .with_aliases(["fable", "fable-5-1"])
+                    .with_tier(ModelTier::Frontier),
                 fable_cost(),
             ),
             priced(
                 engine_model("claude-sonnet-5-5", "Claude Sonnet 5.5", 200_000, 128_000)
-                    .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"]),
+                    .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"])
+                    .with_tier(ModelTier::Balanced),
                 sonnet_cost(),
             ),
             priced(
                 engine_model("claude-haiku-5-5", "Claude Haiku 5.5", 200_000, 128_000)
-                    .with_aliases(["haiku", "haiku-5-5", "haiku-5.5"]),
+                    .with_aliases(["haiku", "haiku-5-5", "haiku-5.5"])
+                    .with_tier(ModelTier::Fast),
                 haiku_cost(),
             ),
         ],

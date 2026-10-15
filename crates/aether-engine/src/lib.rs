@@ -136,6 +136,8 @@ pub struct EngineTurn {
     /// An engine reporting session-cumulative totals (Codex counts a thread)
     /// subtracts this so a resumed session is not billed twice.
     pub session_usage: Usage,
+    /// Per-model counters paired with the resumed session's aggregate baseline.
+    pub session_model_usage: Option<std::collections::BTreeMap<String, Usage>>,
     /// Session id to use when starting fresh.
     pub new_session_id: String,
     /// Durable creation evidence; resumed sessions never invoke this recorder.
@@ -230,7 +232,11 @@ pub enum EngineEvent {
     /// The engine session's own cumulative counters, as last reported.
     /// Persisted against the session so the next turn on it bills only what
     /// it adds; engines that report per-turn usage never emit this.
-    SessionUsage { session: String, total: Usage },
+    SessionUsage {
+        session: String,
+        total: Usage,
+        models: Option<std::collections::BTreeMap<String, Usage>>,
+    },
     /// The engine's session id and what it loaded.
     Session {
         id: String,
@@ -291,6 +297,9 @@ pub struct EngineOutcome {
     /// Parsed from the engine's own final usage message, never synthesized.
     pub closing_accounting: bool,
     pub cost_usd: Option<f64>,
+    /// Invocation counters covered by `cost_usd`, when its scope differs from `usage`.
+    /// Boxed so optional receipt detail does not enlarge every streamed event.
+    pub cost_usage: Option<Box<Usage>>,
     pub stop_reason: Option<String>,
     pub duration_ms: Option<u64>,
     pub is_error: bool,

@@ -60,8 +60,9 @@ keep a run beyond the configured window. Requests for expired event history fail
 explicitly rather than returning an apparently complete empty history.
 
 SQLite reuses freed pages; deletion does not necessarily shrink the database
-file. This policy does not delete backups, native Claude/Codex session files,
-workspaces, or artifact metadata, and is not a total disk-space cap.
+file. This history policy does not delete backups, native Claude/Codex session
+files, workspaces, or artifact metadata. Filesystem cleanup has its own
+[storage policy](configuration.md#storage); neither policy is a total disk-space cap.
 
 ## Read-only retention preview
 
