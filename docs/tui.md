@@ -182,7 +182,7 @@ Everything you send goes to the viewed agent.
 - **Alt+,** and **Alt+.** step the viewed agent's reasoning effort; `/model`
   opens the model and effort picker. Each choice shows whether it supports
   token caps only or token and dollar caps. Native Codex supports token caps;
-  its list-price estimates cannot enforce dollar caps.
+  its API-equivalent estimates cannot enforce dollar caps.
 
 ### Images
 

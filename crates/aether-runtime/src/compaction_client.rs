@@ -515,7 +515,7 @@ mod tests {
         let (runtime, _dir) = crate::test_runtime(|_| {}).await;
         let resolved = runtime
             .models
-            .resolve(&ModelRef::new("codex", "gpt-6.1-sol"))
+            .resolve(&ModelRef::new("claude-code", "haiku"))
             .unwrap();
         let mut accounting = Accounting {
             pricing: TurnPricing::of(&runtime, &resolved),

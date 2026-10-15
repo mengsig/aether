@@ -290,7 +290,7 @@ impl Engine for CodexCheckpointEngine {
 }
 
 #[tokio::test]
-async fn codex_engine_compaction_with_a_known_price_is_complete() {
+async fn codex_engine_compaction_is_estimated_from_its_api_twin() {
     let engine = Arc::new(CodexCheckpointEngine(CheckpointEngine {
         turns: Arc::default(),
         valid: true,
@@ -318,7 +318,7 @@ async fn codex_engine_compaction_with_a_known_price_is_complete() {
         a.stats.turns == 1 && a.status.kind() == AgentStatusKind::Waiting
     })
     .await;
-    assert!(before.stats.usage.cost_complete);
+    assert!(before.stats.usage.estimated_cost_usd.is_some());
     h.runtime.request_compaction(id, Actor::user()).unwrap();
     let after = wait_for(h.store.as_ref(), id, |a| {
         a.stats.turns > before.stats.turns && a.status.kind() == AgentStatusKind::Waiting
@@ -329,8 +329,15 @@ async fn codex_engine_compaction_with_a_known_price_is_complete() {
         after.stats.usage.total_tokens() - before.stats.usage.total_tokens(),
         47
     );
-    assert!(after.stats.usage.cost_usd > before.stats.usage.cost_usd);
-    assert!(after.stats.usage.cost_complete, "{:?}", after.stats.usage);
-    assert_eq!(after.stats.usage.cost_gap, None);
+    assert!(
+        after.stats.usage.estimated_cost_usd > before.stats.usage.estimated_cost_usd,
+        "{:?}",
+        after.stats.usage
+    );
+    assert_eq!(
+        after.stats.usage.cost_gap,
+        Some(aether_core::model::CostGap::Unpriced),
+        "only the subscription's missing bill, no unread counters"
+    );
     h.runtime.shutdown().await;
 }
