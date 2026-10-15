@@ -102,7 +102,11 @@ async fn feedback_in_context_refusal_is_an_invalid_argument_without_writes() {
     let list = host
         .ok(json!({"cmd":"memory_feedback", "memory":request["memory"]}))
         .await;
-    assert_eq!(list, json!({"records":[], "truncated":false}));
+    assert_eq!(
+        list,
+        json!({"records":[], "truncated":false,
+            "ranking":{"helped":0, "hurt":0, "factor":1.0}})
+    );
     assert!(host.audit("memory.feedback").await.is_empty());
     host.daemon.stop().await;
 }
@@ -126,6 +130,34 @@ async fn feedback_retry_writes_one_record_and_one_event_and_conflicts_on_changed
     assert_eq!(list["records"], json!([first]));
     request["verdict"] = json!("hurt");
     assert_eq!(host.err(request).await["code"], "invalid_argument");
+    host.daemon.stop().await;
+}
+
+#[tokio::test]
+async fn feedback_list_reports_the_ranking_tally_and_factor() {
+    let mut host = Host::start().await;
+    let request = feedback_request(&mut host, true).await;
+    host.ok(request.clone()).await;
+    let list = json!({"cmd":"memory_feedback", "memory":request["memory"]});
+    let one = host.ok(list.clone()).await;
+    assert_eq!(one["ranking"], json!({"helped":1, "hurt":0, "factor":1.0}));
+    let task = host
+        .ok(json!({"cmd":"create_task", "objective":"Verify release again"}))
+        .await;
+    show_memory(
+        &host,
+        serde_json::from_value(request["memory"].clone()).unwrap(),
+        serde_json::from_value(task["id"].clone()).unwrap(),
+    );
+    let mut second = request.clone();
+    second["task"] = task["id"].clone();
+    host.ok(second).await;
+    let two = host.ok(list).await;
+    assert_eq!(two["records"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        two["ranking"],
+        json!({"helped":2, "hurt":0, "factor":1.125})
+    );
     host.daemon.stop().await;
 }
 

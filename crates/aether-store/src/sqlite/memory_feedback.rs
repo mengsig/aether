@@ -1,9 +1,31 @@
 use super::SqliteStore;
 use crate::{Result, StoreError};
 use aether_core::id::{MemoryFeedbackId, MemoryId, TaskId};
-use aether_core::memory_feedback::{MAX_FEEDBACK_REASON_CHARS, MemoryFeedback};
+use aether_core::memory_feedback::{
+    FeedbackTally, MAX_FEEDBACK_REASON_CHARS, MemoryFeedback, RANKED_EVIDENCE, RANKING_WINDOW,
+};
 use aether_core::time::Timestamp;
 use rusqlite::{Transaction, params};
+use std::collections::BTreeMap;
+
+/// [`FeedbackTally::of`] in one pass over `memory_feedback_memory_created`:
+/// each task's latest counted verdict, then each memory's most recent tasks.
+pub(super) const TALLIES: &str = "WITH counted AS (
+        SELECT memory_id, created_at, id, json_extract(body, '$.verdict') AS verdict,
+               ROW_NUMBER() OVER (PARTITION BY memory_id, json_extract(body, '$.task')
+                                  ORDER BY created_at DESC, id DESC) AS task_rank
+        FROM memory_feedback
+        WHERE memory_id IN (SELECT value FROM json_each(?1))
+          AND retracted_at IS NULL
+          AND json_extract(body, '$.evidence') IN (SELECT value FROM json_each(?2))
+    ), latest AS (
+        SELECT memory_id, verdict,
+               ROW_NUMBER() OVER (PARTITION BY memory_id
+                                  ORDER BY created_at DESC, id DESC) AS recency
+        FROM counted WHERE task_rank = 1
+    )
+    SELECT memory_id, SUM(verdict = 'helped'), SUM(verdict = 'hurt')
+    FROM latest WHERE recency <= ?3 GROUP BY memory_id";
 
 impl SqliteStore {
     pub(super) fn task_context_contains(
@@ -52,6 +74,42 @@ impl SqliteStore {
         debug_assert!(records.len() <= limit);
         debug_assert!(records.iter().all(|record| record.spec.memory == memory));
         Ok(records)
+    }
+
+    pub(super) fn memory_feedback_tallies_for(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<BTreeMap<MemoryId, FeedbackTally>> {
+        if memories.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let ids: Vec<String> = memories.iter().map(ToString::to_string).collect();
+        let params = params![
+            serde_json::to_string(&ids)?,
+            serde_json::to_string(&RANKED_EVIDENCE)?,
+            RANKING_WINDOW as i64
+        ];
+        let conn = self.read_conn();
+        let mut stmt = conn.prepare_cached(TALLIES)?;
+        let rows = stmt.query_map(params, |row| {
+            Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        let mut tallies = BTreeMap::new();
+        for row in rows {
+            let (id, helped, hurt) = row?;
+            let id: MemoryId = id
+                .parse()
+                .map_err(|e| StoreError::Corrupt(format!("invalid feedback memory id: {e}")))?;
+            debug_assert!(memories.contains(&id), "{id} was not asked for");
+            tallies.insert(id, FeedbackTally { helped, hurt });
+        }
+        debug_assert!(tallies.len() <= memories.len());
+        debug_assert!(
+            tallies
+                .values()
+                .all(|t| (t.helped + t.hurt) as usize <= RANKING_WINDOW)
+        );
+        Ok(tallies)
     }
 
     pub(super) fn insert_memory_feedback(

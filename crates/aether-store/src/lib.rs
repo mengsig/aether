@@ -13,6 +13,7 @@ mod schedule_tests;
 mod schema;
 mod sqlite;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use aether_core::agent::{Agent, AgentStatusKind};
@@ -39,7 +40,7 @@ use aether_core::task::{Task, TaskStatusKind};
 use aether_core::time::Timestamp;
 use aether_core::tool::ApprovalRequest;
 
-use aether_core::memory_feedback::MemoryFeedback;
+use aether_core::memory_feedback::{FeedbackTally, MemoryFeedback};
 
 pub use schema::SCHEMA_VERSION;
 pub use sqlite::{PushSubscriptionRow, RunExpiry, SqliteStore};
@@ -645,6 +646,12 @@ pub trait Store: Send + Sync {
     ) -> Result<bool>;
     fn memory_feedback_record(&self, id: MemoryFeedbackId) -> Result<Option<MemoryFeedback>>;
     fn memory_feedback(&self, memory: MemoryId, limit: usize) -> Result<Vec<MemoryFeedback>>;
+    /// [`FeedbackTally::of`] for each of `memories` that has counted feedback,
+    /// in one read. A memory with none is absent.
+    fn memory_feedback_tallies(
+        &self,
+        memories: &[MemoryId],
+    ) -> Result<BTreeMap<MemoryId, FeedbackTally>>;
 
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>>;
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>>;

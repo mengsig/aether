@@ -575,7 +575,26 @@ The host can record evidence about a memory a task saw. Check the Welcome
 feature `memory_feedback` first. All three commands are host-only: the local
 operator socket and shared-token transport are served; paired operators and
 observers are `forbidden`. The runtime also refuses agent actors, including
-reads. Feedback does not affect recall, scores, prompts or token counts.
+reads.
+
+Feedback moves recall ranking, within strict bounds, and does nothing else:
+
+- Only unretracted feedback with `operator` or `review` evidence counts.
+  `outcome` evidence carries no weight yet.
+- For each memory, each task counts once, with its latest counted verdict
+  (newest `created_at`, then the larger id), and only the 20 most recent of
+  those verdicts count. `helped` and `hurt` are tallied; `neutral` counts
+  toward neither but still holds its task's place among the 20. Retracting a
+  task's latest verdict brings back that task's previous one.
+- Ranking moves only once helped plus hurt reaches 2. The factor is then
+  0.75 + 0.5 × (helped + 1) / (helped + hurt + 2), always between 0.75 and
+  1.25. Below 2 it is exactly 1 and recall is unchanged, bit for bit.
+- The factor multiplies the final recall score (structural plus semantic) of
+  a memory that is not pinned. Pinned memories are untouched.
+- Feedback never hides, filters or forgets a memory, and never changes which
+  memories are candidates, how many are recalled, or admission. It only
+  reorders the candidates, so it can change which of them fit within the
+  limit, and through that the prompt. Equal scores keep their order.
 
 ```json
 {"cmd":"record_memory_feedback","memory":"mem_...","verdict":"helped","evidence":"review","task":"tsk_...","invocation":"inv_...","reason":"The release check caught the regression","idempotency_key":"release-review-17"}
@@ -634,12 +653,16 @@ its envelope.
 
 ```json
 {"cmd":"memory_feedback","memory":"mem_...","limit":100}
-{"records":[{"id":"mfb_...","memory":"mem_...","verdict":"helped","evidence":"review","task":"tsk_...","reason":"Release check passed","actor":{"actor":"user"},"created_at":"2026-10-15T09:00:00Z","retracted_at":"2026-10-15T10:00:00Z","retraction_reason":"Obsolete build"}],"truncated":false}
+{"records":[{"id":"mfb_...","memory":"mem_...","verdict":"helped","evidence":"review","task":"tsk_...","reason":"Release check passed","actor":{"actor":"user"},"created_at":"2026-10-15T09:00:00Z","retracted_at":"2026-10-15T10:00:00Z","retraction_reason":"Obsolete build"}],"truncated":false,"ranking":{"helped":3,"hurt":1,"factor":1.0833334}}
 ```
 
 This read-only command returns `MemoryFeedbackList`: newest first, including
 retracted records. The default and maximum limit are 100; values outside
-1–100 are `invalid_argument`. `truncated` says more records exist. Feedback
+1–100 are `invalid_argument`. `truncated` says more records exist.
+`ranking` is the memory's current `helped` and `hurt` tally under the rule
+above, and the `factor` it gives recall (1.0 below the threshold), computed
+over all its feedback rather than the records listed. A daemon from before
+this field omits it; clients read that as no votes and a factor of 1. Feedback
 survives history retention. Memory and feedback records are not part of run
 export/import. Their audit events can travel with run history; typed ids in
 those events are remapped, but importing does not recreate memory or feedback
@@ -654,3 +677,5 @@ aether memory feedback list <memory> --json
 ```
 
 Recording also accepts `--invocation <id>`. All three accept `--json`.
+`list` ends with the ranking in one line, for example `ranking factor 1.08
+(3 helped, 1 hurt across the latest 20 tasks)`.

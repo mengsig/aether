@@ -66,6 +66,8 @@ pub enum Hook {
     /// check and before its request would be committed.
     TaskBoundaryTranscriptRead,
     MemoryRetrievalRead,
+    /// The one read of counted feedback a retrieval with candidates makes.
+    FeedbackTallyRead,
     FeedbackContextRead,
     /// A repository id resolved through the aliases, fired after the
     /// resolution returns: an alias landing here makes that answer stale.
@@ -447,6 +449,16 @@ impl Store for CommitsMidPass {
         limit: usize,
     ) -> aether_store::Result<Vec<aether_core::memory_feedback::MemoryFeedback>> {
         self.inner.memory_feedback(memory, limit)
+    }
+
+    fn memory_feedback_tallies(
+        &self,
+        memories: &[MemoryId],
+    ) -> aether_store::Result<
+        std::collections::BTreeMap<MemoryId, aether_core::memory_feedback::FeedbackTally>,
+    > {
+        self.fire(Hook::FeedbackTallyRead)?;
+        self.inner.memory_feedback_tallies(memories)
     }
 
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>> {

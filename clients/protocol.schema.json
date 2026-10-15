@@ -7599,6 +7599,32 @@
       ],
       "type": "object"
     },
+    "FeedbackRanking": {
+      "description": "A memory's current tally and the factor it gives, as the host reports it.",
+      "properties": {
+        "factor": {
+          "description": "1.0 until two verdicts are helped or hurt, then 0.75 to 1.25.",
+          "format": "float",
+          "type": "number"
+        },
+        "helped": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "hurt": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "helped",
+        "hurt",
+        "factor"
+      ],
+      "type": "object"
+    },
     "GitSummary": {
       "properties": {
         "ahead": {
@@ -8957,6 +8983,15 @@
     },
     "MemoryFeedbackList": {
       "properties": {
+        "ranking": {
+          "$ref": "#/$defs/FeedbackRanking",
+          "default": {
+            "factor": 1.0,
+            "helped": 0,
+            "hurt": 0
+          },
+          "description": "Absent from an older daemon, whose feedback never moved recall."
+        },
         "records": {
           "items": {
             "$ref": "#/$defs/MemoryFeedback"

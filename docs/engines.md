@@ -604,7 +604,8 @@ record that placement and the exact input. Tool schemas are
 supplied by the provider/MCP protocol, not duplicated in another prompt.
 
 Retrieved memory is ranked on the task objective, not on each message, so the
-set stays stable across a session. Both engines receive it in the user turn,
+set stays stable across a session. Host feedback on a memory can move its rank
+within bounds; see [memory feedback](protocol.md#memory-feedback). Both engines receive it in the user turn,
 digest-gated like the task and checkpoint, so an unchanged set is not re-sent.
 
 Ordinary runtime turns leave the native base instructions untouched. Explicit

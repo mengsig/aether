@@ -1,4 +1,4 @@
-//! Host evidence is append-only and separate from retrieval scores.
+//! Host evidence is append-only; counted verdicts move recall ranking within bounds.
 
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::{InvocationId, MemoryFeedbackId, MemoryId};
@@ -179,9 +179,16 @@ impl Runtime {
         let mut records = self.store.memory_feedback(memory, limit + 1)?;
         let truncated = records.len() > limit;
         records.truncate(limit);
+        let tally = self.store.memory_feedback_tallies(&[memory])?;
         debug_assert!(records.len() <= limit);
         debug_assert!(records.iter().all(|record| record.spec.memory == memory));
-        Ok(MemoryFeedbackList { records, truncated })
+        debug_assert!(tally.keys().all(|id| *id == memory));
+        let ranking = tally.get(&memory).copied().unwrap_or_default().into();
+        Ok(MemoryFeedbackList {
+            records,
+            truncated,
+            ranking,
+        })
     }
 }
 
