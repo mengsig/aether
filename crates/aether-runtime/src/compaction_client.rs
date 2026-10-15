@@ -409,6 +409,7 @@ mod tests {
                 session: None,
                 session_usage: aether_core::model::Usage::default(),
                 new_session_id: String::new(),
+                session_recorder: None,
                 model: None,
                 effort: None,
                 cwd: "/unused-fixture".into(),
@@ -515,7 +516,7 @@ mod tests {
         let (runtime, _dir) = crate::test_runtime(|_| {}).await;
         let resolved = runtime
             .models
-            .resolve(&ModelRef::new("codex", "gpt-6.1-sol"))
+            .resolve(&ModelRef::new("claude-code", "haiku"))
             .unwrap();
         let mut accounting = Accounting {
             pricing: TurnPricing::of(&runtime, &resolved),

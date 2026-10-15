@@ -631,13 +631,18 @@ fn map_terminal_event(ev: Event) -> Option<AppEvent> {
     }
 }
 
-/// A paste as the app takes it: text, or the image file the text names.
+/// A terminal paste: empty image signal, text, or the image file the text names.
 pub(crate) fn paste_event(text: String) -> AppEvent {
+    if text.is_empty() {
+        return AppEvent::TerminalImagePaste;
+    }
     let home = crate::workspace::home_dir();
     let Some(path) = crate::image_input::pasted_image_path(&text, home.as_deref()) else {
         return AppEvent::Paste(text);
     };
     let image = aether_client::images::read_image_file(&path).map_err(|e| e.to_string());
+    debug_assert!(!text.trim().is_empty());
+    debug_assert!(path.extension().is_some());
     AppEvent::ImagePathPasted { text, image }
 }
 
@@ -657,6 +662,13 @@ fn spawn_image_read(tx: mpsc::UnboundedSender<LoopEvent>, source: ImageSource) {
     tokio::spawn(async move {
         let image = crate::image_input::read(source).await;
         let _ = tx.send(LoopEvent::App(AppEvent::ImageRead(image)));
+    });
+}
+
+fn spawn_clipboard_paste(tx: mpsc::UnboundedSender<LoopEvent>) {
+    tokio::spawn(async move {
+        let content = crate::image_input::paste_clipboard().await;
+        let _ = tx.send(LoopEvent::App(AppEvent::ClipboardRead(content)));
     });
 }
 
@@ -707,6 +719,7 @@ pub(crate) fn execute_effects(
                 spawn_copy(tx.clone(), text, out);
             }
             Effect::AttachImage(source) => spawn_image_read(tx.clone(), source),
+            Effect::PasteClipboard => spawn_clipboard_paste(tx.clone()),
             Effect::Bell => {
                 use std::io::Write as _;
                 let mut out = stdout();

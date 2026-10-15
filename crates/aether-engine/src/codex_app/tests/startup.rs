@@ -5,6 +5,64 @@ use crate::detect::EngineVersion;
 use serde_json::json;
 
 #[tokio::test]
+async fn app_ownership_records_only_thread_start_and_confirmed_absolute_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("session.jsonl");
+    for session in [None, Some("user-session")] {
+        for path in [Some(log.to_str().unwrap()), Some("relative.jsonl"), None] {
+            let recorder = std::sync::Arc::new(crate::ownership_tests::Recorder::default());
+            let mut t = turn(session, false);
+            t.mcp = None;
+            t.session_recorder = Some(recorder.clone());
+            let (_, running, _) = handshake(
+                t,
+                None,
+                vec![
+                    json!({}),
+                    json!({"thread": {"id": "new-thread", "path": path}}),
+                ],
+            )
+            .await;
+            assert!(running);
+            let records = recorder.records.lock().unwrap();
+            if session.is_none() {
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].id, "new-thread");
+                assert_eq!(
+                    records[0].log_paths,
+                    if path == Some(log.to_str().unwrap()) {
+                        vec![log.clone()]
+                    } else {
+                        Vec::new()
+                    }
+                );
+            } else {
+                assert!(records.is_empty());
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn app_ownership_failure_prevents_turn_submission() {
+    let mut t = turn(None, false);
+    t.mcp = None;
+    t.session_recorder = Some(std::sync::Arc::new(crate::ownership_tests::Recorder {
+        fail: true,
+        ..Default::default()
+    }));
+    let (requests, running, events) = handshake(
+        t,
+        None,
+        vec![json!({}), json!({"thread": {"id": "new-thread"}})],
+    )
+    .await;
+    assert!(!running);
+    assert_eq!(methods(&requests), ["initialize", "thread/start"]);
+    assert!(events.iter().any(|event| matches!(event, EngineEvent::Done(outcome) if outcome.is_error && outcome.prompt_not_submitted && outcome.error.as_deref().is_some_and(|error| error.contains("storage unavailable")))));
+}
+
+#[tokio::test]
 async fn startup_failure_before_turn_dispatch_proves_prompt_was_not_submitted() {
     check_startup_failure(false).await;
 }

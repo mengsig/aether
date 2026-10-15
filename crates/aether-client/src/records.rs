@@ -14,6 +14,28 @@ use aether_protocol::{
 use std::path::PathBuf;
 
 impl Client {
+    pub async fn storage(&self, gc: bool, dry_run: bool) -> Result<serde_json::Value> {
+        if !self.welcome().is_some_and(|welcome| {
+            welcome
+                .features
+                .iter()
+                .any(|feature| feature == aether_protocol::features::STORAGE)
+        }) {
+            return Err(ClientError::Incompatible(
+                "daemon does not support storage maintenance; update Aether".into(),
+            ));
+        }
+        let command = if gc {
+            Command::StorageGc { dry_run }
+        } else {
+            Command::StorageStatus
+        };
+        match self.request(command).await? {
+            Reply::StorageReport(report) => Ok(report),
+            other => Err(unexpected("storage report", &other)),
+        }
+    }
+
     pub async fn preview_retention(&self) -> Result<aether_core::retention::RetentionPreview> {
         match self.request(Command::PreviewRetention).await? {
             Reply::RetentionPreview(preview) => Ok(preview),

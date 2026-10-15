@@ -155,6 +155,8 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mutation {
+    /// Explicitly created engine sessions; never inferred from agent history.
+    RecordEngineSessionOwnership(EngineSessionOwnership),
     UpsertSchedule(Schedule),
     RecordScheduleOccurrence(ScheduleOccurrence),
     UpsertAgent(Agent),
@@ -197,6 +199,17 @@ pub enum Mutation {
         id: DeviceId,
         at: Timestamp,
     },
+}
+
+/// Evidence that Aether created a native session. Retained independently of agent history.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EngineSessionOwnership {
+    pub engine: String,
+    pub session_id: String,
+    pub agent_id: AgentId,
+    /// Confirmed absolute native log paths. Empty when the adapter cannot identify them.
+    pub log_paths: Vec<PathBuf>,
+    pub created_at: Timestamp,
 }
 
 /// One paired remote device as the store keeps it. The store indexes the
@@ -489,6 +502,9 @@ pub struct ImportedArtifact {
 /// The storage contract. Synchronous by design: SQLite work is short and the
 /// daemon wraps calls in blocking tasks where it matters.
 pub trait Store: Send + Sync {
+    /// Explicit ownership evidence, including sessions whose agent history has expired.
+    fn engine_session_ownerships(&self) -> Result<Vec<EngineSessionOwnership>>;
+
     /// Atomically expire an old completed run, preserving replay boundaries.
     /// The caller holds the runtime write gate and excludes in-flight work
     /// and resource holdings; the store checks durable dependencies itself.

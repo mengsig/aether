@@ -25,7 +25,9 @@ def check(executable):
         for name in ("config", "data"):
             (root / name).mkdir()
         receipt = root / "receipt.jsonl"
-        env = {k: v for k, v in os.environ.items() if not k.startswith("AETHER_")}
+        display_vars = {"DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET"}
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("AETHER_") and k not in display_vars}
         env.update(AETHER_CONFIG_DIR=str(root / "config"), AETHER_DATA_DIR=str(root / "data"),
                    AETHER_SOCKET=str(root / "unused.sock"), AETHER_SUSPEND_RECEIPT=str(receipt),
                    TERM="xterm-256color", PS1="SUSPEND_SHELL> ", PROMPT_COMMAND="")
@@ -68,7 +70,8 @@ def check(executable):
         def input_record(draft, paste=None):
             start = len(records())
             text = draft if paste is None else paste
-            os.write(master, b"\x1b[200~" + text.encode() + b"\x1b[201~\x1b[I")
+            paste_bytes = b"\x1b[200~" + text.encode() + b"\x1b[201~" if text else b""
+            os.write(master, paste_bytes + b"\x1b[I")
             wait_for(lambda: any(r.get("draft") == draft for r in records()[start:]),
                      "input reached the reducer")
             return next(r for r in reversed(records()[start:]) if r.get("draft") == draft)

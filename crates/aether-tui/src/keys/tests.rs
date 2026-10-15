@@ -189,6 +189,82 @@ fn every_default_chord_resolves_to_exactly_one_action() {
 }
 
 #[test]
+fn clipboard_paste_defaults_and_help_include_ctrl_v_and_keep_alt_v() {
+    let keys = KeyBindings::default();
+    for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+        let event = KeyEvent::new(KeyCode::Char('v'), modifiers);
+        assert!(keys.matches(KeyAction::PasteImage, event));
+        assert_eq!(
+            KeyAction::ALL
+                .iter()
+                .filter(|a| keys.matches(**a, event))
+                .count(),
+            1
+        );
+    }
+    let row = crate::commands::KEYS
+        .iter()
+        .find(|spec| spec.bindings == [KeyAction::PasteImage])
+        .unwrap();
+    assert_eq!(row.keys, "Ctrl+V / Alt+V");
+    assert_eq!(row.live_chord(&keys, false), "Ctrl+V");
+    assert_eq!(row.scope, crate::commands::KeyScope::Input);
+}
+
+#[test]
+fn existing_ctrl_v_overrides_take_precedence_over_the_new_default() {
+    for action in [KeyAction::Details, KeyAction::Yank] {
+        let raw = [(action.name().into(), "ctrl+v".into())].into();
+        let (keys, notices) = KeyBindings::load(&raw);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert!(keys.matches(
+            action,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        ));
+        assert!(!keys.matches(
+            KeyAction::PasteImage,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        ));
+        assert!(keys.matches(
+            KeyAction::PasteImage,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT)
+        ));
+        assert_eq!(KeyBindings::load(&keys.overrides()).0, keys);
+        assert!(!keys.customised(KeyAction::PasteImage));
+        assert!(!keys.overrides().contains_key("paste_image"));
+        assert_eq!(keys.help_chord(&[KeyAction::PasteImage], true), "Alt+V");
+    }
+    let raw = [("paste_image".into(), "f6".into())].into();
+    let (keys, notices) = KeyBindings::load(&raw);
+    assert!(notices.is_empty());
+    assert!(keys.matches(
+        KeyAction::PasteImage,
+        KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE)
+    ));
+    assert!(!keys.matches(
+        KeyAction::PasteImage,
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL)
+    ));
+    assert!(!keys.matches(
+        KeyAction::PasteImage,
+        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::ALT)
+    ));
+}
+
+#[test]
+fn an_explicit_paste_image_override_is_still_customised() {
+    let raw = [
+        ("details".into(), "ctrl+v".into()),
+        ("paste_image".into(), "alt+v".into()),
+    ]
+    .into();
+    let (keys, notices) = KeyBindings::load(&raw);
+    assert!(notices.is_empty(), "{notices:?}");
+    assert!(keys.customised(KeyAction::PasteImage));
+    assert_eq!(keys.overrides(), raw);
+}
+
+#[test]
 fn notices_escape_control_characters_from_bad_file_entries() {
     let raw = [
         ("bad\n\u{1b}[2J".into(), "f2".into()),

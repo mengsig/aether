@@ -234,6 +234,11 @@ from ._protocol_commands.status import (
     status,
 )
 
+from ._protocol_commands.storage import (
+    storage_gc,
+    storage_status,
+)
+
 from ._protocol_commands.subscribe import (
     subscribe,
     subscribe_push,

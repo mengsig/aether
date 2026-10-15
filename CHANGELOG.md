@@ -6,6 +6,19 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### New
+
+- **Storage maintenance has a single configurable policy and visible decisions.**
+  `[storage]` defaults to fourteen-day filesystem retention, with per-kind
+  overrides, a one-hour grace for safely saved final delegated workspaces,
+  and the latest three migration backups protected. `aether storage` and
+  `aether storage gc --dry-run` show usage and reasons; the daemon sweeps at
+  startup and periodically. Dirty, live, resumable and journal-referenced
+  workspaces are protected. Logs gain age rotation and pause optional writes
+  below the configured disk floor. New engine sessions have durable ownership
+  records; deletion of Claude/Codex session logs is deferred, so these logs
+  remain a known source of growth.
+
 ### Fixed
 
 - Interrupted native tool calls now carry their cause in transcripts and on resume.
@@ -13,6 +26,23 @@ release is also the text of its GitHub release.
   ending a stage no longer leave a synthetic operator denial uncorrected.
   Genuine approval denials retain their denial status.
 
+- **Clipboard images paste into the terminal UI with Ctrl+V.** Ctrl+V prefers
+  offered plain text, otherwise attaches a supported image; Alt+V and `/image`
+  force an image. Text keeps the usual long-text placeholders and image-path
+  detection. A truly empty terminal paste also tries the clipboard image;
+  whitespace-only pastes and plain-mode input stay text. Reads happen in the
+  background; an empty clipboard, missing helper or SSH session gets a one-line
+  explanation without changing the draft. Existing custom key bindings are
+  preserved.
+- **Codex usage now carries a dollar estimate that says it is one.** A Codex
+  (ChatGPT subscription) turn used to be booked as billed dollars at the
+  OpenAI list price, so a run with any unreported part, such as an interrupted
+  one, left a total with no complete cost and no estimate; tools that enforce
+  dollar budgets, like Archon, then stopped the work. Codex turns are now
+  estimated from the API model behind the slug, the way a subscription model
+  without a price already was, and show as `≈ $X API-equivalent` next to a
+  cost of `not reported`. Dollar caps on Codex agents are still refused. Older
+  records keep the figures they were stored with.
 - **The daemon no longer churns the disk while agents work.** Reading a long
   agent history made SQLite sort it in throwaway files under `/var/tmp`, tens
   of MB per read. With several agents running, that held host IO pressure
@@ -38,9 +68,21 @@ release is also the text of its GitHub release.
   with an error. Escaped processes later in the search stayed alive, and a
   restarted daemon kept retrying the cleanup instead of finishing it. A
   process exiting mid-search is now skipped like one that has gone.
+- **An SSH remote no longer mistakes a finished send for one in flight.** If
+  the client started another program just as a send ended, the send's outbox
+  entry stayed locked until that program had started. Resolving the outbox on
+  connect could skip the entry, and `/outbox` could refuse it as being sent
+  by another process. Each entry is now unlocked as soon as its send ends.
 
 ### Before updating
 
+- **Codex spend is an estimate, not billed dollars.** A Codex turn now
+  records `cost_usd` of 0 and the list-price figure as `estimated_cost_usd`.
+  Limits that read only billed dollars, a parent's `cost_budget` over Codex
+  children and `[scheduler] run_budget_usd`, no longer count Codex turns; a
+  `cost_budget` warns once that its cost is a lower bound, `run_budget_usd`
+  stays silent. Use token budgets for Codex work. An
+  Archon with `count_estimated_cost` off sees $0 for Codex.
 - **Store schema 23.** Adds indexes that list agents and tasks in creation
   order, across the store and within one run. The per-run agents index
   replaces the old run index. The migration is one way: Aether saves the old

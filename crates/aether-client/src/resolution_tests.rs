@@ -4,7 +4,6 @@ use crate::Transport;
 use aether_core::id::{AgentId, MessageId};
 use aether_protocol::{ClientFrame, ErrorCode, ServerFrame};
 use std::sync::Mutex;
-use std::time::Duration;
 
 const SENT_UNDER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV:3";
 const GREETED_WITH: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV:9";
@@ -12,8 +11,8 @@ const GREETED_WITH: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV:9";
 type Answer = std::result::Result<Reply, ErrorReply>;
 type Seen = Arc<Mutex<Vec<Command>>>;
 
-/// A host that answers each command from `script`, or says nothing at all
-/// when the script does: the acknowledgement that gets lost.
+/// A host that answers from `script`, or disconnects without acknowledging
+/// when the script says nothing, so lost replies need no wall-clock timeout.
 fn host(
     mut peer: crate::MemoryPeer,
     script: impl Fn(&Command) -> Option<Answer> + Send + 'static,
@@ -23,8 +22,16 @@ fn host(
     tokio::spawn(async move {
         while let Some(ClientFrame { id, command }) = peer.incoming.recv().await {
             log.lock().expect("log").push(command.clone());
-            if let Some(result) = script(&command) {
-                let _ = peer.outgoing.send(ServerFrame::Reply { id, result }).await;
+            let Some(result) = script(&command) else {
+                return;
+            };
+            if peer
+                .outgoing
+                .send(ServerFrame::Reply { id, result })
+                .await
+                .is_err()
+            {
+                return;
             }
         }
     });
@@ -69,8 +76,7 @@ fn asking(command: &Command, horizon: Option<&str>) -> Command {
 
 /// An SSH client that has just been greeted, before it adopts its outbox.
 fn greeted(transport: Transport, horizon: Option<&str>) -> Client {
-    let mut client =
-        Client::from_transport(transport).with_request_timeout(Duration::from_millis(200));
+    let mut client = Client::from_transport(transport);
     let (cancel, cancelled) = tokio::sync::oneshot::channel();
     std::mem::forget(cancelled);
     client.carrier = Some(Arc::new(crate::ssh::Carrier::test_carrier(cancel)));
@@ -394,18 +400,24 @@ async fn every_operator_choice_settles_the_operation_and_is_recorded() {
 async fn sending_again_without_an_answer_keeps_the_operation_unconfirmed() {
     let lost = lost_send("ssh-silent");
     let fx = Fixture::holding(std::slice::from_ref(&lost)).await;
-    let (adopted, client, _) = fx
+    let (adopted, client, log) = fx
         .connect(Some(GREETED_WITH), |command| match command {
             Command::ResolveSubmission { .. } => unknown(UnprovenAbsence::Forgotten),
             _ => None,
         })
         .await;
     adopted.expect("connected");
+    log.lock().expect("log").clear();
 
     let again = client.settle("ssh-silent", Settlement::SendAgain).await;
     assert!(
         matches!(again, Err(ClientError::DeliveryUnconfirmed(_))),
         "{again:?}"
+    );
+    assert_eq!(
+        seen(&log),
+        std::slice::from_ref(&lost),
+        "the send reached the host"
     );
     assert_eq!(
         client

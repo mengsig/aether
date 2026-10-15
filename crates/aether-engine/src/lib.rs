@@ -79,6 +79,8 @@ impl std::fmt::Display for EngineKind {
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
+    #[error("cannot record engine session ownership: {0}")]
+    SessionOwnership(String),
     #[error("unsupported engine configuration: {0}")]
     Unsupported(String),
     #[error("{program} is not installed or not on PATH")]
@@ -97,7 +99,7 @@ impl EngineError {
     pub fn proves_no_submission(&self) -> bool {
         match self {
             Self::Unsupported(_) | Self::NotInstalled { .. } | Self::Spawn { .. } => true,
-            Self::Exited(_) => false,
+            Self::Exited(_) | Self::SessionOwnership(_) => false,
         }
     }
 }
@@ -108,6 +110,11 @@ pub struct McpBridge {
     /// Program to run (normally the `aether` binary itself).
     pub command: PathBuf,
     pub args: Vec<String>,
+}
+
+/// Persists evidence only for sessions explicitly created by this launch.
+pub trait SessionRecorder: Send + Sync + std::fmt::Debug {
+    fn record(&self, engine: EngineKind, id: &str, log_paths: Vec<PathBuf>) -> Result<(), String>;
 }
 
 /// One turn handed to an engine.
@@ -131,6 +138,8 @@ pub struct EngineTurn {
     pub session_usage: Usage,
     /// Session id to use when starting fresh.
     pub new_session_id: String,
+    /// Durable creation evidence; resumed sessions never invoke this recorder.
+    pub session_recorder: Option<std::sync::Arc<dyn SessionRecorder>>,
     /// Engine model alias; `None` or `default` leaves it to the engine.
     pub model: Option<String>,
     pub effort: Option<Effort>,
@@ -150,6 +159,31 @@ pub struct EngineTurn {
     /// Variables hidden from separately spawned command runners, including provider auth.
     pub tool_hidden_env: Vec<String>,
     pub mcp: Option<McpBridge>,
+}
+
+impl EngineTurn {
+    pub(crate) fn record_new_session(
+        &self,
+        engine: EngineKind,
+        id: &str,
+        log_paths: Vec<PathBuf>,
+    ) -> Result<(), EngineError> {
+        // Resuming an old or user-supplied id never establishes ownership.
+        if self.session.is_some() {
+            return Ok(());
+        }
+        if id.trim().is_empty() {
+            return Err(EngineError::SessionOwnership(
+                "engine returned an empty session id".into(),
+            ));
+        }
+        if let Some(recorder) = &self.session_recorder {
+            recorder
+                .record(engine, id, log_paths)
+                .map_err(EngineError::SessionOwnership)?;
+        }
+        Ok(())
+    }
 }
 
 /// One image a person sent, as the daemon stores it.
@@ -667,3 +701,6 @@ pub fn side_effect_of(tool_name: &str) -> aether_core::tool::SideEffectClass {
 mod test_script;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod ownership_tests;

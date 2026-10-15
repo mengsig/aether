@@ -13,10 +13,12 @@ use crate::profile::ProfileSetting;
 mod remote;
 mod retention;
 mod scheduler;
+mod storage;
 mod templates;
 
 pub use remote::RemoteSection;
 pub use retention::RetentionSection;
+pub use storage::StorageSection;
 
 pub use scheduler::{
     DEFAULT_MAX_CONCURRENT_TURNS, MAX_ENGINE_PARK_GRACE_SECS, MAX_WAIT_TIMEOUT_MINUTES,
@@ -85,6 +87,7 @@ pub struct AetherConfig {
     pub web: WebSection,
     pub artifacts: ArtifactsSection,
     pub retention: RetentionSection,
+    pub storage: StorageSection,
     pub mcp: McpSection,
     pub memory: MemorySection,
     pub listen: ListenSection,

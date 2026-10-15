@@ -317,3 +317,46 @@ async fn failed_spawn_commit_leaves_no_run_behind() {
     assert_eq!(runtime.store.schedule(job.id).unwrap().unwrap(), job);
     assert_eq!(runtime.store.last_seq().unwrap(), before);
 }
+
+#[tokio::test]
+async fn prepared_schedule_spawn_rechecks_workspace_gc_admission() {
+    for reserved in [true, false] {
+        let (runtime, dir) = fixture().await;
+        let workspace = dir.path().join("managed/collected");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let mut spec = spawn_spec(MissedRunPolicy::Coalesce);
+        let ScheduleTarget::Spawn(template) = &mut spec.target else {
+            panic!("spawn");
+        };
+        template.scope = Some(aether_core::agent::Scope {
+            workspace_root: Some(workspace.clone()),
+            ..Default::default()
+        });
+        let mut job = runtime.create_schedule(spec, Actor::user()).unwrap();
+        let due = job.status.next_due().unwrap();
+        let prepared = super::super::execution::prepare_spawn(&runtime, &job, due).unwrap();
+        if reserved {
+            *runtime.workspace_gc_active.lock() = Some(workspace);
+        } else {
+            std::fs::remove_dir(&workspace).unwrap();
+        }
+        let hold = runtime.hold();
+        let mut commit = Commit::new();
+        let result = super::super::execution::prepare_occurrence(
+            &runtime,
+            &hold,
+            &mut commit,
+            &mut job,
+            due,
+            due,
+            Some(Ok(prepared)),
+        );
+        if reserved {
+            assert!(matches!(result.unwrap().0, ScheduleOutcome::Skipped { .. }));
+        } else {
+            assert!(result.unwrap_err().to_string().contains("disappeared"));
+        }
+        assert!(commit.mutations.is_empty());
+        assert!(roots(&runtime).is_empty());
+    }
+}

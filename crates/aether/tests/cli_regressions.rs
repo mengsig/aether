@@ -720,6 +720,26 @@ fn json_daemon_unreachable_reports_the_explicit_socket() {
     assert!(stderr(&output).starts_with("Error: "));
 }
 
+#[test]
+fn storage_json_errors_honor_parent_and_leaf_flags() {
+    for args in [
+        vec!["storage", "--json"],
+        vec!["storage", "--json", "gc", "--dry-run"],
+        vec!["storage", "gc", "--dry-run", "--json"],
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let output = isolated_command(root.path(), &args).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["error"]["code"], "daemon_unreachable", "{args:?}");
+        assert_eq!(stdout(&output).lines().count(), 1);
+        assert_eq!(
+            value["error"]["socket"],
+            root.path().join("a.sock").to_string_lossy().as_ref()
+        );
+    }
+}
+
 #[tokio::test]
 async fn nested_json_client_error_uses_the_same_envelope() {
     let output = cli(&["memory", "show", "invalid-id", "--json"], Stub::default()).await;

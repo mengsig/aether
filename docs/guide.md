@@ -311,8 +311,9 @@ mutations. Approval prompts are not a general filesystem sandbox.
 - Message delivery/acknowledgment is not proof that the model answered a
   question or followed an instruction. Inspect outcomes, not just status.
 - Context occupancy and cumulative token usage are different measurements.
-  Native Claude Code and Codex turns are priced at API list prices, not
-  verified subscription charges. Unknown usage or pricing is shown as unknown.
+  Native Claude Code turns are priced at API list prices and Codex turns are
+  estimated from them, not verified subscription charges. Unknown usage or
+  pricing is shown as unknown.
 - Agent waits are event-driven, but maintenance, GitHub checks, and interface
   refreshes can still use timers. Zero waiting tokens does not mean zero
   operating-system wakeups.

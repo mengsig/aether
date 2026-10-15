@@ -13,6 +13,7 @@ fn turn() -> EngineTurn {
         session: None,
         session_usage: Usage::default(),
         new_session_id: "11111111-2222-4333-8444-555555555555".into(),
+        session_recorder: None,
         model: Some("sonnet".into()),
         effort: Some(aether_core::model::Effort::High),
         cwd: PathBuf::from("/tmp"),
@@ -28,6 +29,63 @@ fn turn() -> EngineTurn {
             args: vec!["mcp-bridge".into()],
         }),
     }
+}
+
+#[tokio::test]
+async fn ownership_is_recorded_at_fresh_spawn_even_without_init_output() {
+    let dir = fake_claude("cat >/dev/null");
+    let engine = ClaudeCodeEngine::new(dir.path().join("claude").to_string_lossy(), "2.1.265");
+    for session in [None, Some("user-session".into())] {
+        let recorder = std::sync::Arc::new(crate::ownership_tests::Recorder::default());
+        let mut t = turn();
+        t.session = session.clone();
+        t.cwd = dir.path().into();
+        t.session_recorder = Some(recorder.clone());
+        let cancel = CancellationToken::new();
+        let mut run = engine.run(t.clone(), cancel.clone()).await.unwrap();
+        {
+            let records = recorder.records.lock().unwrap();
+            if session.is_none() {
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].engine, EngineKind::CLAUDE_CODE);
+                assert_eq!(records[0].id, t.new_session_id);
+                assert_eq!(records[0].log_paths, session_log_paths(&t));
+            } else {
+                assert!(records.is_empty());
+            }
+        }
+        cancel.cancel();
+        while run.events.recv().await.is_some() {}
+    }
+}
+
+#[tokio::test]
+async fn failed_spawn_never_establishes_ownership() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = ClaudeCodeEngine::new(dir.path().join("absent").to_string_lossy(), "2.1.265");
+    let recorder = std::sync::Arc::new(crate::ownership_tests::Recorder::default());
+    let mut t = turn();
+    t.cwd = dir.path().into();
+    t.session_recorder = Some(recorder.clone());
+    assert!(engine.run(t, CancellationToken::new()).await.is_err());
+    assert!(recorder.records.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn ownership_recording_failure_stops_claude_launch() {
+    let dir = fake_claude("cat >/dev/null");
+    let engine = ClaudeCodeEngine::new(dir.path().join("claude").to_string_lossy(), "2.1.265");
+    let mut t = turn();
+    t.cwd = dir.path().into();
+    t.session_recorder = Some(std::sync::Arc::new(crate::ownership_tests::Recorder {
+        fail: true,
+        ..Default::default()
+    }));
+    let cancel = CancellationToken::new();
+    let error = engine.run(t, cancel.clone()).await.unwrap_err();
+    assert!(matches!(error, EngineError::SessionOwnership(_)));
+    assert!(error.to_string().contains("storage unavailable"));
+    assert!(cancel.is_cancelled());
 }
 
 #[test]

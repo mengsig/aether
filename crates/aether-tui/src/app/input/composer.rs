@@ -12,6 +12,8 @@ use crate::ui::bottom::popup::{MentionTab, PopupKind};
 
 impl App {
     pub(super) fn composer_key(&mut self, key: KeyEvent) -> Dispatch {
+        debug_assert!(self.input.cursor <= self.input.text.len());
+        debug_assert!(self.input.text.is_char_boundary(self.input.cursor));
         // An open view or search has the keys; what it ignored is not typing.
         if self.board.focused() || !self.bottom.view_stack.is_empty() || self.search_focused() {
             return Dispatch::Handled(Vec::new());
@@ -30,7 +32,10 @@ impl App {
             return Dispatch::Handled(Vec::new());
         }
         if self.keys.matches(KeyAction::PasteImage, key) {
-            return Dispatch::Handled(self.paste_clipboard_image());
+            if key.modifiers == KeyModifiers::ALT && key.code == KeyCode::Char('v') {
+                return Dispatch::Handled(self.paste_clipboard_image());
+            }
+            return Dispatch::Handled(self.paste_clipboard());
         }
         if self.keys.matches(KeyAction::Shortcuts, key)
             && (self.input.text.is_empty() || self.bottom.shortcuts)
@@ -38,6 +43,12 @@ impl App {
             self.toggle_shortcuts();
             return Dispatch::Handled(Vec::new());
         }
+        self.composer_navigation(key)
+    }
+
+    fn composer_navigation(&mut self, key: KeyEvent) -> Dispatch {
+        debug_assert!(self.input.cursor <= self.input.text.len());
+        debug_assert!(self.input.text.is_char_boundary(self.input.cursor));
         let plain = key.modifiers.is_empty();
         let effects = match key.code {
             _ if self.keys.matches(KeyAction::Send, key) => self.composer_submit(),

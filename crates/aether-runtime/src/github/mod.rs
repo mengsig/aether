@@ -604,6 +604,7 @@ impl Runtime {
                         commit: creation,
                         ..
                     } = *prepared;
+                    self.recheck_workspace_gc_admission(&agent.scope)?;
                     commit.events.extend(creation.events);
                     commit.mutations.extend(creation.mutations);
                     created = Some(agent.clone());

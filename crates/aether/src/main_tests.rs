@@ -573,3 +573,26 @@ fn outbox_lists_by_default_and_every_decision_names_one_key() {
     let outbox = Cmd::Outbox { command: None };
     assert!(check_remote_command(Some(&outbox)).is_ok());
 }
+
+#[test]
+fn storage_command_supports_status_and_dry_run() {
+    let args = Args::try_parse_from(["aether", "storage", "--json"]).unwrap();
+    assert!(matches!(
+        args.command,
+        Some(Cmd::Storage {
+            command: None,
+            json: true
+        })
+    ));
+    let args = Args::try_parse_from(["aether", "storage", "gc", "--dry-run", "--json"]).unwrap();
+    assert!(matches!(
+        args.command,
+        Some(Cmd::Storage {
+            command: Some(StorageCmd::Gc {
+                dry_run: true,
+                json: true
+            }),
+            json: false
+        })
+    ));
+}

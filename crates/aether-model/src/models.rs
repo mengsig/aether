@@ -510,6 +510,7 @@ mod tests {
             web: Default::default(),
             artifacts: Default::default(),
             retention: Default::default(),
+            storage: Default::default(),
             mcp: Default::default(),
             memory: Default::default(),
             listen: Default::default(),

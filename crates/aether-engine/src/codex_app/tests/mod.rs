@@ -45,6 +45,7 @@ pub(super) fn turn(session: Option<&str>, bypass: bool) -> EngineTurn {
         session: session.map(str::to_owned),
         session_usage: Usage::default(),
         new_session_id: "n".into(),
+        session_recorder: None,
         model: Some("gpt-5.3-codex-spark".into()),
         effort: Some(Effort::Low),
         cwd: PathBuf::from("/w"),

@@ -35,6 +35,14 @@ use super::event_queries::Arguments;
 use super::{SqliteStore, schedule_time};
 
 impl Store for SqliteStore {
+    fn engine_session_ownerships(&self) -> Result<Vec<crate::EngineSessionOwnership>> {
+        Self::read_many(
+            &self.read_conn(),
+            "SELECT body FROM engine_session_ownership ORDER BY engine, session_id",
+            &[],
+        )
+    }
+
     fn retention_snapshot(&self) -> Result<Box<dyn Store>> {
         SqliteStore::retention_snapshot(self)
     }

@@ -296,7 +296,8 @@ async fn a_default_engine_turn_is_priced_by_the_model_its_session_reported() {
             .cost_of(&usage)
     };
 
-    // Codex bills its session model at `openai/gpt-6-astra`'s list price.
+    // Codex is a subscription: its session model is estimated at
+    // `openai/gpt-6-astra`'s list price, never booked as billed dollars.
     let h = harness_with_engine(
         Arc::new(SessionModelEngine {
             kind: EngineKind::CODEX,
@@ -309,13 +310,14 @@ async fn a_default_engine_turn_is_priced_by_the_model_its_session_reported() {
     .await;
     let total = one_turn_on(&h, ModelRef::new("codex", "default")).await;
     assert_eq!(
-        total.cost_usd,
-        price_of("openai/gpt-6-astra"),
+        total.estimated_cost_usd,
+        Some(price_of("openai/gpt-6-astra")),
         "a `codex/default` turn used to carry no dollars at all"
     );
-    assert!(total.cost_complete, "billed dollars, not a floor");
+    assert_eq!(total.cost_usd, 0.0, "nobody billed these dollars");
+    assert!(!total.cost_complete, "an estimate is not a billed cost");
+    assert_eq!(total.cost_gap, Some(aether_core::model::CostGap::Unpriced));
     assert_eq!(total.cost_basis, aether_core::model::CostBasis::ListPrice);
-    assert_eq!(total.estimated_cost_usd, None);
     h.runtime.shutdown().await;
 
     // Claude Code bills the subscription at the list price the registry holds,
@@ -340,9 +342,9 @@ async fn a_default_engine_turn_is_priced_by_the_model_its_session_reported() {
     h.runtime.shutdown().await;
 }
 
-/// A Codex turn costs what the OpenAI API would bill for the same tokens.
-/// Reasoning is already inside `output_tokens`, as OpenAI and Codex count it,
-/// so it bills at the output rate exactly once.
+/// A Codex turn is estimated at what the OpenAI API would bill for the same
+/// tokens. Reasoning is already inside `output_tokens`, as OpenAI and Codex
+/// count it, so it counts at the output rate exactly once.
 #[tokio::test]
 async fn a_codex_turn_is_billed_at_the_api_list_price_with_reasoning_as_output() {
     let usage = aether_core::model::Usage {
@@ -365,16 +367,14 @@ async fn a_codex_turn_is_billed_at_the_api_list_price_with_reasoning_as_output()
     let total = one_turn_on(&h, ModelRef::new("codex", "sol")).await;
     // GPT-6.1 Sol: $2 input, $0.10 cached input, $10 output per MTok.
     let expected = 0.1 * 2.0 + 0.4 * 0.10 + 0.05 * 10.0;
+    let estimate = total.estimated_cost_usd.expect("a Codex turn is estimated");
     assert!(
-        (total.cost_usd - expected).abs() < 1e-9,
-        "{} != {expected}",
-        total.cost_usd
+        (estimate - expected).abs() < 1e-9,
+        "{estimate} != {expected}"
     );
-    assert!(total.cost_complete, "billed dollars, not a floor");
-    assert_eq!(
-        total.estimated_cost_usd, None,
-        "a priced turn needs no estimate"
-    );
+    assert_eq!(total.cost_usd, 0.0, "nobody billed these dollars");
+    assert!(!total.cost_complete, "an estimate is not a billed cost");
+    assert_eq!(total.api_equivalent_usd(), Some(estimate));
     assert_eq!(total.reasoning_tokens, Some(30_000));
     h.runtime.shutdown().await;
 }

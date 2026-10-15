@@ -55,6 +55,7 @@ from ._ReplyScheduleHistory import ReplyScheduleHistory
 from ._ReplySchedules import ReplySchedules
 from ._ReplySnapshot import ReplySnapshot
 from ._ReplyStatus import ReplyStatus
+from ._ReplyStorageReport import ReplyStorageReport
 from ._ReplySubmissionResolved import ReplySubmissionResolved
 from ._ReplySubscribed import ReplySubscribed
 from ._ReplyTask import ReplyTask
@@ -67,6 +68,7 @@ from ._ReplyWorkspaces import ReplyWorkspaces
 
 
 Reply = (
+    ReplyStorageReport |
     ReplyRetentionPreview |
     ReplyGithubWatcher |
     ReplySchedule |

@@ -290,7 +290,7 @@ impl Engine for ClaudeCodeEngine {
         let mut state = ParseState::awaiting_prompt(&turn.prompt)
             .with_session_cost(turn.session.clone(), turn.session_usage);
         let outstanding = state.outstanding.clone();
-        let process = run_process(
+        let mut process = run_process(
             &self.program,
             args,
             cwd,
@@ -298,10 +298,18 @@ impl Engine for ClaudeCodeEngine {
             user_message_line(&turn.prompt, &turn.images),
             true,
             Some(input::interrupt_line()),
-            cancel,
+            cancel.clone(),
             move |line| parse_line(line, &mut state),
         )
         .await?;
+        if let Err(error) =
+            turn.record_new_session(self.kind(), &turn.new_session_id, session_log_paths(&turn))
+        {
+            cancel.cancel();
+            // A failed launch is safe to retry only once its process cleanup finished.
+            while process.events.recv().await.is_some() {}
+            return Err(error);
+        }
         let Some(stdin) = process.stdin else {
             return Err(EngineError::Exited("stdin was not kept open".into()));
         };
@@ -318,6 +326,8 @@ impl Engine for ClaudeCodeEngine {
 }
 
 mod input;
+mod ownership;
+use ownership::session_log_paths;
 mod session_cost;
 mod stream;
 pub use stream::{ParseState, parse_line};

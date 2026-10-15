@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::RuntimeError;
 
+pub(crate) mod gc;
+
 const MANIFEST: &str = "manifest.json";
 const JOURNAL: &str = "integration.json";
 const WORKSPACE: &str = "workspace";
@@ -33,7 +35,7 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(60);
 const GIT_STDOUT_LIMIT: usize = 64 * 1024 * 1024;
 const GIT_STDERR_LIMIT: usize = 8192;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WorkspaceManifest {
     pub parent: AgentId,
     pub source: PathBuf,
@@ -166,6 +168,16 @@ fn run_reader(
     limit: usize,
     description: &str,
 ) -> crate::Result<GitOutput> {
+    run_reader_timeout(command, input, limit, GIT_TIMEOUT, description)
+}
+
+fn run_reader_timeout(
+    command: &mut Command,
+    input: Option<Box<dyn Read + Send>>,
+    limit: usize,
+    timeout: Duration,
+    description: &str,
+) -> crate::Result<GitOutput> {
     command
         .stdin(if input.is_some() {
             Stdio::piped()
@@ -208,7 +220,7 @@ fn run_reader(
     let started = Instant::now();
     let mut status = None;
     let stopped = loop {
-        if exceeded.load(Ordering::Relaxed) || started.elapsed() >= GIT_TIMEOUT {
+        if exceeded.load(Ordering::Relaxed) || started.elapsed() >= timeout {
             kill_git_group(&mut child);
             if status.is_none() {
                 status =
@@ -304,6 +316,20 @@ fn git_string(command: &mut Command, description: &str) -> crate::Result<String>
     output_string(run(command, description)?, description)
 }
 
+fn git_string_timeout(
+    command: &mut Command,
+    timeout: Duration,
+    description: &str,
+) -> crate::Result<String> {
+    output_string(
+        successful(
+            run_reader_timeout(command, None, GIT_STDOUT_LIMIT, timeout, description)?,
+            description,
+        )?,
+        description,
+    )
+}
+
 fn run_with_input(
     command: &mut Command,
     input: &[u8],
@@ -368,9 +394,14 @@ fn planned_directory(path: &Path) -> crate::Result<PathBuf> {
 }
 
 fn source_root(source: &Path) -> crate::Result<PathBuf> {
+    source_root_timeout(source, GIT_TIMEOUT)
+}
+
+fn source_root_timeout(source: &Path, timeout: Duration) -> crate::Result<PathBuf> {
     let source = real_directory(source, false)?;
-    let top = git_string(
+    let top = git_string_timeout(
         git(&source).args(["rev-parse", "--show-toplevel"]),
+        timeout,
         "repository root",
     ).map_err(|error| invalid(format!(
         "isolated child workspaces require a Git repository at {}; initialize Git there or choose shared mode: {error}",
@@ -665,9 +696,23 @@ fn oid(tree: &str) -> crate::Result<()> {
 }
 
 fn tree_entries(repo: &Path, tree: &str) -> crate::Result<BTreeMap<PathBuf, Entry>> {
+    tree_entries_timeout(repo, tree, GIT_TIMEOUT)
+}
+
+fn tree_entries_timeout(
+    repo: &Path,
+    tree: &str,
+    timeout: Duration,
+) -> crate::Result<BTreeMap<PathBuf, Entry>> {
     oid(tree)?;
-    let output = run(
-        git(repo).args(["ls-tree", "-r", "-z", "--full-tree", tree]),
+    let output = successful(
+        run_reader_timeout(
+            git(repo).args(["ls-tree", "-r", "-z", "--full-tree", tree]),
+            None,
+            GIT_STDOUT_LIMIT,
+            timeout,
+            "list snapshot tree",
+        )?,
         "list snapshot tree",
     )?;
     let mut entries = BTreeMap::new();
@@ -916,6 +961,14 @@ pub(crate) fn create(
 }
 
 pub(crate) fn load(managed_root: &Path, workspace: &Path) -> crate::Result<WorkspaceManifest> {
+    load_timeout(managed_root, workspace, GIT_TIMEOUT)
+}
+
+fn load_timeout(
+    managed_root: &Path,
+    workspace: &Path,
+    timeout: Duration,
+) -> crate::Result<WorkspaceManifest> {
     let directory = workspace_directory(managed_root, workspace)?;
     let manifest: WorkspaceManifest = read_json(&directory.join(MANIFEST))?;
     let actual_workspace = fs::canonicalize(workspace)
@@ -927,12 +980,13 @@ pub(crate) fn load(managed_root: &Path, workspace: &Path) -> crate::Result<Works
     if let Some(integrated) = &manifest.integrated_tree {
         oid(integrated)?;
     }
-    let source = source_root(&manifest.source)?;
+    let source = source_root_timeout(&manifest.source, timeout)?;
     if source != manifest.source {
         return Err(invalid("workspace manifest source is not canonical"));
     }
-    let top = git_string(
+    let top = git_string_timeout(
         git(&actual_workspace).args(["rev-parse", "--show-toplevel"]),
+        timeout,
         "verify child worktree",
     )?;
     if fs::canonicalize(&top)
@@ -941,12 +995,14 @@ pub(crate) fn load(managed_root: &Path, workspace: &Path) -> crate::Result<Works
     {
         return Err(invalid("workspace path is not the Git worktree root"));
     }
-    let source_common = git_string(
+    let source_common = git_string_timeout(
         git(&source).args(["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+        timeout,
         "source Git directory",
     )?;
-    let workspace_common = git_string(
+    let workspace_common = git_string_timeout(
         git(&actual_workspace).args(["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+        timeout,
         "worktree Git directory",
     )?;
     if fs::canonicalize(&source_common).map_err(|error| {
@@ -964,7 +1020,7 @@ pub(crate) fn load(managed_root: &Path, workspace: &Path) -> crate::Result<Works
     })? {
         return Err(invalid("workspace belongs to a different Git repository"));
     }
-    tree_entries(&source, &manifest.baseline_tree)?;
+    tree_entries_timeout(&source, &manifest.baseline_tree, timeout)?;
     Ok(manifest)
 }
 

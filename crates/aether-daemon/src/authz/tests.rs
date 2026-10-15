@@ -291,3 +291,17 @@ fn memory_feedback_requires_host_authority_even_for_reading() {
         }
     }
 }
+
+#[test]
+fn storage_gc_requires_host_access_in_both_modes() {
+    for dry_run in [true, false] {
+        let command = Command::StorageGc { dry_run };
+        assert_eq!(command.access(), Access::HostOnly);
+        for context in [AuthContext::Local, AuthContext::Token] {
+            assert_eq!(code(&context, &command), None);
+        }
+        for role in [DeviceRole::Operator, DeviceRole::Observer] {
+            assert_eq!(code(&device(role), &command), Some(ErrorCode::Forbidden));
+        }
+    }
+}

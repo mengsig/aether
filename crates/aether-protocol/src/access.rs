@@ -88,7 +88,7 @@ impl Command {
             Self::AddApprovalRule(rule) => rule_access(Some(&rule.scope)),
             Self::ResolveSubmission { command, .. } => resolution_access(command),
 
-            Self::Hello(_) | Self::Status | Self::PreviewRetention | Self::Ping
+            Self::Hello(_) | Self::Status | Self::PreviewRetention | Self::StorageStatus | Self::Ping
             | Self::GetAgent { .. } | Self::ListAgents { .. } | Self::GetTree { .. }
             | Self::GetGithubWatcher | Self::GetSchedule { .. } | Self::ListSchedules { .. }
             | Self::ScheduleHistory { .. } | Self::GetTask { .. } | Self::ListTasks { .. }
@@ -114,7 +114,7 @@ impl Command {
             | Self::SyncRepositoryKnowledge { .. } | Self::CompletePath { .. }
             | Self::ValidateWorkspace { .. } | Self::GetGitSummary { .. } => Access::Operate,
 
-            Self::Shutdown | Self::EngineTool { .. } | Self::EngineTools { .. }
+            Self::StorageGc { .. } | Self::Shutdown | Self::EngineTool { .. } | Self::EngineTools { .. }
             | Self::ExportRun { .. } | Self::ImportRun { .. }
             | Self::AliasRepository { .. } | Self::AcceptMemory { .. }
             | Self::RejectMemory { .. } | Self::MemoriesInContext { .. }

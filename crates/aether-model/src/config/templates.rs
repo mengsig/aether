@@ -86,6 +86,19 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # Live runs and runs with durable references are protected. This does not
 # limit backups, native harness sessions, workspaces, or total disk usage.
 #
+# [storage]
+# retention_days = 14
+# workspaces_days = 14       # 0 disables; clean eligible workspaces use grace below
+# engine_sessions_days = 14  # recorded now; deletion deferred
+# backups_days = 14
+# logs_days = 14             # 0 disables age only, size bound stays
+# artifacts_days = 30        # explicit override; otherwise [artifacts] applies
+# event_history_days = 7     # explicit override; otherwise [retention] applies
+# workspace_grace_seconds = 3600
+# backups_keep = 3           # keep newest N OR within retention
+# gc_interval_seconds = 3600
+# free_space_floor_bytes = 5368709120 # unset inherits scheduler; 0 disables
+
 # [retention]
 # completed_run_days = 7  # positive days; 0 is invalid
 
