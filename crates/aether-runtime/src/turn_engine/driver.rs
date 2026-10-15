@@ -9,7 +9,7 @@ use super::{
     clamp, disallowed_native_spawn_tool, flush_accounting, gated_call, handle_event,
     handle_request, json, mpsc, names_exhaustion, park_grace, permission_verdict, raise_to,
     record_consumed, record_refused_call, refusal, side_effect_of, start_park, steer,
-    stop_for_crossing, stopping,
+    stop_for_crossing, stopping, writes_record,
 };
 
 /// Legacy per-message streams use turn totals as a fallback. Incremental
@@ -254,6 +254,7 @@ pub(super) async fn drive(
                 }
             }, if steering.retry && input.is_some() && park.is_none() && question.is_none() => {
                 if ready {
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
                     steer(runtime, ctx, &mut steering, &mut input).await?;
                 } else {
                     input = None;
@@ -271,6 +272,11 @@ pub(super) async fn drive(
                 subtree.note_own_commits(runtime.store.commits().saturating_sub(commits_before));
             }
             ev = run.events.recv() => {
+                if ev.as_ref().is_some_and(writes_record) {
+                    // Held readings precede what this commits, and are never
+                    // left behind a wait on an operator or the engine.
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
+                }
                 let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
                 if let Some(EngineEvent::Done(outcome)) = &ev {
                     let stopped = engine_cancel.is_cancelled() || park.as_ref().is_some_and(|park| park.stop_requested);
@@ -379,8 +385,6 @@ pub(super) async fn drive(
                     }
                 }
                 Some(EngineEvent::Permission { request_id, tool, input: tool_input, side_effect }) => {
-                    // The verdict can wait on an operator, past any flush window.
-                    flush_accounting(runtime, ctx, &mut state.accounting)?;
                     // Once the turn's end is committed nothing more may run in
                     // it, so a prompt is denied outright: no operator is asked,
                     // and the wind-down is never suspended on an answer.
@@ -638,6 +642,7 @@ pub(super) async fn drive(
                     _ => false,
                 };
                 if delivered {
+                    flush_accounting(runtime, ctx, &mut state.accounting)?;
                     match question.take() {
                         Some(request_id) => match steering.pending(runtime, ctx)? {
                             Some(pending) => answer_question(runtime, ctx, decisions.as_ref(), request_id, pending, &mut steering, &engine_cancel).await?,

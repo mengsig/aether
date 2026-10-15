@@ -591,9 +591,9 @@ fn note_context_usage(ctx: &mut TurnCtx, state: &mut StreamState, tokens: u64) {
     state.accounting.context(tokens);
 }
 
-/// Whether handling `event` may commit anything, which pending readings must
-/// then precede. Usage, context and stream deltas only update memory.
-fn writes_record(event: &EngineEvent) -> bool {
+/// Whether `event` may commit anything or wait on someone, which pending
+/// readings must then precede. Usage, context and stream deltas only update memory.
+pub(super) fn writes_record(event: &EngineEvent) -> bool {
     !matches!(
         event,
         EngineEvent::Delta(_)

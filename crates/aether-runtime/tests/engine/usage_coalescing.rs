@@ -205,8 +205,10 @@ async fn a_held_reading_reaches_the_store_within_the_flush_window() {
     h.runtime.shutdown().await;
 }
 
-/// Reports usage, then asks an operator before acting and waits for the answer.
-struct AskingEngine;
+/// Reports usage, then asks something of a person and waits for the answer.
+struct AskingEngine {
+    ask: EngineEvent,
+}
 
 #[async_trait::async_trait]
 impl Engine for AskingEngine {
@@ -225,12 +227,7 @@ impl Engine for AskingEngine {
         let (decisions, mut answers) = mpsc::channel(1);
         for event in [
             EngineEvent::UsageDelta { usage: reading() },
-            EngineEvent::Permission {
-                request_id: "ask-1".into(),
-                tool: "Bash".into(),
-                input: serde_json::json!({"command": "touch example"}),
-                side_effect: Some(aether_core::tool::SideEffectClass::Mutation),
-            },
+            self.ask.clone(),
         ] {
             tx.send(event).await.expect("fixture channel capacity");
         }
@@ -264,7 +261,14 @@ impl AskingEngine {
 #[tokio::test]
 async fn readings_reach_the_store_before_a_permission_prompt_waits() {
     let h = harness_with_engine(
-        Arc::new(AskingEngine),
+        Arc::new(AskingEngine {
+            ask: EngineEvent::Permission {
+                request_id: "ask-1".into(),
+                tool: "Bash".into(),
+                input: serde_json::json!({"command": "touch example"}),
+                side_effect: Some(aether_core::tool::SideEffectClass::Mutation),
+            },
+        }),
         Arc::new(Mutex::new(Vec::new())),
         Arc::new(Mutex::new(Vec::new())),
     )
@@ -311,5 +315,65 @@ async fn readings_reach_the_store_before_a_permission_prompt_waits() {
     let row = h.store.agent(id).unwrap().expect("row");
     assert_eq!(row.stats.usage.output_tokens, reading().output_tokens);
     assert_eq!(usage_totals(h.store.as_ref(), id).len(), 1);
+    h.runtime.shutdown().await;
+}
+
+/// A question is committed as the agent speaking; what it spent first is
+/// recorded before it, and does not wait for the reply.
+#[tokio::test]
+async fn readings_precede_a_question_and_do_not_wait_for_its_reply() {
+    let h = harness_with_engine(
+        Arc::new(AskingEngine {
+            ask: EngineEvent::Question {
+                request_id: "ask-2".into(),
+                prompt: "Which branch?".into(),
+            },
+        }),
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(Mutex::new(Vec::new())),
+    )
+    .await;
+    let id = chat_agent(&h);
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("Ask first")], Actor::user())
+        .expect("send");
+    let question_seq = || {
+        h.store
+            .events(0, usize::MAX, &EventFilter::for_agent(id))
+            .unwrap()
+            .into_iter()
+            .find(|e| {
+                matches!(&e.kind, EventKind::AgentMessage { role: MessageRole::Assistant, content, .. }
+                    if content == &vec![ContentBlock::text("Which branch?")])
+            })
+            .map(|e| e.seq)
+    };
+    for _ in 0..750 {
+        if question_seq().is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let asked = question_seq().expect("the question was recorded");
+    let usage_seqs: Vec<u64> = h
+        .store
+        .events(0, usize::MAX, &EventFilter::for_agent(id))
+        .unwrap()
+        .into_iter()
+        .filter(|e| matches!(e.kind, EventKind::AgentUsageUpdated { .. }))
+        .map(|e| e.seq)
+        .collect();
+    assert_eq!(usage_seqs.len(), 1, "{usage_seqs:?}");
+    assert!(
+        usage_seqs[0] < asked,
+        "usage {usage_seqs:?}, question {asked}"
+    );
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("main")], Actor::user())
+        .expect("reply");
+    wait_for(h.store.as_ref(), id, |a| {
+        a.stats.turns == 1 && a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
     h.runtime.shutdown().await;
 }
