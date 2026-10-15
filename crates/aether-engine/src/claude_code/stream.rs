@@ -25,10 +25,10 @@ pub struct ParseState {
     streamed_usage_seen: bool,
     /// A closing receipt in this process counted usage, streamed or not.
     receipt_usage_seen: bool,
-    /// An earlier receipt, or a retry after an attempt the API did not refuse,
-    /// may have been billed without usage to show for it.
+    /// An earlier receipt, model output, or a retry after an attempt the API did not
+    /// refuse may have been billed without usage to show for it.
     refusal_unprovable: bool,
-    /// A receipt in this process was proven unbilled; a later billable retry withdraws it.
+    /// This process proved a receipt unbilled; a later retry, request or output withdraws it.
     zero_proven: bool,
     /// The keys above in the order they were first seen, so the map can be
     /// bounded without evicting the message still being streamed.

@@ -37,9 +37,8 @@ impl ParseState {
         Vec::new()
     }
 
-    /// Model output shows that inference ran, counted or not. Claude Code's own
-    /// message for an API error is the one assistant record the model did not write.
-    /// Any output after a proven $0 belongs to a new request, so it withdraws the $0.
+    /// Model output, counted or not, shows inference ran; Claude Code's API-error message is not
+    /// model output. Output after a proven $0 starts a new request, so it withdraws the $0.
     pub(super) fn note_output(&mut self, v: &Value) -> Vec<EngineEvent> {
         let kind = v.get("type").and_then(Value::as_str);
         debug_assert!(
