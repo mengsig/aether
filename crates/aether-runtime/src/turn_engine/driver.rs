@@ -262,7 +262,8 @@ pub(super) async fn drive(
             ev = run.events.recv() => {
                 let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
                 if let Some(EngineEvent::Done(outcome)) = &ev {
-                    observe_closing(outcome, steering.sent_up_to, &mut receipt_seen, &mut receipt_input_cursor);
+                    let stopped = engine_cancel.is_cancelled() || park.as_ref().is_some_and(|park| park.stop_requested);
+                    observe_closing(outcome, stopped, steering.sent_up_to, &mut receipt_seen, &mut receipt_input_cursor);
                 } else if ev.as_ref().is_some_and(event_may_start_request) {
                     receipt_seen = false;
                 }
@@ -459,9 +460,9 @@ pub(super) async fn drive(
                     let before = ctx.agent.stats.usage;
                     let commits_before = runtime.store.commits();
                     handle_event(runtime, ctx, snapshot, ev, &mut state)?;
-                    if reply_received {
+                    if reply_received && let Some(park) = park.as_mut() {
                         park_reply = None;
-                        super::parking::ask_to_stop(&mut input, stop.as_ref(), runtime.config.engine_park_grace);
+                        park.ask_to_stop(&mut input, stop.as_ref(), runtime.config.engine_park_grace);
                     }
                     subtree.note_own_commits(
                         runtime.store.commits().saturating_sub(commits_before),
@@ -684,7 +685,7 @@ pub(super) async fn drive(
                         break;
                     }
                     Some(EngineEvent::Done(receipt)) => {
-                        observe_closing(&receipt, steering.sent_up_to, &mut receipt_seen, &mut receipt_input_cursor);
+                        observe_closing(&receipt, true, steering.sent_up_to, &mut receipt_seen, &mut receipt_input_cursor);
                         activity_seen = true;
                         merge_cleanup_receipt(&mut outcome, receipt);
                     }
@@ -738,14 +739,22 @@ pub(super) async fn drive(
     })
 }
 
-fn observe_closing(outcome: &EngineOutcome, sent: u64, seen: &mut bool, cursor: &mut u64) {
+fn observe_closing(
+    outcome: &EngineOutcome,
+    stopped: bool,
+    sent: u64,
+    seen: &mut bool,
+    cursor: &mut u64,
+) {
     debug_assert!(
         outcome
             .cost_usd
             .is_none_or(|cost| cost.is_finite() && cost >= 0.0)
     );
     debug_assert!(!outcome.closing_accounting || !outcome.prompt_not_submitted);
-    if outcome.interrupted {
+    // Once stopped without coverage, no later receipt can prove all output
+    // was reported. A receipt already in hand remains valid until new work.
+    if outcome.interrupted || (stopped && !*seen) {
         *seen = false;
     } else if outcome.closing_accounting {
         *seen = true;
@@ -777,7 +786,6 @@ fn merge_reaped_outcome(held: Option<EngineOutcome>, mut receipt: EngineOutcome)
     held.forced = receipt.forced;
     held.interrupted = receipt.interrupted;
     held.error = receipt.error;
-    held.closing_accounting |= receipt.closing_accounting;
     held
 }
 
@@ -807,7 +815,6 @@ fn merge_cleanup_receipt(outcome: &mut EngineOutcome, receipt: EngineOutcome) {
     }
     outcome.forced |= receipt.forced;
     outcome.interrupted |= receipt.interrupted;
-    outcome.closing_accounting |= receipt.closing_accounting;
 }
 
 #[cfg(test)]
@@ -818,7 +825,7 @@ mod receipt_tests {
     fn synthetic_done_cannot_establish_or_replace_closing_accounting() {
         let mut seen = false;
         let mut cursor = 0;
-        observe_closing(&EngineOutcome::default(), 7, &mut seen, &mut cursor);
+        observe_closing(&EngineOutcome::default(), false, 7, &mut seen, &mut cursor);
         assert!(!seen);
         assert_eq!(cursor, 0);
         observe_closing(
@@ -826,11 +833,12 @@ mod receipt_tests {
                 closing_accounting: true,
                 ..Default::default()
             },
+            false,
             7,
             &mut seen,
             &mut cursor,
         );
-        observe_closing(&EngineOutcome::default(), 9, &mut seen, &mut cursor);
+        observe_closing(&EngineOutcome::default(), false, 9, &mut seen, &mut cursor);
         assert!(seen);
         assert_eq!(cursor, 7, "synthetic outcomes cannot cover newer input");
     }
@@ -845,11 +853,41 @@ mod receipt_tests {
                 interrupted: true,
                 ..Default::default()
             },
+            false,
             9,
             &mut seen,
             &mut cursor,
         );
         assert!(!seen);
+        assert_eq!(cursor, 7);
+    }
+
+    #[test]
+    fn receipts_after_an_uncovered_stop_cannot_restore_coverage() {
+        let mut seen = false;
+        let mut cursor = 0;
+        let receipt = EngineOutcome {
+            closing_accounting: true,
+            ..Default::default()
+        };
+        for _ in 0..2 {
+            observe_closing(&receipt, true, 7, &mut seen, &mut cursor);
+            assert!(!seen);
+            assert_eq!(cursor, 0);
+        }
+    }
+
+    #[test]
+    fn a_stop_preserves_a_receipt_already_seen() {
+        let mut seen = false;
+        let mut cursor = 0;
+        let receipt = EngineOutcome {
+            closing_accounting: true,
+            ..Default::default()
+        };
+        observe_closing(&receipt, false, 7, &mut seen, &mut cursor);
+        observe_closing(&receipt, true, 7, &mut seen, &mut cursor);
+        assert!(seen);
         assert_eq!(cursor, 7);
     }
 }

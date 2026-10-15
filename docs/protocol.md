@@ -299,7 +299,10 @@ failure without closing accounting keeps observed tokens and priced dollars
 as a floor with an `interrupted` gap. An error response before stream start adds no spend.
 
 After a harness stop (park, kill-switch, or exhaustion), costs are complete
-only if closing accounting arrived and no possible new request followed it.
+only if closing accounting arrived before the stop was requested and no possible
+new request followed it. A closing receipt after interrupting an in-flight
+request cannot repair the `interrupted` gap. Terminal parks allow final accounting
+until their grace expires; they do not request a native interrupt.
 Engine message invocation records carry no usage when the engine accounts
 per request. Their zero-dollar `unreported` gap describes missing per-message
 usage, not missing turn accounting: request usage and its coverage belong to

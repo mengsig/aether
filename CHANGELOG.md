@@ -33,7 +33,10 @@ release is also the text of its GitHub release.
   accounting) or `mixed`. Records stored earlier read as `unknown`. Complete
   totals omit the field, and older clients ignore it. Cancelling a submitted
   engine turn now leaves its cost a lower bound even when the engine sends a
-  final receipt. An API stream that fails midway keeps what it saw as a
+  final receipt. Harness stops of in-flight requests also stay interrupted;
+  a receipt received before the stop stays complete if no new request
+  followed it. Terminal parks still allow final accounting before their
+  deadline. An API stream that fails midway keeps what it saw as a
   floor instead of reading complete. Failures before launch still add no
   spend. Cost text names the reason, e.g. "≥ $0.42 (interrupted run, cost
   unknown)".
