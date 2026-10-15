@@ -249,6 +249,7 @@ async fn completed_projection_with_running_turn_is_preserved() {
             interrupt: cancel.child_token(),
             cancel,
             cancel_request: None,
+            stop_reason: None,
             addressed: false,
             provider: "mock".into(),
             engine: true,

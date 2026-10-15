@@ -175,6 +175,9 @@ pub struct Agent {
 pub struct EngineSessionUsage {
     pub session: String,
     pub total: Usage,
+    /// Cumulative counters by model, when the engine reports their scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<std::collections::BTreeMap<String, Usage>>,
 }
 
 /// The per-agent context layers an engine session has already been sent, as

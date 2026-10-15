@@ -136,7 +136,7 @@ fn head(cell: &CellModel, width: usize, detail: bool, theme: &Theme) -> Layout {
         CallStatus::Awaiting => "Wants to run",
         CallStatus::Running => "Running",
         CallStatus::Denied => "Denied",
-        CallStatus::Cancelled => "Cancelled",
+        CallStatus::Cancelled => "Interrupted",
         CallStatus::Succeeded | CallStatus::Failed => "Ran",
     };
     let first = vec![
@@ -181,7 +181,7 @@ fn outcome(
         CallStatus::Succeeded => (g.done, theme.success(), None),
         CallStatus::Failed => (g.failed, theme.failure(), None),
         CallStatus::Denied => (g.failed, theme.failure(), Some("denied")),
-        CallStatus::Cancelled => (g.cancelled, theme.secondary(), Some("cancelled")),
+        CallStatus::Cancelled => (g.cancelled, theme.secondary(), Some("interrupted")),
     };
     let mut parts = Vec::new();
     parts.extend(word.map(str::to_owned));

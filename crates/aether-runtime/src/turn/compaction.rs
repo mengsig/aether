@@ -202,6 +202,7 @@ pub(super) async fn compaction_client(
             system_prompt: String::new(),
             session: None,
             session_usage: aether_core::model::Usage::default(),
+            session_model_usage: None,
             new_session_id: aether_engine::new_session_id(),
             session_recorder: Some(crate::turn_engine::session_recorder(runtime, ctx.agent.id)),
             model: Some(resolved.model.id),

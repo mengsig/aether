@@ -391,6 +391,27 @@ turn's totals, which reconcile what streamed. An engine turn's
 and its spend arrives as `agent.usage_updated` with the agent's and the turn's
 totals.
 
+Claude Code's [`result` fields have different scopes](https://code.claude.com/docs/en/agent-sdk/cost-tracking#track-costs-in-streaming-input-mode):
+`usage` covers one user turn, while `total_cost_usd` and `modelUsage` include
+earlier turns and the spend restored by `--resume`. Aether subtracts the
+persisted session baseline once per process. When `usage` is below the stream,
+it checks the invocation's increase in `modelUsage` for each streamed model
+before adding any price for missing tokens. Unstreamed helper-model usage
+cannot cover missing tokens from another model. Tokens absent from both
+receipts still retain their stream-derived charge; the agent total can then
+exceed the latest dollar receipt. A parked or interrupted run without proven
+closing coverage keeps its cost gap even when every observed token has a price.
+An all-zero crash receipt keeps the previous baseline. A nonzero receipt with
+lower dollars, lower model counters, or a missing model has unknown cost, as
+do later receipts in the same run, and becomes the baseline the next run bills
+its increase from. A run whose cost stays incomplete without a dollar receipt
+keeps its cost gap and a floor: the stream's dollars plus base-rate prices for
+closing tokens that never streamed.
+After upgrading, a record without per-model counters gets no coverage on its
+first resume, so the streamed shortfall may be priced once more per session.
+A receipt without `modelUsage` keeps the dollars but drops the per-model
+baseline, so the next resume loses coverage.
+
 Three rules the runtime depends on:
 
 1. **`Done` is always last, and always arrives.** A CLI that dies mid-stream

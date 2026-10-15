@@ -77,6 +77,7 @@ fn engine_cost_baseline_requires_matching_session_history() {
         ..Usage::default()
     };
     agent.engine_usage = Some(EngineSessionUsage {
+        models: None,
         session: "old".into(),
         total,
     });

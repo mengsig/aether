@@ -263,6 +263,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         system_prompt: "You are inside Aether.".into(),
         session: None,
         session_usage: Usage::default(),
+        session_model_usage: None,
         new_session_id: "sess-1".into(),
         session_recorder: None,
         model: Some("demo".into()),

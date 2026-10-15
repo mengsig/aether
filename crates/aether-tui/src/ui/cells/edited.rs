@@ -73,7 +73,9 @@ fn lines(cell: &CellModel, width: usize, theme: &Theme, detail: bool) -> Vec<Lin
 
 fn verb(status: CallStatus, change: Option<FileChange>) -> &'static str {
     match (status, change) {
-        (CallStatus::Failed | CallStatus::Denied | CallStatus::Cancelled, _) => "Failed to edit",
+        (CallStatus::Failed, _) => "Failed to edit",
+        (CallStatus::Denied, _) => "Denied edit",
+        (CallStatus::Cancelled, _) => "Interrupted edit",
         (CallStatus::Awaiting, _) => "Wants to edit",
         (_, Some(FileChange::Added)) => "Added",
         (_, Some(FileChange::Deleted)) => "Deleted",

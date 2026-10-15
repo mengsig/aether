@@ -120,8 +120,21 @@ pub(crate) fn recover_leases(
             holder: lease.holder.clone(),
         }));
         commit.push_mutation(Mutation::ClearLease(agent.id));
-        for call in found.open_calls {
-            commit.push_event(base(EventKind::ToolCancelled { call }));
+        for call in &found.open_calls {
+            crate::tool_interruption::record(
+                &mut commit,
+                &agent,
+                *call,
+                found
+                    .calls
+                    .get(call)
+                    .map_or("unknown tool", |call| call.name.as_str()),
+                &found
+                    .calls
+                    .get(call)
+                    .map_or(serde_json::Value::Null, |call| call.input.clone()),
+                &format!("recovery.classified ({class:?}): {detail}"),
+            );
         }
         if let Some((invocation, snapshot)) = found.open_invocation {
             commit.push_event(base(EventKind::InvocationFailed {
@@ -284,6 +297,7 @@ fn requarantine_inspected(runtime: &Arc<Runtime>, done: &[AgentId], rebooted: bo
 
 /// What recovery found in an interrupted turn.
 struct Interrupted {
+    calls: std::collections::BTreeMap<ToolCallId, aether_core::tool::ToolCall>,
     class: RecoveryClass,
     detail: String,
     open_calls: Vec<ToolCallId>,
@@ -473,6 +487,10 @@ fn classify(
         (RecoveryClass::Resume, "no work in flight".into())
     };
     Ok(Interrupted {
+        calls: calls
+            .into_iter()
+            .map(|(id, (call, _))| (id, call))
+            .collect(),
         class,
         detail,
         open_calls,

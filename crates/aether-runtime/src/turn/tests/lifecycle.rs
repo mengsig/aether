@@ -238,6 +238,7 @@ async fn an_unwinding_turn_takes_its_engine_slot_with_it() {
             task: None,
             cancel: CancellationToken::new(),
             cancel_request: None,
+            stop_reason: None,
             interrupt: CancellationToken::new(),
             addressed: false,
             provider: "claude-code".into(),

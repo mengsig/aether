@@ -99,6 +99,7 @@ fn notifications_become_events() {
         accounted,
         vec![
             EngineEvent::SessionUsage {
+                models: None,
                 session: "th".into(),
                 total,
             },

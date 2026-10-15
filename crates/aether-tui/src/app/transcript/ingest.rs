@@ -1498,6 +1498,36 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 format!("the disk refused {refused} write(s) for {during}: {error}").into(),
             );
         }
+        EventKind::Custom { name, payload } if name == "tool.interrupted" => {
+            if let (Ok(call), Some(cause)) = (
+                serde_json::from_value::<ToolCallId>(payload["call"].clone()),
+                payload["cause"].as_str(),
+            ) {
+                let visible = t
+                    .private
+                    .calls
+                    .get(&call)
+                    .is_some_and(|open| open.hidden.is_none());
+                tool_settled(
+                    t,
+                    at,
+                    call,
+                    CallStatus::Cancelled,
+                    &format!("interrupted ({cause})"),
+                    None,
+                );
+                // A deadline can end the agent before its engine finishes cleanup.
+                if !visible {
+                    let tool = payload["tool"].as_str().unwrap_or("Tool call");
+                    notice(
+                        t,
+                        at,
+                        NoticeKind::Engine,
+                        format!("{tool} interrupted ({cause})").into(),
+                    );
+                }
+            }
+        }
         EventKind::Custom { name, payload } if name == "engine.interrupted" => {
             let engine = payload["engine"].as_str().unwrap_or("engine");
             let text = match payload["reason"].as_str() {

@@ -42,6 +42,7 @@ pub(super) fn dispatch(runtime: &Arc<Runtime>, ready: Vec<Runnable>, lineage: &L
                 task: None,
                 cancel: cancel.clone(),
                 cancel_request: None,
+                stop_reason: None,
                 interrupt: interrupt.clone(),
                 addressed,
                 engine: engines.contains(&provider),

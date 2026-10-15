@@ -139,50 +139,38 @@ impl TurnPricing {
             above_threshold: None,
             ..self.estimate?
         };
-        let extra = Usage {
-            input_tokens: total.input_tokens.saturating_sub(streamed.input_tokens),
-            output_tokens: total.output_tokens.saturating_sub(streamed.output_tokens),
-            cache_read_tokens: total
-                .cache_read_tokens
-                .saturating_sub(streamed.cache_read_tokens),
-            cache_write_tokens: total
-                .cache_write_tokens
-                .saturating_sub(streamed.cache_write_tokens),
-            cache_write_1h_tokens: total.cache_write_1h_since(streamed),
-            ..Usage::default()
+        Some(
+            streamed.estimated_cost_usd.unwrap_or(0.0)
+                + rate.cost_of(&tokens_beyond(total, streamed)),
+        )
+    }
+
+    /// Billed base-rate dollars for closing counters the stream never carried.
+    /// Those counters have no request boundaries from which to select a prompt tier.
+    pub(super) fn unstreamed_cost(&self, total: &Usage, streamed: &Usage) -> f64 {
+        debug_assert!(total.total_tokens() >= streamed.total_tokens());
+        let Some(rate) = self.billed else {
+            return 0.0;
         };
-        Some(streamed.estimated_cost_usd.unwrap_or(0.0) + rate.cost_of(&extra))
+        let rate = ModelCost {
+            above_threshold: None,
+            ..rate
+        };
+        let cost = rate.cost_of(&tokens_beyond(total, streamed));
+        debug_assert!(cost.is_finite() && cost >= 0.0);
+        cost
     }
 
     /// Add base-rate pricing for streamed tokens absent from a priced closing receipt.
     /// Missing request boundaries make threshold pricing unavailable.
-    pub(super) fn price_closing_shortfall(&self, total: &mut Usage, closing: &Usage) {
+    pub(super) fn price_closing_shortfall(&self, total: &mut Usage, closing: &Usage) -> bool {
         use aether_core::model::CostBasis;
         debug_assert!(self.billed.is_none() || self.estimate.is_none());
         debug_assert!(total.cost_complete && total.cost_basis == CostBasis::ProviderReported);
-        debug_assert!(
-            total.input_tokens >= closing.input_tokens
-                && total.output_tokens >= closing.output_tokens
-                && total.cache_read_tokens >= closing.cache_read_tokens
-                && total.cache_write_tokens >= closing.cache_write_tokens
-                && total.cache_write_1h_tokens >= closing.cache_write_1h_tokens
-                && total.reasoning_tokens.unwrap_or(0) >= closing.reasoning_tokens.unwrap_or(0),
-            "the raised closing counters must cover the receipt"
-        );
-        let mut shortfall = Usage {
-            input_tokens: total.input_tokens.saturating_sub(closing.input_tokens),
-            output_tokens: total.output_tokens.saturating_sub(closing.output_tokens),
-            cache_read_tokens: total
-                .cache_read_tokens
-                .saturating_sub(closing.cache_read_tokens),
-            cache_write_tokens: total
-                .cache_write_tokens
-                .saturating_sub(closing.cache_write_tokens),
-            cache_write_1h_tokens: total.cache_write_1h_since(closing),
-            ..Usage::default()
-        };
+        debug_assert!(total.cache_write_1h_tokens <= total.cache_write_tokens);
+        let mut shortfall = tokens_beyond(total, closing);
         if shortfall.total_tokens() == 0 {
-            return;
+            return false;
         }
         // Missing request boundaries force base rates, ignoring above_threshold.
         // Billed costs are therefore a lower bound for a tier-crossing request.
@@ -197,6 +185,23 @@ impl TurnPricing {
         if self.billed.is_some() || self.estimate.is_some() {
             total.cost_basis = total.cost_basis.combine(shortfall.cost_basis);
         }
+        true
+    }
+}
+
+/// The billable token counters in `total` beyond those in `covered`.
+fn tokens_beyond(total: &Usage, covered: &Usage) -> Usage {
+    Usage {
+        input_tokens: total.input_tokens.saturating_sub(covered.input_tokens),
+        output_tokens: total.output_tokens.saturating_sub(covered.output_tokens),
+        cache_read_tokens: total
+            .cache_read_tokens
+            .saturating_sub(covered.cache_read_tokens),
+        cache_write_tokens: total
+            .cache_write_tokens
+            .saturating_sub(covered.cache_write_tokens),
+        cache_write_1h_tokens: total.cache_write_1h_since(covered),
+        ..Usage::default()
     }
 }
 
@@ -458,6 +463,29 @@ mod tests {
             assert_eq!(total.estimated_cost_usd, None);
             assert_eq!(total, raised);
         }
+    }
+
+    #[test]
+    fn cumulative_coverage_never_rebills_cache_writes_without_a_ttl_split() {
+        let mut total = Usage {
+            cache_write_tokens: 100,
+            cache_write_1h_tokens: 100,
+            cost_usd: 0.02,
+            cost_basis: CostBasis::ProviderReported,
+            ..Usage::default()
+        };
+        let before = total;
+        let covered = Usage {
+            cache_write_tokens: 200,
+            ..Usage::default()
+        };
+        let pricing = TurnPricing {
+            billed: Some(shortfall_rate()),
+            estimate: None,
+        };
+        assert!(!pricing.price_closing_shortfall(&mut total, &covered));
+        assert_eq!(total, before);
+        assert!(total.cost_complete);
     }
 
     #[test]

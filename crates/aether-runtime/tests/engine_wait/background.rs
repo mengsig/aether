@@ -37,6 +37,20 @@ async fn background_wait(
 #[tokio::test]
 async fn native_jobs_survive_wait_until_their_completion_event() {
     let (h, parent, turn, pending) = background_wait(json!({})).await;
+    turn.events
+        .upgrade()
+        .unwrap()
+        .send(EngineEvent::Assistant {
+            content: vec![ContentBlock::ToolUse {
+                id: "background-wait".into(),
+                name: "mcp__aether__wait_for".into(),
+                input: json!({}),
+            }],
+            usage: None,
+            model: None,
+        })
+        .await
+        .unwrap();
     let before = h.store.agent(parent).unwrap().unwrap().stats;
     tokio::time::sleep(Duration::from_millis(350)).await;
     assert!(!pending.is_finished());
@@ -64,6 +78,12 @@ async fn native_jobs_survive_wait_until_their_completion_event() {
     assert!(!turn.observed.stopped());
     let _ = turn.end.send(());
     wait_for_park(&h, parent).await;
+    let recorded = events(h.store.as_ref());
+    assert!(recorded.iter().any(|event| matches!(&event.kind,
+        EventKind::ToolSucceeded { outcome, .. }
+        if !outcome.is_error && outcome.content == reply)));
+    assert!(!recorded.iter().any(|event| matches!(&event.kind,
+        EventKind::Custom { name, .. } if name == "tool.interrupted")));
     h.runtime.shutdown().await;
 }
 
