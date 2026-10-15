@@ -823,6 +823,27 @@ fn feedback_rows_survive_expiring_their_task_history() {
     f.mutate(Mutation::RecordMemoryFeedback(record.clone()));
     assert!(matches!(f.expire().unwrap(), RunExpiry::Expired { .. }));
     assert!(f.store.task(f.task.id).unwrap().is_none());
+    let snapshot = f.store.retention_snapshot().unwrap();
+    assert_eq!(
+        snapshot.memory_feedback_record(record.id).unwrap(),
+        Some(record.clone())
+    );
+    assert!(
+        snapshot
+            .memory_feedback_tallies(&[record.spec.memory])
+            .unwrap()
+            .is_empty()
+    );
+    let task_id: String = f
+        .store
+        .read_conn()
+        .query_row(
+            "SELECT task_id FROM memory_feedback WHERE id = ?1",
+            [record.id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(task_id, record.spec.task.to_string());
     assert_eq!(
         f.store.memory_feedback_record(record.id).unwrap(),
         Some(record.clone())

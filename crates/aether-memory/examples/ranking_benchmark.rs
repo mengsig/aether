@@ -319,8 +319,13 @@ fn fixture() {
     let rows = records.len();
     record_feedback(&store, records, &retract);
     let after = rank_all(&service, &requests, &index);
+    debug_assert_eq!(before.len(), requests.len());
+    debug_assert_eq!(after.len(), requests.len());
     for (i, ranked) in before.iter().enumerate() {
         println!("baseline {i}: {ranked:?}");
+    }
+    for (i, ranked) in after.iter().enumerate() {
+        println!("ranked {i}: {ranked:?}");
     }
     report_fixture(&before, &after, rows);
 }

@@ -2,6 +2,7 @@ use super::*;
 use aether_core::id::{MemoryFeedbackId, TaskId};
 use aether_core::memory_feedback::{
     FeedbackTally, MemoryEvidence, MemoryFeedback, MemoryFeedbackSpec, MemoryVerdict,
+    RANKED_EVIDENCE,
 };
 use chrono::Duration;
 
@@ -251,7 +252,7 @@ fn the_query_agrees_with_the_rule_on_mixed_history() {
 }
 
 #[test]
-fn the_tally_query_reads_feedback_through_the_memory_index() {
+fn the_tally_query_reads_feedback_through_the_ranked_index() {
     let store = SqliteStore::open_in_memory().unwrap();
     let conn = store.read_conn();
     let mut plan = conn
@@ -262,20 +263,139 @@ fn the_tally_query_reads_feedback_through_the_memory_index() {
         .unwrap();
     let ids = serde_json::to_string(&[MemoryId::new().to_string()]).unwrap();
     let details: Vec<String> = plan
-        .query_map(rusqlite::params![ids, r#"["review"]"#, 20], |row| {
-            row.get(3)
-        })
+        .query_map(rusqlite::params![ids, 20], |row| row.get(3))
         .unwrap()
         .collect::<rusqlite::Result<_>>()
         .unwrap();
     eprintln!("{}", details.join("\n"));
     assert!(
         details.iter().any(|d| d
-            == "SEARCH memory_feedback USING INDEX memory_feedback_memory_created (memory_id=?)")
+            == "SEARCH memory_feedback USING INDEX memory_feedback_ranked (memory_id=?)")
     );
     assert!(
         !details
             .iter()
             .any(|d| d.starts_with("SCAN memory_feedback"))
     );
+    assert!(
+        details
+            .iter()
+            .filter(|d| d.contains("TEMP B-TREE") && d.contains("ORDER BY"))
+            .count()
+            == 1,
+        "the index must supply the first window's ordering: {details:?}"
+    );
+}
+
+#[test]
+fn the_ranked_index_covers_the_read_without_fetching_table_columns() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let conn = store.read_conn();
+    let table_root: i64 = conn
+        .query_row(
+            "SELECT rootpage FROM sqlite_master WHERE name = 'memory_feedback'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let mut statement = conn
+        .prepare(&format!(
+            "EXPLAIN {}",
+            super::super::memory_feedback::TALLIES
+        ))
+        .unwrap();
+    let instructions: Vec<(String, i64, i64)> = statement
+        .query_map(rusqlite::params!["[]", 20], |r| {
+            Ok((r.get(1)?, r.get(2)?, r.get(3)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    let table_cursors: Vec<i64> = instructions
+        .iter()
+        .filter(|(op, _, root)| op == "OpenRead" && *root == table_root)
+        .map(|(_, cursor, _)| *cursor)
+        .collect();
+    assert_eq!(table_cursors.len(), 1);
+    assert!(
+        instructions.iter().all(|(op, cursor, _)| {
+            !table_cursors.contains(cursor)
+                || !matches!(op.as_str(), "Column" | "Rowid" | "SeekRowid")
+        }),
+        "the partial index must cover the read: {instructions:?}"
+    );
+}
+
+#[test]
+fn ranked_sql_evidence_literals_match_the_core_rule() {
+    use std::collections::BTreeSet;
+    let store = SqliteStore::open_in_memory().unwrap();
+    let conn = store.read_conn();
+    let index: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name = 'memory_feedback_ranked'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let expected: BTreeSet<String> = RANKED_EVIDENCE
+        .iter()
+        .map(|e| {
+            serde_json::to_value(e)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    let query = super::super::memory_feedback::TALLIES;
+    assert!(!query.contains("json_extract"));
+    for sql in [query, &index] {
+        let literals = sql
+            .split_once("evidence IN (")
+            .unwrap()
+            .1
+            .split_once(')')
+            .unwrap()
+            .0;
+        let actual: BTreeSet<String> = literals
+            .split(',')
+            .map(|s| s.trim().trim_matches('\'').to_owned())
+            .collect();
+        assert_eq!(actual, expected, "{sql}");
+    }
+}
+
+#[test]
+fn feedback_columns_match_the_full_record_for_every_verdict_and_evidence() {
+    let votes = Votes::new();
+    for verdict in [
+        MemoryVerdict::Helped,
+        MemoryVerdict::Hurt,
+        MemoryVerdict::Neutral,
+    ] {
+        for evidence in [
+            MemoryEvidence::Operator,
+            MemoryEvidence::Review,
+            MemoryEvidence::Outcome,
+        ] {
+            let record = votes.cast_as(MemoryId::new(), TaskId::new(), verdict, evidence, 0);
+            let conn = votes.store.read_conn();
+            let (task, verdict, evidence, body): (String, String, String, String) = conn
+                .query_row(
+                    "SELECT task_id, verdict, evidence, body FROM memory_feedback WHERE id = ?1",
+                    [record.id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<MemoryFeedback>(&body).unwrap(),
+                record
+            );
+            let fields: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(fields["task"], task);
+            assert_eq!(fields["verdict"], verdict);
+            assert_eq!(fields["evidence"], evidence);
+        }
+    }
 }
