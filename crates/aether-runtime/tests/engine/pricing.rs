@@ -34,6 +34,7 @@ impl Engine for UsageEngine {
                 .await;
             let _ = events
                 .send(EngineEvent::Done(EngineOutcome {
+                    closing_accounting: true,
                     text: Some("done".into()),
                     ..Default::default()
                 }))
@@ -87,6 +88,7 @@ impl Engine for AccountingEngine {
                 .await;
             let _ = events
                 .send(EngineEvent::Done(EngineOutcome {
+                    closing_accounting: true,
                     text: Some("done".into()),
                     cost_usd: turn_cost,
                     usage: turn_usage,

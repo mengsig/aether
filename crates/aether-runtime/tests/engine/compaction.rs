@@ -251,3 +251,86 @@ async fn empty_engine_compaction_settles_the_request_visibly() {
     assert!(events.iter().any(|e| matches!(&e.kind, EventKind::CompactionFailed { error, models } if error.contains("Nothing to compact") && models.is_empty())));
     assert!(h.store.latest_checkpoint(id).unwrap().is_none());
 }
+
+struct CodexCheckpointEngine(CheckpointEngine);
+
+#[async_trait::async_trait]
+impl Engine for CodexCheckpointEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::CODEX
+    }
+    fn adapter(&self) -> String {
+        "codex-checkpoint/review".into()
+    }
+    async fn run(
+        &self,
+        turn: EngineTurn,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        assert_eq!(turn.model.as_deref(), Some("gpt-6.1-sol"));
+        assert!(!turn.prompt.is_empty());
+        let mut run = self.0.run(turn, cancel).await?;
+        let (tx, events) = mpsc::channel(8);
+        tokio::spawn(async move {
+            while let Some(mut event) = run.events.recv().await {
+                if let EngineEvent::Done(outcome) = &mut event {
+                    outcome.cost_usd = None;
+                    outcome.closing_accounting = true;
+                }
+                tx.send(event).await.expect("checkpoint event");
+            }
+        });
+        Ok(EngineRun {
+            events,
+            input: None,
+            decisions: None,
+            stop: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn codex_engine_compaction_with_a_known_price_is_complete() {
+    let engine = Arc::new(CodexCheckpointEngine(CheckpointEngine {
+        turns: Arc::default(),
+        valid: true,
+    }));
+    let h = build_harness(
+        engine,
+        Arc::default(),
+        Arc::default(),
+        None,
+        Some("[model]\ncompactor = \"codex/gpt-6.1-sol\"\n"),
+        |c| {
+            c.default_model = Some(ModelRef::new("codex", "gpt-6.1-sol"));
+        },
+    )
+    .await;
+    let id = chat_agent(&h);
+    h.runtime
+        .send_message(
+            id,
+            vec![ContentBlock::text("remember saffron")],
+            Actor::user(),
+        )
+        .unwrap();
+    let before = wait_for(h.store.as_ref(), id, |a| {
+        a.stats.turns == 1 && a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    assert!(before.stats.usage.cost_complete);
+    h.runtime.request_compaction(id, Actor::user()).unwrap();
+    let after = wait_for(h.store.as_ref(), id, |a| {
+        a.stats.turns > before.stats.turns && a.status.kind() == AgentStatusKind::Waiting
+    })
+    .await;
+    assert!(after.checkpoint.is_some());
+    assert_eq!(
+        after.stats.usage.total_tokens() - before.stats.usage.total_tokens(),
+        47
+    );
+    assert!(after.stats.usage.cost_usd > before.stats.usage.cost_usd);
+    assert!(after.stats.usage.cost_complete, "{:?}", after.stats.usage);
+    assert_eq!(after.stats.usage.cost_gap, None);
+    h.runtime.shutdown().await;
+}

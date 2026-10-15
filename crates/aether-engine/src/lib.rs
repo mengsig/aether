@@ -254,6 +254,8 @@ pub enum EngineEvent {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct EngineOutcome {
     pub usage: Usage,
+    /// Parsed from the engine's own final usage message, never synthesized.
+    pub closing_accounting: bool,
     pub cost_usd: Option<f64>,
     pub stop_reason: Option<String>,
     pub duration_ms: Option<u64>,

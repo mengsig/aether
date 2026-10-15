@@ -58,6 +58,7 @@ impl Engine for NativeRequestEngine {
         }
         total += self.closing_extra;
         tx.send(EngineEvent::Done(EngineOutcome {
+            closing_accounting: true,
             text: Some("done".into()),
             usage: total,
             cost_usd: self.closing_cost,

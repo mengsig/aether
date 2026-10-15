@@ -44,13 +44,17 @@ pub(super) fn record_context_usage(
 /// priced invocation needs no estimate - which is what
 /// [`aether_model::Registry::api_equivalent_price`] guarantees.
 #[derive(Debug, Clone, Copy, Default)]
-pub(super) struct TurnPricing {
+pub(crate) struct TurnPricing {
     pub(super) billed: Option<ModelCost>,
     pub(super) estimate: Option<ModelCost>,
 }
 
 impl TurnPricing {
-    pub(super) fn of(runtime: &Arc<Runtime>, resolved: &ResolvedModel) -> Self {
+    pub(crate) fn of(runtime: &Runtime, resolved: &ResolvedModel) -> Self {
+        debug_assert!(
+            !resolved.model.id.is_empty(),
+            "pricing needs a resolved model"
+        );
         let pricing = Self {
             billed: resolved.model.capabilities.cost,
             estimate: runtime.models.registry().api_equivalent_price(resolved),
@@ -94,7 +98,7 @@ impl TurnPricing {
 
     /// Price one invocation's tokens: billed dollars or an estimate, whichever
     /// this model supports.
-    pub(super) fn apply(&self, usage: &mut Usage) {
+    pub(crate) fn apply(&self, usage: &mut Usage) {
         usage.price_from(self.billed, self.estimate);
     }
 

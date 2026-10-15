@@ -206,6 +206,7 @@ impl TurnState {
                     );
                 }
                 events.push(EngineEvent::Done(EngineOutcome {
+                    closing_accounting: status != "interrupted",
                     usage: self.usage_total,
                     stop_reason: Some(status.to_owned()),
                     duration_ms: turn["durationMs"].as_u64(),

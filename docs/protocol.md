@@ -279,8 +279,10 @@ lower bound. `cost_basis` identifies list prices, provider receipts, or a mix.
 The optional `cost_gap` explains incomplete coverage: `unpriced` means reported
 usage had neither a price nor a provider cost; `unreported` means the engine
 did not fully report usage; `interrupted` means possibly billed work lacks
-closing accounting, including caller cancellation after submission. Any two
-different reasons combine as `mixed`. `unknown` is reserved for legacy
+closing accounting, including caller cancellation after submission. Closing
+accounting means the engine's own final usage message, not a synthesized
+adapter outcome or an interrupted turn completion. Any two different reasons
+combine as `mixed`. `unknown` is reserved for legacy
 incomplete records and unrecognized future reasons in Rust readers.
 
 Complete totals omit `cost_gap`. Missing reasons on older incomplete records
@@ -295,6 +297,13 @@ An absent start acknowledgement or usage receipt is not proof of zero spend.
 An API request becomes possibly billed once its stream starts. A stream
 failure without closing accounting keeps observed tokens and priced dollars
 as a floor with an `interrupted` gap. An error response before stream start adds no spend.
+
+After a harness stop (park, kill-switch, or exhaustion), costs are complete
+only if closing accounting arrived and no possible new request followed it.
+Engine message invocation records carry no usage when the engine accounts
+per request. Their zero-dollar `unreported` gap describes missing per-message
+usage, not missing turn accounting: request usage and its coverage belong to
+the turn and agent totals.
 
 Only possible new model work invalidates an engine's closing receipt: assistant
 content, tool activity, or background results and steered messages handed to

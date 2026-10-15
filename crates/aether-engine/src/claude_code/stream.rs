@@ -297,6 +297,7 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
             let text = v.get("result").and_then(Value::as_str).map(str::to_owned);
             let (cost_usd, mut events) = state.session_cost.receipt(&v);
             events.push(EngineEvent::Done(EngineOutcome {
+                closing_accounting: true,
                 usage: v.get("usage").map(parse_usage).unwrap_or_default(),
                 cost_usd,
                 stop_reason: v

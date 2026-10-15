@@ -83,6 +83,7 @@ impl Engine for ScriptedEngine {
                     .await;
                 let _ = events
                     .send(EngineEvent::Done(EngineOutcome {
+                        closing_accounting: true,
                         text: Some("done".into()),
                         cost_usd: cost,
                         // Tokens as an engine reports them: carried on the
@@ -114,6 +115,7 @@ impl Engine for ScriptedEngine {
             };
             let done = |text: &str| {
                 EngineEvent::Done(EngineOutcome {
+                    closing_accounting: true,
                     text: Some(text.to_owned()),
                     ..Default::default()
                 })

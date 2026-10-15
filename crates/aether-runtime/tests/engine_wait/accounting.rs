@@ -260,3 +260,60 @@ async fn an_adapter_force_kill_is_not_recorded_as_the_engine_stopping_itself() {
     );
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn park_timer_killing_an_in_flight_request_is_interrupted() {
+    let mut h = harness_with(
+        Duration::from_millis(200),
+        OnKill::Report(vec![cancelled_with(Usage::default())]),
+    )
+    .await;
+    let worker = start_agent(
+        &h,
+        CreateAgentSpec {
+            objective: Some("finish while accounting drains".into()),
+            start: true,
+            model: Some(ModelRef::new("claude-code", "haiku")),
+            config: Some(AgentConfig {
+                approval: ApprovalPolicy::none(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+    let turn = turn_of(&mut h, worker).await;
+    let events = turn.events.upgrade().expect("live engine");
+    events
+        .send(EngineEvent::UsageDelta {
+            usage: Usage {
+                input_tokens: 100,
+                output_tokens: 10,
+                ..Default::default()
+            },
+        })
+        .await
+        .expect("first request usage");
+    let (reply, is_error) = call(&h, &turn, "complete_task", json!({"summary":"done"})).await;
+    assert!(!is_error, "{reply}");
+    events
+        .send(EngineEvent::Delta(
+            aether_core::model::StreamEvent::MessageStart {
+                provider_message_id: None,
+                model: None,
+            },
+        ))
+        .await
+        .expect("request started after completion");
+    let ended = wait_until(h.store.as_ref(), worker, |a| a.status.is_terminal()).await;
+    assert!(
+        turn.observed.cancelled(),
+        "park timer must kill the in-flight request"
+    );
+    assert_eq!(ended.stats.usage.total_tokens(), 110);
+    assert!(!ended.stats.usage.cost_complete);
+    assert_eq!(
+        ended.stats.usage.cost_gap,
+        Some(aether_core::model::CostGap::Interrupted)
+    );
+    h.runtime.shutdown().await;
+}

@@ -166,6 +166,7 @@ impl Engine for SessionCounterEngine {
                 .await;
             let _ = tx
                 .send(EngineEvent::Done(EngineOutcome {
+                    closing_accounting: true,
                     text: Some("done".into()),
                     session: Some("thread-1".into()),
                     ..Default::default()

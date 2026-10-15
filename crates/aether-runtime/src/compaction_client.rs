@@ -1,6 +1,8 @@
 //! Run checkpoint generation in a fresh engine session without the Aether bridge.
 use std::sync::Arc;
 
+use crate::turn_engine::TurnPricing;
+
 use aether_core::model::{
     BlockStart, CostGap, ModelError, ModelErrorClass, ModelRequest, StreamEvent, Usage,
 };
@@ -13,10 +15,12 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct CompactionClient {
     pub engine: Arc<dyn Engine>,
     pub turn: EngineTurn,
+    pub pricing: TurnPricing,
 }
 
 #[derive(Default)]
 struct Accounting {
+    pricing: TurnPricing,
     usage: Option<Usage>,
     closing_received: bool,
     unsubmitted: bool,
@@ -28,8 +32,9 @@ impl Accounting {
         debug_assert!(!self.unsubmitted, "unsubmitted work cannot report usage");
         let gap =
             (!reported.cost_complete).then_some(reported.cost_gap.unwrap_or(CostGap::Unreported));
-        reported.set_cost(None);
+        self.pricing.apply(&mut reported);
         if let Some(gap) = gap {
+            reported.set_cost(None);
             reported.cost_gap = Some(gap);
         }
         *self.usage.get_or_insert_default() += reported;
@@ -42,7 +47,7 @@ impl Accounting {
                 .is_none_or(|cost| cost.is_finite() && cost >= 0.0)
         );
         debug_assert!(!self.unsubmitted, "a launch failure cannot have a receipt");
-        self.closing_received = true;
+        self.closing_received = outcome.closing_accounting && !outcome.interrupted;
         let mut total = if outcome.usage.total_tokens() > 0 {
             outcome.usage
         } else {
@@ -55,13 +60,20 @@ impl Accounting {
             && self.usage.is_none()
             && total == Usage::default()
             && outcome.cost_usd.is_none();
-        let coverage = total
-            .cost_gap
-            .or_else(|| (total.total_tokens() == 0).then_some(CostGap::Unreported));
-        total.set_cost(outcome.cost_usd);
+        let coverage = (!total.cost_complete)
+            .then_some(total.cost_gap.unwrap_or(CostGap::Unreported))
+            .or_else(|| {
+                (self.usage.is_none() && total.total_tokens() == 0).then_some(CostGap::Unreported)
+            });
+        if let Some(cost) = outcome.cost_usd {
+            total.set_cost(Some(cost));
+        } else {
+            self.pricing.apply(&mut total);
+        }
         if outcome.cost_usd.is_none()
             && let Some(gap) = coverage
         {
+            total.set_cost(None);
             total.cost_gap = Some(gap);
         }
         self.usage = Some(if self.unsubmitted {
@@ -71,7 +83,7 @@ impl Accounting {
         });
     }
 
-    fn finish(&mut self, failed: bool, cancelled: bool) {
+    fn finish(&mut self, cancelled: bool) {
         debug_assert!(
             self.usage
                 .is_none_or(|usage| usage.cost_usd.is_finite() && usage.cost_usd >= 0.0)
@@ -81,7 +93,7 @@ impl Accounting {
         );
         if self.unsubmitted {
             self.usage = Some(Usage::default());
-        } else if cancelled || (failed && !self.closing_received) {
+        } else if cancelled || !self.closing_received {
             self.usage
                 .get_or_insert_default()
                 .mark_cost_gap(CostGap::Interrupted);
@@ -103,7 +115,10 @@ impl ModelClient for CompactionClient {
         let turn = checkpoint_turn(self.turn.clone(), &request);
         let child = cancel.child_token();
         let _cleanup = child.clone().drop_guard();
-        let mut accounting = Accounting::default();
+        let mut accounting = Accounting {
+            pricing: self.pricing,
+            ..Default::default()
+        };
         let run = tokio::time::timeout(
             std::time::Duration::from_secs(180),
             collect_checkpoint(self.engine.as_ref(), turn, child.clone(), &mut accounting),
@@ -113,7 +128,7 @@ impl ModelClient for CompactionClient {
             _ = cancel.cancelled() => Err(ModelError::new(ModelErrorClass::Cancelled, "Checkpoint generation cancelled")),
         };
         child.cancel();
-        accounting.finish(result.is_err(), cancel.is_cancelled());
+        accounting.finish(cancel.is_cancelled());
         Ok(checkpoint_stream(result, accounting.usage))
     }
 }
@@ -161,12 +176,8 @@ async fn collect_checkpoint(
                 if !message.trim().is_empty() {
                     text = message;
                 }
-                match usage {
-                    Some(usage) => accounting.reported(usage),
-                    None => accounting
-                        .usage
-                        .get_or_insert_default()
-                        .mark_cost_gap(CostGap::Unreported),
+                if let Some(usage) = usage {
+                    accounting.reported(usage);
                 }
             }
             EngineEvent::UsageDelta { usage } => accounting.reported(usage),
@@ -196,8 +207,9 @@ async fn refuse_checkpoint_input(run: &EngineRun, request_id: String) -> Result<
     let Some(decisions) = &run.decisions else {
         return Err(failure("Checkpoint engine requested unavailable input"));
     };
-    debug_assert!(!request_id.is_empty(), "input requests need an id");
-    debug_assert!(decisions.capacity() <= decisions.max_capacity());
+    if request_id.is_empty() {
+        return Err(failure("Checkpoint engine requested input without an id"));
+    }
     decisions
         .send(PermissionDecision {
             request_id,
@@ -365,6 +377,7 @@ mod tests {
 
     fn failed_receipt(ending: Ending) -> EngineOutcome {
         EngineOutcome {
+            closing_accounting: true,
             usage: Usage {
                 input_tokens: 23,
                 output_tokens: 7,
@@ -384,6 +397,7 @@ mod tests {
     async fn failed_checkpoint(ending: Ending) -> aether_model::PartialFailure {
         let cancel = CancellationToken::new();
         let client = CompactionClient {
+            pricing: TurnPricing::default(),
             engine: Arc::new(CheckpointEngine {
                 ending,
                 caller: cancel.clone(),
@@ -466,7 +480,7 @@ mod tests {
         let mut outcome = failed_receipt(Ending::Failed);
         outcome.cost_usd = None;
         accounting.close(&outcome);
-        accounting.finish(true, false);
+        accounting.finish(false);
         let usage = accounting.usage.unwrap();
         assert_eq!(usage.total_tokens(), 30);
         assert_eq!(usage.cost_gap, Some(CostGap::Unpriced));
@@ -477,10 +491,47 @@ mod tests {
     fn cancelled_checkpoint_receipt_with_dollars_remains_interrupted() {
         let mut accounting = Accounting::default();
         accounting.close(&failed_receipt(Ending::Failed));
-        accounting.finish(true, true);
+        accounting.finish(true);
         let usage = accounting.usage.unwrap();
         assert_eq!(usage.cost_usd, 1.25);
         assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
         assert!(!usage.cost_complete);
+    }
+    #[test]
+    fn synthetic_checkpoint_done_keeps_known_cost_as_an_interrupted_floor() {
+        let mut accounting = Accounting::default();
+        let mut outcome = failed_receipt(Ending::Failed);
+        outcome.closing_accounting = false;
+        accounting.close(&outcome);
+        accounting.finish(false);
+        let usage = accounting.usage.unwrap();
+        assert_eq!(usage.cost_usd, 1.25);
+        assert_eq!(usage.total_tokens(), 30);
+        assert!(!usage.cost_complete);
+        assert_eq!(usage.cost_gap, Some(CostGap::Interrupted));
+    }
+    #[tokio::test]
+    async fn known_price_zero_token_receipt_keeps_reported_coverage() {
+        let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+        let resolved = runtime
+            .models
+            .resolve(&ModelRef::new("codex", "gpt-6.1-sol"))
+            .unwrap();
+        let mut accounting = Accounting {
+            pricing: TurnPricing::of(&runtime, &resolved),
+            ..Default::default()
+        };
+        accounting.reported(Usage::default());
+        accounting.close(&EngineOutcome {
+            closing_accounting: true,
+            ..Default::default()
+        });
+        accounting.finish(false);
+        let usage = accounting.usage.unwrap();
+        assert_eq!(usage.total_tokens(), 0);
+        assert_eq!(usage.cost_usd, 0.0);
+        assert!(usage.cost_complete);
+        assert_eq!(usage.cost_gap, None);
+        runtime.shutdown().await;
     }
 }
