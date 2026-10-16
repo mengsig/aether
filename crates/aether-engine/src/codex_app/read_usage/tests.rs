@@ -120,7 +120,7 @@ fn process_running(pid: Pid) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(stat) => {
             let (_, rest) = stat.rsplit_once(')').expect("proc stat command");
-            !rest.trim_start().starts_with('Z')
+            !rest.trim_start().starts_with(['Z', 'X'])
         }
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound
