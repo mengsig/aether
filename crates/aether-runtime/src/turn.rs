@@ -245,7 +245,6 @@ async fn execute(
         &ctx.agent,
         ctx.turn,
         crate::workspace_review::Boundary::Start,
-        None,
     )
     .await?;
     // Keep the lease alive while the turn runs.
@@ -284,7 +283,6 @@ async fn execute(
             &ctx.agent,
             ctx.turn,
             crate::workspace_review::Boundary::End,
-            start_head.as_deref(),
         )
         .await?;
     }

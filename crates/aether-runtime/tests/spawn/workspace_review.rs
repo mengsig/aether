@@ -178,3 +178,45 @@ async fn a_shared_workspace_diff_covers_its_turns_commits_and_is_ambiguous() {
     assert!(error.to_string().contains("integration refused"), "{error}");
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_live_restart_successor_protects_its_predecessors_workspace() {
+    let managed = tempfile::tempdir().expect("managed workspaces");
+    let mut h = harness_over(None, 10, "", Some(managed.path().to_path_buf())).await;
+    let (_root, child_bridge, child) = isolated_child(&mut h).await;
+    let child_root = workspace(&h, child);
+    let (reply, is_error) = h
+        .runtime
+        .engine_tool(
+            child,
+            &child_bridge.token,
+            "fail_task".into(),
+            json!({"error": "fixture failure"}),
+        )
+        .await
+        .expect("failure reply");
+    assert!(!is_error, "{reply}");
+    wait_until(h.store.as_ref(), child, |status| status.is_terminal()).await;
+    let successor = h
+        .runtime
+        .restart_agent(child, operator())
+        .expect("restart child");
+    assert_eq!(
+        successor.scope.workspace_root.as_deref(),
+        Some(child_root.as_path())
+    );
+
+    let error = h
+        .runtime
+        .workspace_discard(child, false, operator())
+        .expect_err("successor is live");
+    let message = error.to_string();
+    assert!(message.contains(&successor.id.to_string()), "{message}");
+    assert!(child_root.exists(), "the successor's worktree is kept");
+    let error = h
+        .runtime
+        .workspace_integrate(child, operator())
+        .expect_err("successor is live");
+    assert!(error.to_string().contains("integration refused"), "{error}");
+    h.runtime.shutdown().await;
+}

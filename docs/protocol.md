@@ -760,12 +760,14 @@ at each turn's start and end as a `workspace.head` custom event; a commit's
 source through the same checks as the `integrate_workspace` tool. When the
 source changed a path the child also changed, it replies with `integrated`
 false and every such path in `conflicts`, and writes nothing. Other refusals,
-such as a live agent or a shared workspace, are `invalid` errors. A landed
+such as a live agent or a shared workspace, are `invalid` errors; an agent
+still working in the worktree, such as a restarted successor, counts as live. A landed
 integration is recorded as a `workspace.integrated` custom event.
 
 `workspace_discard` deletes an agent's isolated worktree, its refs and its
-record, whatever it holds. It is refused while the agent or a descendant is
-live unless `force` is true; forcing does not stop the agent. It is also
+record, whatever it holds. It is refused while the agent, a descendant, or
+any other agent working in the worktree (such as a restarted successor) is
+live, unless `force` is true; forcing does not stop them. It is also
 refused while an interrupted integration is unfinished. The discard is
 recorded as a `workspace.discarded` custom event.
 

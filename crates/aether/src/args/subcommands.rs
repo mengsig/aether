@@ -698,8 +698,8 @@ pub(crate) enum WorkspaceCmd {
     /// Delete an agent's isolated workspace and the work in it.
     Discard {
         agent: String,
-        /// Discard even while the agent or a descendant is live; it is not
-        /// stopped.
+        /// Discard even while an agent that uses the workspace is live; it
+        /// is not stopped.
         #[arg(long)]
         force: bool,
         #[arg(long)]

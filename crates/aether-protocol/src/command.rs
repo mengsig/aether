@@ -474,8 +474,8 @@ pub enum Command {
     WorkspaceIntegrate {
         agent: AgentId,
     },
-    /// Throw away an agent's isolated workspace. Refused while the agent or
-    /// a descendant is live unless `force`, which does not stop it.
+    /// Throw away an agent's isolated workspace. Refused while an agent using
+    /// it is live unless `force`, which does not stop that agent.
     WorkspaceDiscard {
         agent: AgentId,
         #[serde(default)]

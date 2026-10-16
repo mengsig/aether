@@ -14,8 +14,8 @@ def workspace_diff(*, agent: AgentId) -> dict[str, Any]:
     return frame
 
 def workspace_discard(*, agent: AgentId, force: bool | None = None) -> dict[str, Any]:
-    """Throw away an agent's isolated workspace. Refused while the agent or
-    a descendant is live unless `force`, which does not stop it.
+    """Throw away an agent's isolated workspace. Refused while an agent using
+    it is live unless `force`, which does not stop that agent.
     """
     frame: dict[str, Any] = {"cmd": "workspace_discard"}
     frame["agent"] = agent

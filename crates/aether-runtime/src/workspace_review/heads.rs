@@ -29,8 +29,7 @@ struct HeadRecord {
     head: String,
 }
 
-/// One turn's recorded HEADs; `end` is absent while it runs, after a crash,
-/// or when the turn committed nothing.
+/// One turn's recorded HEADs; `end` is absent while it runs or after a crash.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TurnWindow {
     pub turn: u32,
@@ -38,18 +37,16 @@ pub(crate) struct TurnWindow {
     pub end: Option<String>,
 }
 
-/// Record the workspace HEAD at a turn boundary and return it. An end equal
-/// to `start_head` is not recorded: the turn committed nothing. A workspace
-/// outside Git records nothing, and a Git failure only costs attribution.
+/// Record the workspace HEAD at a turn boundary and return it. An unchanged
+/// end is recorded too, so the turn is closed. A workspace outside Git records
+/// nothing, and a Git failure only costs attribution.
 pub(crate) async fn record_turn_head(
     runtime: &Runtime,
     agent: &Agent,
     turn: u32,
     boundary: Boundary,
-    start_head: Option<&str>,
 ) -> Result<Option<String>> {
     debug_assert!(turn > 0, "turns count from one");
-    debug_assert!(boundary == Boundary::End || start_head.is_none());
     let Some(root) = agent.scope.workspace_root.clone() else {
         return Ok(None);
     };
@@ -64,9 +61,6 @@ pub(crate) async fn record_turn_head(
             return Ok(None);
         }
     };
-    if start_head == Some(head.as_str()) {
-        return Ok(Some(head));
-    }
     let record = HeadRecord {
         turn,
         boundary,

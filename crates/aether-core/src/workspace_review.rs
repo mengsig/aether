@@ -97,7 +97,7 @@ pub struct WorkspaceIntegration {
 pub struct WorkspaceDiscard {
     pub agent: AgentId,
     pub workspace: PathBuf,
-    /// The agent or one of its descendants was still live.
+    /// An agent using the workspace was still live.
     pub forced: bool,
 }
 
@@ -114,15 +114,16 @@ pub fn truncation_marker(shown: usize, total: u64) -> String {
     format!("\n[patch truncated: showing {shown} of {total} bytes]\n")
 }
 
-/// Cut `patch` to [`PATCH_LIMIT`] bytes on a character boundary and mark the
-/// cut. `total` is the whole patch's size, which may exceed what was read.
+/// Cut `patch` to [`PATCH_LIMIT`] bytes of text on a character boundary and
+/// mark the cut. `total` is the whole patch's size, which may exceed what was read.
 pub fn cap_patch(patch: &[u8], total: u64) -> CappedPatch {
     debug_assert!(
         total >= patch.len() as u64,
         "a patch's total size covers the bytes read"
     );
+    // Replacement characters can make the text longer than the raw bytes.
     let text = String::from_utf8_lossy(patch);
-    if total <= PATCH_LIMIT as u64 && patch.len() as u64 == total {
+    if text.len() <= PATCH_LIMIT && patch.len() as u64 == total {
         return CappedPatch {
             text: text.into_owned(),
             bytes: total,
@@ -184,6 +185,20 @@ mod tests {
         let capped = cap_patch(b"partial", 10 * PATCH_LIMIT as u64);
         assert!(capped.truncated);
         assert!(capped.text.starts_with("partial\n[patch truncated"));
+    }
+
+    #[test]
+    fn a_patch_that_grows_when_decoded_is_still_cut_to_the_limit() {
+        let patch = vec![0xff; PATCH_LIMIT / 2];
+        let capped = cap_patch(&patch, patch.len() as u64);
+        assert!(capped.truncated);
+        let marker = truncation_marker(PATCH_LIMIT - PATCH_LIMIT % 3, patch.len() as u64);
+        assert!(
+            capped.text.ends_with(&marker),
+            "{}",
+            &capped.text[PATCH_LIMIT - 8..]
+        );
+        assert!(capped.text.len() <= PATCH_LIMIT + marker.len());
     }
 
     #[test]

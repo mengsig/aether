@@ -3896,7 +3896,7 @@
           "type": "object"
         },
         {
-          "description": "Throw away an agent's isolated workspace. Refused while the agent or\na descendant is live unless `force`, which does not stop it.",
+          "description": "Throw away an agent's isolated workspace. Refused while an agent using\nit is live unless `force`, which does not stop that agent.",
           "properties": {
             "agent": {
               "$ref": "#/$defs/AgentId"
@@ -15769,7 +15769,7 @@
           "$ref": "#/$defs/AgentId"
         },
         "forced": {
-          "description": "The agent or one of its descendants was still live.",
+          "description": "An agent using the workspace was still live.",
           "type": "boolean"
         },
         "workspace": {

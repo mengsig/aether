@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use aether_core::agent::Agent;
+use aether_core::agent::{Agent, AgentStatusKind};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
 use aether_core::workspace_review::{
@@ -45,7 +45,7 @@ pub(crate) fn integration_preflight(
         Ok(managed) => managed,
         Err(refusal) => return Ok(Err(format!("integration refused: {refusal}"))),
     };
-    if let Some(live) = live_descendant(runtime, target.id)? {
+    if let Some(live) = live_user(runtime, target, &managed.manifest.workspace)? {
         return Ok(Err(format!("integration refused: {live}")));
     }
     Ok(Ok(managed))
@@ -80,20 +80,35 @@ fn managed_workspace(
     }))
 }
 
-/// The first descendant of `agent` that is still live, described.
-fn live_descendant(runtime: &Runtime, agent: AgentId) -> Result<Option<String>> {
+/// The first live agent that could still change `workspace`, described: the
+/// target, a descendant, or any agent working inside it, such as a restart.
+fn live_user(runtime: &Runtime, target: &Agent, workspace: &Path) -> Result<Option<String>> {
+    debug_assert!(workspace.is_absolute(), "managed worktrees are absolute");
     let agents = runtime.store.agents(&AgentFilter::default())?;
-    let by_id: HashMap<_, _> = agents.iter().map(|a| (a.id, a)).collect();
-    for id in aether_core::agent::subtree_of(&agents, agent) {
-        let Some(descendant) = by_id.get(&id).filter(|_| id != agent) else {
+    let descendants: HashSet<_> = aether_core::agent::subtree_of(&agents, target.id)
+        .into_iter()
+        .collect();
+    debug_assert!(
+        descendants.contains(&target.id),
+        "the target heads its subtree"
+    );
+    for agent in agents.iter().filter(|agent| !agent.status.is_terminal()) {
+        let status = agent.status.kind();
+        let inside = agent
+            .scope
+            .workspace_root
+            .as_deref()
+            .is_some_and(|root| root.starts_with(workspace));
+        let role = if agent.id == target.id {
+            "agent"
+        } else if descendants.contains(&agent.id) {
+            "descendant"
+        } else if inside {
+            "agent working in this workspace"
+        } else {
             continue;
         };
-        if !descendant.status.is_terminal() {
-            return Ok(Some(format!(
-                "descendant {id} is still {}",
-                descendant.status.kind()
-            )));
-        }
+        return Ok(Some(format!("{role} {} is still {status}", agent.id)));
     }
     Ok(None)
 }
@@ -166,8 +181,8 @@ impl Runtime {
         Ok(integration)
     }
 
-    /// Throw away a child's managed worktree. A live agent or descendant
-    /// refuses it unless `force`; the discard is recorded as an event.
+    /// Throw away a child's managed worktree. A live agent using it refuses
+    /// the discard unless `force`; the discard is recorded as an event.
     pub fn workspace_discard(
         &self,
         agent: AgentId,
@@ -175,18 +190,14 @@ impl Runtime {
         by: Actor,
     ) -> Result<WorkspaceDiscard> {
         let target = self.review_target(agent)?;
-        let live = if target.status.is_terminal() {
-            live_descendant(self, agent)?
-        } else {
-            Some(format!("agent {agent} is still {}", target.status.kind()))
-        };
+        let managed = managed_workspace(self, &target)?
+            .map_err(|refusal| RuntimeError::Invalid(format!("discard refused: {refusal}")))?;
+        let live = live_user(self, &target, &managed.manifest.workspace)?;
         if let Some(live) = live.as_ref().filter(|_| !force) {
             return Err(RuntimeError::Invalid(format!(
                 "discard refused: {live}; force it to discard the workspace anyway"
             )));
         }
-        let managed = managed_workspace(self, &target)?
-            .map_err(|refusal| RuntimeError::Invalid(format!("discard refused: {refusal}")))?;
         review::abandon(&managed.managed_root, &managed.manifest)
             .map_err(|error| invalid_with("discard refused", error))?;
         let discard = WorkspaceDiscard {
@@ -240,18 +251,20 @@ impl Runtime {
     }
 }
 
-/// The current HEAD stands in for the end of a turn still running.
-fn window_end(
-    target: &Agent,
-    window: &TurnWindow,
-    last_turn: u32,
-    head: Option<&str>,
-) -> Option<String> {
-    let running = !target.status.is_terminal() && window.turn == last_turn;
+/// The turn `target` is running now, if any: the last one recorded.
+fn running_turn(target: &Agent, windows: &[TurnWindow]) -> Option<u32> {
+    let running = target.status.kind() == AgentStatusKind::Running;
+    windows.last().filter(|_| running).map(|window| window.turn)
+}
+
+/// Where a turn's commits end; the current HEAD stands in for the end of the
+/// running turn. `None` when the turn moved nothing or never closed.
+fn window_end(window: &TurnWindow, running: Option<u32>, head: Option<&str>) -> Option<String> {
+    let open = running == Some(window.turn);
     window
         .end
         .clone()
-        .or_else(|| running.then(|| head.map(str::to_owned)).flatten())
+        .or_else(|| open.then(|| head.map(str::to_owned)).flatten())
         .filter(|end| *end != window.start)
 }
 
@@ -262,10 +275,10 @@ fn label_turns(
     windows: &[TurnWindow],
     head: Option<&str>,
 ) -> Result<()> {
-    let last_turn = windows.last().map_or(0, |window| window.turn);
+    let running = running_turn(target, windows);
     let mut turn_of = HashMap::new();
     for window in windows {
-        let Some(end) = window_end(target, window, last_turn, head) else {
+        let Some(end) = window_end(window, running, head) else {
             continue;
         };
         for commit in review::log(repo, &window.start, &end, COMMIT_LIMIT + 1)? {
@@ -316,12 +329,10 @@ fn isolated_diff(
 
 fn shared_diff(target: &Agent, root: &Path, windows: &[TurnWindow]) -> Result<WorkspaceDiff> {
     let head = review::head(root)?;
-    let last_turn = windows.last().map_or(0, |window| window.turn);
+    let running = running_turn(target, windows);
     let spans: Vec<_> = windows
         .iter()
-        .filter_map(|window| {
-            window_end(target, window, last_turn, head.as_deref()).map(|end| (window, end))
-        })
+        .filter_map(|window| window_end(window, running, head.as_deref()).map(|end| (window, end)))
         .collect();
     let mut commits: Vec<WorkspaceCommit> = Vec::new();
     let mut seen = HashSet::new();
@@ -399,5 +410,30 @@ fn assemble(
         patch: diff.patch.text,
         patch_bytes: diff.patch.bytes,
         patch_truncated: diff.patch.truncated,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn window(turn: u32, start: &str, end: Option<&str>) -> TurnWindow {
+        TurnWindow {
+            turn,
+            start: start.into(),
+            end: end.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn only_the_running_turn_borrows_the_current_head() {
+        let closed = window(1, "a", Some("a"));
+        assert_eq!(window_end(&closed, None, Some("later")), None);
+        assert_eq!(window_end(&closed, Some(1), Some("later")), None);
+        let crashed = window(2, "a", None);
+        assert_eq!(window_end(&crashed, None, Some("later")), None);
+        assert_eq!(window_end(&crashed, Some(2), Some("b")), Some("b".into()));
+        let moved = window(3, "a", Some("c"));
+        assert_eq!(window_end(&moved, Some(4), Some("later")), Some("c".into()));
     }
 }
