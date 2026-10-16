@@ -70,6 +70,36 @@ fn expired_history_is_a_visible_missing_history_error_not_internal_failure() {
     assert_eq!(runtime, reply);
 }
 
+/// Clients send a person to sign in on `no_model` alone, so a model that is
+/// named but unknown must not share that code.
+#[tokio::test]
+async fn creation_with_no_model_at_all_has_its_own_code() {
+    let (daemon, _config_dir) = daemon().await;
+    daemon.runtime.set_default_model(None);
+    let refused = |model: Option<aether_core::model::ModelRef>| {
+        let spec = CreateAgentSpec {
+            role: "root".into(),
+            model,
+            ..Default::default()
+        };
+        map_err(
+            daemon
+                .runtime
+                .create_agent(spec, Actor::user())
+                .expect_err("refused"),
+        )
+    };
+    let none = refused(None);
+    assert_eq!(none.code, ErrorCode::NoModel, "{none:?}");
+    assert!(none.message.contains("no model configured"), "{none:?}");
+    let unknown = refused(Some(aether_core::model::ModelRef::new(
+        "nowhere",
+        "claude-nope",
+    )));
+    assert_ne!(unknown.code, ErrorCode::NoModel, "{unknown:?}");
+    assert!(unknown.message.contains("nowhere"), "{unknown:?}");
+}
+
 #[tokio::test]
 async fn github_watcher_configuration_is_operator_only_and_revision_checked() {
     let (daemon, _config) = daemon().await;
