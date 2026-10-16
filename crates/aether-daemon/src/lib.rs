@@ -103,6 +103,24 @@ fn storage_artifact_policy(
 /// The configured provider, as the search tool wants it. The two structs
 /// are field-for-field identical strings, so a transposed pair here would
 /// compile and ship; `the_provider_copy_keeps_every_field_in_place` stops it.
+/// The configured root, else `aether.build-cache` beside the store. A
+/// relative default would resolve inside each agent's workspace, so none.
+fn build_cache_root(configured: Option<&Path>, store_path: &Path) -> Option<PathBuf> {
+    if let Some(root) = configured {
+        debug_assert!(root.is_absolute(), "config load refuses a relative root");
+        return Some(root.to_path_buf());
+    }
+    if !store_path.is_absolute() {
+        tracing::warn!(
+            "builds keep their workspace's own output: store path {} is not absolute, so \
+             there is no default build cache root; set build_cache.root",
+            store_path.display()
+        );
+        return None;
+    }
+    Some(store_path.with_extension("build-cache"))
+}
+
 fn search_provider(s: aether_model::config::WebSearchSection) -> SearchProvider {
     SearchProvider {
         endpoint: s.endpoint,
@@ -302,6 +320,10 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 config.store_path.with_extension("delegated-workspaces"),
             ),
             agent_temp_root,
+            build_cache_root: build_cache_root(
+                models.config().build_cache.root.as_deref(),
+                &store_path,
+            ),
             bridge: bridge.as_ref().map(|bridge| aether_runtime::BridgeConfig {
                 command: bridge.command().to_path_buf(),
                 socket: socket_address.clone(),
@@ -760,6 +782,21 @@ async fn serve_tcp(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_build_cache_root_is_configured_or_beside_an_absolute_store() {
+        let store = Path::new("/srv/aether/aether.db");
+        let configured = Path::new("/var/cache/aether");
+        assert_eq!(
+            build_cache_root(Some(configured), store).as_deref(),
+            Some(configured)
+        );
+        assert_eq!(
+            build_cache_root(None, store),
+            Some(PathBuf::from("/srv/aether/aether.build-cache"))
+        );
+        assert_eq!(build_cache_root(None, Path::new("data/aether.db")), None);
+    }
 
     #[tokio::test(start_paused = true)]
     async fn descriptor_exhaustion_backs_off_but_shutdown_interrupts_it() {

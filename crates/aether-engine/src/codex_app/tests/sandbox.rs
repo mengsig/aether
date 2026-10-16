@@ -50,7 +50,7 @@ async fn exec_server_exit_fails_closed_promptly_and_leaves_nothing() {
     let started = tokio::time::Instant::now();
     let result = tokio::time::timeout(
         Duration::from_secs(15),
-        loopback::start(&program, &cwd, &[], None),
+        loopback::start(&program, &cwd, &[], None, &[]),
     )
     .await
     .expect("a failed exec-server must not hang startup");
@@ -69,7 +69,7 @@ async fn exec_server_exit_fails_closed_promptly_and_leaves_nothing() {
 #[ignore = "needs bwrap and socat on PATH"]
 async fn dropping_the_sandbox_ends_the_namespace() {
     let (_dir, cwd, program) = fixture(READY);
-    let sandbox = loopback::start(&program, &cwd, &[], None)
+    let sandbox = loopback::start(&program, &cwd, &[], None, &[])
         .await
         .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
     assert!(processes_in(&cwd).len() >= 4, "{:?}", processes_in(&cwd));
@@ -86,7 +86,7 @@ async fn the_exec_server_writes_to_the_agent_temp_dir() {
     let (_dir, cwd, program) = fixture(PROBE);
     let leaf = cwd.join("0123456789AB");
     std::fs::create_dir(&leaf).unwrap();
-    let sandbox = loopback::start(&program, &cwd, &[], Some(&leaf))
+    let sandbox = loopback::start(&program, &cwd, &[], Some(&leaf), &[])
         .await
         .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
     let seen = std::fs::read_to_string(leaf.join("seen")).expect("written inside the sandbox");
@@ -100,7 +100,7 @@ async fn the_exec_server_writes_to_the_agent_temp_dir() {
 #[ignore = "needs bwrap and socat on PATH"]
 async fn exec_server_death_mid_turn_is_reported() {
     let (_dir, cwd, program) = fixture(READY);
-    let mut sandbox = loopback::start(&program, &cwd, &[], None)
+    let mut sandbox = loopback::start(&program, &cwd, &[], None, &[])
         .await
         .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
     let server = processes_in(&cwd)
@@ -160,7 +160,7 @@ async fn parent_exit_fixture() {
     };
     let cwd = PathBuf::from(cwd);
     let program = std::env::var("AETHER_LOOPBACK_FIXTURE_PROGRAM").unwrap();
-    let _sandbox = loopback::start(&program, &cwd, &[], None)
+    let _sandbox = loopback::start(&program, &cwd, &[], None, &[])
         .await
         .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
     println!("SANDBOX STARTED");
@@ -190,7 +190,7 @@ async fn seccomp_keeps_sockets_inside_the_namespace() {
          codex_app::tests::sandbox::socket_probe_fixture --ignored --nocapture\n",
         cwd.display()
     ));
-    let result = loopback::start(&program, &cwd, &[], None).await;
+    let result = loopback::start(&program, &cwd, &[], None, &[]).await;
     assert!(matches!(result, Err(EngineError::Unsupported(_))));
     let report = std::fs::read_to_string(&report)
         .unwrap_or_else(|e| panic!("the probe must write its report: {e}"));
@@ -267,7 +267,7 @@ async fn headless_browser_renders_only_loopback_pages() {
         browser.display(),
         exe.display()
     ));
-    let result = loopback::start(&program, &cwd, &[], None).await;
+    let result = loopback::start(&program, &cwd, &[], None, &[]).await;
     assert!(matches!(result, Err(EngineError::Unsupported(_))));
     let read = |name: &str| {
         std::fs::read_to_string(cwd.join(name))

@@ -12,7 +12,7 @@ fn child_of(store: &dyn Store, parent: AgentId) -> aether_core::agent::Agent {
     children.into_iter().next().expect("child")
 }
 
-fn init_repository(root: &std::path::Path) {
+pub(super) fn init_repository(root: &std::path::Path) {
     git_in(root, &["init", "-q"]);
     git_in(root, &["config", "user.email", "fixture@example.com"]);
     git_in(root, &["config", "user.name", "fixture"]);

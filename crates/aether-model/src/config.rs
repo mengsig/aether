@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::profile::ProfileSetting;
 
 mod agents;
+mod build_cache;
 mod providers;
 mod remote;
 mod retention;
@@ -19,6 +20,7 @@ mod storage;
 mod templates;
 
 pub use agents::AgentsSection;
+pub use build_cache::{BuildCacheSection, BuildCacheVar};
 pub use providers::ProvidersSection;
 pub use remote::RemoteSection;
 pub use retention::RetentionSection;
@@ -95,6 +97,7 @@ pub struct AetherConfig {
     pub retention: RetentionSection,
     pub storage: StorageSection,
     pub agents: AgentsSection,
+    pub build_cache: BuildCacheSection,
     pub mcp: McpSection,
     pub memory: MemorySection,
     pub listen: ListenSection,
@@ -618,6 +621,7 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
             config.serve.address().map_err(&bad)?;
             config.agents.validate().map_err(&bad)?;
             config.storage.validate().map_err(&bad)?;
+            config.build_cache.validate().map_err(&bad)?;
             for server in &config.mcp.servers {
                 server.validate().map_err(&bad)?;
             }

@@ -535,6 +535,7 @@ mod tests {
             retention: Default::default(),
             storage: Default::default(),
             agents: Default::default(),
+            build_cache: Default::default(),
             mcp: Default::default(),
             memory: Default::default(),
             listen: Default::default(),

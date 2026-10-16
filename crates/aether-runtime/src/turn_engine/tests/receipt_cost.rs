@@ -268,6 +268,7 @@ fn resumed_parser(prior: Usage) -> ParseState {
         hidden_env: Vec::new(),
         tool_hidden_env: Vec::new(),
         temp_dir: None,
+        build_env: Vec::new(),
         mcp: None,
     })
 }

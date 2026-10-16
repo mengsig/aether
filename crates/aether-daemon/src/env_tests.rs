@@ -117,6 +117,7 @@ async fn a_host_shell_hides_inherited_provider_keys_and_keeps_public_env() {
         env: BTreeMap::new(),
         hidden_env: tools.hidden_env(),
         temp_dir: None,
+        build_env: Vec::new(),
     };
     let command = format!(
         "printf '%s|%s|%s' \"${{{KEY}-absent}}\" \"${{{TOKEN}-absent}}\" \"${{{PUBLIC}-absent}}\""

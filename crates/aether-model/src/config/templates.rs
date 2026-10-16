@@ -123,6 +123,17 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # [agents]
 # temp_root = "/var/tmp/aether"
 
+# Agents in a repository workspace build into a cache outside it, one
+# partition per repository and run, so a run's isolated children share warm
+# output and another run never writes into it. Unset root means
+# `aether.build-cache` beside `aether.db`. A listed table replaces the default.
+#
+# [build_cache]
+# root = "/var/cache/aether"
+# [[build_cache.env]]
+# name = "CARGO_TARGET_DIR"
+# dir = "cargo-target"
+
 # How long artifact bytes are kept. Records are never removed, so an old run
 # still says what it produced even once the payload is gone.
 #

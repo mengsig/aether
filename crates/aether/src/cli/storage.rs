@@ -22,6 +22,7 @@ pub async fn storage(
         "artifacts",
         "event_history",
         "agent_temp",
+        "build_cache",
         "bridge_copies",
     ] {
         let value = &report[kind];
@@ -44,6 +45,9 @@ pub async fn storage(
         }
         if let Some(dirs) = value["dirs"].as_u64() {
             println!("  {dirs} agent temp dirs");
+        }
+        if let Some(partitions) = value["partitions"].as_u64() {
+            println!("  {partitions} build cache partitions");
         }
         if let Some(unreadable) = value["unreadable"].as_u64().filter(|n| *n > 0) {
             println!("  {unreadable} directories could not be read");

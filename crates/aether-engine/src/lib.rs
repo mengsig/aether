@@ -163,6 +163,9 @@ pub struct EngineTurn {
     /// The agent's private temp dir, already created, exported to the engine
     /// and the commands it runs as TMPDIR, TMP and TEMP.
     pub temp_dir: Option<PathBuf>,
+    /// Build cache variables and the directories, already created, they
+    /// name: exported like `temp_dir` and writable in the engine's sandbox.
+    pub build_env: Vec<(String, PathBuf)>,
     pub mcp: Option<McpBridge>,
 }
 
@@ -398,22 +401,50 @@ pub(crate) fn export_temp_dir(command: &mut tokio::process::Command, temp_dir: O
     }
 }
 
-/// Codex `-c` overrides that hand its commands the agent's temp dir even when
-/// the operator's `shell_environment_policy` would not inherit it.
-pub(crate) fn codex_temp_env_args(temp_dir: Option<&Path>) -> Vec<String> {
-    let Some(dir) = temp_dir else {
-        return Vec::new();
-    };
-    let value = serde_json::json!(dir.to_string_lossy());
-    aether_core::agent_temp::ENV_VARS
+/// Point a process's build cache variables at the agent's cache, after any
+/// hidden names were stripped so none of them can remove it again.
+pub(crate) fn export_build_env(
+    command: &mut tokio::process::Command,
+    build_env: &[(String, PathBuf)],
+) {
+    for (name, dir) in build_env {
+        debug_assert!(dir.is_absolute(), "{} is not absolute", dir.display());
+        command.env(name, dir);
+    }
+}
+
+/// Codex `-c` overrides that hand its commands the agent's temp dir and build
+/// cache even when the operator's `shell_environment_policy` would not
+/// inherit them.
+pub(crate) fn codex_env_args(turn: &EngineTurn) -> Vec<String> {
+    let temp = turn.temp_dir.iter().flat_map(|dir| {
+        aether_core::agent_temp::ENV_VARS
+            .iter()
+            .map(move |name| (*name, dir.as_path()))
+    });
+    let build = turn
+        .build_env
         .iter()
-        .flat_map(|name| {
+        .map(|(name, dir)| (name.as_str(), dir.as_path()));
+    temp.chain(build)
+        .flat_map(|(name, dir)| {
+            let value = serde_json::json!(dir.to_string_lossy());
             [
                 "-c".into(),
                 format!("shell_environment_policy.set.{name}={value}"),
             ]
         })
         .collect()
+}
+
+/// Directories the engine's sandbox must let the agent write besides its
+/// workspace: extra roots, the temp dir and the build cache.
+pub(crate) fn writable_dirs(turn: &EngineTurn) -> impl Iterator<Item = &Path> {
+    turn.extra_dirs
+        .iter()
+        .chain(&turn.temp_dir)
+        .chain(turn.build_env.iter().map(|(_, dir)| dir))
+        .map(PathBuf::as_path)
 }
 
 /// A spawned CLI: its normalized events and, when kept open, its raw stdin.
@@ -446,6 +477,7 @@ pub(crate) async fn run_process<P>(
     cwd: PathBuf,
     hidden_env: &[String],
     temp_dir: Option<&Path>,
+    build_env: &[(String, PathBuf)],
     first_input: String,
     keep_stdin_open: bool,
     cancel_input: Option<String>,
@@ -470,6 +502,7 @@ where
     command.as_std_mut().process_group(0);
     strip_hidden(&mut command, hidden_env);
     export_temp_dir(&mut command, temp_dir);
+    export_build_env(&mut command, build_env);
     let mut child = command.spawn().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => EngineError::NotInstalled {
             program: program.to_owned(),
