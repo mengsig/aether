@@ -230,6 +230,7 @@ retention_days = 14
 # event_history_days = 7
 workspace_grace_seconds = 3600
 backups_keep = 3
+migration_backups_keep = 2
 gc_interval_seconds = 3600
 # free_space_floor_bytes = 5368709120
 # build_output_dirs = ["target", "node_modules", ".venv", "__pycache__", "dist"]
@@ -242,7 +243,8 @@ Per-kind day overrides inherit `retention_days`, except artifacts and event
 history, which retain their existing `[artifacts]` and `[retention]` policies
 unless explicitly overridden here. Zero disables cleanup of that kind; log
 size bounds still apply. Day values must be integers from 0 through 65535;
-`backups_keep` and `gc_interval_seconds` must be positive. Unknown keys and
+`backups_keep`, `migration_backups_keep` and `gc_interval_seconds` must be
+positive. Unknown keys and
 invalid values fail configuration loading. A zero grace period is allowed.
 
 Each daemon's copy of its own build, in `bin/` beside the database, is kept
@@ -280,8 +282,11 @@ add `--dry-run` to list each path and its bytes first. Workspaces of live or
 resumable agents are never touched. Each run inspects the same bounded number of
 workspaces as a sweep, so repeat it while the report says `truncated`.
 
-Migration backups keep **both** the newest `backups_keep` snapshots and every
-snapshot within the retention window. Unrecognized files are preserved. Logs
+Migration backups are zstd-compressed and never number more than the newest
+`migration_backups_keep`, whatever their age. Within that cap, GC keeps
+**both** the newest `backups_keep` snapshots and every snapshot within the
+retention window. Unrecognized files are preserved. See
+[migration backups](migration-backups.md) for restoring one. Logs
 retain their existing seven 16 MiB segment limit and gain age rotation and
 pruning under the same cross-process writer lock. Legacy logs remain untouched
 because old versions may still write them. Age maintenance runs when a log
