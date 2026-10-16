@@ -115,6 +115,7 @@ async fn aethers_own_mcp_client_drives_aethers_own_http_server() {
             },
             classes: std::collections::BTreeMap::new(),
             send_caller_meta: true,
+            auth: None,
         }],
         None,
         Vec::new().into(),

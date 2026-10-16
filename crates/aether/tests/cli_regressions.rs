@@ -1626,6 +1626,10 @@ fn hostile_mcp() -> aether_core::mcp::McpServerHealth {
             side_effect: SideEffectClass::ReadOnly,
             declared: true,
         }],
+        auth: Some(aether_core::mcp::McpAuth {
+            token_env: HOSTILE.into(),
+            state: aether_core::mcp::McpAuthState::AuthFailed,
+        }),
         ..aether_core::mcp::McpServerHealth::unknown(HOSTILE, HOSTILE)
     }
 }
@@ -1667,6 +1671,13 @@ async fn terminal_output_sanitises_memory_mcp_status_events_and_streams() {
             "{args:?}: {}",
             stdout(&output)
         );
+        if args == ["mcp", "list"] {
+            assert!(
+                stdout(&output).contains("auth_failed"),
+                "{}",
+                stdout(&output)
+            );
+        }
     }
 }
 

@@ -19,6 +19,28 @@ pub enum McpServerState {
     Failed,
 }
 
+/// Whether a server that names a token variable got its token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAuthState {
+    /// The variable is set; the server is reached with its value.
+    Token,
+    /// The variable is unset and the token is required: the server is not
+    /// contacted, so a typo cannot downgrade it to anonymous access.
+    AuthFailed,
+    /// The variable is unset and the server is configured `auth = "optional"`:
+    /// it is reached without a token.
+    Anonymous,
+}
+
+/// How a server authenticates. Names the variable, never its value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct McpAuth {
+    /// The environment variable the token is read from.
+    pub token_env: String,
+    pub state: McpAuthState,
+}
+
 /// The name an agent sees for a server's tool. Namespaced by server, so two
 /// servers may offer the same tool name, and restricted to the characters
 /// providers accept in a tool name.
@@ -64,6 +86,9 @@ pub struct McpServerHealth {
     /// When the state was last established.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked_at: Option<Timestamp>,
+    /// Present when the server is configured with a token variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<McpAuth>,
 }
 
 impl McpServerHealth {
@@ -76,7 +101,15 @@ impl McpServerHealth {
             tools: Vec::new(),
             error: None,
             checked_at: None,
+            auth: None,
         }
+    }
+
+    /// True when the server was not contacted because its token is missing.
+    pub fn auth_failed(&self) -> bool {
+        self.auth
+            .as_ref()
+            .is_some_and(|auth| auth.state == McpAuthState::AuthFailed)
     }
 }
 

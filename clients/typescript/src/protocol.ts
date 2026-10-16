@@ -184,6 +184,8 @@ export * from "./protocol/types/LayerKind.ts";
 export * from "./protocol/types/LayerPlacement.ts";
 export * from "./protocol/types/Lease.ts";
 export * from "./protocol/types/LowDisk.ts";
+export * from "./protocol/types/McpAuth.ts";
+export * from "./protocol/types/McpAuthState.ts";
 export * from "./protocol/types/McpServerHealth.ts";
 export * from "./protocol/types/McpServerState.ts";
 export * from "./protocol/types/McpToolInfo.ts";

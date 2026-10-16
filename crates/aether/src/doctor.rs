@@ -655,20 +655,11 @@ pub fn check_mcp(
             format!("start the daemon and run `{command} mcp list`"),
         );
     }
-    let failed: Vec<String> = health
-        .iter()
-        .filter(|h| h.state == McpServerState::Failed)
-        .map(|h| h.name.clone())
-        .collect();
-    let unknown: Vec<_> = health
-        .iter()
-        .filter(|h| h.state == McpServerState::Unknown)
-        .map(|h| h.name.as_str())
-        .collect();
     let ready = health
         .iter()
         .filter(|h| h.state == McpServerState::Ready)
         .count();
+    let (auth_failed, anonymous) = mcp_auth_details(health);
     let mut details = vec![if ready == health.len() {
         format!("{ready} server(s) connected")
     } else {
@@ -680,21 +671,76 @@ pub fn check_mcp(
             health.len()
         ));
     }
+    if !anonymous.is_empty() {
+        details.push(format!(
+            "connected without a token (auth = \"optional\"): {}",
+            anonymous.join(", ")
+        ));
+    }
     if ready == health.len() {
         return Check::ok("mcp", details.join(" · "));
     }
-    if !failed.is_empty() {
-        details.push(format!("not answering: {}", failed.join(", ")));
+    let mut fixes = Vec::new();
+    if !auth_failed.is_empty() {
+        details.push(format!(
+            "auth_failed, not connected: {}",
+            auth_failed.join(", ")
+        ));
+        fixes.push(format!(
+            "set each missing token variable in the daemon's environment and restart the \
+             daemon, or mark the server `auth = \"optional\"`; `{command} mcp list` shows it"
+        ));
     }
-    if !unknown.is_empty() {
-        details.push(format!("not contacted yet: {}", unknown.join(", ")));
-    }
-    Check::warn(
-        "mcp",
-        details.join(" · "),
-        format!(
+    if let Some(retryable) = mcp_retryable(health) {
+        details.push(retryable);
+        fixes.push(format!(
             "`{command} mcp refresh <server>` retries; their tools are withheld until one does"
-        ),
+        ));
+    }
+    Check::warn("mcp", details.join(" · "), fixes.join("; "))
+}
+
+/// Servers a refresh may bring back: those that did not answer, and those not
+/// contacted yet. A server that failed auth is not one: its token is read at
+/// daemon start.
+fn mcp_retryable(health: &[aether_core::mcp::McpServerHealth]) -> Option<String> {
+    use aether_core::mcp::McpServerState;
+    let names = |state: McpServerState| -> Vec<&str> {
+        health
+            .iter()
+            .filter(|h| h.state == state && !h.auth_failed())
+            .map(|h| h.name.as_str())
+            .collect()
+    };
+    let mut parts = Vec::new();
+    let failed = names(McpServerState::Failed);
+    if !failed.is_empty() {
+        parts.push(format!("not answering: {}", failed.join(", ")));
+    }
+    let unknown = names(McpServerState::Unknown);
+    if !unknown.is_empty() {
+        parts.push(format!("not contacted yet: {}", unknown.join(", ")));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// Servers whose token variable is unset, as `name (VARIABLE unset)`: those
+/// that failed auth, then those that connected without a token because their
+/// auth is optional. Names the variable only; a token is never read here.
+fn mcp_auth_details(health: &[aether_core::mcp::McpServerHealth]) -> (Vec<String>, Vec<String>) {
+    use aether_core::mcp::McpAuthState;
+    let unset = |state: McpAuthState| -> Vec<String> {
+        health
+            .iter()
+            .filter_map(|h| {
+                let auth = h.auth.as_ref().filter(|auth| auth.state == state)?;
+                Some(format!("{} ({} unset)", h.name, auth.token_env))
+            })
+            .collect()
+    };
+    (
+        unset(McpAuthState::AuthFailed),
+        unset(McpAuthState::Anonymous),
     )
 }
 

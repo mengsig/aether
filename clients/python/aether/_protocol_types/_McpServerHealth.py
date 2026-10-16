@@ -10,6 +10,7 @@ class McpServerHealth(TypedDict, total=False):
     """
     A server's health as of the last contact attempt.
     """
+    auth: _protocol.McpAuth | None  # optional
     checked_at: str | None  # optional
     error: str | None  # optional
     name: str

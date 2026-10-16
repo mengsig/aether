@@ -8827,9 +8827,57 @@
       ],
       "type": "object"
     },
+    "McpAuth": {
+      "description": "How a server authenticates. Names the variable, never its value.",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/McpAuthState"
+        },
+        "token_env": {
+          "description": "The environment variable the token is read from.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token_env",
+        "state"
+      ],
+      "type": "object"
+    },
+    "McpAuthState": {
+      "description": "Whether a server that names a token variable got its token.",
+      "oneOf": [
+        {
+          "const": "token",
+          "description": "The variable is set; the server is reached with its value.",
+          "type": "string"
+        },
+        {
+          "const": "auth_failed",
+          "description": "The variable is unset and the token is required: the server is not\ncontacted, so a typo cannot downgrade it to anonymous access.",
+          "type": "string"
+        },
+        {
+          "const": "anonymous",
+          "description": "The variable is unset and the server is configured `auth = \"optional\"`:\nit is reached without a token.",
+          "type": "string"
+        }
+      ]
+    },
     "McpServerHealth": {
       "description": "A server's health as of the last contact attempt.",
       "properties": {
+        "auth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpAuth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present when the server is configured with a token variable."
+        },
         "checked_at": {
           "description": "When the state was last established.",
           "format": "date-time",

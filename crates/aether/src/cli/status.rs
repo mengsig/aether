@@ -172,6 +172,19 @@ fn render_mcp_summary(servers: &[aether_core::mcp::McpServerHealth]) -> String {
     line
 }
 
+/// How a server authenticates, naming the token variable and never a value.
+fn render_mcp_auth(auth: &aether_core::mcp::McpAuth) -> String {
+    use aether_core::mcp::McpAuthState;
+    let variable = &auth.token_env;
+    match auth.state {
+        McpAuthState::Token => format!("token from {variable}"),
+        McpAuthState::AuthFailed => format!("auth_failed: {variable} is unset; not connected"),
+        McpAuthState::Anonymous => {
+            format!("no token: {variable} is unset and auth is optional")
+        }
+    }
+}
+
 /// Configured MCP servers, optionally reconnecting first.
 pub async fn mcp_list(
     socket: impl Into<aether_client::Endpoint>,
@@ -193,11 +206,15 @@ pub async fn mcp_list(
     }
     for s in &servers {
         let state = match s.state {
+            _ if s.auth_failed() => "auth_failed",
             McpServerState::Ready => "ready",
             McpServerState::Failed => "failed",
             McpServerState::Unknown => "not contacted",
         };
         println!("{}  {}  {}", sane(&s.name), state, sane(&s.transport));
+        if let Some(auth) = &s.auth {
+            println!("  auth: {}", sane(&render_mcp_auth(auth)));
+        }
         if let Some(error) = &s.error {
             println!("  error: {}", sane(error));
         }

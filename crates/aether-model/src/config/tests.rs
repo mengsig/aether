@@ -614,6 +614,36 @@ fn a_reserved_name_and_a_cleartext_url_are_refused_at_load() {
     assert!(odd.validate().is_err(), "only http(s) is spoken");
 }
 
+#[test]
+fn an_optional_token_needs_a_token_variable_and_defaults_to_required() {
+    let parsed: McpServerSection =
+        toml::from_str("name = \"notes\"\nurl = \"https://notes.example/mcp\"\ntoken_env = \"T\"")
+            .expect("parses");
+    assert_eq!(parsed.auth, McpAuthMode::Required);
+    let optional: McpServerSection = toml::from_str(
+        "name = \"notes\"\nurl = \"https://notes.example/mcp\"\ntoken_env = \"T\"\nauth = \"optional\"",
+    )
+    .expect("parses");
+    assert_eq!(optional.auth, McpAuthMode::Optional);
+    assert!(optional.validate().is_ok());
+
+    let without_variable = McpServerSection {
+        token_env: None,
+        ..optional
+    };
+    let e = without_variable
+        .validate()
+        .expect_err("nothing to be optional about");
+    assert!(e.contains("token_env"), "{e}");
+
+    let empty = McpServerSection {
+        token_env: Some(" ".into()),
+        ..without_variable
+    };
+    let e = empty.validate().expect_err("an empty variable name");
+    assert!(e.contains("empty"), "{e}");
+}
+
 /// An otherwise empty server section, for tests that vary one field.
 fn server() -> McpServerSection {
     McpServerSection {
@@ -624,6 +654,7 @@ fn server() -> McpServerSection {
         cwd: None,
         url: None,
         token_env: None,
+        auth: McpAuthMode::Required,
         classes: BTreeMap::new(),
         send_caller_meta: false,
     }

@@ -55,6 +55,7 @@ async fn harness(
             // remote tool must be gated.
             classes: BTreeMap::from([("read_note".to_owned(), SideEffectClass::ReadOnly)]),
             send_caller_meta: true,
+            auth: None,
         }],
         None,
         Vec::new().into(),

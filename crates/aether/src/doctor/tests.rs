@@ -1,5 +1,5 @@
 use super::*;
-use aether_core::mcp::{McpServerHealth, McpServerState};
+use aether_core::mcp::{McpAuth, McpAuthState, McpServerHealth, McpServerState};
 use aether_protocol::remote::RemoteStatus;
 
 fn paths(dir: &Path) -> Paths {
@@ -506,6 +506,60 @@ fn an_mcp_server_that_is_not_answering_is_a_warning_with_the_retry() {
     assert!(check.fix.expect("a fix").contains("mcp refresh"));
 }
 
+fn with_auth(name: &str, state: McpServerState, auth: McpAuthState) -> McpServerHealth {
+    McpServerHealth {
+        state,
+        auth: Some(McpAuth {
+            token_env: format!("{}_TOKEN", name.to_uppercase()),
+            state: auth,
+        }),
+        ..McpServerHealth::unknown(name, "http: https://example/mcp")
+    }
+}
+
+#[test]
+fn a_missing_mcp_token_is_reported_by_variable_and_never_as_retryable() {
+    let health = [with_auth(
+        "issues",
+        McpServerState::Failed,
+        McpAuthState::AuthFailed,
+    )];
+    let check = check_mcp(1, &health, "aether");
+    assert_eq!(check.level, Level::Warn);
+    assert!(
+        check
+            .detail
+            .contains("auth_failed, not connected: issues (ISSUES_TOKEN unset)"),
+        "{}",
+        check.detail
+    );
+    assert!(!check.detail.contains("not answering"), "{}", check.detail);
+    let fix = check.fix.expect("a fix");
+    assert!(fix.contains("auth = \"optional\""), "{fix}");
+    assert!(
+        !fix.contains("mcp refresh"),
+        "a refresh cannot find the token: {fix}"
+    );
+}
+
+#[test]
+fn an_optional_mcp_token_connects_and_doctor_says_so_without_the_secret() {
+    let health = [
+        with_auth("notes", McpServerState::Ready, McpAuthState::Anonymous),
+        with_auth("files", McpServerState::Ready, McpAuthState::Token),
+    ];
+    let check = check_mcp(2, &health, "aether");
+    assert_eq!(check.level, Level::Ok);
+    assert!(
+        check
+            .detail
+            .contains("connected without a token (auth = \"optional\"): notes (NOTES_TOKEN unset)"),
+        "{}",
+        check.detail
+    );
+    assert!(!check.detail.contains("FILES_TOKEN"), "{}", check.detail);
+}
+
 #[test]
 fn the_reports_verdict_is_its_worst_check() {
     let report = Report::new(vec![
@@ -588,6 +642,15 @@ fn every_daemon_command_in_doctor_fixes_preserves_the_selected_socket() {
         check_engines(&unavailable, &command),
         check_mcp(1, &[], &command),
         check_mcp(1, &failed, &command),
+        check_mcp(
+            1,
+            &[with_auth(
+                "files",
+                McpServerState::Failed,
+                McpAuthState::AuthFailed,
+            )],
+            &command,
+        ),
     ]);
     for check in report.checks {
         let fix = check.fix.expect("each scenario has a fix");
