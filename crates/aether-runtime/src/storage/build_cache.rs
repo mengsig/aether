@@ -164,6 +164,7 @@ impl Runtime {
         let mut claims = Claims::default();
         for agent in self.store.agents(&AgentFilter::default())? {
             if let Some(dir) = &agent.config.build_cache {
+                claims.clients.push(resolve(dir));
                 claims.clients.push(dir.clone());
             }
             let Some(partition) = crate::build_cache::aether_partition(root, &agent) else {
@@ -197,10 +198,12 @@ fn plan(report: &mut BuildCacheReport, claims: &Claims, max_bytes: u64) -> Vec<u
             entry.leased_by.clone_from(&owner.holders);
             entry.last_used = entry.last_used.max(owner.last_active);
         }
-        let client = claims
-            .clients
-            .iter()
-            .any(|dir| dir.starts_with(&entry.path) || entry.path.starts_with(dir));
+        let real = resolve(&entry.path);
+        let client = claims.clients.iter().any(|dir| {
+            [&entry.path, &real]
+                .into_iter()
+                .any(|path| dir.starts_with(path) || path.starts_with(dir))
+        });
         if client {
             entry.reason = "holds a client's build cache";
         } else if !entry.leased_by.is_empty() {
@@ -230,6 +233,27 @@ fn plan(report: &mut BuildCacheReport, claims: &Claims, max_bytes: u64) -> Vec<u
         chosen.push(index);
     }
     chosen
+}
+
+/// `path` with every link in the part that exists resolved, and the rest
+/// as written, so that two names for one directory compare equal.
+fn resolve(path: &Path) -> PathBuf {
+    debug_assert!(path.is_absolute(), "{} is not absolute", path.display());
+    let mut missing = Vec::new();
+    let mut existing = path;
+    loop {
+        if let Ok(real) = fs::canonicalize(existing) {
+            return missing
+                .iter()
+                .rev()
+                .fold(real, |real, part| real.join(part));
+        }
+        let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
+            return path.to_path_buf();
+        };
+        missing.push(name);
+        existing = parent;
+    }
 }
 
 /// Rename each chosen partition into `trash`, which is cheap enough for the

@@ -295,6 +295,43 @@ async fn a_partition_holding_a_client_named_cache_is_never_evicted() {
 }
 
 #[tokio::test]
+async fn a_client_cache_named_through_a_link_still_protects_its_partition() {
+    let f = Fixture::new(0).await;
+    let (_, linked) = f.agent(AgentStatus::Completed { summary: None }, 5, 8);
+    let (_, through_parent) = f.agent(AgentStatus::Completed { summary: None }, 5, 8);
+    let links = f._cache.path().join("links");
+    fs::create_dir(&links).unwrap();
+    std::os::unix::fs::symlink(&linked, links.join("client-cache")).unwrap();
+    std::os::unix::fs::symlink(&through_parent, links.join("parent")).unwrap();
+    for client_dir in [
+        links.join("client-cache"),
+        links.join("parent/cargo-target/not-yet-made"),
+    ] {
+        let (mut client, _) = f.agent(AgentStatus::Running, 1, 0);
+        client.config.build_cache = Some(client_dir);
+        f.runtime
+            .apply(Commit::new().mutate(Mutation::UpsertAgent(client)))
+            .unwrap();
+    }
+
+    let swept = f.gc(false);
+    for kept in [&linked, &through_parent] {
+        assert_eq!(entry(&swept, kept).reason, "holds a client's build cache");
+        assert!(built(kept), "{}", kept.display());
+    }
+}
+
+#[test]
+fn resolving_keeps_the_part_that_does_not_exist_yet() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = fs::canonicalize(dir.path()).unwrap();
+    std::os::unix::fs::symlink(&real, real.join("alias")).unwrap();
+    assert_eq!(resolve(&real.join("alias/a/b")), real.join("a/b"));
+    assert_eq!(resolve(&real.join("alias")), real);
+    assert_eq!(resolve(Path::new("/")), Path::new("/"));
+}
+
+#[tokio::test]
 async fn a_claim_marks_only_a_partition_it_creates() {
     let f = Fixture::new(0).await;
     let (agent, partition) = f.agent(AgentStatus::Running, 3, 8);
