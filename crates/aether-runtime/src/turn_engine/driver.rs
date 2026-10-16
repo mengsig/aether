@@ -212,7 +212,10 @@ pub(super) async fn drive(
     // Bound, not thrown away: a detected kill-switch bypass below needs to
     // cancel the process this token was given to, not just close its stdin.
     let engine_cancel = cancel.child_token();
-    let mut run = match engine.run(turn, engine_cancel.clone()).await {
+    let mut run = match engine
+        .run_with_context(turn, ctx.launch_context(), engine_cancel.clone())
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             return Ok(failed_launch(e, pricing, cancel.is_cancelled()));

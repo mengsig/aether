@@ -13,7 +13,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::detect::{self, DetectError, EngineVersion};
 use crate::offline::{self, executable_on_path};
-use crate::{Engine, EngineError, EngineImage, EngineKind, EngineRun, EngineTurn, run_process};
+use crate::{
+    Engine, EngineError, EngineImage, EngineKind, EngineLaunchContext, EngineRun, EngineTurn,
+    run_process_with_env,
+};
 
 // Native coordination would create state outside Aether's tracked tree and
 // durable scheduler. Keep native workspace/research tools, including background
@@ -299,6 +302,26 @@ impl Engine for ClaudeCodeEngine {
         turn: EngineTurn,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
+        self.launch(turn, None, cancel).await
+    }
+
+    async fn run_with_context(
+        &self,
+        turn: EngineTurn,
+        context: EngineLaunchContext,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        self.launch(turn, Some(context), cancel).await
+    }
+}
+
+impl ClaudeCodeEngine {
+    async fn launch(
+        &self,
+        turn: EngineTurn,
+        context: Option<EngineLaunchContext>,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
         if !turn.summary_only {
             self.validate_network_policy(turn.network_access)?;
         }
@@ -306,13 +329,15 @@ impl Engine for ClaudeCodeEngine {
         let cwd: PathBuf = turn.cwd.clone();
         let mut state = ParseState::for_turn(&turn);
         let outstanding = state.outstanding.clone();
-        let mut process = run_process(
+        let environment = telemetry::environment(context, &turn.hidden_env);
+        let mut process = run_process_with_env(
             &self.program,
             args,
             cwd,
             &turn.hidden_env,
             turn.temp_dir.as_deref(),
             &turn.build_env,
+            &environment,
             user_message_line(&turn.prompt, &turn.images),
             true,
             Some(input::interrupt_line()),
@@ -345,6 +370,7 @@ impl Engine for ClaudeCodeEngine {
 
 mod input;
 mod ownership;
+mod telemetry;
 use ownership::session_log_paths;
 mod session_cost;
 mod stream;

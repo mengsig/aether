@@ -205,6 +205,14 @@ pub(crate) struct TurnCtx {
 }
 
 impl TurnCtx {
+    pub(crate) fn launch_context(&self) -> aether_engine::EngineLaunchContext {
+        aether_engine::EngineLaunchContext {
+            run_id: self.agent.run,
+            agent_id: self.agent.id,
+            task_id: self.task.as_ref().map(|task| task.id),
+        }
+    }
+
     pub(crate) fn add_usage(&mut self, usage: aether_core::model::Usage) {
         self.agent.stats.usage += usage;
         self.turn_usage += usage;

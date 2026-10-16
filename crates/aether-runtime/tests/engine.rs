@@ -53,6 +53,8 @@ mod extended_context;
 mod handoff;
 #[path = "engine/interruptions.rs"]
 mod interruptions;
+#[path = "engine/launch_context.rs"]
+mod launch_context;
 #[path = "engine/memory.rs"]
 mod memory;
 #[path = "engine/native_cache_ttl_pricing.rs"]
