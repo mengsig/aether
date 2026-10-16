@@ -11,6 +11,7 @@ your machine, so a check that fails in CI fails locally with the same command.
 | `test` | `ubuntu-latest` | every pull request, every push to `main` | `scripts/ci.sh test` |
 | `binary` | `ubuntu-latest` | every pull request, every push to `main` | `scripts/ci.sh binary` |
 | `macos` | `macos-latest` | `ci:macos` label or manual dispatch, from `.github/workflows/ci-macos.yml` | `scripts/ci.sh` |
+| `upgrade` | `ubuntu-latest` | nightly, release tags, pull requests that touch the protocol, client, bridge or store, manual dispatch, from `.github/workflows/upgrade.yml` | `scripts/upgrade_compat.py` ([Upgrade lane](#upgrade-lane)) |
 
 The three stages together are the whole script, split so they run side by side:
 
@@ -113,6 +114,72 @@ exception: `cargo test` reads both, so they count as code.
 
 `scripts/test_ci_scope.py` holds the list: it fails when the script and the
 push trigger of `ci.yml` disagree, or when `pull_request` gains a path filter.
+
+## Upgrade lane
+
+The field incident behind it: after `aether update`, the old daemon kept
+running and launched the new binary as every native session's MCP bridge, and
+those bridges closed. `.github/workflows/upgrade.yml` runs this tree's build
+against the previous release so that cannot come back unnoticed. It runs
+nightly, on every pushed release tag, on a pull request that changes the
+protocol, the client, the bridge or the store (not a required check), and by
+manual dispatch, which can name the release to test against.
+
+The previous release is the newest published release at or below the workspace
+version: on a release tag, the one before it. The lane downloads its x86_64
+Linux archive, checks it against its `.sha256`, and runs in one temporary
+directory with its own config, data, socket, home, installed binary and TCP
+port. A fake `claude` (`scripts/upgrade_compat_engine.py`) on its `PATH` makes
+native sessions possible without credentials: it starts the MCP bridge Aether
+names and calls `inspect_state` through it. A fake `ssh` runs the remote
+command on the same machine.
+
+1. **The previous daemon across an update.** The previous release's daemon
+   starts from the installed path. During a native session, this build replaces
+   the installed binary the way `aether update` does. The bridge already
+   running must still answer tool calls, and a bridge started afterwards, which
+   the previous daemon takes from the installed path and is therefore this
+   build, must connect and serve tools.
+2. **This build's clients against the previous daemon.** The Rust client
+   (`cargo run -p aether-client --example negotiate`) connects over the Unix
+   socket and over TCP, and must agree on the newest protocol both sides
+   speak; `aether status` runs over the socket, and `aether --remote previous
+   status` over SSH through the previous release's `bridge --stdio`. A command
+   the previous daemon does not announce (`aether workspace diff`, while it
+   lacks `workspace_review`) must be refused by the client before anything
+   is sent.
+3. **An interrupted upgrade of the store.** The previous daemon's store is
+   copied once per kill point, and this build's daemon is killed with
+   `SIGKILL` at start, once the pre-migration backup has begun, once it is
+   written, and after 50, 150 and 400 ms. The kill must leave the store at
+   the old or the new schema, never between, and the next start must either
+   complete the migration with every agent kept, or exit with a message that
+   names the store. When the previous release is on this tree's schema, the
+   lane first undoes the newest migration block (`REWINDS` in
+   `scripts/upgrade_compat_migration.py`) so there is a migration to
+   interrupt; a schema bump must add its undo there, and
+   `scripts/test_upgrade_compat.py` fails until it does.
+4. **This build's daemon across a replaced binary.** This build's daemon
+   starts on the upgraded store, and the previous release replaces the
+   installed binary mid-session. Both bridges of the session must be the
+   daemon's own copy under `<data>/bin`, byte for byte this build.
+
+The lane builds a debug binary without debug info, so a run with a warm cache
+takes a few minutes, of which the cases take well under one; the run is capped
+at 30 minutes and the cases at 10. It writes little beyond the two binaries
+and a few small stores. On a failure the temporary directory, without its
+binaries, is uploaded as the `upgrade-lane-sandbox` artifact. Locally:
+
+```sh
+cargo build -p aether -p aether-client --bin aether --example negotiate
+python3 scripts/upgrade_compat.py            # downloads the previous release
+python3 scripts/upgrade_compat.py --previous v1.0.9 --keep
+```
+
+It needs Linux on x86_64 or aarch64, Python 3.12+ and network access to
+github.com; `--previous-binary PATH` runs it offline against a binary you
+already have. `scripts/test_upgrade_compat.py`, part of the `binary` stage,
+tests the release choice, the schema rewind and the fakes without the network.
 
 ## macOS: label or manual dispatch only
 
