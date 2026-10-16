@@ -75,6 +75,10 @@ pub struct DaemonStatus {
     /// Absent otherwise, and on older daemons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_disk: Option<LowDisk>,
+    /// The executable engines launch as the MCP bridge: the daemon's own
+    /// build. Absent when engines have no bridge, and on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge: Option<String>,
 }
 
 /// One agent's copy of a fanned-out message.

@@ -4713,6 +4713,13 @@
           "default": "yolo",
           "description": "What a new agent's approval policy defaults to."
         },
+        "bridge": {
+          "description": "The executable engines launch as the MCP bridge: the daemon's own\nbuild. Absent when engines have no bridge, and on older daemons.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "default_model": {
           "anyOf": [
             {

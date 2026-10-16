@@ -16,6 +16,9 @@ pub async fn status(socket: impl Into<aether_client::Endpoint>, json: bool) -> a
         sane(&s.instance_id)
     );
     println!("started  {}", s.started_at.to_rfc3339());
+    if let Some(bridge) = &s.bridge {
+        println!("bridge   {}", sane(bridge));
+    }
     println!(
         "model    {}",
         s.default_model

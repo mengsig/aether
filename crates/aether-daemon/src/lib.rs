@@ -3,6 +3,7 @@
 
 mod agent_temp;
 mod authz;
+mod bridge;
 mod connection;
 #[cfg(test)]
 mod env_tests;
@@ -259,6 +260,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         builtins.background().cloned(),
     );
     let tools = Arc::new(builtins.with_mcp(mcp.clone()));
+    let bridge = bridge::Bridge::prepare(&store_path);
     let agent_temp_root = agent_temp::prepare(
         models.config().agents.temp_root.as_deref(),
         &store_path,
@@ -300,12 +302,10 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 config.store_path.with_extension("delegated-workspaces"),
             ),
             agent_temp_root,
-            bridge: std::env::current_exe()
-                .ok()
-                .map(|command| aether_runtime::BridgeConfig {
-                    command,
-                    socket: socket_address.clone(),
-                }),
+            bridge: bridge.as_ref().map(|bridge| aether_runtime::BridgeConfig {
+                command: bridge.command().to_path_buf(),
+                socket: socket_address.clone(),
+            }),
             disk_guard: disk_floor.map(|floor| aether_runtime::DiskGuard {
                 path: store_path.clone(),
                 floor,
@@ -433,7 +433,12 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     } else {
         Ok(())
     };
-    result.and(store_sync).and(socket_cleanup).and(pid_cleanup)
+    let bridge_cleanup = bridge.map_or(Ok(()), bridge::Bridge::remove);
+    result
+        .and(store_sync)
+        .and(socket_cleanup)
+        .and(pid_cleanup)
+        .and(bridge_cleanup)
 }
 
 /// A valid configured alias can resolve to a target longer than `sun_path`.

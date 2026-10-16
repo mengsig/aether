@@ -10,6 +10,8 @@ pub mod agent_temp;
 pub mod approval;
 pub mod artifact;
 pub mod attachment;
+#[cfg(unix)]
+pub mod bridge_bin;
 pub mod budget;
 pub mod checkpoint;
 pub mod disk;

@@ -538,23 +538,23 @@ fn not_a_directory(root: &Path) -> io::Error {
     ))
 }
 
-fn file_type(stat: &Stat) -> FileType {
+pub(crate) fn file_type(stat: &Stat) -> FileType {
     FileType::from_raw_mode(stat.st_mode)
 }
 
 /// The permission bits, sticky bit included.
-fn mode_bits(stat: &Stat) -> u32 {
+pub(crate) fn mode_bits(stat: &Stat) -> u32 {
     // `st_mode` is narrower than u32 on some platforms.
     #[allow(clippy::unnecessary_cast)]
     let mode = stat.st_mode as u32;
     mode & 0o7777
 }
 
-fn refused(message: String) -> io::Error {
+pub(crate) fn refused(message: String) -> io::Error {
     io::Error::new(io::ErrorKind::PermissionDenied, message)
 }
 
-fn context(error: impl Into<io::Error>, what: &str, path: &Path) -> io::Error {
+pub(crate) fn context(error: impl Into<io::Error>, what: &str, path: &Path) -> io::Error {
     let error = error.into();
     io::Error::new(error.kind(), format!("{what} {}: {error}", path.display()))
 }

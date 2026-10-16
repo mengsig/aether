@@ -14,6 +14,7 @@ class DaemonStatus(TypedDict, total=False):
     agents_suspended: int  # optional
     agents_waiting: int
     approval_default: _protocol.ApprovalDefault  # optional
+    bridge: str | None  # optional
     default_model: _protocol.ModelRef | None  # optional
     engine_turns_running: int  # optional
     engines: list[str]  # optional

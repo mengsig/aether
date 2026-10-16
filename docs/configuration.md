@@ -233,6 +233,10 @@ size bounds still apply. Day values must be integers from 0 through 65535;
 `backups_keep` and `gc_interval_seconds` must be positive. Unknown keys and
 invalid values fail configuration loading. A zero grace period is allowed.
 
+Each daemon's copy of its own build, in `bin/` beside the database, is kept
+while that daemon runs and removed once it has stopped; `aether storage`
+lists these under `bridge_copies`. No setting changes this.
+
 Eligible clean delegated workspaces are removed after the grace period, without
 waiting fourteen days. Ownership comes from an agent's workspace root at or
 inside that workspace, the manifest delegator's ancestor/descendant chain,

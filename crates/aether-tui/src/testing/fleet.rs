@@ -155,6 +155,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
             run_budget_usd: None,
             mcp: Vec::new(),
             low_disk: None,
+            bridge: None,
         })),
     });
 

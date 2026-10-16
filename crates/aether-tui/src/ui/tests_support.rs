@@ -46,5 +46,6 @@ pub(crate) fn quiet_status() -> aether_protocol::DaemonStatus {
         runs: Vec::new(),
         mcp: Vec::new(),
         low_disk: None,
+        bridge: None,
     }
 }

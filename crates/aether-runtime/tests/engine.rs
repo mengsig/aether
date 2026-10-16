@@ -29,6 +29,8 @@ use scripted::{Reply, ScriptedEngine};
 
 #[path = "engine/attachments.rs"]
 mod attachments;
+#[path = "engine/bridge_build.rs"]
+mod bridge_build;
 #[path = "engine/budgets.rs"]
 mod budgets;
 #[path = "engine/compaction.rs"]
