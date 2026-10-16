@@ -26,6 +26,23 @@ pub fn negotiate(hello: &Hello) -> Result<u32, ErrorReply> {
     ))
 }
 
+/// The window a refusal from [`negotiate`] says its daemon serves. Every
+/// build in the window words it the same; any other wording yields `None`.
+pub fn served_window(refusal: &str) -> Option<std::ops::RangeInclusive<u32>> {
+    let (_, rest) = refusal.split_once("this daemon speaks ")?;
+    let mut words = rest.split_whitespace();
+    let start: u32 = words.next()?.parse().ok()?;
+    if words.next()? != "to" {
+        return None;
+    }
+    let end: u32 = words
+        .next()?
+        .trim_end_matches(|c: char| !c.is_ascii_digit())
+        .parse()
+        .ok()?;
+    (start <= end).then_some(start..=end)
+}
+
 /// Encode one server frame as a client speaking `version` reads it. Every
 /// shape this build changed for an older client in the window is rewritten
 /// here, keyed on `version`, so the daemon's writer never has to know which.
@@ -144,6 +161,29 @@ mod tests {
     use aether_core::agent::{Agent, AgentStatus, BlockReason};
     use aether_core::github::{GithubRepositoryConfig, GithubWatcherStatus};
     use aether_core::inbox::{InboxItem, InboxKind};
+
+    #[test]
+    fn a_refusal_names_the_window_it_serves() {
+        let mut newer = Hello::new("next", "test");
+        newer.protocol_version = PROTOCOL_VERSION + 1;
+        let refusal = negotiate(&newer).expect_err("outside the window");
+        assert_eq!(
+            served_window(&refusal.message),
+            Some(MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION)
+        );
+        let quoted = format!("{}. This build speaks protocol 21", refusal.message);
+        assert_eq!(
+            served_window(&quoted),
+            Some(MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION)
+        );
+        for other in [
+            "first frame must be hello",
+            "this daemon speaks 19 to 17",
+            "",
+        ] {
+            assert_eq!(served_window(other), None, "{other}");
+        }
+    }
 
     #[test]
     fn v15_watcher_allowlists_are_preserved_in_the_served_window() {

@@ -98,6 +98,20 @@ the wire changes are:
 A version 17 daemon cannot decode these commands and ignores the new keys, so
 it refuses a version 18 hello as outside its window rather than dropping them.
 
+The Rust client negotiates on every transport that can open a fresh
+connection: the Unix socket, the token listener and SSH. Its first hello asks
+for this build's newest version. When the daemon refuses it, the client
+connects again at the newest version that is in both windows, read from the
+refusal ("this daemon speaks A to B"), or one older when the refusal does not
+say. It stops when no version is left in common, and reports both windows.
+
+A command a newer version added is refused by the client, before it is
+written, when the connection speaks an older version: the error is
+`unimplemented` and names the version it needs. A command added within a
+version is announced by a `Welcome` feature instead, and refused the same way
+when the daemon does not list it. `Command::introduced` in `aether-protocol`
+classifies every command.
+
 The versioning contract and negotiation are defined in `aether-protocol`'s
 `PROTOCOL_VERSION` and `compat` module.
 

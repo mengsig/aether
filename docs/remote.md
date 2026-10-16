@@ -1864,8 +1864,10 @@ socket = "/run/user/1000/aether/aetherd.sock" # optional; host default otherwise
   an environment-only remote. Typing `--remote` with `--socket` or `--local`
   is exit code 2. A typed remote overrides `AETHER_SOCKET`. Profile management
   (`remote add`, `list`, `remove`) always operates on the client's profiles.
-- Protocols 17, 18 and 19 are supported. If the newest hello is refused, the
-  client opens a fresh SSH carrier and tries the next older one, down to 17.
+- Protocols 17 through 20 are supported. If the newest hello is refused, the
+  client opens a fresh SSH carrier and tries the newest older version the
+  daemon's refusal says it serves, down to 17, as it does on the Unix socket
+  and the token listener ([versions](protocol.md#versions)).
   Incompatible errors report the client version and the daemon's served
   window. They never suggest automatically restarting the host's daemon.
   Protocol 17 hosts can run existing fleet commands; protocol 18 host
