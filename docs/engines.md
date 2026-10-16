@@ -841,3 +841,29 @@ turn's first transient failure, partial progress does not reset it, and no
 attempt starts after it ends. The agent then fails, the error names the class
 and how long it retried, and every responsible ancestor is told. The turn
 keeps its scheduler and engine-cap slot while it waits.
+
+### Launch identity and child telemetry
+
+The runtime calls `Engine::run_with_context(turn, context, cancel)` for normal,
+resumed and checkpoint launches. `EngineLaunchContext` contains typed `run_id`,
+`agent_id` and optional `task_id` values. Its default implementation calls `run`
+and ignores the context, so existing engines and `EngineTurn` struct literals
+continue to work unchanged. Override the hook to consume runtime identity.
+
+For Claude Code, when `CLAUDE_CODE_ENABLE_TELEMETRY` is present in the daemon's
+inherited environment, Aether appends `aether.run_id`, `aether.agent_id` and,
+when a task is assigned, `aether.task_id` to `OTEL_RESOURCE_ATTRIBUTES`.
+Existing attributes are preserved verbatim, including existing Aether keys;
+the current launch's attributes are appended last. Taskless chat launches omit
+the task attribute rather than inventing an id. Aether does not enable telemetry
+or configure exporters itself; see [Claude Code monitoring](https://code.claude.com/docs/en/monitoring-usage).
+
+Aether replaces the child's `TRACEPARENT` with a version-00 sampled parent for
+that run: the trace id is the run ULID as 32 lowercase hex digits; the parent
+span id is the XOR of its high and low 64-bit halves as 16 lowercase hex digits.
+Zero values are replaced with one to satisfy W3C Trace Context. This stable,
+synthetic parent correlates siblings and resumed/checkpoint launches; Aether
+does not yet export the corresponding span. Direct `run` calls without launch
+context, and launches without the telemetry variable, retain their environment.
+Hidden environment variables remain hidden and the daemon environment is never
+modified. Settings that enable telemetry only inside Claude Code are not detected.

@@ -34,11 +34,11 @@ pub(crate) enum MemoryCmd {
     },
     /// List durable memories, most important first.
     List {
-        /// Only this scope: `global`, `role:<role>`, `agent:<id>`,
-        /// `subtree:<agent id>`, `repo-role:<role>@<repository>`, or a
+        /// Only this scope: `global`, `role:<role>`, `agent:<agent>`,
+        /// `subtree:<agent>`, `repo-role:<role>@<repository>`, or a
         /// repository id.
         #[arg(long)]
-        scope: Option<String>,
+        scope: Option<cli::MemoryScopeRef>,
         /// Full-text search over memory text and tags.
         #[arg(long)]
         text: Option<String>,
@@ -132,7 +132,7 @@ pub(crate) enum MemoryCmd {
             required_unless_present = "invocation",
             conflicts_with = "invocation"
         )]
-        task: Option<String>,
+        task: Option<cli::TaskRef>,
         /// The one model call with this invocation id.
         #[arg(long)]
         invocation: Option<String>,
@@ -169,13 +169,13 @@ pub(crate) struct RememberArgs {
 pub(crate) struct ApprovalScopeArgs {
     /// One agent only.
     #[arg(long, conflicts_with_all = ["subtree", "run"])]
-    agent: Option<String>,
+    agent: Option<cli::AgentRef>,
     /// An agent and all its descendants.
     #[arg(long, conflicts_with_all = ["agent", "run"])]
-    subtree: Option<String>,
+    subtree: Option<cli::AgentRef>,
     /// Every agent in one run.
     #[arg(long, conflicts_with_all = ["agent", "subtree"])]
-    run: Option<String>,
+    run: Option<cli::RunRef>,
 }
 
 impl From<ApprovalScopeArgs> for cli::RuleScopeArgs {
@@ -195,13 +195,13 @@ impl From<ApprovalScopeArgs> for cli::RuleScopeArgs {
 pub(crate) struct ScopeArgs {
     /// One agent only.
     #[arg(long, conflicts_with_all = ["subtree", "run", "everywhere"])]
-    pub(crate) agent: Option<String>,
+    pub(crate) agent: Option<cli::AgentRef>,
     /// An agent and everything it delegates to.
     #[arg(long, conflicts_with_all = ["agent", "run", "everywhere"])]
-    pub(crate) subtree: Option<String>,
+    pub(crate) subtree: Option<cli::AgentRef>,
     /// Every agent in one run.
     #[arg(long, conflicts_with_all = ["agent", "subtree", "everywhere"])]
-    pub(crate) run: Option<String>,
+    pub(crate) run: Option<cli::RunRef>,
     /// Every agent this daemon will ever run. Say it deliberately.
     #[arg(long, conflicts_with_all = ["agent", "subtree", "run"])]
     pub(crate) everywhere: bool,
@@ -230,7 +230,7 @@ pub(crate) enum RunsCmd {
     /// What a run did, composed from its events: agents, tasks, tools, cost
     /// per subtree, approvals, failures and the timeline.
     Report {
-        run: String,
+        run: cli::RunRef,
         /// The whole document as JSON, for another process.
         #[arg(long, conflicts_with = "md")]
         json: bool,
@@ -245,7 +245,7 @@ pub(crate) enum RunsCmd {
     /// Write a finished run - events, snapshots, checkpoints, artifacts - to
     /// one file, to inspect it in another daemon.
     Export {
-        run: String,
+        run: cli::RunRef,
         #[arg(long)]
         json: bool,
         /// The file to write. The daemon opens it, so it must be reachable
@@ -267,9 +267,9 @@ pub(crate) enum ArtifactsCmd {
     /// List artifacts, newest first.
     List {
         #[arg(long)]
-        agent: Option<String>,
+        agent: Option<cli::AgentRef>,
         #[arg(long)]
-        task: Option<String>,
+        task: Option<cli::TaskRef>,
         /// Skip artifacts whose bytes retention has dropped.
         #[arg(long)]
         with_bytes: bool,
@@ -373,7 +373,7 @@ pub(crate) enum GithubWatcherCmd {
                 "spawn_backend", "spawn_network",
             ]
         )]
-        agent: Option<String>,
+        agent: Option<cli::AgentRef>,
         /// Thread dispatch: role label for the agent spawned per thread.
         #[arg(long, requires = "spawn_objective")]
         spawn_role: Option<String>,
@@ -498,7 +498,7 @@ pub(crate) enum ScheduleCmd {
                 "cost_budget", "max_turns", "backend", "network",
             ]
         )]
-        target: Option<String>,
+        target: Option<cli::AgentRef>,
         /// Start a new root run with this task on each occurrence.
         #[arg(long)]
         objective: Option<String>,
@@ -562,32 +562,32 @@ pub(crate) enum ScheduleCmd {
     },
     List {
         #[arg(long)]
-        target: Option<String>,
+        target: Option<cli::AgentRef>,
         #[arg(long)]
         json: bool,
     },
     Inspect {
-        id: String,
+        id: cli::ScheduleRef,
         #[arg(long)]
         json: bool,
     },
     Pause {
-        id: String,
+        id: cli::ScheduleRef,
         #[arg(long)]
         json: bool,
     },
     Resume {
-        id: String,
+        id: cli::ScheduleRef,
         #[arg(long)]
         json: bool,
     },
     Cancel {
-        id: String,
+        id: cli::ScheduleRef,
         #[arg(long)]
         json: bool,
     },
     History {
-        id: String,
+        id: cli::ScheduleRef,
         #[arg(long, default_value_t = 100)]
         limit: usize,
         #[arg(long)]
@@ -711,7 +711,7 @@ pub(crate) enum StorageCmd {
 pub(crate) enum WorkspaceCmd {
     /// Files, diffstat and commits an agent's turns made.
     Diff {
-        agent: String,
+        agent: cli::AgentRef,
         /// Also print the patch, capped for transport.
         #[arg(long)]
         patch: bool,
@@ -721,13 +721,13 @@ pub(crate) enum WorkspaceCmd {
     /// Land a finished child's isolated workspace in its source repository.
     /// Exits 1 with the conflicting paths when the source changed them too.
     Integrate {
-        agent: String,
+        agent: cli::AgentRef,
         #[arg(long)]
         json: bool,
     },
     /// Delete an agent's isolated workspace and the work in it.
     Discard {
-        agent: String,
+        agent: cli::AgentRef,
         /// Discard even while an agent that uses the workspace is live; it
         /// is not stopped.
         #[arg(long)]

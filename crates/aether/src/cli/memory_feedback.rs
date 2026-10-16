@@ -1,4 +1,4 @@
-use aether_core::id::{InvocationId, MemoryFeedbackId, MemoryId, TaskId};
+use aether_core::id::{InvocationId, MemoryFeedbackId, MemoryId};
 use aether_core::memory_feedback::{
     FeedbackRanking, MemoryEvidence, MemoryFeedbackSpec, MemoryVerdict, RANKING_MIN_VOTES,
     RANKING_WINDOW,
@@ -34,7 +34,7 @@ pub enum MemoryFeedbackCmd {
 pub struct MemoryFeedbackArgs {
     memory: MemoryId,
     #[arg(long)]
-    task: TaskId,
+    task: super::TaskRef,
     #[arg(long)]
     invocation: Option<InvocationId>,
     #[arg(long, value_parser = parse_verdict)]
@@ -64,7 +64,7 @@ pub async fn memory_feedback(
         MemoryFeedbackCmd::Record { feedback, json } => {
             let spec = MemoryFeedbackSpec {
                 memory: feedback.memory,
-                task: feedback.task,
+                task: feedback.task.resolve(&client).await?,
                 invocation: feedback.invocation,
                 verdict: feedback.verdict,
                 evidence: feedback.evidence,

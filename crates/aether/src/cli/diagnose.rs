@@ -19,11 +19,16 @@ pub async fn diagnose(
     socket: PathBuf,
     explicit_socket: bool,
     out: PathBuf,
-    run: Option<RunId>,
+    run: Option<super::RunRef>,
     last: usize,
     json: bool,
 ) -> anyhow::Result<()> {
     anyhow::ensure!((1..=100).contains(&last), "--last must be 1..=100");
+    // Before the bundle exists, so a reference that names nothing creates nothing.
+    let run = match run {
+        Some(run) => Some(requested_run(&socket, &run).await?),
+        None => None,
+    };
     let out = std::path::absolute(out)?;
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
@@ -173,6 +178,20 @@ fn write_json(
 }
 
 // Error classes and OS codes diagnose failures without copying a server's error text.
+/// A full id is read as it is, even with no daemon: this command must work
+/// without one. Anything else asks the daemon which run it names.
+async fn requested_run(socket: &Path, run: &super::RunRef) -> anyhow::Result<RunId> {
+    if let Some(id) = run.full_id() {
+        return Ok(id);
+    }
+    let connected = tokio::time::timeout(Duration::from_secs(5), Client::connect(socket)).await;
+    let client = connected
+        .context("timed out reaching the daemon to resolve --run")?
+        .context("reaching the daemon to resolve --run; give the full run id")?;
+    let client = client.with_request_timeout(Duration::from_secs(5));
+    run.resolve(&client, &socket.into()).await
+}
+
 fn client_error(error: &ClientError) -> Value {
     let kind = match error {
         ClientError::Io(error) => {

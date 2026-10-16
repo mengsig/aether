@@ -616,3 +616,116 @@ fn storage_command_supports_status_and_dry_run() {
         })
     ));
 }
+
+mod id_references {
+    use super::*;
+    use std::any::TypeId;
+
+    /// Argument ids that name an agent, run, task, approval or schedule, or
+    /// a memory scope that may hold an agent. Matched by name, so a new
+    /// argument called one of these is checked too.
+    const ID_ARGUMENTS: &[&str] = &[
+        "scope",
+        "agent",
+        "subtree",
+        "run",
+        "task",
+        "owner",
+        "depends_on",
+        "approval",
+        "target",
+    ];
+    /// Strict on purpose: engines spawn it with the full id of their agent.
+    const STRICT: &[&str] = &["aether mcp-bridge agent"];
+    /// Named like an id argument but holding something else.
+    const NOT_IDS: &[&str] = &["aether set approval"];
+
+    fn arguments(command: &clap::Command, prefix: &str, out: &mut Vec<(String, clap::Arg)>) {
+        let path = if prefix.is_empty() {
+            command.get_name().to_owned()
+        } else {
+            format!("{prefix} {}", command.get_name())
+        };
+        for arg in command.get_arguments() {
+            out.push((format!("{path} {}", arg.get_id()), arg.clone()));
+        }
+        for sub in command.get_subcommands() {
+            arguments(sub, &path, out);
+        }
+    }
+
+    fn takes_an_id(path: &str) -> bool {
+        let (command, arg) = path.rsplit_once(' ').expect("path names an argument");
+        ID_ARGUMENTS.contains(&arg) || (arg == "id" && command.starts_with("aether schedule "))
+    }
+
+    fn resolves(arg: &clap::Arg) -> bool {
+        let parser = arg.get_value_parser().type_id();
+        [
+            TypeId::of::<cli::AgentRef>(),
+            TypeId::of::<cli::RunRef>(),
+            TypeId::of::<cli::TaskRef>(),
+            TypeId::of::<cli::ApprovalRef>(),
+            TypeId::of::<cli::ScheduleRef>(),
+            TypeId::of::<cli::TargetRef>(),
+            TypeId::of::<cli::MemoryScopeRef>(),
+            TypeId::of::<cli::OperatorScopeRef>(),
+        ]
+        .iter()
+        .any(|kind| parser == *kind)
+    }
+
+    #[test]
+    fn every_id_argument_goes_through_the_resolver() {
+        let mut all = Vec::new();
+        arguments(&Args::command(), "", &mut all);
+        let id_arguments: Vec<_> = all
+            .iter()
+            .filter(|(path, arg)| arg.get_action().takes_values() && takes_an_id(path))
+            .filter(|(path, _)| !NOT_IDS.contains(&path.as_str()))
+            .collect();
+        // Enough to know the walk reached the nested subcommands.
+        assert!(id_arguments.len() > 30, "found only {}", id_arguments.len());
+        let strict: Vec<_> = id_arguments
+            .iter()
+            .filter(|(path, arg)| !STRICT.contains(&path.as_str()) && !resolves(arg))
+            .map(|(path, _)| path.as_str())
+            .collect();
+        assert!(strict.is_empty(), "parse these as references: {strict:?}");
+        for path in NOT_IDS {
+            assert!(
+                all.iter().any(|(p, _)| p == path),
+                "{path} no longer exists"
+            );
+        }
+        for path in STRICT {
+            let (_, arg) = id_arguments
+                .iter()
+                .find(|(p, _)| p == path)
+                .unwrap_or_else(|| panic!("{path} is exempt but no longer exists"));
+            assert!(!resolves(arg), "{path} must stay a full id");
+        }
+    }
+
+    #[test]
+    fn references_reach_the_commands_as_typed() {
+        let parsed = Args::try_parse_from(["aether", "send", "@last", "hello"]).expect("CLI");
+        let Some(Cmd::Send { agent, .. }) = parsed.command else {
+            panic!("send");
+        };
+        assert_eq!(agent.to_string(), "@last");
+        let refused = Args::try_parse_from(["aether", "cancel", " "]);
+        assert!(refused.is_err(), "an empty reference names nothing");
+        let parsed = Args::try_parse_from(["aether", "memory", "list", "--scope", "agent:@viewed"]);
+        let Some(Cmd::Memory {
+            command: MemoryCmd::List { scope, .. },
+        }) = parsed.expect("CLI").command
+        else {
+            panic!("memory list");
+        };
+        assert!(matches!(
+            scope,
+            Some(cli::MemoryScopeRef::Agent(agent)) if agent.to_string() == "@viewed"
+        ));
+    }
+}

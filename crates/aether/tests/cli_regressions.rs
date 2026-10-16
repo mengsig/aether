@@ -74,6 +74,8 @@ struct Stub {
     invalid_models: bool,
     features: Vec<String>,
     replay_note: bool,
+    /// The agent a TUI beside the socket views, for `@viewed`.
+    viewed: Option<&'static str>,
 }
 impl Default for Stub {
     fn default() -> Self {
@@ -93,6 +95,7 @@ impl Default for Stub {
             invalid_models: false,
             features: Vec::new(),
             replay_note: false,
+            viewed: None,
         }
     }
 }
@@ -157,6 +160,13 @@ async fn cli_with_socket(
         .unwrap();
     }
     let socket = root.path().join("a.sock");
+    // Held until the CLI has run: a TUI's view lasts only while it does.
+    let _tui = stub.viewed.map(|agent| {
+        let path = aether_tui::viewed::viewed_dir(&socket);
+        let mut tui = aether_tui::viewed::Publisher::new(path);
+        tui.sync(Some(agent.parse().unwrap())).unwrap();
+        tui
+    });
     let listener = UnixListener::bind(&socket).unwrap();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
@@ -459,6 +469,9 @@ async fn cli_with_socket(
                         m.forgotten_at = Some(AT.parse().unwrap());
                     }
                     m.proposed_at = stub.proposed.then(|| AT.parse().unwrap());
+                    if let Some(scope) = &query.scope {
+                        m.scope = scope.clone();
+                    }
                     let matches = query.proposed == stub.proposed && query.text.as_ref().is_none_or(|t| m.text.contains(t))
                         && query
                             .recorded_by
@@ -1413,6 +1426,57 @@ async fn cancel_acknowledgement_explains_subtree_and_protocol_limit() {
     );
 }
 
+#[tokio::test]
+async fn an_agent_is_named_by_prefix_name_or_last_through_the_daemon() {
+    for reference in ["01J0000", "agt_01j0000", "assistant", "@last"] {
+        let out = cli(&["cancel", reference, "--json"], Stub::default()).await;
+        assert!(out.status.success(), "{reference}: {}", stderr(&out));
+        let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["agent"], AGENT, "{reference}");
+    }
+    let out = cli(&["cancel", "nobody"], Stub::default()).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("no agent matches `nobody`"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[tokio::test]
+async fn viewed_names_the_agent_a_tui_beside_the_socket_views() {
+    let viewing = Stub {
+        viewed: Some(AGENT),
+        ..Stub::default()
+    };
+    let out = cli(&["cancel", "@viewed", "--json"], viewing).await;
+    assert!(out.status.success(), "{}", stderr(&out));
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(reply["agent"], AGENT);
+
+    let out = cli(&["cancel", "@viewed"], Stub::default()).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("no running TUI views an agent"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[tokio::test]
+async fn a_memory_scope_names_its_agent_like_any_reference() {
+    for scope in ["agent:assistant", "agent:01J0000", "agent:@last"] {
+        let out = cli(
+            &["memory", "list", "--scope", scope, "--json"],
+            Stub::default(),
+        )
+        .await;
+        assert!(out.status.success(), "{scope}: {}", stderr(&out));
+        let listed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(listed[0]["scope"]["id"], AGENT, "{scope}: {listed}");
+    }
+}
+
 fn check_help(args: &[&str], phrases: &[&str]) {
     let root = tempfile::tempdir().unwrap();
     let out = isolated_command(root.path(), args).output().unwrap();
@@ -1698,6 +1762,10 @@ fn hostile_mcp() -> aether_core::mcp::McpServerHealth {
             side_effect: SideEffectClass::ReadOnly,
             declared: true,
         }],
+        auth: Some(aether_core::mcp::McpAuth {
+            token_env: HOSTILE.into(),
+            state: aether_core::mcp::McpAuthState::AuthFailed,
+        }),
         ..aether_core::mcp::McpServerHealth::unknown(HOSTILE, HOSTILE)
     }
 }
@@ -1739,7 +1807,40 @@ async fn terminal_output_sanitises_memory_mcp_status_events_and_streams() {
             "{args:?}: {}",
             stdout(&output)
         );
+        if args == ["mcp", "list"] {
+            assert!(
+                stdout(&output).contains("auth_failed"),
+                "{}",
+                stdout(&output)
+            );
+        }
     }
+}
+
+/// The stub daemon reports version "stub": not this build, as a daemon left
+/// running across `aether update` is not.
+#[tokio::test]
+async fn status_names_the_running_and_the_installed_version() {
+    let installed = env!("CARGO_PKG_VERSION");
+    let (output, socket) = cli_with_socket(&["status"], Stub::default(), false).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    let said = stdout(&output);
+    let line = said
+        .lines()
+        .find(|line| line.starts_with("version  "))
+        .unwrap_or_else(|| panic!("no version line: {said}"));
+    assert!(
+        line.contains(&format!("running stub, installed {installed}")),
+        "{line}"
+    );
+    let aether = aether_protocol::command_hint::command_hint(&socket, true);
+    assert!(line.contains(&format!("`{aether} stop`")), "{line}");
+
+    let output = cli(&["status", "--json"], Stub::default()).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["version"], "stub");
+    assert_eq!(value["installed_version"], installed);
 }
 
 #[tokio::test]

@@ -11,10 +11,12 @@ use anyhow::{Context as _, bail, ensure};
 
 pub async fn pending_approvals(
     endpoint: impl Into<aether_client::Endpoint>,
-    scope: Option<RuleScope>,
+    scope: super::RuleScopeArgs,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = super::connect(&endpoint.into()).await?;
+    let endpoint = endpoint.into();
+    let client = super::connect(&endpoint).await?;
+    let scope = scope.resolve(&client, &endpoint).await?;
     let pending = snapshot(&client, scope.as_ref()).await?;
     if json {
         println!("{}", serde_json::to_string(&pending)?);
@@ -114,16 +116,19 @@ fn scoped_agents(agents: &[Agent], scope: &RuleScope) -> anyhow::Result<HashSet<
 
 pub async fn answer_pending(
     endpoint: impl Into<aether_client::Endpoint>,
-    scope: RuleScope,
+    scope: super::RuleScopeArgs,
     approve: bool,
     yes: bool,
     json: bool,
 ) -> anyhow::Result<()> {
+    let endpoint = endpoint.into();
+    let client = super::connect(&endpoint).await?;
+    let scope = scope.resolve(&client, &endpoint).await?;
+    let scope = scope.context("--all-pending requires --agent, --subtree, or --run")?;
     ensure!(
         scope != RuleScope::Everywhere,
         "--all-pending requires --agent, --subtree, or --run"
     );
-    let client = super::connect(&endpoint.into()).await?;
     let pending = snapshot(&client, Some(&scope)).await?;
     let decision = if approve {
         ApprovalDecision::Approved

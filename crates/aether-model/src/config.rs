@@ -365,6 +365,15 @@ impl McpSection {
 /// Aether's own tools.
 const RESERVED_SERVER_NAMES: [&str; 1] = ["aether"];
 
+/// Whether an MCP server's token is required.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAuthMode {
+    #[default]
+    Required,
+    Optional,
+}
+
 /// One configured server. Exactly one transport: `command` or `url`.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -388,6 +397,10 @@ pub struct McpServerSection {
     /// Aether stores no credential; the value is read at daemon start.
     #[serde(default)]
     pub token_env: Option<String>,
+    /// Whether the server may be reached without its token when `token_env`
+    /// is unset. Required by default: the server is then not contacted.
+    #[serde(default)]
+    pub auth: McpAuthMode,
     /// Side-effect class per tool name. Anything not named here is treated as
     /// a non-idempotent mutation and needs approval.
     #[serde(default)]
@@ -415,6 +428,22 @@ impl McpServerSection {
             return Err(format!(
                 "`{}` is reserved: it is how Aether's own tools reach an engine, and a server \
                  with that name would have its calls recorded as theirs",
+                self.name
+            ));
+        }
+        if self
+            .token_env
+            .as_deref()
+            .is_some_and(|var| var.trim().is_empty())
+        {
+            return Err(format!(
+                "mcp server `{}` names an empty `token_env`",
+                self.name
+            ));
+        }
+        if self.auth == McpAuthMode::Optional && self.token_env.is_none() {
+            return Err(format!(
+                "mcp server `{}` sets `auth = \"optional\"` but names no `token_env`",
                 self.name
             ));
         }

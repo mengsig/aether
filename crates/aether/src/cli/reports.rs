@@ -1,4 +1,4 @@
-use super::{AgentId, PathBuf, ReportOptions, RunId, connect, short};
+use super::{PathBuf, ReportOptions, connect, short};
 use anyhow::{Context as _, bail};
 use std::io::Write as _;
 
@@ -59,11 +59,8 @@ pub async fn run_report(
     options: ReportOptions,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
-    let run = options
-        .run
-        .parse::<RunId>()
-        .with_context(|| format!("invalid run id {:?}", options.run))?;
     let client = connect(&socket).await?;
+    let run = options.run.resolve(&client, &socket).await?;
     let report = client.run_report(run).await?;
     if report.body.events == 0 {
         bail!("run {run} has no events in this daemon's store");
@@ -101,18 +98,16 @@ pub async fn run_report(
 /// Write a finished run to one file, on the daemon's machine.
 pub async fn run_export(
     socket: impl Into<aether_client::Endpoint>,
-    run: String,
+    run: super::RunRef,
     out: PathBuf,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
-    let run = run
-        .parse::<RunId>()
-        .with_context(|| format!("invalid run id {run:?}"))?;
     // The daemon opens the file, so a relative path must mean the same thing
     // here as it does there.
     let out = std::path::absolute(&out).with_context(|| format!("path {}", out.display()))?;
     let client = connect(&socket).await?;
+    let run = run.resolve(&client, &socket).await?;
     let s = client.export_run(run, out).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&s)?);
@@ -180,14 +175,12 @@ pub(super) fn imported_lines(s: &aether_core::transfer::ImportSummary, command: 
 /// Step through an agent's turns as they happened.
 pub async fn replay(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
-    let agent = agent
-        .parse::<AgentId>()
-        .with_context(|| format!("invalid agent id {agent:?}"))?;
     let client = connect(&socket).await?;
+    let agent = agent.resolve(&client, &socket).await?;
     client.get_agent(agent).await?;
     let frames = client.replay(agent).await?;
     if json {

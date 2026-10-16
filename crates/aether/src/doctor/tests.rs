@@ -1,6 +1,6 @@
 use super::providers::LocalServer;
 use super::*;
-use aether_core::mcp::{McpServerHealth, McpServerState};
+use aether_core::mcp::{McpAuth, McpAuthState, McpServerHealth, McpServerState};
 use aether_protocol::AuthInfo;
 use aether_protocol::remote::RemoteStatus;
 
@@ -153,6 +153,7 @@ fn a_stale_socket_reads_differently_from_no_socket() {
     let absent = check_socket(
         &p,
         SocketState::Silent,
+        INSTALLED,
         &aether_protocol::command_hint::command_hint(&p.socket, false),
     );
     assert_eq!(absent.level, Level::Warn);
@@ -161,6 +162,7 @@ fn a_stale_socket_reads_differently_from_no_socket() {
     let stale = check_socket(
         &p,
         SocketState::Silent,
+        INSTALLED,
         &aether_protocol::command_hint::command_hint(&p.socket, false),
     );
     assert_eq!(stale.level, Level::Warn);
@@ -178,6 +180,7 @@ fn a_daemon_that_refuses_this_build_is_not_reported_as_silence() {
     let check = check_socket(
         &p,
         SocketState::Refused("client protocol 11 is not served"),
+        INSTALLED,
         &aether_protocol::command_hint::command_hint(&p.socket, false),
     );
     assert_eq!(check.level, Level::Fail, "{}", check.detail);
@@ -199,6 +202,49 @@ fn a_daemon_that_refuses_this_build_is_not_reported_as_silence() {
         "the fix is to stop the daemon that is running: {:?}",
         check.fix
     );
+}
+
+const INSTALLED: &str = "1.0.10";
+
+/// What a daemon of `version` reports, with nothing else running.
+fn daemon_status(version: &str) -> aether_protocol::DaemonStatus {
+    serde_json::from_value(serde_json::json!({
+        "instance_id": "i", "version": version, "pid": 42, "started_at": "2026-10-16T00:00:00Z",
+        "last_seq": 0, "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
+        "agents_blocked": 0, "tasks_active": 0, "pending_approvals": 0,
+        "usage_total": aether_core::model::Usage::default(), "mcp": [], "providers": []
+    }))
+    .expect("daemon status")
+}
+
+/// `aether update` replaces the binary and leaves the daemon on its old build;
+/// the report says both versions, and warns until the daemon is restarted.
+#[test]
+fn a_daemon_older_than_the_installed_binary_is_named_with_both_versions() {
+    let dir = tempfile::tempdir().expect("dir");
+    let p = paths(dir.path());
+    let command = aether_protocol::command_hint::command_hint(&p.socket, false);
+    let old = daemon_status("1.0.9");
+    let check = check_socket(&p, SocketState::Answering(&old), INSTALLED, &command);
+    assert_eq!(check.level, Level::Warn, "{}", check.detail);
+    assert!(
+        check.detail.contains("running 1.0.9, installed 1.0.10"),
+        "{}",
+        check.detail
+    );
+    let fix = check.fix.expect("a restart is the fix");
+    assert!(fix.contains(&format!("`{command} stop`")), "{fix}");
+    assert!(fix.contains("to start 1.0.10"), "{fix}");
+
+    let current = daemon_status(INSTALLED);
+    let check = check_socket(&p, SocketState::Answering(&current), INSTALLED, &command);
+    assert_eq!(check.level, Level::Ok, "{}", check.detail);
+    assert!(
+        check.detail.contains("running 1.0.10, installed 1.0.10"),
+        "{}",
+        check.detail
+    );
+    assert_eq!(check.fix, None);
 }
 
 #[test]
@@ -665,6 +711,88 @@ fn an_mcp_server_that_is_not_answering_is_a_warning_with_the_retry() {
     assert!(check.fix.expect("a fix").contains("mcp refresh"));
 }
 
+fn with_auth(name: &str, state: McpServerState, auth: McpAuthState) -> McpServerHealth {
+    McpServerHealth {
+        state,
+        auth: Some(McpAuth {
+            token_env: format!("{}_TOKEN", name.to_uppercase()),
+            state: auth,
+        }),
+        ..McpServerHealth::unknown(name, "http: https://example/mcp")
+    }
+}
+
+#[test]
+fn a_missing_mcp_token_is_reported_by_variable_and_never_as_retryable() {
+    let health = [with_auth(
+        "issues",
+        McpServerState::Failed,
+        McpAuthState::AuthFailed,
+    )];
+    let check = check_mcp(1, &health, "aether");
+    assert_eq!(check.level, Level::Warn);
+    assert!(
+        check
+            .detail
+            .contains("auth_failed, not connected: issues (ISSUES_TOKEN unset)"),
+        "{}",
+        check.detail
+    );
+    assert!(!check.detail.contains("not answering"), "{}", check.detail);
+    let fix = check.fix.expect("a fix");
+    assert!(fix.contains("auth = \"optional\""), "{fix}");
+    assert!(
+        !fix.contains("mcp refresh"),
+        "a refresh cannot find the token: {fix}"
+    );
+}
+
+#[test]
+fn an_optional_mcp_token_connects_and_doctor_says_so_without_the_secret() {
+    let health = [
+        with_auth("notes", McpServerState::Ready, McpAuthState::Anonymous),
+        with_auth("files", McpServerState::Ready, McpAuthState::Token),
+    ];
+    let check = check_mcp(2, &health, "aether");
+    assert_eq!(check.level, Level::Ok);
+    assert!(
+        check
+            .detail
+            .contains("no token, auth = \"optional\": notes (NOTES_TOKEN unset)"),
+        "{}",
+        check.detail
+    );
+    assert!(!check.detail.contains("FILES_TOKEN"), "{}", check.detail);
+}
+
+#[test]
+fn an_optional_mcp_server_that_did_not_answer_is_not_called_connected() {
+    for (state, trouble) in [
+        (McpServerState::Failed, "not answering: notes"),
+        (McpServerState::Unknown, "not contacted yet: notes"),
+    ] {
+        let health = [with_auth("notes", state, McpAuthState::Anonymous)];
+        let check = check_mcp(1, &health, "aether");
+        assert_eq!(check.level, Level::Warn);
+        assert!(
+            check.detail.contains("0 of 1 server(s) connected"),
+            "{}",
+            check.detail
+        );
+        assert!(check.detail.contains(trouble), "{}", check.detail);
+        assert!(
+            check
+                .detail
+                .contains("no token, auth = \"optional\": notes (NOTES_TOKEN unset)"),
+            "{}",
+            check.detail
+        );
+        for claim in ["connected without", "reached"] {
+            assert!(!check.detail.contains(claim), "{}", check.detail);
+        }
+    }
+}
+
 #[test]
 fn the_reports_verdict_is_its_worst_check() {
     let report = Report::new(vec![
@@ -738,9 +866,16 @@ fn every_daemon_command_in_doctor_fixes_preserves_the_selected_socket() {
         state: McpServerState::Failed,
         ..McpServerHealth::unknown("files", "stdio: a")
     }];
+    let daemon = daemon_status("1.0.9");
     let report = Report::new(vec![
-        check_socket(&p, SocketState::Silent, &command),
-        check_socket(&p, SocketState::Refused("version mismatch"), &command),
+        check_socket(&p, SocketState::Silent, INSTALLED, &command),
+        check_socket(
+            &p,
+            SocketState::Refused("version mismatch"),
+            INSTALLED,
+            &command,
+        ),
+        check_socket(&p, SocketState::Answering(&daemon), INSTALLED, &command),
         Check::no_daemon_providers(&command),
         Check::unprobed_providers("timed out", &command),
         check_providers(&[], &[], None, &command),
@@ -755,6 +890,15 @@ fn every_daemon_command_in_doctor_fixes_preserves_the_selected_socket() {
         check_engines(&unavailable, &command),
         check_mcp(1, &[], &command),
         check_mcp(1, &failed, &command),
+        check_mcp(
+            1,
+            &[with_auth(
+                "files",
+                McpServerState::Failed,
+                McpAuthState::AuthFailed,
+            )],
+            &command,
+        ),
     ]);
     for check in report.checks {
         let fix = check.fix.expect("each scenario has a fix");

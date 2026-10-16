@@ -696,3 +696,6 @@ async fn detect_reports_an_absent_program() {
     );
     assert!(error.to_string().contains("claude"));
 }
+
+#[path = "telemetry.rs"]
+mod telemetry;

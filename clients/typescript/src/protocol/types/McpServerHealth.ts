@@ -2,6 +2,7 @@
 // Do not edit: change the Rust types and regenerate.
 
 import type {
+  McpAuth,
   McpServerState,
   McpToolInfo,
 } from "../../protocol.ts";
@@ -10,6 +11,7 @@ import type {
  * A server's health as of the last contact attempt.
  */
 export interface McpServerHealth {
+  "auth"?: McpAuth | null;
   "checked_at"?: string | null;
   "error"?: string | null;
   "name": string;

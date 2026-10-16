@@ -9,9 +9,9 @@ use std::sync::Arc;
 use aether_core::agent::{ExecutionBackend, NetworkPolicy, Scope};
 use aether_core::artifact::{Artifact, ArtifactKind};
 use aether_core::id::{AgentId, TaskId};
-use aether_core::mcp::McpServerState;
+use aether_core::mcp::{McpAuth, McpAuthState, McpServerState};
 use aether_core::tool::{ResourceKey, SideEffectClass, ToolExposure};
-use aether_tools::mcp::{McpCaller, McpManager, McpServerSpec, McpTransportSpec};
+use aether_tools::mcp::{McpCaller, McpError, McpManager, McpServerSpec, McpTransportSpec};
 use aether_tools::{ArtifactSink, ToolContext, ToolError, ToolExecution, ToolRegistry};
 use async_trait::async_trait;
 use serde_json::json;
@@ -96,6 +96,7 @@ fn spec(
         },
         classes,
         send_caller_meta: false,
+        auth: None,
     }
 }
 
@@ -307,6 +308,7 @@ async fn an_unreachable_server_offers_nothing() {
             },
             classes: BTreeMap::new(),
             send_caller_meta: false,
+            auth: None,
         }],
         None,
         Vec::new().into(),
@@ -490,6 +492,7 @@ async fn an_http_server_that_logs_before_replying_is_still_understood() {
             },
             classes: BTreeMap::new(),
             send_caller_meta: false,
+            auth: None,
         }],
         None,
         no_hidden(),
@@ -708,4 +711,76 @@ async fn a_server_that_rejects_unknown_params_is_unchanged_unless_it_opts_in() {
         .expect_err("the strict server refuses `_meta`");
     assert!(error.to_string().contains("_meta"), "{error}");
     assert_eq!(manager.health()[0].state, McpServerState::Ready);
+}
+
+fn http_with_auth(url: String, state: McpAuthState) -> McpServerSpec {
+    McpServerSpec {
+        name: "remote".into(),
+        transport: McpTransportSpec::Http { url, token: None },
+        classes: BTreeMap::new(),
+        send_caller_meta: false,
+        auth: Some(McpAuth {
+            token_env: "REMOTE_MCP_TOKEN".into(),
+            state,
+        }),
+    }
+}
+
+#[tokio::test]
+async fn a_server_whose_required_token_is_missing_is_never_contacted() {
+    // A listener that never answers: were the server contacted, the request
+    // would land in its backlog and discovery would wait out its timeout.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    listener.set_nonblocking(true).expect("nonblocking");
+    let url = format!("http://{}/mcp", listener.local_addr().expect("addr"));
+    let manager = McpManager::new(
+        vec![http_with_auth(url, McpAuthState::AuthFailed)],
+        None,
+        no_hidden(),
+    );
+    let quick = std::time::Duration::from_secs(5);
+    tokio::time::timeout(quick, manager.discover_all())
+        .await
+        .expect("refused without a round trip");
+    let call = tokio::time::timeout(quick, manager.call("remote", "ask", json!({}), &caller()))
+        .await
+        .expect("refused without a round trip");
+    assert!(matches!(call, Err(McpError::AuthFailed(_))), "{call:?}");
+
+    let health = &manager.health()[0];
+    assert_eq!(health.state, McpServerState::Failed);
+    assert!(health.auth_failed());
+    let error = health.error.as_deref().expect("a failure says why");
+    assert!(error.contains("auth_failed"), "{error}");
+    assert!(error.contains("REMOTE_MCP_TOKEN"), "{error}");
+    assert_eq!(
+        listener.accept().map(|_| ()).map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::WouldBlock),
+        "nothing may reach the server"
+    );
+}
+
+#[tokio::test]
+async fn an_optional_token_connects_without_one_and_says_so() {
+    let stop = tokio_util::sync::CancellationToken::new();
+    let (address, serving) = chatty_sse_server(stop.clone()).await;
+    let manager = McpManager::new(
+        vec![http_with_auth(
+            format!("http://{address}/mcp"),
+            McpAuthState::Anonymous,
+        )],
+        None,
+        no_hidden(),
+    );
+    manager.discover_all().await;
+    let health = &manager.health()[0];
+    assert_eq!(health.state, McpServerState::Ready, "{:?}", health.error);
+    assert_eq!(
+        health.auth.as_ref().map(|a| a.state),
+        Some(McpAuthState::Anonymous)
+    );
+    assert!(!health.auth_failed());
+
+    stop.cancel();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serving).await;
 }

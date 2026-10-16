@@ -5,7 +5,7 @@ use super::{
 use aether_tui::prefs::MouseMode;
 use aether_tui::ui::theme::files::{self, ThemeError};
 use aether_tui::ui::theme::{Builtin, ThemeChoice, ThemeSpec, probe};
-use anyhow::{Context as _, anyhow};
+use anyhow::anyhow;
 
 /// Validate a saved model chain (`ui.toml`) against the daemon's live model
 /// list before it reaches `CreateAgent`. A primary that no longer resolves
@@ -74,7 +74,7 @@ pub(super) fn filter_known_models(
 pub async fn tui(
     socket: impl Into<aether_client::Endpoint>,
     explicit_socket: bool,
-    agent: Option<String>,
+    agent: Option<super::AgentRef>,
     mouse: Option<bool>,
     yolo: Option<bool>,
     display: TuiDisplayOptions,
@@ -161,10 +161,10 @@ pub async fn tui(
         Some(model) => Some(model),
         None => client.status().await.ok().and_then(|s| s.default_model),
     };
-    let focus = agent
-        .map(|a| a.parse::<AgentId>())
-        .transpose()
-        .context("invalid agent id")?;
+    let focus = match agent {
+        Some(agent) => Some(agent.resolve(&client, &socket).await?),
+        None => None,
+    };
     // A pipe or a screen reader gets lines whether or not --plain was typed:
     // the full-screen UI is meaningless without a terminal.
     let plain = plain || !std::io::IsTerminal::is_terminal(&std::io::stdout());

@@ -5,8 +5,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use aether_core::id::AgentId;
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::collections::HashSet;
 
 use crate::{Result, Runtime, RuntimeError};
 
@@ -116,8 +118,7 @@ impl Runtime {
         }
         if let Some(root) = &self.config.build_cache_root {
             report["build_cache"] =
-                serde_json::to_value(build_cache::report(root).map_err(invalid)?)
-                    .map_err(invalid)?;
+                serde_json::to_value(self.gc_build_cache(root, dry_run)?).map_err(invalid)?;
         }
         let artifacts = self.store.live_artifacts()?;
         let mut digests = std::collections::HashSet::new();
@@ -136,6 +137,28 @@ impl Runtime {
         }
         report["last_gc"] = json!(previous);
         Ok(report)
+    }
+}
+
+impl Runtime {
+    /// Agents with a turn, retake, lease or resource in flight, read under
+    /// the scheduler and engine-turn locks the caller holds.
+    fn in_flight_agents(
+        &self,
+        sched: &crate::SchedulerState,
+        engine_turns: &std::collections::HashMap<AgentId, crate::turn_engine::EngineTurnHandle>,
+    ) -> Result<HashSet<AgentId>> {
+        let leases = self.store.leases()?;
+        let resources = self.resources.holdings();
+        Ok(sched
+            .running
+            .keys()
+            .chain(&sched.engine_retakers)
+            .chain(engine_turns.keys())
+            .copied()
+            .chain(leases.iter().map(|lease| lease.agent_id))
+            .chain(resources.iter().map(|holding| holding.agent))
+            .collect())
     }
 }
 

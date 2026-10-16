@@ -17,6 +17,10 @@ use crate::{Result, Runtime, RuntimeError};
 /// name: the end of a URL or path is the part that names the project.
 const SLUG_LIMIT: usize = 48;
 
+/// The file Aether writes into each partition it creates: eviction removes
+/// only marked partitions, and the marker's mtime is the partition's last use.
+pub(crate) const PARTITION_MARKER: &str = ".aether-partition";
+
 /// The partition the builds of `repository` in `run` use under `root`.
 pub(crate) fn partition(root: &Path, repository: &str, run: RunId) -> PathBuf {
     debug_assert!(root.is_absolute(), "{} is not absolute", root.display());
@@ -78,15 +82,45 @@ fn base_dir(runtime: &Runtime, agent: &Agent) -> Option<PathBuf> {
     if let Some(dir) = &agent.config.build_cache {
         return Some(dir.clone());
     }
-    let root = runtime.config.build_cache_root.as_deref()?;
+    aether_partition(runtime.config.build_cache_root.as_deref()?, agent)
+}
+
+/// The partition of Aether's cache under `root` that `agent` builds into:
+/// none for a client-named cache, a container or no repository workspace.
+pub(crate) fn aether_partition(root: &Path, agent: &Agent) -> Option<PathBuf> {
+    if agent.config.build_cache.is_some() || agent.scope.backend != ExecutionBackend::Host {
+        return None;
+    }
     let repository = agent.scope.repository.as_deref()?;
     agent.scope.workspace_root.as_ref()?;
     Some(partition(root, repository, agent.run))
 }
 
+/// Whether `name` has the shape [`repository_dir`] gives: an optional slug,
+/// then 16 hex digits of digest. Nothing else under the root is Aether's.
+pub(crate) fn is_repository_dir(name: &str) -> bool {
+    let (slug, digest) = match name.rsplit_once('-') {
+        Some(("", _)) => return false,
+        Some((slug, digest)) => (slug, digest),
+        None => ("", name),
+    };
+    let plain_slug = slug.len() <= SLUG_LIMIT
+        && !slug.starts_with(['.', '-'])
+        && !slug.ends_with('-')
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    plain_slug
+        && digest.len() == 16
+        && digest
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+}
+
 /// [`exports`], each directory created now because one of the agent's
 /// processes is about to start. A directory that cannot be made stops it.
 pub(crate) fn prepare(runtime: &Runtime, agent: &Agent) -> Result<Vec<(String, PathBuf)>> {
+    claim(runtime, agent)?;
     let exports = exports(runtime, agent);
     for (name, dir) in &exports {
         std::fs::DirBuilder::new()
@@ -98,6 +132,51 @@ pub(crate) fn prepare(runtime: &Runtime, agent: &Agent) -> Result<Vec<(String, P
             })?;
     }
     Ok(exports)
+}
+
+/// Make `agent`'s partition of Aether's cache, if it has one and it is not
+/// there yet, marked as Aether's so eviction may later remove it. A marked
+/// partition's marker is touched as its last use; an unmarked existing
+/// directory is someone else's and is left as it is.
+pub(crate) fn claim(runtime: &Runtime, agent: &Agent) -> Result<()> {
+    let Some(root) = runtime.config.build_cache_root.as_deref() else {
+        return Ok(());
+    };
+    let Some(partition) = aether_partition(root, agent) else {
+        return Ok(());
+    };
+    let failed = |e: std::io::Error| {
+        RuntimeError::Invalid(format!("build cache {}: {e}", partition.display()))
+    };
+    let Some(repository) = partition.parent() else {
+        return Err(RuntimeError::Invalid(format!(
+            "build cache {} has no repository directory",
+            partition.display()
+        )));
+    };
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(repository)
+        .map_err(failed)?;
+    let marker = partition.join(PARTITION_MARKER);
+    match std::fs::DirBuilder::new().mode(0o700).create(&partition) {
+        Ok(()) => {
+            std::fs::File::create_new(&marker).map_err(failed)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            if std::fs::symlink_metadata(&marker).is_ok_and(|meta| meta.is_file()) {
+                std::fs::File::options()
+                    .write(true)
+                    .open(&marker)
+                    .and_then(|file| file.set_modified(std::time::SystemTime::now()))
+                    .map_err(failed)?;
+            }
+        }
+        Err(e) => return Err(failed(e)),
+    }
+    debug_assert!(partition.is_dir(), "{} was not made", partition.display());
+    Ok(())
 }
 
 /// Settle a new agent's client-named cache: an omitted one is its parent's,
@@ -187,12 +266,36 @@ mod tests {
             assert!(!name.starts_with(['.', '-']), "{name}");
             assert!(name.len() <= SLUG_LIMIT + 17, "{name}");
         }
+        assert!(
+            names.iter().all(|name| is_repository_dir(name)),
+            "{names:?}"
+        );
         assert_ne!(names[0], names[1], "same slug, different ids");
         assert!(
             names[5].contains("xxx-project-"),
             "the name keeps the end: {}",
             names[5]
         );
+    }
+
+    #[test]
+    fn only_the_shape_of_a_repository_dir_is_recognised() {
+        for name in [
+            "target",
+            "debug",
+            "cargo-target",
+            ".evicting",
+            "-0123456789abcdef",
+        ] {
+            assert!(!is_repository_dir(name), "{name}");
+        }
+        assert!(
+            !is_repository_dir("repo-0123456789ABCDEF"),
+            "digests are lowercase"
+        );
+        assert!(!is_repository_dir("repo-0123456789abcde"), "fifteen digits");
+        assert!(is_repository_dir("0123456789abcdef"));
+        assert!(is_repository_dir("github-com-org-repo-0123456789abcdef"));
     }
 
     #[test]

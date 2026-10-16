@@ -405,6 +405,8 @@ partition and never writes into this one.
 ```toml
 [build_cache]
 # root = "/var/cache/aether"
+# Unset means 15% of the cache's filesystem.
+# max_bytes = 53687091200
 
 # A listed table replaces the default, which is the one below.
 [[build_cache.env]]
@@ -433,8 +435,23 @@ an agent with `config.build_cache` on `create_agent` (see
 [the protocol](protocol.md#optional-features)); its children inherit it.
 
 `aether storage` reports the bytes, repositories and partitions under the
-root as `build_cache`, apart from workspaces. Nothing in it is evicted yet:
-remove a partition by hand when no agent of its run is still building. The
+root as `build_cache`, apart from workspaces, with each partition's bytes,
+last use and the agents that lease it. Every agent of the run that is not
+yet completed, failed or cancelled, or has work in flight, leases its
+partition. When Aether's partitions hold more than `max_bytes`, storage GC
+evicts unleased ones, least recently used first, until the rest fit; the
+disk guard does the same as soon as the disk runs low. Last use is the
+latest activity of the run's agents or the newest write at the partition's
+top level. Aether marks each partition it creates with a `.aether-partition`
+file, and evicts only marked partitions. Anything else under the root, such
+as an operator's own target directory or a partition made before this
+release, is reported and kept. So is a partition that holds, or lies
+inside, a directory a client named with `config.build_cache`. Evicted
+partitions are renamed into `<root>/.evicting` and then deleted; a deletion
+that fails is retried at the next sweep (each partition's marker is
+removed last), and nothing in `.evicting` that Aether did not move there,
+or that holds a client's directory, is removed. A failed agent woken later builds
+cold again. The
 agents of one run share a partition and can read and overwrite each other's
 output; partitions of different runs are separate directories under one
 user, not an operating-system boundary.

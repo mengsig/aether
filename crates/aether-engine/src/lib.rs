@@ -360,6 +360,14 @@ pub struct EngineRun {
     pub stop: Option<mpsc::Sender<std::time::Duration>>,
 }
 
+/// Runtime identity for a launch, separate from the source-compatible turn payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EngineLaunchContext {
+    pub run_id: aether_core::id::RunId,
+    pub agent_id: aether_core::id::AgentId,
+    pub task_id: Option<aether_core::id::TaskId>,
+}
+
 #[async_trait::async_trait]
 pub trait Engine: Send + Sync {
     fn kind(&self) -> EngineKind;
@@ -375,6 +383,15 @@ pub trait Engine: Send + Sync {
         turn: EngineTurn,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError>;
+    /// Launch with runtime identity; existing adapters may ignore the context.
+    async fn run_with_context(
+        &self,
+        turn: EngineTurn,
+        _context: EngineLaunchContext,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        self.run(turn, cancel).await
+    }
     /// Whether the engine asks before acting, so an approval policy can be
     /// honoured. False means its agents must run without one.
     fn gates_permissions(&self) -> bool {
@@ -482,6 +499,41 @@ pub(crate) async fn run_process<P>(
     keep_stdin_open: bool,
     cancel_input: Option<String>,
     cancel: CancellationToken,
+    parser: P,
+) -> Result<ProcessRun, EngineError>
+where
+    P: FnMut(&str) -> Vec<EngineEvent> + Send + 'static,
+{
+    run_process_with_env(
+        program,
+        args,
+        cwd,
+        hidden_env,
+        temp_dir,
+        build_env,
+        &[],
+        first_input,
+        keep_stdin_open,
+        cancel_input,
+        cancel,
+        parser,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn run_process_with_env<P>(
+    program: &str,
+    args: Vec<String>,
+    cwd: PathBuf,
+    hidden_env: &[String],
+    temp_dir: Option<&Path>,
+    build_env: &[(String, PathBuf)],
+    extra_env: &[(std::ffi::OsString, std::ffi::OsString)],
+    first_input: String,
+    keep_stdin_open: bool,
+    cancel_input: Option<String>,
+    cancel: CancellationToken,
     mut parser: P,
 ) -> Result<ProcessRun, EngineError>
 where
@@ -500,6 +552,7 @@ where
         .kill_on_drop(true);
     // Own process group so cancellation can take the CLI's children with it.
     command.as_std_mut().process_group(0);
+    command.envs(extra_env.iter().cloned());
     strip_hidden(&mut command, hidden_env);
     export_temp_dir(&mut command, temp_dir);
     export_build_env(&mut command, build_env);

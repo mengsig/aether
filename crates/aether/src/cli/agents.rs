@@ -1,5 +1,5 @@
-use super::{AgentId, AgentQuery, ArchiveTarget, RunId, acted, connect, sane, short};
-use anyhow::{Context as _, anyhow, bail};
+use super::{AgentQuery, ArchiveTarget, acted, connect, sane, short};
+use anyhow::bail;
 use std::path::PathBuf;
 
 pub async fn new_agent(
@@ -100,28 +100,22 @@ fn agent_status_label(a: &aether_core::agent::Agent) -> String {
 /// durable; nothing leaves the store, reports or replay.
 pub async fn archive(
     socket: impl Into<aether_client::Endpoint>,
-    target: Option<String>,
+    target: Option<super::TargetRef>,
     all_finished: bool,
     undo: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
-    let target = match (target.as_deref(), all_finished) {
+    match (&target, all_finished) {
         (Some(_), true) => bail!("name an agent or a run, or --all-finished, not both"),
-        (None, false) => bail!("usage: aether archive <agent-id|run-id> | --all-finished"),
-        (None, true) => ArchiveTarget::AllFinished,
-        // Ids are prefixed (agt_/run_) and parse disjointly, so trying agent
-        // first and falling back to run is safe: `aether archive <id>` does
-        // the obvious thing without ever misreading one kind as the other.
-        (Some(id), false) => match id.parse::<AgentId>() {
-            Ok(agent) => ArchiveTarget::Agent(agent),
-            Err(_) => ArchiveTarget::Run(
-                id.parse::<RunId>()
-                    .map_err(|e| anyhow!("{id} is neither an agent nor a run id: {e}"))?,
-            ),
-        },
-    };
+        (None, false) => bail!("usage: aether archive <agent|run> | --all-finished"),
+        _ => {}
+    }
     let client = connect(&socket).await?;
+    let target = match target {
+        Some(target) => target.resolve(&client, &socket).await?,
+        None => ArchiveTarget::AllFinished,
+    };
     let moved = client.archive(target, !undo).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&moved)?);
@@ -137,20 +131,20 @@ pub async fn archive(
 
 pub async fn send(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     text: String,
     images: Vec<PathBuf>,
     subtree: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
-    let id: AgentId = agent.parse().context("invalid agent id")?;
     // Read before connecting: a bad file is refused without a daemon.
     let attachments = images
         .iter()
         .map(|path| aether_client::images::read_image_file(path))
         .collect::<Result<Vec<_>, _>>()?;
     let client = connect(&socket).await?;
+    let id = agent.resolve(&client, &socket).await?;
     if !subtree {
         let message = client
             .send_message_with_images(id, text, attachments)
@@ -176,12 +170,12 @@ pub async fn send(
 
 pub async fn cancel(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id: AgentId = agent.parse().context("invalid agent id")?;
+    let id = agent.resolve(&client, &socket).await?;
     client
         .cancel(id, Some("cancelled from the command line".into()))
         .await?;
@@ -196,12 +190,12 @@ pub async fn cancel(
 
 pub async fn interrupt(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id: AgentId = agent.parse().context("invalid agent id")?;
+    let id = agent.resolve(&client, &socket).await?;
     let was_running = client.interrupt(id).await?;
     let line = if was_running {
         format!("interrupted {id}; it waits for the next message")
@@ -217,14 +211,14 @@ pub async fn interrupt(
 
 pub async fn trigger(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     source: String,
     payload: String,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id: AgentId = agent.parse().context("invalid agent id")?;
+    let id = agent.resolve(&client, &socket).await?;
     let payload = serde_json::from_str(&payload).unwrap_or(serde_json::Value::String(payload));
     client.trigger(id, source.clone(), payload).await?;
     acted(
@@ -237,12 +231,12 @@ pub async fn trigger(
 /// Recreate a failed or cancelled agent from its last checkpoint.
 pub async fn restart(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id: AgentId = agent.parse().context("invalid agent id")?;
+    let id = agent.resolve(&client, &socket).await?;
     let fresh = client.restart(id).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&fresh)?);
@@ -255,12 +249,12 @@ pub async fn restart(
 /// Wake a failed agent in place, keeping its history and context.
 pub async fn wake(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id: AgentId = agent.parse().context("invalid agent id")?;
+    let id = agent.resolve(&client, &socket).await?;
     let woken = client.wake(id).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&woken)?);
@@ -279,13 +273,13 @@ pub async fn wake(
 /// and, for anything mid-turn, that the turn finishes first.
 pub async fn pause(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     subtree: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id: AgentId = agent.parse().context("invalid agent id")?;
+    let id = agent.resolve(&client, &socket).await?;
     let (agents, mid_turn) = client.pause(id, subtree).await?;
     if json {
         println!(
@@ -320,13 +314,13 @@ pub async fn pause(
 /// Lift a pause, or clear a wait or an inspection the operator owns (§3.1).
 pub async fn resume(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     subtree: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id: AgentId = agent.parse().context("invalid agent id")?;
+    let id = agent.resolve(&client, &socket).await?;
     let agents = client.resume(id, subtree).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&agents)?);
@@ -344,12 +338,12 @@ pub async fn resume(
 
 pub async fn compact(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id: AgentId = agent.parse().context("invalid agent id")?;
+    let id = agent.resolve(&client, &socket).await?;
     client.compact(id).await?;
     let follow_up = format!("{} events --agent {id} --follow", socket.command_hint(true));
     acted(

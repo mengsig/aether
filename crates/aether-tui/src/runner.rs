@@ -29,6 +29,7 @@ use crate::prefs::MouseMode;
 use crate::ui;
 use crate::ui::theme::probe::{PROBE_DEADLINE, probe_palette};
 use crate::ui::transcript::ViewCache;
+use crate::viewed::Publisher;
 use crate::voice::control::{self, ControlRequest, Listener};
 
 mod frames;
@@ -308,6 +309,11 @@ async fn run_inner(
     app.load_voice_prefs();
     let mut voice = crate::voice::Service::default();
     let mut voice_control = None;
+    let mut viewed = app
+        .options
+        .socket_path
+        .as_deref()
+        .map(|socket| Publisher::new(crate::viewed::viewed_dir(socket)));
     let mut link = Link::new(client);
     let (tx, mut rx) = mpsc::unbounded_channel::<LoopEvent>();
     let mut term_events = EventStream::new();
@@ -325,6 +331,7 @@ async fn run_inner(
         loop {
             pending.extend(frames.advance_clock(&mut app, Instant::now()));
             pending.extend(reconcile_voice_control(&mut app, &mut voice_control).await);
+            publish_viewed(&mut app, viewed.as_mut());
             let mut regular = Vec::new();
             for effect in std::mem::take(&mut pending) {
                 match effect {
@@ -506,7 +513,10 @@ async fn run_inner(
     .await;
     state.restore();
     drop(voice_control);
-    let cleanup = voice.shutdown().await;
+    let cleanup = match (voice.shutdown().await, viewed.map(Publisher::finish)) {
+        (Err(voice), Some(Err(viewed))) => Err(voice.context(format!("{viewed:#}"))),
+        (voice, viewed) => voice.and(viewed.unwrap_or(Ok(()))),
+    };
     drop(terminal);
     drop(guard);
     if let Some(message) = app.exit_message.take() {
@@ -539,6 +549,16 @@ async fn sleep_until(wake: Option<Instant>) {
     match wake {
         Some(at) => tokio::time::sleep_until(at.into()).await,
         None => std::future::pending().await,
+    }
+}
+
+/// Keep `@viewed` naming this TUI's agent; a failure is shown, not fatal.
+fn publish_viewed(app: &mut App, viewed: Option<&mut Publisher>) {
+    let Some(viewed) = viewed else {
+        return;
+    };
+    if let Err(error) = viewed.sync(app.selected) {
+        app.flash_error(format!("`@viewed` will not name this view: {error:#}"));
     }
 }
 

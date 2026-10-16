@@ -166,6 +166,11 @@ impl ReleaseSource {
         format!("{}/download/{}/{asset}", self.base, version.tag())
     }
 
+    /// The page a person reads one release's notes on.
+    pub(super) fn release_page(&self, version: Version) -> String {
+        format!("{}/tag/{}", self.base, version.tag())
+    }
+
     /// The archive of one release for `target`, pinned to that release's tag.
     pub(super) fn archive(&self, version: Version, target: &str) -> Archive {
         let name = archive_name(target);

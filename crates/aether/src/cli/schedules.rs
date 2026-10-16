@@ -5,7 +5,7 @@ use aether_core::schedule::{
     BusyPolicy, CreateScheduleSpec, MissedRunPolicy, Recurrence, Schedule, ScheduleAction,
     ScheduleMode, ScheduleOutcome, ScheduleStatus, ScheduleTarget, SpawnSpec,
 };
-use anyhow::{Context, anyhow, bail};
+use anyhow::{anyhow, bail};
 
 use super::{acted, connect, here, parse_backend, sane, short};
 use crate::ScheduleCmd;
@@ -61,7 +61,7 @@ pub(crate) async fn run(
             };
             let target = match (target, objective) {
                 (Some(target), None) => {
-                    ScheduleTarget::Agent(target.parse().context("invalid target agent id")?)
+                    ScheduleTarget::Agent(target.resolve(&client, &socket).await?)
                 }
                 (None, Some(objective)) => {
                     let template = Template {
@@ -106,10 +106,10 @@ pub(crate) async fn run(
             acted(json, &describe(&job), serde_json::json!(job))
         }
         ScheduleCmd::List { target, json } => {
-            let target = target
-                .map(|id| id.parse())
-                .transpose()
-                .context("invalid target agent id")?;
+            let target = match target {
+                Some(target) => Some(target.resolve(&client, &socket).await?),
+                None => None,
+            };
             let jobs = client.schedules(target).await?;
             let text = if jobs.is_empty() {
                 "No schedules.".into()
@@ -119,41 +119,30 @@ pub(crate) async fn run(
             acted(json, &text, serde_json::json!(jobs))
         }
         ScheduleCmd::Inspect { id, json } => {
-            let job = client
-                .schedule(id.parse().context("invalid schedule id")?)
-                .await?;
+            let job = client.schedule(id.resolve(&client).await?).await?;
             acted(json, &describe(&job), serde_json::json!(job))
         }
         ScheduleCmd::Pause { id, json } => {
             let job = client
-                .update_schedule(
-                    id.parse().context("invalid schedule id")?,
-                    ScheduleAction::Pause,
-                )
+                .update_schedule(id.resolve(&client).await?, ScheduleAction::Pause)
                 .await?;
             acted(json, &describe(&job), serde_json::json!(job))
         }
         ScheduleCmd::Resume { id, json } => {
             let job = client
-                .update_schedule(
-                    id.parse().context("invalid schedule id")?,
-                    ScheduleAction::Resume,
-                )
+                .update_schedule(id.resolve(&client).await?, ScheduleAction::Resume)
                 .await?;
             acted(json, &describe(&job), serde_json::json!(job))
         }
         ScheduleCmd::Cancel { id, json } => {
             let job = client
-                .update_schedule(
-                    id.parse().context("invalid schedule id")?,
-                    ScheduleAction::Cancel,
-                )
+                .update_schedule(id.resolve(&client).await?, ScheduleAction::Cancel)
                 .await?;
             acted(json, &describe(&job), serde_json::json!(job))
         }
         ScheduleCmd::History { id, limit, json } => {
             let history = client
-                .schedule_history(id.parse().context("invalid schedule id")?, limit)
+                .schedule_history(id.resolve(&client).await?, limit)
                 .await?;
             let text = history
                 .iter()

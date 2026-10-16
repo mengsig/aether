@@ -32,6 +32,7 @@ pub(super) async fn execute_inner(
     cancel: CancellationToken,
 ) -> Result<Next> {
     // ---- 2. settle tool calls whose approvals were resolved -----------------
+    crate::build_cache::claim(runtime, &ctx.agent)?;
     let tool_ctx = Arc::new(tool_context(runtime, ctx));
     settle_resolved_approvals(runtime, ctx, &tool_ctx, &cancel).await?;
     if cancel.is_cancelled() {

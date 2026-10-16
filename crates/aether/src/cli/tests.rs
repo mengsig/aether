@@ -387,8 +387,20 @@ fn every_memory_scope_is_nameable_on_the_command_line() {
         ),
     ];
     for (text, scope) in cases {
-        assert_eq!(parse_memory_scope(text).expect(text), scope, "{text}");
+        match (parse_memory_scope(text).expect(text), scope) {
+            (MemoryScopeRef::Fixed(parsed), scope) => assert_eq!(parsed, scope, "{text}"),
+            (MemoryScopeRef::Agent(agent), MemoryScope::Agent { id })
+            | (MemoryScopeRef::Subtree(agent), MemoryScope::Subtree { root: id }) => {
+                assert_eq!(agent.to_string(), id.to_string(), "{text}");
+            }
+            (parsed, scope) => panic!("{text}: {parsed:?} is not {scope:?}"),
+        }
     }
+    // The agent part is a reference: a name or a prefix resolves later.
+    assert!(matches!(
+        parse_memory_scope("subtree: planner").expect("a name"),
+        MemoryScopeRef::Subtree(root) if root.to_string() == "planner"
+    ));
     assert_eq!(
         memory_scope_label(&MemoryScope::RepositoryRole {
             id: "r".into(),
@@ -400,7 +412,8 @@ fn every_memory_scope_is_nameable_on_the_command_line() {
         "repo-role:team",
         "repo-role:has space@r",
         "repo-role:team@",
-        "subtree:nope",
+        "subtree: ",
+        "agent:",
     ] {
         assert!(parse_memory_scope(bad).is_err(), "{bad}");
     }
@@ -441,7 +454,7 @@ fn a_stale_primary_drops_the_whole_chain_but_a_stale_fallback_is_dropped_alone()
 
 fn scope(agent: Option<&str>, everywhere: bool) -> RuleScopeArgs {
     RuleScopeArgs {
-        agent: agent.map(str::to_owned),
+        agent: agent.map(|a| a.parse().expect("agent reference")),
         subtree: None,
         run: None,
         everywhere,
@@ -543,21 +556,13 @@ fn backend_parses_both_forms_and_refuses_a_container_without_an_image() {
 
 #[test]
 fn a_scope_is_never_everywhere_by_omission() {
-    // `None` is "the caller decides": answering an approval keeps it for
+    // No flag is "the caller decides": answering an approval keeps it for
     // the agent that was answered, and a hand-written rule is refused.
-    assert!(scope(None, false).parse().expect("parse").is_none());
-    assert_eq!(
-        scope(None, true).parse().expect("parse"),
-        Some(RuleScope::Everywhere)
-    );
+    assert!(!scope(None, false).given().expect("no flag"));
+    assert!(scope(None, true).given().expect("everywhere"));
     let id = aether_core::id::AgentId::new().to_string();
-    assert_eq!(
-        scope(Some(&id), false).parse().expect("parse"),
-        Some(RuleScope::Agent {
-            id: id.parse().expect("id")
-        })
-    );
-    assert!(scope(Some(&id), true).parse().is_err(), "one scope only");
+    assert!(scope(Some(&id), false).given().expect("one agent"));
+    assert!(scope(Some(&id), true).given().is_err(), "one scope only");
 }
 
 #[test]

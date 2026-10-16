@@ -1,15 +1,51 @@
-use super::{MemoryQuerySpec, PathBuf, connect, short};
+use super::{AgentRef, MemoryQuerySpec, PathBuf, connect, short};
+use aether_client::{Client, Endpoint};
+use aether_core::memory::MemoryScope;
 use anyhow::Context as _;
 
-/// `global`, `role:<role>`, `agent:<id>`, `subtree:<agent id>`,
+/// A memory scope as typed. The agent in `agent:` or `subtree:` is a
+/// reference, which only the daemon's records turn into an id.
+#[derive(Debug, Clone)]
+pub(crate) enum MemoryScopeRef {
+    Fixed(MemoryScope),
+    Agent(AgentRef),
+    Subtree(AgentRef),
+}
+
+impl std::str::FromStr for MemoryScopeRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        parse_memory_scope(text).map_err(|error| format!("{error:#}"))
+    }
+}
+
+impl MemoryScopeRef {
+    pub(crate) async fn resolve(
+        &self,
+        client: &Client,
+        socket: &Endpoint,
+    ) -> anyhow::Result<MemoryScope> {
+        Ok(match self {
+            Self::Fixed(scope) => scope.clone(),
+            Self::Agent(agent) => MemoryScope::Agent {
+                id: agent.resolve(client, socket).await?,
+            },
+            Self::Subtree(root) => MemoryScope::Subtree {
+                root: root.resolve(client, socket).await?,
+            },
+        })
+    }
+}
+
+/// `global`, `role:<role>`, `agent:<agent>`, `subtree:<agent>`,
 /// `repo-role:<role>@<repository>`, or anything else as a repository.
 /// Every scope a memory can carry has to be nameable, or the person curating
 /// them cannot list what they are curating.
-pub(super) fn parse_memory_scope(text: &str) -> anyhow::Result<aether_core::memory::MemoryScope> {
-    use aether_core::memory::MemoryScope;
+pub(super) fn parse_memory_scope(text: &str) -> anyhow::Result<MemoryScopeRef> {
     let text = text.trim();
     if text.eq_ignore_ascii_case("global") {
-        return Ok(MemoryScope::Global);
+        return Ok(MemoryScopeRef::Fixed(MemoryScope::Global));
     }
     if let Some(rest) = text.strip_prefix("repo-role:") {
         // A role family never contains `@`, so the first one ends it.
@@ -22,34 +58,32 @@ pub(super) fn parse_memory_scope(text: &str) -> anyhow::Result<aether_core::memo
         }
         let id = aether_core::repository::normalize_id(repository)
             .ok_or_else(|| anyhow::anyhow!("`{repository}` does not name a repository"))?;
-        return Ok(MemoryScope::RepositoryRole {
+        return Ok(MemoryScopeRef::Fixed(MemoryScope::RepositoryRole {
             id,
             role: role.to_owned(),
-        });
+        }));
     }
     if let Some(root) = text.strip_prefix("subtree:") {
-        return Ok(MemoryScope::Subtree {
-            root: root.trim().parse()?,
-        });
+        let root = root.parse().map_err(anyhow::Error::msg)?;
+        return Ok(MemoryScopeRef::Subtree(root));
     }
     if let Some(role) = text.strip_prefix("role:") {
-        return Ok(MemoryScope::Role {
+        return Ok(MemoryScopeRef::Fixed(MemoryScope::Role {
             role: role.trim().to_owned(),
-        });
+        }));
     }
-    if let Some(id) = text.strip_prefix("agent:") {
-        return Ok(MemoryScope::Agent {
-            id: id.trim().parse()?,
-        });
+    if let Some(agent) = text.strip_prefix("agent:") {
+        let agent = agent.parse().map_err(anyhow::Error::msg)?;
+        return Ok(MemoryScopeRef::Agent(agent));
     }
     let id = aether_core::repository::normalize_id(text.strip_prefix("repo:").unwrap_or(text))
         .ok_or_else(|| anyhow::anyhow!("`{text}` does not name a repository"))?;
-    Ok(MemoryScope::Repository { id })
+    Ok(MemoryScopeRef::Fixed(MemoryScope::Repository { id }))
 }
 
 /// What `memory list` narrows by.
 pub struct MemoryFilter {
-    pub scope: Option<String>,
+    pub scope: Option<MemoryScopeRef>,
     pub text: Option<String>,
     pub tag: Vec<String>,
     pub recorded_by: Option<aether_core::memory::MemoryRecorder>,
@@ -65,12 +99,15 @@ pub fn parse_memory_recorder(text: &str) -> anyhow::Result<aether_core::memory::
         .map_err(|_| anyhow::anyhow!("`{text}` is not a recorder; expected `operator`"))
 }
 
-fn memory_query(filter: MemoryFilter) -> anyhow::Result<MemoryQuerySpec> {
-    let scope = filter
-        .scope
-        .as_deref()
-        .map(parse_memory_scope)
-        .transpose()?;
+/// `scope` is the filter's, resolved.
+fn memory_query(
+    filter: MemoryFilter,
+    scope: Option<MemoryScope>,
+) -> anyhow::Result<MemoryQuerySpec> {
+    anyhow::ensure!(
+        scope.is_some() == filter.scope.is_some(),
+        "a scope filter is resolved before the query is built"
+    );
     Ok(MemoryQuerySpec {
         provenance_agent: None,
         recorded_by: filter.recorded_by,
@@ -161,8 +198,12 @@ pub async fn memory_list(
         && filter.recorded_by.is_none()
         && !filter.proposed;
     let all = filter.all;
-    let query = memory_query(filter)?;
     let client = connect(&socket).await?;
+    let scope = match &filter.scope {
+        Some(scope) => Some(scope.resolve(&client, &socket).await?),
+        None => None,
+    };
+    let query = memory_query(filter, scope)?;
     let memories = client.memories(query).await?;
     if json {
         println!("{}", serde_json::to_string(&memories)?);
@@ -204,15 +245,18 @@ async fn find_memory(
     client: &aether_client::Client,
     id: aether_core::id::MemoryId,
 ) -> anyhow::Result<aether_core::memory::MemoryRecord> {
-    let mut query = memory_query(MemoryFilter {
-        scope: None,
-        text: None,
-        tag: Vec::new(),
-        recorded_by: None,
-        all: true,
-        proposed: false,
-        limit: 1,
-    })?;
+    let mut query = memory_query(
+        MemoryFilter {
+            scope: None,
+            text: None,
+            tag: Vec::new(),
+            recorded_by: None,
+            all: true,
+            proposed: false,
+            limit: 1,
+        },
+        None,
+    )?;
     query.id = Some(id);
     let mut records = client.memories(query.clone()).await?;
     if records.is_empty()
@@ -499,14 +543,10 @@ pub async fn memory_aliases(
 
 pub async fn memory_context(
     socket: impl Into<aether_client::Endpoint>,
-    task: Option<String>,
+    task: Option<super::TaskRef>,
     invocation: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let task: Option<aether_core::id::TaskId> = task
-        .map(|id| id.parse())
-        .transpose()
-        .context("invalid task id")?;
     let invocation: Option<aether_core::id::InvocationId> = invocation
         .map(|id| id.parse())
         .transpose()
@@ -517,6 +557,10 @@ pub async fn memory_context(
     );
     let socket = socket.into();
     let client = connect(&socket).await?;
+    let task = match task {
+        Some(task) => Some(task.resolve(&client).await?),
+        None => None,
+    };
     let found = client.memories_in_context(task, invocation).await?;
     if json {
         println!("{}", serde_json::to_string(&found)?);

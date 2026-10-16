@@ -10,7 +10,7 @@ use super::release::{
     ReleaseSource, VERSION_ASSET, Version, archive_name, checksum_name, published_digest,
     target_for,
 };
-use super::{Plan, check_line, plan, restart_notice, stop_first};
+use super::{Plan, check_line, confirm, not_confirmed, plan, restart_notice, stop_first};
 
 fn version(text: &str) -> Version {
     Version::parse(text).expect(text)
@@ -402,5 +402,47 @@ fn check_names_the_command_that_really_installs_the_newer_release() {
     assert_eq!(
         check_line(newer, running, None),
         "aether 1.1.0 is newer than the latest release, 1.0.0."
+    );
+}
+
+#[test]
+fn only_a_yes_confirms_a_one_way_migration_and_no_answer_is_a_no() {
+    for (answer, agreed) in [
+        ("y\n", true),
+        ("YES\n", true),
+        (" yes \n", true),
+        ("n\n", false),
+        ("\n", false),
+        ("", false),
+        ("yep\n", false),
+    ] {
+        let mut prompt = Vec::new();
+        let said = confirm(&mut answer.as_bytes(), &mut prompt, version("1.2.0")).expect("asked");
+        assert_eq!(said, agreed, "{answer:?}");
+        let prompt = String::from_utf8(prompt).expect("utf-8");
+        assert!(
+            prompt.contains("Updating to aether 1.2.0 migrates the store one way"),
+            "{prompt}"
+        );
+        assert!(prompt.ends_with("[y/N] "), "{prompt}");
+    }
+}
+
+#[test]
+fn an_unconfirmed_migration_names_the_same_update_again_and_yes() {
+    let latest = not_confirmed("aether", version("1.2.0"), None);
+    assert!(latest.contains("aether was not updated"), "{latest}");
+    assert!(
+        latest.contains("run `aether update` and answer y, or add --yes"),
+        "{latest}"
+    );
+    let pinned = not_confirmed(
+        "aether --socket /s",
+        version("1.2.0"),
+        Some(version("1.2.0")),
+    );
+    assert!(
+        pinned.contains("`aether --socket /s update --version v1.2.0`"),
+        "{pinned}"
     );
 }

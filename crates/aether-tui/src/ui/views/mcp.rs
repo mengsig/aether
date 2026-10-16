@@ -89,6 +89,7 @@ fn body(app: &App, theme: &Theme) -> Vec<Line<'static>> {
 fn server_lines(server: &McpServerHealth, theme: &Theme) -> Vec<Line<'static>> {
     let dot = sep(theme);
     let (state, style) = match server.state {
+        _ if server.auth_failed() => ("auth_failed", theme.failure()),
         McpServerState::Ready => ("ready", theme.success()),
         McpServerState::Failed => ("failed", theme.failure()),
         McpServerState::Unknown => ("not contacted", theme.secondary()),

@@ -112,6 +112,8 @@ check_python_suites() {
     python3 -m unittest discover -s scripts -p test_release_install_check.py
     step "link check tests"
     python3 -m unittest discover -s scripts -p test_check_links.py
+    step "upgrade lane tests (release choice, schema rewind, fake engine)"
+    python3 -m unittest discover -s scripts -p test_upgrade_compat.py
     step "CI scope tests (which changes skip the Rust checks)"
     python3 -m unittest discover -s scripts -p test_ci_scope.py
     step "client generator layout tests"

@@ -3,29 +3,64 @@ use super::{AgentId, ApprovalDefault, PathBuf, connect, health_segments, sane};
 use aether_core::time::{Timestamp, now};
 use anyhow::Context as _;
 
-pub async fn status(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
+pub async fn status(
+    socket: impl Into<aether_client::Endpoint>,
+    explicit_socket: bool,
+    json: bool,
+) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
     let s = client.status().await?;
-    println!("{}", status_text(&s, json, now())?);
+    let installed = env!("CARGO_PKG_VERSION");
+    let local = LocalInstall {
+        // Only a daemon on this machine runs a build of this installation.
+        installed: socket.local_path().map(|_| installed),
+        version: version_line(&socket, &s.version, installed, explicit_socket),
+    };
+    println!("{}", status_text(&s, &local, json, now())?);
     Ok(())
+}
+
+/// What this installation adds to a local daemon's status; empty for a
+/// remote one, which runs a binary of its own.
+#[derive(Default)]
+struct LocalInstall<'a> {
+    installed: Option<&'a str>,
+    version: Option<String>,
 }
 
 /// Exact values for `--json`, scaled ones for a person.
 fn status_text(
     s: &aether_protocol::DaemonStatus,
+    local: &LocalInstall<'_>,
     json: bool,
     at: Timestamp,
 ) -> anyhow::Result<String> {
+    debug_assert_eq!(
+        local.installed.is_some(),
+        local.version.is_some(),
+        "a local daemon has both an installed version and a version line"
+    );
     if json {
-        return Ok(serde_json::to_string_pretty(s)?);
+        let mut value = serde_json::to_value(s)?;
+        if let Some(installed) = local.installed {
+            value
+                .as_object_mut()
+                .context("the daemon status is not a JSON object")?
+                .insert("installed_version".to_owned(), installed.into());
+        }
+        return Ok(serde_json::to_string_pretty(&value)?);
     }
-    Ok(human_status(s, at).join("\n"))
+    Ok(human_status(s, local.version.as_deref(), at).join("\n"))
 }
 
 /// The status a person reads: scaled units and one qualifier per line,
 /// where `--json` keeps every exact value.
-fn human_status(s: &aether_protocol::DaemonStatus, at: Timestamp) -> Vec<String> {
+fn human_status(
+    s: &aether_protocol::DaemonStatus,
+    version: Option<&str>,
+    at: Timestamp,
+) -> Vec<String> {
     let mut out = Vec::new();
     out.push(format!(
         "aetherd {} (pid {}) instance {}",
@@ -33,6 +68,9 @@ fn human_status(s: &aether_protocol::DaemonStatus, at: Timestamp) -> Vec<String>
         s.pid,
         sane(&s.instance_id)
     ));
+    if let Some(versions) = version {
+        out.push(format!("version  {}", sane(versions)));
+    }
     out.push(format!("started  {}", s.started_at.to_rfc3339()));
     if let Some(bridge) = &s.bridge {
         out.push(format!("bridge   {}", sane(bridge)));
@@ -201,6 +239,26 @@ fn run_line(r: &aether_core::budget::RunSummary, at: Timestamp) -> String {
     line
 }
 
+/// The daemon's version beside this binary's, and what restarts it when they
+/// differ. `None` for a remote daemon, which runs a binary of its own.
+fn version_line(
+    endpoint: &aether_client::Endpoint,
+    running: &str,
+    installed: &str,
+    explicit_socket: bool,
+) -> Option<String> {
+    endpoint.local_path()?;
+    let versions = crate::doctor::running_versus_installed(running, installed);
+    if running == installed {
+        return Some(versions);
+    }
+    let aether = endpoint.command_hint(explicit_socket);
+    Some(format!(
+        "{versions} · the daemon keeps its build until `{aether} stop`; `{aether}` then starts \
+         {installed}"
+    ))
+}
+
 /// One line for the status header: how many servers are usable, and what is
 /// wrong with the rest.
 fn render_mcp_summary(servers: &[aether_core::mcp::McpServerHealth]) -> String {
@@ -224,6 +282,19 @@ fn render_mcp_summary(servers: &[aether_core::mcp::McpServerHealth]) -> String {
     line
 }
 
+/// How a server authenticates, naming the token variable and never a value.
+fn render_mcp_auth(auth: &aether_core::mcp::McpAuth) -> String {
+    use aether_core::mcp::McpAuthState;
+    let variable = &auth.token_env;
+    match auth.state {
+        McpAuthState::Token => format!("token from {variable}"),
+        McpAuthState::AuthFailed => format!("auth_failed: {variable} is unset; not connected"),
+        McpAuthState::Anonymous => {
+            format!("no token: {variable} is unset and auth is optional")
+        }
+    }
+}
+
 /// Configured MCP servers, optionally reconnecting first.
 pub async fn mcp_list(
     socket: impl Into<aether_client::Endpoint>,
@@ -245,11 +316,15 @@ pub async fn mcp_list(
     }
     for s in &servers {
         let state = match s.state {
+            _ if s.auth_failed() => "auth_failed",
             McpServerState::Ready => "ready",
             McpServerState::Failed => "failed",
             McpServerState::Unknown => "not contacted",
         };
         println!("{}  {}  {}", sane(&s.name), state, sane(&s.transport));
+        if let Some(auth) = &s.auth {
+            println!("  auth: {}", sane(&render_mcp_auth(auth)));
+        }
         if let Some(error) = &s.error {
             println!("  error: {}", sane(error));
         }
@@ -353,7 +428,7 @@ mod tests {
     #[test]
     fn a_person_reads_scaled_tokens_and_one_qualifier_per_run() {
         let at = aether_core::time::now();
-        let text = status_text(&fixture(at), false, at).expect("renders");
+        let text = status_text(&fixture(at), &LocalInstall::default(), false, at).expect("renders");
         assert!(
             text.contains("usage    1.23M in · 5.98B cached · 89.0k out"),
             "{text}"
@@ -382,7 +457,7 @@ mod tests {
     fn json_keeps_every_exact_value() {
         let at = aether_core::time::now();
         let status = fixture(at);
-        let text = status_text(&status, true, at).expect("renders");
+        let text = status_text(&status, &LocalInstall::default(), true, at).expect("renders");
         let value: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
         assert_eq!(value, serde_json::to_value(&status).expect("serializes"));
         assert_eq!(value["usage_total"]["cache_read_tokens"], 5_981_893_206_u64);
@@ -390,5 +465,22 @@ mod tests {
         assert_eq!(value["runs"][0]["rate_usd_per_hour"], 12.0);
         assert_eq!(value["runs"][0]["forecast_usd_next_hour"], 855.18);
         assert_eq!(value["runs"][1]["rate_usd_per_hour"], 0.0);
+    }
+
+    #[test]
+    fn a_local_daemon_names_the_installed_version_in_both_forms() {
+        let at = aether_core::time::now();
+        let status = fixture(at);
+        let local = LocalInstall {
+            installed: Some("2"),
+            version: Some("running 1 · installed 2".to_owned()),
+        };
+        let text = status_text(&status, &local, false, at).expect("renders");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[1], "version  running 1 · installed 2", "{text}");
+        let json = status_text(&status, &local, true, at).expect("renders");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["installed_version"], "2");
+        assert_eq!(value["version"], "1");
     }
 }

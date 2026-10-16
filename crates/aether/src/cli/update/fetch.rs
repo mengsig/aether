@@ -17,6 +17,8 @@ const TEXT_TIMEOUT: Duration = Duration::from_secs(30);
 /// The whole download of one archive, as in `install.sh`.
 const ARCHIVE_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_TEXT_BYTES: u64 = 4 * 1024;
+/// The changelog grows with every release; this leaves it room for years.
+const MAX_NOTES_BYTES: u64 = 1024 * 1024;
 const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// A client for release downloads. It follows GitHub's redirects to its asset
@@ -33,13 +35,32 @@ pub(super) fn client(source: &ReleaseSource) -> anyhow::Result<reqwest::Client> 
 
 /// A small text asset, such as a version or a checksum file.
 pub(super) async fn text(client: &reqwest::Client, url: &str) -> anyhow::Result<String> {
-    let mut response = get(client, url, TEXT_TIMEOUT, MAX_TEXT_BYTES).await?;
+    let response = get(client, url, TEXT_TIMEOUT, MAX_TEXT_BYTES).await?;
+    read_text(response, url, MAX_TEXT_BYTES).await
+}
+
+/// The release notes asset, or `None` when the release has no such file:
+/// releases published before it existed do not.
+pub(super) async fn notes(client: &reqwest::Client, url: &str) -> anyhow::Result<Option<String>> {
+    let response = send(client, url, TEXT_TIMEOUT).await?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let response = accepted(response, url, MAX_NOTES_BYTES)?;
+    read_text(response, url, MAX_NOTES_BYTES).await.map(Some)
+}
+
+async fn read_text(
+    mut response: reqwest::Response,
+    url: &str,
+    max_bytes: u64,
+) -> anyhow::Result<String> {
     let interrupted = || format!("the download of {url} was interrupted");
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.with_context(interrupted)? {
         ensure!(
-            (body.len() + chunk.len()) as u64 <= MAX_TEXT_BYTES,
-            "{url} is larger than the {MAX_TEXT_BYTES} bytes a release text file may be"
+            (body.len() + chunk.len()) as u64 <= max_bytes,
+            "{url} is larger than the {max_bytes} bytes a release text file may be"
         );
         body.extend_from_slice(&chunk);
     }
@@ -92,12 +113,29 @@ async fn get(
     timeout: Duration,
     max_bytes: u64,
 ) -> anyhow::Result<reqwest::Response> {
-    let response = client
+    let response = send(client, url, timeout).await?;
+    accepted(response, url, max_bytes)
+}
+
+async fn send(
+    client: &reqwest::Client,
+    url: &str,
+    timeout: Duration,
+) -> anyhow::Result<reqwest::Response> {
+    client
         .get(url)
         .timeout(timeout)
         .send()
         .await
-        .with_context(|| format!("could not download {url}"))?;
+        .with_context(|| format!("could not download {url}"))
+}
+
+/// The response, if it succeeded and announces no more than `max_bytes`.
+fn accepted(
+    response: reqwest::Response,
+    url: &str,
+    max_bytes: u64,
+) -> anyhow::Result<reqwest::Response> {
     let status = response.status();
     ensure!(
         status.is_success(),

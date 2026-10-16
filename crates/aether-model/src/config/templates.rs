@@ -128,9 +128,12 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # partition per repository and run, so a run's isolated children share warm
 # output and another run never writes into it. Unset root means
 # `aether.build-cache` beside `aether.db`. A listed table replaces the default.
+# Over max_bytes (default 15% of its filesystem), storage GC evicts partitions
+# no live agent leases, least recently used first.
 #
 # [build_cache]
 # root = "/var/cache/aether"
+# max_bytes = 53687091200
 # [[build_cache.env]]
 # name = "CARGO_TARGET_DIR"
 # dir = "cargo-target"
@@ -246,6 +249,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # name = "issues"
 # url = "http://127.0.0.1:9100/mcp"
 # token_env = "ISSUES_MCP_TOKEN"
+# auth = "optional"   # connect without a token when the variable is unset
 "#;
 
 const PROVIDERS_HEADER: &str = r#"# Provider overrides and additions. Built-in providers (claude-code, codex,

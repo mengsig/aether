@@ -80,6 +80,15 @@ fn kind_lines(kind: &str, value: &Value) -> Vec<String> {
     if let Some(partitions) = value["partitions"].as_u64() {
         out.push(format!("  {partitions} build cache partitions"));
     }
+    if let Some(max) = value["max_bytes"].as_u64() {
+        out.push(format!("  budget {}", units::bytes(max)));
+    }
+    for error in value["errors"].as_array().into_iter().flatten() {
+        out.push(format!(
+            "  error: {}",
+            error.as_str().unwrap_or("see JSON report")
+        ));
+    }
     if let Some(unreadable) = value["unreadable"].as_u64().filter(|n| *n > 0) {
         out.push(format!("  {unreadable} directories could not be read"));
     }
@@ -98,6 +107,7 @@ fn kind_lines(kind: &str, value: &Value) -> Vec<String> {
                 entry["reason"].as_str().unwrap_or("see JSON report")
             ));
             out.extend(build_output_lines(entry));
+            out.extend(partition_line(entry));
         }
     }
     debug_assert!(
@@ -122,6 +132,21 @@ fn build_output_lines(entry: &Value) -> impl Iterator<Item = String> + '_ {
         })
 }
 
+fn partition_line(entry: &Value) -> Option<String> {
+    let holders = entry["leased_by"].as_array()?;
+    let holders: Vec<_> = holders.iter().filter_map(|id| id.as_str()).collect();
+    Some(format!(
+        "    {}, last used {}, leased by {}",
+        units::bytes(entry["bytes"].as_u64().unwrap_or(0)),
+        entry["last_used"].as_str().unwrap_or("unknown"),
+        if holders.is_empty() {
+            "no agent".to_owned()
+        } else {
+            holders.join(", ")
+        }
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +162,12 @@ mod tests {
             },
             "logs": {"bytes": 812},
             "backups": {"policy": "kept forever"},
+            "build_cache": {
+                "bytes": 3072, "partitions": 1, "max_bytes": 10_737_418_240_u64,
+                "errors": ["cannot remove /c/p"],
+                "entries": [{"action": "kept", "path": "/c/p", "reason": "leased",
+                    "bytes": 3072, "last_used": "2026-10-16T00:00:00Z", "leased_by": ["agt_1"]}],
+            },
             "available_bytes": 1_099_511_627_776_u64,
         })
     }
@@ -152,6 +183,11 @@ mod tests {
             "    build output pruned /w/a/target: 5.00 GiB",
             "backups: kept forever",
             "logs: 812 B",
+            "build_cache: 3.00 KiB",
+            "  budget 10.0 GiB",
+            "  error: cannot remove /c/p",
+            "  kept /c/p: leased",
+            "    3.00 KiB, last used 2026-10-16T00:00:00Z, leased by agt_1",
         ];
         for line in expected {
             assert!(

@@ -6,16 +6,17 @@ use anyhow::{Context as _, anyhow, bail};
 
 pub async fn approve(
     socket: impl Into<aether_client::Endpoint>,
-    approval: String,
+    approval: super::ApprovalRef,
     approve: bool,
     remember: bool,
-    scope: Option<RuleScope>,
+    scope: RuleScopeArgs,
     tool_wide: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id = approval.parse().context("invalid approval id")?;
+    let id = approval.resolve(&client).await?;
+    let scope = scope.resolve(&client, &socket).await?;
     let decision = decision_of(approve);
     client
         .resolve_approval_remembering(
@@ -34,7 +35,7 @@ pub async fn approve(
     let decided = if approve { "approved" } else { "denied" };
     acted(
         json,
-        &format!("{decided} {approval}"),
+        &format!("{decided} {id}"),
         serde_json::json!({"approval": id, "decision": decision, "remembered": remember}),
     )
 }
@@ -125,7 +126,7 @@ pub async fn rules_add(
     matcher.validate().map_err(|e| anyhow!(e))?;
     // A hand-written rule outlives the session that wrote it, so it never
     // widens to everywhere by omission.
-    let Some(scope) = scope.parse()? else {
+    let Some(scope) = scope.resolve(&client, &socket).await? else {
         bail!(
             "say where this rule applies: --agent, --subtree, --run, or --everywhere for every \
              agent this daemon will ever run"

@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct CompactionClient {
     pub engine: Arc<dyn Engine>,
     pub turn: EngineTurn,
+    pub context: aether_engine::EngineLaunchContext,
     pub pricing: TurnPricing,
 }
 
@@ -121,7 +122,13 @@ impl ModelClient for CompactionClient {
         };
         let run = tokio::time::timeout(
             std::time::Duration::from_secs(180),
-            collect_checkpoint(self.engine.as_ref(), turn, child.clone(), &mut accounting),
+            collect_checkpoint(
+                self.engine.as_ref(),
+                turn,
+                self.context,
+                child.clone(),
+                &mut accounting,
+            ),
         );
         let result = tokio::select! {
             result = run => result.unwrap_or_else(|_| Err(failure("Checkpoint engine timed out"))),
@@ -159,15 +166,19 @@ fn checkpoint_turn(mut turn: EngineTurn, request: &ModelRequest) -> EngineTurn {
 async fn collect_checkpoint(
     engine: &dyn Engine,
     turn: EngineTurn,
+    context: aether_engine::EngineLaunchContext,
     cancel: CancellationToken,
     accounting: &mut Accounting,
 ) -> Result<String, ModelError> {
     debug_assert!(turn.session.is_none());
     debug_assert!(accounting.usage.is_none() && !accounting.closing_received);
-    let mut run = engine.run(turn, cancel.clone()).await.map_err(|error| {
-        accounting.unsubmitted = error.proves_no_submission();
-        failure(error.to_string())
-    })?;
+    let mut run = engine
+        .run_with_context(turn, context, cancel.clone())
+        .await
+        .map_err(|error| {
+            accounting.unsubmitted = error.proves_no_submission();
+            failure(error.to_string())
+        })?;
     let mut text = String::new();
     while let Some(event) = run.events.recv().await {
         match event {
@@ -397,6 +408,11 @@ mod tests {
     async fn failed_checkpoint(ending: Ending) -> aether_model::PartialFailure {
         let cancel = CancellationToken::new();
         let client = CompactionClient {
+            context: aether_engine::EngineLaunchContext {
+                run_id: aether_core::id::RunId::new(),
+                agent_id: aether_core::id::AgentId::new(),
+                task_id: None,
+            },
             pricing: TurnPricing::default(),
             engine: Arc::new(CheckpointEngine {
                 ending,

@@ -1,12 +1,12 @@
 use super::{
-    AgentId, ApprovalPolicy, DeadlineUpdate, Effort, ModelChain, NetworkPolicy, Priority, SetKnobs,
-    connect, parse_backend,
+    ApprovalPolicy, DeadlineUpdate, Effort, ModelChain, NetworkPolicy, Priority, SetKnobs, connect,
+    parse_backend,
 };
-use anyhow::{Context as _, anyhow, bail};
+use anyhow::{anyhow, bail};
 
 pub async fn set(
     socket: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: super::AgentRef,
     knobs: SetKnobs,
     json: bool,
 ) -> anyhow::Result<()> {
@@ -15,7 +15,7 @@ pub async fn set(
     use aether_protocol::AgentPatch;
 
     let client = connect(&socket).await?;
-    let id: AgentId = agent.parse().context("invalid agent id")?;
+    let id = agent.resolve(&client, &socket).await?;
     let tools = match (knobs.tools.is_empty(), knobs.deny_tools.is_empty()) {
         (true, true) => None,
         (false, true) => Some(ToolExposure::Only {

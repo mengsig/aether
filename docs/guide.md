@@ -258,6 +258,15 @@ aether runs report RUN_ID --md
 aether runs export RUN_ID --out run.aether
 ```
 
+Wherever a command takes an ID, a unique prefix of it works as well, with or
+without its `agt_`/`run_`/`tsk_`/`apr_`/`sch_` part. An agent or a schedule
+can also be named by its name when no other live one has it, and `@last` names
+the newest agent of the current run (or, where a run is expected, that run).
+`@viewed` names the agent a TUI on this machine views, or its run; with several
+TUIs open, the one whose view changed last. The agent in a memory scope such as
+`agent:planner` or `subtree:@viewed` is named the same way. When a prefix or
+name matches more than one, the command refuses and lists them.
+
 Plain `aether events` shows tool-result text and error markers, plus custom
 event names and brief payloads. Use `--json` for complete event records.
 

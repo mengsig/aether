@@ -10,6 +10,40 @@ Aether's bridge. Both paths end in the same connection.
 Each server is a single connection shared by every agent: one process for a
 stdio server, one endpoint for an HTTP one.
 
+## Tokens
+
+An HTTP server can name an environment variable that holds its bearer token:
+
+```toml
+[[mcp.servers]]
+name = "issues"
+url = "https://issues.example/mcp"
+token_env = "ISSUES_MCP_TOKEN"
+```
+
+The daemon reads the variable once, when it starts, and stores no
+credential. If the variable is unset or empty, the server fails auth: it is
+reported as `auth_failed` and is never contacted, so a typo in the variable's
+name cannot quietly turn into anonymous access. Set the variable in the
+daemon's environment and restart the daemon; `mcp refresh` cannot help,
+because the token is not read again.
+
+A server that also serves anonymous callers can say so:
+
+```toml
+auth = "optional"
+```
+
+It is then reached without a token when the variable is unset. `auth`
+needs a `token_env`.
+
+`aether mcp list` prints an `auth:` line for every server with a token
+variable, and `aether doctor` lists the servers that failed auth or connected
+without a token. Both name the variable, never its value. Over the protocol,
+`McpServerHealth.auth` carries the variable's name and a state: `token`,
+`auth_failed` or `anonymous`. A server that failed auth also has
+`state: "failed"` and an `error` that starts with `auth_failed`.
+
 ## Caller identity
 
 A server configured with `send_caller_meta = true` is told which agent each

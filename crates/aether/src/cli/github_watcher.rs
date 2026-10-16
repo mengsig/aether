@@ -81,7 +81,11 @@ pub async fn run(
                 Some(template) => Some(spawn_spec(&client, template).await?),
                 None => None,
             };
-            let dispatch = add_dispatch(agent.as_deref(), spawn)?;
+            let agent = match agent {
+                Some(agent) => Some(agent.resolve(&client, &socket).await?),
+                None => None,
+            };
+            let dispatch = add_dispatch(agent, spawn);
             apply_add(&mut config, repository, dispatch, allowed_users)?;
             json
         }
@@ -148,13 +152,11 @@ pub async fn run(
 /// Resolves `add`'s flags into a dispatch decision. `--agent` and
 /// `--spawn-role`/`--spawn-objective` are mutually exclusive at the clap
 /// level, so exactly one of `agent`/`spawn` is `Some` unless both are absent.
-fn add_dispatch(agent: Option<&str>, spawn: Option<SpawnSpec>) -> anyhow::Result<AddDispatch> {
+fn add_dispatch(agent: Option<AgentId>, spawn: Option<SpawnSpec>) -> AddDispatch {
     match (agent, spawn) {
-        (Some(agent), None) => Ok(AddDispatch::Fixed(
-            agent.parse().context("invalid target agent id")?,
-        )),
-        (None, Some(template)) => Ok(AddDispatch::Thread(template)),
-        (None, None) => Ok(AddDispatch::Unchanged),
+        (Some(agent), None) => AddDispatch::Fixed(agent),
+        (None, Some(template)) => AddDispatch::Thread(template),
+        (None, None) => AddDispatch::Unchanged,
         (Some(_), Some(_)) => {
             unreachable!("clap conflicts_with forbids --agent with --spawn-role")
         }
@@ -458,21 +460,17 @@ mod tests {
     }
 
     #[test]
-    fn add_dispatch_rejects_both_and_accepts_either_or_neither() {
+    fn add_dispatch_takes_an_agent_a_template_or_neither() {
         let template = template();
+        assert!(matches!(add_dispatch(None, None), AddDispatch::Unchanged));
         assert!(matches!(
-            add_dispatch(None, None).unwrap(),
-            AddDispatch::Unchanged
-        ));
-        assert!(matches!(
-            add_dispatch(Some(&AgentId::new().to_string()), None).unwrap(),
+            add_dispatch(Some(AgentId::new()), None),
             AddDispatch::Fixed(_)
         ));
         assert!(matches!(
-            add_dispatch(None, Some(template)).unwrap(),
+            add_dispatch(None, Some(template)),
             AddDispatch::Thread(_)
         ));
-        assert!(add_dispatch(Some("not-an-id"), None).is_err());
     }
 
     #[test]

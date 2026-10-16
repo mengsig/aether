@@ -195,6 +195,7 @@ pub(super) async fn compaction_client(
     let tool_ctx = tool_context(runtime, ctx);
     Ok(Arc::new(crate::compaction_client::CompactionClient {
         engine,
+        context: ctx.launch_context(),
         pricing: crate::turn_engine::TurnPricing::of(runtime, &resolved),
         turn: aether_engine::EngineTurn {
             prompt: String::new(),

@@ -6,25 +6,27 @@ use std::io::Write as _;
 
 pub async fn artifacts_list(
     socket: impl Into<aether_client::Endpoint>,
-    agent: Option<String>,
-    task: Option<String>,
+    agent: Option<super::AgentRef>,
+    task: Option<super::TaskRef>,
     with_bytes: bool,
     limit: usize,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
+    let agent = match agent {
+        Some(agent) => Some(agent.resolve(&client, &socket).await?),
+        None => None,
+    };
+    let task = match task {
+        Some(task) => Some(task.resolve(&client).await?),
+        None => None,
+    };
     let rows = client
         .list_artifacts(ArtifactQuery {
             name: None,
-            agent: agent
-                .map(|a| a.parse())
-                .transpose()
-                .context("invalid agent id")?,
-            task: task
-                .map(|t| t.parse())
-                .transpose()
-                .context("invalid task id")?,
+            agent,
+            task,
             with_bytes_only: with_bytes,
             limit,
         })

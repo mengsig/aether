@@ -1,22 +1,18 @@
 use std::fmt::Write as _;
 
 use aether_core::workspace_review::{ChangedFile, FileStatus, WorkspaceDiff, WorkspaceIntegration};
-use anyhow::Context as _;
 
-use super::{AgentId, acted, connect, sane, sane_document, short};
-
-fn agent_id(agent: &str) -> anyhow::Result<AgentId> {
-    agent.parse().context("invalid agent id")
-}
+use super::{AgentRef, acted, connect, sane, sane_document, short};
 
 pub async fn workspace_diff(
     endpoint: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: AgentRef,
     patch: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    let id = agent_id(&agent)?;
-    let client = connect(&endpoint.into()).await?;
+    let endpoint = endpoint.into();
+    let client = connect(&endpoint).await?;
+    let id = agent.resolve(&client, &endpoint).await?;
     let diff = client.workspace_diff(id).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&diff)?);
@@ -112,11 +108,12 @@ fn diff_summary(diff: &WorkspaceDiff) -> String {
 /// The exit code is 1 when conflicts refused the integration.
 pub async fn workspace_integrate(
     endpoint: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: AgentRef,
     json: bool,
 ) -> anyhow::Result<i32> {
-    let id = agent_id(&agent)?;
-    let client = connect(&endpoint.into()).await?;
+    let endpoint = endpoint.into();
+    let client = connect(&endpoint).await?;
+    let id = agent.resolve(&client, &endpoint).await?;
     let integration = client.workspace_integrate(id).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&integration)?);
@@ -163,12 +160,13 @@ fn integration_summary(integration: &WorkspaceIntegration) -> String {
 
 pub async fn workspace_discard(
     endpoint: impl Into<aether_client::Endpoint>,
-    agent: String,
+    agent: AgentRef,
     force: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    let id = agent_id(&agent)?;
-    let client = connect(&endpoint.into()).await?;
+    let endpoint = endpoint.into();
+    let client = connect(&endpoint).await?;
+    let id = agent.resolve(&client, &endpoint).await?;
     let discard = client.workspace_discard(id, force).await?;
     let live = if discard.forced {
         " while it was live"
@@ -188,6 +186,7 @@ pub async fn workspace_discard(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aether_core::id::AgentId;
     use aether_core::workspace_review::WorkspaceCommit;
 
     fn diff() -> WorkspaceDiff {

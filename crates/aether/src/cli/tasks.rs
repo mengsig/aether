@@ -1,6 +1,5 @@
-use super::{AgentId, EventKind, TaskQuery, connect, short};
+use super::{EventKind, TaskQuery, connect, short};
 use aether_core::model::{ContentBlock, ToolResultBlock};
-use anyhow::Context as _;
 
 pub async fn tasks(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
     let socket = socket.into();
@@ -31,23 +30,18 @@ pub async fn tasks(socket: impl Into<aether_client::Endpoint>, json: bool) -> an
 pub async fn task_create(
     socket: impl Into<aether_client::Endpoint>,
     objective: String,
-    owner: Option<String>,
-    depends_on: Vec<String>,
+    owner: Option<super::AgentRef>,
+    depends_on: Vec<super::TaskRef>,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
-    use aether_core::id::TaskId;
     use aether_protocol::CreateTask;
     let client = connect(&socket).await?;
-    let owner = owner
-        .map(|a| a.parse::<AgentId>())
-        .transpose()
-        .context("invalid agent id")?;
-    let dependencies = depends_on
-        .iter()
-        .map(|t| t.parse::<TaskId>())
-        .collect::<Result<Vec<_>, _>>()
-        .context("invalid task id")?;
+    let owner = match owner {
+        Some(owner) => Some(owner.resolve(&client, &socket).await?),
+        None => None,
+    };
+    let dependencies = super::TaskRef::resolve_each(&depends_on, &client).await?;
     let task = client
         .create_task(CreateTask {
             objective,
