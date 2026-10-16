@@ -203,6 +203,8 @@ pub struct ProviderInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_source: Option<String>,
     pub health: ProviderHealth,
+    #[serde(default)]
+    pub headroom: aether_core::provider::ProviderHeadroom,
 }
 
 impl ProviderInfo {

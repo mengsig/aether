@@ -67,6 +67,7 @@ section and key. Omitted settings use the shipped defaults.
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `model.default` | First model of the first ready provider | Choose the default `provider/model`. |
+| `providers.usage_stale_after` | `900` | Seconds before cached provider usage is stale; zero marks reports stale as soon as time advances. |
 | `scheduler.max_concurrent_turns` | `32` | Bound simultaneous model turns. |
 | `scheduler.max_concurrent_engine_turns` | Unset | Add a limit for native CLI turns. |
 | `scheduler.run_budget_usd` | Unset | Refuse new delegation once recorded run spend reaches the limit. |
@@ -78,6 +79,13 @@ apply; approval policy alone is not a sandbox. See the
 [engine integration guide](engines.md) and [known limitations](known-limitations.md).
 
 ## Providers
+
+`aether providers` and the TUI usage view show remaining percentages and reset
+times in UTC. These are passive observations from provider turns, not balance
+probes. In `config.toml`, `[providers] usage_stale_after = 900` sets the freshness
+threshold in seconds (15 minutes by default). Newly configured subscriptions
+appear automatically, even before they report usage.
+
 
 One signed-in native CLI **or** one configured API provider is enough.
 These are all the provider IDs in the [built-in registry](../crates/aether-model/src/builtin.rs).

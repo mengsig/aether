@@ -112,6 +112,7 @@ fn usage_keeps_newer_events_when_an_older_refresh_arrives() {
         ProviderUsage::from_engine_payload(&serde_json::json!({"primary":{"usedPercent":60}}), at)
             .unwrap();
     let provider = aether_protocol::ProviderInfo {
+        headroom: Default::default(),
         provider: "codex".into(),
         name: "Codex".into(),
         protocol: "codex-app".into(),

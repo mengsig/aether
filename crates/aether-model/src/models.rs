@@ -520,6 +520,7 @@ mod tests {
     fn models(env: Vec<(&'static str, &'static str)>, default: Option<&str>) -> Models {
         let store: Arc<dyn CredentialStore> = Arc::new(MemoryCredentialStore::new());
         let config = AetherConfig {
+            providers: Default::default(),
             theme: Default::default(),
             model: crate::config::ModelSection {
                 default: default.map(str::to_owned),

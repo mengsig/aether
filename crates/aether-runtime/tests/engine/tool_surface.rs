@@ -28,7 +28,7 @@ async fn non_leaf_engine_tools_expose_the_catalog_and_explicit_delegation_choice
         serde_json::to_vec(&root).unwrap(),
         serde_json::to_vec(&before).unwrap()
     );
-    assert_eq!(root.len(), 19);
+    assert_eq!(root.len(), 20);
     let delegate = root.iter().find(|tool| tool.name == "delegate").unwrap();
     let required = delegate.input_schema["required"].as_array().unwrap();
     assert!(required.contains(&serde_json::json!("model")));

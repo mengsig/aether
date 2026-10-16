@@ -1,0 +1,9 @@
+{
+  "method": "account/rateLimits/updated",
+  "params": {
+    "rateLimits": {
+      "primary": {"usedPercent": 42, "windowDurationMins": 300, "resetsAt": 2000000000},
+      "secondary": {"usedPercent": 73, "windowDurationMins": 10080, "resetsAt": 2000500000}
+    }
+  }
+}

@@ -18,6 +18,7 @@ class ProviderInfo(TypedDict, total=False):
     enabled: bool
     engine: bool
     family: str | None  # optional
+    headroom: _protocol.ProviderHeadroom  # optional
     health: _protocol.ProviderHealth
     models: int
     name: str
