@@ -37,6 +37,19 @@ async function mountHarness(page) {
   await expect.poll(()=>page.locator('.conversation-viewport').evaluate(node=>node.scrollHeight-node.clientHeight-node.scrollTop)).toBeLessThan(2);
 }
 
+async function verifyNote(page) {
+  await page.evaluate(()=>{
+    const {state,store,entries}=window.conversationTest; const agent=state.agents[0].id;
+    const note={seq:7,at:'2026-10-12T04:37:00Z',message:{role:'note',content:[{type:'text',text:'3 items shipped · https://example.com/pull/12'}]}};
+    store.patch({transcripts:{[agent]:[...entries,note]}});
+  });
+  const note = page.locator('.conversation-role-note');
+  await expect(note).toHaveCount(1);
+  await expect(note.locator('.conversation-source')).toHaveText('Note · woke nobody');
+  await expect(note.locator('.conversation-content')).toContainText('3 items shipped');
+  assert.equal(await page.locator('.conversation-role-user, .conversation-role-assistant').filter({hasText:'3 items shipped'}).count(),0);
+}
+
 async function verifyGeometry(page, name) {
   await page.evaluate(async()=>{await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);});
   await expect(page.getByRole('textbox', {name:'Message draft'})).toHaveValue('Keep this draft through a daemon restart.');
@@ -193,7 +206,7 @@ test('conversation small screens, original records, actions, keyboard and virtua
     await page.route('**/boot.js',route=>route.fulfill({contentType:'text/javascript',body:''}));
     await page.goto(`http://127.0.0.1:${address.port}/`);
     await mountHarness(page); await verifyGeometry(page,'390x844'); await verifyToolEdge(page); await verifyActions(page);
-    await verifySearchAndConnection(page);
+    await verifySearchAndConnection(page); await verifyNote(page);
     await page.evaluate(()=>window.conversationTest.cleanup()); await mountHarness(page);
     await page.setViewportSize({width:360,height:640}); await verifyGeometry(page,'360x640');
     await page.evaluate(()=>{document.documentElement.style.fontSize='200%';});

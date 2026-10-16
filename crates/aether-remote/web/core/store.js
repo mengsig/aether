@@ -2,7 +2,7 @@ import { assertSubmissionLock, SUBMISSION_LOCK_WAIT, withSubmissionLock } from '
 import { readUnconfirmed } from './unconfirmed.js';
 import { recoverSubmissions } from './recovery.js';
 import { array, errorText, integer, object, string } from './validate.js';
-import { agent, agentAttention, approval, question, transcriptEntry, unique } from './normalize.js';
+import { agent, agentAttention, approval, noteEntry, question, transcriptEntry, unique } from './normalize.js';
 import { applyDelta, applyEvent } from './events.js';
 import { applyReceipt } from './receipts.js';
 import { retire } from './retirements.js';
@@ -10,6 +10,7 @@ import { clearLocalState, interruptedReceipts, dismissReceipt, mergeLedger } fro
 import { createDrafts, restoreSnapshot, saveSnapshot } from './persistence.js';
 /** @typedef {import('../types.js').State} State */
 /** @typedef {import('../types.js').Transport} Transport */
+const NOTE_PAGE = 200;
 /** @returns {State} */
 function initialState() {
   return {ready:false,connection:'offline',connectionDetail:'Not connected',role:'observer',agents:[],attention:[],activity:[],
@@ -267,9 +268,9 @@ export class RemoteStore {
   async fetchTranscript(id) {
     const epoch = this.epoch;
     const after = this.completeTranscripts.has(id) ? (this.state.transcripts[id] ?? []).reduce((seq,entry)=>Math.max(seq,entry.seq),0) : 0;
-    const reply = await this.transport.request({cmd:'get_transcript',agent:id,after});
+    const [reply,notes] = await Promise.all([this.transport.request({cmd:'get_transcript',agent:id,after}),this.fetchNotes(id,after)]);
     if (reply.reply !== 'transcript') throw new Error('Unexpected transcript reply');
-    const records = unique(array(reply.data).map(transcriptEntry), entry => entry.seq);
+    const records = unique([...array(reply.data).map(transcriptEntry),...notes], entry => entry.seq);
     if (epoch !== this.epoch || !Object.hasOwn(this.state.transcripts,id)) return;
     const merged = new Map(records.map(entry => [entry.seq,entry]));
     for (const entry of this.state.transcripts[id] ?? []) merged.set(entry.seq,entry);
@@ -277,6 +278,20 @@ export class RemoteStore {
     while (Object.keys(transcripts).length >= 20) delete transcripts[Object.keys(transcripts)[0]];
     transcripts[id] = [...merged.values()].sort((a,b)=>a.seq-b.seq);
     this.completeTranscripts.add(id); this.patch({transcripts});
+  }
+  /** The agent's latest notes after `after`: `get_transcript` holds its messages only. */
+  /** @param {string} id @param {number} after */
+  async fetchNotes(id, after) {
+    // No event's type is `note.appended`, so `child_types` keeps children's events off the page.
+    const reply = await this.transport.request({cmd:'get_events',after:0,limit:NOTE_PAGE,
+      query:{before:Number.MAX_SAFE_INTEGER,agent:id,types:['custom'],child_types:['note.appended']}});
+    if (reply.reply !== 'events') throw new Error('Unexpected note history reply');
+    const records = array(reply.data, 'Note history');
+    if (records.length > NOTE_PAGE) throw new Error('Note history exceeded the requested limit');
+    return records.flatMap(record => {
+      const entry = object(record, 'event').agent_id === id ? noteEntry(record) : null;
+      return entry && entry.seq > after ? [entry] : [];
+    });
   }
   async refreshTranscripts() {
     await Promise.all(Object.keys(this.state.transcripts).map(id => this.loadTranscript(id).catch(error => {

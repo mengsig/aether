@@ -169,3 +169,22 @@ test('uncertain delivery stays in its ledger instead of raising an unrelated glo
     assert.equal(store.get().error,null);
   }finally{store.dispose();}
 });
+
+test('a note joins its agent conversation when it loads and when it arrives',async()=>{
+  const fixtures=createFixtures(); let listener;
+  const agent='agt_00000000000000000000000002';
+  const note=(seq,agentId,text)=>({seq,at:'2026-10-12T00:00:00Z',agent_id:agentId,kind:{type:'custom',name:'note.appended',payload:{text,links:['https://example.com/pull/12'],context:'none'}}});
+  fixtures.events.push(note(30,agent,'3 items shipped'),note(31,'agt_00000000000000000000000003','another agent'));
+  const transport={onFrame:fn=>{listener=fn;return()=>{};},onConnection:()=>()=>{},request:async command=>readCommand(fixtures,command)};
+  const store=createStore(transport,{storage:null});
+  try {
+    await store.loadTranscript(agent);
+    const loaded=store.get().transcripts[agent];
+    assert.deepEqual(loaded.map(entry=>entry.seq),[1,2,3,4,5,30]);
+    assert.deepEqual(loaded.at(-1).message,{role:'note',content:[{type:'text',text:'3 items shipped · https://example.com/pull/12'}]});
+    listener({frame:'event',event:note(40,agent,'review passed')});
+    const live=store.get().transcripts[agent];
+    assert.deepEqual(live.map(entry=>entry.seq),[1,2,3,4,5,30,40]);
+    assert.equal(live.at(-1).message.role,'note');assert.equal(store.get().activity.at(-1).detail,'review passed');
+  } finally {store.dispose();}
+});
