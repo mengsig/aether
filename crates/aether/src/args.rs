@@ -115,6 +115,11 @@ pub(crate) enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Review an agent's workspace changes, then land or throw them away.
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCmd,
+    },
     /// Inspect retention without deleting history or artifact payloads.
     Retention {
         #[command(subcommand)]

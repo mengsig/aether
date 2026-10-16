@@ -676,3 +676,33 @@ pub(crate) enum StorageCmd {
         json: bool,
     },
 }
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum WorkspaceCmd {
+    /// Files, diffstat and commits an agent's turns made.
+    Diff {
+        agent: String,
+        /// Also print the patch, capped for transport.
+        #[arg(long)]
+        patch: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Land a finished child's isolated workspace in its source repository.
+    /// Exits 1 with the conflicting paths when the source changed them too.
+    Integrate {
+        agent: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete an agent's isolated workspace and the work in it.
+    Discard {
+        agent: String,
+        /// Discard even while the agent or a descendant is live; it is not
+        /// stopped.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}

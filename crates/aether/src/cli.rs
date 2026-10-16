@@ -23,6 +23,8 @@ mod storage;
 pub use storage::storage;
 mod retention;
 pub use retention::retention_preview;
+mod workspace;
+pub use workspace::{workspace_diff, workspace_discard, workspace_integrate};
 
 mod outbox;
 pub use outbox::{outbox_list, outbox_settle};

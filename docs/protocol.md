@@ -157,6 +157,11 @@ deletes declared build output from finished workspaces that GC keeps for
 another reason. An older daemon ignores the field and runs an ordinary sweep;
 the Rust client refuses such a request itself.
 
+`workspace_review` means the daemon serves `workspace_diff`,
+`workspace_integrate` and `workspace_discard` (see
+[workspace review](#workspace-review)). An older daemon refuses them as
+unknown; the Rust client refuses to send them to one.
+
 `repository_aliases` means the daemon serves `alias_repository` and
 `list_repository_aliases` (see [repository aliases](#repository-aliases)). An
 older daemon refuses both commands as unknown; the Rust client refuses to send
@@ -727,3 +732,47 @@ Remaining percentages and reset countdowns are clamped at zero. A passed reset
 does not imply replenished credit: only a new provider report changes the usage.
 Future observation timestamps have age zero to tolerate clock skew. Older clients
 can ignore the added fields; new clients default missing headroom to unknown.
+
+## Workspace review
+
+An operator can review an agent's work and decide its fate without asking the
+parent agent. All three commands take `agent` and need `operate`.
+
+`workspace_diff` replies `workspace_diff` with `files` (path, `added`,
+`modified` or `deleted`, and line counts, absent for a binary file), the
+diffstat in `insertions` and `deletions`, `commits` newest first, and `patch`.
+The patch carries at most 256 KiB; a longer one is cut on a character boundary
+and ends with `[patch truncated: showing N of M bytes]`, with `patch_bytes`
+giving the whole size and `patch_truncated` set. At most 1000 files and 200
+commits are listed; `files_truncated` and `commits_truncated` say when more
+exist, and the diffstat still counts every file.
+
+For an agent's own isolated worktree the diff runs from the delegation snapshot
+to the worktree as it is now, committed or not, and `integrated` says whether
+that state was integrated already. Every other workspace is shared: the diff
+runs from the HEAD the agent's first turn started on to the HEAD its last turn
+ended on, so it covers committed changes only, and `ambiguous` is set because
+other agents may have committed in between. Aether records the workspace HEAD
+at each turn's start and end as a `workspace.head` custom event; a commit's
+`turn` names the turn whose recorded HEADs bracket it.
+
+`workspace_integrate` lands a finished child's isolated worktree in its
+source through the same checks as the `integrate_workspace` tool. When the
+source changed a path the child also changed, it replies with `integrated`
+false and every such path in `conflicts`, and writes nothing. Other refusals,
+such as a live agent or a shared workspace, are `invalid` errors. A landed
+integration is recorded as a `workspace.integrated` custom event.
+
+`workspace_discard` deletes an agent's isolated worktree, its refs and its
+record, whatever it holds. It is refused while the agent or a descendant is
+live unless `force` is true; forcing does not stop the agent. It is also
+refused while an interrupted integration is unfinished. The discard is
+recorded as a `workspace.discarded` custom event.
+
+```sh
+aether workspace diff <agent> [--patch] [--json]
+aether workspace integrate <agent> [--json]
+aether workspace discard <agent> [--force] [--json]
+```
+
+`integrate` exits 1 and lists the conflicting paths when conflicts refuse it.

@@ -438,6 +438,9 @@ mod tests {
             ("update_schedule", &["action", "id"]),
             ("validate_workspace", &["path"]),
             ("wake", &["agent"]),
+            ("workspace_diff", &["agent"]),
+            ("workspace_discard", &["agent"]),
+            ("workspace_integrate", &["agent"]),
         ];
 
         let live = command_requirements();

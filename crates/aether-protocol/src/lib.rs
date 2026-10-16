@@ -186,6 +186,9 @@ pub mod features {
     pub const PRUNE_BUILD_OUTPUT: &str = "prune_build_output";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
+    /// The daemon serves `workspace_diff`, `workspace_integrate` and
+    /// `workspace_discard`.
+    pub const WORKSPACE_REVIEW: &str = "workspace_review";
 }
 
 mod handshake;

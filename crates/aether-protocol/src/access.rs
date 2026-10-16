@@ -112,7 +112,9 @@ impl Command {
             | Self::PublishArtifact(_) | Self::CreateMemory { .. } | Self::ForgetMemory { .. }
             | Self::RestoreMemory { .. } | Self::PinMemory { .. }
             | Self::SyncRepositoryKnowledge { .. } | Self::CompletePath { .. }
-            | Self::ValidateWorkspace { .. } | Self::GetGitSummary { .. } => Access::Operate,
+            | Self::ValidateWorkspace { .. } | Self::GetGitSummary { .. }
+            | Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
+            | Self::WorkspaceDiscard { .. } => Access::Operate,
 
             Self::StorageGc { .. } | Self::Shutdown | Self::EngineTool { .. } | Self::EngineTools { .. }
             | Self::ExportRun { .. } | Self::ImportRun { .. }

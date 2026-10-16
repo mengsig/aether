@@ -218,6 +218,17 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 };
                 cli::storage(endpoint, gc, dry_run, prune_build_output, json).await
             }
+            Cmd::Workspace { command } => match command {
+                WorkspaceCmd::Diff { agent, patch, json } => {
+                    cli::workspace_diff(endpoint, agent, patch, json).await
+                }
+                WorkspaceCmd::Integrate { agent, json } => {
+                    return cli::workspace_integrate(endpoint, agent, json).await;
+                }
+                WorkspaceCmd::Discard { agent, force, json } => {
+                    cli::workspace_discard(endpoint, agent, force, json).await
+                }
+            },
             Cmd::Retention { command } => match command {
                 RetentionCmd::Preview { json } => cli::retention_preview(endpoint, json).await,
             },

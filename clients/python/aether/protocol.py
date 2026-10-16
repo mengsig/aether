@@ -274,3 +274,9 @@ from ._protocol_commands.validate import (
 from ._protocol_commands.wake import (
     wake,
 )
+
+from ._protocol_commands.workspace import (
+    workspace_diff,
+    workspace_discard,
+    workspace_integrate,
+)

@@ -86,7 +86,10 @@ worktree remains available for later inspection or integration.
 
 Integration does not reset or check out over the parent's working tree. The
 worktree is retained after integration for inspection and must be removed
-deliberately when no longer needed. Replaced regular files keep their read and
+deliberately when no longer needed. An operator can do the same from the
+command line with `aether workspace diff|integrate|discard AGENT` (see
+[workspace review](protocol.md#workspace-review)); the operator's integration
+runs the same conflict check as the tool. Replaced regular files keep their read and
 write permissions, while Git's executable setting controls execution;
 setuid, setgid, and sticky bits are cleared. New integrated files are
 owner-only (`0600`, or `0700` when executable). Change permissions explicitly
