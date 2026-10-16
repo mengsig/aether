@@ -1009,30 +1009,29 @@ async fn replay_distinguishes_unknown_agents_from_real_agents_without_turns() {
     assert!(stdout(&out).contains("has taken no turns yet"));
 }
 
-/// One turn that followed a note a client appended.
+/// A note a client appended to an agent that has taken no turn.
 fn replayed_note() -> aether_core::replay::ReplayFrame {
     serde_json::from_value(json!({
-        "agent": AGENT, "turn": 1, "started_at": AT, "from_seq": 3, "to_seq": 4,
+        "agent": AGENT, "turn": 0, "started_at": AT, "from_seq": 2, "to_seq": 2,
         "messages": [], "tools": [], "approvals": [], "usage": aether_core::model::Usage::default(), "duration_ms": 0,
-        "outcome": {"outcome": "running"},
+        "outcome": {"outcome": "not_started"},
         "notes": [{"at": AT, "seq": 2, "text": "3 items shipped", "context": "none"}],
     }))
     .unwrap()
 }
 
 #[tokio::test]
-async fn replay_prints_a_note_a_client_appended() {
+async fn replay_prints_a_note_appended_before_the_first_turn() {
     let stub = Stub {
         replay_note: true,
         ..Stub::default()
     };
     let out = cli(&["replay", AGENT], stub).await;
     assert!(out.status.success(), "{}", stderr(&out));
-    assert!(
-        stdout(&out).contains("note  3 items shipped"),
-        "{}",
-        stdout(&out)
-    );
+    let printed = stdout(&out);
+    assert!(printed.contains("─── before the first turn"), "{printed}");
+    assert!(printed.contains("note  3 items shipped"), "{printed}");
+    assert!(!printed.contains("turn 0"), "{printed}");
 }
 
 #[tokio::test]

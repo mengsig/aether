@@ -276,8 +276,10 @@ with `invalid_argument` naming the limit. Nothing is queued in the agent's
 inbox, so the note never wakes it, and it is never sent to the model as a user
 message. It is stored as one `custom` event named `note.appended` whose
 payload is the note, and the reply, `NoteAppended`, carries that event's
-`seq`. The TUI shows it as a note, `aether replay` prints it in the turn it
-follows, and the phone's activity feed shows its text.
+`seq`. The TUI shows it as a note, and the phone's activity feed shows its
+text. `replay` puts it in the frame of the turn it follows; notes on an agent
+that has taken no turn replay as a turn-0 frame whose outcome is
+`not_started`.
 
 `context` is `none` by default: only people see the note. With `digest` the
 agent's next turn is also given it, in a compact list in its runtime state:

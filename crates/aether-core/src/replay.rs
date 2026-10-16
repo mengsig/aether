@@ -35,7 +35,8 @@ pub struct ReplayFrame {
     /// What was said, in order - what it was shown and what it answered.
     pub messages: Vec<ReplayMessage>,
     /// Notes a client appended after the turn before ended, in order. Notes
-    /// written before the first turn open the first frame.
+    /// written before the first turn open the first frame, or a turn-0 frame
+    /// when there is no turn yet.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<ReplayNote>,
     /// What it did.
@@ -163,6 +164,8 @@ pub enum TurnOutcome {
         retryable: bool,
     },
     Interrupted,
+    /// No turn has started: a turn-0 frame holding the notes written so far.
+    NotStarted,
 }
 
 impl TurnOutcome {
@@ -172,6 +175,7 @@ impl TurnOutcome {
             Self::Completed { .. } => "completed",
             Self::Failed { .. } => "failed",
             Self::Interrupted => "interrupted",
+            Self::NotStarted => "not started",
         }
     }
 }
@@ -181,7 +185,7 @@ impl TurnOutcome {
 /// A turn opens at `agent.started`. Anything the agent was shown before its
 /// first turn is that turn's prologue, so the first frame says what it
 /// actually saw rather than starting mid-conversation. An agent that has
-/// taken no turn yet folds to no frames.
+/// taken no turn yet folds to no frames, or to one turn-0 frame of its notes.
 pub fn build(agent: AgentId, events: &[Event]) -> Vec<ReplayFrame> {
     let mut frames: Vec<ReplayFrame> = Vec::new();
     let mut prologue: Vec<ReplayMessage> = Vec::new();
@@ -193,22 +197,10 @@ pub fn build(agent: AgentId, events: &[Event]) -> Vec<ReplayFrame> {
     let mut asked_in: BTreeMap<AskId, usize> = BTreeMap::new();
     for event in events.iter().filter(|e| e.agent_id == Some(agent)) {
         if let EventKind::AgentStarted { turn } = &event.kind {
-            frames.push(ReplayFrame {
-                agent,
-                turn: *turn,
-                started_at: event.at,
-                ended_at: None,
-                from_seq: event.seq,
-                to_seq: event.seq,
-                context: None,
-                messages: std::mem::take(&mut prologue),
-                notes: std::mem::take(&mut prologue_notes),
-                tools: Vec::new(),
-                approvals: Vec::new(),
-                usage: Usage::default(),
-                duration_ms: 0,
-                outcome: TurnOutcome::Running,
-            });
+            let mut frame = ReplayFrame::open(agent, *turn, event.at, event.seq);
+            frame.messages = std::mem::take(&mut prologue);
+            frame.notes = std::mem::take(&mut prologue_notes);
+            frames.push(frame);
             continue;
         }
         if frames.is_empty() {
@@ -244,7 +236,50 @@ pub fn build(agent: AgentId, events: &[Event]) -> Vec<ReplayFrame> {
             None => take(&mut frames[open], event),
         }
     }
+    if let Some(frame) = before_any_turn(agent, prologue, prologue_notes) {
+        debug_assert!(frames.is_empty(), "a started turn takes the prologue");
+        frames.push(frame);
+    }
     frames
+}
+
+impl ReplayFrame {
+    /// An empty frame of a running turn, opened at event `seq`.
+    fn open(agent: AgentId, turn: u32, at: Timestamp, seq: u64) -> Self {
+        Self {
+            agent,
+            turn,
+            started_at: at,
+            ended_at: None,
+            from_seq: seq,
+            to_seq: seq,
+            context: None,
+            messages: Vec::new(),
+            notes: Vec::new(),
+            tools: Vec::new(),
+            approvals: Vec::new(),
+            usage: Usage::default(),
+            duration_ms: 0,
+            outcome: TurnOutcome::Running,
+        }
+    }
+}
+
+/// The notes of an agent that has taken no turn, so they are not lost from
+/// its replay: turn 0, spanning its first event to its last note.
+fn before_any_turn(
+    agent: AgentId,
+    messages: Vec<ReplayMessage>,
+    notes: Vec<ReplayNote>,
+) -> Option<ReplayFrame> {
+    let (first, last) = (notes.first()?, notes.last()?);
+    debug_assert!(first.seq <= last.seq, "notes are in log order");
+    let mut frame = ReplayFrame::open(agent, 0, first.at, first.seq);
+    frame.to_seq = last.seq;
+    frame.outcome = TurnOutcome::NotStarted;
+    frame.messages = messages;
+    frame.notes = notes;
+    Some(frame)
 }
 
 /// A tool call or an approval this event opens (`true`) or answers

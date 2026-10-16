@@ -438,3 +438,18 @@ fn notes_replay_in_the_turn_they_follow_and_before_the_first_turn() {
     assert_eq!(frames[0].notes[1].links, ["https://example.com/1"]);
     assert_eq!(frames[0].messages.len(), 1, "a note is not a message");
 }
+
+#[test]
+fn notes_of_an_agent_with_no_turn_fold_to_a_turn_zero_frame() {
+    let mut log = Log::new();
+    assert!(log.frames().is_empty(), "nothing to replay");
+    log.push(note("queued for later"));
+    log.push(note("still waiting"));
+    let frames = log.frames();
+    assert_eq!(frames.len(), 1);
+    let frame = &frames[0];
+    assert_eq!((frame.turn, &frame.outcome), (0, &TurnOutcome::NotStarted));
+    assert_eq!((frame.from_seq, frame.to_seq), (1, 2));
+    assert_eq!(frame.notes.len(), 2);
+    assert!(frame.messages.is_empty() && frame.tools.is_empty());
+}

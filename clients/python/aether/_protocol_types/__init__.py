@@ -511,6 +511,7 @@ from ._TurnOutcomeRunning import TurnOutcomeRunning
 from ._TurnOutcomeCompleted import TurnOutcomeCompleted
 from ._TurnOutcomeFailed import TurnOutcomeFailed
 from ._TurnOutcomeInterrupted import TurnOutcomeInterrupted
+from ._TurnOutcomeNotStarted import TurnOutcomeNotStarted
 from ._TurnOutcome import TurnOutcome
 from ._UnprovenAbsence import UnprovenAbsence
 from ._Usage import Usage
@@ -581,6 +582,6 @@ __all__ = [
     'ThinkingModeOff', 'ThinkingModeAdaptive', 'ThinkingModeBudget', 'ThinkingMode', 'ThinkingSupport', 'ToolCall', 'ToolCallId', 'ToolExposureAll', 'ToolExposureOnly', 'ToolExposureExcept',
     'ToolExposure', 'ToolLine', 'ToolOutcome', 'ToolResultPending', 'ToolResultSucceeded', 'ToolResultFailed', 'ToolResultDenied', 'ToolResultCancelled', 'ToolResultReplayed', 'ToolResult',
     'ToolResultBlockText', 'ToolResultBlockImage', 'ToolResultBlock', 'ToolSpec', 'TranscriptEntry', 'TreeNode', 'TurnOutcomeRunning', 'TurnOutcomeCompleted', 'TurnOutcomeFailed', 'TurnOutcomeInterrupted',
-    'TurnOutcome', 'UnprovenAbsence', 'Usage', 'UsageWindow', 'WaitConditionTask', 'WaitConditionApproval', 'WaitConditionMessageFrom', 'WaitConditionInbox', 'WaitConditionDeadline', 'WaitConditionAny',
-    'WaitConditionAll', 'WaitConditionAtLeast', 'WaitCondition', 'Welcome', 'WindowHeadroom', 'Workspace', 'WorkspaceValidation',
+    'TurnOutcomeNotStarted', 'TurnOutcome', 'UnprovenAbsence', 'Usage', 'UsageWindow', 'WaitConditionTask', 'WaitConditionApproval', 'WaitConditionMessageFrom', 'WaitConditionInbox', 'WaitConditionDeadline',
+    'WaitConditionAny', 'WaitConditionAll', 'WaitConditionAtLeast', 'WaitCondition', 'Welcome', 'WindowHeadroom', 'Workspace', 'WorkspaceValidation',
 ]

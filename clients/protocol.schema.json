@@ -11286,7 +11286,7 @@
           "type": "array"
         },
         "notes": {
-          "description": "Notes a client appended after the turn before ended, in order. Notes\nwritten before the first turn open the first frame.",
+          "description": "Notes a client appended after the turn before ended, in order. Notes\nwritten before the first turn open the first frame, or a turn-0 frame\nwhen there is no turn yet.",
           "items": {
             "$ref": "#/$defs/ReplayNote"
           },
@@ -15170,6 +15170,19 @@
           "properties": {
             "outcome": {
               "const": "interrupted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "outcome"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "No turn has started: a turn-0 frame holding the notes written so far.",
+          "properties": {
+            "outcome": {
+              "const": "not_started",
               "type": "string"
             }
           },

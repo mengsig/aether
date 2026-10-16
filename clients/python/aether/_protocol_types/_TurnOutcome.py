@@ -6,6 +6,7 @@ from typing import Any, Literal, TypedDict
 from ._TurnOutcomeCompleted import TurnOutcomeCompleted
 from ._TurnOutcomeFailed import TurnOutcomeFailed
 from ._TurnOutcomeInterrupted import TurnOutcomeInterrupted
+from ._TurnOutcomeNotStarted import TurnOutcomeNotStarted
 from ._TurnOutcomeRunning import TurnOutcomeRunning
 
 
@@ -13,5 +14,6 @@ TurnOutcome = (
     TurnOutcomeRunning |
     TurnOutcomeCompleted |
     TurnOutcomeFailed |
-    TurnOutcomeInterrupted
+    TurnOutcomeInterrupted |
+    TurnOutcomeNotStarted
 )

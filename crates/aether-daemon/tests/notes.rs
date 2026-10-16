@@ -34,8 +34,9 @@ fn kinds(events: &[Value]) -> Vec<&str> {
         .collect()
 }
 
-/// The feature is advertised; a note lands as one `note.appended` event and
-/// starts nothing; an oversized one is refused with the limit named.
+/// The feature is advertised; a note lands as one `note.appended` event,
+/// starts nothing and replays before the first turn; an oversized one is
+/// refused with the limit named.
 #[tokio::test]
 async fn a_note_is_recorded_without_starting_a_turn() {
     let mut host = Host::enabled().await;
@@ -61,6 +62,10 @@ async fn a_note_is_recorded_without_starting_a_turn() {
     assert_eq!(note["kind"]["payload"]["text"], "3 items shipped");
     assert_eq!(note["kind"]["payload"]["context"], "digest");
     assert!(!kinds(&after).contains(&"agent.started"), "{after:?}");
+    let replay = host.ok(json!({"cmd":"replay", "agent":agent})).await;
+    assert_eq!(replay[0]["turn"], 0, "{replay}");
+    assert_eq!(replay[0]["outcome"]["outcome"], "not_started");
+    assert_eq!(replay[0]["notes"][0]["text"], "3 items shipped");
 
     let oversized = host
         .err(json!({"cmd":"append_note", "agent":agent, "text":"x".repeat(2049)}))
