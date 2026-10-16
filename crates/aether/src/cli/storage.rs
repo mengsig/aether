@@ -49,6 +49,12 @@ pub async fn storage(
         if let Some(partitions) = value["partitions"].as_u64() {
             println!("  {partitions} build cache partitions");
         }
+        if let Some(max) = value["max_bytes"].as_u64() {
+            println!("  budget {max} bytes");
+        }
+        for error in value["errors"].as_array().into_iter().flatten() {
+            println!("  error: {}", error.as_str().unwrap_or("see JSON report"));
+        }
         if let Some(unreadable) = value["unreadable"].as_u64().filter(|n| *n > 0) {
             println!("  {unreadable} directories could not be read");
         }
@@ -68,6 +74,7 @@ pub async fn storage(
                         entry["reason"].as_str().unwrap_or("see JSON report")
                     );
                     print_build_output(entry);
+                    print_partition(entry);
                 }
             }
         }
@@ -87,4 +94,21 @@ fn print_build_output(entry: &serde_json::Value) {
             output["bytes"].as_u64().unwrap_or(0)
         );
     }
+}
+
+fn print_partition(entry: &serde_json::Value) {
+    let Some(holders) = entry["leased_by"].as_array() else {
+        return;
+    };
+    let holders: Vec<_> = holders.iter().filter_map(|id| id.as_str()).collect();
+    println!(
+        "    {} bytes, last used {}, leased by {}",
+        entry["bytes"].as_u64().unwrap_or(0),
+        entry["last_used"].as_str().unwrap_or("unknown"),
+        if holders.is_empty() {
+            "no agent".to_owned()
+        } else {
+            holders.join(", ")
+        }
+    );
 }

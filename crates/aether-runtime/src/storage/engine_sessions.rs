@@ -85,17 +85,7 @@ impl Runtime {
         }
         let sched = self.sched.lock();
         let engine_turns = self.engine_turns.lock();
-        let leases = self.store.leases()?;
-        let resources = self.resources.holdings();
-        let in_flight: HashSet<_> = sched
-            .running
-            .keys()
-            .chain(&sched.engine_retakers)
-            .chain(engine_turns.keys())
-            .copied()
-            .chain(leases.iter().map(|lease| lease.agent_id))
-            .chain(resources.iter().map(|holding| holding.agent))
-            .collect();
+        let in_flight = self.in_flight_agents(&sched, &engine_turns)?;
         // Preview is a point-in-time snapshot. Only deletion reserves admission
         // while rechecking and unlinking files.
         let _admission = (!dry_run).then_some((sched, engine_turns));

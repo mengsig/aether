@@ -116,7 +116,10 @@ pub(crate) fn spawn(runtime: Arc<Runtime>) {
     let Some(guard) = runtime.config.disk_guard.clone() else {
         return;
     };
-    check(&runtime, &guard);
+    if check(&runtime, &guard) {
+        let evicting = runtime.clone();
+        tokio::task::spawn_blocking(move || evicting.evict_build_cache());
+    }
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -127,20 +130,28 @@ pub(crate) fn spawn(runtime: Arc<Runtime>) {
             let (checking, guard) = (runtime.clone(), guard.clone());
             // statvfs can hang on a stuck mount, and recording is a SQLite
             // write; neither belongs on an async worker.
-            if let Err(error) = tokio::task::spawn_blocking(move || check(&checking, &guard)).await
-            {
+            let checked = tokio::task::spawn_blocking(move || {
+                if check(&checking, &guard) {
+                    checking.evict_build_cache();
+                }
+            });
+            if let Err(error) = checked.await {
                 tracing::error!(%error, "disk check failed");
             }
         }
     });
 }
 
-fn check(runtime: &Runtime, guard: &DiskGuard) {
+/// Measure and observe once. True when the disk has just turned low, so the
+/// build cache is worth evicting now rather than at the next sweep.
+fn check(runtime: &Runtime, guard: &DiskGuard) -> bool {
     let measured = fs4::available_space(&guard.path)
         .and_then(|available| Ok((available, fs4::total_space(&guard.path)?)));
     match measured {
         Ok((available, total)) => {
-            observe(runtime, &guard.path, guard.floor.bytes(total), available)
+            let was_low = runtime.disk_is_low();
+            observe(runtime, &guard.path, guard.floor.bytes(total), available);
+            !was_low && runtime.disk_is_low()
         }
         Err(error) => {
             let mut state = runtime.disk.lock();
@@ -151,6 +162,7 @@ fn check(runtime: &Runtime, guard: &DiskGuard) {
                     "cannot measure free space; new turns keep the last disk state"
                 );
             }
+            false
         }
     }
 }

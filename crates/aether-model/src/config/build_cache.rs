@@ -14,6 +14,9 @@ pub struct BuildCacheSection {
     /// Variables pointed at a directory of the agent's cache partition. An
     /// empty list exports nothing.
     pub env: Vec<BuildCacheVar>,
+    /// Bytes the cache may hold before storage GC evicts unleased partitions,
+    /// least recently used first. Unset means 15% of the cache's filesystem.
+    pub max_bytes: Option<u64>,
 }
 
 /// One exported variable and the directory, inside the partition, it names.
@@ -35,6 +38,7 @@ impl Default for BuildCacheSection {
                 name: "CARGO_TARGET_DIR".into(),
                 dir: "cargo-target".into(),
             }],
+            max_bytes: None,
         }
     }
 }
@@ -110,6 +114,7 @@ mod tests {
     fn defaults_export_the_cargo_target_and_a_table_replaces_them() {
         let config: AetherConfig = toml::from_str("").unwrap();
         assert_eq!(config.build_cache.root, None);
+        assert_eq!(config.build_cache.max_bytes, None);
         let names: Vec<_> = config.build_cache.env.iter().map(|v| &v.name).collect();
         assert_eq!(names, ["CARGO_TARGET_DIR"]);
         assert_eq!(config.build_cache.env[0].dir, "cargo-target");
@@ -127,8 +132,10 @@ mod tests {
         );
         let names: Vec<_> = config.build_cache.env.iter().map(|v| &v.name).collect();
         assert_eq!(names, ["npm_config_cache"]);
-        let config: AetherConfig = toml::from_str("[build_cache]\nenv = []\n").unwrap();
+        let config: AetherConfig =
+            toml::from_str("[build_cache]\nenv = []\nmax_bytes = 1048576\n").unwrap();
         assert!(config.build_cache.env.is_empty());
+        assert_eq!(config.build_cache.max_bytes, Some(1 << 20));
     }
 
     #[test]

@@ -1,0 +1,323 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use aether_core::agent::{
+    Agent, AgentConfig, AgentStats, AgentStatus, BlockReason, Role, Scope, WaitCondition,
+};
+use aether_core::id::TaskId;
+use aether_core::model::ModelRef;
+use aether_store::{Commit, Mutation};
+
+use super::*;
+
+const REPOSITORY: &str = "github.com/example-org/example-repo";
+const KIB: u64 = 1 << 10;
+const DAY: Duration = Duration::from_secs(86_400);
+
+/// A runtime with its own cache root and a budget of `max_bytes`.
+struct Fixture {
+    runtime: Arc<Runtime>,
+    root: PathBuf,
+    _config: tempfile::TempDir,
+    _cache: tempfile::TempDir,
+}
+
+impl Fixture {
+    async fn new(max_bytes: u64) -> Self {
+        let config = tempfile::tempdir().unwrap();
+        fs::write(
+            config.path().join("config.toml"),
+            format!("[storage]\nworkspaces_days = 0\n[build_cache]\nmax_bytes = {max_bytes}\n"),
+        )
+        .unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let root = cache.path().join("aether.build-cache");
+        let configured = root.clone();
+        let (runtime, config) = crate::test_runtime_in(config, |config| {
+            config.build_cache_root = Some(configured);
+        })
+        .await;
+        runtime.shutdown.cancel();
+        tokio::task::yield_now().await;
+        Self {
+            runtime,
+            root,
+            _config: config,
+            _cache: cache,
+        }
+    }
+
+    /// Store an agent of a new run in a repository workspace, last active
+    /// `days_ago`, whose partition got `kib` of build output then.
+    fn agent(&self, status: AgentStatus, days_ago: u32, kib: u64) -> (Agent, PathBuf) {
+        let then = SystemTime::now() - DAY * days_ago;
+        let agent = Agent {
+            id: AgentId::new(),
+            parent: None,
+            role: Role::new("worker"),
+            name: "builder".into(),
+            scope: Scope {
+                repository: Some(REPOSITORY.into()),
+                workspace_root: Some("/srv/workspace".into()),
+                ..Scope::default()
+            },
+            model: ModelRef::new("mock", "test"),
+            fallbacks: vec![],
+            status,
+            paused: false,
+            paused_via: None,
+            current_task: None,
+            archived: false,
+            inbox_cursor: 0,
+            checkpoint: None,
+            engine_session: None,
+            engine_usage: None,
+            engine_sent: None,
+            status_since: Some(then.into()),
+            resume_wait: None,
+            restarted_from: None,
+            restarted_as: None,
+            config: AgentConfig::default(),
+            stats: AgentStats::default(),
+            run: RunId::new(),
+            created_at: then.into(),
+            updated_at: then.into(),
+        };
+        self.runtime
+            .apply(Commit::new().mutate(Mutation::UpsertAgent(agent.clone())))
+            .unwrap();
+        let partition = crate::build_cache::aether_partition(&self.root, &agent).unwrap();
+        build(&partition, kib, then);
+        (agent, partition)
+    }
+
+    fn gc(&self, dry_run: bool) -> BuildCacheReport {
+        self.runtime.gc_build_cache(&self.root, dry_run).unwrap()
+    }
+}
+
+/// Write `kib` of output into `partition`'s cargo target, every level of it
+/// last changed at `then`.
+fn build(partition: &Path, kib: u64, then: SystemTime) {
+    let target = partition.join("cargo-target");
+    let debug = target.join("debug");
+    fs::create_dir_all(&debug).unwrap();
+    let artifact = debug.join("artifact");
+    fs::write(&artifact, vec![7u8; usize::try_from(kib * KIB).unwrap()]).unwrap();
+    for path in [&artifact, &debug, &target, partition] {
+        fs::File::open(path).unwrap().set_modified(then).unwrap();
+    }
+}
+
+fn built(partition: &Path) -> bool {
+    partition.join("cargo-target/debug/artifact").is_file()
+}
+
+fn entry<'a>(report: &'a BuildCacheReport, path: &Path) -> &'a PartitionEntry {
+    report
+        .entries
+        .iter()
+        .find(|entry| entry.path == path)
+        .unwrap_or_else(|| panic!("{} is not reported: {report:?}", path.display()))
+}
+
+#[tokio::test]
+async fn over_budget_the_least_recently_used_unleased_partition_goes_first() {
+    let f = Fixture::new(600 * KIB).await;
+    let (holder, leased) = f.agent(AgentStatus::Running, 30, 256);
+    let (_, oldest) = f.agent(AgentStatus::Completed { summary: None }, 20, 256);
+    let (_, newer) = f.agent(AgentStatus::Completed { summary: None }, 10, 256);
+
+    let preview = f.gc(true);
+    assert_eq!(preview.max_bytes, Some(600 * KIB));
+    assert!(preview.bytes > 600 * KIB, "{preview:?}");
+    assert_eq!(entry(&preview, &oldest).action, "would_evict");
+    assert_eq!(entry(&preview, &newer).action, "kept", "the rest fit");
+    let leased_entry = entry(&preview, &leased);
+    assert_eq!(leased_entry.action, "kept", "older, but leased");
+    assert_eq!(leased_entry.leased_by, [holder.id]);
+    assert!(
+        leased_entry.last_used < entry(&preview, &newer).last_used,
+        "{preview:?}"
+    );
+    assert!(built(&oldest), "a preview deletes nothing");
+
+    let swept = f.gc(false);
+    assert_eq!(entry(&swept, &oldest).action, "evicted");
+    assert!(swept.errors.is_empty(), "{:?}", swept.errors);
+    assert!(swept.bytes_removed >= 256 * KIB, "{swept:?}");
+    assert!(!oldest.exists());
+    assert!(built(&newer) && built(&leased));
+    let trash: Vec<_> = fs::read_dir(f.root.join(TRASH)).unwrap().collect();
+    assert!(trash.is_empty(), "evicted output is deleted, not parked");
+
+    let again = f.gc(false);
+    assert!(
+        again.entries.iter().all(|entry| entry.action == "kept"),
+        "within budget now: {again:?}"
+    );
+}
+
+#[tokio::test]
+async fn every_live_status_leases_its_partition_even_with_no_budget() {
+    let f = Fixture::new(0).await;
+    let live = [
+        AgentStatus::Created,
+        AgentStatus::Ready,
+        AgentStatus::Running,
+        AgentStatus::Waiting {
+            condition: WaitCondition::Task { id: TaskId::new() },
+        },
+        AgentStatus::Blocked {
+            reason: BlockReason::Dependency { on: TaskId::new() },
+        },
+    ];
+    let live: Vec<_> = live.map(|status| f.agent(status, 90, 8)).into();
+    let finished = [
+        AgentStatus::Completed { summary: None },
+        AgentStatus::Failed {
+            error: "boom".into(),
+        },
+        AgentStatus::Cancelled { reason: None },
+    ];
+    let finished: Vec<_> = finished.map(|status| f.agent(status, 1, 8)).into();
+
+    let swept = f.gc(false);
+    for (agent, partition) in &live {
+        let kept = entry(&swept, partition);
+        assert_eq!(kept.action, "kept", "{:?}", agent.status);
+        assert_eq!(kept.leased_by, [agent.id]);
+        assert!(built(partition), "{:?}", agent.status);
+    }
+    for (agent, partition) in &finished {
+        assert_eq!(
+            entry(&swept, partition).action,
+            "evicted",
+            "{:?}",
+            agent.status
+        );
+        assert!(!partition.exists(), "{:?}", agent.status);
+    }
+}
+
+#[tokio::test]
+async fn a_finished_agent_with_work_in_flight_still_leases_its_partition() {
+    let f = Fixture::new(0).await;
+    let (agent, partition) = f.agent(AgentStatus::Completed { summary: None }, 5, 8);
+    f.runtime.sched.lock().engine_retakers.insert(agent.id);
+    let swept = f.gc(false);
+    assert_eq!(entry(&swept, &partition).leased_by, [agent.id]);
+    assert!(built(&partition));
+
+    f.runtime.sched.lock().engine_retakers.remove(&agent.id);
+    assert_eq!(entry(&f.gc(false), &partition).action, "evicted");
+    assert!(!partition.exists());
+}
+
+#[tokio::test]
+async fn directories_aether_does_not_create_are_never_evicted() {
+    let f = Fixture::new(0).await;
+    let then = SystemTime::now() - DAY;
+    let operators = f.root.join("my-target/debug");
+    let not_a_run = f.root.join("github-com-org-repo-0123456789abcdef/scratch");
+    let foreign_repository = f.root.join(format!("project/{}", RunId::new()));
+    let orphan = f.root.join(format!(
+        "github-com-org-repo-0123456789abcdef/{}",
+        RunId::new()
+    ));
+    for dir in [&operators, &not_a_run, &foreign_repository, &orphan] {
+        build(dir, 8, then);
+    }
+
+    let swept = f.gc(false);
+    for kept in [&operators, &not_a_run, &foreign_repository] {
+        let seen = entry(&swept, kept);
+        assert_eq!(
+            (seen.action, seen.reason),
+            ("kept", "not a partition Aether creates")
+        );
+        assert!(built(kept), "{}", kept.display());
+    }
+    assert_eq!(
+        entry(&swept, &orphan).action,
+        "evicted",
+        "a partition whose agents left the store is still Aether's"
+    );
+}
+
+#[tokio::test]
+async fn what_a_failed_deletion_left_is_removed_on_the_next_sweep() {
+    let f = Fixture::new(0).await;
+    let left = f.root.join(TRASH).join("run_leftover/cargo-target");
+    fs::create_dir_all(&left).unwrap();
+    fs::write(left.join("artifact"), b"x").unwrap();
+    let preview = f.gc(true);
+    assert!(left.exists(), "a preview deletes nothing");
+    assert!(preview.entries.is_empty(), "the trash is not a partition");
+    let swept = f.gc(false);
+    assert!(swept.errors.is_empty(), "{:?}", swept.errors);
+    assert!(!f.root.join(TRASH).join("run_leftover").exists());
+}
+
+#[test]
+fn partitions_are_counted_and_links_never_followed() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("cache");
+    let missing = scan(&root).unwrap();
+    assert_eq!((missing.bytes, missing.partitions), (0, 0));
+
+    let outside = dir.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("big"), vec![1u8; 1 << 20]).unwrap();
+    let run = root.join("repo-0123/run_one/cargo-target/debug");
+    fs::create_dir_all(&run).unwrap();
+    fs::write(run.join("artifact"), vec![1u8; 64 << 10]).unwrap();
+    fs::create_dir_all(root.join("repo-0123/run_two")).unwrap();
+    fs::create_dir_all(root.join("repo-4567")).unwrap();
+    std::os::unix::fs::symlink(&outside, run.join("link")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("repo-0123/run_link")).unwrap();
+    fs::write(root.join("stray"), b"not a repository").unwrap();
+
+    let seen = scan(&root).unwrap();
+    assert_eq!(seen.repositories, 2);
+    assert_eq!(seen.partitions, 2, "a link is not a partition");
+    assert!(seen.bytes >= 64 << 10, "{seen:?}");
+    assert!(
+        seen.bytes < 1 << 20,
+        "the linked file is not counted: {seen:?}"
+    );
+    assert_eq!((seen.unreadable, seen.truncated), (0, false));
+}
+
+#[test]
+fn the_budget_bounds_every_level_and_marks_the_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("cache");
+    let partition = root.join("repo-0123/run_one");
+    fs::create_dir_all(&partition).unwrap();
+    for i in 0..10 {
+        fs::write(partition.join(i.to_string()), b"x").unwrap();
+    }
+    let mut seen = scan(&root).unwrap();
+    assert_eq!(
+        (seen.budget, seen.truncated),
+        (MAX_CACHE_ENTRIES - 12, false)
+    );
+
+    seen.budget = 5;
+    seen.truncated = false;
+    seen.add_tree(&partition);
+    assert_eq!((seen.budget, seen.truncated), (0, true), "{seen:?}");
+    assert!(
+        seen.real_dirs(&root).is_empty(),
+        "nothing is read past the bound"
+    );
+}
+
+#[test]
+fn a_root_that_is_not_a_directory_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("cache");
+    fs::write(&root, b"file").unwrap();
+    assert!(scan(&root).is_err());
+}
