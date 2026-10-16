@@ -54,7 +54,7 @@ pub(crate) enum Cmd {
     Tui {
         /// Focus this agent on start.
         #[arg(long)]
-        agent: Option<String>,
+        agent: Option<cli::AgentRef>,
         /// Leave the mouse to the terminal for this run, whatever /mouse
         /// saved. Mouse capture is on by default.
         #[arg(long = "no-mouse", overrides_with = "mouse")]
@@ -237,7 +237,7 @@ pub(crate) enum Cmd {
         out: PathBuf,
         /// Collect this run instead of the most recent runs.
         #[arg(long, conflicts_with = "last")]
-        run: Option<aether_core::id::RunId>,
+        run: Option<cli::RunRef>,
         /// Number of recent runs (1..=100).
         #[arg(long, default_value = "5", value_parser = clap::value_parser!(u32).range(1..=100))]
         last: u32,
@@ -273,8 +273,8 @@ pub(crate) enum Cmd {
     /// Clear finished agents or runs out of the live view (they stay in the
     /// store, in reports and in replay), or bring them back with --undo.
     Archive {
-        /// An agent id or a run id.
-        target: Option<String>,
+        /// An agent or a run: an id, a unique id prefix, a live agent's name, or @last.
+        target: Option<cli::TargetRef>,
         /// Every finished agent there is - the same as `/clear` in the TUI.
         #[arg(long)]
         all_finished: bool,
@@ -299,10 +299,10 @@ pub(crate) enum Cmd {
         /// Live, taskless agent to own it. Agents from `aether run` already own
         /// a task. Create an eligible agent with `aether new` or TUI /new, then use its ID.
         #[arg(long)]
-        owner: Option<String>,
+        owner: Option<cli::AgentRef>,
         /// Task this one waits for; repeat for several.
         #[arg(long = "depends-on")]
-        depends_on: Vec<String>,
+        depends_on: Vec<cli::TaskRef>,
         #[arg(long)]
         json: bool,
     },
@@ -320,7 +320,7 @@ pub(crate) enum Cmd {
     /// Step through an agent's turns as they happened: what it saw, what it
     /// did, what it cost.
     Replay {
-        agent: String,
+        agent: cli::AgentRef,
         /// One frame per line, for another process.
         #[arg(long)]
         json: bool,
@@ -332,14 +332,14 @@ pub(crate) enum Cmd {
         #[arg(long, default_value_t = 0)]
         after: u64,
         #[arg(long)]
-        agent: Option<String>,
+        agent: Option<cli::AgentRef>,
         /// One event per line, so `-f --json` is a stream.
         #[arg(long)]
         json: bool,
     },
     /// Send a message to an agent.
     Send {
-        agent: String,
+        agent: cli::AgentRef,
         text: Vec<String>,
         /// Attach an image file (PNG, JPEG, GIF or WebP); repeat for more.
         #[arg(long = "image", value_name = "FILE")]
@@ -364,7 +364,7 @@ pub(crate) enum Cmd {
             required_unless_present = "all_pending",
             conflicts_with = "all_pending"
         )]
-        approval: Option<String>,
+        approval: Option<cli::ApprovalRef>,
         #[command(flatten)]
         remember: RememberArgs,
     },
@@ -374,7 +374,7 @@ pub(crate) enum Cmd {
             required_unless_present = "all_pending",
             conflicts_with = "all_pending"
         )]
-        approval: Option<String>,
+        approval: Option<cli::ApprovalRef>,
         #[command(flatten)]
         remember: RememberArgs,
     },
@@ -402,14 +402,14 @@ pub(crate) enum Cmd {
     },
     /// Cancel an agent and its children.
     Cancel {
-        agent: String,
+        agent: cli::AgentRef,
         #[arg(long)]
         json: bool,
     },
     /// Stop an agent's running turn; it keeps its transcript and waits for
     /// the next message.
     Interrupt {
-        agent: String,
+        agent: cli::AgentRef,
         #[arg(long)]
         json: bool,
     },
@@ -425,7 +425,7 @@ pub(crate) enum Cmd {
     },
     /// Deliver an external trigger (webhook, timer, CI result) to an agent.
     Trigger {
-        agent: String,
+        agent: cli::AgentRef,
         /// Where it comes from, e.g. `ci` or `cron`.
         source: String,
         /// JSON payload; plain text is wrapped as a string.
@@ -437,20 +437,20 @@ pub(crate) enum Cmd {
     /// Recreate a failed or cancelled agent from its last checkpoint, with
     /// its transcript tail, as a new agent linked to it.
     Restart {
-        agent: String,
+        agent: cli::AgentRef,
         #[arg(long)]
         json: bool,
     },
     /// Wake a failed agent in place: same agent, same history and context,
     /// reachable by message again.
     Wake {
-        agent: String,
+        agent: cli::AgentRef,
         #[arg(long)]
         json: bool,
     },
     /// Pause an agent: it takes no turns until resumed, and its inbox fills.
     Pause {
-        agent: String,
+        agent: cli::AgentRef,
         /// Pause every live agent beneath it as well.
         #[arg(long)]
         subtree: bool,
@@ -459,7 +459,7 @@ pub(crate) enum Cmd {
     },
     /// Lift a pause, or clear a wait or an inspection the operator owns.
     Resume {
-        agent: String,
+        agent: cli::AgentRef,
         /// Lift the pause on every live agent beneath it as well.
         #[arg(long)]
         subtree: bool,
@@ -468,7 +468,7 @@ pub(crate) enum Cmd {
     },
     /// Set any of the agent's knobs on a live agent; each becomes an event.
     Set {
-        agent: String,
+        agent: cli::AgentRef,
         #[command(flatten)]
         knobs: cli::SetKnobs,
         #[arg(long)]
@@ -476,7 +476,7 @@ pub(crate) enum Cmd {
     },
     /// Compact an agent's context promptly; a reply runs only if other work is pending.
     Compact {
-        agent: String,
+        agent: cli::AgentRef,
         #[arg(long)]
         json: bool,
     },

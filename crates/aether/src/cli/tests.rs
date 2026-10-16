@@ -441,7 +441,7 @@ fn a_stale_primary_drops_the_whole_chain_but_a_stale_fallback_is_dropped_alone()
 
 fn scope(agent: Option<&str>, everywhere: bool) -> RuleScopeArgs {
     RuleScopeArgs {
-        agent: agent.map(str::to_owned),
+        agent: agent.map(|a| a.parse().expect("agent reference")),
         subtree: None,
         run: None,
         everywhere,
@@ -543,21 +543,13 @@ fn backend_parses_both_forms_and_refuses_a_container_without_an_image() {
 
 #[test]
 fn a_scope_is_never_everywhere_by_omission() {
-    // `None` is "the caller decides": answering an approval keeps it for
+    // No flag is "the caller decides": answering an approval keeps it for
     // the agent that was answered, and a hand-written rule is refused.
-    assert!(scope(None, false).parse().expect("parse").is_none());
-    assert_eq!(
-        scope(None, true).parse().expect("parse"),
-        Some(RuleScope::Everywhere)
-    );
+    assert!(!scope(None, false).given().expect("no flag"));
+    assert!(scope(None, true).given().expect("everywhere"));
     let id = aether_core::id::AgentId::new().to_string();
-    assert_eq!(
-        scope(Some(&id), false).parse().expect("parse"),
-        Some(RuleScope::Agent {
-            id: id.parse().expect("id")
-        })
-    );
-    assert!(scope(Some(&id), true).parse().is_err(), "one scope only");
+    assert!(scope(Some(&id), false).given().expect("one agent"));
+    assert!(scope(Some(&id), true).given().is_err(), "one scope only");
 }
 
 #[test]

@@ -19,6 +19,9 @@ pub use memory_proposals::{MemoryAddArgs, memory_accept, memory_add, memory_reje
 #[cfg(test)]
 use memory::{memory_scope_label, parse_memory_scope};
 
+mod resolve;
+pub(crate) use resolve::{AgentRef, ApprovalRef, RunRef, ScheduleRef, TargetRef, TaskRef};
+
 mod storage;
 pub use storage::storage;
 mod retention;
@@ -113,7 +116,7 @@ use aether_core::agent::{
 use aether_core::approval::{RuleMatch, RuleScope};
 use aether_core::artifact::ArtifactKind;
 use aether_core::event::EventKind;
-use aether_core::id::{AgentId, RunId};
+use aether_core::id::AgentId;
 use aether_core::model::{Effort, ModelChain};
 use aether_core::provider::ProviderHealth;
 use aether_core::task::Priority;
@@ -374,15 +377,15 @@ fn short(text: &str, max: usize) -> String {
 
 /// Where a rule applies, from the mutually exclusive CLI flags.
 pub struct RuleScopeArgs {
-    pub agent: Option<String>,
-    pub subtree: Option<String>,
-    pub run: Option<String>,
+    pub agent: Option<AgentRef>,
+    pub subtree: Option<AgentRef>,
+    pub run: Option<RunRef>,
     pub everywhere: bool,
 }
 
 impl RuleScopeArgs {
-    /// `None` when no flag was given, so a caller can pick its own default.
-    pub fn parse(&self) -> anyhow::Result<Option<RuleScope>> {
+    /// Whether any scope flag was given; refuses more than one.
+    pub fn given(&self) -> anyhow::Result<bool> {
         let given = [
             self.agent.is_some(),
             self.subtree.is_some(),
@@ -395,22 +398,28 @@ impl RuleScopeArgs {
         if given > 1 {
             bail!("give at most one of --agent, --subtree, --run, --everywhere");
         }
-        if let Some(a) = &self.agent {
-            return Ok(Some(RuleScope::Agent {
-                id: a.parse().context("invalid agent id")?,
-            }));
+        Ok(given == 1)
+    }
+
+    /// `None` when no flag was given, so a caller can pick its own default.
+    pub async fn resolve(&self, client: &Client) -> anyhow::Result<Option<RuleScope>> {
+        if !self.given()? {
+            return Ok(None);
         }
-        if let Some(a) = &self.subtree {
-            return Ok(Some(RuleScope::Subtree {
-                root: a.parse().context("invalid agent id")?,
-            }));
+        if let Some(agent) = &self.agent {
+            let id = agent.resolve(client).await?;
+            return Ok(Some(RuleScope::Agent { id }));
         }
-        if let Some(r) = &self.run {
-            return Ok(Some(RuleScope::Run {
-                id: r.parse().context("invalid run id")?,
-            }));
+        if let Some(subtree) = &self.subtree {
+            let root = subtree.resolve(client).await?;
+            return Ok(Some(RuleScope::Subtree { root }));
         }
-        Ok(self.everywhere.then_some(RuleScope::Everywhere))
+        if let Some(run) = &self.run {
+            let id = run.resolve(client).await?;
+            return Ok(Some(RuleScope::Run { id }));
+        }
+        debug_assert!(self.everywhere, "one flag was given");
+        Ok(Some(RuleScope::Everywhere))
     }
 }
 
@@ -490,7 +499,7 @@ fn parse_backend(spec: &str) -> anyhow::Result<ExecutionBackend> {
 
 /// How a run report is asked for and where it goes.
 pub struct ReportOptions {
-    pub run: String,
+    pub run: RunRef,
     pub json: bool,
     pub md: bool,
     /// Write to this file instead of stdout.

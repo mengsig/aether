@@ -499,14 +499,10 @@ pub async fn memory_aliases(
 
 pub async fn memory_context(
     socket: impl Into<aether_client::Endpoint>,
-    task: Option<String>,
+    task: Option<super::TaskRef>,
     invocation: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let task: Option<aether_core::id::TaskId> = task
-        .map(|id| id.parse())
-        .transpose()
-        .context("invalid task id")?;
     let invocation: Option<aether_core::id::InvocationId> = invocation
         .map(|id| id.parse())
         .transpose()
@@ -517,6 +513,10 @@ pub async fn memory_context(
     );
     let socket = socket.into();
     let client = connect(&socket).await?;
+    let task = match task {
+        Some(task) => Some(task.resolve(&client).await?),
+        None => None,
+    };
     let found = client.memories_in_context(task, invocation).await?;
     if json {
         println!("{}", serde_json::to_string(&found)?);

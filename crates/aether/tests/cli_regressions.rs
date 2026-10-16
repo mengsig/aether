@@ -1341,6 +1341,23 @@ async fn cancel_acknowledgement_explains_subtree_and_protocol_limit() {
     );
 }
 
+#[tokio::test]
+async fn an_agent_is_named_by_prefix_name_or_last_through_the_daemon() {
+    for reference in ["01J0000", "agt_01j0000", "assistant", "@last"] {
+        let out = cli(&["cancel", reference, "--json"], Stub::default()).await;
+        assert!(out.status.success(), "{reference}: {}", stderr(&out));
+        let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["agent"], AGENT, "{reference}");
+    }
+    let out = cli(&["cancel", "nobody"], Stub::default()).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("no agent matches `nobody`"),
+        "{}",
+        stderr(&out)
+    );
+}
+
 fn check_help(args: &[&str], phrases: &[&str]) {
     let root = tempfile::tempdir().unwrap();
     let out = isolated_command(root.path(), args).output().unwrap();
