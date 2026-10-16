@@ -2,10 +2,11 @@
 //! CLI command on the same machine can name it `@viewed`. Of several live
 //! TUIs, the one whose view changed last wins.
 //!
-//! Each TUI owns two files in `<socket>.viewed/`: `<id>.lock`, locked for as
-//! long as it runs, and `<id>.json`, what it views. The OS drops the lock
-//! however the TUI ends, so a lock anyone can take marks a stale record, and
-//! the reader that takes it removes the record. No TUI touches another's files.
+//! Each TUI owns two files in `<socket>.viewed/`: `<id>.lock`, locked
+//! exclusively for as long as it runs, and `<id>.json`, what it views. The OS
+//! drops the lock however the TUI ends. Readers probe it with a shared lock,
+//! which only a running TUI blocks, so readers cleaning up a stale record
+//! never look live to each other. No TUI touches another's files.
 
 use std::fs::{File, TryLockError};
 use std::io::{self, Read as _};
@@ -71,7 +72,7 @@ fn live_record(dir: &Path, id: &str) -> anyhow::Result<Option<Record>> {
             return Err(error).with_context(|| format!("opening {}", lock_path.display()));
         }
     };
-    let live = match lock.as_ref().map(File::try_lock) {
+    let live = match lock.as_ref().map(File::try_lock_shared) {
         None | Some(Ok(())) => false,
         Some(Err(TryLockError::WouldBlock)) => true,
         Some(Err(TryLockError::Error(error))) => {
@@ -81,7 +82,8 @@ fn live_record(dir: &Path, id: &str) -> anyhow::Result<Option<Record>> {
     if live {
         return read_record(&record_path);
     }
-    // Holding a dead publisher's lock: nothing else writes its files now.
+    // The publisher is gone and ids are never reused: only readers, which
+    // all reach this same verdict, touch its files now.
     remove_if_present(&record_path)?;
     if lock.is_some() {
         remove_if_present(&lock_path)?;

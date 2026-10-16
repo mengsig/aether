@@ -68,6 +68,26 @@ fn a_crashed_tuis_record_is_stale_whatever_its_pid_became() {
 }
 
 #[test]
+fn a_reader_cleaning_a_stale_record_does_not_make_it_look_live() {
+    let (_scratch, dir) = scratch();
+    let (live_view, crashed_view) = (AgentId::new(), AgentId::new());
+    let mut live = Publisher::new(dir.clone());
+    live.sync(Some(live_view)).expect("live");
+    let mut crashed = Publisher::new(dir.clone());
+    crashed.sync(Some(crashed_view)).expect("crashed");
+    let crashed_lock = lock_path(&dir, &crashed.slot.as_ref().expect("slot").id);
+    drop(crashed);
+    // Another reader paused mid-cleanup, holding the dead TUI's lock.
+    let cleaner = File::open(&crashed_lock).expect("stale lock");
+    cleaner.lock_shared().expect("a reader's lock");
+    assert_eq!(read(&dir).expect("read"), Some(live_view));
+    assert!(
+        !crashed_lock.exists(),
+        "either reader may finish the cleanup"
+    );
+}
+
+#[test]
 fn a_corrupt_live_record_or_a_shared_directory_is_reported() {
     let (_scratch, dir) = scratch();
     let mut tui = Publisher::new(dir.clone());
