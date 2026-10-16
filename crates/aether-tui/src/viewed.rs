@@ -1,48 +1,114 @@
-//! The agent a running TUI views, published in a private file beside the
-//! daemon socket so a CLI command on the same machine can name it `@viewed`.
-//! With several TUIs open, the one whose view changed last wins.
+//! The agent each running TUI views, published beside the daemon socket so a
+//! CLI command on the same machine can name it `@viewed`. Of several live
+//! TUIs, the one whose view changed last wins.
+//!
+//! Each TUI owns two files in `<socket>.viewed/`: `<id>.lock`, locked for as
+//! long as it runs, and `<id>.json`, what it views. The OS drops the lock
+//! however the TUI ends, so a lock anyone can take marks a stale record, and
+//! the reader that takes it removes the record. No TUI touches another's files.
 
+use std::fs::{File, TryLockError};
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 use aether_core::id::AgentId;
+use aether_core::time::Timestamp;
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 
 /// A record is two short fields; anything longer is not one.
 const MAX_RECORD_BYTES: u64 = 4096;
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Record {
-    pid: u32,
     agent: AgentId,
+    changed_at: Timestamp,
 }
 
 /// `<socket file name>.viewed`, beside the daemon socket.
-pub fn viewed_path(daemon_socket: &Path) -> PathBuf {
+pub fn viewed_dir(daemon_socket: &Path) -> PathBuf {
     let mut name = daemon_socket.file_name().unwrap_or_default().to_owned();
     name.push(".viewed");
     daemon_socket.with_file_name(name)
 }
 
-/// The agent the most recent live TUI published, if any. A record left by a
-/// TUI that died without withdrawing it names nothing.
-pub fn read(path: &Path) -> anyhow::Result<Option<AgentId>> {
-    let record = read_record(path)?;
-    Ok(record.filter(|r| process_is_alive(r.pid)).map(|r| r.agent))
+/// The agent the live TUI whose view changed last views, if any TUI does.
+pub fn read(dir: &Path) -> anyhow::Result<Option<AgentId>> {
+    if !check_dir(dir)? {
+        return Ok(None);
+    }
+    let mut newest: Option<(Timestamp, String, AgentId)> = None;
+    for entry in std::fs::read_dir(dir).with_context(|| format!("listing {}", dir.display()))? {
+        let entry = entry.with_context(|| format!("listing {}", dir.display()))?;
+        let name = entry.file_name();
+        let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".json")) else {
+            continue;
+        };
+        if ulid::Ulid::from_string(id).is_err() {
+            continue;
+        }
+        let Some(record) = live_record(dir, id)? else {
+            continue;
+        };
+        let key = (record.changed_at, id.to_owned());
+        if newest
+            .as_ref()
+            .is_none_or(|(at, seen, _)| key > (*at, seen.clone()))
+        {
+            newest = Some((key.0, key.1, record.agent));
+        }
+    }
+    Ok(newest.map(|(_, _, agent)| agent))
 }
 
-/// Keeps the published record in step with what one TUI views.
+/// The record of publisher `id` while it runs; a stale one is removed.
+fn live_record(dir: &Path, id: &str) -> anyhow::Result<Option<Record>> {
+    let (lock_path, record_path) = (lock_path(dir, id), record_path(dir, id));
+    let lock = match open_lock(&lock_path, false) {
+        Ok(lock) => Some(lock),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error).with_context(|| format!("opening {}", lock_path.display()));
+        }
+    };
+    let live = match lock.as_ref().map(File::try_lock) {
+        None | Some(Ok(())) => false,
+        Some(Err(TryLockError::WouldBlock)) => true,
+        Some(Err(TryLockError::Error(error))) => {
+            return Err(error).with_context(|| format!("locking {}", lock_path.display()));
+        }
+    };
+    if live {
+        return read_record(&record_path);
+    }
+    // Holding a dead publisher's lock: nothing else writes its files now.
+    remove_if_present(&record_path)?;
+    if lock.is_some() {
+        remove_if_present(&lock_path)?;
+    }
+    Ok(None)
+}
+
+/// Keeps one TUI's record in step with what it views.
 #[derive(Debug)]
 pub struct Publisher {
-    path: PathBuf,
+    dir: PathBuf,
+    slot: Option<Slot>,
     published: Option<AgentId>,
 }
 
+/// This publisher's id and its lock, held until it finishes.
+#[derive(Debug)]
+struct Slot {
+    id: String,
+    _lock: File,
+}
+
 impl Publisher {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new(dir: PathBuf) -> Self {
         Self {
-            path,
+            dir,
+            slot: None,
             published: None,
         }
     }
@@ -55,48 +121,94 @@ impl Publisher {
         }
         self.published = viewed;
         match viewed {
-            Some(agent) => publish(&self.path, agent),
-            None => withdraw(&self.path),
+            Some(agent) => self.publish(agent),
+            None => self.withdraw(),
         }
     }
 
-    /// Withdraw this TUI's record as it exits.
+    /// Remove this TUI's files as it exits; another TUI's stay.
     pub fn finish(mut self) -> anyhow::Result<()> {
-        self.sync(None)
+        self.withdraw()?;
+        let Some(slot) = self.slot.take() else {
+            return Ok(());
+        };
+        remove_if_present(&lock_path(&self.dir, &slot.id))
+    }
+
+    fn publish(&mut self, agent: AgentId) -> anyhow::Result<()> {
+        if self.slot.is_none() {
+            self.slot = Some(Slot::claim(&self.dir)?);
+        }
+        let slot = self.slot.as_ref().context("the slot was just claimed")?;
+        let record = Record {
+            agent,
+            changed_at: aether_core::time::now(),
+        };
+        let bytes = serde_json::to_vec(&record)?;
+        debug_assert!(
+            bytes.len() as u64 <= MAX_RECORD_BYTES,
+            "a record reads back"
+        );
+        let path = record_path(&self.dir, &slot.id);
+        aether_core::private_file::write(&path, &bytes)
+            .with_context(|| format!("publishing the viewed agent to {}", path.display()))
+    }
+
+    fn withdraw(&self) -> anyhow::Result<()> {
+        match &self.slot {
+            Some(slot) => remove_if_present(&record_path(&self.dir, &slot.id)),
+            None => Ok(()),
+        }
     }
 }
 
-fn publish(path: &Path, agent: AgentId) -> anyhow::Result<()> {
-    let record = Record {
-        pid: std::process::id(),
-        agent,
-    };
-    let bytes = serde_json::to_vec(&record)?;
-    debug_assert!(
-        bytes.len() as u64 <= MAX_RECORD_BYTES,
-        "a record reads back"
-    );
-    aether_core::private_file::write(path, &bytes)
-        .with_context(|| format!("publishing the viewed agent to {}", path.display()))
+impl Slot {
+    /// A fresh id, locked before its record can exist, so no reader ever
+    /// finds the record of a live publisher unlocked.
+    fn claim(dir: &Path) -> anyhow::Result<Self> {
+        ensure_dir(dir)?;
+        let id = ulid::Ulid::generate().to_string();
+        let path = lock_path(dir, &id);
+        let lock =
+            open_lock(&path, true).with_context(|| format!("creating {}", path.display()))?;
+        match lock.try_lock() {
+            Ok(()) => Ok(Self { id, _lock: lock }),
+            Err(error) => Err(io::Error::from(error))
+                .with_context(|| format!("locking the new {}", path.display())),
+        }
+    }
 }
 
-/// Remove the record only if this process wrote it: another TUI's stays.
-fn withdraw(path: &Path) -> anyhow::Result<()> {
-    let Some(record) = read_record(path)? else {
-        return Ok(());
-    };
-    if record.pid != std::process::id() {
-        return Ok(());
+fn lock_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.lock"))
+}
+
+fn record_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.json"))
+}
+
+fn open_lock(path: &Path, create: bool) -> io::Result<File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(create).create_new(create);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options
+            .mode(0o600)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
     }
-    match std::fs::remove_file(path) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error)
-            .with_context(|| format!("withdrawing the viewed agent at {}", path.display())),
-        _ => Ok(()),
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a regular file", path.display()),
+        ));
     }
+    Ok(file)
 }
 
 fn read_record(path: &Path) -> anyhow::Result<Option<Record>> {
-    let file = match std::fs::File::open(path) {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
@@ -117,68 +229,54 @@ fn read_record(path: &Path) -> anyhow::Result<Option<Record>> {
     Ok(Some(record))
 }
 
-#[cfg(unix)]
-fn process_is_alive(pid: u32) -> bool {
-    use nix::errno::Errno;
-    // Zero or a negative pid would name a process group, not a TUI.
-    let Some(pid) = i32::try_from(pid).ok().filter(|pid| *pid > 0) else {
-        return false;
-    };
-    // Signal 0 only checks: EPERM means the process exists under another uid.
-    matches!(
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None),
-        Ok(()) | Err(Errno::EPERM)
-    )
+fn remove_if_present(path: &Path) -> anyhow::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => {
+            Err(error).with_context(|| format!("removing {}", path.display()))
+        }
+        _ => Ok(()),
+    }
 }
 
-#[cfg(not(unix))]
-fn process_is_alive(_pid: u32) -> bool {
-    true
+fn ensure_dir(dir: &Path) -> anyhow::Result<()> {
+    if check_dir(dir)? {
+        return Ok(());
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    match builder.create(dir) {
+        Err(error) if error.kind() != io::ErrorKind::AlreadyExists => {
+            Err(error).with_context(|| format!("creating {}", dir.display()))
+        }
+        // Another TUI may have created it first; it must still be ours alone.
+        _ => check_dir(dir).map(|_| ()),
+    }
+}
+
+/// Whether `dir` exists, refusing a link, a file, or a directory that is
+/// not this user's alone.
+fn check_dir(dir: &Path) -> anyhow::Result<bool> {
+    let meta = match std::fs::symlink_metadata(dir) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| format!("inspecting {}", dir.display()));
+        }
+    };
+    anyhow::ensure!(meta.is_dir(), "{} is not a directory", dir.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+        anyhow::ensure!(
+            meta.uid() == nix::unistd::getuid().as_raw() && meta.permissions().mode() & 0o077 == 0,
+            "{} is not this user's alone; refusing to use it",
+            dir.display()
+        );
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn scratch() -> (tempfile::TempDir, PathBuf) {
-        let dir = tempfile::tempdir().expect("scratch dir");
-        let path = viewed_path(&dir.path().join("aether.sock"));
-        (dir, path)
-    }
-
-    #[test]
-    fn the_viewed_agent_is_published_followed_and_withdrawn() {
-        let (_dir, path) = scratch();
-        assert!(path.ends_with("aether.sock.viewed"));
-        assert_eq!(read(&path).expect("nothing yet"), None);
-        let mut publisher = Publisher::new(path.clone());
-        let (first, second) = (AgentId::new(), AgentId::new());
-        publisher.sync(Some(first)).expect("publish");
-        assert_eq!(read(&path).expect("read"), Some(first));
-        publisher.sync(Some(second)).expect("follow");
-        assert_eq!(read(&path).expect("read"), Some(second));
-        publisher.finish().expect("withdraw");
-        assert!(!path.exists(), "an exiting TUI removes its record");
-    }
-
-    #[test]
-    fn another_tuis_record_survives_and_a_dead_ones_names_nothing() {
-        let (_dir, path) = scratch();
-        let agent = AgentId::new();
-        // Pid 1 is always alive and never this test.
-        let other = serde_json::to_vec(&Record { pid: 1, agent }).expect("json");
-        std::fs::write(&path, other).expect("other TUI");
-        withdraw(&path).expect("leave it");
-        assert_eq!(read(&path).expect("read"), Some(agent));
-
-        let mut child = std::process::Command::new("true").spawn().expect("child");
-        let pid = child.id();
-        child.wait().expect("reaped");
-        let dead = serde_json::to_vec(&Record { pid, agent }).expect("json");
-        std::fs::write(&path, dead).expect("dead TUI");
-        assert_eq!(read(&path).expect("read"), None);
-
-        std::fs::write(&path, b"not json").expect("garbage");
-        assert!(read(&path).is_err(), "a corrupt record is reported");
-    }
-}
+#[path = "viewed_tests.rs"]
+mod tests;

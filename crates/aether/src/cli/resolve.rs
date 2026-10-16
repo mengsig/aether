@@ -261,7 +261,7 @@ pub(crate) fn viewed_agent(socket: &Endpoint) -> anyhow::Result<AgentId> {
     let socket = socket.local_path().with_context(|| {
         format!("`{VIEWED}` names what a TUI on this machine views, so it needs a local daemon")
     })?;
-    let path = aether_tui::viewed::viewed_path(socket);
+    let path = aether_tui::viewed::viewed_dir(socket);
     let viewed =
         aether_tui::viewed::read(&path).with_context(|| format!("looking up `{VIEWED}`"))?;
     viewed.with_context(|| {

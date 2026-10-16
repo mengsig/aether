@@ -167,7 +167,7 @@ fn viewed_is_what_a_tui_beside_the_socket_publishes() {
 
     let viewed: AgentId = id("agt", "01J5B1");
     let local = socket.local_path().expect("a local socket");
-    let mut tui = aether_tui::viewed::Publisher::new(aether_tui::viewed::viewed_path(local));
+    let mut tui = aether_tui::viewed::Publisher::new(aether_tui::viewed::viewed_dir(local));
     tui.sync(Some(viewed)).expect("publish");
     assert_eq!(viewed_agent(&socket).expect("viewed"), viewed);
     assert_eq!(

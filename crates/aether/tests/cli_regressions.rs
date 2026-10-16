@@ -158,11 +158,13 @@ async fn cli_with_socket(
         .unwrap();
     }
     let socket = root.path().join("a.sock");
-    if let Some(agent) = stub.viewed {
-        let path = aether_tui::viewed::viewed_path(&socket);
+    // Held until the CLI has run: a TUI's view lasts only while it does.
+    let _tui = stub.viewed.map(|agent| {
+        let path = aether_tui::viewed::viewed_dir(&socket);
         let mut tui = aether_tui::viewed::Publisher::new(path);
         tui.sync(Some(agent.parse().unwrap())).unwrap();
-    }
+        tui
+    });
     let listener = UnixListener::bind(&socket).unwrap();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();

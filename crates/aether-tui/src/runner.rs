@@ -313,7 +313,7 @@ async fn run_inner(
         .options
         .socket_path
         .as_deref()
-        .map(|socket| Publisher::new(crate::viewed::viewed_path(socket)));
+        .map(|socket| Publisher::new(crate::viewed::viewed_dir(socket)));
     let mut link = Link::new(client);
     let (tx, mut rx) = mpsc::unbounded_channel::<LoopEvent>();
     let mut term_events = EventStream::new();
