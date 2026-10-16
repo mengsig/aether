@@ -244,8 +244,9 @@ against the built daemon) wherever Chromium is installed under
   `Cargo.toml`, and `CHANGELOG.md` must have a `## MAJOR.MINOR.PATCH` section
   with text, or the run fails before anything is built. It then creates a
   **draft** release with these assets: four `aether-<target>.tar.gz`, their
-  `.sha256` files, `SHA256SUMS`, and `VERSION` (the tag, which `aether update`
-  reads from the latest release). The draft's text is that changelog section
+  `.sha256` files, `SHA256SUMS`, `VERSION` (the tag, which `aether update`
+  reads from the latest release) and `CHANGELOG.md` (whose "Before updating"
+  sections `aether update` shows). The draft's text is that changelog section
   followed by the install command (`scripts/release.sh notes <tag>` prints
   it). Nothing is downloadable as "latest" until the draft is published by
   hand.
@@ -267,6 +268,22 @@ scripts/release.sh notes v1.0.0
 scripts/release.sh package x86_64-unknown-linux-musl dist   # needs musl-gcc
 scripts/release.sh install-check x86_64-unknown-linux-musl dist
 ```
+
+### Release policy
+
+The version says what an update asks of the person installing it:
+
+- a **minor** release (`1.1.0`) for new features, changed defaults and store
+  migrations;
+- a **patch** release (`1.0.1`) for fixes only, with no migration and no
+  changed default.
+
+Anything a person should know before installing a release goes under
+`### Before updating` in its changelog section: a migration, a changed
+default, a changed limit. `aether update` prints those sections for every
+release it crosses, and asks for confirmation when one says "one way" or
+"one-way", so every one-way migration has to say so in those words, as
+`The migration is one way` does.
 
 ### Cutting a release
 

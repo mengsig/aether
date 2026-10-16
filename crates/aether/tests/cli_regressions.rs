@@ -1670,6 +1670,32 @@ async fn terminal_output_sanitises_memory_mcp_status_events_and_streams() {
     }
 }
 
+/// The stub daemon reports version "stub": not this build, as a daemon left
+/// running across `aether update` is not.
+#[tokio::test]
+async fn status_names_the_running_and_the_installed_version() {
+    let installed = env!("CARGO_PKG_VERSION");
+    let (output, socket) = cli_with_socket(&["status"], Stub::default(), false).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    let said = stdout(&output);
+    let line = said
+        .lines()
+        .find(|line| line.starts_with("version  "))
+        .unwrap_or_else(|| panic!("no version line: {said}"));
+    assert!(
+        line.contains(&format!("running stub, installed {installed}")),
+        "{line}"
+    );
+    let aether = aether_protocol::command_hint::command_hint(&socket, true);
+    assert!(line.contains(&format!("`{aether} stop`")), "{line}");
+
+    let output = cli(&["status", "--json"], Stub::default()).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["version"], "stub");
+    assert_eq!(value["installed_version"], installed);
+}
+
 #[tokio::test]
 async fn memory_and_mcp_json_preserve_original_text() {
     for args in [

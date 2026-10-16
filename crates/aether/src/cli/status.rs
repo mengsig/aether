@@ -1,12 +1,25 @@
 use super::{AgentId, ApprovalDefault, PathBuf, connect, health_segments, sane};
 use anyhow::Context as _;
 
-pub async fn status(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
+pub async fn status(
+    socket: impl Into<aether_client::Endpoint>,
+    explicit_socket: bool,
+    json: bool,
+) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
     let s = client.status().await?;
+    let installed = env!("CARGO_PKG_VERSION");
     if json {
-        println!("{}", serde_json::to_string_pretty(&s)?);
+        let mut value = serde_json::to_value(&s)?;
+        // Only a daemon on this machine runs a build of this installation.
+        if socket.local_path().is_some() {
+            value
+                .as_object_mut()
+                .context("the daemon status is not a JSON object")?
+                .insert("installed_version".to_owned(), installed.into());
+        }
+        println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
     println!(
@@ -15,6 +28,9 @@ pub async fn status(socket: impl Into<aether_client::Endpoint>, json: bool) -> a
         s.pid,
         sane(&s.instance_id)
     );
+    if let Some(versions) = version_line(&socket, &s.version, installed, explicit_socket) {
+        println!("version  {}", sane(&versions));
+    }
     println!("started  {}", s.started_at.to_rfc3339());
     if let Some(bridge) = &s.bridge {
         println!("bridge   {}", sane(bridge));
@@ -147,6 +163,26 @@ pub async fn status(socket: impl Into<aether_client::Endpoint>, json: bool) -> a
     }
     println!("events   {}", s.last_seq);
     Ok(())
+}
+
+/// The daemon's version beside this binary's, and what restarts it when they
+/// differ. `None` for a remote daemon, which runs a binary of its own.
+fn version_line(
+    endpoint: &aether_client::Endpoint,
+    running: &str,
+    installed: &str,
+    explicit_socket: bool,
+) -> Option<String> {
+    endpoint.local_path()?;
+    let versions = crate::doctor::running_versus_installed(running, installed);
+    if running == installed {
+        return Some(versions);
+    }
+    let aether = endpoint.command_hint(explicit_socket);
+    Some(format!(
+        "{versions} · the daemon keeps its build until `{aether} stop`; `{aether}` then starts \
+         {installed}"
+    ))
 }
 
 /// One line for the status header: how many servers are usable, and what is

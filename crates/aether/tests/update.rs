@@ -174,6 +174,12 @@ impl Fixture {
             .serve(&format!("/download/{tag}/{name}.sha256"), checksum);
     }
 
+    /// Publish `tag`'s changelog, the release notes `aether update` shows.
+    fn publish_notes(&self, tag: &str, changelog: &str) {
+        self.server
+            .serve(&format!("/download/{tag}/CHANGELOG.md"), changelog);
+    }
+
     fn latest_is(&self, tag: &str) {
         self.server
             .serve("/latest/download/VERSION", format!("{tag}\n"));
@@ -208,6 +214,27 @@ impl Fixture {
     }
 
     fn update_from(&self, base: &str, args: &[&str]) -> Output {
+        self.update_command(base, args)
+            .output()
+            .expect("aether update")
+    }
+
+    /// `aether update` with `answer` on its standard input.
+    fn update_answering(&self, args: &[&str], answer: &str) -> Output {
+        let mut child = self
+            .update_command(&self.server.base, args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("aether update");
+        let mut stdin = child.stdin.take().expect("stdin");
+        stdin.write_all(answer.as_bytes()).expect("answer");
+        drop(stdin);
+        child.wait_with_output().expect("aether update")
+    }
+
+    fn update_command(&self, base: &str, args: &[&str]) -> Command {
         let mut command = Command::new(&self.binary);
         command
             .arg("--socket")
@@ -228,7 +255,7 @@ impl Fixture {
         ] {
             command.env_remove(proxy);
         }
-        command.output().expect("aether update")
+        command
     }
 
     /// What the installed binary says it is now.
@@ -440,6 +467,10 @@ fn update_as_json_reports_what_was_installed_and_what_to_restart() {
             "binary": binary,
             "daemon_running": true,
             "restart": [format!("{aether} stop"), aether],
+            "release_notes": {
+                "published": false,
+                "url": format!("{}/tag/v99.0.0", fixture.server.base),
+            },
         })
     );
 }
@@ -483,11 +514,16 @@ fn update_installs_the_latest_release_over_the_running_binary() {
         said.contains("No daemon is running: the next `aether --socket"),
         "{said}"
     );
+    assert!(
+        said.contains("99.0.0 publishes no release notes for `aether update`"),
+        "{said}"
+    );
     let name = archive_name();
     assert_eq!(
         fixture.server.requested(),
         [
             "/latest/download/VERSION".to_owned(),
+            "/download/v99.0.0/CHANGELOG.md".to_owned(),
             format!("/download/v99.0.0/{name}.sha256"),
             format!("/download/v99.0.0/{name}"),
         ]
@@ -862,4 +898,139 @@ fn usage_errors_and_help_follow_the_documented_exit_codes() {
     assert!(help.contains("10 = a newer release exists"), "{help}");
     assert!(help.contains("AETHER_INSTALL_BASE_URL"), "{help}");
     assert_eq!(fixture.server.requested(), Vec::<String>::new());
+}
+
+/// A changelog whose newest release migrates the store one way, and whose
+/// release before it only changes a default.
+const MIGRATING_CHANGELOG: &str = "# Changelog
+
+## 99.0.0
+
+Agents can now pause.
+
+### Before updating
+
+- **Store schema 99.** The migration is one way: an older binary refuses
+  the migrated store.
+
+## 98.0.0
+
+Cleanup.
+
+### Before updating
+
+- **Storage cleanup is on by default.** Logs go after fourteen days.
+";
+
+fn migrating_release() -> Fixture {
+    let fixture = Fixture::installed();
+    fixture.latest_is("v99.0.0");
+    fixture.publish("v99.0.0", "99.0.0");
+    fixture.publish_notes("v99.0.0", MIGRATING_CHANGELOG);
+    fixture
+}
+
+#[test]
+fn a_one_way_migration_is_shown_and_installed_only_when_confirmed() {
+    for answer in ["", "n\n"] {
+        let fixture = migrating_release();
+        let output = fixture.update_answering(&[], answer);
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let said = stdout(&output);
+        assert!(
+            said.contains("What 99.0.0 brings:\n\nAgents can now pause."),
+            "{said}"
+        );
+        assert!(said.contains("Before updating to 98.0.0:"), "{said}");
+        assert!(said.contains("Before updating to 99.0.0:"), "{said}");
+        assert!(said.contains("**Store schema 99.**"), "{said}");
+        let error = stderr(&output);
+        assert!(error.contains("migrates the store one way"), "{error}");
+        assert!(error.contains("[y/N]"), "{error}");
+        assert!(error.contains("aether was not updated"), "{error}");
+        assert!(error.contains("or add --yes"), "{error}");
+        assert_eq!(
+            fixture.server.requested(),
+            ["/latest/download/VERSION", "/download/v99.0.0/CHANGELOG.md"],
+            "nothing is downloaded before the answer"
+        );
+        fixture.assert_unchanged();
+    }
+
+    let fixture = migrating_release();
+    let output = fixture.update_answering(&[], "y\n");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(stderr(&output).contains("[y/N]"), "{output:?}");
+    assert_eq!(fixture.installed_version(), "aether 99.0.0");
+}
+
+#[test]
+fn yes_installs_a_one_way_migration_without_asking() {
+    let fixture = migrating_release();
+    let output = fixture.update(&["--yes"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(
+        stdout(&output).contains("Before updating to 99.0.0:"),
+        "{output:?}"
+    );
+    assert!(!stderr(&output).contains("[y/N]"), "{output:?}");
+    assert_eq!(fixture.installed_version(), "aether 99.0.0");
+
+    let fixture = migrating_release();
+    let output = fixture.update(&["--yes", "--json"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let notes = &json(&output)["release_notes"];
+    assert_eq!(notes["published"], true, "{notes}");
+    assert_eq!(notes["one_way_migration"], true, "{notes}");
+    assert_eq!(notes["summary"], "Agents can now pause.", "{notes}");
+    assert_eq!(notes["before_updating"][1]["version"], "99.0.0", "{notes}");
+    assert!(stderr(&output).is_empty(), "{output:?}");
+}
+
+#[test]
+fn json_without_yes_asks_on_stderr_and_keeps_stdout_one_object() {
+    let fixture = migrating_release();
+    let output = fixture.update(&["--json"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let message = json(&output)["error"]["message"].to_string();
+    assert!(message.contains("migrates the store one way"), "{message}");
+    let error = stderr(&output);
+    assert!(error.contains("Before updating to 99.0.0:"), "{error}");
+    assert!(error.contains("[y/N]"), "{error}");
+    fixture.assert_unchanged();
+}
+
+#[test]
+fn notes_without_a_migration_are_shown_and_the_update_goes_ahead() {
+    let fixture = Fixture::installed();
+    fixture.latest_is("v99.0.0");
+    fixture.publish("v99.0.0", "99.0.0");
+    fixture.publish_notes(
+        "v99.0.0",
+        "## 99.0.0\n\nFixes only.\n\n### Fixed\n\n- A fix.\n",
+    );
+    let output = fixture.update(&[]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let said = stdout(&output);
+    assert!(
+        said.contains("What 99.0.0 brings:\n\nFixes only."),
+        "{said}"
+    );
+    assert!(!said.contains("Before updating"), "{said}");
+    assert!(!stderr(&output).contains("[y/N]"), "{output:?}");
+    assert_eq!(fixture.installed_version(), "aether 99.0.0");
+}
+
+#[test]
+fn notes_that_do_not_describe_the_release_stop_the_update() {
+    let fixture = Fixture::installed();
+    fixture.latest_is("v99.0.0");
+    fixture.publish("v99.0.0", "99.0.0");
+    fixture.publish_notes("v99.0.0", "## 98.0.0\n\nAn older release.\n");
+    let output = fixture.update(&["--yes"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let error = stderr(&output);
+    assert!(error.contains("no section for 99.0.0"), "{error}");
+    assert!(error.contains("aether was not updated"), "{error}");
+    fixture.assert_unchanged();
 }

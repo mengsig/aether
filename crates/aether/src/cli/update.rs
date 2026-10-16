@@ -7,18 +7,24 @@
 mod daemon;
 mod fetch;
 mod install;
+mod notes;
 mod release;
 
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod notes_tests;
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests;
 
 use std::cmp::Ordering;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail, ensure};
 use daemon::Daemon;
 use install::{Installation, Refusal};
+use notes::Notes;
 pub use release::Version;
 use release::{Archive, ReleaseSource};
 
@@ -37,6 +43,8 @@ pub struct UpdateOptions {
     pub version: Option<Version>,
     /// Print the outcome as one object, with no progress lines.
     pub json: bool,
+    /// Install a release with a one-way migration without asking first.
+    pub yes: bool,
 }
 
 /// What installing `wanted` over `running` amounts to.
@@ -112,15 +120,15 @@ pub async fn update(
     }
     let target = release::target_for(std::env::consts::OS, std::env::consts::ARCH)?;
     let archive = source.archive(wanted, target);
+    let outcome = announce(&client, &source, plan, running, wanted, &options, &aether).await?;
     if !options.json {
-        println!("{}", announcement(plan, running, wanted));
         println!("Downloading {}", archive.url);
     }
     if let Some(left_behind) = replace_binary(&client, &installation, wanted, &archive).await? {
         eprintln!("Warning: {}", super::sane(&left_behind));
     }
     let installed = Installed {
-        outcome: outcome(plan, running, wanted),
+        outcome,
         binary: installation.binary(),
         daemon_before,
         daemon: daemon::probe(&socket).await,
@@ -133,12 +141,124 @@ pub async fn update(
     Ok(0)
 }
 
+/// Say what is about to happen and, before an upgrade, what its release
+/// notes ask; return the `--json` outcome so far. Fails when not confirmed.
+async fn announce(
+    client: &reqwest::Client,
+    source: &ReleaseSource,
+    plan: Plan,
+    running: Version,
+    wanted: Version,
+    options: &UpdateOptions,
+    aether: &str,
+) -> anyhow::Result<serde_json::Value> {
+    assert!(
+        plan.replaces_the_binary(),
+        "{plan:?} installs nothing to announce"
+    );
+    if !options.json {
+        println!("{}", announcement(plan, running, wanted));
+    }
+    let mut outcome = outcome(plan, running, wanted);
+    // A downgrade's notes describe what it lacks, not what it asks of the store.
+    if plan == Plan::Upgrade {
+        let notes = read_notes(client, source, running, wanted).await?;
+        accept_notes(&notes, wanted, options, aether)?;
+        outcome["release_notes"] = notes.to_json();
+    }
+    Ok(outcome)
+}
+
+/// The notes `wanted` publishes for an update from `running`. Before the
+/// notes asset existed releases had none, which is said, not an error.
+async fn read_notes(
+    client: &reqwest::Client,
+    source: &ReleaseSource,
+    running: Version,
+    wanted: Version,
+) -> anyhow::Result<Notes> {
+    let url = source.tagged_url(wanted, notes::NOTES_ASSET);
+    let Some(changelog) = fetch::notes(client, &url)
+        .await
+        .context("could not read the release notes; aether was not updated")?
+    else {
+        let page = source.release_page(wanted);
+        return Ok(Notes::Unpublished { page });
+    };
+    let notes = notes::parse(&changelog, running, wanted)
+        .with_context(|| format!("{url} is not usable; aether was not updated"))?;
+    Ok(Notes::Published(notes))
+}
+
+/// Show the notes, and have a one-way migration confirmed unless `--yes`
+/// was given. With `--json` the notes go to stderr, and only when asked about.
+fn accept_notes(
+    notes: &Notes,
+    wanted: Version,
+    options: &UpdateOptions,
+    aether: &str,
+) -> anyhow::Result<()> {
+    let ask = notes.one_way_migration() && !options.yes;
+    let text = super::sane(&notes.render(wanted));
+    if !options.json {
+        println!("\n{text}\n");
+    } else if ask {
+        eprintln!("{text}\n");
+    }
+    if !ask {
+        return Ok(());
+    }
+    let mut stdin = std::io::stdin().lock();
+    if confirm(&mut stdin, &mut std::io::stderr(), wanted)? {
+        return Ok(());
+    }
+    bail!(not_confirmed(aether, wanted, options.version))
+}
+
+/// Ask on `prompt` and read the answer from `answer`: only `y` or `yes`
+/// agrees, and no answer at all is a no.
+fn confirm(
+    answer: &mut impl BufRead,
+    prompt: &mut impl Write,
+    wanted: Version,
+) -> anyhow::Result<bool> {
+    write!(
+        prompt,
+        "Updating to aether {wanted} migrates the store one way: an older binary will not \
+         open it afterwards. Update? [y/N] "
+    )
+    .and_then(|()| prompt.flush())
+    .context("could not ask for confirmation")?;
+    let mut line = String::new();
+    answer
+        .read_line(&mut line)
+        .context("could not read the confirmation; pass --yes to update without asking")?;
+    Ok(matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
+
+/// Why nothing was installed when the migration was not confirmed.
+fn not_confirmed(aether: &str, wanted: Version, pinned: Option<Version>) -> String {
+    format!(
+        "aether was not updated: updating to {wanted} migrates the store one way and that was \
+         not confirmed. Read the notes, then run `{aether} update{}` and answer y, or add --yes.",
+        pin_argument(pinned)
+    )
+}
+
+/// The `--version` argument that repeats a pinned update.
+fn pin_argument(pinned: Option<Version>) -> String {
+    pinned.map_or_else(String::new, |version| {
+        format!(" --version {}", version.tag())
+    })
+}
+
 /// Why nothing was installed: where a refusing daemon cannot be signalled,
 /// replacing the binary would remove the only build that can still stop it.
 fn stop_first(socket: &Path, aether: &str, pinned: Option<Version>, reason: &str) -> String {
-    let pin = pinned.map_or_else(String::new, |version| {
-        format!(" --version {}", version.tag())
-    });
+    let pin = pin_argument(pinned);
     format!(
         "aether was not updated: the daemon on {} has to be stopped first, because here a \
          build with another protocol version cannot stop it ({reason}). Run `{aether} stop`, \

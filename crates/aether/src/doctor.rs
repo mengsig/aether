@@ -262,18 +262,22 @@ pub enum SocketState<'a> {
     Silent,
 }
 
-/// Is a daemon answering, and is it the one this binary would talk to.
-pub fn check_socket(paths: &Paths, state: SocketState<'_>, command: &str) -> Check {
+/// "running X, installed Y": a daemon keeps the build it started with, and
+/// `installed` is this binary's version, the one a restarted daemon runs.
+pub fn running_versus_installed(running: &str, installed: &str) -> String {
+    format!("running {running}, installed {installed}")
+}
+
+/// Is a daemon answering, is it the one this binary would talk to, and is it
+/// still the `installed` build.
+pub fn check_socket(
+    paths: &Paths,
+    state: SocketState<'_>,
+    installed: &str,
+    command: &str,
+) -> Check {
     match state {
-        SocketState::Answering(s) => Check::ok(
-            "daemon",
-            format!(
-                "aetherd {} (pid {}) on {}",
-                s.version,
-                s.pid,
-                paths.socket.display()
-            ),
-        ),
+        SocketState::Answering(s) => check_answering(paths, s, installed, command),
         // A failure, not a warning: nothing this binary asks for will work,
         // and `aether` will not replace the daemon that holds the socket.
         SocketState::Refused(why) => Check::fail(
@@ -295,6 +299,28 @@ pub fn check_socket(paths: &Paths, state: SocketState<'_>, command: &str) -> Che
             format!("start one with `{command}` or `{command} daemon`"),
         ),
     }
+}
+
+/// A daemon that answers, and whether a restart is needed to run `installed`.
+fn check_answering(paths: &Paths, s: &DaemonStatus, installed: &str, command: &str) -> Check {
+    let detail = format!(
+        "aetherd {} (pid {}) on {} · {}",
+        s.version,
+        s.pid,
+        paths.socket.display(),
+        running_versus_installed(&s.version, installed)
+    );
+    if s.version == installed {
+        return Check::ok("daemon", detail);
+    }
+    Check::warn(
+        "daemon",
+        detail,
+        format!(
+            "the daemon keeps the build it started with; run `{command} stop`, then \
+             `{command}` to start {installed} (agents resume when it starts again)"
+        ),
+    )
 }
 
 /// The store opens, passes SQLite's own integrity check, and is a schema

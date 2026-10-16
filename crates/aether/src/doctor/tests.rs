@@ -153,6 +153,7 @@ fn a_stale_socket_reads_differently_from_no_socket() {
     let absent = check_socket(
         &p,
         SocketState::Silent,
+        INSTALLED,
         &aether_protocol::command_hint::command_hint(&p.socket, false),
     );
     assert_eq!(absent.level, Level::Warn);
@@ -161,6 +162,7 @@ fn a_stale_socket_reads_differently_from_no_socket() {
     let stale = check_socket(
         &p,
         SocketState::Silent,
+        INSTALLED,
         &aether_protocol::command_hint::command_hint(&p.socket, false),
     );
     assert_eq!(stale.level, Level::Warn);
@@ -178,6 +180,7 @@ fn a_daemon_that_refuses_this_build_is_not_reported_as_silence() {
     let check = check_socket(
         &p,
         SocketState::Refused("client protocol 11 is not served"),
+        INSTALLED,
         &aether_protocol::command_hint::command_hint(&p.socket, false),
     );
     assert_eq!(check.level, Level::Fail, "{}", check.detail);
@@ -199,6 +202,49 @@ fn a_daemon_that_refuses_this_build_is_not_reported_as_silence() {
         "the fix is to stop the daemon that is running: {:?}",
         check.fix
     );
+}
+
+const INSTALLED: &str = "1.0.10";
+
+/// What a daemon of `version` reports, with nothing else running.
+fn daemon_status(version: &str) -> aether_protocol::DaemonStatus {
+    serde_json::from_value(serde_json::json!({
+        "instance_id": "i", "version": version, "pid": 42, "started_at": "2026-10-16T00:00:00Z",
+        "last_seq": 0, "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
+        "agents_blocked": 0, "tasks_active": 0, "pending_approvals": 0,
+        "usage_total": aether_core::model::Usage::default(), "mcp": [], "providers": []
+    }))
+    .expect("daemon status")
+}
+
+/// `aether update` replaces the binary and leaves the daemon on its old build;
+/// the report says both versions, and warns until the daemon is restarted.
+#[test]
+fn a_daemon_older_than_the_installed_binary_is_named_with_both_versions() {
+    let dir = tempfile::tempdir().expect("dir");
+    let p = paths(dir.path());
+    let command = aether_protocol::command_hint::command_hint(&p.socket, false);
+    let old = daemon_status("1.0.9");
+    let check = check_socket(&p, SocketState::Answering(&old), INSTALLED, &command);
+    assert_eq!(check.level, Level::Warn, "{}", check.detail);
+    assert!(
+        check.detail.contains("running 1.0.9, installed 1.0.10"),
+        "{}",
+        check.detail
+    );
+    let fix = check.fix.expect("a restart is the fix");
+    assert!(fix.contains(&format!("`{command} stop`")), "{fix}");
+    assert!(fix.contains("to start 1.0.10"), "{fix}");
+
+    let current = daemon_status(INSTALLED);
+    let check = check_socket(&p, SocketState::Answering(&current), INSTALLED, &command);
+    assert_eq!(check.level, Level::Ok, "{}", check.detail);
+    assert!(
+        check.detail.contains("running 1.0.10, installed 1.0.10"),
+        "{}",
+        check.detail
+    );
+    assert_eq!(check.fix, None);
 }
 
 #[test]
@@ -738,9 +784,16 @@ fn every_daemon_command_in_doctor_fixes_preserves_the_selected_socket() {
         state: McpServerState::Failed,
         ..McpServerHealth::unknown("files", "stdio: a")
     }];
+    let daemon = daemon_status("1.0.9");
     let report = Report::new(vec![
-        check_socket(&p, SocketState::Silent, &command),
-        check_socket(&p, SocketState::Refused("version mismatch"), &command),
+        check_socket(&p, SocketState::Silent, INSTALLED, &command),
+        check_socket(
+            &p,
+            SocketState::Refused("version mismatch"),
+            INSTALLED,
+            &command,
+        ),
+        check_socket(&p, SocketState::Answering(&daemon), INSTALLED, &command),
         Check::no_daemon_providers(&command),
         Check::unprobed_providers("timed out", &command),
         check_providers(&[], &[], None, &command),
