@@ -162,6 +162,14 @@ async fn children_of_another_run_get_their_own_partition() {
         "both partitions belong to the one repository"
     );
     assert!(builds[1].1.starts_with(cache.path()));
+    for (_, dir) in &builds {
+        let partition = dir.parent().expect("partition");
+        assert!(
+            partition.join(".aether-partition").is_file(),
+            "Aether marks the partitions it makes: {}",
+            partition.display()
+        );
+    }
 
     let report = h.runtime.storage_gc(true).expect("storage report");
     let reported = &report["build_cache"];
