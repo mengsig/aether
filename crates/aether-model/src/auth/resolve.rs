@@ -16,6 +16,10 @@ use super::types::{AuthError, AuthKind, Credential, CredentialInfo, CredentialSt
 use crate::adapters::RequestAuth;
 use crate::registry::ProviderDef;
 
+/// The `source` of a provider that needs no credentials: a local server,
+/// ready only when something listens at its address.
+pub const NO_AUTH_SOURCE: &str = "no auth required";
+
 /// Refresh when less than this remains.
 const REFRESH_WINDOW: Duration = Duration::from_secs(5 * 60);
 
@@ -107,7 +111,7 @@ impl AuthResolver {
             return Ok(Some(ResolvedAuth {
                 auth: RequestAuth::None,
                 headers: BTreeMap::new(),
-                source: "no auth required".into(),
+                source: NO_AUTH_SOURCE.into(),
                 kind: AuthKind::None,
             }));
         }

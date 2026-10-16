@@ -9,6 +9,7 @@
 pub mod approval;
 pub mod artifacts;
 pub mod attachments;
+mod build_cache;
 pub mod bus;
 mod cancellation;
 pub mod commands;
@@ -77,6 +78,9 @@ pub enum RuntimeError {
     NotFound(String),
     #[error("{0}")]
     Invalid(String),
+    /// Nothing names a model and the daemon has no default to fall back on.
+    #[error("no model configured; sign in from your client")]
+    NoModel,
     #[error("internal: {0}")]
     Internal(String),
 }

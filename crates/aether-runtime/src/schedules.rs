@@ -191,9 +191,7 @@ impl Runtime {
             .model
             .take()
             .or_else(|| self.default_model())
-            .ok_or_else(|| {
-                RuntimeError::Invalid("no model configured; sign in from your client".into())
-            })?;
+            .ok_or(RuntimeError::NoModel)?;
         template.model = Some(model);
         // Refuse now what every occurrence would fail on. Nothing is written.
         let objective = template.objective.clone();

@@ -22,6 +22,7 @@ fn turn() -> EngineTurn {
         hidden_env: Vec::new(),
         tool_hidden_env: Vec::new(),
         temp_dir: None,
+        build_env: Vec::new(),
         summary_only: false,
         lean_host_context: false,
         network_access: true,
@@ -120,6 +121,36 @@ async fn fresh_and_resumed_claude_get_the_agent_temp_dir() {
     }
 }
 
+#[tokio::test]
+async fn claude_builds_into_the_agents_build_cache() {
+    let dir = fake_claude(
+        r#"printf '%s' "$CARGO_TARGET_DIR" > "$CARGO_TARGET_DIR/seen"; cat >/dev/null"#,
+    );
+    let engine = ClaudeCodeEngine::new(dir.path().join("claude").to_string_lossy(), "2.1.265");
+    let cache = dir.path().join("cache/cargo-target");
+    std::fs::create_dir_all(&cache).unwrap();
+    let mut t = turn();
+    t.cwd = dir.path().into();
+    t.hidden_env = vec!["CARGO_TARGET_DIR".into()];
+    t.build_env = vec![("CARGO_TARGET_DIR".into(), cache.clone())];
+    let cancel = CancellationToken::new();
+    let mut run = engine.run(t, cancel.clone()).await.unwrap();
+    let seen = cache.join("seen");
+    for _ in 0..200 {
+        if std::fs::read_to_string(&seen).is_ok_and(|s| !s.is_empty()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    cancel.cancel();
+    while run.events.recv().await.is_some() {}
+    assert_eq!(
+        std::fs::read_to_string(&seen).unwrap(),
+        cache.display().to_string(),
+        "exported after hidden names are stripped"
+    );
+}
+
 #[test]
 fn a_sandboxed_claude_may_write_only_its_own_temp_dir_beyond_the_defaults() {
     let engine = ClaudeCodeEngine::new("claude", "2.1.265");
@@ -135,6 +166,16 @@ fn a_sandboxed_claude_may_write_only_its_own_temp_dir_beyond_the_defaults() {
         settings(&t)["sandbox"]["filesystem"],
         json!({"allowWrite": ["/var/t/0123456789AB"]})
     );
+    t.build_env = vec![(
+        "CARGO_TARGET_DIR".into(),
+        "/var/cache/r/run/cargo-target".into(),
+    )];
+    assert_eq!(
+        settings(&t)["sandbox"]["filesystem"],
+        json!({"allowWrite": ["/var/t/0123456789AB", "/var/cache/r/run/cargo-target"]}),
+        "and its build cache"
+    );
+    t.build_env.clear();
     t.temp_dir = None;
     assert!(settings(&t)["sandbox"].get("filesystem").is_none());
     t.temp_dir = Some(PathBuf::from("/var/t/0123456789AB"));
@@ -142,6 +183,21 @@ fn a_sandboxed_claude_may_write_only_its_own_temp_dir_beyond_the_defaults() {
     assert!(
         settings(&t).get("sandbox").is_none(),
         "an online turn is not sandboxed"
+    );
+    t.build_env = vec![(
+        "CARGO_TARGET_DIR".into(),
+        "/var/cache/r/run/cargo-target".into(),
+    )];
+    let online = settings(&t);
+    assert_eq!(
+        online["sandbox"],
+        json!({"filesystem": {"allowWrite": ["/var/cache/r/run/cargo-target"]}}),
+        "an inherited sandbox may still write the build cache, and is not enabled by Aether"
+    );
+    t.summary_only = true;
+    assert!(
+        settings(&t).get("sandbox").is_none(),
+        "a summary runs no builds"
     );
 }
 

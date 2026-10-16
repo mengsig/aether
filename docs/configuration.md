@@ -387,3 +387,49 @@ warning shows both lengths. On macOS the default root,
 absolute directory that only you can write, such as `/Users/<you>/.aether-t`. `aether storage` reports the total bytes and the number
 of agent directories under `agent_temp`. Nothing is cleaned up automatically
 yet.
+
+## Build cache
+
+Agents working in a repository workspace build into a cache outside it, so
+a delegated worktree does not start its own cold `target/`. Each repository
+and run gets one partition, `<root>/<repository>-<digest>/<run id>`, shared by
+all the agents of that run, so an isolated child builds warm on its
+siblings' output. Another run is another trust domain: it gets its own
+partition and never writes into this one.
+
+```toml
+[build_cache]
+# root = "/var/cache/aether"
+
+# A listed table replaces the default, which is the one below.
+[[build_cache.env]]
+name = "CARGO_TARGET_DIR"
+dir = "cargo-target"
+
+# [[build_cache.env]]
+# name = "npm_config_cache"
+# dir = "npm"
+```
+
+Each variable is set to `<partition>/<dir>` for the agent's engine CLI and
+for the commands and background jobs it runs on the host. The directory is
+created with mode 0700 just before such a process starts, and is a writable
+root of Claude Code's and Codex's sandboxes. `env = []` exports nothing.
+Commands in a container get no build cache, since the container does not
+mount it.
+
+`root` must be an absolute path with no `..`; `~` and environment variables
+are not expanded. When unset, it is `aether.build-cache` beside `aether.db`.
+Variable names must be plain shell names other than `TMPDIR`, `TMP` and
+`TEMP`, and each `dir` must be one plain directory name, used once.
+
+A client that accounts for build output itself can name the directory for
+an agent with `config.build_cache` on `create_agent` (see
+[the protocol](protocol.md#optional-features)); its children inherit it.
+
+`aether storage` reports the bytes, repositories and partitions under the
+root as `build_cache`, apart from workspaces. Nothing in it is evicted yet:
+remove a partition by hand when no agent of its run is still building. The
+agents of one run share a partition and can read and overwrite each other's
+output; partitions of different runs are separate directories under one
+user, not an operating-system boundary.

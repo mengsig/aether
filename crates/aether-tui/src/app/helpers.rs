@@ -142,7 +142,10 @@ pub(super) fn explain(theme: &Theme, error: &ClientError, then: Then, command: &
             "{text}; check SSH connectivity and the Aether versions on the host and this client"
         );
     }
-    if matches!(then, Then::AgentCreated(_)) && text.contains("model") {
+    // Only this code means nothing can run yet; any other model error, such
+    // as a retired or misspelled one, falls through with the daemon's text.
+    let no_model = matches!(error, ClientError::Protocol(reply) if reply.code == aether_protocol::ErrorCode::NoModel);
+    if matches!(then, Then::AgentCreated(_)) && no_model {
         return theme
             .decoration(
                 "no model to run on yet · /login to sign in, then send a message",

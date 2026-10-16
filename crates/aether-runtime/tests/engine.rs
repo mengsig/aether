@@ -33,6 +33,8 @@ mod attachments;
 mod bridge_build;
 #[path = "engine/budgets.rs"]
 mod budgets;
+#[path = "engine/build_cache.rs"]
+mod build_cache;
 #[path = "engine/compaction.rs"]
 mod compaction;
 #[path = "engine/completion_recovery.rs"]

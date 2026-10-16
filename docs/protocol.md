@@ -28,7 +28,7 @@ protocol version.
 
 ## Versions
 
-The protocol is version 20 and the daemon serves versions 17 through 20. The window is
+The protocol is version 22 and the daemon serves versions 17 through 22. The window is
 `MIN_PROTOCOL_VERSION` to `PROTOCOL_VERSION` in `aether-protocol`; the
 `compat` module translates replies for the older versions.
 A hello outside the window is refused with `incompatible`, naming both bounds.
@@ -39,6 +39,16 @@ Only the daemon's answers are rewritten. Every field a newer version added to
 a command is optional, so an older client's requests decode unchanged; the
 test `no_command_requires_a_field_an_older_client_would_not_send` holds that
 against the live schema.
+
+Version 22 adds `workspace_diff`, `workspace_integrate` and
+`workspace_discard`, advertised by the `workspace_review` feature. They are new
+commands, so older clients never send them and see no change.
+
+Version 21 adds the `no_model` error code: creating an agent or a schedule
+with no model named, when the daemon has no default because no provider is
+signed in. A model that is named but cannot be used keeps its own code.
+Clients on versions 17 through 20 receive `invalid_argument` with the same
+message, the code they got for it before.
 
 Version 20 adds transient `accounting` deltas with absolute agent usage,
 turn usage and the latest context token count. Live subscribers receive these
@@ -170,6 +180,15 @@ them to one.
 `memory_context` means the daemon serves `memories_in_context` (see
 [memories in context](#memories-in-context)). An older daemon refuses the
 command as unknown; the Rust client refuses to send it to one.
+
+`build_cache` means `create_agent` accepts `config.build_cache`: an absolute
+directory the agent's builds use instead of Aether's per-repository
+partition (see [build cache](configuration.md#build-cache)). Its children
+inherit it. It must be absolute, valid UTF-8, without `..`, and not `/`; a
+paired device cannot send it, and agents delegating with the `delegate` tool
+cannot set it. A client must check the feature before sending the field: an
+older daemon ignores it and the agent builds elsewhere. The Rust client
+refuses such a create itself.
 
 ## Naming a checkout
 

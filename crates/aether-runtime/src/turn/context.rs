@@ -21,6 +21,7 @@ pub(crate) fn tool_context(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> ToolContext
         env: BTreeMap::new(),
         hidden_env: runtime.tools.hidden_env(),
         temp_dir: agent_temp_path(runtime, ctx.agent.id),
+        build_env: crate::build_cache::exports(runtime, &ctx.agent),
     }
 }
 

@@ -1,5 +1,7 @@
+use super::providers::LocalServer;
 use super::*;
 use aether_core::mcp::{McpServerHealth, McpServerState};
+use aether_protocol::AuthInfo;
 use aether_protocol::remote::RemoteStatus;
 
 fn paths(dir: &Path) -> Paths {
@@ -333,18 +335,175 @@ fn the_log_check_names_the_file_the_daemon_writes_now() {
     );
 }
 
+fn model(text: &str) -> aether_core::model::ModelRef {
+    aether_core::model::ModelRef::parse(text).expect("provider/model")
+}
+
+fn local(provider: &str) -> AuthInfo {
+    AuthInfo {
+        source: Some(aether_model::auth::NO_AUTH_SOURCE.into()),
+        methods: vec!["none".into()],
+        ..auth(provider, true)
+    }
+}
+
+fn provider_info(provider: &str, base_url: &str) -> aether_protocol::ProviderInfo {
+    aether_protocol::ProviderInfo {
+        provider: provider.into(),
+        name: provider.into(),
+        protocol: "openai-chat".into(),
+        family: None,
+        base_url: base_url.into(),
+        engine: false,
+        models: 0,
+        open_model_list: true,
+        enabled: true,
+        configured: true,
+        auth_source: None,
+        health: aether_core::provider::ProviderHealth::idle(provider),
+        headroom: Default::default(),
+    }
+}
+
 #[test]
 fn no_configured_provider_is_a_failure_and_one_is_enough() {
+    let default = model("claude-code/sonnet");
     assert_eq!(
-        check_providers(&[auth("anthropic", false), auth("openai", false)], "aether").level,
+        check_providers(
+            &[auth("anthropic", false), auth("openai", false)],
+            &[],
+            None,
+            "aether"
+        )
+        .level,
         Level::Fail
     );
     let ok = check_providers(
         &[auth("anthropic", false), auth("claude-code", true)],
+        &[],
+        Some(&default),
         "aether",
     );
     assert_eq!(ok.level, Level::Ok);
-    assert!(ok.detail.contains("claude-code"));
+    assert!(ok.detail.contains("claude-code"), "{}", ok.detail);
+    assert!(
+        ok.detail.contains("default claude-code/sonnet"),
+        "{}",
+        ok.detail
+    );
+}
+
+#[test]
+fn only_providers_needing_no_credentials_are_probed() {
+    let auth = [
+        auth("anthropic", true),
+        local("vllm"),
+        AuthInfo {
+            configured: false,
+            ..local("lmstudio")
+        },
+    ];
+    let providers = [
+        provider_info("anthropic", "https://api.anthropic.com"),
+        provider_info("vllm", "http://localhost:8000/v1"),
+        provider_info("lmstudio", "http://localhost:1234/v1"),
+    ];
+    assert_eq!(
+        local_servers(&auth, &providers),
+        vec![LocalServer {
+            provider: "vllm".into(),
+            base_url: "http://localhost:8000/v1".into(),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn a_local_server_on_a_closed_port_is_not_ready_and_names_its_address() {
+    let open = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let open_port = open.local_addr().expect("addr").port();
+    let closed_port = {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        probe.local_addr().expect("addr").port()
+    };
+    let servers = [
+        LocalServer {
+            provider: "ollama".into(),
+            base_url: format!("http://127.0.0.1:{open_port}/v1"),
+        },
+        LocalServer {
+            provider: "vllm".into(),
+            base_url: format!("http://127.0.0.1:{closed_port}/v1"),
+        },
+    ];
+    let down = unreachable_servers(&servers, PROBE_TIMEOUT).await;
+    let address = format!("127.0.0.1:{closed_port}");
+    assert_eq!(
+        down,
+        vec![Unreachable {
+            provider: "vllm".into(),
+            address: address.clone(),
+        }]
+    );
+
+    let default = model("ollama/llama3");
+    let check = check_providers(
+        &[local("ollama"), local("vllm")],
+        &down,
+        Some(&default),
+        "aether",
+    );
+    assert_eq!(check.level, Level::Ok);
+    assert!(
+        check.detail.contains("1 of 2 ready: ollama"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains(&format!("vllm not reachable at {address}")),
+        "{}",
+        check.detail
+    );
+    let only_down = check_providers(&[local("vllm")], &down, None, "aether");
+    assert_eq!(only_down.level, Level::Fail);
+    assert!(only_down.detail.contains(&address), "{}", only_down.detail);
+}
+
+#[test]
+fn a_default_model_no_ready_provider_serves_is_a_failure() {
+    let down = [Unreachable {
+        provider: "vllm".into(),
+        address: "localhost:8000".into(),
+    }];
+    let auth = [
+        auth("claude-code", true),
+        local("vllm"),
+        auth("openai", false),
+    ];
+    for default in ["vllm/qwen3", "openai/gpt-6"] {
+        let default = model(default);
+        let check = check_providers(&auth, &down, Some(&default), "aether");
+        assert_eq!(check.level, Level::Fail, "{default}: {}", check.detail);
+        assert!(
+            check.detail.contains(&format!("default model {default}")),
+            "{}",
+            check.detail
+        );
+        assert!(
+            check
+                .fix
+                .as_deref()
+                .is_some_and(|f| f.contains(&default.provider)),
+            "{:?}",
+            check.fix
+        );
+    }
+    let none = check_providers(&auth, &down, None, "aether");
+    assert_eq!(none.level, Level::Warn);
+    assert!(none.detail.contains("no default model"), "{}", none.detail);
 }
 
 #[test]
@@ -583,8 +742,16 @@ fn every_daemon_command_in_doctor_fixes_preserves_the_selected_socket() {
         check_socket(&p, SocketState::Silent, &command),
         check_socket(&p, SocketState::Refused("version mismatch"), &command),
         Check::no_daemon_providers(&command),
-        check_providers(&[], &command),
-        check_providers(&[auth("anthropic", false)], &command),
+        Check::unprobed_providers("timed out", &command),
+        check_providers(&[], &[], None, &command),
+        check_providers(&[auth("anthropic", false)], &[], None, &command),
+        check_providers(&[auth("claude-code", true)], &[], None, &command),
+        check_providers(
+            &[auth("claude-code", true)],
+            &[],
+            Some(&model("anthropic/claude-sonnet-5-5")),
+            &command,
+        ),
         check_engines(&unavailable, &command),
         check_mcp(1, &[], &command),
         check_mcp(1, &failed, &command),

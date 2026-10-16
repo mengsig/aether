@@ -123,6 +123,12 @@ looks like a boundary and is not one.
   temp directory. Agent temp directories are not cleaned up automatically
   yet: `aether storage` shows their size, and you can remove a finished
   agent's directory by hand.
+- The build cache is not evicted yet and has no byte budget: `aether storage`
+  shows its size, and you can remove a finished run's partition by hand. Only
+  programs that honour the configured variables (by default
+  `CARGO_TARGET_DIR`) use it. The agents of one run share a partition and can
+  overwrite each other's output; runs are kept apart by directory, not by an
+  operating-system boundary, since every agent runs as the same user.
 - On macOS the default agent temp root is long enough that a tool's Unix
   socket path under `TMPDIR` can exceed the 104-byte limit, and startup always
   warns about it. Set `[agents] temp_root` to a short, absolute directory that

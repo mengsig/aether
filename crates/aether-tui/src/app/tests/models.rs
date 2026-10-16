@@ -957,3 +957,66 @@ fn a_message_after_the_agent_completed_starts_a_new_agent() {
         }
     )));
 }
+
+/// The notice a root creation refused with `code` and `message` leaves.
+fn creation_refusal(code: aether_protocol::ErrorCode, message: &str) -> String {
+    let mut app = App::new(TuiOptions {
+        cwd: Some("/proj".into()),
+        ..Default::default()
+    });
+    app.reduce(AppEvent::Connected);
+    let defaults = app.start_new_root(Some("hello".into()), Some("/proj".into()));
+    let Effect::Request { then, .. } = defaults else {
+        panic!("{defaults:?}");
+    };
+    let effects = app.reduce(AppEvent::Reply {
+        then,
+        result: Ok(Reply::Status(crate::ui::tests_support::quiet_status())),
+    });
+    let [
+        Effect::Request {
+            then: then @ Then::AgentCreated(_),
+            ..
+        },
+    ] = &effects[..]
+    else {
+        panic!("{effects:?}");
+    };
+    app.reduce(AppEvent::Reply {
+        then: then.clone(),
+        result: Err(ClientError::Protocol(aether_protocol::ErrorReply::new(
+            code, message,
+        ))),
+    });
+    app.live_flash().expect("a creation notice").to_owned()
+}
+
+/// A signed-in person who named a model that does not exist must see why,
+/// not be told to log in: only the daemon's `no_model` code means that.
+#[test]
+fn only_the_no_model_code_sends_a_failed_creation_to_login() {
+    use aether_protocol::ErrorCode;
+    for (code, message) in [
+        (
+            ErrorCode::Unavailable,
+            "model `anthropic/claude-nope` not found",
+        ),
+        (
+            ErrorCode::InvalidArgument,
+            "model `openai/gpt-6` does not take effort max",
+        ),
+        (
+            ErrorCode::Unavailable,
+            "model `anthropic/claude-3-opus` is retired",
+        ),
+    ] {
+        let shown = creation_refusal(code, message);
+        assert!(shown.contains(message), "{shown}");
+        assert!(!shown.contains("/login"), "{shown}");
+    }
+    let shown = creation_refusal(
+        ErrorCode::NoModel,
+        "no model configured; sign in from your client",
+    );
+    assert!(shown.contains("/login"), "{shown}");
+}

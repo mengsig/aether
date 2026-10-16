@@ -8,18 +8,22 @@ use aether_protocol::{
 
 impl Client {
     /// A daemon that cannot derive a repository from `repository_root` would
-    /// create the agent under its workspace's repository instead, so that is
-    /// refused here.
+    /// create the agent under its workspace's repository instead, and one
+    /// without `build_cache` would build elsewhere, so both are refused here.
     pub async fn create_agent(&self, req: CreateAgent) -> Result<Agent> {
-        if req.repository_root.is_some()
-            && !self.welcome().is_some_and(|w| {
-                w.features
-                    .iter()
-                    .any(|f| f == aether_protocol::features::REPOSITORY_ROOT)
-            })
-        {
+        let supports = |wanted: &str| {
+            self.welcome()
+                .is_some_and(|w| w.features.iter().any(|f| f == wanted))
+        };
+        if req.repository_root.is_some() && !supports(aether_protocol::features::REPOSITORY_ROOT) {
             return Err(ClientError::Incompatible(
                 "daemon cannot derive a repository from repository_root; update Aether".into(),
+            ));
+        }
+        let names_cache = req.config.as_ref().is_some_and(|c| c.build_cache.is_some());
+        if names_cache && !supports(aether_protocol::features::BUILD_CACHE) {
+            return Err(ClientError::Incompatible(
+                "daemon cannot set an agent's build_cache; update Aether".into(),
             ));
         }
         match self.request(Command::CreateAgent(req)).await? {

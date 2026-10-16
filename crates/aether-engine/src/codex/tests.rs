@@ -262,6 +262,16 @@ fn exec_commands_get_the_agent_temp_dir() {
         }
         assert_eq!(args.last().map(String::as_str), Some("-"));
     }
+    turn.build_env = vec![(
+        "CARGO_TARGET_DIR".into(),
+        "/var/cache/r/run/cargo-target".into(),
+    )];
+    let args = engine.args(&turn);
+    let set = "shell_environment_policy.set.CARGO_TARGET_DIR=\"/var/cache/r/run/cargo-target\"";
+    assert!(
+        args.windows(2).any(|pair| pair == ["-c", set]),
+        "and its build cache: {args:?}"
+    );
 }
 
 #[tokio::test]
@@ -414,6 +424,7 @@ fn turn_with_effort(effort: Option<Effort>) -> EngineTurn {
         hidden_env: Vec::new(),
         tool_hidden_env: Vec::new(),
         temp_dir: None,
+        build_env: Vec::new(),
         summary_only: false,
         lean_host_context: false,
         network_access: true,

@@ -135,7 +135,30 @@ fn host_command(command: &str, ctx: &ToolContext) -> Result<tokio::process::Comm
             cmd.env(name, dir);
         }
     }
+    export_build_env(&mut cmd, &ctx.build_env)?;
     Ok(cmd)
+}
+
+/// Point the build cache variables at their directories, created now so a
+/// tool that only reads the variable still finds one.
+fn export_build_env(
+    cmd: &mut tokio::process::Command,
+    build_env: &[(String, std::path::PathBuf)],
+) -> Result<(), ToolError> {
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    for (name, dir) in build_env {
+        debug_assert!(dir.is_absolute(), "{} is not absolute", dir.display());
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|e| {
+                ToolError::Internal(format!("build cache {name} {}: {e}", dir.display()))
+            })?;
+        cmd.env(name, dir);
+    }
+    Ok(())
 }
 
 fn container_command(
@@ -451,6 +474,37 @@ mod tests {
             assert!(leaf.join("x").exists(), "{round}");
             std::fs::remove_dir_all(&leaf).expect("delete");
         }
+    }
+
+    #[tokio::test]
+    async fn host_commands_build_into_the_cache_and_containers_do_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cache = dir.path().join("cache/repo/run/cargo-target");
+        let mut ctx = ctx_in(dir.path());
+        ctx.build_env = vec![("CARGO_TARGET_DIR".into(), cache.clone())];
+        let output = prepare(
+            r#"printf '%s' "$CARGO_TARGET_DIR" && touch "$CARGO_TARGET_DIR/x""#,
+            &ctx,
+        )
+        .expect("prepare")
+        .command
+        .output()
+        .await
+        .expect("run");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            cache.display().to_string()
+        );
+        assert!(cache.join("x").is_file());
+
+        std::fs::remove_dir_all(dir.path().join("cache")).expect("delete");
+        ctx.scope.backend = ExecutionBackend::Container {
+            image: "alpine:3".into(),
+        };
+        let prepared = prepare("true", &ctx).expect("prepare");
+        assert!(!rendered(&prepared.command).contains("CARGO_TARGET_DIR"));
+        assert!(!cache.exists(), "nothing is created for a container");
     }
 
     #[test]

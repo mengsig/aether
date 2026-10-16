@@ -8,11 +8,15 @@
 use std::path::{Path, PathBuf};
 
 mod agent_temp;
+mod providers;
 pub use agent_temp::check_agent_temp;
+pub use providers::{
+    PROBE_TIMEOUT, Unreachable, check_providers, local_servers, unreachable_servers,
+};
 
 use aether_core::disk::{DiskFloor, LowDisk};
+use aether_protocol::DaemonStatus;
 use aether_protocol::remote::RemoteStatus;
-use aether_protocol::{AuthInfo, DaemonStatus};
 use serde::{Deserialize, Serialize};
 
 /// Free space under which the data directory is called out.
@@ -98,6 +102,16 @@ impl Check {
             "providers",
             "not checked: no daemon to ask",
             format!("start one with `{command}`, then run this again"),
+        )
+    }
+
+    /// The daemon answered for credentials but not with its providers'
+    /// addresses, so whether its local servers listen is unknown.
+    pub fn unprobed_providers(why: &str, command: &str) -> Self {
+        Self::warn(
+            "providers",
+            format!("not checked: the daemon did not list its providers: {why}"),
+            format!("`{command} providers` shows what it says"),
         )
     }
 }
@@ -455,40 +469,6 @@ fn judge_disk(probe: &Path, free: u64, floor: Option<u64>, held: Option<&LowDisk
 
 fn gib(bytes: u64) -> f64 {
     bytes as f64 / (1u64 << 30) as f64
-}
-
-/// At least one provider has credentials, or nothing can take a turn.
-pub fn check_providers(auth: &[AuthInfo], command: &str) -> Check {
-    if auth.is_empty() {
-        return Check::warn(
-            "providers",
-            "no providers known",
-            format!("run `{command} auth` against a running daemon to see them"),
-        );
-    }
-    let ready: Vec<&str> = auth
-        .iter()
-        .filter(|a| a.configured)
-        .map(|a| a.provider.as_str())
-        .collect();
-    if ready.is_empty() {
-        return Check::fail(
-            "providers",
-            format!("none of {} providers are configured", auth.len()),
-            format!(
-                "`{command} login claude-code` for a subscription, or `{command} login anthropic` for a key"
-            ),
-        );
-    }
-    Check::ok(
-        "providers",
-        format!(
-            "{} of {} ready: {}",
-            ready.len(),
-            auth.len(),
-            ready.join(", ")
-        ),
-    )
 }
 
 /// One engine CLI's detection outcome. Registration and

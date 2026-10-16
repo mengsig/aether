@@ -293,6 +293,20 @@ clients are checked against the Rust protocol schema in CI.
 
 ## Safety and honest limits
 
+Use `aether approvals` to list pending approvals with their full IDs, agent IDs,
+tools, argument summaries, side-effect classes and ages. Filter with exactly one
+of `--agent AGENT`, `--subtree AGENT` (including that agent), or `--run RUN`.
+`--json` returns an array of approval request objects, ordered by request time
+then ID; `requested_at` supplies the stable timestamp instead of a changing age.
+
+Answer one ID with `aether approve APPROVAL` or `aether deny APPROVAL`. To answer
+a batch, use `aether approve --all-pending --run RUN` (or `deny`, with any of the
+three scopes). The CLI confirms the selected count; `--yes` skips confirmation.
+Only that snapshot is answered, so approvals arriving later wait for another
+command. Concurrently answered IDs are reported as already resolved; other
+failures stop the batch and report how many answers succeeded. Batch answers
+cannot be combined with `--remember`, `--tool-wide`, or `--everywhere`.
+
 **Approvals are off by default.** Do not run unfamiliar repositories or
 untrusted requests in a privileged workspace. `--no-yolo` requires approval for
 external side effects only; local file writes do not prompt. Before sending

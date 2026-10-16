@@ -107,5 +107,6 @@ pub fn ctx_in(root: &Path) -> ToolContext {
         env: BTreeMap::new(),
         hidden_env: Vec::new().into(),
         temp_dir: None,
+        build_env: Vec::new(),
     }
 }

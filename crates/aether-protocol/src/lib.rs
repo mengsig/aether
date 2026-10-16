@@ -154,7 +154,13 @@ use serde::{Deserialize, Serialize};
 /// 20: transient `accounting` deltas carry absolute live usage and context.
 /// Tree nodes retain omitted descendants separately in optional `hidden_usage`.
 /// Older clients receive durable accounting events and the existing stream deltas.
-pub const PROTOCOL_VERSION: u32 = 20;
+///
+/// 21: the `no_model` code, for creation with no model named and no default.
+/// `compat` folds it to `invalid_argument`, the code older clients got for it.
+///
+/// 22: `workspace_diff`, `workspace_integrate` and `workspace_discard`, behind
+/// the `workspace_review` feature. Older clients never send them.
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
@@ -184,6 +190,9 @@ pub mod features {
     pub const STORAGE: &str = "storage";
     /// The daemon applies `Command::StorageGc.prune_build_output`.
     pub const PRUNE_BUILD_OUTPUT: &str = "prune_build_output";
+    /// The daemon accepts `AgentConfig.build_cache`. A daemon without it
+    /// ignores the field, so check this first.
+    pub const BUILD_CACHE: &str = "build_cache";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
     /// The daemon serves `workspace_diff`, `workspace_integrate` and

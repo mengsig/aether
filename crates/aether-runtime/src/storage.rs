@@ -13,6 +13,7 @@ use crate::{Result, Runtime, RuntimeError};
 const MAX_ENTRIES: usize = 10_000;
 
 mod agent_temp;
+mod build_cache;
 mod engine_sessions;
 
 #[derive(Debug, Clone)]
@@ -109,6 +110,11 @@ impl Runtime {
         if let Some(root) = &self.config.agent_temp_root {
             report["agent_temp"] = serde_json::to_value(agent_temp::report(root).map_err(invalid)?)
                 .map_err(invalid)?;
+        }
+        if let Some(root) = &self.config.build_cache_root {
+            report["build_cache"] =
+                serde_json::to_value(build_cache::report(root).map_err(invalid)?)
+                    .map_err(invalid)?;
         }
         let artifacts = self.store.live_artifacts()?;
         let mut digests = std::collections::HashSet::new();

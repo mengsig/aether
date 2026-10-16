@@ -164,7 +164,7 @@ impl CodexAppEngine {
             args.push("-c".into());
             args.push(format!("mcp_servers.aether.args={}", json!(mcp.args)));
         }
-        args.extend(crate::codex_temp_env_args(turn.temp_dir.as_deref()));
+        args.extend(crate::codex_env_args(turn));
         args
     }
 }
@@ -287,10 +287,7 @@ pub fn turn_params(turn: &EngineTurn, thread_id: &str, loopback_note_in_effect: 
     } else if turn.bypass_permissions && turn.network_access {
         params["sandboxPolicy"] = json!({ "type": "dangerFullAccess" });
     } else {
-        let roots: Vec<String> = turn
-            .extra_dirs
-            .iter()
-            .chain(&turn.temp_dir)
+        let roots: Vec<String> = crate::writable_dirs(turn)
             .map(|d| d.to_string_lossy().into_owned())
             .collect();
         let environments = loopback_environments(turn);
@@ -379,6 +376,7 @@ impl Engine for CodexAppEngine {
                     &turn.cwd,
                     &turn.tool_hidden_env,
                     turn.temp_dir.as_deref(),
+                    &turn.build_env,
                 )
                 .await?,
             )
@@ -399,6 +397,7 @@ impl Engine for CodexAppEngine {
         command.as_std_mut().process_group(0);
         crate::strip_hidden(&mut command, &turn.hidden_env);
         crate::export_temp_dir(&mut command, turn.temp_dir.as_deref());
+        crate::export_build_env(&mut command, &turn.build_env);
         let mut child = command.spawn().map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => EngineError::NotInstalled {
                 program: self.program.clone(),

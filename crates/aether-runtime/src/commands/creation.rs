@@ -162,9 +162,7 @@ impl Runtime {
             .model
             .or_else(|| parent.as_ref().map(|p| p.model.clone()))
             .or_else(|| self.default_model())
-            .ok_or_else(|| {
-                RuntimeError::Invalid("no model configured; sign in from your client".into())
-            })?;
+            .ok_or(RuntimeError::NoModel)?;
         if checked.is_some_and(|(checked_model, _)| *checked_model != model) {
             return Err(RuntimeError::Invalid(
                 "Inherited model changed during delegation checks; retry delegation".into(),
@@ -205,6 +203,7 @@ impl Runtime {
         {
             config.instructions.clone_from(&p.config.instructions);
         }
+        crate::build_cache::settle(&mut config, parent.as_ref(), by)?;
         // §3.2 for approvals: a child inherits its parent's policy and may
         // only gate more than it, never less. A root with nothing asked for
         // gets the daemon's configured default.
