@@ -86,7 +86,9 @@ impl Fixture {
         self.runtime
             .apply(Commit::new().mutate(Mutation::UpsertAgent(agent.clone())))
             .unwrap();
+        crate::build_cache::claim(&self.runtime, &agent).unwrap();
         let partition = crate::build_cache::aether_partition(&self.root, &agent).unwrap();
+        assert!(is_marked(&partition, PARTITION_MARKER), "claimed");
         build(&partition, kib, then);
         (agent, partition)
     }
@@ -104,9 +106,19 @@ fn build(partition: &Path, kib: u64, then: SystemTime) {
     fs::create_dir_all(&debug).unwrap();
     let artifact = debug.join("artifact");
     fs::write(&artifact, vec![7u8; usize::try_from(kib * KIB).unwrap()]).unwrap();
-    for path in [&artifact, &debug, &target, partition] {
-        fs::File::open(path).unwrap().set_modified(then).unwrap();
+    let marker = partition.join(PARTITION_MARKER);
+    for path in [&marker, &artifact, &debug, &target, partition] {
+        if path.exists() {
+            fs::File::open(path).unwrap().set_modified(then).unwrap();
+        }
     }
+}
+
+/// Build in `partition` as an Aether partition: marked as `claim` marks one.
+fn build_marked(partition: &Path, then: SystemTime) {
+    fs::create_dir_all(partition).unwrap();
+    fs::File::create_new(partition.join(PARTITION_MARKER)).unwrap();
+    build(partition, 8, then);
 }
 
 fn built(partition: &Path) -> bool {
@@ -148,8 +160,15 @@ async fn over_budget_the_least_recently_used_unleased_partition_goes_first() {
     assert!(swept.bytes_removed >= 256 * KIB, "{swept:?}");
     assert!(!oldest.exists());
     assert!(built(&newer) && built(&leased));
-    let trash: Vec<_> = fs::read_dir(f.root.join(TRASH)).unwrap().collect();
-    assert!(trash.is_empty(), "evicted output is deleted, not parked");
+    let trash: Vec<_> = fs::read_dir(f.root.join(TRASH))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        trash,
+        [TRASH_MARKER],
+        "evicted output is deleted, not parked"
+    );
 
     let again = f.gc(false);
     assert!(
@@ -218,45 +237,119 @@ async fn a_finished_agent_with_work_in_flight_still_leases_its_partition() {
 async fn directories_aether_does_not_create_are_never_evicted() {
     let f = Fixture::new(0).await;
     let then = SystemTime::now() - DAY;
+    let repository = f.root.join("github-com-org-repo-0123456789abcdef");
     let operators = f.root.join("my-target/debug");
-    let not_a_run = f.root.join("github-com-org-repo-0123456789abcdef/scratch");
+    let not_a_run = repository.join("scratch");
     let foreign_repository = f.root.join(format!("project/{}", RunId::new()));
-    let orphan = f.root.join(format!(
-        "github-com-org-repo-0123456789abcdef/{}",
-        RunId::new()
-    ));
-    for dir in [&operators, &not_a_run, &foreign_repository, &orphan] {
+    let unmarked = repository.join(RunId::new().to_string());
+    for dir in [&operators, &not_a_run, &foreign_repository, &unmarked] {
         build(dir, 8, then);
     }
+    let orphan = repository.join(RunId::new().to_string());
+    build_marked(&orphan, then);
 
     let swept = f.gc(false);
-    for kept in [&operators, &not_a_run, &foreign_repository] {
+    for kept in [&operators, &not_a_run, &foreign_repository, &unmarked] {
         let seen = entry(&swept, kept);
         assert_eq!(
             (seen.action, seen.reason),
-            ("kept", "not a partition Aether creates")
+            ("kept", "not a partition Aether creates"),
+            "{}",
+            kept.display()
         );
         assert!(built(kept), "{}", kept.display());
     }
     assert_eq!(
         entry(&swept, &orphan).action,
         "evicted",
-        "a partition whose agents left the store is still Aether's"
+        "a marked partition whose agents left the store is still Aether's"
     );
 }
 
 #[tokio::test]
-async fn what_a_failed_deletion_left_is_removed_on_the_next_sweep() {
+async fn a_partition_holding_a_client_named_cache_is_never_evicted() {
     let f = Fixture::new(0).await;
-    let left = f.root.join(TRASH).join("run_leftover/cargo-target");
-    fs::create_dir_all(&left).unwrap();
-    fs::write(left.join("artifact"), b"x").unwrap();
+    let (_, named) = f.agent(AgentStatus::Completed { summary: None }, 5, 8);
+    let (_, holds_one) = f.agent(AgentStatus::Completed { summary: None }, 5, 8);
+    for (agent_dir, client_dir) in [
+        (named.clone(), named.clone()),
+        (holds_one.clone(), holds_one.join("cargo-target/items/one")),
+    ] {
+        let (mut client, _) = f.agent(AgentStatus::Running, 1, 0);
+        client.config.build_cache = Some(client_dir);
+        f.runtime
+            .apply(Commit::new().mutate(Mutation::UpsertAgent(client)))
+            .unwrap();
+        assert!(agent_dir.exists());
+    }
+
+    let swept = f.gc(false);
+    for kept in [&named, &holds_one] {
+        let seen = entry(&swept, kept);
+        assert_eq!(
+            (seen.action, seen.reason),
+            ("kept", "holds a client's build cache")
+        );
+        assert!(built(kept), "{}", kept.display());
+    }
+}
+
+#[tokio::test]
+async fn a_claim_marks_only_a_partition_it_creates() {
+    let f = Fixture::new(0).await;
+    let (agent, partition) = f.agent(AgentStatus::Running, 3, 8);
+    let marker = partition.join(PARTITION_MARKER);
+    let before = fs::metadata(&marker).unwrap().modified().unwrap();
+    crate::build_cache::claim(&f.runtime, &agent).unwrap();
+    let after = fs::metadata(&marker).unwrap().modified().unwrap();
+    assert!(after > before, "a claim is the partition's last use");
+
+    let mut other = agent.clone();
+    other.run = RunId::new();
+    let existing = crate::build_cache::aether_partition(&f.root, &other).unwrap();
+    fs::create_dir_all(&existing).unwrap();
+    crate::build_cache::claim(&f.runtime, &other).unwrap();
+    assert!(
+        !is_marked(&existing, PARTITION_MARKER),
+        "a directory already there is not adopted"
+    );
+}
+
+#[tokio::test]
+async fn only_marked_partitions_in_aethers_own_trash_are_removed_later() {
+    let f = Fixture::new(0).await;
+    let trash = f.root.join(TRASH);
+    let left = trash.join("01LEFTOVER");
+    build_marked(&left, SystemTime::now());
+    let unknown = trash.join("operator-files");
+    build(&unknown, 8, SystemTime::now());
+
+    let unmarked = f.gc(false);
+    assert!(built(&left), "an unmarked trash is not Aether's");
+    assert_eq!(unmarked.errors.len(), 1, "{:?}", unmarked.errors);
+
+    fs::File::create_new(trash.join(TRASH_MARKER)).unwrap();
     let preview = f.gc(true);
-    assert!(left.exists(), "a preview deletes nothing");
+    assert!(built(&left), "a preview deletes nothing");
     assert!(preview.entries.is_empty(), "the trash is not a partition");
     let swept = f.gc(false);
-    assert!(swept.errors.is_empty(), "{:?}", swept.errors);
-    assert!(!f.root.join(TRASH).join("run_leftover").exists());
+    assert!(!left.exists(), "an evicted partition left behind goes");
+    assert!(built(&unknown), "anything else in the trash stays");
+    assert_eq!(swept.errors.len(), 1, "{:?}", swept.errors);
+    assert!(swept.errors[0].contains("not an evicted partition"));
+}
+
+#[test]
+fn a_trash_that_is_a_link_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real");
+    fs::create_dir(&real).unwrap();
+    fs::File::create_new(real.join(TRASH_MARKER)).unwrap();
+    let trash = dir.path().join(TRASH);
+    std::os::unix::fs::symlink(&real, &trash).unwrap();
+    assert!(open_trash(&trash, true).is_err());
+    assert!(open_trash(&real, false).unwrap());
+    assert!(!open_trash(&dir.path().join("missing"), false).unwrap());
 }
 
 #[test]

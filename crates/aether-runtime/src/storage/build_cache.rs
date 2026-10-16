@@ -14,6 +14,7 @@ use aether_store::AgentFilter;
 use serde::Serialize;
 
 use super::{Runtime, invalid};
+use crate::build_cache::PARTITION_MARKER;
 
 const POLICY: &str =
     "unleased partitions over the byte budget are evicted, least recently used first";
@@ -31,6 +32,9 @@ const DEFAULT_BUDGET_PERCENT: u64 = 15;
 /// Evicted partitions are renamed in here under the commit hold and deleted
 /// after it; what a failed deletion leaves is retried on the next sweep.
 const TRASH: &str = ".evicting";
+
+/// Marks the trash as Aether's own; an unmarked `.evicting` is never used.
+const TRASH_MARKER: &str = ".aether-trash";
 
 #[derive(Debug, Serialize)]
 pub(super) struct BuildCacheReport {
@@ -75,6 +79,14 @@ struct Owners {
     last_active: Option<Timestamp>,
 }
 
+/// What the store says of the cache: Aether's partitions in use, and the
+/// directories clients named, which eviction must never reach.
+#[derive(Debug, Default)]
+struct Claims {
+    owners: HashMap<PathBuf, Owners>,
+    clients: Vec<PathBuf>,
+}
+
 impl Runtime {
     /// Report the cache under `root` and, unless `dry_run`, evict it to its
     /// budget. Leases are read and partitions moved aside under the commit
@@ -104,8 +116,8 @@ impl Runtime {
         let sched = self.sched.lock();
         let engine_turns = self.engine_turns.lock();
         let in_flight = self.in_flight_agents(&sched, &engine_turns)?;
-        let owners = self.build_cache_owners(root, &in_flight)?;
-        let chosen = plan(&mut report, &owners, max_bytes);
+        let claims = self.build_cache_claims(root, &in_flight)?;
+        let chosen = plan(&mut report, &claims, max_bytes);
         if dry_run {
             return Ok(report);
         }
@@ -142,18 +154,22 @@ impl Runtime {
     }
 
     /// Each Aether partition under `root` an agent in the store builds into,
-    /// with the agents that lease it and when its run was last active.
-    fn build_cache_owners(
+    /// with the agents that lease it and when its run was last active, and
+    /// every directory a client named for its agents.
+    fn build_cache_claims(
         &self,
         root: &Path,
         in_flight: &HashSet<AgentId>,
-    ) -> crate::Result<HashMap<PathBuf, Owners>> {
-        let mut owners: HashMap<PathBuf, Owners> = HashMap::new();
+    ) -> crate::Result<Claims> {
+        let mut claims = Claims::default();
         for agent in self.store.agents(&AgentFilter::default())? {
+            if let Some(dir) = &agent.config.build_cache {
+                claims.clients.push(dir.clone());
+            }
             let Some(partition) = crate::build_cache::aether_partition(root, &agent) else {
                 continue;
             };
-            let owner = owners.entry(partition).or_default();
+            let owner = claims.owners.entry(partition).or_default();
             if !agent.status.is_terminal() || in_flight.contains(&agent.id) {
                 owner.holders.push(agent.id);
             }
@@ -162,47 +178,50 @@ impl Runtime {
                 .max(agent.status_since.unwrap_or(agent.updated_at));
             owner.last_active = owner.last_active.max(Some(active));
         }
-        Ok(owners)
+        Ok(claims)
     }
 }
 
-/// Mark the unleased Aether partitions to evict, least recently used first,
-/// until the rest fit `max_bytes`. Returns their indexes in `report.entries`.
-fn plan(
-    report: &mut BuildCacheReport,
-    owners: &HashMap<PathBuf, Owners>,
-    max_bytes: u64,
-) -> Vec<usize> {
+/// Mark the evictable partitions to evict, least recently used first, until
+/// the rest of Aether's fit `max_bytes`. Evictable means Aether's, unleased
+/// and holding no client's directory. Returns indexes in `report.entries`.
+fn plan(report: &mut BuildCacheReport, claims: &Claims, max_bytes: u64) -> Vec<usize> {
     let mut held = 0u64;
-    for entry in &mut report.entries {
+    let mut evictable = Vec::new();
+    for (index, entry) in report.entries.iter_mut().enumerate() {
         if entry.run.is_none() {
             continue;
         }
         held = held.saturating_add(entry.bytes);
-        if let Some(owner) = owners.get(&entry.path) {
+        if let Some(owner) = claims.owners.get(&entry.path) {
             entry.leased_by.clone_from(&owner.holders);
             entry.last_used = entry.last_used.max(owner.last_active);
         }
-        if !entry.leased_by.is_empty() {
+        let client = claims
+            .clients
+            .iter()
+            .any(|dir| dir.starts_with(&entry.path) || entry.path.starts_with(dir));
+        if client {
+            entry.reason = "holds a client's build cache";
+        } else if !entry.leased_by.is_empty() {
             entry.reason = "leased by an agent of its run";
+        } else {
+            evictable.push(index);
         }
     }
     let entries = &mut report.entries;
-    let mut order: Vec<usize> = (0..entries.len())
-        .filter(|&i| entries[i].run.is_some() && entries[i].leased_by.is_empty())
-        .collect();
-    order.sort_by(|&a, &b| {
+    evictable.sort_by(|&a, &b| {
         (entries[a].last_used, &entries[a].path).cmp(&(entries[b].last_used, &entries[b].path))
     });
     let mut chosen = Vec::new();
-    for index in order {
+    for index in evictable {
         if held <= max_bytes {
             break;
         }
         let entry = &mut entries[index];
         debug_assert!(
-            entry.leased_by.is_empty(),
-            "{} is leased",
+            entry.run.is_some() && entry.leased_by.is_empty(),
+            "{} is not evictable",
             entry.path.display()
         );
         held = held.saturating_sub(entry.bytes);
@@ -223,19 +242,15 @@ fn move_to_trash(
     if chosen.is_empty() {
         return Vec::new();
     }
-    match fs::DirBuilder::new().mode(0o700).create(trash) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        Err(error) => {
-            report
-                .errors
-                .push(format!("creating {}: {error}", trash.display()));
-            for &index in chosen {
-                report.entries[index].action = "kept";
-                report.entries[index].reason = "eviction failed";
-            }
-            return Vec::new();
+    if let Err(error) = open_trash(trash, true) {
+        report
+            .errors
+            .push(format!("trash {}: {error}", trash.display()));
+        for &index in chosen {
+            report.entries[index].action = "kept";
+            report.entries[index].reason = "eviction failed";
         }
+        return Vec::new();
     }
     let mut moved = Vec::new();
     for &index in chosen {
@@ -263,11 +278,42 @@ fn move_to_trash(
     moved
 }
 
-/// Delete what earlier evictions moved aside but could not remove.
+/// Whether `trash` is Aether's: a real directory holding its marker. With
+/// `create`, a missing one is made and marked; anything else is refused.
+fn open_trash(trash: &Path, create: bool) -> io::Result<bool> {
+    match fs::symlink_metadata(trash) {
+        Ok(meta) if meta.is_dir() && is_marked(trash, TRASH_MARKER) => Ok(true),
+        Ok(_) => Err(io::Error::other(
+            "exists but is not a directory Aether made",
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound && create => {
+            fs::DirBuilder::new().mode(0o700).create(trash)?;
+            fs::File::create_new(trash.join(TRASH_MARKER))?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether `dir` holds `marker` as a regular file, not a link.
+fn is_marked(dir: &Path, marker: &str) -> bool {
+    fs::symlink_metadata(dir.join(marker)).is_ok_and(|meta| meta.is_file())
+}
+
+/// Delete the partitions earlier evictions moved aside but could not
+/// remove. Only marked partitions in Aether's own trash are touched.
 fn empty_trash(trash: &Path, errors: &mut Vec<String>) {
-    let entries = match super::read_directory(trash) {
-        Ok(Some(entries)) => entries,
-        Ok(None) => return,
+    match open_trash(trash, false) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(error) => {
+            errors.push(format!("trash {}: {error}", trash.display()));
+            return;
+        }
+    }
+    let entries = match fs::read_dir(trash) {
+        Ok(entries) => entries,
         Err(error) => {
             errors.push(format!("reading {}: {error}", trash.display()));
             return;
@@ -276,12 +322,16 @@ fn empty_trash(trash: &Path, errors: &mut Vec<String>) {
     for entry in entries {
         let removed = entry.and_then(|entry| {
             let path = entry.path();
-            let kind = entry.file_type()?;
-            if kind.is_dir() {
-                fs::remove_dir_all(&path)
-            } else {
-                fs::remove_file(&path)
+            if entry.file_name() == TRASH_MARKER {
+                return Ok(());
             }
+            if !entry.file_type()?.is_dir() || !is_marked(&path, PARTITION_MARKER) {
+                return Err(io::Error::other(format!(
+                    "{} is not an evicted partition; left in place",
+                    path.display()
+                )));
+            }
+            fs::remove_dir_all(&path)
         });
         if let Err(error) = removed {
             errors.push(format!("emptying {}: {error}", trash.display()));
@@ -332,7 +382,7 @@ fn scan(root: &Path) -> io::Result<BuildCacheReport> {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .and_then(|name| name.parse::<RunId>().ok())
-                .filter(|_| aether);
+                .filter(|_| aether && is_marked(&partition, PARTITION_MARKER));
             let before = report.bytes;
             let newest = report.add_tree(&partition);
             report.entries.push(PartitionEntry {

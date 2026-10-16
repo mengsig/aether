@@ -17,6 +17,10 @@ use crate::{Result, Runtime, RuntimeError};
 /// name: the end of a URL or path is the part that names the project.
 const SLUG_LIMIT: usize = 48;
 
+/// The file Aether writes into each partition it creates: eviction removes
+/// only marked partitions, and the marker's mtime is the partition's last use.
+pub(crate) const PARTITION_MARKER: &str = ".aether-partition";
+
 /// The partition the builds of `repository` in `run` use under `root`.
 pub(crate) fn partition(root: &Path, repository: &str, run: RunId) -> PathBuf {
     debug_assert!(root.is_absolute(), "{} is not absolute", root.display());
@@ -116,6 +120,7 @@ pub(crate) fn is_repository_dir(name: &str) -> bool {
 /// [`exports`], each directory created now because one of the agent's
 /// processes is about to start. A directory that cannot be made stops it.
 pub(crate) fn prepare(runtime: &Runtime, agent: &Agent) -> Result<Vec<(String, PathBuf)>> {
+    claim(runtime, agent)?;
     let exports = exports(runtime, agent);
     for (name, dir) in &exports {
         std::fs::DirBuilder::new()
@@ -127,6 +132,51 @@ pub(crate) fn prepare(runtime: &Runtime, agent: &Agent) -> Result<Vec<(String, P
             })?;
     }
     Ok(exports)
+}
+
+/// Make `agent`'s partition of Aether's cache, if it has one and it is not
+/// there yet, marked as Aether's so eviction may later remove it. A marked
+/// partition's marker is touched as its last use; an unmarked existing
+/// directory is someone else's and is left as it is.
+pub(crate) fn claim(runtime: &Runtime, agent: &Agent) -> Result<()> {
+    let Some(root) = runtime.config.build_cache_root.as_deref() else {
+        return Ok(());
+    };
+    let Some(partition) = aether_partition(root, agent) else {
+        return Ok(());
+    };
+    let failed = |e: std::io::Error| {
+        RuntimeError::Invalid(format!("build cache {}: {e}", partition.display()))
+    };
+    let Some(repository) = partition.parent() else {
+        return Err(RuntimeError::Invalid(format!(
+            "build cache {} has no repository directory",
+            partition.display()
+        )));
+    };
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(repository)
+        .map_err(failed)?;
+    let marker = partition.join(PARTITION_MARKER);
+    match std::fs::DirBuilder::new().mode(0o700).create(&partition) {
+        Ok(()) => {
+            std::fs::File::create_new(&marker).map_err(failed)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            if std::fs::symlink_metadata(&marker).is_ok_and(|meta| meta.is_file()) {
+                std::fs::File::options()
+                    .write(true)
+                    .open(&marker)
+                    .and_then(|file| file.set_modified(std::time::SystemTime::now()))
+                    .map_err(failed)?;
+            }
+        }
+        Err(e) => return Err(failed(e)),
+    }
+    debug_assert!(partition.is_dir(), "{} was not made", partition.display());
+    Ok(())
 }
 
 /// Settle a new agent's client-named cache: an omitted one is its parent's,

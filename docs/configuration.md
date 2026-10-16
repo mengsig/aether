@@ -437,10 +437,15 @@ partition. When Aether's partitions hold more than `max_bytes`, storage GC
 evicts unleased ones, least recently used first, until the rest fit; the
 disk guard does the same as soon as the disk runs low. Last use is the
 latest activity of the run's agents or the newest write at the partition's
-top level. Only directories shaped like Aether's partitions
-(`<repository>-<digest>/<run id>`) are evicted; anything else under the
-root is reported and kept, and a client's `config.build_cache` directory is
-never managed. A failed agent woken later builds cold again. The
+top level. Aether marks each partition it creates with a `.aether-partition`
+file, and evicts only marked partitions. Anything else under the root, such
+as an operator's own target directory or a partition made before this
+release, is reported and kept. So is a partition that holds, or lies
+inside, a directory a client named with `config.build_cache`. Evicted
+partitions are renamed into `<root>/.evicting` and then deleted; a deletion
+that fails is retried at the next sweep, and nothing in `.evicting` that
+Aether did not move there is removed. A failed agent woken later builds
+cold again. The
 agents of one run share a partition and can read and overwrite each other's
 output; partitions of different runs are separate directories under one
 user, not an operating-system boundary.
