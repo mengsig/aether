@@ -16,14 +16,19 @@ use clap::{CommandFactory, FromArgMatches};
 mod args;
 use args::*;
 
-/// Answer one approval, keeping the answer when `--remember` is given.
+/// Answer one approval with optional remembering, or a scoped pending batch.
 async fn approve_with(
     socket: aether_client::Endpoint,
-    approval: String,
+    approval: Option<String>,
     approve: bool,
     args: RememberArgs,
 ) -> anyhow::Result<()> {
     let scope = cli::RuleScopeArgs::from(args.scope).parse()?;
+    if args.all_pending {
+        let scope = scope.context("--all-pending requires --agent, --subtree, or --run")?;
+        return cli::answer_pending(socket, scope, approve, args.yes, args.json).await;
+    }
+    let approval = approval.context("provide an approval ID or --all-pending")?;
     if !args.remember && (args.tool_wide || scope.is_some()) {
         anyhow::bail!("--tool-wide and the scope flags only mean something with --remember");
     }
@@ -328,6 +333,10 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 subtree,
                 json,
             } => cli::send(endpoint, agent, text.join(" "), images, subtree, json).await,
+            Cmd::Approvals { scope, json } => {
+                cli::pending_approvals(endpoint, cli::RuleScopeArgs::from(scope).parse()?, json)
+                    .await
+            }
             Cmd::Approve { approval, remember } => {
                 approve_with(endpoint, approval, true, remember).await
             }

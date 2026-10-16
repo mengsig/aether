@@ -13176,7 +13176,7 @@
           "type": "number"
         },
         "rate_usd_per_hour": {
-          "description": "Dollars per hour over the run's life so far. Derived from\n`usage.cost_usd`, so it is a floor exactly when that is.",
+          "description": "Dollars per hour over the last 15 minutes (`RATE_WINDOW_MINUTES`) of\nreceipts, zero for a run that billed nothing in them. Derived from\n`usage.cost_usd`, so it is a floor exactly when that is.",
           "format": "double",
           "type": "number"
         },

@@ -63,6 +63,7 @@ use providers::health_segments;
 pub use providers::{auth, login, logout, models, providers};
 
 mod status;
+mod units;
 pub use status::{mcp_bridge, mcp_list, mcp_serve, status};
 
 mod agents;
@@ -76,6 +77,8 @@ mod tasks;
 use tasks::summarize;
 pub use tasks::{events, task_create, tasks};
 
+mod pending_approvals;
+pub use pending_approvals::{answer_pending, pending_approvals};
 mod approvals;
 pub use approvals::{approve, rules_add, rules_list, rules_revoke};
 
