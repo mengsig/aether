@@ -150,6 +150,14 @@ test('restricted remote events retain cursor continuity without inventing admin 
   } finally {store.dispose();}
 });
 
+test('an appended note shows its text in the activity feed',()=>{
+  const {transport,emit}=mock();const store=createStore(transport,{storage:null});
+  try {
+    emit({frame:'event',event:{seq:21,at:'2026-10-12T00:00:00Z',agent_id:'agt_00000000000000000000000001',kind:{type:'custom',name:'note.appended',payload:{text:'3 items shipped',context:'none'}}}});
+    assert.equal(store.get().activity.at(-1).kind,'note.appended');assert.equal(store.get().activity.at(-1).detail,'3 items shipped');
+  } finally {store.dispose();}
+});
+
 test('uncertain delivery stays in its ledger instead of raising an unrelated global error',async()=>{
   const {transport}=mock();const store=createStore(transport,{storage:null});store.patch({connection:'online',role:'operator'});
   try {
@@ -160,4 +168,44 @@ test('uncertain delivery stays in its ledger instead of raising an unrelated glo
     await assert.rejects(createCommand(store,transport)({cmd:'pause',agent:'agent'}),/Permission denied/);
     assert.equal(store.get().error,null);
   }finally{store.dispose();}
+});
+
+test('a note joins its agent conversation when it loads and when it arrives',async()=>{
+  const fixtures=createFixtures(); let listener;
+  const agent='agt_00000000000000000000000002';
+  const note=(seq,agentId,text)=>({seq,at:'2026-10-12T00:00:00Z',agent_id:agentId,kind:{type:'custom',name:'note.appended',payload:{text,links:['https://example.com/pull/12'],context:'none'}}});
+  fixtures.events.push(note(30,agent,'3 items shipped'),note(31,'agt_00000000000000000000000003','another agent'));
+  const transport={onFrame:fn=>{listener=fn;return()=>{};},onConnection:()=>()=>{},request:async command=>readCommand(fixtures,command)};
+  const store=createStore(transport,{storage:null});
+  try {
+    await store.loadTranscript(agent);
+    const loaded=store.get().transcripts[agent];
+    assert.deepEqual(loaded.map(entry=>entry.seq),[1,2,3,4,5,30]);
+    assert.deepEqual(loaded.at(-1).message,{role:'note',content:[{type:'text',text:'3 items shipped · https://example.com/pull/12'}]});
+    listener({frame:'event',event:note(40,agent,'review passed')});
+    const live=store.get().transcripts[agent];
+    assert.deepEqual(live.map(entry=>entry.seq),[1,2,3,4,5,30,40]);
+    assert.equal(live.at(-1).message.role,'note');assert.equal(store.get().activity.at(-1).detail,'review passed');
+  } finally {store.dispose();}
+});
+
+test('notes behind more than a page of other custom events still load',async()=>{
+  const fixtures=createFixtures(); const agent='agt_00000000000000000000000002';
+  const custom=(seq,name,payload)=>({seq,at:'2026-10-12T00:00:00Z',agent_id:agent,kind:{type:'custom',name,payload}});
+  const events=[custom(10,'note.appended',{text:'first',context:'none'}),
+    ...Array.from({length:1200},(_,index)=>custom(11+index,'context.usage',{tokens:index})),
+    custom(1300,'note.appended',{text:'last',context:'digest'})];
+  let pages=0;
+  const transport={onFrame:()=>()=>{},onConnection:()=>()=>{},request:async command=>{
+    if (command.cmd!=='get_events') return readCommand(fixtures,command);
+    pages+=1; assert.equal(command.query.agent,agent); assert.deepEqual(command.query.types,['custom']); assert.equal(command.query.before,undefined);
+    return {reply:'events',data:events.filter(event=>event.seq>command.after).slice(0,command.limit)};
+  }};
+  const store=createStore(transport,{storage:null});
+  try {
+    await store.loadTranscript(agent);
+    const notes=store.get().transcripts[agent].filter(entry=>entry.message.role==='note');
+    assert.deepEqual(notes.map(entry=>entry.message.content[0].text),['first','last']);
+    assert.equal(pages,2);
+  } finally {store.dispose();}
 });

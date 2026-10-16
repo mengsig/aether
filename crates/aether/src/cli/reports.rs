@@ -197,6 +197,16 @@ pub async fn replay(
         return Ok(());
     }
     for frame in &frames {
+        print_frame(frame);
+    }
+    Ok(())
+}
+
+/// One frame of `aether replay`, for a terminal.
+fn print_frame(frame: &aether_core::replay::ReplayFrame) {
+    if frame.outcome == aether_core::replay::TurnOutcome::NotStarted {
+        println!("\n─── before the first turn");
+    } else {
         println!(
             "\n─── turn {} · {} · {} · {} in / {} out · {}",
             frame.turn,
@@ -206,46 +216,48 @@ pub async fn replay(
             frame.usage.output_tokens,
             frame.usage.cost_line(),
         );
-        if let Some(context) = &frame.context {
-            let layers: Vec<String> = context
-                .layers
-                .iter()
-                .map(|l| format!("{} {}t", l.kind.as_str(), l.tokens))
-                .collect();
-            println!(
-                "saw   {} tokens · {}",
-                context.token_estimate,
-                layers.join(" · ")
-            );
-        }
-        for message in &frame.messages {
-            println!(
-                "{:<6}{}",
-                role_label(message.role),
-                short(&blocks(&message.content), 100)
-            );
-        }
-        for tool in &frame.tools {
-            println!(
-                "tool  {} {} → {}",
-                short(&tool.name, 40),
-                short(&tool.input.to_string(), 60),
-                short(&tool_result(&tool.outcome), 60)
-            );
-        }
-        for approval in &frame.approvals {
-            println!(
-                "ask   {} {} → {}",
-                short(&approval.tool, 40),
-                short(&approval.description, 50),
-                approval
-                    .decision
-                    .map(|d| d.as_str())
-                    .unwrap_or("unanswered")
-            );
-        }
     }
-    Ok(())
+    if let Some(context) = &frame.context {
+        let layers: Vec<String> = context
+            .layers
+            .iter()
+            .map(|l| format!("{} {}t", l.kind.as_str(), l.tokens))
+            .collect();
+        println!(
+            "saw   {} tokens · {}",
+            context.token_estimate,
+            layers.join(" · ")
+        );
+    }
+    for message in &frame.messages {
+        println!(
+            "{:<6}{}",
+            role_label(message.role),
+            short(&blocks(&message.content), 100)
+        );
+    }
+    for note in &frame.notes {
+        println!("note  {}", short(&note.text, 100));
+    }
+    for tool in &frame.tools {
+        println!(
+            "tool  {} {} → {}",
+            short(&tool.name, 40),
+            short(&tool.input.to_string(), 60),
+            short(&tool_result(&tool.outcome), 60)
+        );
+    }
+    for approval in &frame.approvals {
+        println!(
+            "ask   {} {} → {}",
+            short(&approval.tool, 40),
+            short(&approval.description, 50),
+            approval
+                .decision
+                .map(|d| d.as_str())
+                .unwrap_or("unanswered")
+        );
+    }
 }
 
 fn role_label(role: aether_core::model::MessageRole) -> &'static str {

@@ -199,6 +199,8 @@ mod message_fanout;
 mod model_effort;
 #[path = "kernel/model_profiles.rs"]
 mod model_profiles;
+#[path = "kernel/notes.rs"]
+mod notes;
 #[path = "kernel/operator_memory.rs"]
 mod operator_memory;
 #[path = "kernel/operator_rename.rs"]

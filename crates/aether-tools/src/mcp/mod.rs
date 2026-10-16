@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use aether_core::id::{AgentId, TaskId};
 pub use aether_core::mcp::qualified_name;
-use aether_core::mcp::{McpServerHealth, McpServerState, McpToolInfo};
+use aether_core::mcp::{McpAuth, McpAuthState, McpServerHealth, McpServerState, McpToolInfo};
 use aether_core::time::{Timestamp, now};
 use aether_core::tool::SideEffectClass;
 
@@ -74,6 +74,9 @@ pub enum McpError {
     /// Refused before it was sent; nothing reached the server.
     #[error("invalid arguments: {0}")]
     InvalidArguments(String),
+    /// The server's required token is missing; it was not contacted.
+    #[error("auth_failed: {0}")]
+    AuthFailed(String),
 }
 
 impl McpError {
@@ -136,6 +139,32 @@ pub struct McpServerSpec {
     /// Whether each call carries its [`McpCaller`] in `params._meta`, and
     /// arguments that claim a caller are refused. Off unless configured.
     pub send_caller_meta: bool,
+    /// Whether its token was found, when it names one. A server whose
+    /// required token is missing is never contacted.
+    pub auth: Option<McpAuth>,
+}
+
+impl McpServerSpec {
+    /// Why the server must not be contacted, when its required token is
+    /// missing. Names the variable, never a value.
+    fn auth_refusal(&self) -> Option<McpError> {
+        let auth = self.auth.as_ref()?;
+        if auth.state != McpAuthState::AuthFailed {
+            return None;
+        }
+        debug_assert!(
+            !matches!(
+                &self.transport,
+                McpTransportSpec::Http { token: Some(_), .. }
+            ),
+            "a server with a token cannot be in auth_failed"
+        );
+        Some(McpError::AuthFailed(format!(
+            "token environment variable `{}` is unset; set it, or mark the server \
+             `auth = \"optional\"` to connect without one",
+            auth.token_env
+        )))
+    }
 }
 
 /// `params._meta` key naming the agent a call is made for.
@@ -254,6 +283,7 @@ impl ServerSlot {
                 tools: s.tools.iter().map(|t| t.info.clone()).collect(),
                 error: s.error.clone(),
                 checked_at: s.checked_at,
+                auth: self.spec.auth.clone(),
                 ..unknown
             },
             // A poisoned lock means a panic while updating state; report the
@@ -261,6 +291,7 @@ impl ServerSlot {
             Err(_) => McpServerHealth {
                 state: McpServerState::Failed,
                 error: Some("health lock poisoned".into()),
+                auth: self.spec.auth.clone(),
                 ..unknown
             },
         }
@@ -398,6 +429,9 @@ impl McpManager {
         &self,
         slot: &ServerSlot,
     ) -> Result<(Arc<McpClient>, Vec<DiscoveredTool>, Option<String>), McpError> {
+        if let Some(refusal) = slot.spec.auth_refusal() {
+            return Err(refusal);
+        }
         let transport: Arc<dyn Transport> = match &slot.spec.transport {
             McpTransportSpec::Stdio {
                 command,

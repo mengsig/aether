@@ -12,6 +12,7 @@ use aether_core::id::{AgentId, InboxItemId};
 use aether_core::inbox::{InboxItem, InboxKind};
 use aether_core::memory::MemoryRecord;
 use aether_core::model::{ContentBlock, Effort, Message, text_of};
+use aether_core::note::Note;
 use aether_core::task::{Task, TaskStatus};
 use aether_core::tool::{ApprovalDecision, ApprovalRequest};
 
@@ -98,6 +99,7 @@ fn status_text(inputs: &ContextInputs<'_>, stated_effort: Option<Effort>) -> Str
     push_child_agents(&mut out, inputs.children, &links);
     push_other_tasks(&mut out, inputs.child_tasks, &links);
     push_pending_approvals(&mut out, inputs.pending_approvals);
+    out.push_str(&note_digest(inputs.notes, inputs.notes_omitted));
     if let Some(interrupted) = &inputs.agent.resume_wait {
         let _ = write!(
             out,
@@ -215,6 +217,32 @@ fn push_other_tasks(out: &mut String, tasks: &[Task], links: &FleetLinks<'_>) {
     }
 }
 
+/// The most of one note's text a digest repeats.
+const DIGEST_NOTE_CHARS: usize = 400;
+
+/// Notes a client added for this turn, one line each. Empty when there are none.
+pub fn note_digest(notes: &[Note], omitted: usize) -> String {
+    if notes.is_empty() {
+        debug_assert_eq!(omitted, 0, "omitted notes imply kept ones");
+        return String::new();
+    }
+    let mut out = String::from(
+        "\nNotes added to your transcript since your previous turn (information, not a request):\n",
+    );
+    for note in notes {
+        let _ = write!(out, "- {}", short(&note.text, DIGEST_NOTE_CHARS));
+        if !note.links.is_empty() {
+            let _ = write!(out, " ({})", note.links.join(", "));
+        }
+        out.push('\n');
+    }
+    if omitted > 0 {
+        let _ = writeln!(out, "({omitted} earlier notes left out.)");
+    }
+    debug_assert!(out.lines().count() > notes.len());
+    out
+}
+
 fn push_pending_approvals(out: &mut String, approvals: &[ApprovalRequest]) {
     if approvals.is_empty() {
         return;
@@ -238,6 +266,8 @@ pub fn engine_runtime_state(inputs: &ContextInputs<'_>) -> String {
     brief.children = &[];
     brief.child_tasks = &[];
     brief.pending_approvals = &[];
+    brief.notes = &[];
+    brief.notes_omitted = 0;
     // Every engine passes the agent's effort to its CLI. Stated again in
     // this line, it made a model work below the effort that was asked for.
     let full = status_text(&brief, None);
@@ -298,6 +328,7 @@ pub fn engine_runtime_state(inputs: &ContextInputs<'_>) -> String {
             inputs.pending_approvals.len()
         );
     }
+    out.push_str(note_digest(inputs.notes, inputs.notes_omitted).trim_end_matches('\n'));
     if !inputs.children.is_empty() || !inputs.child_tasks.is_empty() {
         out.push_str("\nFleet summary with at most eight child IDs (failed/blocked first). For additional records use `list_agents` or `list_tasks`, then `read_task` for a specific result. These tools return bounded pages. Completion and failure details arrive in your inbox.");
     }

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-PROTOCOL_VERSION = 22
+PROTOCOL_VERSION = 23
 MIN_PROTOCOL_VERSION = 17
 
 from ._protocol_types import *
@@ -23,6 +23,10 @@ from ._protocol_commands.add import (
 
 from ._protocol_commands.alias import (
     alias_repository,
+)
+
+from ._protocol_commands.append import (
+    append_note,
 )
 
 from ._protocol_commands.archive import (

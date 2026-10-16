@@ -1,0 +1,28 @@
+── unicode 80 compact
+note 3 items shipped: the release notes are ready for review the release notes
+     are ready for review the release notes are ready for review ·
+     https://example.com/pull/12
+── unicode 80 detail
+note 3 items shipped: the release notes are ready for review the release notes
+     are ready for review the release notes are ready for review ·
+     https://example.com/pull/12
+── unicode 120 compact
+note 3 items shipped: the release notes are ready for review the release notes are ready for review the release notes
+     are ready for review · https://example.com/pull/12
+── unicode 120 detail
+note 3 items shipped: the release notes are ready for review the release notes are ready for review the release notes
+     are ready for review · https://example.com/pull/12
+── ascii 80 compact
+note 3 items shipped: the release notes are ready for review the release notes
+     are ready for review the release notes are ready for review |
+     https://example.com/pull/12
+── ascii 80 detail
+note 3 items shipped: the release notes are ready for review the release notes
+     are ready for review the release notes are ready for review |
+     https://example.com/pull/12
+── ascii 120 compact
+note 3 items shipped: the release notes are ready for review the release notes are ready for review the release notes
+     are ready for review | https://example.com/pull/12
+── ascii 120 detail
+note 3 items shipped: the release notes are ready for review the release notes are ready for review the release notes
+     are ready for review | https://example.com/pull/12

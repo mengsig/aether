@@ -5,6 +5,7 @@ import type {
   AcceptMemoryCommand,
   AddApprovalRuleCommand,
   AliasRepositoryCommand,
+  AppendNoteCommand,
   ArchiveCommand,
   AuthStatusCommand,
   CancelCommand,
@@ -109,6 +110,7 @@ export type Command =
   | AcceptMemoryCommand
   | AddApprovalRuleCommand
   | AliasRepositoryCommand
+  | AppendNoteCommand
   | ArchiveCommand
   | AuthStatusCommand
   | CancelCommand

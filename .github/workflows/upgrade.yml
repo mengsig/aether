@@ -1,0 +1,90 @@
+name: upgrade
+
+# This tree's build against the previous release's daemon, store and bridge
+# (scripts/upgrade_compat.py, docs/ci.md). GitHub-hosted runner, read-only token.
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  push:
+    tags: ["v*.*.*"]
+  # Not a required check, so a path filter cannot leave anything waiting.
+  pull_request:
+    paths:
+      - "crates/aether-protocol/**"
+      - "crates/aether-client/**"
+      - "crates/aether-store/**"
+      - "crates/aether-engine/src/bridge.rs"
+      - "crates/aether-engine/src/bridge/**"
+      - "crates/aether-daemon/src/bridge.rs"
+      - "crates/aether-core/src/bridge_bin.rs"
+      - "scripts/upgrade_compat*.py"
+      - ".github/workflows/upgrade.yml"
+  workflow_dispatch:
+    inputs:
+      previous:
+        description: "Release tag to test against (default: the newest published one at or below the workspace version)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upgrade-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # The lane needs no debugger, only a quicker build.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: install the Rust toolchain pinned by rust-toolchain.toml
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$channel" --profile minimal
+          cargo --version
+      # The nightly run on main saves the cache that pull requests read.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: upgrade
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: build this tree's aether and the client handshake example
+        run: cargo build --locked -p aether -p aether-client --bin aether --example negotiate
+      - name: lane tests
+        run: python3 -m unittest discover -s scripts -p test_upgrade_compat.py
+      - name: scripts/upgrade_compat.py
+        timeout-minutes: 10
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ inputs.previous }}
+          # A tag run never picks its own release, published or not, as the previous one.
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          TMPDIR: ${{ runner.temp }}/aether-upgrade
+        run: |
+          mkdir -p "$TMPDIR"
+          python3 scripts/upgrade_compat.py ${PREVIOUS:+--previous "$PREVIOUS"} \
+            ${RELEASE_TAG:+--release-tag "$RELEASE_TAG"}
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-lane-sandbox
+          # Logs, engine records and stores; not the binaries, which the run can rebuild.
+          path: |
+            ${{ runner.temp }}/aether-upgrade
+            !${{ runner.temp }}/aether-upgrade/**/aether
+            !${{ runner.temp }}/aether-upgrade/**/bin/**
+            !${{ runner.temp }}/aether-upgrade/**/*.tar.gz
+          if-no-files-found: ignore

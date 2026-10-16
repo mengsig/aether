@@ -723,6 +723,7 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `update_agent` | operate | `host_only` when `patch.backend` or `patch.tools` is supplied. |
 | `reply_to_question` | operate | |
 | `send_message` | operate | The same with `attachments` (images). |
+| `append_note` | operate | Starts no turn. |
 | `cancel` | operate | |
 | `interrupt` | operate | |
 | `restart` | operate | |

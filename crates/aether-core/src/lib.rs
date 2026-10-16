@@ -26,6 +26,7 @@ pub mod mcp;
 pub mod memory;
 pub mod memory_feedback;
 pub mod model;
+pub mod note;
 pub mod private_file;
 pub mod provider;
 pub mod redact;
@@ -63,7 +64,7 @@ pub mod prelude {
     pub use crate::idempotency::{IdempotencyKey, RecordedOutcome, RetryPolicy};
     pub use crate::inbox::{InboxItem, InboxKind};
     pub use crate::lease::Lease;
-    pub use crate::mcp::{McpServerHealth, McpServerState, McpToolInfo};
+    pub use crate::mcp::{McpAuth, McpAuthState, McpServerHealth, McpServerState, McpToolInfo};
     pub use crate::memory::{
         MemoryCandidate, MemoryKind, MemoryProvenance, MemoryRecord, MemoryScope, MemorySource,
         SeedReport,

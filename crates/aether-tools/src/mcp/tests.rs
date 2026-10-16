@@ -23,6 +23,7 @@ fn one_servers_colliding_tool_names_are_refused_at_discovery() {
         },
         classes: BTreeMap::new(),
         send_caller_meta: true,
+        auth: None,
     };
     let of = |name: &str| {
         discovered(
@@ -52,6 +53,7 @@ fn an_undeclared_tool_is_classed_conservatively() {
         },
         classes: BTreeMap::new(),
         send_caller_meta: true,
+        auth: None,
     };
     assert_eq!(
         classify(&spec, "delete_everything"),

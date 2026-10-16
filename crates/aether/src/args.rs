@@ -221,7 +221,7 @@ pub(crate) enum Cmd {
     /// Replace this binary with the latest released one. Asks the network
     /// only when run; nothing checks for updates in the background.
     #[command(
-        after_help = "Exit codes: 0 = updated, or nothing to do; 1 = error, with the installed binary left as it was; 2 = invalid command-line arguments. With --check: 0 = up to date, 10 = a newer release exists. --json prints the outcome as one object and no progress lines; the exit codes are the same.\n\nOnly a binary that install.sh installed in a directory you can write is replaced; for any other, the command that updates it is printed. A running daemon keeps the old build until `aether stop` and the next `aether`. Where a daemon that refuses a newer build cannot be signalled (macOS, and Linux before 6.5), a running daemon is not left behind: nothing is installed until `aether stop` has been run. Assets come from GitHub releases, or from AETHER_INSTALL_BASE_URL, and their SHA-256 is checked before anything is replaced."
+        after_help = "Exit codes: 0 = updated, or nothing to do; 1 = error, or a migration not confirmed, with the installed binary left as it was; 2 = invalid command-line arguments. With --check: 0 = up to date, 10 = a newer release exists. --json prints the outcome as one object and no progress lines; the exit codes are the same.\n\nBefore an upgrade the release's summary is printed with the \"Before updating\" notes of every release it crosses. When one of them migrates the store one way, the update asks before anything is downloaded; --yes skips the question, and with --json the notes and the question go to stderr.\n\nOnly a binary that install.sh installed in a directory you can write is replaced; for any other, the command that updates it is printed. A running daemon keeps the old build until `aether stop` and the next `aether`. Where a daemon that refuses a newer build cannot be signalled (macOS, and Linux before 6.5), a running daemon is not left behind: nothing is installed until `aether stop` has been run. Assets come from GitHub releases, or from AETHER_INSTALL_BASE_URL, and their SHA-256 is checked before anything is replaced."
     )]
     Update {
         /// Only report whether a newer release exists (see the exit codes).
@@ -234,6 +234,10 @@ pub(crate) enum Cmd {
         /// Print the outcome as one JSON object, with no progress lines.
         #[arg(long)]
         json: bool,
+        /// Install a release whose notes announce a one-way migration
+        /// without asking first.
+        #[arg(long, conflicts_with = "check")]
+        yes: bool,
     },
     /// Write a private, redacted diagnostic directory (never starts a daemon).
     Diagnose {

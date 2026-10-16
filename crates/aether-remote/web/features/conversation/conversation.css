@@ -31,6 +31,7 @@
 .conversation-role-user { display: flex; flex-direction: column; align-items: flex-end; padding-top: 16px; }
 .conversation-role-user > .conversation-content { width: fit-content; max-width: 88%; padding: 12px 17px; border-radius: 23px 23px 7px 23px; background: var(--surface-soft); }
 .conversation-role-user .conversation-markdown { line-height: 1.55; }
+.conversation-role-note > .conversation-content { padding: 8px 12px; border-left: 3px solid var(--accent); border-radius: 7px; background: var(--accent-soft); }
 .conversation-time-group { display: block; width: 100%; align-self: stretch; text-align: center; font-size: .6875rem; padding: 8px 0 20px; font-variant-numeric: tabular-nums; }
 .conversation-source { font-size: .6875rem; line-height: 1.4; margin-bottom: 5px; }
 .conversation-content > .conversation-source + * { margin-top: 0; }

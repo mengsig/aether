@@ -127,6 +127,9 @@ jobs:
       # The draft's text, from CHANGELOG.md; it is not uploaded as a release asset.
       - name: write the release notes
         run: scripts/release.sh notes "$TAG" >dist/RELEASE_NOTES.md
+      # Uploaded: `aether update` shows the "Before updating" notes of every release it crosses.
+      - name: copy the changelog
+        run: cp CHANGELOG.md dist/CHANGELOG.md
       # This is the whole release; a dry run stops here with it as an artifact.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -165,5 +168,5 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release create "$TAG" dist/aether-*.tar.gz dist/aether-*.tar.gz.sha256 \
-            dist/SHA256SUMS dist/VERSION \
+            dist/SHA256SUMS dist/VERSION dist/CHANGELOG.md \
             --draft --verify-tag --notes-file dist/RELEASE_NOTES.md --title "$TAG"

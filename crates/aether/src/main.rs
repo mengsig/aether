@@ -242,7 +242,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 RetentionCmd::Preview { json } => cli::retention_preview(endpoint, json).await,
             },
             Cmd::Outbox { command } => settle_outbox(endpoint, command).await,
-            Cmd::Status { json } => cli::status(endpoint, json).await,
+            Cmd::Status { json } => cli::status(endpoint, explicit_socket, json).await,
             Cmd::Archive {
                 target,
                 all_finished,
@@ -306,12 +306,14 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 check,
                 version,
                 json,
+                yes,
             } => {
                 // `--check` answers with its exit code, as `doctor` does.
                 let options = cli::UpdateOptions {
                     check,
                     version,
                     json,
+                    yes,
                 };
                 return cli::update(socket, explicit_socket, options).await;
             }

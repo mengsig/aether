@@ -144,6 +144,18 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idempotency_key: Option<String>,
     },
+    /// Append a note to an agent's transcript without starting a turn. People
+    /// see it at once; the model sees it only with `context: digest`, in the
+    /// next turn's runtime state. Needs `features::NOTES`.
+    AppendNote {
+        agent: AgentId,
+        /// At most [`aether_core::note::MAX_NOTE_BYTES`] bytes.
+        text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        links: Vec<String>,
+        #[serde(default)]
+        context: aether_core::note::NoteContext,
+    },
     /// Recreate a failed or cancelled agent from its last checkpoint, as a
     /// new agent linked to it.
     Restart {

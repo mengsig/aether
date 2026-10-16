@@ -1,5 +1,5 @@
 import { object, string, integer, event as validateEvent } from './validate.js';
-import { transcriptEntry } from './normalize.js';
+import { NOTE_EVENT, noteEntry, transcriptEntry } from './normalize.js';
 import { actorLabel } from './actors.js';
 /** @typedef {import('../types.js').State} State */
 /** @param {State} state @param {unknown} value @returns {Partial<State>|null} */
@@ -31,18 +31,26 @@ export function applyEvent(state, value) {
   if (type === 'approval.resolved') patch.attention = state.attention.filter(item => item.id !== kind.id && item.id !== kind.approval);
   if (type === 'agent.message') {
     const entry = transcriptEntry({seq,at:event.at,invocation:kind.invocation,message:{role:kind.role,content:kind.content}});
-    if (Object.hasOwn(state.transcripts,agentId)) {
-      const entries = [...state.transcripts[agentId].filter(item => item.seq !== seq),entry].sort((a,b)=>a.seq-b.seq);
-      patch.transcripts = {...state.transcripts,[agentId]:entries};
-    }
+    if (Object.hasOwn(state.transcripts,agentId)) patch.transcripts = withEntry(state.transcripts,agentId,entry);
     patch.streams = {...state.streams}; delete patch.streams[agentId];
   }
+  if (name === NOTE_EVENT && Object.hasOwn(state.transcripts,agentId)) {
+    const entry = noteEntry(event);
+    if (!entry) throw new Error('Invalid note event');
+    patch.transcripts = withEntry(state.transcripts,agentId,entry);
+  }
   return patch;
+}
+/** @param {State['transcripts']} transcripts @param {string} agentId @param {import('../types.js').TranscriptEntry} entry */
+function withEntry(transcripts, agentId, entry) {
+  const entries = [...transcripts[agentId].filter(item => item.seq !== entry.seq),entry].sort((a,b)=>a.seq-b.seq);
+  return {...transcripts,[agentId]:entries};
 }
 /** @param {Record<string,unknown>} kind @param {string} name @param {unknown} actor @param {State['agents']} agents */
 function eventDetail(kind,name,actor,agents) {
   if (name === 'submissions.evicted') return 'Saved delivery receipts were discarded. Review unresolved deliveries before retrying.';
   if (name === 'remote.restricted') return 'Remote administration changed. Details are available only on the host.';
+  if (name === NOTE_EVENT) return String(object(kind.payload).text ?? name);
   if (name === 'approval.resolved') return `${String(kind.decision)} · Decided by: ${actorLabel(actor,agents)}`;
   return String(kind.question ?? kind.summary ?? kind.error ?? kind.reason ?? name);
 }

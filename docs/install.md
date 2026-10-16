@@ -103,6 +103,7 @@ gh attestation verify "aether-$target.tar.gz" --repo mengsig/aether
 aether update                    # install the latest release, if it is newer
 aether update --check            # only report; changes nothing
 aether update --version v1.2.3   # install exactly this release
+aether update --yes              # do not ask before a one-way migration
 ```
 
 `aether update` downloads the same assets as the installer and applies the same
@@ -110,6 +111,15 @@ SHA-256 check. It then runs the downloaded binary once and requires it to report
 the expected version before renaming it over the installed one. A failed
 download, a checksum mismatch or a binary that does not run leaves the installed
 binary as it was.
+
+Before an upgrade downloads anything, it prints the summary of the release it
+installs and the "Before updating" notes of every release from the installed
+one up to it, read from the `CHANGELOG.md` the release publishes. When one of
+those notes announces a one-way store migration, it asks `Update? [y/N]` and
+installs only on `y` or `yes`; no answer, as from a script, is a no. `--yes`
+installs without asking. With `--json` the notes and the question go to
+stderr. A release published before the notes asset existed has none to show:
+the command names the release page instead and does not ask.
 
 `--version` with an older release is a downgrade, and the command says so. An
 older build may refuse a store that a newer one has already migrated; the
@@ -119,7 +129,7 @@ snapshot taken before that migration is described in
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Updated, or nothing to do. With `--check`: up to date. An update whose staging directory could not be removed afterwards also exits 0, with a warning on stderr that names the directory. |
-| 1 | An error. The installed binary is unchanged. |
+| 1 | An error, or a one-way migration that was not confirmed. The installed binary is unchanged. |
 | 2 | Invalid command-line arguments, such as a `--version` that is not a release tag. |
 | 10 | Only with `--check`: a newer release exists. |
 
@@ -129,9 +139,13 @@ exit codes are the same. `--check --json` prints `current`, `latest`,
 release, or `null` when there is none). An update prints `current`, `version` and `action` (`none`,
 `upgraded` or `downgraded`), and after replacing the binary also `binary`,
 `daemon_running` and `restart`, the commands that restart a running daemon.
+An upgrade adds `release_notes`: `published`, then either `url`, the release
+page, or `summary`, `before_updating` (`version` and `text` per release, oldest
+first) and `one_way_migration`.
 
 The network is used only while this command runs: one request for the latest
-release's `VERSION`, then the checksum and the archive of that release. Nothing
+release's `VERSION`, then that release's `CHANGELOG.md` for an upgrade, its
+checksum and its archive. Nothing
 checks for updates in the background and nothing is reported anywhere. Every
 request has a deadline.
 
@@ -163,6 +177,11 @@ aether
 ```
 
 Agents resume when the daemon starts again.
+
+Until then `aether status` and `aether doctor` show both versions, such as
+`running 1.0.9, installed 1.0.10`, where installed is the version of the
+`aether` you ran; doctor warns while they differ. `aether status --json` adds
+`installed_version` beside the daemon's `version` for a daemon on this machine.
 
 Until then, the old daemon keeps launching its own build as each agent's MCP
 bridge, not the new binary, so its engines keep their Aether tools. At startup

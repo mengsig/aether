@@ -3,11 +3,12 @@ name: ci
 # Every job runs on a GitHub-hosted runner with a read-only token and no secrets,
 # so a pull request from a fork gets nothing a public clone would not.
 on:
-  # No path filter here: a workflow that a filter skips leaves a required check
+  # No PR path filter: a workflow that a path filter skips leaves a required check
   # waiting forever. The jobs start, and stop early for a documentation change.
   pull_request:
+    branches: [main, next]
   push:
-    branches: [main]
+    branches: [main, next]
     # Documentation alone starts nothing; the same paths as scripts/ci_scope.sh.
     paths:
       - "**"
@@ -47,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stage: [lint, test, binary]
+        stage: ${{ fromJSON((github.event_name != 'pull_request' || github.base_ref == 'main') && '["lint", "test", "binary"]' || '["lint"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

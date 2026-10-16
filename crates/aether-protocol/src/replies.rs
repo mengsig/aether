@@ -284,6 +284,10 @@ pub enum Reply {
     MessageSent {
         message: MessageId,
     },
+    /// The note's event, by its sequence number in the log.
+    NoteAppended {
+        seq: u64,
+    },
     /// One entry per agent a fanned-out message reached, in delivery order.
     MessagesSent {
         deliveries: Vec<MessageDelivery>,

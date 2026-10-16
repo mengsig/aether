@@ -200,6 +200,33 @@ async fn repository_aliases_are_refused_by_a_daemon_without_the_feature() {
 }
 
 #[tokio::test]
+async fn a_note_is_refused_by_a_daemon_without_the_feature() {
+    let (transport, peer) = Transport::memory(16);
+    let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = sent.clone();
+    let _daemon = fake_daemon(peer, move |_, _| {
+        seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { true })
+    });
+    let client = Client::open(transport).await.expect("open");
+    let note = aether_core::note::Note {
+        text: "3 items shipped".into(),
+        links: Vec::new(),
+        context: aether_core::note::NoteContext::None,
+    };
+    let error = client
+        .append_note(aether_core::id::AgentId::new(), note)
+        .await
+        .expect_err("old daemon must be refused before submission");
+    let ClientError::Protocol(refusal) = error else {
+        panic!("expected a protocol refusal: {error:?}");
+    };
+    assert_eq!(refusal.code, aether_protocol::ErrorCode::Unimplemented);
+    assert!(refusal.message.contains("`notes`"), "{}", refusal.message);
+    assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn handshake_succeeds() {
     let (transport, peer) = Transport::memory(16);
     let _daemon = fake_daemon(peer, |_, _| Box::pin(async { true }));

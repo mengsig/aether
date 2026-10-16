@@ -17,6 +17,7 @@ class ReplayFrame(TypedDict, total=False):
     ended_at: str | None  # optional
     from_seq: int
     messages: list[_protocol.ReplayMessage]
+    notes: list[_protocol.ReplayNote]  # optional
     outcome: _protocol.TurnOutcome
     started_at: str
     to_seq: int

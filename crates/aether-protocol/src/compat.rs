@@ -1,8 +1,9 @@
 //! Serving older protocol versions: replies are rewritten for a client behind
 //! this build, and its requests decode unchanged (docs/protocol.md).
 
-use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, ServerFrame};
+use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame};
 use aether_core::model::ContentBlock;
+use aether_core::replay::{ReplayFrame, TurnOutcome};
 use serde_json::Value;
 
 /// Oldest protocol version this build still serves. Existing frame rewrites
@@ -54,7 +55,8 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
     if let Some(folded) = older_error_reply(version, frame) {
         return crate::encode(&folded);
     }
-    let line = crate::encode(frame)?;
+    let started = older_replay_reply(version, frame);
+    let line = crate::encode(started.as_ref().unwrap_or(frame))?;
     let hide_images = version < 19 && line.contains(IMAGE_REF_TAG);
     let hide_devices = version < 18 && line.contains(DEVICE_ORIGIN);
     if !hide_images && !hide_devices {
@@ -91,6 +93,28 @@ fn older_error_reply(version: u32, frame: &ServerFrame) -> Option<ServerFrame> {
     Some(ServerFrame::Reply {
         id: *id,
         result: Err(ErrorReply::new(code, error.message.clone())),
+    })
+}
+
+/// A replay reply without its `not_started` frame, for a client before v23
+/// that cannot decode it. Before notes, an agent with no turn replayed to no frames.
+fn older_replay_reply(version: u32, frame: &ServerFrame) -> Option<ServerFrame> {
+    let ServerFrame::Reply {
+        id,
+        result: Ok(Reply::Replay(frames)),
+    } = frame
+    else {
+        return None;
+    };
+    let unstarted = |f: &ReplayFrame| matches!(f.outcome, TurnOutcome::NotStarted);
+    if version >= 23 || !frames.iter().any(unstarted) {
+        return None;
+    }
+    let started: Vec<ReplayFrame> = frames.iter().filter(|f| !unstarted(f)).cloned().collect();
+    debug_assert!(started.len() < frames.len(), "a frame was withheld");
+    Some(ServerFrame::Reply {
+        id: *id,
+        result: Ok(Reply::Replay(started)),
     })
 }
 
@@ -286,6 +310,47 @@ mod tests {
         assert_eq!(crate::decode::<ServerFrame>(&current).unwrap(), frame);
     }
 
+    fn replay_frame(turn: u32, outcome: TurnOutcome) -> ReplayFrame {
+        let at = "2026-10-16T11:00:00Z".parse().expect("timestamp");
+        ReplayFrame {
+            agent: aether_core::id::AgentId::new(),
+            turn,
+            started_at: at,
+            ended_at: None,
+            from_seq: 1,
+            to_seq: 2,
+            context: None,
+            messages: Vec::new(),
+            notes: Vec::new(),
+            tools: Vec::new(),
+            approvals: Vec::new(),
+            usage: aether_core::model::Usage::default(),
+            duration_ms: 0,
+            outcome,
+        }
+    }
+
+    #[test]
+    fn the_not_started_replay_frame_is_withheld_before_v23() {
+        let unstarted = reply(Reply::Replay(vec![replay_frame(
+            0,
+            TurnOutcome::NotStarted,
+        )]));
+        for version in [MIN_PROTOCOL_VERSION, 22] {
+            let encoded = encode_for(version, &unstarted).unwrap();
+            assert!(!encoded.contains("not_started"), "v{version}: {encoded}");
+            let old: ServerFrame = crate::decode(&encoded).unwrap();
+            assert_eq!(old, reply(Reply::Replay(Vec::new())), "v{version}");
+        }
+        let current = encode_for(23, &unstarted).unwrap();
+        assert!(current.contains(r#""not_started""#), "{current}");
+        assert_eq!(crate::decode::<ServerFrame>(&current).unwrap(), unstarted);
+
+        let started = reply(Reply::Replay(vec![replay_frame(1, TurnOutcome::Running)]));
+        let encoded = encode_for(MIN_PROTOCOL_VERSION, &started).unwrap();
+        assert_eq!(crate::decode::<ServerFrame>(&encoded).unwrap(), started);
+    }
+
     #[test]
     fn the_v18_error_codes_fold_into_ones_v17_knows() {
         for (code, folded) in [
@@ -356,6 +421,7 @@ mod tests {
             ("accept_memory", &["id"]),
             ("add_approval_rule", &["decision", "match", "scope"]),
             ("alias_repository", &["alias"]),
+            ("append_note", &["agent", "text"]),
             ("archive", &["target"]),
             ("auth_status", &[]),
             ("cancel", &["agent"]),
@@ -537,7 +603,7 @@ mod tests {
 
     #[test]
     fn the_window_retains_existing_versions() {
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 22));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 23));
         for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
             let mut hello = Hello::new("t", "0");
             hello.protocol_version = version;
@@ -780,7 +846,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 22));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 23));
     }
 
     #[test]

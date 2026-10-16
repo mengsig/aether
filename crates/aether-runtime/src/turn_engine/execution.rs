@@ -112,6 +112,7 @@ pub(crate) async fn execute(
     // but not to the objective is not surfaced mid-session.
     let memories = crate::turn::retrieve_memories(runtime, ctx, &[])?;
     let memory_records: Vec<_> = memories.into_iter().map(|m| m.record).collect();
+    let notes = crate::notes::digest(runtime, ctx.agent.id)?;
     let tools: Vec<ToolSpec> = runtime.engine_tool_specs(&ctx.agent);
     let adapter = engine.adapter();
     // The assembler reads the model and effort off the agent; on a fallback link
@@ -130,6 +131,8 @@ pub(crate) async fn execute(
         checkpoint: carried.as_ref(),
         transcript: &transcript,
         memories: &memory_records,
+        notes: &notes.notes,
+        notes_omitted: notes.omitted,
         tools,
         model_profile: profile.as_deref(),
         engine_policy: None,

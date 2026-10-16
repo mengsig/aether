@@ -73,6 +73,7 @@ struct Stub {
     reject_models: bool,
     invalid_models: bool,
     features: Vec<String>,
+    replay_note: bool,
     /// The agent a TUI beside the socket views, for `@viewed`.
     viewed: Option<&'static str>,
 }
@@ -93,6 +94,7 @@ impl Default for Stub {
             reject_models: false,
             invalid_models: false,
             features: Vec::new(),
+            replay_note: false,
             viewed: None,
         }
     }
@@ -335,6 +337,7 @@ async fn cli_with_socket(
                 Command::GetAgent { .. } => {
                     Err(ErrorReply::new(ErrorCode::NotFound, "unknown agent"))
                 }
+                Command::Replay { .. } if stub.replay_note => Ok(Reply::Replay(vec![replayed_note()])),
                 Command::Replay { .. } => Ok(Reply::Replay(vec![])),
                 Command::SendMessage { .. } => {
                     Err(ErrorReply::new(ErrorCode::NotFound, "unknown agent"))
@@ -1063,6 +1066,31 @@ async fn replay_distinguishes_unknown_agents_from_real_agents_without_turns() {
     assert!(stdout(&out).contains("has taken no turns yet"));
 }
 
+/// A note a client appended to an agent that has taken no turn.
+fn replayed_note() -> aether_core::replay::ReplayFrame {
+    serde_json::from_value(json!({
+        "agent": AGENT, "turn": 0, "started_at": AT, "from_seq": 2, "to_seq": 2,
+        "messages": [], "tools": [], "approvals": [], "usage": aether_core::model::Usage::default(), "duration_ms": 0,
+        "outcome": {"outcome": "not_started"},
+        "notes": [{"at": AT, "seq": 2, "text": "3 items shipped", "context": "none"}],
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn replay_prints_a_note_appended_before_the_first_turn() {
+    let stub = Stub {
+        replay_note: true,
+        ..Stub::default()
+    };
+    let out = cli(&["replay", AGENT], stub).await;
+    assert!(out.status.success(), "{}", stderr(&out));
+    let printed = stdout(&out);
+    assert!(printed.contains("─── before the first turn"), "{printed}");
+    assert!(printed.contains("note  3 items shipped"), "{printed}");
+    assert!(!printed.contains("turn 0"), "{printed}");
+}
+
 #[tokio::test]
 async fn memory_human_output_includes_agent_and_task_provenance() {
     for args in [vec!["memory", "list"], vec!["memory", "show", MEMORY]] {
@@ -1734,6 +1762,10 @@ fn hostile_mcp() -> aether_core::mcp::McpServerHealth {
             side_effect: SideEffectClass::ReadOnly,
             declared: true,
         }],
+        auth: Some(aether_core::mcp::McpAuth {
+            token_env: HOSTILE.into(),
+            state: aether_core::mcp::McpAuthState::AuthFailed,
+        }),
         ..aether_core::mcp::McpServerHealth::unknown(HOSTILE, HOSTILE)
     }
 }
@@ -1775,7 +1807,40 @@ async fn terminal_output_sanitises_memory_mcp_status_events_and_streams() {
             "{args:?}: {}",
             stdout(&output)
         );
+        if args == ["mcp", "list"] {
+            assert!(
+                stdout(&output).contains("auth_failed"),
+                "{}",
+                stdout(&output)
+            );
+        }
     }
+}
+
+/// The stub daemon reports version "stub": not this build, as a daemon left
+/// running across `aether update` is not.
+#[tokio::test]
+async fn status_names_the_running_and_the_installed_version() {
+    let installed = env!("CARGO_PKG_VERSION");
+    let (output, socket) = cli_with_socket(&["status"], Stub::default(), false).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    let said = stdout(&output);
+    let line = said
+        .lines()
+        .find(|line| line.starts_with("version  "))
+        .unwrap_or_else(|| panic!("no version line: {said}"));
+    assert!(
+        line.contains(&format!("running stub, installed {installed}")),
+        "{line}"
+    );
+    let aether = aether_protocol::command_hint::command_hint(&socket, true);
+    assert!(line.contains(&format!("`{aether} stop`")), "{line}");
+
+    let output = cli(&["status", "--json"], Stub::default()).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["version"], "stub");
+    assert_eq!(value["installed_version"], installed);
 }
 
 #[tokio::test]

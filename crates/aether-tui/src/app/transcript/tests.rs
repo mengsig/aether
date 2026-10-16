@@ -2103,3 +2103,26 @@ fn interruption_cause_survives_a_terminal_event_arriving_first() {
         CellModel::Notice { text, .. } if text.to_string().contains("shell interrupted (scheduler stop: deadline of now)")
     )));
 }
+
+#[test]
+fn a_note_is_its_own_notice_and_starts_nothing() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "orchestrator", "assistant");
+    let note = aether_core::note::Note {
+        text: "3 items shipped".into(),
+        links: vec!["https://example.com/pull/12".into()],
+        context: aether_core::note::NoteContext::None,
+    };
+    let draft = note
+        .draft(agent, aether_core::id::RunId::new(), Actor::user())
+        .expect("a valid note");
+    let before = feed.models(agent).len();
+    feed.on(agent, draft.kind);
+    let models = feed.models(agent);
+    assert_eq!(models.len(), before + 1, "one cell for one note");
+    assert!(
+        matches!(models.last(), Some(CellModel::Notice { kind: NoticeKind::Note, text })
+        if text.as_str() == "3 items shipped · https://example.com/pull/12"),
+        "{models:?}"
+    );
+}

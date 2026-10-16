@@ -160,7 +160,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// 22: `workspace_diff`, `workspace_integrate` and `workspace_discard`, behind
 /// the `workspace_review` feature. Older clients never send them.
-pub const PROTOCOL_VERSION: u32 = 22;
+///
+/// 23: `append_note`, behind the `notes` feature, and the `not_started` replay
+/// frame holding notes of an agent with no turn. `compat` withholds that frame.
+pub const PROTOCOL_VERSION: u32 = 23;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
@@ -200,6 +203,8 @@ pub mod features {
     /// The daemon serves `workspace_diff`, `workspace_integrate` and
     /// `workspace_discard`.
     pub const WORKSPACE_REVIEW: &str = "workspace_review";
+    /// The daemon serves `append_note`: a transcript entry that wakes nobody.
+    pub const NOTES: &str = "notes";
 }
 
 mod handshake;

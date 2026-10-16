@@ -253,6 +253,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # name = "issues"
 # url = "http://127.0.0.1:9100/mcp"
 # token_env = "ISSUES_MCP_TOKEN"
+# auth = "optional"   # connect without a token when the variable is unset
 "#;
 
 const PROVIDERS_HEADER: &str = r#"# Provider overrides and additions. Built-in providers (claude-code, codex,

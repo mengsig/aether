@@ -272,6 +272,20 @@ pub(super) async fn dispatch_authorized(
         command @ Command::SendMessage { .. } => {
             messages::dispatch(daemon, command, by, submission).await
         }
+        Command::AppendNote {
+            agent,
+            text,
+            links,
+            context,
+        } => {
+            let note = aether_core::note::Note {
+                text,
+                links,
+                context,
+            };
+            let seq = rt.append_note(agent, &note, by).map_err(map_err)?;
+            Ok(Reply::NoteAppended { seq })
+        }
         Command::Cancel { agent, reason, .. } => {
             rt.cancel_agent_keyed(agent, reason, by, submission)
                 .map_err(map_err)?;

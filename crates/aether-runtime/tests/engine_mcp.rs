@@ -185,6 +185,7 @@ async fn harness_with(
                 ("echo_request".to_owned(), SideEffectClass::ReadOnly),
             ]),
             send_caller_meta: true,
+            auth: None,
         }],
         None,
         Vec::new().into(),

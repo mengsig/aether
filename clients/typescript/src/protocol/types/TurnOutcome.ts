@@ -31,9 +31,17 @@ export interface TurnOutcomeInterrupted {
   "outcome": "interrupted";
 }
 
+/**
+ * No turn has started: a turn-0 frame holding the notes written so far.
+ */
+export interface TurnOutcomeNotStarted {
+  "outcome": "not_started";
+}
+
 export type TurnOutcome =
     TurnOutcomeRunning |
     TurnOutcomeCompleted |
     TurnOutcomeFailed |
-    TurnOutcomeInterrupted
+    TurnOutcomeInterrupted |
+    TurnOutcomeNotStarted
 ;

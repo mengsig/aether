@@ -407,3 +407,49 @@ fn another_agents_events_never_reach_the_replay() {
         .push(Event::from_draft(other, EventId::new(), 99, log.at));
     assert_eq!(log.frames().len(), 1);
 }
+
+fn note(text: &str) -> EventKind {
+    let note = Note {
+        text: text.to_owned(),
+        links: vec!["https://example.com/1".into()],
+        context: NoteContext::None,
+    };
+    note.draft(AgentId::new(), crate::id::RunId::new(), Actor::user())
+        .expect("a valid note")
+        .kind
+}
+
+#[test]
+fn notes_replay_in_the_turn_they_follow_and_before_the_first_turn() {
+    let mut log = Log::new();
+    log.push(note("before any turn"));
+    log.push(EventKind::AgentStarted { turn: 1 });
+    log.push(message(MessageRole::Assistant, "on it"));
+    log.push(note("between turns"));
+    log.push(EventKind::Custom {
+        name: "context.usage".into(),
+        payload: serde_json::json!({}),
+    });
+    let frames = log.frames();
+    assert_eq!(frames.len(), 1);
+    let texts: Vec<&str> = frames[0].notes.iter().map(|n| n.text.as_str()).collect();
+    assert_eq!(texts, ["before any turn", "between turns"]);
+    assert_eq!(frames[0].notes[1].seq, 4);
+    assert_eq!(frames[0].notes[1].links, ["https://example.com/1"]);
+    assert_eq!(frames[0].messages.len(), 1, "a note is not a message");
+}
+
+#[test]
+fn notes_of_an_agent_with_no_turn_fold_to_a_turn_zero_frame() {
+    let mut log = Log::new();
+    assert!(log.frames().is_empty(), "nothing to replay");
+    log.push(note("queued for later"));
+    log.push(note("still waiting"));
+    let frames = log.frames();
+    assert_eq!(frames.len(), 1);
+    let frame = &frames[0];
+    assert_eq!((frame.turn, &frame.outcome), (0, &TurnOutcome::NotStarted));
+    assert_eq!((frame.from_seq, frame.to_seq), (1, 2));
+    assert_eq!(frame.notes.len(), 2);
+    assert!(frame.messages.is_empty() && frame.tools.is_empty());
+}

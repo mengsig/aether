@@ -85,6 +85,8 @@ fn inputs<'a>(
         checkpoint: None,
         transcript,
         memories: &[],
+        notes: &[],
+        notes_omitted: 0,
         tools: vec![],
         model_profile: None,
         engine_policy: None,

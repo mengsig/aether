@@ -36,6 +36,7 @@ impl Command {
             Self::StorageStatus | Self::StorageGc { .. } => Introduced::Feature(features::STORAGE),
             Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
             | Self::WorkspaceDiscard { .. } => Introduced::Feature(features::WORKSPACE_REVIEW),
+            Self::AppendNote { .. } => Introduced::Feature(features::NOTES),
 
             Self::GetAttention | Self::CompletePath { .. } | Self::ListWorkspaces { .. }
             | Self::ValidateWorkspace { .. } | Self::GetGitSummary { .. } | Self::GetRemote
@@ -127,6 +128,10 @@ mod tests {
             (
                 json!({"cmd": "workspace_discard", "agent": aether_core::id::AgentId::new()}),
                 features::WORKSPACE_REVIEW,
+            ),
+            (
+                json!({"cmd": "append_note", "agent": aether_core::id::AgentId::new(), "text": "hi"}),
+                features::NOTES,
             ),
         ] {
             let command = command(wire);

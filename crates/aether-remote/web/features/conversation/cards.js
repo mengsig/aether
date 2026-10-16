@@ -8,7 +8,8 @@ export function messageCard(entry, context, quote, agentId, previous) {
   invariant(Number.isSafeInteger(entry.seq), 'Message sequence must be an integer');
   invariant(Array.isArray(entry.message.content), 'Message content must be an array');
   const toolsOnly = entry.message.content.every(block => ['tool_use', 'tool_result', 'thinking'].includes(String(block.type)));
-  const role = toolsOnly ? 'tool' : entry.message.role === 'user' ? 'user' : 'assistant';
+  const note = entry.message.role === 'note';
+  const role = note ? 'note' : toolsOnly ? 'tool' : entry.message.role === 'user' ? 'user' : 'assistant';
   const node = el('article', `conversation-message conversation-role-${role}`);
   node.dataset.seq = String(entry.seq);
   node.setAttribute('aria-label', `${entry.message.role} message`);
@@ -20,6 +21,7 @@ export function messageCard(entry, context, quote, agentId, previous) {
     node.append(group);
   }
   const content = el('div', 'conversation-content');
+  if (note) content.append(el('p', 'conversation-source muted', 'Note · woke nobody'));
   const originals = [];
   for (const block of entry.message.content) {
     const envelopes = block.type === 'text' ? inboxPresentation(entry.message.role, String(block.text ?? ''), context.store.get().agents) : null;

@@ -2632,6 +2632,38 @@
           "type": "object"
         },
         {
+          "description": "Append a note to an agent's transcript without starting a turn. People\nsee it at once; the model sees it only with `context: digest`, in the\nnext turn's runtime state. Needs `features::NOTES`.",
+          "properties": {
+            "agent": {
+              "$ref": "#/$defs/AgentId"
+            },
+            "cmd": {
+              "const": "append_note",
+              "type": "string"
+            },
+            "context": {
+              "$ref": "#/$defs/NoteContext",
+              "default": "none"
+            },
+            "links": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "text": {
+              "description": "At most [`aether_core::note::MAX_NOTE_BYTES`] bytes.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "agent",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Recreate a failed or cancelled agent from its last checkpoint, as a\nnew agent linked to it.",
           "properties": {
             "agent": {
@@ -8946,9 +8978,57 @@
       ],
       "type": "object"
     },
+    "McpAuth": {
+      "description": "How a server authenticates. Names the variable, never its value.",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/McpAuthState"
+        },
+        "token_env": {
+          "description": "The environment variable the token is read from.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "token_env",
+        "state"
+      ],
+      "type": "object"
+    },
+    "McpAuthState": {
+      "description": "Whether a server that names a token variable got its token.",
+      "oneOf": [
+        {
+          "const": "token",
+          "description": "The variable is set; the server is reached with its value.",
+          "type": "string"
+        },
+        {
+          "const": "auth_failed",
+          "description": "The variable is unset and the token is required: the server is not\ncontacted, so a typo cannot downgrade it to anonymous access.",
+          "type": "string"
+        },
+        {
+          "const": "anonymous",
+          "description": "The variable is unset and the server is configured `auth = \"optional\"`:\nit is reached without a token.",
+          "type": "string"
+        }
+      ]
+    },
     "McpServerHealth": {
       "description": "A server's health as of the last contact attempt.",
       "properties": {
+        "auth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/McpAuth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present when the server is configured with a token variable."
+        },
         "checked_at": {
           "description": "When the state was last established.",
           "format": "date-time",
@@ -9965,6 +10045,21 @@
         "scope"
       ],
       "type": "object"
+    },
+    "NoteContext": {
+      "description": "Whether the agent's model is shown the note as well as people.",
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "Only people see it: the model is never given it.",
+          "type": "string"
+        },
+        {
+          "const": "digest",
+          "description": "The agent's next turn is also given it, in a compact digest.",
+          "type": "string"
+        }
+      ]
     },
     "OpenLoop": {
       "description": "Something the run left unfinished.",
@@ -11352,6 +11447,13 @@
           },
           "type": "array"
         },
+        "notes": {
+          "description": "Notes a client appended after the turn before ended, in order. Notes\nwritten before the first turn open the first frame, or a turn-0 frame\nwhen there is no turn yet.",
+          "items": {
+            "$ref": "#/$defs/ReplayNote"
+          },
+          "type": "array"
+        },
         "outcome": {
           "$ref": "#/$defs/TurnOutcome"
         },
@@ -11426,6 +11528,39 @@
         "at",
         "role",
         "content"
+      ],
+      "type": "object"
+    },
+    "ReplayNote": {
+      "description": "A note appended to the transcript; it started no turn.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/NoteContext",
+          "default": "none"
+        },
+        "links": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "seq",
+        "text"
       ],
       "type": "object"
     },
@@ -11766,6 +11901,33 @@
             },
             "reply": {
               "const": "message_sent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The note's event, by its sequence number in the log.",
+          "properties": {
+            "data": {
+              "properties": {
+                "seq": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "seq"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "note_appended",
               "type": "string"
             }
           },
@@ -15239,6 +15401,19 @@
             "outcome"
           ],
           "type": "object"
+        },
+        {
+          "description": "No turn has started: a turn-0 frame holding the notes written so far.",
+          "properties": {
+            "outcome": {
+              "const": "not_started",
+              "type": "string"
+            }
+          },
+          "required": [
+            "outcome"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -15908,7 +16083,7 @@
     "$ref": "#/$defs/ClientFrame"
   },
   "min_protocol_version": 17,
-  "protocol_version": 22,
+  "protocol_version": 23,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },

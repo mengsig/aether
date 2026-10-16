@@ -360,6 +360,7 @@ pub(super) async fn run_link(
     let transcript = runtime.store.transcript(ctx.agent.id, transcript_after)?;
     let memories = retrieve_memories(runtime, ctx, pending_inbox)?;
     let memory_records: Vec<_> = memories.iter().map(|m| m.record.clone()).collect();
+    let notes = crate::notes::digest(runtime, ctx.agent.id)?;
     let mut tools = runtime.agent_tool_specs(&ctx.agent);
     // Task-closing tools make no sense without a task; hiding them avoids
     // pointless failed calls from a chat agent.
@@ -382,6 +383,8 @@ pub(super) async fn run_link(
         checkpoint: checkpoint.as_ref(),
         transcript: &transcript,
         memories: &memory_records,
+        notes: &notes.notes,
+        notes_omitted: notes.omitted,
         tools,
         model_profile: profile.as_deref(),
         engine_policy: None,

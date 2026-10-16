@@ -1,4 +1,4 @@
-export const VERSION = "f176644590cdd6a7";
+export const VERSION = "47daefee1d8998aa";
 export const PRECACHE = [
   "./app.js",
   "./assets/icon-192.png",

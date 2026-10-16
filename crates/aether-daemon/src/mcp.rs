@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use aether_core::mcp::McpServerHealth;
-use aether_model::config::{McpSection, McpServerSection};
+use aether_core::mcp::{McpAuth, McpAuthState, McpServerHealth};
+use aether_model::config::{McpAuthMode, McpSection, McpServerSection};
 use aether_runtime::Runtime;
 use aether_tools::{McpServerSpec, McpTransportSpec};
 
@@ -15,6 +15,7 @@ pub(crate) fn specs(section: &McpSection) -> Vec<McpServerSpec> {
 }
 
 fn spec(section: &McpServerSection) -> Option<McpServerSpec> {
+    let mut auth = None;
     // Configuration was validated at load; a server that slips through with
     // no transport is skipped loudly rather than connected to nothing.
     let transport = match (&section.command, &section.url) {
@@ -24,20 +25,19 @@ fn spec(section: &McpServerSection) -> Option<McpServerSpec> {
             env: section.env.clone(),
             cwd: section.cwd.clone(),
         },
-        (None, Some(url)) => McpTransportSpec::Http {
-            url: url.clone(),
-            token: section.token_env.as_ref().and_then(|var| {
-                let value = std::env::var(var).ok().filter(|v| !v.is_empty());
-                if value.is_none() {
-                    tracing::warn!(
-                        server = %section.name,
-                        variable = %var,
-                        "mcp: token environment variable is unset; connecting without one"
-                    );
-                }
-                value
-            }),
-        },
+        (None, Some(url)) => {
+            let (token, resolved) = match &section.token_env {
+                Some(var) => resolve_token(&section.name, var, section.auth, |name| {
+                    std::env::var(name).ok()
+                }),
+                None => (None, None),
+            };
+            auth = resolved;
+            McpTransportSpec::Http {
+                url: url.clone(),
+                token,
+            }
+        }
         _ => {
             tracing::error!(
                 server = %section.name,
@@ -51,7 +51,49 @@ fn spec(section: &McpServerSection) -> Option<McpServerSpec> {
         transport,
         classes: section.classes.clone(),
         send_caller_meta: section.send_caller_meta,
+        auth,
     })
+}
+
+/// Read a server's token from `var`. A missing or empty one fails auth
+/// unless the server is configured `auth = "optional"`: a typo in a variable
+/// name must not silently downgrade the server to anonymous access.
+fn resolve_token(
+    server: &str,
+    var: &str,
+    mode: McpAuthMode,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> (Option<String>, Option<McpAuth>) {
+    debug_assert!(
+        !var.is_empty(),
+        "config validation refuses an empty token_env"
+    );
+    let token = lookup(var).filter(|value| !value.is_empty());
+    let state = match (&token, mode) {
+        (Some(_), _) => McpAuthState::Token,
+        (None, McpAuthMode::Optional) => {
+            tracing::info!(
+                server = %server,
+                variable = %var,
+                "mcp: token environment variable is unset; auth is optional, connecting without one"
+            );
+            McpAuthState::Anonymous
+        }
+        (None, McpAuthMode::Required) => {
+            tracing::warn!(
+                server = %server,
+                variable = %var,
+                "mcp: token environment variable is unset; not connecting (auth_failed)"
+            );
+            McpAuthState::AuthFailed
+        }
+    };
+    debug_assert_eq!(token.is_some(), state == McpAuthState::Token);
+    let auth = McpAuth {
+        token_env: var.to_owned(),
+        state,
+    };
+    (token, Some(auth))
 }
 
 /// Drain the manager's health channel into the event log for as long as the
@@ -90,6 +132,7 @@ mod tests {
             cwd: None,
             url: None,
             token_env: None,
+            auth: McpAuthMode::Required,
             classes: Default::default(),
             send_caller_meta: false,
         }
@@ -107,6 +150,67 @@ mod tests {
         let specs = specs(&McpSection { servers });
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].name, "good");
+    }
+
+    fn http(name: &str, token_env: &str, auth: McpAuthMode) -> McpServerSection {
+        McpServerSection {
+            url: Some("https://notes.example/mcp".into()),
+            token_env: Some(token_env.into()),
+            auth,
+            ..section(name)
+        }
+    }
+
+    #[test]
+    fn a_missing_required_token_fails_auth_instead_of_going_anonymous() {
+        let unset = |_: &str| None;
+        for lookup in [&unset as &dyn Fn(&str) -> Option<String>, &|_| {
+            Some(String::new())
+        }] {
+            let (token, auth) =
+                resolve_token("notes", "NOTES_TOKEN", McpAuthMode::Required, lookup);
+            assert_eq!(token, None);
+            let auth = auth.expect("a token variable is always reported");
+            assert_eq!(auth.state, McpAuthState::AuthFailed);
+            assert_eq!(auth.token_env, "NOTES_TOKEN");
+        }
+
+        let (token, auth) = resolve_token("notes", "NOTES_TOKEN", McpAuthMode::Optional, unset);
+        assert_eq!(token, None);
+        assert_eq!(auth.map(|a| a.state), Some(McpAuthState::Anonymous));
+
+        let (token, auth) = resolve_token("notes", "NOTES_TOKEN", McpAuthMode::Required, |var| {
+            (var == "NOTES_TOKEN").then(|| "s3cret".to_owned())
+        });
+        assert_eq!(token.as_deref(), Some("s3cret"));
+        assert_eq!(auth.map(|a| a.state), Some(McpAuthState::Token));
+    }
+
+    #[test]
+    fn the_spec_carries_the_auth_state_and_a_stdio_server_has_none() {
+        let var = "AETHER_TEST_MCP_TOKEN_THAT_IS_NEVER_SET";
+        assert!(std::env::var_os(var).is_none());
+        let servers = vec![
+            http("required", var, McpAuthMode::Required),
+            http("optional", var, McpAuthMode::Optional),
+            McpServerSection {
+                command: Some("mock".into()),
+                ..section("local")
+            },
+        ];
+        let specs = specs(&McpSection { servers });
+        let states: Vec<_> = specs
+            .iter()
+            .map(|s| s.auth.as_ref().map(|a| a.state))
+            .collect();
+        assert_eq!(
+            states,
+            [
+                Some(McpAuthState::AuthFailed),
+                Some(McpAuthState::Anonymous),
+                None
+            ]
+        );
     }
 
     /// A config written before `send_caller_meta` existed, for a server that

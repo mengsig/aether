@@ -11,6 +11,7 @@ your machine, so a check that fails in CI fails locally with the same command.
 | `test` | `ubuntu-latest` | every pull request, every push to `main` | `scripts/ci.sh test` |
 | `binary` | `ubuntu-latest` | every pull request, every push to `main` | `scripts/ci.sh binary` |
 | `macos` | `macos-latest` | `ci:macos` label or manual dispatch, from `.github/workflows/ci-macos.yml` | `scripts/ci.sh` |
+| `upgrade` | `ubuntu-latest` | nightly, release tags, pull requests that touch the protocol, client, bridge or store, manual dispatch, from `.github/workflows/upgrade.yml` | `scripts/upgrade_compat.py` ([Upgrade lane](#upgrade-lane)) |
 
 The three stages together are the whole script, split so they run side by side:
 
@@ -113,6 +114,78 @@ exception: `cargo test` reads both, so they count as code.
 
 `scripts/test_ci_scope.py` holds the list: it fails when the script and the
 push trigger of `ci.yml` disagree, or when `pull_request` gains a path filter.
+
+## Upgrade lane
+
+The field incident behind it: after `aether update`, the old daemon kept
+running and launched the new binary as every native session's MCP bridge, and
+those bridges closed. `.github/workflows/upgrade.yml` runs this tree's build
+against the previous release so that cannot come back unnoticed. It runs
+nightly, on every pushed release tag, on a pull request that changes the
+protocol, the client, the bridge or the store (not a required check), and by
+manual dispatch, which can name the release to test against.
+
+The previous release is the newest published release at or below the workspace
+version, other than the release tag under test: on a release tag, even one
+already published, the one before it. The lane downloads its x86_64
+Linux archive, checks it against its `.sha256`, and runs in one temporary
+directory with its own config, data, socket, home, installed binary and TCP
+port. A fake `claude` (`scripts/upgrade_compat_engine.py`) on its `PATH` makes
+native sessions possible without credentials: it starts the MCP bridge Aether
+names and calls `inspect_state` through it. A fake `ssh` runs the remote
+command on the same machine.
+
+1. **The previous daemon across an update.** The previous release's daemon
+   starts from the installed path. During a native session, this build replaces
+   the installed binary the way `aether update` does. The bridge already
+   running must still answer tool calls, and so must the bridge the previous
+   daemon starts next. A release before 1.0.11 takes it from the installed
+   path, so it is this build; a later one launches a copy of its own build,
+   and the lane accepts either. Either way the fake engine then starts a
+   bridge from the installed path itself, so this build's bridge always has
+   to reach the previous daemon and serve tools.
+2. **This build's clients against the previous daemon.** The Rust client
+   (`cargo run -p aether-client --example negotiate`) connects over the Unix
+   socket and over TCP, and must agree on the newest protocol both sides
+   speak; `aether status` runs over the socket, and `aether --remote previous
+   status` over SSH through the previous release's `bridge --stdio`. A command
+   the previous daemon does not announce (`aether workspace diff`, while it
+   lacks `workspace_review`) must be refused by the client before anything
+   is sent.
+3. **An interrupted upgrade of the store.** The previous daemon's store is
+   copied once per kill point, and this build's daemon is killed with
+   `SIGKILL` at start, once the pre-migration backup has begun, once it is
+   written, and after 50, 150 and 400 ms. The kill must leave the store at
+   the old or the new schema, never between, and the next start must either
+   complete the migration with every agent kept, or exit with a message that
+   names the store. When the previous release is on this tree's schema, the
+   lane first undoes the newest migration block (`REWINDS` in
+   `scripts/upgrade_compat_migration.py`) so there is a migration to
+   interrupt; a schema bump must add its undo there, and
+   `scripts/test_upgrade_compat.py` fails until it does.
+4. **This build's daemon across a replaced binary.** This build's daemon
+   starts on the upgraded store, and the previous release replaces the
+   installed binary mid-session. Both bridges of the session must be the
+   daemon's own copy under `<data>/bin`, byte for byte this build, and the
+   previous release's bridge, started from the installed path, must reach
+   this build's daemon.
+
+The lane builds a debug binary without debug info, so a run with a warm cache
+takes a few minutes, of which the cases take well under one; the run is capped
+at 30 minutes and the cases at 10. It writes little beyond the two binaries
+and a few small stores. On a failure the temporary directory, without its
+binaries, is uploaded as the `upgrade-lane-sandbox` artifact. Locally:
+
+```sh
+cargo build -p aether -p aether-client --bin aether --example negotiate
+python3 scripts/upgrade_compat.py            # downloads the previous release
+python3 scripts/upgrade_compat.py --previous v1.0.9 --keep
+```
+
+It needs Linux on x86_64 or aarch64, Python 3.12+ and network access to
+github.com; `--previous-binary PATH` runs it offline against a binary you
+already have. `scripts/test_upgrade_compat.py`, part of the `binary` stage,
+tests the release choice, the schema rewind and the fakes without the network.
 
 ## macOS: label or manual dispatch only
 
@@ -244,8 +317,9 @@ against the built daemon) wherever Chromium is installed under
   `Cargo.toml`, and `CHANGELOG.md` must have a `## MAJOR.MINOR.PATCH` section
   with text, or the run fails before anything is built. It then creates a
   **draft** release with these assets: four `aether-<target>.tar.gz`, their
-  `.sha256` files, `SHA256SUMS`, and `VERSION` (the tag, which `aether update`
-  reads from the latest release). The draft's text is that changelog section
+  `.sha256` files, `SHA256SUMS`, `VERSION` (the tag, which `aether update`
+  reads from the latest release) and `CHANGELOG.md` (whose "Before updating"
+  sections `aether update` shows). The draft's text is that changelog section
   followed by the install command (`scripts/release.sh notes <tag>` prints
   it). Nothing is downloadable as "latest" until the draft is published by
   hand.
@@ -267,6 +341,22 @@ scripts/release.sh notes v1.0.0
 scripts/release.sh package x86_64-unknown-linux-musl dist   # needs musl-gcc
 scripts/release.sh install-check x86_64-unknown-linux-musl dist
 ```
+
+### Release policy
+
+The version says what an update asks of the person installing it:
+
+- a **minor** release (`1.1.0`) for new features, changed defaults and store
+  migrations;
+- a **patch** release (`1.0.1`) for fixes only, with no migration and no
+  changed default.
+
+Anything a person should know before installing a release goes under
+`### Before updating` in its changelog section: a migration, a changed
+default, a changed limit. `aether update` prints those sections for every
+release it crosses, and asks for confirmation when one says "one way" or
+"one-way", so every one-way migration has to say so in those words, as
+`The migration is one way` does.
 
 ### Cutting a release
 

@@ -104,7 +104,8 @@ impl Command {
             | Self::ListRepositoryAliases => Access::Observe,
 
             Self::CreateAgent(_) | Self::ReplyToQuestion { .. } | Self::SendMessage { .. }
-            | Self::Cancel { .. } | Self::Interrupt { .. } | Self::ConfigureGithubWatcher { .. }
+            | Self::AppendNote { .. } | Self::Cancel { .. } | Self::Interrupt { .. }
+            | Self::ConfigureGithubWatcher { .. }
             | Self::CreateSchedule { .. } | Self::UpdateSchedule { .. } | Self::Trigger { .. }
             | Self::Restart { .. } | Self::Wake { .. } | Self::Pause { .. }
             | Self::Resume { .. } | Self::Archive { .. } | Self::SetApprovals { .. }

@@ -29,6 +29,17 @@ export function transcriptEntry(value) {
   return {seq:integer(item.seq),at:string(item.at),invocation:item.invocation == null ? undefined : string(item.invocation),
     message:{role:string(message.role),content}};
 }
+export const NOTE_EVENT = 'note.appended';
+/** A client's note as a transcript row, or null for any other event. Its `note` role is no model role. */
+/** @param {unknown} value @returns {import('../types.js').TranscriptEntry|null} */
+export function noteEntry(value) {
+  const event = object(value, 'event'); const kind = object(event.kind, 'event kind');
+  if (kind.type !== 'custom' || kind.name !== NOTE_EVENT) return null;
+  const payload = object(kind.payload, 'note');
+  const links = array(payload.links ?? [], 'note links').map(link => string(link, 'note link'));
+  const text = [string(payload.text, 'note text').trim(), ...links].join(' · ');
+  return {seq:integer(event.seq),at:string(event.at),message:{role:'note',content:[{type:'text',text}]}};
+}
 /** @template T @param {T[]} values @param {(value:T)=>string|number} key */
 export function unique(values, key) {
   if (new Set(values.map(key)).size !== values.length) throw new Error('Duplicate records in daemon response');
