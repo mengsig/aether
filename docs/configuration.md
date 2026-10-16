@@ -230,6 +230,7 @@ retention_days = 14
 # event_history_days = 7
 workspace_grace_seconds = 3600
 backups_keep = 3
+migration_backups_keep = 2
 gc_interval_seconds = 3600
 # free_space_floor_bytes = 5368709120
 # build_output_dirs = ["target", "node_modules", ".venv", "__pycache__", "dist"]
@@ -242,7 +243,8 @@ Per-kind day overrides inherit `retention_days`, except artifacts and event
 history, which retain their existing `[artifacts]` and `[retention]` policies
 unless explicitly overridden here. Zero disables cleanup of that kind; log
 size bounds still apply. Day values must be integers from 0 through 65535;
-`backups_keep` and `gc_interval_seconds` must be positive. Unknown keys and
+`backups_keep`, `migration_backups_keep` and `gc_interval_seconds` must be
+positive. Unknown keys and
 invalid values fail configuration loading. A zero grace period is allowed.
 
 Each daemon's copy of its own build, in `bin/` beside the database, is kept
@@ -280,8 +282,11 @@ add `--dry-run` to list each path and its bytes first. Workspaces of live or
 resumable agents are never touched. Each run inspects the same bounded number of
 workspaces as a sweep, so repeat it while the report says `truncated`.
 
-Migration backups keep **both** the newest `backups_keep` snapshots and every
-snapshot within the retention window. Unrecognized files are preserved. Logs
+Migration backups are zstd-compressed and never number more than the newest
+`migration_backups_keep`, whatever their age. Within that cap, GC keeps
+**both** the newest `backups_keep` snapshots and every snapshot within the
+retention window. Unrecognized files are preserved. See
+[migration backups](migration-backups.md) for restoring one. Logs
 retain their existing seven 16 MiB segment limit and gain age rotation and
 pruning under the same cross-process writer lock. Legacy logs remain untouched
 because old versions may still write them. Age maintenance runs when a log
@@ -400,6 +405,8 @@ partition and never writes into this one.
 ```toml
 [build_cache]
 # root = "/var/cache/aether"
+# Unset means 15% of the cache's filesystem.
+# max_bytes = 53687091200
 
 # A listed table replaces the default, which is the one below.
 [[build_cache.env]]
@@ -428,8 +435,23 @@ an agent with `config.build_cache` on `create_agent` (see
 [the protocol](protocol.md#optional-features)); its children inherit it.
 
 `aether storage` reports the bytes, repositories and partitions under the
-root as `build_cache`, apart from workspaces. Nothing in it is evicted yet:
-remove a partition by hand when no agent of its run is still building. The
+root as `build_cache`, apart from workspaces, with each partition's bytes,
+last use and the agents that lease it. Every agent of the run that is not
+yet completed, failed or cancelled, or has work in flight, leases its
+partition. When Aether's partitions hold more than `max_bytes`, storage GC
+evicts unleased ones, least recently used first, until the rest fit; the
+disk guard does the same as soon as the disk runs low. Last use is the
+latest activity of the run's agents or the newest write at the partition's
+top level. Aether marks each partition it creates with a `.aether-partition`
+file, and evicts only marked partitions. Anything else under the root, such
+as an operator's own target directory or a partition made before this
+release, is reported and kept. So is a partition that holds, or lies
+inside, a directory a client named with `config.build_cache`. Evicted
+partitions are renamed into `<root>/.evicting` and then deleted; a deletion
+that fails is retried at the next sweep (each partition's marker is
+removed last), and nothing in `.evicting` that Aether did not move there,
+or that holds a client's directory, is removed. A failed agent woken later builds
+cold again. The
 agents of one run share a partition and can read and overwrite each other's
 output; partitions of different runs are separate directories under one
 user, not an operating-system boundary.

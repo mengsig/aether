@@ -106,6 +106,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # event_history_days = 7     # explicit override; otherwise [retention] applies
 # workspace_grace_seconds = 3600
 # backups_keep = 3           # keep newest N OR within retention
+# migration_backups_keep = 2 # but never more than the newest N
 # gc_interval_seconds = 3600
 # free_space_floor_bytes = 5368709120 # unset inherits scheduler; 0 disables
 # Wholly Git-ignored directories with these names never keep a finished
@@ -127,9 +128,12 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # partition per repository and run, so a run's isolated children share warm
 # output and another run never writes into it. Unset root means
 # `aether.build-cache` beside `aether.db`. A listed table replaces the default.
+# Over max_bytes (default 15% of its filesystem), storage GC evicts partitions
+# no live agent leases, least recently used first.
 #
 # [build_cache]
 # root = "/var/cache/aether"
+# max_bytes = 53687091200
 # [[build_cache.env]]
 # name = "CARGO_TARGET_DIR"
 # dir = "cargo-target"

@@ -581,6 +581,28 @@
     }
   },
   {
+    "access": "operate",
+    "command": {
+      "cmd": "workspace_diff",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "workspace_integrate",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "workspace_discard",
+      "agent": "agt_00000000000000000000000000",
+      "force": true
+    }
+  },
+  {
     "access": "remote_admin",
     "command": {
       "cmd": "get_remote"

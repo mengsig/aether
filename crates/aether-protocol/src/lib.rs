@@ -157,7 +157,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// 21: the `no_model` code, for creation with no model named and no default.
 /// `compat` folds it to `invalid_argument`, the code older clients got for it.
-pub const PROTOCOL_VERSION: u32 = 21;
+///
+/// 22: `workspace_diff`, `workspace_integrate` and `workspace_discard`, behind
+/// the `workspace_review` feature. Older clients never send them.
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
@@ -192,6 +195,9 @@ pub mod features {
     pub const BUILD_CACHE: &str = "build_cache";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
+    /// The daemon serves `workspace_diff`, `workspace_integrate` and
+    /// `workspace_discard`.
+    pub const WORKSPACE_REVIEW: &str = "workspace_review";
 }
 
 mod handshake;

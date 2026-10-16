@@ -18,5 +18,3 @@ export interface WakeCommand {
 export function wake(args: Omit<WakeCommand, "cmd">): WakeCommand {
   return { cmd: "wake", ...args };
 }
-
-/** Every command the daemon accepts. */

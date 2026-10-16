@@ -80,6 +80,7 @@ pub(crate) fn is_mutating(command: &Command) -> bool {
         Command::CompletePath { .. }
             | Command::ValidateWorkspace { .. }
             | Command::GetGitSummary { .. }
+            | Command::WorkspaceDiff { .. }
             | Command::ListDevices { .. }
             | Command::GetRemote
             | Command::GetPairing { .. }

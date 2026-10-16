@@ -1,7 +1,7 @@
 // Generated from clients/protocol.schema.json by scripts/generate_clients.py.
 // Do not edit: change the Rust types and regenerate.
 
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 22;
 export const MIN_PROTOCOL_VERSION = 17;
 
 export * from "./protocol/commands/accept.ts";
@@ -60,6 +60,7 @@ export * from "./protocol/commands/unsubscribe.ts";
 export * from "./protocol/commands/update.ts";
 export * from "./protocol/commands/validate.ts";
 export * from "./protocol/commands/wake.ts";
+export * from "./protocol/commands/workspace.ts";
 export * from "./protocol/events/agent.ts";
 export * from "./protocol/events/approval.ts";
 export * from "./protocol/events/artifact.ts";
@@ -120,6 +121,7 @@ export * from "./protocol/types/AuthInfo.ts";
 export * from "./protocol/types/BlockReason.ts";
 export * from "./protocol/types/BusyPolicy.ts";
 export * from "./protocol/types/CapabilityProfile.ts";
+export * from "./protocol/types/ChangedFile.ts";
 export * from "./protocol/types/Checkpoint.ts";
 export * from "./protocol/types/CheckpointDraft.ts";
 export * from "./protocol/types/CheckpointId.ts";
@@ -158,6 +160,7 @@ export * from "./protocol/types/ExportSummary.ts";
 export * from "./protocol/types/FailureLine.ts";
 export * from "./protocol/types/FallbackRecord.ts";
 export * from "./protocol/types/FeedbackRanking.ts";
+export * from "./protocol/types/FileStatus.ts";
 export * from "./protocol/types/GitSummary.ts";
 export * from "./protocol/types/GithubDispatchMode.ts";
 export * from "./protocol/types/GithubRepositoryConfig.ts";
@@ -316,4 +319,8 @@ export * from "./protocol/types/WaitCondition.ts";
 export * from "./protocol/types/Welcome.ts";
 export * from "./protocol/types/WindowHeadroom.ts";
 export * from "./protocol/types/Workspace.ts";
+export * from "./protocol/types/WorkspaceCommit.ts";
+export * from "./protocol/types/WorkspaceDiff.ts";
+export * from "./protocol/types/WorkspaceDiscard.ts";
+export * from "./protocol/types/WorkspaceIntegration.ts";
 export * from "./protocol/types/WorkspaceValidation.ts";

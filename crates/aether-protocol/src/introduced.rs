@@ -33,6 +33,8 @@ impl Command {
             Self::RecordMemoryFeedback { .. } | Self::RetractMemoryFeedback { .. }
             | Self::MemoryFeedback { .. } => Introduced::Feature(features::MEMORY_FEEDBACK),
             Self::StorageStatus | Self::StorageGc { .. } => Introduced::Feature(features::STORAGE),
+            Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
+            | Self::WorkspaceDiscard { .. } => Introduced::Feature(features::WORKSPACE_REVIEW),
 
             Self::GetAttention | Self::CompletePath { .. } | Self::ListWorkspaces { .. }
             | Self::ValidateWorkspace { .. } | Self::GetGitSummary { .. } | Self::GetRemote
@@ -120,6 +122,10 @@ mod tests {
             (
                 json!({"cmd": "memory_feedback", "memory": memory}),
                 features::MEMORY_FEEDBACK,
+            ),
+            (
+                json!({"cmd": "workspace_discard", "agent": aether_core::id::AgentId::new()}),
+                features::WORKSPACE_REVIEW,
             ),
         ] {
             let command = command(wire);

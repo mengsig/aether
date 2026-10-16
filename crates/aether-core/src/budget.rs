@@ -35,6 +35,10 @@ pub fn subtree_usage(agents: &[Agent]) -> BTreeMap<AgentId, Usage> {
     totals
 }
 
+/// How far back a run's rate looks: long enough to smooth one turn's burst,
+/// short enough that a run gone idle stops forecasting.
+pub const RATE_WINDOW_MINUTES: i64 = 15;
+
 /// What one run has spent and where that rate leads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunSummary {
@@ -43,7 +47,8 @@ pub struct RunSummary {
     pub agents_live: u32,
     pub usage: Usage,
     pub started_at: Timestamp,
-    /// Dollars per hour over the run's life so far. Derived from
+    /// Dollars per hour over the last 15 minutes (`RATE_WINDOW_MINUTES`) of
+    /// receipts, zero for a run that billed nothing in them. Derived from
     /// `usage.cost_usd`, so it is a floor exactly when that is.
     pub rate_usd_per_hour: f64,
     /// What it would have spent after another hour at that rate.
@@ -62,7 +67,15 @@ pub fn run_usage<'a>(agents: impl IntoIterator<Item = &'a Agent>) -> Usage {
 }
 
 /// One summary per run that still has a live agent, oldest run first.
-pub fn active_runs(agents: &[Agent], now: Timestamp) -> Vec<RunSummary> {
+///
+/// `window_start` holds, for each agent with a receipt in the last
+/// `RATE_WINDOW_MINUTES`, its billed dollars when the window opened; an agent
+/// absent from it billed nothing since, so a run with none is idle.
+pub fn active_runs(
+    agents: &[Agent],
+    window_start: &BTreeMap<AgentId, f64>,
+    now: Timestamp,
+) -> Vec<RunSummary> {
     let mut by_run: BTreeMap<RunId, Vec<&Agent>> = BTreeMap::new();
     for agent in agents {
         by_run.entry(agent.run).or_default().push(agent);
@@ -76,14 +89,8 @@ pub fn active_runs(agents: &[Agent], now: Timestamp) -> Vec<RunSummary> {
             // The floor, like everything else derived from a cost: a run with
             // an unpriced agent forecasts what it is known to be spending,
             // marked by `usage.cost_complete`, never a confident zero.
-            let spent = usage.cost_usd;
-            // Below a minute the rate is noise, not a forecast.
-            let hours = (now - started_at).num_milliseconds().max(0) as f64 / 3_600_000.0;
-            let rate = if hours >= 1.0 / 60.0 {
-                spent / hours
-            } else {
-                0.0
-            };
+            let rate = recent_rate(&members, window_start, started_at, now);
+            debug_assert!(rate >= 0.0, "a rate of spend is never negative");
             RunSummary {
                 run,
                 agents: members.len() as u32,
@@ -91,10 +98,36 @@ pub fn active_runs(agents: &[Agent], now: Timestamp) -> Vec<RunSummary> {
                 usage,
                 started_at,
                 rate_usd_per_hour: rate,
-                forecast_usd_next_hour: spent + rate,
+                forecast_usd_next_hour: usage.cost_usd + rate,
             }
         })
         .collect()
+}
+
+/// Dollars per hour the run's agents billed inside the window, over the part
+/// of the window the run has existed for.
+fn recent_rate(
+    members: &[&Agent],
+    window_start: &BTreeMap<AgentId, f64>,
+    started_at: Timestamp,
+    now: Timestamp,
+) -> f64 {
+    let spent: f64 = members
+        .iter()
+        .filter_map(|a| {
+            let before = window_start.get(&a.id)?;
+            debug_assert!(*before >= 0.0, "a cumulative cost is never negative");
+            // Cumulative cost only grows; a reading above it is a stale row.
+            Some((a.stats.usage.cost_usd - before).max(0.0))
+        })
+        .sum();
+    let window = chrono::Duration::minutes(RATE_WINDOW_MINUTES);
+    let observed = (now - started_at).clamp(chrono::Duration::zero(), window);
+    // Below a minute the rate is noise, not a forecast.
+    if observed < chrono::Duration::minutes(1) {
+        return 0.0;
+    }
+    spent / (observed.num_milliseconds() as f64 / 3_600_000.0)
 }
 
 #[cfg(test)]
@@ -184,7 +217,8 @@ mod tests {
         assert_eq!(total.cost_usd, 0.0, "nobody billed this run");
         assert_eq!(total.estimated_cost_usd, Some(2.0));
 
-        let summary = &active_runs(&[root, child], now())[0];
+        let billing = BTreeMap::from([(root.id, 0.0), (child.id, 0.0)]);
+        let summary = &active_runs(&[root, child], &billing, now())[0];
         assert_eq!(summary.usage.estimated_cost_usd, Some(2.0));
         assert_eq!(
             summary.rate_usd_per_hour, 0.0,
@@ -202,6 +236,7 @@ mod tests {
                 agent(None, live, 1.0, true),
                 agent(None, finished, 9.0, false),
             ],
+            &BTreeMap::new(),
             now(),
         );
         assert_eq!(runs.len(), 1);
@@ -209,23 +244,59 @@ mod tests {
         assert_eq!(runs[0].agents_live, 1);
     }
 
+    /// Only what was billed inside the window counts: $4 of the $6 came in
+    /// the last 15 minutes, so the run burns $16/h, not its lifetime $4/h.
     #[test]
-    fn the_forecast_follows_the_rate_of_spend() {
+    fn the_forecast_follows_the_recent_rate_of_spend() {
+        let at = now();
         let run = RunId::new();
         let mut a = agent(None, run, 6.0, true);
-        a.created_at = now() - chrono::Duration::minutes(30);
-        let summary = &active_runs(&[a], now())[0];
+        a.created_at = at - chrono::Duration::minutes(90);
+        let summary = &active_runs(std::slice::from_ref(&a), &BTreeMap::from([(a.id, 2.0)]), at)[0];
         assert!(
-            (summary.rate_usd_per_hour - 12.0).abs() < 0.1,
+            (summary.rate_usd_per_hour - 16.0).abs() < 1e-9,
             "{summary:?}"
         );
-        assert!((summary.forecast_usd_next_hour - 18.0).abs() < 0.1);
+        assert!((summary.forecast_usd_next_hour - 22.0).abs() < 1e-9);
+    }
+
+    /// A run whose last receipt is older than the window is idle: however
+    /// much it spent before, it forecasts no further spend.
+    #[test]
+    fn a_run_without_a_receipt_in_the_window_is_idle() {
+        let at = now();
+        let run = RunId::new();
+        let mut a = agent(None, run, 843.18, true);
+        a.created_at = at - chrono::Duration::hours(5);
+        a.stats.last_turn_at = Some(at - chrono::Duration::minutes(RATE_WINDOW_MINUTES + 1));
+        let summary = &active_runs(&[a], &BTreeMap::new(), at)[0];
+        assert_eq!(summary.rate_usd_per_hour, 0.0);
+        assert_eq!(summary.forecast_usd_next_hour, 843.18);
+    }
+
+    /// A run younger than the window is rated over its own age.
+    #[test]
+    fn a_young_run_is_rated_over_its_age() {
+        let at = now();
+        let run = RunId::new();
+        let mut a = agent(None, run, 1.0, true);
+        a.created_at = at - chrono::Duration::minutes(5);
+        let summary = &active_runs(std::slice::from_ref(&a), &BTreeMap::from([(a.id, 0.0)]), at)[0];
+        assert!(
+            (summary.rate_usd_per_hour - 12.0).abs() < 1e-9,
+            "{summary:?}"
+        );
     }
 
     #[test]
     fn a_run_younger_than_a_minute_has_no_rate() {
         let run = RunId::new();
-        let summary = &active_runs(&[agent(None, run, 5.0, true)], now())[0];
+        let a = agent(None, run, 5.0, true);
+        let summary = &active_runs(
+            std::slice::from_ref(&a),
+            &BTreeMap::from([(a.id, 0.0)]),
+            now(),
+        )[0];
         assert_eq!(summary.rate_usd_per_hour, 0.0);
         assert_eq!(summary.forecast_usd_next_hour, 5.0);
     }
@@ -267,10 +338,11 @@ mod tests {
         let totals = subtree_usage(&members);
         assert!((totals[&root.id].cost_usd - 0.0580005).abs() < 1e-12);
         assert!(root.budget_exceeded(&totals[&root.id]).is_some());
-        let summary = &active_runs(&members, at)[0];
+        let billing = members.iter().map(|a| (a.id, 0.0)).collect();
+        let summary = &active_runs(&members, &billing, at)[0];
         assert!((summary.usage.cost_usd - 0.0580005).abs() < 1e-12);
-        assert!((summary.rate_usd_per_hour - 0.116001).abs() < 1e-12);
-        assert!((summary.forecast_usd_next_hour - 0.1740015).abs() < 1e-12);
+        assert!((summary.rate_usd_per_hour - 0.232002).abs() < 1e-12);
+        assert!((summary.forecast_usd_next_hour - 0.2900025).abs() < 1e-12);
     }
 
     #[test]
@@ -286,7 +358,7 @@ mod tests {
         assert_eq!(total.cost_gap, Some(CostGap::Mixed));
         assert_eq!(total.cost_usd, 3.0);
         assert_eq!(total.total_tokens(), 20);
-        let summary = &active_runs(&members, now())[0];
+        let summary = &active_runs(&members, &BTreeMap::new(), now())[0];
         assert_eq!(summary.usage, total);
         assert!(!summary.usage.cost_complete);
     }

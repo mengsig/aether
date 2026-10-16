@@ -240,6 +240,13 @@ async fn execute(
             .map(|task| task.id);
     }
 
+    let start_head = crate::workspace_review::record_turn_head(
+        runtime,
+        &ctx.agent,
+        ctx.turn,
+        crate::workspace_review::Boundary::Start,
+    )
+    .await?;
     // Keep the lease alive while the turn runs.
     let heartbeat = spawn_heartbeat(runtime.clone(), lease, &ctx.agent);
     let task_was_open = ctx.task.as_ref().is_some_and(|t| !t.status.is_terminal());
@@ -269,6 +276,15 @@ async fn execute(
     if let Some(refused) = refused_renewals {
         let agent = &ctx.agent;
         runtime.apply(Commit::new().event(refused.draft(agent.id, agent.parent, agent.run)))?;
+    }
+    if start_head.is_some() {
+        crate::workspace_review::record_turn_head(
+            runtime,
+            &ctx.agent,
+            ctx.turn,
+            crate::workspace_review::Boundary::End,
+        )
+        .await?;
     }
     finish(runtime, &ctx, next)
 }

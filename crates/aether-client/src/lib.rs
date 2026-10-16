@@ -39,6 +39,7 @@ mod operations;
 mod records;
 mod ssh;
 mod subscription;
+mod workspace_review;
 pub use subscription::{Subscription, SubscriptionFrame};
 
 pub use endpoint::{Endpoint, SshRemote};

@@ -465,6 +465,22 @@ pub enum Command {
     GetGitSummary {
         workspace: std::path::PathBuf,
     },
+    /// Files, diffstat, commits and a capped patch of an agent's work.
+    WorkspaceDiff {
+        agent: AgentId,
+    },
+    /// Land a finished child's isolated workspace in the source it came
+    /// from, through the same conflict check as the `integrate_workspace` tool.
+    WorkspaceIntegrate {
+        agent: AgentId,
+    },
+    /// Throw away an agent's isolated workspace. Refused while an agent using
+    /// it is live unless `force`, which does not stop that agent.
+    WorkspaceDiscard {
+        agent: AgentId,
+        #[serde(default)]
+        force: bool,
+    },
 
     /// The remote listener's settings and state. Host only.
     GetRemote,

@@ -28,7 +28,7 @@ protocol version.
 
 ## Versions
 
-The protocol is version 21 and the daemon serves versions 17 through 21. The window is
+The protocol is version 22 and the daemon serves versions 17 through 22. The window is
 `MIN_PROTOCOL_VERSION` to `PROTOCOL_VERSION` in `aether-protocol`; the
 `compat` module translates replies for the older versions.
 A hello outside the window is refused with `incompatible`, naming both bounds.
@@ -39,6 +39,10 @@ Only the daemon's answers are rewritten. Every field a newer version added to
 a command is optional, so an older client's requests decode unchanged; the
 test `no_command_requires_a_field_an_older_client_would_not_send` holds that
 against the live schema.
+
+Version 22 adds `workspace_diff`, `workspace_integrate` and
+`workspace_discard`, advertised by the `workspace_review` feature. They are new
+commands, so older clients never send them and see no change.
 
 Version 21 adds the `no_model` error code: creating an agent or a schedule
 with no model named, when the daemon has no default because no provider is
@@ -162,6 +166,11 @@ sending any of the three commands. The Rust client refuses them to older daemons
 deletes declared build output from finished workspaces that GC keeps for
 another reason. An older daemon ignores the field and runs an ordinary sweep;
 the Rust client refuses such a request itself.
+
+`workspace_review` means the daemon serves `workspace_diff`,
+`workspace_integrate` and `workspace_discard` (see
+[workspace review](#workspace-review)). An older daemon refuses them as
+unknown; the Rust client refuses to send them to one.
 
 `repository_aliases` means the daemon serves `alias_repository` and
 `list_repository_aliases` (see [repository aliases](#repository-aliases)). An
@@ -742,3 +751,49 @@ Remaining percentages and reset countdowns are clamped at zero. A passed reset
 does not imply replenished credit: only a new provider report changes the usage.
 Future observation timestamps have age zero to tolerate clock skew. Older clients
 can ignore the added fields; new clients default missing headroom to unknown.
+
+## Workspace review
+
+An operator can review an agent's work and decide its fate without asking the
+parent agent. All three commands take `agent` and need `operate`.
+
+`workspace_diff` replies `workspace_diff` with `files` (path, `added`,
+`modified` or `deleted`, and line counts, absent for a binary file), the
+diffstat in `insertions` and `deletions`, `commits` newest first, and `patch`.
+The patch carries at most 256 KiB; a longer one is cut on a character boundary
+and ends with `[patch truncated: showing N of M bytes]`, with `patch_bytes`
+giving the whole size and `patch_truncated` set. At most 1000 files and 200
+commits are listed; `files_truncated` and `commits_truncated` say when more
+exist, and the diffstat still counts every file.
+
+For an agent's own isolated worktree the diff runs from the delegation snapshot
+to the worktree as it is now, committed or not, and `integrated` says whether
+that state was integrated already. Every other workspace is shared: the diff
+runs from the HEAD the agent's first turn started on to the HEAD its last turn
+ended on, so it covers committed changes only, and `ambiguous` is set because
+other agents may have committed in between. Aether records the workspace HEAD
+at each turn's start and end as a `workspace.head` custom event; a commit's
+`turn` names the turn whose recorded HEADs bracket it.
+
+`workspace_integrate` lands a finished child's isolated worktree in its
+source through the same checks as the `integrate_workspace` tool. When the
+source changed a path the child also changed, it replies with `integrated`
+false and every such path in `conflicts`, and writes nothing. Other refusals,
+such as a live agent or a shared workspace, are `invalid` errors; an agent
+still working in the worktree, such as a restarted successor, counts as live. A landed
+integration is recorded as a `workspace.integrated` custom event.
+
+`workspace_discard` deletes an agent's isolated worktree, its refs and its
+record, whatever it holds. It is refused while the agent, a descendant, or
+any other agent working in the worktree (such as a restarted successor) is
+live, unless `force` is true; forcing does not stop them. It is also
+refused while an interrupted integration is unfinished. The discard is
+recorded as a `workspace.discarded` custom event.
+
+```sh
+aether workspace diff <agent> [--patch] [--json]
+aether workspace integrate <agent> [--json]
+aether workspace discard <agent> [--force] [--json]
+```
+
+`integrate` exits 1 and lists the conflicting paths when conflicts refuse it.
