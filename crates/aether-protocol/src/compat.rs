@@ -51,9 +51,7 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
         (MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION).contains(&version),
         "a connection only ever speaks a negotiated version, got {version}"
     );
-    if version < 18
-        && let Some(folded) = v17_error_reply(frame)
-    {
+    if let Some(folded) = older_error_reply(version, frame) {
         return crate::encode(&folded);
     }
     let line = crate::encode(frame)?;
@@ -79,9 +77,9 @@ const DEVICE_ORIGIN: &str = r#""transport":"device""#;
 /// The wire tag of a stored image's content block, new in v19.
 const IMAGE_REF_TAG: &str = "image_ref";
 
-/// An error reply whose code a v17 client cannot decode, with the code it
-/// reads in its place.
-fn v17_error_reply(frame: &ServerFrame) -> Option<ServerFrame> {
+/// An error reply whose code a `version` client cannot decode, with the code
+/// it reads in its place.
+fn older_error_reply(version: u32, frame: &ServerFrame) -> Option<ServerFrame> {
     let ServerFrame::Reply {
         id,
         result: Err(error),
@@ -89,7 +87,7 @@ fn v17_error_reply(frame: &ServerFrame) -> Option<ServerFrame> {
     else {
         return None;
     };
-    let code = v17_error_code(error.code)?;
+    let code = older_error_code(version, error.code)?;
     Some(ServerFrame::Reply {
         id: *id,
         result: Err(ErrorReply::new(code, error.message.clone())),
@@ -126,11 +124,12 @@ fn image_ref_text(value: &Value) -> Option<Value> {
     }
 }
 
-/// The code a v17 client reads in place of one it cannot decode.
-fn v17_error_code(code: ErrorCode) -> Option<ErrorCode> {
+/// The code a `version` client reads in place of one it cannot decode.
+fn older_error_code(version: u32, code: ErrorCode) -> Option<ErrorCode> {
     match code {
-        ErrorCode::Forbidden => Some(ErrorCode::Unauthorized),
-        ErrorCode::Unimplemented => Some(ErrorCode::Unavailable),
+        ErrorCode::Forbidden if version < 18 => Some(ErrorCode::Unauthorized),
+        ErrorCode::Unimplemented if version < 18 => Some(ErrorCode::Unavailable),
+        ErrorCode::NoModel if version < 21 => Some(ErrorCode::InvalidArgument),
         _ => None,
     }
 }
@@ -263,6 +262,28 @@ mod tests {
             panic!("a message");
         };
         assert_eq!(from.label(), "user:device:phone");
+    }
+
+    #[test]
+    fn the_no_model_code_folds_into_invalid_argument_before_v21() {
+        let frame = ServerFrame::Reply {
+            id: 4,
+            result: Err(ErrorReply::new(ErrorCode::NoModel, "no model configured")),
+        };
+        for version in [MIN_PROTOCOL_VERSION, 20] {
+            let old: ServerFrame = crate::decode(&encode_for(version, &frame).unwrap()).unwrap();
+            let ServerFrame::Reply {
+                result: Err(error), ..
+            } = old
+            else {
+                panic!("an error reply");
+            };
+            assert_eq!(error.code, ErrorCode::InvalidArgument, "v{version}");
+            assert_eq!(error.message, "no model configured");
+        }
+        let current = encode_for(21, &frame).unwrap();
+        assert!(current.contains(r#""no_model""#), "{current}");
+        assert_eq!(crate::decode::<ServerFrame>(&current).unwrap(), frame);
     }
 
     #[test]
@@ -512,7 +533,7 @@ mod tests {
 
     #[test]
     fn the_window_retains_existing_versions() {
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 20));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 21));
         for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
             let mut hello = Hello::new("t", "0");
             hello.protocol_version = version;
@@ -755,7 +776,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 20));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 21));
     }
 
     #[test]

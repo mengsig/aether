@@ -154,7 +154,10 @@ use serde::{Deserialize, Serialize};
 /// 20: transient `accounting` deltas carry absolute live usage and context.
 /// Tree nodes retain omitted descendants separately in optional `hidden_usage`.
 /// Older clients receive durable accounting events and the existing stream deltas.
-pub const PROTOCOL_VERSION: u32 = 20;
+///
+/// 21: the `no_model` code, for creation with no model named and no default.
+/// `compat` folds it to `invalid_argument`, the code older clients got for it.
+pub const PROTOCOL_VERSION: u32 = 21;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {

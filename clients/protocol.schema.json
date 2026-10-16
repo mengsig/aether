@@ -5348,6 +5348,11 @@
           "const": "unimplemented",
           "description": "The command is part of the protocol and this build does not serve it.",
           "type": "string"
+        },
+        {
+          "const": "no_model",
+          "description": "Nothing named a model and the daemon has no default: no provider is\nsigned in. A model named but not usable is refused with another code.",
+          "type": "string"
         }
       ]
     },
@@ -15545,7 +15550,7 @@
     "$ref": "#/$defs/ClientFrame"
   },
   "min_protocol_version": 17,
-  "protocol_version": 20,
+  "protocol_version": 21,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },
