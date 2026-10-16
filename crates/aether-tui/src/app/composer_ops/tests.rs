@@ -559,6 +559,22 @@ fn forwarded_slash_commands_keep_their_mentions_as_typed() {
     typed(&mut app, "/answer 3 @researcher");
     assert!(app.composer_queue().is_empty());
     assert_eq!(app.transcripts[&id].queue, ["/answer 3 @researcher"]);
+
+    for status in [AgentStatus::Ready, AgentStatus::Running] {
+        let (mut app, id) = app_with(status.clone());
+        add_child(&mut app, id, "researcher");
+        let prefix = format!("/answer 3 {}", "x".repeat(PASTE_PLACEHOLDER_CHARS));
+        app.composer_paste(&prefix);
+        assert_eq!(app.input.pastes.len(), 1, "the prefix is a placeholder");
+        typed(&mut app, " @researcher");
+        let expected = format!("{prefix} @researcher");
+        let effects = app.composer_queue();
+        let delivered = match status {
+            AgentStatus::Running => app.transcripts[&id].queue.clone(),
+            _ => sent(&effects).into_iter().map(|(_, text)| text).collect(),
+        };
+        assert_eq!(delivered, [expected], "{status:?}");
+    }
 }
 
 #[test]
