@@ -426,6 +426,29 @@ agents board. High-contrast
 a theme with `/theme` and set contrast in your terminal.
 Existing dusk/dawn aliases still work.
 
+### Event timeline from the CLI
+
+`aether events` shows the latest 50 matching events when stdout is a terminal.
+Piped output retains the full history; use `--tail N` to bound either mode
+(`--tail 0 -f` watches only new events). Results are in sequence order, with
+UTC dates and times in human output and one complete event per line with
+`--json`. `--after SEQ` is an exclusive lower bound, including with a tail.
+
+Filter with `--agent ID`, `--run ID`, `--task ID`, `--type tool.failed`, or
+`--family tool`. Types and families accept repeated flags or comma-separated
+values. For example:
+
+```sh
+aether events --run RUN_ID --type tool.failed --since 1h --tail 20 -f
+```
+
+`--since` accepts positive integer durations such as `30s`, `5m`, `2h`, or
+`1d`, measured from command startup. `--grep TEXT` matches a case-sensitive
+literal substring of the full event JSON. These two filters run locally
+because the event protocol has no timestamp or text filter; sparse matches
+can require reading older pages. A tail counts matching events, then `-f`
+continues from the history snapshot without replaying it.
+
 ## Leaving
 
 Quitting only detaches this client. Agents keep running in the daemon, and the

@@ -319,6 +319,7 @@ where
                                                     features::MEMORY_FEEDBACK.into(),
                                                     features::STORAGE.into(),
                                                     features::PRUNE_BUILD_OUTPUT.into(),
+                                                    features::WORKSPACE_REVIEW.into(),
                                                     features::BUILD_CACHE.into(),
                                                 ],
                                                 daemon_protocol_version: Some(

@@ -792,6 +792,9 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `complete_path` | operate | |
 | `validate_workspace` | operate | |
 | `get_git_summary` | operate | |
+| `workspace_diff` | operate | Carries file contents in its patch. |
+| `workspace_integrate` | operate | Writes the source repository. |
+| `workspace_discard` | operate | Deletes the worktree. |
 | `get_remote` | remote_admin | |
 | `configure_remote` | remote_admin | |
 | `start_pairing` | remote_admin | |

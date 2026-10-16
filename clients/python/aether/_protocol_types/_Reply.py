@@ -63,6 +63,9 @@ from ._ReplyTasks import ReplyTasks
 from ._ReplyTranscript import ReplyTranscript
 from ._ReplyTree import ReplyTree
 from ._ReplyWelcome import ReplyWelcome
+from ._ReplyWorkspaceDiff import ReplyWorkspaceDiff
+from ._ReplyWorkspaceDiscarded import ReplyWorkspaceDiscarded
+from ._ReplyWorkspaceIntegration import ReplyWorkspaceIntegration
 from ._ReplyWorkspaceValidation import ReplyWorkspaceValidation
 from ._ReplyWorkspaces import ReplyWorkspaces
 
@@ -124,6 +127,9 @@ Reply = (
     ReplyWorkspaces |
     ReplyWorkspaceValidation |
     ReplyGitSummary |
+    ReplyWorkspaceDiff |
+    ReplyWorkspaceIntegration |
+    ReplyWorkspaceDiscarded |
     ReplyRemote |
     ReplyPairing |
     ReplyDevice |

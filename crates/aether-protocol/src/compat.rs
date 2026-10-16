@@ -459,6 +459,9 @@ mod tests {
             ("update_schedule", &["action", "id"]),
             ("validate_workspace", &["path"]),
             ("wake", &["agent"]),
+            ("workspace_diff", &["agent"]),
+            ("workspace_discard", &["agent"]),
+            ("workspace_integrate", &["agent"]),
         ];
 
         let live = command_requirements();
@@ -533,7 +536,7 @@ mod tests {
 
     #[test]
     fn the_window_retains_existing_versions() {
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 21));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 22));
         for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
             let mut hello = Hello::new("t", "0");
             hello.protocol_version = version;
@@ -776,7 +779,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 21));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 22));
     }
 
     #[test]

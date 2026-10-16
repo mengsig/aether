@@ -2,11 +2,73 @@ use super::*;
 
 mod inspection;
 
-fn workspace_path_for_reply(path: &std::path::Path) -> String {
-    use std::os::unix::ffi::OsStrExt;
-    path.to_str()
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("hex:{}", hex::encode(path.as_os_str().as_bytes())))
+use crate::workspace::review::path_text as workspace_path_for_reply;
+
+/// `integrate_workspace`: the operator's checks, then the caller's own: the
+/// child must be its direct child and the source still within its scope.
+async fn integrate_child_workspace(
+    runtime: &Arc<Runtime>,
+    ctx: &TurnCtx,
+    child: AgentId,
+) -> Result<ToolOutcome> {
+    let Some(target) = runtime.store.agent(child)? else {
+        return Ok(ToolOutcome::error(format!(
+            "child agent {child} was not found"
+        )));
+    };
+    if target.parent != Some(ctx.agent.id) {
+        return Ok(ToolOutcome::error(format!(
+            "agent {child} is not your direct child"
+        )));
+    }
+    let managed = match crate::workspace_review::integration_preflight(runtime, &target)? {
+        Ok(managed) => managed,
+        Err(refusal) => return Ok(ToolOutcome::error(refusal)),
+    };
+    debug_assert_eq!(managed.manifest.parent, ctx.agent.id);
+    let current_parent = runtime.store.agent(ctx.agent.id)?.ok_or_else(|| {
+        crate::RuntimeError::Invalid("integrating parent no longer exists".into())
+    })?;
+    if let Some(field) =
+        runtime.scope_widened_for_existing(&target.scope, &target, &current_parent)?
+    {
+        return Ok(ToolOutcome::error(format!(
+            "integration refused: selected source is outside your current `{field}` scope"
+        )));
+    }
+    let outcome = tokio::task::spawn_blocking(move || {
+        crate::workspace::integrate(&managed.managed_root, &managed.manifest)
+    })
+    .await
+    .map_err(|e| {
+        crate::RuntimeError::Internal(format!("workspace integration task failed: {e}"))
+    })?;
+    let report = match outcome {
+        Ok(crate::workspace::IntegrationOutcome::Landed(report)) => report,
+        Ok(crate::workspace::IntegrationOutcome::Conflicts(paths)) => {
+            let paths: Vec<_> = paths.iter().map(|p| workspace_path_for_reply(p)).collect();
+            return Ok(ToolOutcome::error(format!(
+                "integration refused: parent changed {}; resolve them before integrating the child workspace",
+                paths.join(", ")
+            )));
+        }
+        Err(error) => {
+            return Ok(ToolOutcome::error(format!("integration refused: {error}")));
+        }
+    };
+    let changed_paths: Vec<_> = report
+        .changed_paths
+        .iter()
+        .map(|path| workspace_path_for_reply(path))
+        .collect();
+    Ok(ToolOutcome::ok(
+        serde_json::json!({
+            "child_agent_id": child,
+            "changed_paths": changed_paths,
+            "already_integrated": report.already_integrated,
+        })
+        .to_string(),
+    ))
 }
 
 /// Apply a harness action: validate, transition, record. Returns what the
@@ -388,94 +450,7 @@ pub(crate) async fn apply_action(
             }
         }
         HarnessAction::IntegrateWorkspace { child } => {
-            let Some(target) = runtime.store.agent(child)? else {
-                return Ok(ToolOutcome::error(format!(
-                    "child agent {child} was not found"
-                )));
-            };
-            if target.parent != Some(ctx.agent.id) {
-                return Ok(ToolOutcome::error(format!(
-                    "agent {child} is not your direct child"
-                )));
-            }
-            if !target.status.is_terminal() {
-                return Ok(ToolOutcome::error(format!(
-                    "agent {child} is still {}; wait for it to finish before integrating",
-                    target.status.kind()
-                )));
-            }
-            let Some(managed_root) = runtime.config.delegated_workspace_root.as_ref() else {
-                return Ok(ToolOutcome::error("managed workspaces are not configured"));
-            };
-            let Some(root) = target.scope.workspace_root.as_ref() else {
-                return Ok(ToolOutcome::error(format!(
-                    "agent {child} has no isolated workspace"
-                )));
-            };
-            let manifest = match crate::workspace::load(managed_root, root) {
-                Ok(manifest) if manifest.parent == ctx.agent.id => manifest,
-                Ok(_) => {
-                    return Ok(ToolOutcome::error(
-                        "workspace parent does not match this agent",
-                    ));
-                }
-                Err(error) => {
-                    return Ok(ToolOutcome::error(format!("integration refused: {error}")));
-                }
-            };
-            let current_parent = runtime.store.agent(ctx.agent.id)?.ok_or_else(|| {
-                crate::RuntimeError::Invalid("integrating parent no longer exists".into())
-            })?;
-            if let Some(field) =
-                runtime.scope_widened_for_existing(&target.scope, &target, &current_parent)?
-            {
-                return Ok(ToolOutcome::error(format!(
-                    "integration refused: selected source is outside your current `{field}` scope"
-                )));
-            }
-            let agents = runtime
-                .store
-                .agents(&aether_store::AgentFilter::default())?;
-            for descendant_id in aether_core::agent::subtree_of(&agents, child) {
-                if descendant_id == child {
-                    continue;
-                }
-                let Some(descendant) = agents.iter().find(|a| a.id == descendant_id) else {
-                    continue;
-                };
-                if !descendant.status.is_terminal() {
-                    return Ok(ToolOutcome::error(format!(
-                        "integration refused: descendant {descendant_id} is still {}",
-                        descendant.status.kind()
-                    )));
-                }
-            }
-            let managed_root = managed_root.clone();
-            let report = match tokio::task::spawn_blocking(move || {
-                crate::workspace::integrate(&managed_root, &manifest)
-            })
-            .await
-            .map_err(|e| {
-                crate::RuntimeError::Internal(format!("workspace integration task failed: {e}"))
-            })? {
-                Ok(report) => report,
-                Err(error) => {
-                    return Ok(ToolOutcome::error(format!("integration refused: {error}")));
-                }
-            };
-            let changed_paths: Vec<_> = report
-                .changed_paths
-                .iter()
-                .map(|path| workspace_path_for_reply(path))
-                .collect();
-            Ok(ToolOutcome::ok(
-                serde_json::json!({
-                    "child_agent_id": child,
-                    "changed_paths": changed_paths,
-                    "already_integrated": report.already_integrated,
-                })
-                .to_string(),
-            ))
+            integrate_child_workspace(runtime, ctx, child).await
         }
         HarnessAction::CreateSchedule { spec } => {
             match runtime.create_schedule(spec, ctx.base_actor.clone()) {

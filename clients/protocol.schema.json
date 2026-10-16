@@ -1921,6 +1921,38 @@
       ],
       "type": "object"
     },
+    "ChangedFile": {
+      "properties": {
+        "deletions": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "insertions": {
+          "description": "Line counts; both absent for a binary file.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/FileStatus"
+        }
+      },
+      "required": [
+        "path",
+        "status"
+      ],
+      "type": "object"
+    },
     "Checkpoint": {
       "description": "A durable, validated checkpoint.",
       "properties": {
@@ -3833,6 +3865,61 @@
           "required": [
             "cmd",
             "workspace"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Files, diffstat, commits and a capped patch of an agent's work.",
+          "properties": {
+            "agent": {
+              "$ref": "#/$defs/AgentId"
+            },
+            "cmd": {
+              "const": "workspace_diff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "agent"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Land a finished child's isolated workspace in the source it came\nfrom, through the same conflict check as the `integrate_workspace` tool.",
+          "properties": {
+            "agent": {
+              "$ref": "#/$defs/AgentId"
+            },
+            "cmd": {
+              "const": "workspace_integrate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "agent"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Throw away an agent's isolated workspace. Refused while an agent using\nit is live unless `force`, which does not stop that agent.",
+          "properties": {
+            "agent": {
+              "$ref": "#/$defs/AgentId"
+            },
+            "cmd": {
+              "const": "workspace_discard",
+              "type": "string"
+            },
+            "force": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cmd",
+            "agent"
           ],
           "type": "object"
         },
@@ -7717,6 +7804,14 @@
         "factor"
       ],
       "type": "object"
+    },
+    "FileStatus": {
+      "enum": [
+        "added",
+        "modified",
+        "deleted"
+      ],
+      "type": "string"
     },
     "GitSummary": {
       "properties": {
@@ -12422,6 +12517,54 @@
         {
           "properties": {
             "data": {
+              "$ref": "#/$defs/WorkspaceDiff"
+            },
+            "reply": {
+              "const": "workspace_diff",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/WorkspaceIntegration"
+            },
+            "reply": {
+              "const": "workspace_integration",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/WorkspaceDiscard"
+            },
+            "reply": {
+              "const": "workspace_discarded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
               "$ref": "#/$defs/RemoteStatus"
             },
             "reply": {
@@ -15508,6 +15651,188 @@
       ],
       "type": "object"
     },
+    "WorkspaceCommit": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "turn": {
+          "description": "The agent turn whose start and end HEAD bracket this commit, when\nAether recorded both.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "author",
+        "at",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "WorkspaceDiff": {
+      "description": "An agent's work in its workspace, bounded for the wire.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "ambiguous": {
+          "description": "Other agents may have committed in the same workspace during this\nagent's turns, so files and commits can include their work.",
+          "type": "boolean"
+        },
+        "commits": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceCommit"
+          },
+          "type": "array"
+        },
+        "commits_truncated": {
+          "description": "More than [`COMMIT_LIMIT`] commits; the oldest are not listed.",
+          "type": "boolean"
+        },
+        "deletions": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/ChangedFile"
+          },
+          "type": "array"
+        },
+        "files_truncated": {
+          "description": "More than [`FILE_LIMIT`] files changed; the rest are not listed.",
+          "type": "boolean"
+        },
+        "insertions": {
+          "description": "Lines added and removed across every changed file, listed or not.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "integrated": {
+          "description": "The work was integrated into `source` already.",
+          "type": "boolean"
+        },
+        "isolated": {
+          "description": "The workspace is a managed worktree of this agent's own. Otherwise it\nis shared, and files and commits come from its turns' HEAD snapshots.",
+          "type": "boolean"
+        },
+        "patch": {
+          "description": "At most [`PATCH_LIMIT`] bytes of the patch, then the truncation\nmarker when `patch_truncated`.",
+          "type": "string"
+        },
+        "patch_bytes": {
+          "description": "Size of the whole patch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "patch_truncated": {
+          "type": "boolean"
+        },
+        "source": {
+          "description": "The repository an isolated workspace integrates into.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "workspace",
+        "isolated",
+        "ambiguous",
+        "integrated",
+        "files",
+        "files_truncated",
+        "insertions",
+        "deletions",
+        "commits",
+        "commits_truncated",
+        "patch",
+        "patch_bytes",
+        "patch_truncated"
+      ],
+      "type": "object"
+    },
+    "WorkspaceDiscard": {
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "forced": {
+          "description": "An agent using the workspace was still live.",
+          "type": "boolean"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "workspace",
+        "forced"
+      ],
+      "type": "object"
+    },
+    "WorkspaceIntegration": {
+      "description": "The result of an operator's integration. Refused with `conflicts` when\nthe source changed a path the child also changed; nothing was written.",
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "already_integrated": {
+          "type": "boolean"
+        },
+        "changed_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "conflicts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "integrated": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "source",
+        "integrated",
+        "already_integrated",
+        "changed_paths",
+        "conflicts"
+      ],
+      "type": "object"
+    },
     "WorkspaceValidation": {
       "properties": {
         "git": {
@@ -15550,7 +15875,7 @@
     "$ref": "#/$defs/ClientFrame"
   },
   "min_protocol_version": 17,
-  "protocol_version": 21,
+  "protocol_version": 22,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },
