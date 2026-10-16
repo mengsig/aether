@@ -673,7 +673,7 @@ pub fn check_mcp(
     }
     if !anonymous.is_empty() {
         details.push(format!(
-            "reached without a token (auth = \"optional\"): {}",
+            "no token, auth = \"optional\": {}",
             anonymous.join(", ")
         ));
     }
@@ -725,7 +725,7 @@ fn mcp_retryable(health: &[aether_core::mcp::McpServerHealth]) -> Option<String>
 }
 
 /// Servers whose token variable is unset, as `name (VARIABLE unset)`: those
-/// that failed auth, then those reached without a token because their
+/// that failed auth, then those that go without one because their
 /// auth is optional. Names the variable only; a token is never read here.
 fn mcp_auth_details(health: &[aether_core::mcp::McpServerHealth]) -> (Vec<String>, Vec<String>) {
     use aether_core::mcp::McpAuthState;

@@ -553,7 +553,7 @@ fn an_optional_mcp_token_connects_and_doctor_says_so_without_the_secret() {
     assert!(
         check
             .detail
-            .contains("reached without a token (auth = \"optional\"): notes (NOTES_TOKEN unset)"),
+            .contains("no token, auth = \"optional\": notes (NOTES_TOKEN unset)"),
         "{}",
         check.detail
     );
@@ -562,28 +562,30 @@ fn an_optional_mcp_token_connects_and_doctor_says_so_without_the_secret() {
 
 #[test]
 fn an_optional_mcp_server_that_did_not_answer_is_not_called_connected() {
-    let health = [with_auth(
-        "notes",
-        McpServerState::Failed,
-        McpAuthState::Anonymous,
-    )];
-    let check = check_mcp(1, &health, "aether");
-    assert_eq!(check.level, Level::Warn);
-    assert!(
-        check.detail.contains("0 of 1 server(s) connected"),
-        "{}",
-        check.detail
-    );
-    assert!(
-        check.detail.contains("not answering: notes"),
-        "{}",
-        check.detail
-    );
-    assert!(
-        !check.detail.contains("connected without"),
-        "{}",
-        check.detail
-    );
+    for (state, trouble) in [
+        (McpServerState::Failed, "not answering: notes"),
+        (McpServerState::Unknown, "not contacted yet: notes"),
+    ] {
+        let health = [with_auth("notes", state, McpAuthState::Anonymous)];
+        let check = check_mcp(1, &health, "aether");
+        assert_eq!(check.level, Level::Warn);
+        assert!(
+            check.detail.contains("0 of 1 server(s) connected"),
+            "{}",
+            check.detail
+        );
+        assert!(check.detail.contains(trouble), "{}", check.detail);
+        assert!(
+            check
+                .detail
+                .contains("no token, auth = \"optional\": notes (NOTES_TOKEN unset)"),
+            "{}",
+            check.detail
+        );
+        for claim in ["connected without", "reached"] {
+            assert!(!check.detail.contains(claim), "{}", check.detail);
+        }
+    }
 }
 
 #[test]
