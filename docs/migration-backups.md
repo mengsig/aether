@@ -1,19 +1,54 @@
 # Pre-migration database backups
 
-Opening an existing database with an older schema first creates a SQLite
-snapshot in `migration-backups/` next to that database. The filename records the
-old and new schema versions plus a unique ID. Fresh databases and databases
-already on the current schema do not create another snapshot.
+Opening an existing database with an older schema first creates a
+zstd-compressed SQLite snapshot in `migration-backups/` next to that database,
+named `schema-<old>-before-<new>-<id>.sqlite.zst`. Fresh databases and
+databases already on the current schema do not create another snapshot.
+Backups written by older versions are plain `.sqlite` files and are managed
+the same way.
 
 The snapshot uses SQLite's backup API, preserving committed WAL data and row
-IDs used by memory search. A temporary file is published under its final name
-only after the copy completes and is synced. The backup directory is private
-on Unix. If copying or syncing fails, startup fails before migration begins;
-Aether does not silently proceed without the backup. Existing snapshots are
-never overwritten. Background storage maintenance keeps the latest three and
-anything within fourteen days by default; configure `[storage] backups_keep`
-and `backups_days`, or set `backups_days = 0` to disable pruning. See
-[storage configuration](configuration.md#storage).
+IDs used by memory search. Aether checks that the SQLite header accounts for
+every byte of the copy, compresses it, then decompresses the result and
+compares its SHA-256 with the copy. The compressed file is published under its
+final name only after that check passes and it is synced; the uncompressed
+copy is then deleted. The backup directory is private on Unix. If copying,
+checking or syncing fails, startup fails before migration begins; Aether does
+not silently proceed without the backup. Existing snapshots are never
+overwritten.
+
+Background storage maintenance, which runs at startup and hourly, keeps at
+most the newest `[storage] migration_backups_keep` snapshots (two by default),
+whatever their age. Below that cap it keeps the newest `backups_keep` and
+anything within `backups_days` (fourteen days by default); `backups_days = 0`
+turns off only the age rule. `aether storage` lists the backups' bytes and the
+decision for each file. See [storage configuration](configuration.md#storage).
+
+## Restoring a backup
+
+`aether stop` returns once the daemon has accepted the request, before it has
+finished writing the database. The daemon holds an exclusive lock on
+`aether.db.lock` until its process exits, so run the restore under that lock:
+`flock` waits for the daemon to be gone and keeps a new one from starting
+until the restore is done.
+
+```sh
+aether stop
+cd ~/.local/share/aether            # the directory holding aether.db
+flock aether.db.lock sh -euc '
+  cp aether.db aether.db.before-restore
+  zstd -d -f migration-backups/schema-21-before-22-<id>.sqlite.zst -o aether.db
+  rm -f aether.db-wal aether.db-shm
+'
+```
+
+Without `flock` (macOS has none by default), wait until
+`lsof aether.db aether.db.lock` lists no process before running the three
+commands, and start no daemon until they are done.
+
+The file is a single standard zstd frame, so `unzstd` or any zstd library
+gives the same bytes. To look at a snapshot without restoring it, decompress
+it to another path and open that read-only.
 
 These are database snapshots, not complete workspace archives. Artifact bytes
 remain in the database's sibling `artifacts/` directory, and the images sent

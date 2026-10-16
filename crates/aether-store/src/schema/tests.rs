@@ -26,15 +26,20 @@ fn migration_backup_preserves_wal_data_and_row_ids_before_upgrade() {
     let path = directory.path().join("aether.db");
     let previous = previous_database(&path);
     previous.execute_batch("CREATE TABLE backup_probe(key TEXT PRIMARY KEY, body TEXT); INSERT INTO backup_probe VALUES ('first','removed'),('second','committed in WAL'); DELETE FROM backup_probe WHERE key='first';").expect("probe");
+    let before = dump(&previous);
     let upgraded = crate::SqliteStore::open(&path).expect("upgrade");
     let backups: Vec<_> = std::fs::read_dir(directory.path().join("migration-backups"))
         .expect("backups")
         .map(|entry| entry.expect("entry").path())
         .collect();
     assert_eq!(backups.len(), 1);
-    let backup =
-        Connection::open_with_flags(&backups[0], rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .expect("backup");
+    let (_restore_dir, restored) = restore(&backups[0]);
+    let compressed = std::fs::metadata(&backups[0]).expect("backup").len();
+    let plain = std::fs::metadata(&restored).expect("restored").len();
+    assert!(compressed < plain, "{compressed} >= {plain}");
+    let backup = Connection::open_with_flags(&restored, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .expect("backup");
+    assert_eq!(dump(&backup), before, "the restored store is identical");
     assert_eq!(version(&backup), SCHEMA_VERSION - 1);
     let probe: (i64, String) = backup
         .query_row(
@@ -59,9 +64,7 @@ fn migration_backup_preserves_wal_data_and_row_ids_before_upgrade() {
         std::fs::read_dir(directory.path().join("migration-backups"))
             .expect("backups")
             .map(|entry| entry.expect("entry").path())
-            .filter(|path| path
-                .extension()
-                .is_some_and(|extension| extension == "sqlite"))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "zst"))
             .count(),
         1
     );
@@ -113,6 +116,69 @@ fn v9_initializes_cancellation_intent_without_overwriting_existing_state() {
             .expect("journal");
         assert_eq!(body, existing.unwrap_or("{}"));
     }
+}
+
+/// Restore a migration backup as docs/migration-backups.md describes: it is
+/// a zstd frame holding the plain SQLite file.
+fn restore(backup: &std::path::Path) -> (tempfile::TempDir, std::path::PathBuf) {
+    assert!(
+        backup.to_string_lossy().ends_with(".sqlite.zst"),
+        "{}",
+        backup.display()
+    );
+    let directory = tempfile::tempdir().expect("restore directory");
+    let restored = directory.path().join("aether.db");
+    zstd::stream::copy_decode(
+        std::fs::File::open(backup).expect("backup"),
+        std::fs::File::create(&restored).expect("restored"),
+    )
+    .expect("decompress");
+    assert!(std::fs::metadata(&restored).expect("restored").len() > 0);
+    (directory, restored)
+}
+
+/// Every schema object and every row of every ordinary table, by row ID.
+fn dump(conn: &Connection) -> Vec<String> {
+    let mut statement = conn
+        .prepare("SELECT type, name, sql FROM sqlite_master ORDER BY type, name")
+        .expect("schema");
+    let objects: Vec<(String, String, Option<String>)> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("objects")
+        .collect::<rusqlite::Result<_>>()
+        .expect("object");
+    assert!(!objects.is_empty());
+    let mut lines = Vec::new();
+    for (kind, name, sql) in objects {
+        lines.push(format!("{kind} {name} {sql:?}"));
+        let virtual_table = sql
+            .as_deref()
+            .is_some_and(|sql| sql.starts_with("CREATE VIRTUAL"));
+        if kind != "table" || virtual_table || name.starts_with("sqlite_") {
+            continue;
+        }
+        // Row IDs are compared where a table has them; sorting makes order irrelevant.
+        let rowid = !sql
+            .as_deref()
+            .is_some_and(|sql| sql.contains("WITHOUT ROWID"));
+        let query = if rowid {
+            format!("SELECT rowid, * FROM \"{name}\"")
+        } else {
+            format!("SELECT * FROM \"{name}\"")
+        };
+        let mut rows = conn.prepare(&query).expect("rows");
+        let columns = rows.column_count();
+        let mut cursor = rows.query([]).expect("query");
+        let mut table = Vec::new();
+        while let Some(row) = cursor.next().expect("row") {
+            let values: Vec<rusqlite::types::Value> =
+                (0..columns).map(|i| row.get(i).expect("value")).collect();
+            table.push(format!("{name} {values:?}"));
+        }
+        table.sort();
+        lines.extend(table);
+    }
+    lines
 }
 
 fn version(conn: &Connection) -> u32 {
@@ -621,9 +687,9 @@ fn v19_backs_up_a_v18_store_and_keeps_binaries_without_image_refs_out() {
     let name = backups[0].file_name().expect("name").to_string_lossy();
     let prefix = format!("schema-18-before-{SCHEMA_VERSION}-");
     assert!(name.starts_with(&prefix), "{name}");
-    let backup =
-        Connection::open_with_flags(&backups[0], rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .expect("backup");
+    let (_restore_dir, restored) = restore(&backups[0]);
+    let backup = Connection::open_with_flags(&restored, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .expect("backup");
     assert_eq!(version(&backup), LAST_SCHEMA_WITHOUT_IMAGE_REFS);
 
     let conn = Connection::open(&path).expect("reopen");
@@ -878,7 +944,8 @@ fn v22_feedback_migration_preserves_v21_memories_and_saves_a_readable_backup() {
 }
 
 fn assert_feedback_backup(path: &std::path::Path, record: &aether_core::memory::MemoryRecord) {
-    let backup = Connection::open(path).unwrap();
+    let (_restore_dir, restored) = restore(path);
+    let backup = Connection::open(restored).unwrap();
     assert_eq!(version(&backup), 21);
     assert!(backup.prepare("SELECT * FROM memory_feedback").is_err());
     assert_eq!(

@@ -674,3 +674,6 @@ fn a_feedback_list_without_a_ranking_decodes_as_unranked() {
 
 #[path = "tests/provider_headroom.rs"]
 mod provider_headroom;
+
+#[path = "tests/workspace_review.rs"]
+mod workspace_review;

@@ -38,6 +38,7 @@ regex = "1.13.1"
 nix = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs"] }
 fs4 = { workspace = true }
+tempfile = { workspace = true }
 
 [dev-dependencies]
 aether-client = { workspace = true }

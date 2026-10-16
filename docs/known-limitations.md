@@ -177,8 +177,10 @@ looks like a boundary and is not one.
   though no retry is in flight; the disconnect notice gives the retry step.
 - The agent scheduling tool cannot create schedules that spawn a fresh agent;
   the CLI can (roadmap).
-- A per-agent view of Git commits with their provenance is not shipped
-  (roadmap).
+- `aether workspace diff` attributes commits in a shared workspace by the
+  HEADs recorded at each turn's start and end, so another agent's commits in
+  the same window are included; the reply flags such diffs `ambiguous`. There
+  is no TUI or phone view of it yet (roadmap).
 - A background PTY shell has been seen to ignore Ctrl-C on a heavily
   oversubscribed host (roadmap).
 

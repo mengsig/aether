@@ -33,6 +33,8 @@ impl Command {
             Self::RecordMemoryFeedback { .. } | Self::RetractMemoryFeedback { .. }
             | Self::MemoryFeedback { .. } => Introduced::Feature(features::MEMORY_FEEDBACK),
             Self::StorageStatus | Self::StorageGc { .. } => Introduced::Feature(features::STORAGE),
+            Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
+            | Self::WorkspaceDiscard { .. } => Introduced::Feature(features::WORKSPACE_REVIEW),
             Self::AppendNote { .. } => Introduced::Feature(features::NOTES),
 
             Self::GetAttention | Self::CompletePath { .. } | Self::ListWorkspaces { .. }
@@ -121,6 +123,10 @@ mod tests {
             (
                 json!({"cmd": "memory_feedback", "memory": memory}),
                 features::MEMORY_FEEDBACK,
+            ),
+            (
+                json!({"cmd": "workspace_discard", "agent": aether_core::id::AgentId::new()}),
+                features::WORKSPACE_REVIEW,
             ),
             (
                 json!({"cmd": "append_note", "agent": aether_core::id::AgentId::new(), "text": "hi"}),

@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::RuntimeError;
 
 pub(crate) mod gc;
+pub(crate) mod review;
 
 const MANIFEST: &str = "manifest.json";
 const JOURNAL: &str = "integration.json";
@@ -48,6 +49,14 @@ pub(crate) struct WorkspaceManifest {
 pub(crate) struct IntegrationReport {
     pub changed_paths: Vec<PathBuf>,
     pub already_integrated: bool,
+}
+
+/// What an integration did: landed, or refused before writing anything
+/// because the source changed paths the child also changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IntegrationOutcome {
+    Landed(IntegrationReport),
+    Conflicts(Vec<PathBuf>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1441,20 +1450,8 @@ fn apply_changes(
     Ok(())
 }
 
-pub(crate) fn integrate(
-    managed_root: &Path,
-    manifest: &WorkspaceManifest,
-) -> crate::Result<IntegrationReport> {
-    let trusted = load(managed_root, &manifest.workspace)?;
-    if trusted.parent != manifest.parent
-        || trusted.source != manifest.source
-        || trusted.baseline_tree != manifest.baseline_tree
-    {
-        return Err(invalid(
-            "workspace manifest differs from the private managed record",
-        ));
-    }
-    let root = real_directory(managed_root, false)?;
+/// Serialize every change to managed worktrees; released when dropped.
+fn lock_integrations(root: &Path) -> crate::Result<File> {
     let lock_path = root.join(".integration.lock");
     let lock = OpenOptions::new()
         .write(true)
@@ -1465,6 +1462,24 @@ pub(crate) fn integrate(
         .map_err(|error| io_error("cannot open integration lock", &lock_path, error))?;
     lock.lock()
         .map_err(|error| io_error("cannot lock workspace integrations", &lock_path, error))?;
+    Ok(lock)
+}
+
+pub(crate) fn integrate(
+    managed_root: &Path,
+    manifest: &WorkspaceManifest,
+) -> crate::Result<IntegrationOutcome> {
+    let trusted = load(managed_root, &manifest.workspace)?;
+    if trusted.parent != manifest.parent
+        || trusted.source != manifest.source
+        || trusted.baseline_tree != manifest.baseline_tree
+    {
+        return Err(invalid(
+            "workspace manifest differs from the private managed record",
+        ));
+    }
+    let root = real_directory(managed_root, false)?;
+    let _lock = lock_integrations(&root)?;
     let directory = trusted
         .workspace
         .parent()
@@ -1488,15 +1503,19 @@ pub(crate) fn integrate(
     let changed = changed_paths(&baseline, &final_tree);
     let current_tree_id = stable_snapshot(&trusted.source, &root)?;
     let current = tree_entries(&trusted.source, &current_tree_id)?;
+    let conflicts: Vec<PathBuf> = changed
+        .iter()
+        .filter(|path| {
+            let actual = current.get(*path);
+            actual != baseline.get(*path) && actual != final_tree.get(*path)
+        })
+        .cloned()
+        .collect();
+    if !conflicts.is_empty() {
+        return Ok(IntegrationOutcome::Conflicts(conflicts));
+    }
     let mut desired = current.clone();
     for path in &changed {
-        let actual = current.get(path);
-        if actual != baseline.get(path) && actual != final_tree.get(path) {
-            return Err(invalid(format!(
-                "parent changed {}; resolve it before integrating the child workspace",
-                path.display()
-            )));
-        }
         if let Some(entry) = final_tree.get(path) {
             desired.insert(path.clone(), entry.clone());
         } else {
@@ -1555,10 +1574,10 @@ pub(crate) fn integrate(
     fs::remove_file(&journal_path)
         .map_err(|error| io_error("cannot clear integration journal", &journal_path, error))?;
     sync_directory(&directory)?;
-    Ok(IntegrationReport {
+    Ok(IntegrationOutcome::Landed(IntegrationReport {
         changed_paths: changed,
         already_integrated,
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -1578,6 +1597,13 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         output.stdout
+    }
+
+    fn landed(outcome: crate::Result<IntegrationOutcome>) -> IntegrationReport {
+        match outcome.unwrap() {
+            IntegrationOutcome::Landed(report) => report,
+            IntegrationOutcome::Conflicts(paths) => panic!("unexpected conflicts: {paths:?}"),
+        }
     }
 
     fn repo() -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -1662,13 +1688,22 @@ mod tests {
         fs::write(manifest.workspace.join("tracked.txt"), b"child one\n").unwrap();
         fs::write(manifest.workspace.join("second.txt"), b"child two\n").unwrap();
         fs::write(source.join("second.txt"), b"parent edit\n").unwrap();
-        let error = integrate(&managed, &manifest).unwrap_err().to_string();
-        assert!(error.contains("parent changed"), "{error}");
+        fs::write(source.join("tracked.txt"), b"parent edit\n").unwrap();
+        let outcome = integrate(&managed, &manifest).unwrap();
+        assert_eq!(
+            outcome,
+            IntegrationOutcome::Conflicts(vec![
+                PathBuf::from("second.txt"),
+                PathBuf::from("tracked.txt")
+            ]),
+            "every conflicting path is listed, not only the first"
+        );
+        fs::write(source.join("tracked.txt"), b"initial\n").unwrap();
         assert_eq!(fs::read(source.join("tracked.txt")).unwrap(), b"initial\n");
         assert!(!manifest.workspace.parent().unwrap().join(JOURNAL).exists());
 
         fs::write(source.join("second.txt"), b"old\n").unwrap();
-        let first = integrate(&managed, &manifest).unwrap();
+        let first = landed(integrate(&managed, &manifest));
         assert!(!first.already_integrated);
         assert_eq!(
             first.changed_paths,
@@ -1683,7 +1718,7 @@ mod tests {
             fs::read(manifest.workspace.join("tracked.txt")).unwrap(),
             b"child one\n"
         );
-        assert!(integrate(&managed, &manifest).unwrap().already_integrated);
+        assert!(landed(integrate(&managed, &manifest)).already_integrated);
     }
 
     #[test]
@@ -1712,7 +1747,7 @@ mod tests {
         )
         .unwrap();
 
-        integrate(&managed, &manifest).unwrap();
+        landed(integrate(&managed, &manifest));
         for (name, expected) in [
             ("tracked.txt", 0o600),
             ("removed.txt", 0o700),
@@ -1747,7 +1782,7 @@ mod tests {
         let manifest = create(&managed, &source, AgentId::new()).unwrap();
         fs::write(manifest.workspace.join("tracked.txt"), b"new contents\n").unwrap();
 
-        integrate(&managed, &manifest).unwrap();
+        landed(integrate(&managed, &manifest));
         assert_eq!(
             fs::metadata(source.join("tracked.txt"))
                 .unwrap()
@@ -1769,7 +1804,7 @@ mod tests {
         let manifest = create(&managed, &source, AgentId::new()).unwrap();
         fs::write(manifest.workspace.join("tracked.txt"), b"new contents\n").unwrap();
 
-        integrate(&managed, &manifest).unwrap();
+        landed(integrate(&managed, &manifest));
         assert_eq!(
             fs::metadata(source.join("tracked.txt"))
                 .unwrap()
@@ -1851,7 +1886,7 @@ mod tests {
         assert!(error.contains("ignored"), "{error}");
         assert_eq!(fs::read(source.join("folder/old")).unwrap(), b"old");
         fs::remove_file(source.join("ignored")).unwrap();
-        integrate(&managed, &manifest).unwrap();
+        landed(integrate(&managed, &manifest));
         assert_eq!(fs::read(source.join("folder")).unwrap(), b"now a file");
         assert_eq!(fs::read(source.join("plain/new")).unwrap(), b"nested");
         assert_eq!(fs::read(source.join("ignored")).unwrap(), b"child");
@@ -1876,7 +1911,7 @@ mod tests {
         )
         .unwrap();
         fs::write(source.join("second.txt"), b"new two\n").unwrap();
-        let report = integrate(&managed, &manifest).unwrap();
+        let report = landed(integrate(&managed, &manifest));
         assert!(!report.already_integrated);
         assert_eq!(fs::read(source.join("tracked.txt")).unwrap(), b"new one\n");
         assert!(!manifest.workspace.parent().unwrap().join(JOURNAL).exists());

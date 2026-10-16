@@ -100,6 +100,9 @@ import type {
   UpdateScheduleCommand,
   ValidateWorkspaceCommand,
   WakeCommand,
+  WorkspaceDiffCommand,
+  WorkspaceDiscardCommand,
+  WorkspaceIntegrateCommand,
 } from "../../protocol.ts";
 
 export type Command =
@@ -200,4 +203,7 @@ export type Command =
   | UpdateDeviceCommand
   | UpdateScheduleCommand
   | ValidateWorkspaceCommand
-  | WakeCommand;
+  | WakeCommand
+  | WorkspaceDiffCommand
+  | WorkspaceDiscardCommand
+  | WorkspaceIntegrateCommand;
