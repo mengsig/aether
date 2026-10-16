@@ -89,6 +89,14 @@
   {
     "access": "operate",
     "command": {
+      "cmd": "append_note",
+      "agent": "agt_00000000000000000000000000",
+      "text": "fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
       "cmd": "cancel",
       "agent": "agt_00000000000000000000000000"
     }

@@ -439,6 +439,16 @@ fn fixtures() -> Vec<(&'static str, CellModel)> {
             },
         ),
         (
+            "notice_note",
+            CellModel::Notice {
+                kind: NoticeKind::Note,
+                text: NoticeText::joined(&[
+                    &format!("3 items shipped: {}", "the release notes are ready for review ".repeat(3).trim_end()),
+                    "https://example.com/pull/12",
+                ], NoticeSeparator::Dot),
+            },
+        ),
+        (
             "exec_engine_wrapped",
             CellModel::Exec {
                 call: Some(ToolCallId::new()),

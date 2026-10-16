@@ -25,6 +25,10 @@ from ._protocol_commands.alias import (
     alias_repository,
 )
 
+from ._protocol_commands.append import (
+    append_note,
+)
+
 from ._protocol_commands.archive import (
     archive,
 )

@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::event::{Actor, Event, EventKind};
 use crate::id::{AgentId, ApprovalId, ArtifactId, InvocationId, SnapshotId, ToolCallId};
 use crate::model::{ContentBlock, MessageRole, ModelRef, StopReason, Usage};
+use crate::note::{Note, NoteContext};
 use crate::snapshot::ContextLayer;
 use crate::time::Timestamp;
 use crate::tool::{ApprovalDecision, SideEffectClass};
@@ -33,6 +34,10 @@ pub struct ReplayFrame {
     pub context: Option<ReplayContext>,
     /// What was said, in order - what it was shown and what it answered.
     pub messages: Vec<ReplayMessage>,
+    /// Notes a client appended after the turn before ended, in order. Notes
+    /// written before the first turn open the first frame.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<ReplayNote>,
     /// What it did.
     pub tools: Vec<ReplayTool>,
     pub approvals: Vec<ReplayApproval>,
@@ -59,6 +64,30 @@ pub struct ReplayMessage {
     pub content: Vec<ContentBlock>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invocation: Option<InvocationId>,
+}
+
+/// A note appended to the transcript; it started no turn.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReplayNote {
+    pub at: Timestamp,
+    pub seq: u64,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<String>,
+    #[serde(default)]
+    pub context: NoteContext,
+}
+
+impl ReplayNote {
+    fn new(event: &Event, note: Note) -> Self {
+        Self {
+            at: event.at,
+            seq: event.seq,
+            text: note.text,
+            links: note.links,
+            context: note.context,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -156,6 +185,7 @@ impl TurnOutcome {
 pub fn build(agent: AgentId, events: &[Event]) -> Vec<ReplayFrame> {
     let mut frames: Vec<ReplayFrame> = Vec::new();
     let mut prologue: Vec<ReplayMessage> = Vec::new();
+    let mut prologue_notes: Vec<ReplayNote> = Vec::new();
     // Which frame asked. A tool outcome or an approval answer that lands
     // after the next turn has opened belongs to the turn that requested it,
     // not to whichever frame happens to be last - written there it would be
@@ -172,6 +202,7 @@ pub fn build(agent: AgentId, events: &[Event]) -> Vec<ReplayFrame> {
                 to_seq: event.seq,
                 context: None,
                 messages: std::mem::take(&mut prologue),
+                notes: std::mem::take(&mut prologue_notes),
                 tools: Vec::new(),
                 approvals: Vec::new(),
                 usage: Usage::default(),
@@ -181,7 +212,9 @@ pub fn build(agent: AgentId, events: &[Event]) -> Vec<ReplayFrame> {
             continue;
         }
         if frames.is_empty() {
-            if let EventKind::AgentMessage {
+            if let Some(note) = Note::of(&event.kind) {
+                prologue_notes.push(ReplayNote::new(event, note));
+            } else if let EventKind::AgentMessage {
                 role,
                 content,
                 invocation,
@@ -340,6 +373,11 @@ fn take(frame: &mut ReplayFrame, event: &Event) {
             if let Some(a) = frame.approvals.iter_mut().find(|a| a.id == *approval) {
                 a.decision = Some(*decision);
                 a.decided_by = Some(by.original().clone());
+            }
+        }
+        EventKind::Custom { .. } => {
+            if let Some(note) = Note::of(&event.kind) {
+                frame.notes.push(ReplayNote::new(event, note));
             }
         }
         EventKind::AgentUsageUpdated { turn_usage, .. } => {

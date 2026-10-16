@@ -283,7 +283,8 @@ pub fn category(model: &CellModel) -> Category {
             | NoticeKind::ModelChange
             | NoticeKind::Handoff
             | NoticeKind::Cancelled
-            | NoticeKind::Trigger { .. } => Status,
+            | NoticeKind::Trigger { .. }
+            | NoticeKind::Note => Status,
         },
         CellModel::Compaction(_) => Compaction,
         CellModel::Separator { .. } => Usage,

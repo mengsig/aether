@@ -72,6 +72,7 @@ struct Stub {
     reject_models: bool,
     invalid_models: bool,
     features: Vec<String>,
+    replay_note: bool,
 }
 impl Default for Stub {
     fn default() -> Self {
@@ -89,6 +90,7 @@ impl Default for Stub {
             reject_models: false,
             invalid_models: false,
             features: Vec::new(),
+            replay_note: false,
         }
     }
 }
@@ -315,6 +317,7 @@ async fn cli_with_socket(
                 Command::GetAgent { .. } => {
                     Err(ErrorReply::new(ErrorCode::NotFound, "unknown agent"))
                 }
+                Command::Replay { .. } if stub.replay_note => Ok(Reply::Replay(vec![replayed_note()])),
                 Command::Replay { .. } => Ok(Reply::Replay(vec![])),
                 Command::SendMessage { .. } => {
                     Err(ErrorReply::new(ErrorCode::NotFound, "unknown agent"))
@@ -1004,6 +1007,32 @@ async fn replay_distinguishes_unknown_agents_from_real_agents_without_turns() {
     let out = cli(&["replay", AGENT], Stub::default()).await;
     assert!(out.status.success());
     assert!(stdout(&out).contains("has taken no turns yet"));
+}
+
+/// One turn that followed a note a client appended.
+fn replayed_note() -> aether_core::replay::ReplayFrame {
+    serde_json::from_value(json!({
+        "agent": AGENT, "turn": 1, "started_at": AT, "from_seq": 3, "to_seq": 4,
+        "messages": [], "tools": [], "approvals": [], "usage": aether_core::model::Usage::default(), "duration_ms": 0,
+        "outcome": {"outcome": "running"},
+        "notes": [{"at": AT, "seq": 2, "text": "3 items shipped", "context": "none"}],
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn replay_prints_a_note_a_client_appended() {
+    let stub = Stub {
+        replay_note: true,
+        ..Stub::default()
+    };
+    let out = cli(&["replay", AGENT], stub).await;
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("note  3 items shipped"),
+        "{}",
+        stdout(&out)
+    );
 }
 
 #[tokio::test]

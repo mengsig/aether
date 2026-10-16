@@ -121,6 +121,27 @@ impl Client {
         }
     }
 
+    /// Append `note` to `agent`'s transcript without starting a turn.
+    /// Returns the note's event sequence number. A daemon that does not
+    /// announce `notes` is refused before anything is sent.
+    pub async fn append_note(&self, agent: AgentId, note: aether_core::note::Note) -> Result<u64> {
+        let aether_core::note::Note {
+            text,
+            links,
+            context,
+        } = note;
+        let command = Command::AppendNote {
+            agent,
+            text,
+            links,
+            context,
+        };
+        match self.request(command).await? {
+            Reply::NoteAppended { seq } => Ok(seq),
+            other => Err(unexpected("note_appended", &other)),
+        }
+    }
+
     /// Fan a message out to `root` and every live agent beneath it. Returns
     /// one delivery per agent reached, in delivery order.
     pub async fn send_message_subtree(

@@ -1486,6 +1486,14 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             t.close_calls(at);
             t.close_questions(super::QuestionState::AskerEnded);
         }
+        EventKind::Custom { name, .. } if name == aether_core::note::NOTE_EVENT => {
+            if let Some(note) = aether_core::note::Note::of(&event.kind) {
+                let mut parts = vec![note.text.trim()];
+                parts.extend(note.links.iter().map(String::as_str));
+                let text = NoticeText::joined(&parts, NoticeSeparator::Dot);
+                notice(t, at, NoticeKind::Note, text);
+            }
+        }
         EventKind::Custom { name, payload } if name == "store.write_failed" => {
             // Recorded after writes resume: an outage notice is history, not a live hold.
             let during = payload["during"].as_str().unwrap_or("a write");

@@ -235,6 +235,8 @@ pub enum NoticeKind {
         /// The delivering schedule, named on screen once the TUI knows it.
         schedule: Option<ScheduleId>,
     },
+    /// A note a client appended; it woke nobody.
+    Note,
 }
 
 #[derive(Debug, Clone, PartialEq)]

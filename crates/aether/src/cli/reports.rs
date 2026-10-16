@@ -232,6 +232,9 @@ pub async fn replay(
                 short(&blocks(&message.content), 100)
             );
         }
+        for note in &frame.notes {
+            println!("note  {}", short(&note.text, 100));
+        }
         for tool in &frame.tools {
             println!(
                 "tool  {} {} → {}",

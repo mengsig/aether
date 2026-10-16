@@ -356,6 +356,7 @@ mod tests {
             ("accept_memory", &["id"]),
             ("add_approval_rule", &["decision", "match", "scope"]),
             ("alias_repository", &["alias"]),
+            ("append_note", &["agent", "text"]),
             ("archive", &["target"]),
             ("auth_status", &[]),
             ("cancel", &["agent"]),

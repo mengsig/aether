@@ -6,6 +6,7 @@ import type {
   ReplayApproval,
   ReplayContext,
   ReplayMessage,
+  ReplayNote,
   ReplayTool,
   TurnOutcome,
   Usage,
@@ -22,6 +23,7 @@ export interface ReplayFrame {
   "ended_at"?: string | null;
   "from_seq": number;
   "messages": Array<ReplayMessage>;
+  "notes"?: Array<ReplayNote>;
   "outcome": TurnOutcome;
   "started_at": string;
   "to_seq": number;

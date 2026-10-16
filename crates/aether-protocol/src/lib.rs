@@ -192,6 +192,8 @@ pub mod features {
     pub const BUILD_CACHE: &str = "build_cache";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
+    /// The daemon serves `append_note`: a transcript entry that wakes nobody.
+    pub const NOTES: &str = "notes";
 }
 
 mod handshake;

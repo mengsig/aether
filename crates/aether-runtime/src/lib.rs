@@ -21,6 +21,7 @@ mod inspection;
 pub mod memory_context;
 pub mod memory_curation;
 mod memory_feedback;
+pub mod notes;
 pub mod recovery;
 mod repository_aliases;
 pub mod resources;

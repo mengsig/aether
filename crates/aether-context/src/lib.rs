@@ -52,6 +52,10 @@ pub struct ContextInputs<'a> {
     /// Transcript entries after the checkpoint (or all, when none).
     pub transcript: &'a [TranscriptEntry],
     pub memories: &'a [MemoryRecord],
+    /// `digest` notes appended since the previous turn started, oldest first.
+    pub notes: &'a [aether_core::note::Note],
+    /// Older such notes left out of `notes`.
+    pub notes_omitted: usize,
     pub tools: Vec<ToolSpec>,
     /// Model-family instructions from the registry, if any.
     pub model_profile: Option<&'a str>,

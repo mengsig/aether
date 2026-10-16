@@ -33,6 +33,7 @@ impl Command {
             Self::RecordMemoryFeedback { .. } | Self::RetractMemoryFeedback { .. }
             | Self::MemoryFeedback { .. } => Introduced::Feature(features::MEMORY_FEEDBACK),
             Self::StorageStatus | Self::StorageGc { .. } => Introduced::Feature(features::STORAGE),
+            Self::AppendNote { .. } => Introduced::Feature(features::NOTES),
 
             Self::GetAttention | Self::CompletePath { .. } | Self::ListWorkspaces { .. }
             | Self::ValidateWorkspace { .. } | Self::GetGitSummary { .. } | Self::GetRemote
@@ -120,6 +121,10 @@ mod tests {
             (
                 json!({"cmd": "memory_feedback", "memory": memory}),
                 features::MEMORY_FEEDBACK,
+            ),
+            (
+                json!({"cmd": "append_note", "agent": aether_core::id::AgentId::new(), "text": "hi"}),
+                features::NOTES,
             ),
         ] {
             let command = command(wire);

@@ -35,6 +35,7 @@ from ._ReplyMemorySeeded import ReplyMemorySeeded
 from ._ReplyMessageSent import ReplyMessageSent
 from ._ReplyMessagesSent import ReplyMessagesSent
 from ._ReplyModels import ReplyModels
+from ._ReplyNoteAppended import ReplyNoteAppended
 from ._ReplyOk import ReplyOk
 from ._ReplyPairing import ReplyPairing
 from ._ReplyPathCompletions import ReplyPathCompletions
@@ -85,6 +86,7 @@ Reply = (
     ReplyTask |
     ReplyTasks |
     ReplyMessageSent |
+    ReplyNoteAppended |
     ReplyMessagesSent |
     ReplyApprovals |
     ReplyApprovalRule |

@@ -26,6 +26,7 @@ pub mod mcp;
 pub mod memory;
 pub mod memory_feedback;
 pub mod model;
+pub mod note;
 pub mod private_file;
 pub mod provider;
 pub mod redact;

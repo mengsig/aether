@@ -43,6 +43,7 @@ export function applyEvent(state, value) {
 function eventDetail(kind,name,actor,agents) {
   if (name === 'submissions.evicted') return 'Saved delivery receipts were discarded. Review unresolved deliveries before retrying.';
   if (name === 'remote.restricted') return 'Remote administration changed. Details are available only on the host.';
+  if (name === 'note.appended') return String(object(kind.payload).text ?? name);
   if (name === 'approval.resolved') return `${String(kind.decision)} · Decided by: ${actorLabel(actor,agents)}`;
   return String(kind.question ?? kind.summary ?? kind.error ?? kind.reason ?? name);
 }

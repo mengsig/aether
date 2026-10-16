@@ -150,6 +150,14 @@ test('restricted remote events retain cursor continuity without inventing admin 
   } finally {store.dispose();}
 });
 
+test('an appended note shows its text in the activity feed',()=>{
+  const {transport,emit}=mock();const store=createStore(transport,{storage:null});
+  try {
+    emit({frame:'event',event:{seq:21,at:'2026-10-12T00:00:00Z',agent_id:'agt_00000000000000000000000001',kind:{type:'custom',name:'note.appended',payload:{text:'3 items shipped',context:'none'}}}});
+    assert.equal(store.get().activity.at(-1).kind,'note.appended');assert.equal(store.get().activity.at(-1).detail,'3 items shipped');
+  } finally {store.dispose();}
+});
+
 test('uncertain delivery stays in its ledger instead of raising an unrelated global error',async()=>{
   const {transport}=mock();const store=createStore(transport,{storage:null});store.patch({connection:'online',role:'operator'});
   try {

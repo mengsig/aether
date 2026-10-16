@@ -181,6 +181,10 @@ cannot set it. A client must check the feature before sending the field: an
 older daemon ignores it and the agent builds elsewhere. The Rust client
 refuses such a create itself.
 
+`notes` means the daemon serves `append_note` (see [notes](#notes)). An
+older daemon refuses the command as unknown; the Rust client refuses to send
+it to one.
+
 ## Naming a checkout
 
 An agent's memory is scoped by `scope.repository`. Left unset, the daemon
@@ -256,6 +260,31 @@ put an old agent's new memories under the old name again, so an alias is
 permanent. `list_repository_aliases` answers `RepositoryAliases`, every alias
 ordered by name. `alias_repository` is host only, so a paired device cannot
 send it; it can list them. Check the `repository_aliases` feature first.
+
+## Notes
+
+`append_note` adds a note to an agent's transcript without starting a turn:
+
+```json
+{"cmd": "append_note", "agent": "agt_...", "text": "3 items shipped",
+  "links": ["https://github.com/o/r/pull/7"], "context": "digest"}
+```
+
+`text` is at most 2048 bytes and not blank; `links` holds at most 8, each at
+most 512 bytes with no control characters. A note over a limit is refused
+with `invalid_argument` naming the limit. Nothing is queued in the agent's
+inbox, so the note never wakes it, and it is never sent to the model as a user
+message. It is stored as one `custom` event named `note.appended` whose
+payload is the note, and the reply, `NoteAppended`, carries that event's
+`seq`. The TUI shows it as a note, `aether replay` prints it in the turn it
+follows, and the phone's activity feed shows its text.
+
+`context` is `none` by default: only people see the note. With `digest` the
+agent's next turn is also given it, in a compact list in its runtime state:
+the digest notes appended since its previous turn started, at most 10 (older
+ones are counted), each cut to one line of 400 characters. A note reaches one
+turn only. `append_note` is an operate command, so an observer device cannot
+send it. Check the `notes` feature first.
 
 ## Operator memory scopes
 

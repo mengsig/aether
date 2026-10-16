@@ -86,6 +86,8 @@ fn inputs<'a>(
         checkpoint: None,
         transcript: &[],
         memories: &[],
+        notes: &[],
+        notes_omitted: 0,
         tools: vec![],
         model_profile: None,
         engine_policy: None,
@@ -278,4 +280,44 @@ fn detailed_status_keeps_its_exact_text_and_section_order() {
         b.id, tasks[0].id, tasks[2].id, approvals[0].id
     );
     assert_eq!(text, expected);
+}
+
+fn digest_note(text: &str, links: &[&str]) -> Note {
+    Note {
+        text: text.into(),
+        links: links.iter().map(|link| (*link).to_owned()).collect(),
+        context: aether_core::note::NoteContext::Digest,
+    }
+}
+
+#[test]
+fn both_status_texts_carry_the_note_digest_and_only_when_there_is_one() {
+    let me = agent("orchestrator");
+    let caps = CapabilityProfile::default();
+    let notes = [
+        digest_note("PR 12 merged", &["https://example.com/pull/12"]),
+        digest_note(&format!("{}\nsecond line", "long ".repeat(200)), &[]),
+    ];
+    let mut with_notes = inputs(&me, &[], &[], &[], &caps);
+    with_notes.notes = &notes;
+    with_notes.notes_omitted = 3;
+    for status in [
+        runtime_state(&with_notes),
+        engine_runtime_state(&with_notes),
+    ] {
+        assert!(
+            status.contains("- PR 12 merged (https://example.com/pull/12)"),
+            "{status}"
+        );
+        assert!(status.contains("(3 earlier notes left out.)"), "{status}");
+        assert!(
+            !status.contains("second line\n"),
+            "one line per note: {status}"
+        );
+        assert!(status.contains('…'), "a long note is clipped: {status}");
+    }
+    let without = inputs(&me, &[], &[], &[], &caps);
+    for status in [runtime_state(&without), engine_runtime_state(&without)] {
+        assert!(!status.contains("Notes added"), "{status}");
+    }
 }
