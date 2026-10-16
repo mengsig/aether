@@ -547,6 +547,21 @@ fn agent_mentions_expand_at_submit_without_rerouting() {
 }
 
 #[test]
+fn forwarded_slash_commands_keep_their_mentions_as_typed() {
+    let (mut app, id) = app_with(AgentStatus::Ready);
+    add_child(&mut app, id, "researcher");
+    typed(&mut app, "/answer 3 @researcher");
+    let effects = app.composer_submit();
+    assert_eq!(sent(&effects), [(id, "/answer 3 @researcher".to_owned())]);
+
+    let (mut app, id) = app_with(AgentStatus::Running);
+    add_child(&mut app, id, "researcher");
+    typed(&mut app, "/answer 3 @researcher");
+    assert!(app.composer_queue().is_empty());
+    assert_eq!(app.transcripts[&id].queue, ["/answer 3 @researcher"]);
+}
+
+#[test]
 fn mentions_of_a_shared_name_or_already_expanded_stay_as_typed() {
     let (mut app, id) = app_with(AgentStatus::Ready);
     let first = add_child(&mut app, id, "tester");

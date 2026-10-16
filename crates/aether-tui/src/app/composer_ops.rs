@@ -419,6 +419,11 @@ impl App {
 
     /// Expand mentions in typed text and substitute tracked pastes once.
     fn expanded_draft(&self) -> String {
+        // A `/name` line forwarded to the agent is another program's syntax: keep it verbatim.
+        if matches!(self.parse_input(&self.input.text), InputAction::Message(text) if text.starts_with('/'))
+        {
+            return self.expand_draft(str::to_owned);
+        }
         self.expand_draft(|text| expand_mentions(text, |name| self.unique_agent(name)))
     }
 
