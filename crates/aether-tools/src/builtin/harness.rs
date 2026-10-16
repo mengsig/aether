@@ -13,10 +13,12 @@ use crate::tool::{HarnessAction, Tool, ToolContext, ToolError, ToolExecution, pa
 
 mod delegation;
 mod memory;
+mod providers;
 mod tasks;
 
 pub use delegation::{CancelAgent, Delegate, IntegrateWorkspace, SendMessage};
 pub use memory::Remember;
+pub use providers::RefreshProviderUsage;
 pub use tasks::{CompleteTask, FailTask, WaitFor};
 
 pub fn all() -> Vec<Arc<dyn Tool>> {
@@ -27,6 +29,7 @@ pub fn all() -> Vec<Arc<dyn Tool>> {
         Arc::new(InspectState),
         Arc::new(ListModels),
         Arc::new(ProviderUsage),
+        Arc::new(RefreshProviderUsage),
         Arc::new(Delegate),
         Arc::new(IntegrateWorkspace),
         Arc::new(SendMessage),

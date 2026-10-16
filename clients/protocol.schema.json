@@ -3740,6 +3740,25 @@
           "type": "object"
         },
         {
+          "description": "Refresh stale quota observations through explicitly enabled probe turns.",
+          "properties": {
+            "cmd": {
+              "const": "refresh_provider_usage",
+              "type": "string"
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Configured MCP servers and their tools. `refresh` reconnects first,\nso tools added since daemon start are discovered on demand.",
           "properties": {
             "cmd": {
@@ -12348,6 +12367,20 @@
             },
             "reply": {
               "const": "providers",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": true,
+            "reply": {
+              "const": "provider_usage",
               "type": "string"
             }
           },

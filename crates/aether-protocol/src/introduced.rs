@@ -23,6 +23,7 @@ impl Command {
     #[rustfmt::skip]
     pub fn introduced(&self) -> Introduced {
         match self {
+            Self::RefreshProviderUsage { .. } => Introduced::Feature(features::PROVIDER_USAGE_REFRESH),
             Self::AcceptMemory { .. } | Self::RejectMemory { .. } => {
                 Introduced::Feature(features::MEMORY_PROPOSALS)
             }

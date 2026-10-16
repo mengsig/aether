@@ -166,6 +166,15 @@ impl ModelDef {
     }
 }
 
+/// Whether quota refresh may spend a minimal turn through the provider's engine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageProbe {
+    #[default]
+    Disabled,
+    Turn,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderDef {
     pub id: String,
@@ -195,6 +204,8 @@ pub struct ProviderDef {
     pub family: Option<ModelFamily>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub usage_probe: UsageProbe,
 }
 
 fn default_true() -> bool {
@@ -336,6 +347,7 @@ pub struct ProviderOverride {
     /// Model family; `"none"` clears it.
     pub family: Option<FamilyOverride>,
     pub enabled: Option<bool>,
+    pub usage_probe: Option<UsageProbe>,
 }
 
 /// One `add_models` entry: a [`ModelDef`] that may start from the capabilities
@@ -594,6 +606,7 @@ impl Registry {
                         max_concurrent: None,
                         family: None,
                         enabled: true,
+                        usage_probe: UsageProbe::Disabled,
                     };
                     apply_override(&mut def, o)?;
                     self.providers.push(def);
@@ -723,6 +736,9 @@ fn apply_override(def: &mut ProviderDef, o: ProviderOverride) -> Result<(), Regi
     }
     if let Some(v) = o.enabled {
         def.enabled = v;
+    }
+    if let Some(v) = o.usage_probe {
+        def.usage_probe = v;
     }
     Ok(())
 }

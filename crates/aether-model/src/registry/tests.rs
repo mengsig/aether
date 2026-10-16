@@ -302,6 +302,7 @@ fn a_zero_max_concurrent_clears_the_cap() {
         max_concurrent: Some(3),
         family: None,
         enabled: true,
+        usage_probe: Default::default(),
     };
     apply_override(
         &mut def,

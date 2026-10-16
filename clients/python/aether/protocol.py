@@ -172,6 +172,10 @@ from ._protocol_commands.record import (
     record_memory_feedback,
 )
 
+from ._protocol_commands.refresh import (
+    refresh_provider_usage,
+)
+
 from ._protocol_commands.reject import (
     reject_memory,
 )

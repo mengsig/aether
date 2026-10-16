@@ -90,19 +90,20 @@ pub fn tick(runtime: &Arc<Runtime>) -> Result<()> {
                 reason: BlockReason::Exhausted { model, .. },
             } if canaries.get(&model.provider) == Some(&agent.id) => {
                 let (provider, id) = (model.provider.clone(), agent.id);
+                if !providers::claim_canary(runtime, &provider, id) {
+                    continue;
+                }
                 let woken = wake(
                     runtime,
                     agent,
                     format!("probing {provider} after exhaustion"),
                     None,
                     None,
-                )?;
-                // Claimed only once the release actually took: the fence in
-                // `wake` can find the row already moved on.
-                if woken.is_some() {
-                    runtime.sched.lock().probing.insert(provider, id);
+                );
+                if !matches!(&woken, Ok(Some(_))) {
+                    runtime.sched.lock().probing.remove(&provider);
                 }
-                woken
+                woken?
             }
             AgentStatus::Waiting { condition } => {
                 let oracle = RuntimeOracle {

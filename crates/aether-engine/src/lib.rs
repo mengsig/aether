@@ -378,6 +378,15 @@ pub trait Engine: Send + Sync {
     fn validate_network_policy(&self, _network_access: bool) -> Result<(), EngineError> {
         Ok(())
     }
+    /// Read account limits without starting a model turn. Unsupported adapters return `None`.
+    /// Implementations must bound their work and clean up on cancellation or future drop.
+    async fn read_usage(
+        &self,
+        _hidden_env: &[String],
+        _cancel: CancellationToken,
+    ) -> Result<Option<Value>, EngineError> {
+        Ok(None)
+    }
     async fn run(
         &self,
         turn: EngineTurn,

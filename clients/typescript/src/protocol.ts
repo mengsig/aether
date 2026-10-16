@@ -35,6 +35,7 @@ export * from "./protocol/commands/providers.ts";
 export * from "./protocol/commands/publish.ts";
 export * from "./protocol/commands/read.ts";
 export * from "./protocol/commands/record.ts";
+export * from "./protocol/commands/refresh.ts";
 export * from "./protocol/commands/reject.ts";
 export * from "./protocol/commands/replay.ts";
 export * from "./protocol/commands/reply.ts";

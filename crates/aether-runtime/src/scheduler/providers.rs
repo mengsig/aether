@@ -99,7 +99,18 @@ fn prune_probe_claims(runtime: &Runtime, live: &[Agent]) -> HashSet<String> {
     state
         .probing
         .retain(|_, id| state.running.contains_key(id) || dispatchable.contains(id));
-    state.probing.keys().cloned().collect()
+    state
+        .probing
+        .keys()
+        .cloned()
+        .chain(
+            state
+                .usage_refresh
+                .iter()
+                .filter(|(_, refresh)| refresh.in_flight)
+                .map(|(id, _)| id.clone()),
+        )
+        .collect()
 }
 
 /// Drop the claim this agent held, wherever it held one. Called when its probe
@@ -296,4 +307,21 @@ pub(crate) fn record_quota(
         )?;
     }
     Ok(())
+}
+
+/// Reserve before waking, under the same lock used by usage refresh admission.
+pub(super) fn claim_canary(runtime: &Runtime, provider: &str, agent: AgentId) -> bool {
+    let mut sched = runtime.sched.lock();
+    if sched.probing.contains_key(provider)
+        || sched
+            .usage_refresh
+            .get(provider)
+            .is_some_and(|refresh| refresh.in_flight)
+    {
+        return false;
+    }
+    debug_assert!(!provider.is_empty());
+    let previous = sched.probing.insert(provider.to_owned(), agent);
+    debug_assert!(previous.is_none());
+    true
 }

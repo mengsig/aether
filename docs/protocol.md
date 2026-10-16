@@ -177,6 +177,9 @@ unknown; the Rust client refuses to send them to one.
 older daemon refuses both commands as unknown; the Rust client refuses to send
 them to one.
 
+The `provider_usage_refresh` handshake feature advertises the additive
+`refresh_provider_usage` command; clients should check it before requesting a refresh.
+
 `memory_context` means the daemon serves `memories_in_context` (see
 [memories in context](#memories-in-context)). An older daemon refuses the
 command as unknown; the Rust client refuses to send it to one.
@@ -751,6 +754,41 @@ Remaining percentages and reset countdowns are clamped at zero. A passed reset
 does not imply replenished credit: only a new provider report changes the usage.
 Future observation timestamps have age zero to tolerate clock skew. Older clients
 can ignore the added fields; new clients default missing headroom to unknown.
+
+Explicit refresh requires `operate` access and returns a `provider_usage` reply:
+
+```json
+{"cmd":"refresh_provider_usage","provider":"codex"}
+{"reply":"provider_usage","data":{"providers":[{"provider":"codex","headroom":{"windows":[],"observed_at":null,"age_seconds":null,"stale":true},"status":"error","error":"probe timed out"}]}}
+```
+
+Omit `provider` to consider every enabled registry provider. The harness/MCP
+tool `refresh_provider_usage` takes the same optional field and rejects
+unknown arguments. It is an external, network-enabled operation: a probe may
+spend tokens, so each provider must explicitly opt in with
+`[providers.<id>] usage_probe = "turn"` in `providers.toml`. The default is
+`"disabled"`. Probe turns run through native engines, in an isolated temporary
+workspace with minimal output and no MCP tools; API adapters do not probe.
+
+Each result includes `provider`, `headroom`, and one of these `status` values:
+
+| Status | Meaning |
+| --- | --- |
+| `refreshed` | The probe supplied a new usage observation. |
+| `cached` | Usage is fresh; no probe was needed. |
+| `in_flight` | A refresh owns this provider; no overlapping probe starts. |
+| `backoff` | The minimum interval between attempts has not elapsed. |
+| `unsupported` | Probe turns are disabled for this provider. |
+| `error` | The probe failed, timed out, or cannot run through this provider's adapter; `error` explains why. |
+
+Refresh considers only stale observations, preserves cached headroom on failure,
+and reports provider errors independently. It never chooses a route.
+`providers.usage_refresh_interval` (default 600 seconds) spaces attempts,
+including failed and unsupported attempts. `providers.usage_refresh_timeout`
+(default 15 seconds) bounds the probe; both settings must be positive integers
+in `config.toml`. Cancellation allows up to three additional seconds for cleanup.
+If cleanup cannot complete, the provider remains `in_flight` until daemon
+restart so another refresh cannot overlap an unclosed probe.
 
 ## Workspace review
 

@@ -151,6 +151,7 @@ fn anthropic() -> ProviderDef {
         max_concurrent: None,
         family: Some(ModelFamily::Claude),
         enabled: true,
+        usage_probe: Default::default(),
     }
 }
 
@@ -236,6 +237,7 @@ fn openai() -> ProviderDef {
         max_concurrent: None,
         family: Some(ModelFamily::Gpt),
         enabled: true,
+        usage_probe: Default::default(),
     }
 }
 
@@ -258,6 +260,7 @@ fn openai_responses() -> ProviderDef {
         max_concurrent: None,
         family: Some(ModelFamily::Gpt),
         enabled: true,
+        usage_probe: Default::default(),
     }
 }
 
@@ -286,6 +289,7 @@ fn openai_codex() -> ProviderDef {
         max_concurrent: None,
         family: Some(ModelFamily::Codex),
         enabled: false,
+        usage_probe: Default::default(),
     }
 }
 
@@ -317,6 +321,7 @@ fn compat(
         max_concurrent: None,
         family: None,
         enabled: true,
+        usage_probe: Default::default(),
     }
 }
 
@@ -472,6 +477,7 @@ fn claude_code() -> ProviderDef {
         max_concurrent: None,
         family: Some(ModelFamily::Claude),
         enabled: true,
+        usage_probe: Default::default(),
     }
 }
 
@@ -497,6 +503,7 @@ fn codex_cli() -> ProviderDef {
         max_concurrent: None,
         family: Some(ModelFamily::Codex),
         enabled: true,
+        usage_probe: Default::default(),
     }
 }
 

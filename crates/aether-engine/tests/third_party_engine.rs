@@ -169,3 +169,14 @@ async fn cancellation_still_produces_a_final_outcome() {
         "the stream ends with a verdict even when the turn was cut short"
     );
 }
+
+#[tokio::test]
+async fn existing_engines_default_to_unsupported_usage_reads() {
+    let engine = LineEngine::new("/missing/usage-reader", "0.1.0");
+    let result = engine.read_usage(&[], CancellationToken::new()).await;
+    assert!(result.is_ok(), "unsupported reads are not failures");
+    assert!(
+        result.unwrap().is_none(),
+        "unsupported reads do not launch the CLI"
+    );
+}

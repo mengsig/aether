@@ -171,3 +171,27 @@ async fn an_entry_refusal_holds_a_turn_briefly_but_never_a_persons() {
         "an expired hold parked the agent until something pruned it"
     );
 }
+
+#[tokio::test]
+async fn exhaustion_canary_cannot_overlap_a_usage_refresh_claim() {
+    let (runtime, _dir) = engine_runtime().await;
+    let agent = engine_agent(&runtime);
+    runtime.sched.lock().usage_refresh.insert(
+        "codex".into(),
+        crate::provider_refresh::RefreshState {
+            last_attempt: Instant::now(),
+            in_flight: true,
+        },
+    );
+    assert!(!providers::claim_canary(&runtime, "codex", agent.id));
+    assert!(!runtime.sched.lock().probing.contains_key("codex"));
+    runtime
+        .sched
+        .lock()
+        .usage_refresh
+        .get_mut("codex")
+        .unwrap()
+        .in_flight = false;
+    assert!(providers::claim_canary(&runtime, "codex", agent.id));
+    assert_eq!(runtime.sched.lock().probing["codex"], agent.id);
+}

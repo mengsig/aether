@@ -68,6 +68,8 @@ section and key. Omitted settings use the shipped defaults.
 | --- | --- | --- |
 | `model.default` | First model of the first ready provider | Choose the default `provider/model`. |
 | `providers.usage_stale_after` | `900` | Seconds before cached provider usage is stale; zero marks reports stale as soon as time advances. |
+| `providers.usage_refresh_interval` | `600` | Minimum seconds between explicit refresh attempts for one provider; must be positive. |
+| `providers.usage_refresh_timeout` | `15` | Probe deadline in seconds; must be positive. |
 | `scheduler.max_concurrent_turns` | `32` | Bound simultaneous model turns. |
 | `scheduler.max_concurrent_engine_turns` | Unset | Add a limit for native CLI turns. |
 | `scheduler.run_budget_usd` | Unset | Refuse new delegation once recorded run spend reaches the limit. |
@@ -85,6 +87,30 @@ times in UTC. These are passive observations from provider turns, not balance
 probes. In `config.toml`, `[providers] usage_stale_after = 900` sets the freshness
 threshold in seconds (15 minutes by default). Newly configured subscriptions
 appear automatically, even before they report usage.
+
+To allow explicit refresh to spend a small native engine turn, opt in for each
+provider in `providers.toml`:
+
+```toml
+[providers.codex]
+usage_probe = "turn"
+```
+
+`usage_probe` defaults to `"disabled"`; set it to `"disabled"` again to revoke
+opt-in. The `refresh_provider_usage` protocol command and harness/MCP tool
+accept an optional provider id; omission considers all enabled providers.
+They probe only stale usage. Fresh observations, a refresh already in flight,
+and attempts within `usage_refresh_interval` are skipped. The interval counts
+failed and unsupported attempts too. Reading usage never triggers a refresh,
+and refresh never changes provider routing.
+
+Probe turns use the provider's native engine in an isolated temporary workspace
+with a minimal prompt and no MCP tools. API adapters do not perform probe turns;
+opting an API provider in returns a per-provider error. Results include each
+provider's cached headroom and a status, with an error message when a probe
+fails, so one provider's failure does not hide the others. A timed-out probe
+is cancelled, with up to five further seconds for cleanup. If cleanup cannot
+finish, that provider stays `in_flight` until daemon restart to avoid overlap.
 
 
 One signed-in native CLI **or** one configured API provider is enough.

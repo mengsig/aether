@@ -108,6 +108,14 @@ pub(crate) async fn apply_action(
             offset,
             max_chars,
         ),
+        HarnessAction::RefreshProviderUsage { provider } => {
+            let data = runtime.refresh_provider_usage(provider.as_deref()).await?;
+            Ok(ToolOutcome {
+                content: data.to_string(),
+                structured: Some(data),
+                ..Default::default()
+            })
+        }
         HarnessAction::ProviderUsage => {
             let data = runtime.provider_usage();
             Ok(ToolOutcome {

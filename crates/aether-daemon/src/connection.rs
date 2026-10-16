@@ -320,6 +320,7 @@ where
                                                     features::STORAGE.into(),
                                                     features::PRUNE_BUILD_OUTPUT.into(),
                                                     features::WORKSPACE_REVIEW.into(),
+                                                    features::PROVIDER_USAGE_REFRESH.into(),
                                                     features::BUILD_CACHE.into(),
                                                 ],
                                                 daemon_protocol_version: Some(

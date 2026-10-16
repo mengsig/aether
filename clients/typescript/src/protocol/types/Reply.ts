@@ -308,6 +308,11 @@ export interface ReplyProviders {
   "reply": "providers";
 }
 
+export interface ReplyProviderUsage {
+  "data": unknown;
+  "reply": "provider_usage";
+}
+
 export interface ReplyAuth {
   "data": Array<AuthInfo>;
   "reply": "auth";
@@ -442,6 +447,7 @@ export type Reply =
     ReplyMcpServers |
     ReplyModels |
     ReplyProviders |
+    ReplyProviderUsage |
     ReplyAuth |
     ReplyEngineTool |
     ReplyEngineTools |

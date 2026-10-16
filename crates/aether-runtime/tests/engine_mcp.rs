@@ -303,6 +303,7 @@ async fn the_bridge_is_offered_the_harness_and_mcp_tools_and_nothing_else() {
     // MCP surface. Losing one silently strands the agent mid-turn.
     for expected in [
         "provider_usage",
+        "refresh_provider_usage",
         "list_agents",
         "list_tasks",
         "read_task",

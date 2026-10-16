@@ -209,6 +209,7 @@ async fn unknown_field_is_rejected_on_every_advertised_input() {
         (&InspectState, json!({"bogus": 1})),
         (&ListModels, json!({"bogus": 1})),
         (&ProviderUsage, json!({"bogus": 1})),
+        (&RefreshProviderUsage, json!({"bogus": 1})),
         (
             &Delegate,
             json!({"role": "w", "objective": "x", "model": "mock/m", "effort": "low", "bogus": 1}),

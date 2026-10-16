@@ -670,7 +670,7 @@ impl Driver {
             .await;
     }
 }
-fn init_params() -> Value {
+pub(super) fn init_params() -> Value {
     json!({
         "clientInfo": {
             "name": "aether",

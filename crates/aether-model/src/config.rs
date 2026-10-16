@@ -609,6 +609,7 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
                 return Err(bad("model.compactor must be provider/model".into()));
             }
             config.models.validate().map_err(&bad)?;
+            config.providers.validate().map_err(&bad)?;
             config.scheduler.wait_timeout().map_err(&bad)?;
             config.scheduler.engine_park_grace().map_err(&bad)?;
             config.scheduler.engine_transient_retry().map_err(&bad)?;

@@ -421,6 +421,7 @@ async fn the_registry_routes_every_protocol_to_its_adapter() {
             max_concurrent: None,
             family: None,
             enabled: true,
+            usage_probe: Default::default(),
         });
     }
     let store: Arc<dyn CredentialStore> = Arc::new(MemoryCredentialStore::new());

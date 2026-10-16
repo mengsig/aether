@@ -102,6 +102,7 @@ pub type Result<T> = std::result::Result<T, RuntimeError>;
 mod config;
 mod engine_access;
 mod provider_health;
+mod provider_refresh;
 
 pub use config::{
     BridgeConfig, DEFAULT_ENGINE_PARK_GRACE, DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR,
@@ -178,6 +179,7 @@ pub(crate) struct SchedulerState {
     pub probing: HashMap<String, AgentId>,
     /// Latest subscription window each provider reported.
     pub quotas: HashMap<String, aether_core::provider::ProviderUsage>,
+    pub usage_refresh: HashMap<String, provider_refresh::RefreshState>,
     /// Commit count as of the last budget pass; `None` before the first.
     pub budgets_checked_after: Option<u64>,
     /// Newest normalized failures each provider returned.

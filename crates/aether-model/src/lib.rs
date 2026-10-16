@@ -22,7 +22,9 @@ pub mod tier;
 pub use client::{ModelClient, ModelStream, PartialFailure, collect, collect_partial};
 pub use models::{AuthStatus, LoginMethod, ModelInfo, Models, ModelsError, ResolvedModel};
 pub use profile::{FamilyProfiles, ModelFamily, ModelProfile, ProfileSetting};
-pub use registry::{ModelDef, ModelPrice, Protocol, ProviderDef, ProviderFlags, Registry};
+pub use registry::{
+    ModelDef, ModelPrice, Protocol, ProviderDef, ProviderFlags, Registry, UsageProbe,
+};
 pub use tier::ModelTier;
 
 /// Crate version, sent in every `User-Agent` header.

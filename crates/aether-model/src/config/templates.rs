@@ -63,6 +63,10 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 [providers]
 # Cached usage becomes stale after this many seconds; reads never probe providers.
 # usage_stale_after = 900
+# Minimum seconds between explicit refresh attempts; must be positive.
+# usage_refresh_interval = 600
+# Probe deadline in seconds; must be positive.
+# usage_refresh_timeout = 15
 
 [scheduler]
 # Maximum simultaneous model turns across the daemon; must be positive.
@@ -260,6 +264,10 @@ const PROVIDERS_HEADER: &str = r#"# Provider overrides and additions. Built-in p
 #
 # [providers.groq]
 # enabled = false
+#
+# Opt into quota refresh turns through a native engine; may spend tokens.
+# [providers.codex]
+# usage_probe = "turn" # default "disabled"; config.toml controls probe limits
 #
 # Add an OpenAI-compatible server with its own models:
 #

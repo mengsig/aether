@@ -9,6 +9,7 @@ mod attachments;
 mod credential_directory;
 mod device_gate;
 mod history_expiry;
+mod provider_usage;
 mod resolution;
 mod shutdown;
 mod shutdown_approval;

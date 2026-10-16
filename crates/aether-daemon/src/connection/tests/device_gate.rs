@@ -210,6 +210,16 @@ async fn an_observer_device_reads_and_cannot_operate() {
         .await
         .expect_err("an observer changes nothing");
     assert_eq!(refused.code, ErrorCode::Forbidden);
+    let refresh = carrier
+        .request(
+            4,
+            Command::RefreshProviderUsage {
+                provider: Some("unknown".into()),
+            },
+        )
+        .await
+        .expect_err("an observer cannot spend a probe turn");
+    assert_eq!(refresh.code, ErrorCode::Forbidden);
     carrier.shutdown.cancel();
     carrier.ended().await;
 }

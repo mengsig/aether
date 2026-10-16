@@ -347,6 +347,7 @@ mod tests {
             max_concurrent: None,
             family: None,
             enabled: true,
+            usage_probe: Default::default(),
         }
     }
 

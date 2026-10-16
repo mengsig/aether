@@ -51,3 +51,83 @@ fn providers_headroom_json_shape_is_additive() {
     assert_eq!(current.headroom, ProviderHeadroom::default());
     assert!(current.headroom.stale);
 }
+
+#[test]
+fn refresh_provider_usage_command_roundtrips_and_requires_operate_access() {
+    for (wire, provider) in [
+        (json!({"cmd":"refresh_provider_usage"}), None),
+        (
+            json!({"cmd":"refresh_provider_usage", "provider":null}),
+            None,
+        ),
+        (
+            json!({"cmd":"refresh_provider_usage", "provider":"codex"}),
+            Some("codex".into()),
+        ),
+    ] {
+        let command: Command = serde_json::from_value(wire).unwrap();
+        assert_eq!(command, Command::RefreshProviderUsage { provider });
+        assert_eq!(command.access(), Access::Operate);
+        assert_eq!(
+            command.introduced(),
+            crate::Introduced::Feature(crate::features::PROVIDER_USAGE_REFRESH)
+        );
+        assert_eq!(command.name(), "refresh_provider_usage");
+        assert_eq!(
+            decode::<Command>(&encode(&command).unwrap()).unwrap(),
+            command
+        );
+    }
+    assert_eq!(Command::Providers.access(), Access::Observe);
+    assert!(
+        serde_json::from_value::<Command>(
+            json!({"cmd":"refresh_provider_usage", "provider":false})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn refresh_provider_usage_reply_preserves_status_and_per_provider_error() {
+    let data = json!({"providers":[
+        {"provider":"codex", "headroom":ProviderHeadroom::default(), "status":"refreshed"},
+        {"provider":"custom-engine", "headroom":ProviderHeadroom::default(),
+            "status":"error", "error":"probe timed out"}
+    ]});
+    let reply = Reply::ProviderUsage(data.clone());
+    let encoded = serde_json::to_value(&reply).unwrap();
+    assert_eq!(encoded["reply"], "provider_usage");
+    assert_eq!(encoded["data"], data);
+    assert_eq!(decode::<Reply>(&encode(&reply).unwrap()).unwrap(), reply);
+}
+
+#[test]
+fn generated_schema_includes_refresh_command_and_usage_reply() {
+    let schema = crate::schema::schema();
+    let command = schema["$defs"]["ClientFrame"]["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|variant| variant["properties"]["cmd"]["const"] == "refresh_provider_usage")
+        .unwrap();
+    assert!(command["properties"].get("provider").is_some());
+    assert!(
+        !command["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("provider"))
+    );
+    let reply = schema["$defs"]["Reply"]["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|variant| variant["properties"]["reply"]["const"] == "provider_usage")
+        .unwrap();
+    assert!(reply["properties"].get("data").is_some());
+    assert!(
+        reply["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("data"))
+    );
+}

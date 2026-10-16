@@ -698,6 +698,13 @@ pub(super) async fn dispatch_authorized(
         Command::AuthStatus => providers::auth_status(daemon).await,
 
         Command::Providers => providers::providers(daemon).await,
+        Command::RefreshProviderUsage { provider } => Ok(Reply::ProviderUsage(
+            daemon
+                .runtime
+                .refresh_provider_usage(provider.as_deref())
+                .await
+                .map_err(map_err)?,
+        )),
 
         command @ (Command::GetAttention
         | Command::CompletePath { .. }

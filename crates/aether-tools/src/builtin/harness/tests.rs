@@ -21,5 +21,6 @@ mod delegation;
 mod waiting;
 
 mod inspection;
+mod providers;
 
 mod validation;

@@ -164,6 +164,8 @@ pub const PROTOCOL_VERSION: u32 = 22;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
+    /// The daemon serves bounded stale provider usage refreshes.
+    pub const PROVIDER_USAGE_REFRESH: &str = "provider_usage_refresh";
     pub const DELTAS: &str = "deltas";
     pub const PUBLISH_ARTIFACT: &str = "publish_artifact";
     pub const ARTIFACT_BYTES: &str = "artifact_bytes";

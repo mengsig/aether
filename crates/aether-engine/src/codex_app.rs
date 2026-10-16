@@ -21,6 +21,7 @@ use crate::{Engine, EngineError, EngineKind, EngineRun, EngineTurn, PermissionDe
 mod driver;
 mod items;
 mod loopback;
+mod read_usage;
 mod state;
 mod usage;
 
@@ -359,6 +360,16 @@ impl Engine for CodexAppEngine {
         self.validate_loopback_support(|program| {
             crate::offline::executable_on_path(program, path.as_deref())
         })
+    }
+
+    async fn read_usage(
+        &self,
+        hidden_env: &[String],
+        cancel: CancellationToken,
+    ) -> Result<Option<Value>, EngineError> {
+        read_usage::read(&self.program, hidden_env, cancel)
+            .await
+            .map(Some)
     }
 
     async fn run(

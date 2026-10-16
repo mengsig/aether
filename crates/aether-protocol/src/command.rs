@@ -426,6 +426,11 @@ pub enum Command {
     AuthStatus,
     /// Every provider the registry knows, with its live health.
     Providers,
+    /// Refresh stale quota observations through explicitly enabled probe turns.
+    RefreshProviderUsage {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+    },
     /// Configured MCP servers and their tools. `refresh` reconnects first,
     /// so tools added since daemon start are discovered on demand.
     McpServers {

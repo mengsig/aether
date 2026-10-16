@@ -232,6 +232,7 @@ pub(super) fn decides(action: &HarnessAction) -> Decides {
         | HarnessAction::ListTasks { .. }
         | HarnessAction::ReadTask { .. }
         | HarnessAction::ReadArtifact { .. }
+        | HarnessAction::RefreshProviderUsage { .. }
         | HarnessAction::ProviderUsage
         | HarnessAction::ListModels { .. }
         | HarnessAction::SendMessage { .. }
