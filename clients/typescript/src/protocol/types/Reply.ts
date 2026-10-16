@@ -44,6 +44,9 @@ import type {
   TranscriptEntry,
   Welcome,
   Workspace,
+  WorkspaceDiff,
+  WorkspaceDiscard,
+  WorkspaceIntegration,
   WorkspaceValidation,
   memories,
   pause,
@@ -345,6 +348,21 @@ export interface ReplyGitSummary {
   "reply": "git_summary";
 }
 
+export interface ReplyWorkspaceDiff {
+  "data": WorkspaceDiff;
+  "reply": "workspace_diff";
+}
+
+export interface ReplyWorkspaceIntegration {
+  "data": WorkspaceIntegration;
+  "reply": "workspace_integration";
+}
+
+export interface ReplyWorkspaceDiscarded {
+  "data": WorkspaceDiscard;
+  "reply": "workspace_discarded";
+}
+
 export interface ReplyRemote {
   "data": RemoteStatus;
   "reply": "remote";
@@ -432,6 +450,9 @@ export type Reply =
     ReplyWorkspaces |
     ReplyWorkspaceValidation |
     ReplyGitSummary |
+    ReplyWorkspaceDiff |
+    ReplyWorkspaceIntegration |
+    ReplyWorkspaceDiscarded |
     ReplyRemote |
     ReplyPairing |
     ReplyDevice |

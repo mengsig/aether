@@ -375,6 +375,24 @@ pub(super) async fn dispatch_authorized(
             rt.request_compaction(agent, by).map_err(map_err)?;
             Ok(Reply::Ok)
         }
+        Command::WorkspaceDiff { agent } => {
+            let reading = rt.clone();
+            let diff = blocking(move || reading.workspace_diff(agent).map_err(map_err)).await??;
+            Ok(Reply::WorkspaceDiff(Box::new(diff)))
+        }
+        Command::WorkspaceIntegrate { agent } => {
+            let writing = rt.clone();
+            let integration =
+                blocking(move || writing.workspace_integrate(agent, by).map_err(map_err)).await??;
+            Ok(Reply::WorkspaceIntegration(integration))
+        }
+        Command::WorkspaceDiscard { agent, force } => {
+            let writing = rt.clone();
+            let discard =
+                blocking(move || writing.workspace_discard(agent, force, by).map_err(map_err))
+                    .await??;
+            Ok(Reply::WorkspaceDiscarded(discard))
+        }
         Command::EngineTool {
             agent,
             token,

@@ -569,3 +569,6 @@ async fn parent_can_integrate_child_without_accepting_isolated_grandchild() {
     );
     h.runtime.shutdown().await;
 }
+
+#[path = "workspace_review.rs"]
+mod review;

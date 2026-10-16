@@ -19,6 +19,9 @@ pub struct StorageSection {
     pub event_history_days: Option<u16>,
     pub workspace_grace_seconds: u32,
     pub backups_keep: NonZeroU16,
+    /// Hard cap: migration backups beyond the newest this many are removed
+    /// whatever their age.
+    pub migration_backups_keep: NonZeroU16,
     pub gc_interval_seconds: NonZeroU32,
     /// None uses the scheduler's floor; zero disables the low-disk guard.
     pub free_space_floor_bytes: Option<u64>,
@@ -41,6 +44,7 @@ impl Default for StorageSection {
             event_history_days: None,
             workspace_grace_seconds: 3600,
             backups_keep: const { NonZeroU16::new(3).unwrap() },
+            migration_backups_keep: const { NonZeroU16::new(2).unwrap() },
             gc_interval_seconds: const { NonZeroU32::new(3600).unwrap() },
             free_space_floor_bytes: None,
             build_output_dirs: ["target", "node_modules", ".venv", "__pycache__", "dist"]
@@ -112,6 +116,7 @@ mod tests {
         let config: AetherConfig = toml::from_str("").unwrap();
         assert_eq!(config.storage.retention_days, 14);
         assert_eq!(config.storage.backups_keep.get(), 3);
+        assert_eq!(config.storage.migration_backups_keep.get(), 2);
         assert_eq!(config.storage.days(config.storage.engine_sessions_days), 14);
         let config: AetherConfig = toml::from_str(
             "[storage]\nworkspaces_days = 0\nengine_sessions_days = 0\nbackups_days = 21\nworkspace_grace_seconds = 0",
@@ -153,6 +158,7 @@ mod tests {
             "logs_days = 65536",
             "retention_days = 1.5",
             "backups_keep = 0",
+            "migration_backups_keep = 0",
             "gc_interval_seconds = 0",
             "workspace_grace_seconds = -1",
             "free_space_floor_bytes = -1",

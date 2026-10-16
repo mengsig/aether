@@ -23,6 +23,8 @@ mod storage;
 pub use storage::storage;
 mod retention;
 pub use retention::retention_preview;
+mod workspace;
+pub use workspace::{workspace_diff, workspace_discard, workspace_integrate};
 
 mod outbox;
 pub use outbox::{outbox_list, outbox_settle};
@@ -75,7 +77,9 @@ pub use agents::{
 mod tasks;
 #[cfg(test)]
 use tasks::summarize;
-pub use tasks::{events, task_create, tasks};
+pub use tasks::{task_create, tasks};
+mod events;
+pub use events::{EventArgs, events};
 
 mod pending_approvals;
 pub use pending_approvals::{answer_pending, pending_approvals};

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-PROTOCOL_VERSION = 21
+PROTOCOL_VERSION = 22
 MIN_PROTOCOL_VERSION = 17
 
 from ._protocol_types import *
@@ -273,4 +273,10 @@ from ._protocol_commands.validate import (
 
 from ._protocol_commands.wake import (
     wake,
+)
+
+from ._protocol_commands.workspace import (
+    workspace_diff,
+    workspace_discard,
+    workspace_integrate,
 )

@@ -36,6 +36,7 @@ pub mod turn_engine;
 pub mod wait;
 mod workspace;
 pub mod workspace_gc;
+mod workspace_review;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

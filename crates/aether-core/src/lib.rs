@@ -40,6 +40,7 @@ pub mod text;
 pub mod time;
 pub mod tool;
 pub mod transfer;
+pub mod workspace_review;
 
 /// The commonly used names, for `use aether_core::prelude::*`.
 pub mod prelude {

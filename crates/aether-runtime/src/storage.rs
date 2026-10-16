@@ -89,8 +89,11 @@ impl Runtime {
             report["backups"] = serde_json::to_value(
                 prune_backups(
                     &root.join("migration-backups"),
-                    config.days(config.backups_days),
-                    usize::from(config.backups_keep.get()),
+                    BackupRetention {
+                        days: config.days(config.backups_days),
+                        keep: usize::from(config.backups_keep.get()),
+                        cap: usize::from(config.migration_backups_keep.get()),
+                    },
                     SystemTime::now(),
                     dry_run,
                 )
@@ -161,17 +164,28 @@ fn backup_name(name: &str) -> bool {
     from.parse::<u32>().is_ok()
         && to.parse::<u32>().is_ok()
         && id
-            .strip_suffix(".sqlite")
+            .strip_suffix(".sqlite.zst")
+            .or_else(|| id.strip_suffix(".sqlite"))
             .is_some_and(|id| id.parse::<ulid::Ulid>().is_ok())
+}
+
+/// Keep the newest `keep` or anything younger than `days` (zero: no age
+/// cleanup), but never more than the newest `cap`.
+#[derive(Debug, Clone, Copy)]
+struct BackupRetention {
+    days: u16,
+    keep: usize,
+    cap: usize,
 }
 
 fn prune_backups(
     root: &Path,
-    days: u16,
-    keep: usize,
+    retention: BackupRetention,
     now: SystemTime,
     dry_run: bool,
 ) -> io::Result<FileReport> {
+    let BackupRetention { days, keep, cap } = retention;
+    assert!(cap > 0, "the backup cap must keep the newest backup");
     let mut report = FileReport::default();
     let Some(entries) = read_directory(root)? else {
         return Ok(report);
@@ -210,11 +224,14 @@ fn prune_backups(
         let old = now
             .duration_since(modified)
             .is_ok_and(|age| age >= Duration::from_secs(u64::from(days) * 86400));
-        let eligible = managed && days > 0 && rank >= keep && old;
+        let over_cap = managed && rank >= cap;
+        let eligible = over_cap || (managed && days > 0 && rank >= keep && old);
         let reason = if !managed {
             "unrecognized file retained"
+        } else if over_cap {
+            "beyond the newest migration_backups_keep backups"
         } else if days == 0 {
-            "backup cleanup disabled"
+            "backup age cleanup disabled"
         } else if rank < keep {
             "latest backups retained"
         } else if !old {
@@ -243,6 +260,7 @@ fn prune_backups(
             reason,
         });
     }
+    debug_assert!(backups <= cap || report.bytes_eligible > 0);
     Ok(report)
 }
 
@@ -305,9 +323,12 @@ fn inventory(root: &Path) -> io::Result<FileReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn retention(days: u16, keep: usize, cap: usize) -> BackupRetention {
+        BackupRetention { days, keep, cap }
+    }
     fn backup(root: &Path, seconds: u64) -> PathBuf {
         let path = root.join(format!(
-            "schema-1-before-2-{}.sqlite",
+            "schema-1-before-2-{}.sqlite.zst",
             ulid::Ulid::generate()
         ));
         fs::write(&path, b"backup").unwrap();
@@ -327,13 +348,56 @@ mod tests {
         let recent = backup(dir.path(), 86401);
         let newest = backup(dir.path(), 86402);
         let now = SystemTime::UNIX_EPOCH + Duration::from_secs(2 * 86400);
-        let preview = prune_backups(dir.path(), 1, 1, now, true).unwrap();
+        let preview = prune_backups(dir.path(), retention(1, 1, 10), now, true).unwrap();
         assert_eq!(preview.bytes_eligible, 12);
         assert!(old.exists() && boundary.exists());
-        let actual = prune_backups(dir.path(), 1, 1, now, false).unwrap();
+        let actual = prune_backups(dir.path(), retention(1, 1, 10), now, false).unwrap();
         assert_eq!(preview.bytes_eligible, actual.bytes_removed);
         assert!(!old.exists() && !boundary.exists());
         assert!(recent.exists() && newest.exists());
+    }
+    #[test]
+    fn three_recent_migrations_with_a_cap_of_two_lose_the_oldest() {
+        let dir = tempfile::tempdir().unwrap();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(10 * 86400);
+        let oldest = backup(dir.path(), 9 * 86400);
+        let middle = backup(dir.path(), 9 * 86400 + 1);
+        let newest = backup(dir.path(), 9 * 86400 + 2);
+        let legacy = dir.path().join(format!(
+            "schema-1-before-2-{}.sqlite",
+            ulid::Ulid::generate()
+        ));
+        fs::copy(&oldest, &legacy).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&legacy)
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(8 * 86400))
+            .unwrap();
+        // Every backup is within the 14-day window and `keep` would hold three.
+        let report = prune_backups(dir.path(), retention(14, 3, 2), now, false).unwrap();
+        assert_eq!(report.bytes, 24);
+        assert_eq!(report.bytes_removed, 12);
+        assert!(!oldest.exists() && !legacy.exists());
+        assert!(middle.exists() && newest.exists());
+        assert_eq!(
+            prune_backups(dir.path(), retention(14, 3, 2), now, false)
+                .unwrap()
+                .bytes_removed,
+            0
+        );
+    }
+    #[test]
+    fn the_cap_applies_when_age_cleanup_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let oldest = backup(dir.path(), 0);
+        let middle = backup(dir.path(), 1);
+        let newest = backup(dir.path(), 2);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100 * 86400);
+        let report = prune_backups(dir.path(), retention(0, 3, 2), now, false).unwrap();
+        assert_eq!((report.bytes, report.bytes_removed), (18, 6));
+        assert!(!oldest.exists());
+        assert!(middle.exists() && newest.exists());
     }
     #[test]
     fn disabled_unrecognized_and_symlink_files_are_preserved() {
@@ -341,7 +405,7 @@ mod tests {
         let old = backup(dir.path(), 0);
         fs::write(dir.path().join("personal.sqlite"), b"mine").unwrap();
         assert_eq!(
-            prune_backups(dir.path(), 0, 0, SystemTime::now(), false)
+            prune_backups(dir.path(), retention(0, 0, 10), SystemTime::now(), false)
                 .unwrap()
                 .bytes_removed,
             0
@@ -349,7 +413,7 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         let target = backup(outside.path(), 0);
         std::os::unix::fs::symlink(&target, dir.path().join(target.file_name().unwrap())).unwrap();
-        prune_backups(dir.path(), 1, 0, SystemTime::now(), false).unwrap();
+        prune_backups(dir.path(), retention(1, 0, 10), SystemTime::now(), false).unwrap();
         assert!(!old.exists());
         assert!(target.exists() && dir.path().join("personal.sqlite").exists());
     }
