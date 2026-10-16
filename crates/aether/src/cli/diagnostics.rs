@@ -65,8 +65,14 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
 
     // Credentials live with the client, so `aether auth`'s answer is the
     // daemon's; without one, say so rather than guessing.
-    let providers = if client.is_some() {
-        doctor::check_providers(&auth, &command)
+    let providers = if let Some(c) = &client {
+        let default_model = status.as_ref().and_then(|s| s.default_model.as_ref());
+        match unreachable_local_servers(c, &auth).await {
+            Ok(unreachable) => {
+                doctor::check_providers(&auth, &unreachable, default_model, &command)
+            }
+            Err(e) => Check::unprobed_providers(&e.to_string(), &command),
+        }
     } else {
         Check::no_daemon_providers(&command)
     };
@@ -99,6 +105,16 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
         doctor::check_mcp(configured_mcp, &mcp_health, &command),
         doctor::check_remote(remote.as_ref(), &command),
     ])
+}
+
+/// The no-auth providers the daemon counts as ready that nothing answers at.
+async fn unreachable_local_servers(
+    client: &Client,
+    auth: &[aether_protocol::AuthInfo],
+) -> Result<Vec<crate::doctor::Unreachable>, ClientError> {
+    let providers = client.providers().await?;
+    let servers = crate::doctor::local_servers(auth, &providers);
+    Ok(crate::doctor::unreachable_servers(&servers, crate::doctor::PROBE_TIMEOUT).await)
 }
 
 /// The daemon's remote access status, or `None` from a daemon that predates

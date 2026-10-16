@@ -350,15 +350,31 @@ pub(crate) enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// List pending tool approvals.
+    Approvals {
+        #[command(flatten)]
+        scope: ApprovalScopeArgs,
+        /// Print pending requests as a JSON array.
+        #[arg(long)]
+        json: bool,
+    },
     /// Approve a pending tool call.
     Approve {
-        approval: String,
+        #[arg(
+            required_unless_present = "all_pending",
+            conflicts_with = "all_pending"
+        )]
+        approval: Option<String>,
         #[command(flatten)]
         remember: RememberArgs,
     },
     /// Deny a pending tool call.
     Deny {
-        approval: String,
+        #[arg(
+            required_unless_present = "all_pending",
+            conflicts_with = "all_pending"
+        )]
+        approval: Option<String>,
         #[command(flatten)]
         remember: RememberArgs,
     },

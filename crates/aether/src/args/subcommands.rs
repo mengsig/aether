@@ -147,6 +147,12 @@ pub(crate) enum MemoryCmd {
 /// answered, and this call's own command or path. Widening is explicit.
 #[derive(Debug, clap::Args)]
 pub(crate) struct RememberArgs {
+    /// Answer a snapshot of pending approvals in an explicit scope.
+    #[arg(long, conflicts_with_all = ["remember", "tool_wide", "everywhere"])]
+    pub(crate) all_pending: bool,
+    /// Skip confirmation of the pending count.
+    #[arg(long, requires = "all_pending")]
+    pub(crate) yes: bool,
     /// Remember this answer for later calls like it.
     #[arg(long)]
     pub(crate) remember: bool,
@@ -157,6 +163,30 @@ pub(crate) struct RememberArgs {
     pub(crate) tool_wide: bool,
     #[command(flatten)]
     pub(crate) scope: ScopeArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub(crate) struct ApprovalScopeArgs {
+    /// One agent only.
+    #[arg(long, conflicts_with_all = ["subtree", "run"])]
+    agent: Option<String>,
+    /// An agent and all its descendants.
+    #[arg(long, conflicts_with_all = ["agent", "run"])]
+    subtree: Option<String>,
+    /// Every agent in one run.
+    #[arg(long, conflicts_with_all = ["agent", "subtree"])]
+    run: Option<String>,
+}
+
+impl From<ApprovalScopeArgs> for cli::RuleScopeArgs {
+    fn from(scope: ApprovalScopeArgs) -> Self {
+        Self {
+            agent: scope.agent,
+            subtree: scope.subtree,
+            run: scope.run,
+            everywhere: false,
+        }
+    }
 }
 
 /// Where a rule applies. A hand-written rule names its scope; answering an

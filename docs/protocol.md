@@ -28,7 +28,7 @@ protocol version.
 
 ## Versions
 
-The protocol is version 20 and the daemon serves versions 17 through 20. The window is
+The protocol is version 21 and the daemon serves versions 17 through 21. The window is
 `MIN_PROTOCOL_VERSION` to `PROTOCOL_VERSION` in `aether-protocol`; the
 `compat` module translates replies for the older versions.
 A hello outside the window is refused with `incompatible`, naming both bounds.
@@ -39,6 +39,12 @@ Only the daemon's answers are rewritten. Every field a newer version added to
 a command is optional, so an older client's requests decode unchanged; the
 test `no_command_requires_a_field_an_older_client_would_not_send` holds that
 against the live schema.
+
+Version 21 adds the `no_model` error code: creating an agent or a schedule
+with no model named, when the daemon has no default because no provider is
+signed in. A model that is named but cannot be used keeps its own code.
+Clients on versions 17 through 20 receive `invalid_argument` with the same
+message, the code they got for it before.
 
 Version 20 adds transient `accounting` deltas with absolute agent usage,
 turn usage and the latest context token count. Live subscribers receive these

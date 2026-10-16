@@ -390,6 +390,9 @@ pub enum ErrorCode {
     Forbidden,
     /// The command is part of the protocol and this build does not serve it.
     Unimplemented,
+    /// Nothing named a model and the daemon has no default: no provider is
+    /// signed in. A model named but not usable is refused with another code.
+    NoModel,
 }
 
 #[derive(

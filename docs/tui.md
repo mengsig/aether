@@ -409,7 +409,7 @@ These removals are intentional. The daemon capabilities remain available:
 | `/trigger` | `aether trigger <agent> <source> --payload <json>` |
 | Replay and inspector Turns/Tools/Checkpoint tabs | `aether replay <agent>`; transcript Ctrl+T still shows output and reasoning |
 | Event timeline and timeline search | `aether events` (including follow/filter options) |
-| `/approve`, `/deny`, including batch answers | `aether approve <approval>` / `aether deny <approval>`; repeat for each pending ID |
+| `/approve`, `/deny`, including batch answers | `aether approvals` lists pending IDs; `aether approve <approval>` / `aether deny <approval>`, or `--all-pending --run <run>` for a scoped batch |
 | `/always`, `/never`, tool-wide rules and remembered refusals | `aether rules list\|allow\|deny\|revoke`; TUI `y/a/p/n` answer one prompt |
 | GitHub-watcher view | `aether github-watcher` |
 | Notice history | Client failures persist as error cells in the current transcript; daemon events are available through `aether events` |

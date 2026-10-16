@@ -18,6 +18,6 @@ pub use interaction::{
     AuthEvent, AuthInteraction, AuthPrompt, ScriptedInteraction, SelectOption, TerminalInteraction,
 };
 pub use methods::{AuthMethods, OAuthKind};
-pub use resolve::{AuthResolver, LoginMethod, ResolvedAuth};
+pub use resolve::{AuthResolver, LoginMethod, NO_AUTH_SOURCE, ResolvedAuth};
 pub use store::{FileCredentialStore, MemoryCredentialStore};
 pub use types::{AuthError, AuthKind, Credential, CredentialInfo, CredentialStore, ModifyFn};
