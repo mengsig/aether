@@ -184,6 +184,21 @@ fn a_sandboxed_claude_may_write_only_its_own_temp_dir_beyond_the_defaults() {
         settings(&t).get("sandbox").is_none(),
         "an online turn is not sandboxed"
     );
+    t.build_env = vec![(
+        "CARGO_TARGET_DIR".into(),
+        "/var/cache/r/run/cargo-target".into(),
+    )];
+    let online = settings(&t);
+    assert_eq!(
+        online["sandbox"],
+        json!({"filesystem": {"allowWrite": ["/var/cache/r/run/cargo-target"]}}),
+        "an inherited sandbox may still write the build cache, and is not enabled by Aether"
+    );
+    t.summary_only = true;
+    assert!(
+        settings(&t).get("sandbox").is_none(),
+        "a summary runs no builds"
+    );
 }
 
 #[test]
