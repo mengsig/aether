@@ -70,10 +70,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PREVIOUS: ${{ inputs.previous }}
+          # A tag run never picks its own release, published or not, as the previous one.
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           TMPDIR: ${{ runner.temp }}/aether-upgrade
         run: |
           mkdir -p "$TMPDIR"
-          python3 scripts/upgrade_compat.py ${PREVIOUS:+--previous "$PREVIOUS"}
+          python3 scripts/upgrade_compat.py ${PREVIOUS:+--previous "$PREVIOUS"} \
+            ${RELEASE_TAG:+--release-tag "$RELEASE_TAG"}
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

@@ -82,8 +82,9 @@ class Fixture:
         engine = shlex.quote(str(SCRIPTS / "upgrade_compat_engine.py"))
         state = shlex.quote(str(self.engine_state))
         python = shlex.quote(sys.executable)
-        write_executable(self.fake_bin / "claude",
-                         f'#!/bin/sh\nexec {python} {engine} --state {state} "$@"\n')
+        installed = shlex.quote(str(self.installed))
+        write_executable(self.fake_bin / "claude", f'#!/bin/sh\nexec {python} {engine} '
+                                                   f'--state {state} --installed {installed} "$@"\n')
         write_executable(self.fake_bin / "ssh", FAKE_SSH)
 
     @property

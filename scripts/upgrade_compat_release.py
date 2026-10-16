@@ -1,8 +1,9 @@
 """Which release the upgrade lane runs against, and fetching its binary.
 
 The previous release is the newest published (not draft, not prerelease)
-release whose version is at or below the workspace version: on a release tag
-that is the one before it, and between releases it is the one users run.
+release whose version is at or below the workspace version, other than the
+release tag under test: between releases it is the one users run, and on a
+release tag, even one already published, it is the one before.
 """
 import hashlib
 import json
@@ -41,13 +42,17 @@ def workspace_version(cargo_toml=ROOT / "Cargo.toml"):
     raise ValueError(f"{cargo_toml} has no version under [workspace.package]")
 
 
-def select_previous(releases, workspace):
-    """The tag of the newest published release at or below `workspace`."""
+def select_previous(releases, workspace, testing=None):
+    """The tag of the newest published release at or below `workspace` that is
+    not `testing`, the release tag this run checks."""
     assert len(workspace) == 3, f"a version is (major, minor, patch), got {workspace}"
+    assert testing is None or parse_tag(testing), f"not a release tag: {testing}"
     candidates = []
     for release in releases:
         version = parse_tag(release.get("tag_name", ""))
         if release.get("draft") or release.get("prerelease") or version is None:
+            continue
+        if release["tag_name"] == testing:
             continue
         if version <= workspace:
             candidates.append((version, release["tag_name"]))
@@ -66,11 +71,11 @@ def fetch(url, accept="application/octet-stream"):
         return response.read()
 
 
-def previous_tag():
+def previous_tag(testing=None):
     url = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=30"
     releases = json.loads(fetch(url, accept="application/vnd.github+json"))
     assert isinstance(releases, list), f"the releases API answered {releases!r:.200}"
-    return select_previous(releases, workspace_version())
+    return select_previous(releases, workspace_version(), testing)
 
 
 def release_target():

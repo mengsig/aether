@@ -126,7 +126,8 @@ protocol, the client, the bridge or the store (not a required check), and by
 manual dispatch, which can name the release to test against.
 
 The previous release is the newest published release at or below the workspace
-version: on a release tag, the one before it. The lane downloads its x86_64
+version, other than the release tag under test: on a release tag, even one
+already published, the one before it. The lane downloads its x86_64
 Linux archive, checks it against its `.sha256`, and runs in one temporary
 directory with its own config, data, socket, home, installed binary and TCP
 port. A fake `claude` (`scripts/upgrade_compat_engine.py`) on its `PATH` makes
@@ -137,9 +138,12 @@ command on the same machine.
 1. **The previous daemon across an update.** The previous release's daemon
    starts from the installed path. During a native session, this build replaces
    the installed binary the way `aether update` does. The bridge already
-   running must still answer tool calls, and a bridge started afterwards, which
-   the previous daemon takes from the installed path and is therefore this
-   build, must connect and serve tools.
+   running must still answer tool calls, and so must the bridge the previous
+   daemon starts next. A release before 1.0.11 takes it from the installed
+   path, so it is this build; a later one launches a copy of its own build,
+   and the lane accepts either. Either way the fake engine then starts a
+   bridge from the installed path itself, so this build's bridge always has
+   to reach the previous daemon and serve tools.
 2. **This build's clients against the previous daemon.** The Rust client
    (`cargo run -p aether-client --example negotiate`) connects over the Unix
    socket and over TCP, and must agree on the newest protocol both sides
@@ -162,7 +166,9 @@ command on the same machine.
 4. **This build's daemon across a replaced binary.** This build's daemon
    starts on the upgraded store, and the previous release replaces the
    installed binary mid-session. Both bridges of the session must be the
-   daemon's own copy under `<data>/bin`, byte for byte this build.
+   daemon's own copy under `<data>/bin`, byte for byte this build, and the
+   previous release's bridge, started from the installed path, must reach
+   this build's daemon.
 
 The lane builds a debug binary without debug info, so a run with a warm cache
 takes a few minutes, of which the cases take well under one; the run is capped

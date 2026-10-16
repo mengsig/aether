@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A stand-in `claude` for the upgrade lane (scripts/upgrade_compat.py).
 
-  upgrade_compat_engine.py --state DIR [claude arguments...]
+  upgrade_compat_engine.py --state DIR --installed PATH [claude arguments...]
 
 It answers `--version`, and runs a `-p` turn the way Claude Code does as far as
 Aether can see: stream-json in and out, and the MCP bridge Aether names in
@@ -11,7 +11,9 @@ Aether can see: stream-json in and out, and the MCP bridge Aether names in
 2. writes `bridge-ready` in DIR and waits for `swapped` (the lane replaces the
    installed binary in between), then calls the tool again on that bridge;
 3. starts a second bridge from the same command, as the next turn would, and
-   calls the tool there too.
+   calls the tool there too;
+4. starts one more bridge, from the installed binary PATH with the same
+   arguments, so the build now installed meets the running daemon.
 
 Every step is written to `session.json` in DIR. The turn ends in success only
 when every call succeeded; otherwise its result names the first failure.
@@ -162,8 +164,8 @@ def publish(state, name, record):
     os.replace(staged, state / name)
 
 
-def bridge_session(state, command, args, record):
-    """The three steps in the module docstring, recorded as they happen."""
+def bridge_session(state, installed, command, args, record):
+    """The four steps in the module docstring, recorded as they happen."""
     record["first_build"] = build_of(command)
     first, names = start(command, args)
     try:
@@ -174,16 +176,22 @@ def bridge_session(state, command, args, record):
         record["after_swap"] = call(first, names)[:200]
     finally:
         first.close()
-    record["second_build"] = build_of(command)
-    second, names = start(command, args)
+    fresh_bridge(command, args, record, "second")
+    fresh_bridge(installed, args, record, "installed")
+
+
+def fresh_bridge(command, args, record, name):
+    """Start a bridge from `command`, call the tool once, and close it."""
+    record[f"{name}_build"] = build_of(command)
+    bridge, names = start(command, args)
     try:
-        record["second_tools"] = names
-        record["second_bridge"] = call(second, names)[:200]
+        record[f"{name}_tools"] = names
+        record[f"{name}_bridge"] = call(bridge, names)[:200]
     finally:
-        second.close()
+        bridge.close()
 
 
-def run_turn(state, args):
+def run_turn(state, installed, args):
     session = option(args, "--session-id") or option(args, "--resume") or "fake-session"
     prompt = json.loads(sys.stdin.readline())
     assert prompt.get("type") == "user", f"the first stdin line is not a user message: {prompt}"
@@ -197,7 +205,7 @@ def run_turn(state, args):
         server = json.loads(config)["mcpServers"]["aether"]
         record["command"] = server["command"]
         try:
-            bridge_session(state, server["command"], server.get("args", []), record)
+            bridge_session(state, installed, server["command"], server.get("args", []), record)
         except BridgeError as failure:
             error = str(failure)
     record["error"] = error
@@ -212,11 +220,12 @@ def run_turn(state, args):
 
 
 def main(argv):
-    if len(argv) < 2 or argv[0] != "--state":
-        raise SystemExit("usage: upgrade_compat_engine.py --state DIR [claude arguments...]")
-    state = Path(argv[1])
+    if len(argv) < 4 or argv[0] != "--state" or argv[2] != "--installed":
+        raise SystemExit("usage: upgrade_compat_engine.py --state DIR --installed PATH "
+                         "[claude arguments...]")
+    state, installed = Path(argv[1]), argv[3]
     assert state.is_dir(), f"state directory {state} does not exist"
-    args = argv[2:]
+    args = argv[4:]
     with open(state / "invocations.log", "a") as log:
         log.write(json.dumps(args) + "\n")
     if args[:1] == ["--version"]:
@@ -225,7 +234,7 @@ def main(argv):
     if "-p" not in args:
         print(f"fake claude: unsupported invocation {args}", file=sys.stderr)
         return 2
-    run_turn(state, args)
+    run_turn(state, installed, args)
     return 0
 
 

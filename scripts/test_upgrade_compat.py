@@ -1,6 +1,8 @@
 """Tests for the upgrade lane's offline parts: release choice, checksums, the
 schema rewind, the fake ssh and the fake `claude`. The lane itself needs the
 network and two builds; .github/workflows/upgrade.yml runs it."""
+import contextlib
+import io
 import json
 from pathlib import Path
 import sqlite3
@@ -8,10 +10,13 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import types
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import upgrade_compat as lane  # noqa: E402
 import upgrade_compat_fixture as fixture  # noqa: E402
 import upgrade_compat_migration as migration  # noqa: E402
 import upgrade_compat_release as release  # noqa: E402
@@ -47,6 +52,11 @@ class ReleaseChoice(unittest.TestCase):
                     published("nightly"), published("v1.0.12")]
         self.assertEqual(release.select_previous(releases, (1, 0, 11)), "v1.0.10")
         self.assertEqual(release.select_previous(releases, (1, 0, 10)), "v1.0.10")
+
+    def test_a_release_tag_run_never_picks_its_own_release(self):
+        releases = [published("v1.0.10"), published("v1.0.11")]
+        self.assertEqual(release.select_previous(releases, (1, 0, 11)), "v1.0.11")
+        self.assertEqual(release.select_previous(releases, (1, 0, 11), "v1.0.11"), "v1.0.10")
 
     def test_no_candidate_is_an_error_not_a_guess(self):
         with self.assertRaisesRegex(ValueError, "no published release"):
@@ -139,7 +149,8 @@ class FakeEngine(unittest.TestCase):
                                                 "args": [str(bridge), mode]}}}
             prompt = {"type": "user", "message": {"role": "user", "content": "hi"}}
             done = subprocess.run(
-                [sys.executable, ENGINE, "--state", state, "-p", "--session-id", "s1",
+                [sys.executable, ENGINE, "--state", state, "--installed", sys.executable,
+                 "-p", "--session-id", "s1",
                  "--mcp-config", json.dumps(config)],
                 input=json.dumps(prompt) + "\n", capture_output=True, text=True, timeout=60)
             self.assertEqual(done.returncode, 0, done.stderr)
@@ -153,7 +164,7 @@ class FakeEngine(unittest.TestCase):
         self.assertEqual(frames[-1]["subtype"], "success")
         self.assertEqual(frames[-1]["session_id"], "s1")
         self.assertIsNone(record["error"])
-        for step in ("before_swap", "after_swap", "second_bridge"):
+        for step in ("before_swap", "after_swap", "second_bridge", "installed_bridge"):
             self.assertEqual(record[step], "state")
         self.assertEqual(record["first_build"]["sha256"], record["second_build"]["sha256"])
 
@@ -165,9 +176,34 @@ class FakeEngine(unittest.TestCase):
 
     def test_it_reports_a_claude_version(self):
         with tempfile.TemporaryDirectory() as directory:
-            done = subprocess.run([sys.executable, ENGINE, "--state", directory, "--version"],
+            done = subprocess.run([sys.executable, ENGINE, "--state", directory,
+                                   "--installed", sys.executable, "--version"],
                                   capture_output=True, text=True, timeout=10)
             self.assertEqual(done.stdout.strip(), "2.1.265 (Claude Code)")
+
+
+class PreviousDaemonBridge(unittest.TestCase):
+    """Both bridge strategies a previous release may have pass; a drift fails."""
+    sandbox = types.SimpleNamespace(installed=Path("/sandbox/install/aether"))
+    binaries = lane.Binaries(Path("previous"), Path("new"), Path("negotiate"), "1.0.10")
+
+    def check(self, command, second):
+        record = {"command": command, "first_build": {"sha256": "previous"},
+                  "second_build": {"sha256": second}}
+        with mock.patch.object(lane, "native_session", return_value=record), \
+                mock.patch.object(lane, "digest", side_effect=lambda path: str(path)), \
+                contextlib.redirect_stdout(io.StringIO()):
+            lane.check_previous_daemon_session(self.sandbox, self.binaries)
+
+    def test_a_daemon_launching_the_installed_path_gets_the_new_build(self):
+        self.check(str(self.sandbox.installed), "new")
+        with self.assertRaises(fixture.LaneFailure):
+            self.check(str(self.sandbox.installed), "previous")
+
+    def test_a_daemon_launching_its_own_copy_keeps_its_build(self):
+        self.check("/sandbox/data/bin/aether-1.0.11-x", "previous")
+        with self.assertRaisesRegex(fixture.LaneFailure, "changed build"):
+            self.check("/sandbox/data/bin/aether-1.0.11-x", "new")
 
 
 if __name__ == "__main__":

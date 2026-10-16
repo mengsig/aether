@@ -2,7 +2,8 @@
 """The upgrade-compatibility lane: this tree's build against the previous release.
 
   python3 scripts/upgrade_compat.py [--new-binary PATH] [--negotiate PATH]
-                                    [--previous vX.Y.Z | --previous-binary PATH] [--keep]
+                                    [--previous vX.Y.Z | --previous-binary PATH]
+                                    [--release-tag vX.Y.Z] [--keep]
 
 It downloads the previous release (scripts/upgrade_compat_release.py), then:
 
@@ -89,18 +90,27 @@ def native_session(fixture, binaries, replacement):
     record = json.loads((fixture.engine_state / "session.json").read_text())
     require(record["error"] is None, f"a bridge call failed: {record['error']}\n{output[-3000:]}")
     require(run.returncode == 0, f"`aether run` exited {run.returncode}:\n{output[-3000:]}")
-    require(record["second_tools"], "the second bridge offered no tools")
+    require(record["installed_build"]["sha256"] == digest(replacement),
+            "the bridge from the installed path was not the build installed mid-session")
     return record
 
 
 def check_previous_daemon_session(fixture, binaries):
+    """Either bridge strategy a release may have is fine: launching the installed
+    path (before 1.0.11), or a copy of its own build. Tools must work in both."""
     record = native_session(fixture, binaries, replacement=binaries.new)
-    require(Path(record["command"]) == fixture.installed,
-            f"the previous daemon launched {record['command']}, not {fixture.installed}")
-    require(record["first_build"]["sha256"] == digest(binaries.previous),
+    previous = digest(binaries.previous)
+    require(record["first_build"]["sha256"] == previous,
             "the session's first bridge was not the previous release")
-    require(record["second_build"]["sha256"] == digest(binaries.new),
-            "after the swap the previous daemon did not launch this build as its bridge")
+    if Path(record["command"]) == fixture.installed:
+        require(record["second_build"]["sha256"] == digest(binaries.new),
+                "the previous daemon launches the installed path, yet its next bridge "
+                "was not the build installed there")
+        print("  the previous daemon launches the installed path: now this build")
+    else:
+        require(record["second_build"]["sha256"] == previous,
+                f"the previous daemon's own bridge {record['command']} changed build mid-session")
+        print("  the previous daemon launches a copy of its own build")
     print("  the running bridge kept its tools; this build's bridge reached the previous daemon")
 
 
@@ -180,6 +190,7 @@ def new_daemon_case(fixture, binaries, store):
             "a bridge of this build's daemon was not this build")
     daemon.stop(binaries.new)
     print(f"  both bridges ran {command.name}, the daemon's own build")
+    print("  the previous release's bridge, now installed, reached this build's daemon")
 
 
 def resolve_binaries(args, scratch):
@@ -190,7 +201,9 @@ def resolve_binaries(args, scratch):
     if args.previous_binary:
         previous, version = Path(args.previous_binary).resolve(), None
     else:
-        tag = args.previous or release.previous_tag()
+        require(args.release_tag is None or release.parse_tag(args.release_tag) is not None,
+                f"`{args.release_tag}` is not a vX.Y.Z release tag")
+        tag = args.previous or release.previous_tag(args.release_tag)
         require(release.parse_tag(tag) is not None, f"`{tag}` is not a vX.Y.Z release tag")
         print(f"previous release: {tag}")
         previous, version = release.download_binary(tag, scratch), tag.removeprefix("v")
@@ -206,6 +219,8 @@ def parse_args(argv):
     which.add_argument("--previous", help="release tag to test against (default: the newest "
                                           "published one at or below the workspace version)")
     which.add_argument("--previous-binary", help="an already downloaded previous `aether`")
+    parser.add_argument("--release-tag", help="the release tag this run checks, never chosen "
+                                              "as its previous release")
     parser.add_argument("--keep", action="store_true", help="keep the sandbox after a pass")
     return parser.parse_args(argv)
 
