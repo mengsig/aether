@@ -429,6 +429,29 @@ async fn a_partly_failed_deletion_stays_marked_and_finishes_later() {
     assert!(!left.exists());
 }
 
+#[tokio::test]
+async fn a_partition_swapped_for_a_link_after_the_scan_is_never_followed() {
+    let f = Fixture::new(0).await;
+    let (_, partition) = f.agent(AgentStatus::Completed { summary: None }, 5, 8);
+    let mut report = scan(&f.root).unwrap();
+    let index = report
+        .entries
+        .iter()
+        .position(|entry| entry.path == partition)
+        .unwrap();
+    let operator = f.root.parent().unwrap().join("operator-target");
+    fs::rename(&partition, &operator).unwrap();
+    fs::remove_file(operator.join(PARTITION_MARKER)).unwrap();
+    std::os::unix::fs::symlink(&operator, &partition).unwrap();
+
+    let moved = move_to_trash(&mut report, &[index], &f.root.join(TRASH));
+    assert!(moved.is_empty(), "{moved:?}");
+    assert_eq!(report.entries[index].action, "kept");
+    assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+    assert!(remove_partition(&partition).is_err(), "a link is refused");
+    assert!(built(&operator), "the operator's files stay");
+}
+
 #[test]
 fn a_trash_that_is_a_link_is_refused() {
     let dir = tempfile::tempdir().unwrap();

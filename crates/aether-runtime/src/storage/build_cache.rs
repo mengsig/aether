@@ -300,6 +300,15 @@ fn move_to_trash(
             "{} is not Aether's",
             entry.path.display()
         );
+        if !is_partition(&entry.path) {
+            entry.action = "kept";
+            entry.reason = "changed since the scan";
+            report.errors.push(format!(
+                "{} is no longer a marked directory; left in place",
+                entry.path.display()
+            ));
+            continue;
+        }
         let target = trash.join(ulid::Ulid::generate().to_string());
         match fs::rename(&entry.path, &target) {
             Ok(()) => {
@@ -334,6 +343,11 @@ fn open_trash(trash: &Path, create: bool) -> io::Result<bool> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
     }
+}
+
+/// Whether `path` is itself a marked directory, not a link to one.
+fn is_partition(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) && is_marked(path, PARTITION_MARKER)
 }
 
 /// Whether `dir` holds `marker` as a regular file, not a link.
@@ -386,13 +400,12 @@ fn trash_leftovers(trash: &Path, claims: &Claims, errors: &mut Vec<String>) -> V
 }
 
 /// Delete a marked partition, its marker last, so a deletion that fails
-/// part way still leaves it marked for the next sweep to finish.
+/// part way still leaves it marked for the next sweep to finish. Whatever
+/// the rename moved is checked again: a link swapped in is never followed.
 fn remove_partition(partition: &Path) -> io::Result<()> {
-    debug_assert!(
-        is_marked(partition, PARTITION_MARKER),
-        "{}",
-        partition.display()
-    );
+    if !is_partition(partition) {
+        return Err(io::Error::other("not a marked directory; left in place"));
+    }
     for entry in fs::read_dir(partition)? {
         let entry = entry?;
         if entry.file_name() == PARTITION_MARKER {
