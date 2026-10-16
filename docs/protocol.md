@@ -693,3 +693,23 @@ aether memory feedback list <memory> --json
 Recording also accepts `--invocation <id>`. All three accept `--json`.
 `list` ends with the ranking in one line, for example `ranking factor 1.08
 (3 helped, 1 hurt across the latest 20 tasks)`.
+
+## Provider quota headroom
+
+The `providers` reply adds `headroom` to each provider row. The read-only
+`provider_usage` harness/MCP tool returns `{"providers": [{"provider": "id",
+"headroom": {...}}]}` for every enabled registry provider, including custom
+subscriptions. Neither read performs a probe or changes scheduling decisions.
+
+`headroom.windows` contains `name`, `window_minutes`, `remaining_percent`,
+`resets_at` (UTC timestamp or null) and `resets_in_seconds` (or null). Its
+`observed_at` and `age_seconds` describe the single report shared by all windows.
+`stale` becomes true when that report is older than `providers.usage_stale_after`
+seconds in `config.toml` (default 900). An unobserved provider has `windows: []`,
+null observation and age, and `stale: true`. Usage is currently held in memory;
+restarting the daemon makes it unknown until another report arrives.
+
+Remaining percentages and reset countdowns are clamped at zero. A passed reset
+does not imply replenished credit: only a new provider report changes the usage.
+Future observation timestamps have age zero to tolerate clock skew. Older clients
+can ignore the added fields; new clients default missing headroom to unknown.

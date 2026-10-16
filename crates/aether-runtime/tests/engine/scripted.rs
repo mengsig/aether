@@ -66,7 +66,7 @@ impl Engine for ScriptedEngine {
                         .send(EngineEvent::RateLimit {
                             payload: serde_json::json!({
                                 "unifiedWindows": {
-                                    "five_hour": {"utilization": 0.42},
+                                    "five_hour": {"utilization": 0.42, "resetsAt": aether_core::time::now().timestamp() + 3600},
                                     "seven_day": {"utilization": 0.73}
                                 }
                             }),

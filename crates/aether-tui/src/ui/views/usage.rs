@@ -176,14 +176,7 @@ fn provider_lines(provider: &ProviderInfo, name_width: usize, theme: &Theme) -> 
     };
     match (&provider.health.usage, provider.health.quota) {
         (Some(usage), _) => lines.extend(window_lines(usage, theme).into_iter().map(sub)),
-        (None, Some(window)) => lines.push(sub(row(
-            format!(
-                "{}: {}% used",
-                window.window_label().unwrap_or_else(|| "quota".into()),
-                window.used_percent
-            ),
-            theme.text(),
-        ))),
+        (None, Some(window)) => lines.push(sub(row(window.headroom_label("quota"), theme.text()))),
         (None, None) => {}
     }
     if let Some(detail) = health_detail(&provider.health, theme) {
@@ -209,10 +202,7 @@ fn window_lines(usage: &ProviderUsage, theme: &Theme) -> Vec<Line<'static>> {
             } else {
                 theme.text()
             };
-            row(
-                format!("{}: {}% used", clean(&label), window.quota.used_percent),
-                style,
-            )
+            row(window.quota.headroom_label(&clean(&label)), style)
         })
         .collect();
     lines.push(row(

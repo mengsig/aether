@@ -311,6 +311,7 @@ fn artifact(name: &str) -> Artifact {
 
 fn provider(name: &str) -> ProviderInfo {
     ProviderInfo {
+        headroom: Default::default(),
         provider: name.into(),
         name: name.into(),
         protocol: "anthropic-messages".into(),
@@ -1952,4 +1953,21 @@ fn login_status_keeps_daemon_failure_detail_for_cli_and_api_providers() {
         assert!(status.contains("not signed in"), "{status}");
         assert!(status.contains(info.detail.as_deref().unwrap()), "{status}");
     }
+}
+
+#[test]
+fn usage_view_shows_remaining_credit_and_reset_time() {
+    let mut app = viewed_app();
+    let mut row = provider("custom-subscription");
+    row.health.usage = aether_core::provider::ProviderUsage::from_engine_payload(
+        &serde_json::json!({"primary":{"usedPercent":38,"windowDurationMins":300,"resetsAt":1893598200}}),
+        now(),
+    );
+    app.providers = vec![row];
+    let text = screen_text(&draw(&super::usage::UsageView::default(), &app, 160));
+    assert!(
+        text.contains("5h: 62% left, resets 15:30 UTC (2030-01-02)"),
+        "{text}"
+    );
+    assert!(text.contains("custom-subscription"), "{text}");
 }

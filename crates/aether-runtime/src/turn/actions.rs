@@ -46,6 +46,14 @@ pub(crate) async fn apply_action(
             offset,
             max_chars,
         ),
+        HarnessAction::ProviderUsage => {
+            let data = runtime.provider_usage();
+            Ok(ToolOutcome {
+                content: data.to_string(),
+                structured: Some(data),
+                ..Default::default()
+            })
+        }
         HarnessAction::InspectState => inspection::inspect_state(runtime, ctx),
         HarnessAction::ListModels { provider } => {
             inspection::list_models(runtime, ctx, provider).await

@@ -615,3 +615,29 @@ async fn an_agent_cannot_ask_which_memories_were_in_context() {
         .expect_err("no such task");
     assert_eq!(unknown.code, ErrorCode::NotFound);
 }
+
+#[tokio::test]
+async fn providers_reply_and_usage_tool_share_unknown_headroom() {
+    let (daemon, _config) = daemon().await;
+    let Reply::Providers(rows) = dispatch(&daemon, Command::Providers, Actor::user())
+        .await
+        .unwrap()
+    else {
+        panic!("providers reply");
+    };
+    let tool = daemon.runtime.provider_usage();
+    let enabled = tool["providers"].as_array().unwrap();
+    assert_eq!(enabled.len(), rows.iter().filter(|row| row.enabled).count());
+    for provider in rows.iter().filter(|row| row.enabled) {
+        let entry = enabled
+            .iter()
+            .find(|row| row["provider"] == provider.provider)
+            .unwrap();
+        assert_eq!(
+            entry["headroom"],
+            serde_json::to_value(&provider.headroom).unwrap()
+        );
+        assert!(provider.headroom.stale && provider.headroom.windows.is_empty());
+    }
+    daemon.runtime.shutdown().await;
+}

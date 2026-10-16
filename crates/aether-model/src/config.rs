@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::profile::ProfileSetting;
 
 mod agents;
+mod providers;
 mod remote;
 mod retention;
 mod scheduler;
@@ -18,6 +19,7 @@ mod storage;
 mod templates;
 
 pub use agents::AgentsSection;
+pub use providers::ProvidersSection;
 pub use remote::RemoteSection;
 pub use retention::RetentionSection;
 pub use storage::StorageSection;
@@ -82,6 +84,7 @@ pub fn create_config_dir(dir: &Path) -> std::io::Result<()> {
 pub struct AetherConfig {
     #[serde(skip_serializing)]
     pub theme: toml::Table,
+    pub providers: ProvidersSection,
     pub model: ModelSection,
     pub models: ModelsSection,
     pub approval: ApprovalSection,

@@ -60,6 +60,10 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # Existing agents and explicitly requested scopes are not changed.
 # default = "allowed"
 
+[providers]
+# Cached usage becomes stale after this many seconds; reads never probe providers.
+# usage_stale_after = 900
+
 [scheduler]
 # Maximum simultaneous model turns across the daemon; must be positive.
 # max_concurrent_turns = 32

@@ -26,6 +26,7 @@ pub fn all() -> Vec<Arc<dyn Tool>> {
         Arc::new(super::schedules::ScheduleTool::Update),
         Arc::new(InspectState),
         Arc::new(ListModels),
+        Arc::new(ProviderUsage),
         Arc::new(Delegate),
         Arc::new(IntegrateWorkspace),
         Arc::new(SendMessage),
@@ -82,6 +83,37 @@ impl Tool for InspectState {
         struct Input {}
         let _: Input = parse_input(input)?;
         Ok(ToolExecution::Action(HarnessAction::InspectState))
+    }
+}
+
+#[derive(Debug)]
+pub struct ProviderUsage;
+
+#[async_trait]
+impl Tool for ProviderUsage {
+    fn descriptor(&self) -> ToolDescriptor {
+        harness_descriptor(
+            "provider_usage",
+            "Read cached quota headroom, reset times and observation age for every enabled provider. Unknown usage is stale; this read-only tool never probes providers or chooses a route.",
+            json!({"type":"object", "properties":{}, "additionalProperties":false}),
+        )
+    }
+
+    fn resources(&self, _input: &Value, _ctx: &ToolContext) -> Vec<ResourceKey> {
+        Vec::new()
+    }
+
+    async fn execute(
+        &self,
+        input: Value,
+        _ctx: &ToolContext,
+        _cancel: CancellationToken,
+    ) -> Result<ToolExecution, ToolError> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Input {}
+        let _: Input = parse_input(input)?;
+        Ok(ToolExecution::Action(HarnessAction::ProviderUsage))
     }
 }
 
