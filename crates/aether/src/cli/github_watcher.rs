@@ -82,7 +82,7 @@ pub async fn run(
                 None => None,
             };
             let agent = match agent {
-                Some(agent) => Some(agent.resolve(&client).await?),
+                Some(agent) => Some(agent.resolve(&client, &socket).await?),
                 None => None,
             };
             let dispatch = add_dispatch(agent, spawn);

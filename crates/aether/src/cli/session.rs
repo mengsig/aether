@@ -162,7 +162,7 @@ pub async fn tui(
         None => client.status().await.ok().and_then(|s| s.default_model),
     };
     let focus = match agent {
-        Some(agent) => Some(agent.resolve(&client).await?),
+        Some(agent) => Some(agent.resolve(&client, &socket).await?),
         None => None,
     };
     // A pipe or a screen reader gets lines whether or not --plain was typed:

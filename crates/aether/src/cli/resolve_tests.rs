@@ -151,11 +151,35 @@ fn last_is_the_newest_agent_of_the_current_run() {
         id::<RunId>("run", "01J5B")
     );
     assert!(error_text(resolve_agent(LAST, &[])).contains("no run yet"));
-    let message = error_text(resolve_agent("@viewed", &agents));
+    let message = error_text(resolve_agent("@first", &agents));
+    assert!(message.contains("`@first` is not a reference"), "{message}");
+}
+
+#[test]
+fn viewed_is_what_a_tui_beside_the_socket_publishes() {
+    let dir = tempfile::tempdir().expect("scratch dir");
+    let socket = Endpoint::from(dir.path().join("aether.sock"));
+    let message = error_text(viewed_agent(&socket));
     assert!(
-        message.contains("`@viewed` is not a reference"),
+        message.contains("no running TUI views an agent"),
         "{message}"
     );
+
+    let viewed: AgentId = id("agt", "01J5B1");
+    let local = socket.local_path().expect("a local socket");
+    let mut tui = aether_tui::viewed::Publisher::new(aether_tui::viewed::viewed_path(local));
+    tui.sync(Some(viewed)).expect("publish");
+    assert_eq!(viewed_agent(&socket).expect("viewed"), viewed);
+    assert_eq!(
+        run_of(viewed, &fleet()).expect("its run"),
+        id::<RunId>("run", "01J5B")
+    );
+    assert!(
+        run_of(id("agt", "01J9"), &fleet()).is_err(),
+        "not on this daemon"
+    );
+    tui.finish().expect("withdraw");
+    assert!(viewed_agent(&socket).is_err(), "a closed TUI views nothing");
 }
 
 #[test]

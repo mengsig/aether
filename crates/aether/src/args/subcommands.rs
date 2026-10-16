@@ -34,11 +34,11 @@ pub(crate) enum MemoryCmd {
     },
     /// List durable memories, most important first.
     List {
-        /// Only this scope: `global`, `role:<role>`, `agent:<id>`,
-        /// `subtree:<agent id>`, `repo-role:<role>@<repository>`, or a
+        /// Only this scope: `global`, `role:<role>`, `agent:<agent>`,
+        /// `subtree:<agent>`, `repo-role:<role>@<repository>`, or a
         /// repository id.
         #[arg(long)]
-        scope: Option<String>,
+        scope: Option<cli::MemoryScopeRef>,
         /// Full-text search over memory text and tags.
         #[arg(long)]
         text: Option<String>,
@@ -711,7 +711,7 @@ pub(crate) enum StorageCmd {
 pub(crate) enum WorkspaceCmd {
     /// Files, diffstat and commits an agent's turns made.
     Diff {
-        agent: String,
+        agent: cli::AgentRef,
         /// Also print the patch, capped for transport.
         #[arg(long)]
         patch: bool,
@@ -721,13 +721,13 @@ pub(crate) enum WorkspaceCmd {
     /// Land a finished child's isolated workspace in its source repository.
     /// Exits 1 with the conflicting paths when the source changed them too.
     Integrate {
-        agent: String,
+        agent: cli::AgentRef,
         #[arg(long)]
         json: bool,
     },
     /// Delete an agent's isolated workspace and the work in it.
     Discard {
-        agent: String,
+        agent: cli::AgentRef,
         /// Discard even while an agent that uses the workspace is live; it
         /// is not stopped.
         #[arg(long)]

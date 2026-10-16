@@ -31,6 +31,7 @@ pub mod prefs;
 mod runner;
 pub mod testing;
 pub mod ui;
+pub mod viewed;
 pub mod voice;
 pub mod workspace;
 

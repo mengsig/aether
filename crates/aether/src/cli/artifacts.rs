@@ -15,7 +15,7 @@ pub async fn artifacts_list(
     let socket = socket.into();
     let client = connect(&socket).await?;
     let agent = match agent {
-        Some(agent) => Some(agent.resolve(&client).await?),
+        Some(agent) => Some(agent.resolve(&client, &socket).await?),
         None => None,
     };
     let task = match task {

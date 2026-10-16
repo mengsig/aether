@@ -60,7 +60,7 @@ pub async fn run_report(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let run = options.run.resolve(&client).await?;
+    let run = options.run.resolve(&client, &socket).await?;
     let report = client.run_report(run).await?;
     if report.body.events == 0 {
         bail!("run {run} has no events in this daemon's store");
@@ -107,7 +107,7 @@ pub async fn run_export(
     // here as it does there.
     let out = std::path::absolute(&out).with_context(|| format!("path {}", out.display()))?;
     let client = connect(&socket).await?;
-    let run = run.resolve(&client).await?;
+    let run = run.resolve(&client, &socket).await?;
     let s = client.export_run(run, out).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&s)?);
@@ -180,7 +180,7 @@ pub async fn replay(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let agent = agent.resolve(&client).await?;
+    let agent = agent.resolve(&client, &socket).await?;
     client.get_agent(agent).await?;
     let frames = client.replay(agent).await?;
     if json {

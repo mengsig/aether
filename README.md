@@ -122,9 +122,9 @@ has never heard of Tailscale and can be re-run at any time.
 
 Replace `AGENT_ID` with an agent from `aether agents`: its full ID, a unique
 prefix of it (`01J5A` or `agt_01J5A`), its name if no other live agent has it,
-or `@last` for the newest agent of the current run. Run, task, approval and
-schedule IDs take unique prefixes too. An ambiguous one is refused with the
-candidates listed.
+`@last` for the newest agent of the current run, or `@viewed` for the agent a
+TUI on this machine views. Run, task, approval and schedule IDs take unique
+prefixes too. An ambiguous one is refused with the candidates listed.
 
 | Command | Purpose |
 | --- | --- |

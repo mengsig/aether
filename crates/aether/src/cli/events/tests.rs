@@ -7,14 +7,16 @@ use aether_core::{
 };
 use clap::Parser;
 
-fn args(flags: &[&str]) -> EventArgs {
-    let parsed = crate::args::Args::try_parse_from(
+fn try_args(flags: &[&str]) -> Result<crate::args::Args, clap::Error> {
+    crate::args::Args::try_parse_from(
         ["aether", "events"]
             .into_iter()
             .chain(flags.iter().copied()),
     )
-    .unwrap();
-    match parsed.command.unwrap() {
+}
+
+fn args(flags: &[&str]) -> EventArgs {
+    match try_args(flags).unwrap().command.unwrap() {
         crate::args::Cmd::Events(args) => args,
         _ => panic!("expected events"),
     }
@@ -62,11 +64,10 @@ fn combined_filters_and_since_cutoff() {
         "--grep",
         "needle",
     ]);
-    let query = args.query().unwrap();
-    assert_eq!(query.run.unwrap().to_string(), run);
-    assert_eq!(query.task.unwrap().to_string(), task);
-    assert_eq!(query.types, ["compaction.failed"]);
-    assert_eq!(query.families, ["compaction"]);
+    assert_eq!(args.run.as_ref().unwrap().to_string(), run);
+    assert_eq!(args.task.as_ref().unwrap().to_string(), task);
+    assert_eq!(args.types, ["compaction.failed"]);
+    assert_eq!(args.families, ["compaction"]);
     let now = "2026-10-16T15:00:00Z".parse().unwrap();
     let cutoff = args.cutoff(now).unwrap();
     assert_eq!(cutoff.unwrap().to_rfc3339(), "2026-10-16T14:00:00+00:00");
@@ -97,7 +98,8 @@ fn durations_and_ids_reject_invalid_input() {
         assert!(parse_duration(invalid).is_err(), "{invalid}");
     }
     assert_eq!(parse_duration("2h").unwrap().as_secs(), 7200);
-    assert!(args(&["--run", "bad"]).query().is_err());
+    assert!(try_args(&["--run", "bad"]).is_err());
+    assert!(try_args(&["--task", "agt_01J5"]).is_err());
     assert!(
         args(&["--since", "18446744073709551615s"])
             .cutoff(aether_core::time::now())

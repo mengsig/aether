@@ -16,7 +16,7 @@ pub async fn approve(
     let socket = socket.into();
     let client = connect(&socket).await?;
     let id = approval.resolve(&client).await?;
-    let scope = scope.resolve(&client).await?;
+    let scope = scope.resolve(&client, &socket).await?;
     let decision = decision_of(approve);
     client
         .resolve_approval_remembering(
@@ -126,7 +126,7 @@ pub async fn rules_add(
     matcher.validate().map_err(|e| anyhow!(e))?;
     // A hand-written rule outlives the session that wrote it, so it never
     // widens to everywhere by omission.
-    let Some(scope) = scope.resolve(&client).await? else {
+    let Some(scope) = scope.resolve(&client, &socket).await? else {
         bail!(
             "say where this rule applies: --agent, --subtree, --run, or --everywhere for every \
              agent this daemon will ever run"

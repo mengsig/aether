@@ -1,9 +1,12 @@
 use std::{io::IsTerminal, time::Duration};
 
+use aether_client::Endpoint;
 use aether_core::{event::Event, time::Timestamp};
 use anyhow::Context as _;
 
-use super::{Client, EventQuery, SubscriptionFrame, connect, tasks::summarize};
+use super::{
+    AgentRef, Client, EventQuery, RunRef, SubscriptionFrame, TaskRef, connect, tasks::summarize,
+};
 
 #[derive(Debug, clap::Args)]
 pub struct EventArgs {
@@ -13,14 +16,15 @@ pub struct EventArgs {
     /// Only events with a sequence greater than this cursor.
     #[arg(long, default_value_t = 0)]
     after: u64,
+    /// Filter by agent.
     #[arg(long)]
-    agent: Option<String>,
-    /// Filter by run ID.
+    agent: Option<AgentRef>,
+    /// Filter by run.
     #[arg(long)]
-    run: Option<String>,
-    /// Filter by task ID.
+    run: Option<RunRef>,
+    /// Filter by task.
     #[arg(long)]
-    task: Option<String>,
+    task: Option<TaskRef>,
     /// Event type, e.g. tool.failed; repeat or separate with commas.
     #[arg(long = "type", value_delimiter = ',')]
     types: Vec<String>,
@@ -64,30 +68,23 @@ fn parse_duration(value: &str) -> Result<Duration, String> {
 }
 
 impl EventArgs {
-    fn query(&self) -> anyhow::Result<EventQuery> {
-        Ok(EventQuery {
-            agent: self
-                .agent
-                .as_deref()
-                .map(str::parse)
-                .transpose()
-                .context("invalid agent id")?,
-            run: self
-                .run
-                .as_deref()
-                .map(str::parse)
-                .transpose()
-                .context("invalid run id")?,
-            task: self
-                .task
-                .as_deref()
-                .map(str::parse)
-                .transpose()
-                .context("invalid task id")?,
+    async fn query(&self, client: &Client, socket: &Endpoint) -> anyhow::Result<EventQuery> {
+        let mut query = EventQuery {
             types: self.types.clone(),
             families: self.families.clone(),
             ..Default::default()
-        })
+        };
+        if let Some(agent) = &self.agent {
+            query.agent = Some(agent.resolve(client, socket).await?);
+        }
+        if let Some(run) = &self.run {
+            query.run = Some(run.resolve(client, socket).await?);
+        }
+        if let Some(task) = &self.task {
+            query.task = Some(task.resolve(client).await?);
+        }
+        debug_assert_eq!(query.agent.is_some(), self.agent.is_some());
+        Ok(query)
     }
 
     fn tail_limit(&self, terminal: bool) -> Option<usize> {
@@ -124,10 +121,11 @@ pub async fn events(
     socket: impl Into<aether_client::Endpoint>,
     args: EventArgs,
 ) -> anyhow::Result<()> {
-    let query = args.query()?;
+    let socket = socket.into();
     let cutoff = args.cutoff(aether_core::time::now())?;
     let tail = args.tail_limit(std::io::stdout().is_terminal());
-    let client = connect(&socket.into()).await?;
+    let client = connect(&socket).await?;
+    let query = args.query(&client, &socket).await?;
     let mut cursor = args.after;
     if let Some(limit) = tail {
         cursor = cursor.max(client.status().await?.last_seq);

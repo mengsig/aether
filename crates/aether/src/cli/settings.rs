@@ -15,7 +15,7 @@ pub async fn set(
     use aether_protocol::AgentPatch;
 
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     let tools = match (knobs.tools.is_empty(), knobs.deny_tools.is_empty()) {
         (true, true) => None,
         (false, true) => Some(ToolExposure::Only {

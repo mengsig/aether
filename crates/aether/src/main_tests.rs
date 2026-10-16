@@ -621,9 +621,11 @@ mod id_references {
     use super::*;
     use std::any::TypeId;
 
-    /// Argument ids that name an agent, run, task, approval or schedule.
-    /// Matched by name, so a new argument called one of these is checked too.
+    /// Argument ids that name an agent, run, task, approval or schedule, or
+    /// a memory scope that may hold an agent. Matched by name, so a new
+    /// argument called one of these is checked too.
     const ID_ARGUMENTS: &[&str] = &[
+        "scope",
         "agent",
         "subtree",
         "run",
@@ -666,6 +668,8 @@ mod id_references {
             TypeId::of::<cli::ApprovalRef>(),
             TypeId::of::<cli::ScheduleRef>(),
             TypeId::of::<cli::TargetRef>(),
+            TypeId::of::<cli::MemoryScopeRef>(),
+            TypeId::of::<cli::OperatorScopeRef>(),
         ]
         .iter()
         .any(|kind| parser == *kind)
@@ -712,5 +716,16 @@ mod id_references {
         assert_eq!(agent.to_string(), "@last");
         let refused = Args::try_parse_from(["aether", "cancel", " "]);
         assert!(refused.is_err(), "an empty reference names nothing");
+        let parsed = Args::try_parse_from(["aether", "memory", "list", "--scope", "agent:@viewed"]);
+        let Some(Cmd::Memory {
+            command: MemoryCmd::List { scope, .. },
+        }) = parsed.expect("CLI").command
+        else {
+            panic!("memory list");
+        };
+        assert!(matches!(
+            scope,
+            Some(cli::MemoryScopeRef::Agent(agent)) if agent.to_string() == "@viewed"
+        ));
     }
 }

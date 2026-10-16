@@ -14,8 +14,9 @@ pub async fn pending_approvals(
     scope: super::RuleScopeArgs,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = super::connect(&endpoint.into()).await?;
-    let scope = scope.resolve(&client).await?;
+    let endpoint = endpoint.into();
+    let client = super::connect(&endpoint).await?;
+    let scope = scope.resolve(&client, &endpoint).await?;
     let pending = snapshot(&client, scope.as_ref()).await?;
     if json {
         println!("{}", serde_json::to_string(&pending)?);
@@ -120,8 +121,9 @@ pub async fn answer_pending(
     yes: bool,
     json: bool,
 ) -> anyhow::Result<()> {
-    let client = super::connect(&endpoint.into()).await?;
-    let scope = scope.resolve(&client).await?;
+    let endpoint = endpoint.into();
+    let client = super::connect(&endpoint).await?;
+    let scope = scope.resolve(&client, &endpoint).await?;
     let scope = scope.context("--all-pending requires --agent, --subtree, or --run")?;
     ensure!(
         scope != RuleScope::Everywhere,

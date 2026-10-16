@@ -387,8 +387,20 @@ fn every_memory_scope_is_nameable_on_the_command_line() {
         ),
     ];
     for (text, scope) in cases {
-        assert_eq!(parse_memory_scope(text).expect(text), scope, "{text}");
+        match (parse_memory_scope(text).expect(text), scope) {
+            (MemoryScopeRef::Fixed(parsed), scope) => assert_eq!(parsed, scope, "{text}"),
+            (MemoryScopeRef::Agent(agent), MemoryScope::Agent { id })
+            | (MemoryScopeRef::Subtree(agent), MemoryScope::Subtree { root: id }) => {
+                assert_eq!(agent.to_string(), id.to_string(), "{text}");
+            }
+            (parsed, scope) => panic!("{text}: {parsed:?} is not {scope:?}"),
+        }
     }
+    // The agent part is a reference: a name or a prefix resolves later.
+    assert!(matches!(
+        parse_memory_scope("subtree: planner").expect("a name"),
+        MemoryScopeRef::Subtree(root) if root.to_string() == "planner"
+    ));
     assert_eq!(
         memory_scope_label(&MemoryScope::RepositoryRole {
             id: "r".into(),
@@ -400,7 +412,8 @@ fn every_memory_scope_is_nameable_on_the_command_line() {
         "repo-role:team",
         "repo-role:has space@r",
         "repo-role:team@",
-        "subtree:nope",
+        "subtree: ",
+        "agent:",
     ] {
         assert!(parse_memory_scope(bad).is_err(), "{bad}");
     }

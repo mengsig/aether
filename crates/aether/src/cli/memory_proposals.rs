@@ -1,12 +1,15 @@
+use super::AgentRef;
+use super::memory::MemoryScopeRef;
+use aether_client::{Client, Endpoint};
 use aether_core::memory::{MemoryKind, MemoryScope, OperatorMemoryScope, OperatorMemorySpec};
 use anyhow::Context as _;
 
 #[derive(Debug, clap::Args)]
 pub struct MemoryAddArgs {
     text: String,
-    /// global, agent:<id>, role:<role>, repo-role:<role>@<repository>, or a repository id.
+    /// global, agent:<agent>, role:<role>, repo-role:<role>@<repository>, or a repository id.
     #[arg(long, default_value = "global", conflicts_with = "root")]
-    scope: String,
+    scope: OperatorScopeRef,
     /// File under the repository derived from this checkout.
     #[arg(long)]
     root: Option<std::path::PathBuf>,
@@ -31,7 +34,8 @@ fn parse_kind(text: &str) -> anyhow::Result<MemoryKind> {
 }
 
 impl MemoryAddArgs {
-    fn into_spec(self) -> anyhow::Result<OperatorMemorySpec> {
+    /// Everything that needs no daemon, checked before connecting.
+    fn check(&self) -> anyhow::Result<()> {
         anyhow::ensure!(!self.text.trim().is_empty(), "text is empty");
         for value in [self.importance, self.confidence].into_iter().flatten() {
             anyhow::ensure!(
@@ -39,14 +43,30 @@ impl MemoryAddArgs {
                 "scores must be between 0 and 1"
             );
         }
-        let scope = if let Some(root) = self.root {
-            OperatorMemoryScope::Repository {
+        Ok(())
+    }
+
+    async fn scope(
+        &self,
+        client: &Client,
+        socket: &Endpoint,
+    ) -> anyhow::Result<OperatorMemoryScope> {
+        if let Some(root) = &self.root {
+            return Ok(OperatorMemoryScope::Repository {
                 root: Some(std::path::absolute(root)?),
                 repository: None,
-            }
-        } else {
-            operator_scope(&self.scope)?
-        };
+            });
+        }
+        match &self.scope {
+            OperatorScopeRef::Ready(scope) => Ok(scope.clone()),
+            OperatorScopeRef::Agent(agent) => Ok(OperatorMemoryScope::Agent {
+                id: agent.resolve(client, socket).await?,
+            }),
+        }
+    }
+
+    fn into_spec(self, scope: OperatorMemoryScope) -> anyhow::Result<OperatorMemorySpec> {
+        self.check()?;
         debug_assert!(self.importance.is_none_or(f32::is_finite));
         debug_assert!(self.confidence.is_none_or(f32::is_finite));
         Ok(OperatorMemorySpec {
@@ -62,7 +82,22 @@ impl MemoryAddArgs {
     }
 }
 
-fn operator_scope(text: &str) -> anyhow::Result<OperatorMemoryScope> {
+/// An operator memory's scope as typed; only an agent in it needs the daemon.
+#[derive(Debug, Clone)]
+pub(crate) enum OperatorScopeRef {
+    Ready(OperatorMemoryScope),
+    Agent(AgentRef),
+}
+
+impl std::str::FromStr for OperatorScopeRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        operator_scope(text).map_err(|error| format!("{error:#}"))
+    }
+}
+
+fn operator_scope(text: &str) -> anyhow::Result<OperatorScopeRef> {
     if let Some(rest) = text.trim().strip_prefix("repo-role:") {
         let (role, repository) = rest
             .split_once('@')
@@ -70,13 +105,22 @@ fn operator_scope(text: &str) -> anyhow::Result<OperatorMemoryScope> {
         anyhow::ensure!(!role.trim().is_empty(), "role is empty");
         let repository = aether_core::repository::normalize_id(repository)
             .context("scope does not name a repository")?;
-        return Ok(OperatorMemoryScope::RepositoryRole {
-            root: None,
-            repository: Some(repository),
-            role: role.trim().to_owned(),
-        });
+        return Ok(OperatorScopeRef::Ready(
+            OperatorMemoryScope::RepositoryRole {
+                root: None,
+                repository: Some(repository),
+                role: role.trim().to_owned(),
+            },
+        ));
     }
-    Ok(match super::memory::parse_memory_scope(text)? {
+    let fixed = match super::memory::parse_memory_scope(text)? {
+        MemoryScopeRef::Agent(agent) => return Ok(OperatorScopeRef::Agent(agent)),
+        MemoryScopeRef::Subtree(_) => {
+            anyhow::bail!("operator memory creation does not support subtree scope")
+        }
+        MemoryScopeRef::Fixed(fixed) => fixed,
+    };
+    Ok(OperatorScopeRef::Ready(match fixed {
         MemoryScope::Global => OperatorMemoryScope::Global,
         MemoryScope::Agent { id } => OperatorMemoryScope::Agent { id },
         MemoryScope::Role { role } => OperatorMemoryScope::Role { role },
@@ -92,7 +136,7 @@ fn operator_scope(text: &str) -> anyhow::Result<OperatorMemoryScope> {
         MemoryScope::Subtree { .. } => {
             anyhow::bail!("operator memory creation does not support subtree scope")
         }
-    })
+    }))
 }
 
 pub async fn memory_add(
@@ -100,8 +144,11 @@ pub async fn memory_add(
     memory: MemoryAddArgs,
     json: bool,
 ) -> anyhow::Result<()> {
-    let spec = memory.into_spec()?;
-    let client = super::connect(socket).await?;
+    let socket = socket.into();
+    memory.check()?;
+    let client = super::connect(&socket).await?;
+    let scope = memory.scope(&client, &socket).await?;
+    let spec = memory.into_spec(scope)?;
     let proposed = spec.proposed;
     let text = spec.text.trim().to_owned();
     let record = client.create_memory(spec).await?;
@@ -176,6 +223,9 @@ mod tests {
     fn operator_scope_keeps_role_names_that_the_operator_protocol_accepts() {
         for role in ["reviewer.security", "archon-stage:default/review"] {
             let scope = operator_scope(&format!("repo-role:{role}@aether")).unwrap();
+            let OperatorScopeRef::Ready(scope) = scope else {
+                panic!("a repository role needs no daemon");
+            };
             assert_eq!(
                 scope,
                 OperatorMemoryScope::RepositoryRole {
@@ -187,5 +237,10 @@ mod tests {
         }
         assert!(operator_scope("repo-role:@aether").is_err());
         assert!(operator_scope("repo-role:reviewer").is_err());
+        assert!(operator_scope("subtree:planner").is_err());
+        assert!(matches!(
+            operator_scope("agent:planner").unwrap(),
+            OperatorScopeRef::Agent(agent) if agent.to_string() == "planner"
+        ));
     }
 }

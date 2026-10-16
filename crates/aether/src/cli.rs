@@ -20,6 +20,9 @@ pub use memory_proposals::{MemoryAddArgs, memory_accept, memory_add, memory_reje
 use memory::{memory_scope_label, parse_memory_scope};
 
 mod resolve;
+pub(crate) use memory::MemoryScopeRef;
+#[cfg(test)]
+pub(crate) use memory_proposals::OperatorScopeRef;
 pub(crate) use resolve::{AgentRef, ApprovalRef, RunRef, ScheduleRef, TargetRef, TaskRef};
 
 mod storage;
@@ -406,20 +409,24 @@ impl RuleScopeArgs {
     }
 
     /// `None` when no flag was given, so a caller can pick its own default.
-    pub async fn resolve(&self, client: &Client) -> anyhow::Result<Option<RuleScope>> {
+    pub async fn resolve(
+        &self,
+        client: &Client,
+        socket: &aether_client::Endpoint,
+    ) -> anyhow::Result<Option<RuleScope>> {
         if !self.given()? {
             return Ok(None);
         }
         if let Some(agent) = &self.agent {
-            let id = agent.resolve(client).await?;
+            let id = agent.resolve(client, socket).await?;
             return Ok(Some(RuleScope::Agent { id }));
         }
         if let Some(subtree) = &self.subtree {
-            let root = subtree.resolve(client).await?;
+            let root = subtree.resolve(client, socket).await?;
             return Ok(Some(RuleScope::Subtree { root }));
         }
         if let Some(run) = &self.run {
-            let id = run.resolve(client).await?;
+            let id = run.resolve(client, socket).await?;
             return Ok(Some(RuleScope::Run { id }));
         }
         debug_assert!(self.everywhere, "one flag was given");

@@ -188,8 +188,8 @@ async fn requested_run(socket: &Path, run: &super::RunRef) -> anyhow::Result<Run
     let client = connected
         .context("timed out reaching the daemon to resolve --run")?
         .context("reaching the daemon to resolve --run; give the full run id")?;
-    run.resolve(&client.with_request_timeout(Duration::from_secs(5)))
-        .await
+    let client = client.with_request_timeout(Duration::from_secs(5));
+    run.resolve(&client, &socket.into()).await
 }
 
 fn client_error(error: &ClientError) -> Value {

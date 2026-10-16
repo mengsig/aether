@@ -113,7 +113,7 @@ pub async fn archive(
     }
     let client = connect(&socket).await?;
     let target = match target {
-        Some(target) => target.resolve(&client).await?,
+        Some(target) => target.resolve(&client, &socket).await?,
         None => ArchiveTarget::AllFinished,
     };
     let moved = client.archive(target, !undo).await?;
@@ -144,7 +144,7 @@ pub async fn send(
         .map(|path| aether_client::images::read_image_file(path))
         .collect::<Result<Vec<_>, _>>()?;
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     if !subtree {
         let message = client
             .send_message_with_images(id, text, attachments)
@@ -175,7 +175,7 @@ pub async fn cancel(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     client
         .cancel(id, Some("cancelled from the command line".into()))
         .await?;
@@ -195,7 +195,7 @@ pub async fn interrupt(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     let was_running = client.interrupt(id).await?;
     let line = if was_running {
         format!("interrupted {id}; it waits for the next message")
@@ -218,7 +218,7 @@ pub async fn trigger(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     let payload = serde_json::from_str(&payload).unwrap_or(serde_json::Value::String(payload));
     client.trigger(id, source.clone(), payload).await?;
     acted(
@@ -236,7 +236,7 @@ pub async fn restart(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     let fresh = client.restart(id).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&fresh)?);
@@ -254,7 +254,7 @@ pub async fn wake(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     let woken = client.wake(id).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&woken)?);
@@ -279,7 +279,7 @@ pub async fn pause(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     let (agents, mid_turn) = client.pause(id, subtree).await?;
     if json {
         println!(
@@ -320,7 +320,7 @@ pub async fn resume(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     let agents = client.resume(id, subtree).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&agents)?);
@@ -343,7 +343,7 @@ pub async fn compact(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
-    let id = agent.resolve(&client).await?;
+    let id = agent.resolve(&client, &socket).await?;
     client.compact(id).await?;
     let follow_up = format!("{} events --agent {id} --follow", socket.command_hint(true));
     acted(

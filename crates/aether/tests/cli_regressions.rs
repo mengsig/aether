@@ -73,6 +73,8 @@ struct Stub {
     reject_models: bool,
     invalid_models: bool,
     features: Vec<String>,
+    /// The agent a TUI beside the socket views, for `@viewed`.
+    viewed: Option<&'static str>,
 }
 impl Default for Stub {
     fn default() -> Self {
@@ -91,6 +93,7 @@ impl Default for Stub {
             reject_models: false,
             invalid_models: false,
             features: Vec::new(),
+            viewed: None,
         }
     }
 }
@@ -155,6 +158,11 @@ async fn cli_with_socket(
         .unwrap();
     }
     let socket = root.path().join("a.sock");
+    if let Some(agent) = stub.viewed {
+        let path = aether_tui::viewed::viewed_path(&socket);
+        let mut tui = aether_tui::viewed::Publisher::new(path);
+        tui.sync(Some(agent.parse().unwrap())).unwrap();
+    }
     let listener = UnixListener::bind(&socket).unwrap();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
@@ -456,6 +464,9 @@ async fn cli_with_socket(
                         m.forgotten_at = Some(AT.parse().unwrap());
                     }
                     m.proposed_at = stub.proposed.then(|| AT.parse().unwrap());
+                    if let Some(scope) = &query.scope {
+                        m.scope = scope.clone();
+                    }
                     let matches = query.proposed == stub.proposed && query.text.as_ref().is_none_or(|t| m.text.contains(t))
                         && query
                             .recorded_by
@@ -1400,6 +1411,40 @@ async fn an_agent_is_named_by_prefix_name_or_last_through_the_daemon() {
         "{}",
         stderr(&out)
     );
+}
+
+#[tokio::test]
+async fn viewed_names_the_agent_a_tui_beside_the_socket_views() {
+    let viewing = Stub {
+        viewed: Some(AGENT),
+        ..Stub::default()
+    };
+    let out = cli(&["cancel", "@viewed", "--json"], viewing).await;
+    assert!(out.status.success(), "{}", stderr(&out));
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(reply["agent"], AGENT);
+
+    let out = cli(&["cancel", "@viewed"], Stub::default()).await;
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("no running TUI views an agent"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[tokio::test]
+async fn a_memory_scope_names_its_agent_like_any_reference() {
+    for scope in ["agent:assistant", "agent:01J0000", "agent:@last"] {
+        let out = cli(
+            &["memory", "list", "--scope", scope, "--json"],
+            Stub::default(),
+        )
+        .await;
+        assert!(out.status.success(), "{scope}: {}", stderr(&out));
+        let listed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(listed[0]["scope"]["id"], AGENT, "{scope}: {listed}");
+    }
 }
 
 fn check_help(args: &[&str], phrases: &[&str]) {

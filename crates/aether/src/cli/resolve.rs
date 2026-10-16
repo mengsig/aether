@@ -1,14 +1,15 @@
 //! Typeable references. Wherever the CLI expects an agent, run, task,
 //! approval or schedule id it also takes a unique prefix of one, with or
 //! without its `agt_`-style prefix, an exact name unique among live records,
-//! and `@last`. Only the CLI resolves; agent-facing tools take full ids.
+//! `@last` and `@viewed`. Only the CLI resolves; agent-facing tools take
+//! full ids.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-use aether_client::Client;
+use aether_client::{Client, Endpoint};
 use aether_core::agent::{Agent, ArchiveTarget};
 use aether_core::id::{AgentId, ApprovalId, RunId, ScheduleId, TaskId};
 use aether_core::schedule::{Schedule, ScheduleStatus};
@@ -19,6 +20,8 @@ use anyhow::{Context as _, bail, ensure};
 
 /// The most recently created agent of the current run, or that run.
 pub(crate) const LAST: &str = "@last";
+/// The agent a TUI on this machine views, or its run.
+pub(crate) const VIEWED: &str = "@viewed";
 /// Candidates an ambiguity lists before it counts the rest.
 const SHOWN: usize = 10;
 
@@ -138,20 +141,36 @@ impl<K> Ref<K> {
 }
 
 impl AgentRef {
-    pub(crate) async fn resolve(&self, client: &Client) -> anyhow::Result<AgentId> {
+    /// `socket` is where `@viewed` looks for a TUI's view.
+    pub(crate) async fn resolve(
+        &self,
+        client: &Client,
+        socket: &Endpoint,
+    ) -> anyhow::Result<AgentId> {
         if let Some(id) = self.exact() {
             return Ok(id);
+        }
+        if self.text == VIEWED {
+            return viewed_agent(socket);
         }
         resolve_agent(&self.text, &all_agents(client).await?)
     }
 }
 
 impl RunRef {
-    pub(crate) async fn resolve(&self, client: &Client) -> anyhow::Result<RunId> {
+    pub(crate) async fn resolve(
+        &self,
+        client: &Client,
+        socket: &Endpoint,
+    ) -> anyhow::Result<RunId> {
         if let Some(id) = self.exact() {
             return Ok(id);
         }
-        resolve_run(&self.text, &all_agents(client).await?)
+        let agents = all_agents(client).await?;
+        if self.text == VIEWED {
+            return run_of(viewed_agent(socket)?, &agents);
+        }
+        resolve_run(&self.text, &agents)
     }
 
     /// The id itself when the text is a full one, read with no daemon.
@@ -219,15 +238,45 @@ impl ScheduleRef {
 }
 
 impl TargetRef {
-    pub(crate) async fn resolve(&self, client: &Client) -> anyhow::Result<ArchiveTarget> {
+    pub(crate) async fn resolve(
+        &self,
+        client: &Client,
+        socket: &Endpoint,
+    ) -> anyhow::Result<ArchiveTarget> {
         if let Some(id) = self.exact::<AgentId>() {
             return Ok(ArchiveTarget::Agent(id));
         }
         if let Some(id) = self.exact::<RunId>() {
             return Ok(ArchiveTarget::Run(id));
         }
+        if self.text == VIEWED {
+            return viewed_agent(socket).map(ArchiveTarget::Agent);
+        }
         resolve_target(&self.text, &all_agents(client).await?)
     }
+}
+
+/// What a TUI on this machine, talking to the daemon at `socket`, views.
+pub(crate) fn viewed_agent(socket: &Endpoint) -> anyhow::Result<AgentId> {
+    let socket = socket.local_path().with_context(|| {
+        format!("`{VIEWED}` names what a TUI on this machine views, so it needs a local daemon")
+    })?;
+    let path = aether_tui::viewed::viewed_path(socket);
+    let viewed =
+        aether_tui::viewed::read(&path).with_context(|| format!("looking up `{VIEWED}`"))?;
+    viewed.with_context(|| {
+        format!(
+            "no running TUI views an agent, so `{VIEWED}` names none; \
+             open `aether tui`, or give an id or a name"
+        )
+    })
+}
+
+fn run_of(agent: AgentId, agents: &[Agent]) -> anyhow::Result<RunId> {
+    let found = agents.iter().find(|a| a.id == agent);
+    let found = found.with_context(|| format!("the viewed agent {agent} is not on this daemon"))?;
+    debug_assert_eq!(found.id, agent);
+    Ok(found.run)
 }
 
 /// Every agent the daemon holds, cleared ones included: a finished agent is
@@ -411,7 +460,9 @@ fn pick<T>(
 ) -> anyhow::Result<T> {
     assert!(!text.is_empty(), "references are never empty");
     if text.starts_with('@') {
-        bail!("`{text}` is not a reference the CLI knows; `{LAST}` names an agent or a run");
+        bail!(
+            "`{text}` is not a reference the CLI knows; `{LAST}` and `{VIEWED}` name an agent or a run"
+        );
     }
     let mut matches: Vec<_> = candidates
         .into_iter()

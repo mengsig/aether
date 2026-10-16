@@ -60,7 +60,9 @@ pub(crate) async fn run(
                 _ => bail!("choose exactly one of --every or --cron"),
             };
             let target = match (target, objective) {
-                (Some(target), None) => ScheduleTarget::Agent(target.resolve(&client).await?),
+                (Some(target), None) => {
+                    ScheduleTarget::Agent(target.resolve(&client, &socket).await?)
+                }
                 (None, Some(objective)) => {
                     let template = Template {
                         objective,
@@ -105,7 +107,7 @@ pub(crate) async fn run(
         }
         ScheduleCmd::List { target, json } => {
             let target = match target {
-                Some(target) => Some(target.resolve(&client).await?),
+                Some(target) => Some(target.resolve(&client, &socket).await?),
                 None => None,
             };
             let jobs = client.schedules(target).await?;
