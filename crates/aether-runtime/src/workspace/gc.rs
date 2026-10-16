@@ -5,9 +5,13 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::MetadataExt;
 use std::time::SystemTime;
 
+mod build_output;
 mod snapshot;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use build_output::BuildOutput;
+pub use build_output::BuildOutputAction;
 
 const MAX_ENTRIES: usize = 16_384;
 const MAX_DEPTH: usize = 64;
@@ -50,6 +54,8 @@ pub(crate) struct Candidate {
     pub bytes: u64,
     pub bytes_complete: bool,
     pub modified: SystemTime,
+    /// Wholly ignored build output, sized apart and skipped by the checks.
+    pub build_output: Vec<BuildOutput>,
     permissions: Vec<(File, fs::Permissions)>,
     git_state: Option<GitState>,
     snapshot: Option<snapshot::Snapshot>,
@@ -69,6 +75,7 @@ impl Candidate {
             bytes: 0,
             bytes_complete: false,
             modified: SystemTime::UNIX_EPOCH,
+            build_output: vec![],
             permissions: vec![],
             git_state: None,
             snapshot: None,
@@ -77,32 +84,111 @@ impl Candidate {
 
     /// Walk through pinned directory handles. Permission repair must never
     /// chmod a symlink target or a file shared through another hard link.
-    pub fn measure(&mut self, dry_run: bool) -> crate::Result<()> {
+    /// Directories named in `build_output_names` that Git reports as wholly
+    /// ignored are sized without the entry cap; any other is walked as usual.
+    pub fn measure(&mut self, dry_run: bool, build_output_names: &[String]) -> crate::Result<()> {
+        debug_assert!(
+            self.build_output.is_empty(),
+            "a GC candidate is measured once"
+        );
         let path = self.directory.clone();
         let device = fs::symlink_metadata(&path)
             .map_err(|error| io_error("inspect GC candidate", &path, error))?
             .dev();
-        let mut remaining = MAX_ENTRIES;
-        self.walk(&path, device, 0, &mut remaining, dry_run)?;
+        let mut walk = Walk {
+            device,
+            remaining: MAX_ENTRIES,
+            dry_run,
+            workspace: path.join(WORKSPACE),
+            build_output_names,
+            deferred: vec![],
+        };
+        self.walk(&path, &path, 0, &mut walk)?;
+        self.settle_build_output(walk)?;
         self.bytes_complete = true;
         Ok(())
     }
 
+    fn settle_build_output(&mut self, walk: Walk<'_>) -> crate::Result<()> {
+        if walk.deferred.is_empty() {
+            return Ok(());
+        }
+        let ignored = build_output::ignored_directories(&status(&walk.workspace)?)?;
+        let Walk {
+            device,
+            remaining,
+            dry_run,
+            workspace,
+            deferred,
+            ..
+        } = walk;
+        // Anything Git does not list as wholly ignored is walked like source.
+        let mut strict = Walk {
+            device,
+            remaining,
+            dry_run,
+            workspace,
+            build_output_names: &[],
+            deferred: vec![],
+        };
+        for (path, depth) in deferred {
+            let relative = path
+                .strip_prefix(&strict.workspace)
+                .map_err(|_| invalid("deferred build output is outside the workspace"))?;
+            if !ignored.contains(relative) {
+                let parent = pin_beneath(&self.directory, &path)?;
+                let name = path
+                    .file_name()
+                    .ok_or_else(|| invalid("deferred build output has no name"))?;
+                let pinned = descriptor_path(&parent).join(name);
+                let metadata = fs::symlink_metadata(&pinned)
+                    .map_err(|error| io_error("inspect GC entry", &path, error))?;
+                self.visit(&pinned, &path, &metadata, depth, &mut strict)?;
+                continue;
+            }
+            let (output, modified) = BuildOutput::measure(path, strict.device)?;
+            self.bytes = self.bytes.saturating_add(output.bytes);
+            self.modified = self.modified.max(modified);
+            self.build_output.push(output);
+        }
+        Ok(())
+    }
+
+    /// `path` reaches the entry through its pinned parent; `logical` names it
+    /// inside the candidate directory.
     fn walk(
         &mut self,
         path: &Path,
-        device: u64,
+        logical: &Path,
         depth: usize,
-        remaining: &mut usize,
-        dry_run: bool,
+        walk: &mut Walk<'_>,
     ) -> crate::Result<()> {
-        if *remaining == 0 || depth > MAX_DEPTH {
+        if walk.remaining == 0 || depth > MAX_DEPTH {
             return Err(invalid("workspace GC entry/depth limit reached"));
         }
-        *remaining -= 1;
+        walk.remaining -= 1;
         let metadata = fs::symlink_metadata(path)
             .map_err(|error| io_error("inspect GC entry", path, error))?;
-        if metadata.dev() != device {
+        if metadata.dev() != walk.device {
+            return Err(invalid("workspace contains a mount boundary"));
+        }
+        if metadata.is_dir() && walk.is_build_output(logical) {
+            walk.deferred.push((logical.to_path_buf(), depth));
+            return Ok(());
+        }
+        self.visit(path, logical, &metadata, depth, walk)
+    }
+
+    /// Record one entry, repair its permissions when needed, then walk its children.
+    fn visit(
+        &mut self,
+        path: &Path,
+        logical: &Path,
+        metadata: &fs::Metadata,
+        depth: usize,
+        walk: &mut Walk<'_>,
+    ) -> crate::Result<()> {
+        if metadata.dev() != walk.device {
             return Err(invalid("workspace contains a mount boundary"));
         }
         self.modified = self.modified.max(
@@ -127,7 +213,7 @@ impl Candidate {
         let needed = if metadata.is_dir() { 0o700 } else { 0o600 };
         let permissions = metadata.permissions();
         if permissions.mode() & needed != needed {
-            if dry_run {
+            if walk.dry_run {
                 return Err(invalid(
                     "workspace needs permission repair; dry run kept it",
                 ));
@@ -155,9 +241,83 @@ impl Candidate {
             fs::read_dir(&directory).map_err(|error| io_error("read GC directory", path, error))?
         {
             let entry = entry.map_err(|error| io_error("read GC directory entry", path, error))?;
-            self.walk(&entry.path(), device, depth + 1, remaining, dry_run)?;
+            self.walk(
+                &entry.path(),
+                &logical.join(entry.file_name()),
+                depth + 1,
+                walk,
+            )?;
         }
         Ok(())
+    }
+
+    /// Delete every measured build output directory, stopping at the first failure.
+    pub fn prune_build_output(&mut self) -> crate::Result<()> {
+        debug_assert!(
+            self.bytes_complete,
+            "build output is pruned only after measuring"
+        );
+        for output in &mut self.build_output {
+            output.prune(&self.directory)?;
+        }
+        Ok(())
+    }
+
+    /// Git must still list every measured directory as wholly ignored: a
+    /// file force-added since measuring makes it source again.
+    pub fn confirm_build_output(&self) -> crate::Result<()> {
+        debug_assert!(
+            self.bytes_complete,
+            "build output is confirmed after measuring"
+        );
+        let workspace = self.directory.join(WORKSPACE);
+        let ignored = build_output::ignored_directories(&status(&workspace)?)?;
+        for output in &self.build_output {
+            let relative = output
+                .path
+                .strip_prefix(&workspace)
+                .map_err(|_| invalid("build output is outside the workspace"))?;
+            if !ignored.contains(relative) {
+                return Err(invalid(format!(
+                    "build output {} is no longer wholly ignored",
+                    output.path.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// The source checkout the unvalidated manifest names; it only selects
+    /// which build output names apply. `inspect` validates the manifest.
+    pub fn source(&self) -> crate::Result<PathBuf> {
+        self.check_metadata()?;
+        let manifest: WorkspaceManifest = read_json(&self.directory.join(MANIFEST))?;
+        Ok(manifest.source)
+    }
+
+    /// The manifest, validated against Git, without the preservation checks.
+    pub fn manifest(&self, root: &Path) -> crate::Result<WorkspaceManifest> {
+        self.check_metadata()?;
+        let expected: WorkspaceManifest = read_json(&self.directory.join(MANIFEST))?;
+        let workspace = self.directory.join(WORKSPACE);
+        let manifest = load_timeout(root, &workspace, Duration::from_secs(2))?;
+        if manifest != expected || manifest.workspace != workspace {
+            return Err(invalid("workspace manifest names a different GC candidate"));
+        }
+        Ok(manifest)
+    }
+
+    pub fn mark_build_output(&mut self, action: BuildOutputAction) {
+        for output in &mut self.build_output {
+            output.action = action;
+        }
+    }
+
+    fn build_output_paths(&self) -> BTreeSet<PathBuf> {
+        self.build_output
+            .iter()
+            .map(|output| output.path.clone())
+            .collect()
     }
 
     pub fn restore_permissions(&mut self) -> crate::Result<()> {
@@ -173,7 +333,8 @@ impl Candidate {
         self.git_state = None;
         self.check_metadata()?;
         let expected: WorkspaceManifest = read_json(&self.directory.join(MANIFEST))?;
-        let snapshot = snapshot::Snapshot::capture(&self.directory, &expected)?;
+        let skipped = self.build_output_paths();
+        let snapshot = snapshot::Snapshot::capture(&self.directory, &expected, &skipped)?;
         snapshot::check_configuration(&expected)?;
         let manifest = load_timeout(
             root,
@@ -184,7 +345,7 @@ impl Candidate {
             return Err(invalid("workspace manifest names a different GC candidate"));
         }
         verify_saved_files(&manifest.workspace)?;
-        check_status(&manifest.workspace)?;
+        check_status(&manifest.workspace, &skipped)?;
         let state = git_state(&manifest)?;
         check_commits(&manifest, &self.directory, &state)?;
         snapshot.recheck(&manifest)?;
@@ -234,7 +395,7 @@ impl Candidate {
                 "workspace manifest, HEAD, or source refs changed during GC",
             ));
         }
-        check_status(&manifest.workspace)?;
+        check_status(&manifest.workspace, &self.build_output_paths())?;
         self.recheck_unchanged(manifest)
     }
 
@@ -284,6 +445,28 @@ impl Candidate {
     }
 }
 
+struct Walk<'a> {
+    device: u64,
+    remaining: usize,
+    dry_run: bool,
+    workspace: PathBuf,
+    build_output_names: &'a [String],
+    /// Name-matched directories and their depth, classified after the walk.
+    deferred: Vec<(PathBuf, usize)>,
+}
+
+impl Walk<'_> {
+    fn is_build_output(&self, path: &Path) -> bool {
+        path != self.workspace
+            && path.starts_with(&self.workspace)
+            && path.file_name().is_some_and(|name| {
+                self.build_output_names
+                    .iter()
+                    .any(|candidate| name == OsStr::new(candidate))
+            })
+    }
+}
+
 impl Drop for Candidate {
     fn drop(&mut self) {
         if let Err(error) = self.restore_permissions() {
@@ -312,6 +495,23 @@ fn pin(path: &Path) -> crate::Result<File> {
         .map_err(|error| io_error("pin workspace GC entry", path, error))
 }
 
+/// Pin the parent of `path` one component at a time from `root`, never
+/// following a symlink, as the measuring walk reached it.
+fn pin_beneath(root: &Path, path: &Path) -> crate::Result<File> {
+    let parent = path
+        .parent()
+        .and_then(|parent| parent.strip_prefix(root).ok())
+        .ok_or_else(|| invalid("GC entry is outside its candidate"))?;
+    let mut handle = pin(root)?;
+    for component in parent.components() {
+        let Component::Normal(name) = component else {
+            return Err(invalid("GC entry path is not plain"));
+        };
+        handle = pin(&descriptor_path(&handle).join(name))?;
+    }
+    Ok(handle)
+}
+
 fn set_pinned_permissions(handle: &File, permissions: fs::Permissions) -> crate::Result<()> {
     // O_PATH handles cannot use fchmod; the descriptor link still names the
     // pinned inode if its original path is replaced with a symlink.
@@ -319,7 +519,24 @@ fn set_pinned_permissions(handle: &File, permissions: fs::Permissions) -> crate:
         .map_err(|error| invalid(format!("set pinned workspace permissions: {error}")))
 }
 
-fn check_status(workspace: &Path) -> crate::Result<()> {
+fn status(workspace: &Path) -> crate::Result<Vec<u8>> {
+    run(
+        git(workspace).args([
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignored=matching",
+            "--ignore-submodules=none",
+        ]),
+        "check GC workspace status",
+    )
+}
+
+/// Only the measured build output may be ignored; anything else listed,
+/// including ignored files, keeps the workspace.
+fn check_status(workspace: &Path, build_output: &BTreeSet<PathBuf>) -> crate::Result<()> {
     // Git's final worktree removal check honors these flags too, so saved
     // bytes at inspection time cannot make their later deletion safe.
     let entries = run(
@@ -335,20 +552,19 @@ fn check_status(workspace: &Path) -> crate::Result<()> {
             "workspace index has assume-unchanged or skip-worktree entries",
         ));
     }
-    let status = run(
-        git(workspace).args([
-            "--no-optional-locks",
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--untracked-files=all",
-            "--ignored=matching",
-            "--ignore-submodules=none",
-        ]),
-        "check GC workspace status",
-    )?;
-    if !status.is_empty() {
-        return Err(invalid("workspace has dirty, untracked, or ignored files"));
+    let status = status(workspace)?;
+    let mut listed = BTreeSet::new();
+    for record in build_output::status_records(&status)? {
+        let path = workspace.join(OsStr::from_bytes(
+            record.path.strip_suffix(b"/").unwrap_or(record.path),
+        ));
+        if record.code != *b"!!" || !record.path.ends_with(b"/") || !build_output.contains(&path) {
+            return Err(invalid("workspace has dirty, untracked, or ignored files"));
+        }
+        listed.insert(path);
+    }
+    if &listed != build_output {
+        return Err(invalid("workspace build output changed during GC"));
     }
     Ok(())
 }

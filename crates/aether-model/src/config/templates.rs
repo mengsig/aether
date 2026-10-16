@@ -104,6 +104,9 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # backups_keep = 3           # keep newest N OR within retention
 # gc_interval_seconds = 3600
 # free_space_floor_bytes = 5368709120 # unset inherits scheduler; 0 disables
+# Wholly Git-ignored directories with these names never keep a finished
+# workspace: GC deletes them first. Per checkout: [storage.repository_build_output_dirs]
+# build_output_dirs = ["target", "node_modules", ".venv", "__pycache__", "dist"]
 
 # [retention]
 # completed_run_days = 7  # positive days; 0 is invalid

@@ -84,9 +84,20 @@ pub(super) async fn dispatch_authorized(
         // open under the idle timeout.
         Command::Ping => Ok(Reply::Ok),
         Command::StorageStatus | Command::StorageGc { .. } => {
-            let dry_run = !matches!(command, Command::StorageGc { dry_run: false });
+            let (dry_run, prune_build_output) = match command {
+                Command::StorageGc {
+                    dry_run,
+                    prune_build_output,
+                } => (dry_run, prune_build_output),
+                _ => (true, false),
+            };
             let reading = rt.clone();
-            let report = blocking(move || reading.storage_gc(dry_run).map_err(map_err)).await??;
+            let report = blocking(move || {
+                reading
+                    .storage_gc_with(dry_run, prune_build_output)
+                    .map_err(map_err)
+            })
+            .await??;
             Ok(Reply::StorageReport(report))
         }
         Command::PreviewRetention => {

@@ -742,6 +742,24 @@ fn storage_json_errors_honor_parent_and_leaf_flags() {
     }
 }
 
+/// A daemon that would ignore the flag runs an ordinary sweep, so the client
+/// refuses before sending anything.
+#[tokio::test]
+async fn storage_prune_build_output_needs_a_daemon_that_prunes() {
+    let older = Stub {
+        features: vec![aether_protocol::features::STORAGE.into()],
+        ..Default::default()
+    };
+    let args = ["storage", "gc", "--prune-build-output", "--dry-run"];
+    let output = cli(&args, older).await;
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("cannot prune build output"),
+        "{}",
+        stderr(&output)
+    );
+}
+
 #[tokio::test]
 async fn nested_json_client_error_uses_the_same_envelope() {
     let output = cli(&["memory", "show", "invalid-id", "--json"], Stub::default()).await;

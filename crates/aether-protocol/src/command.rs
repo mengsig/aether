@@ -32,6 +32,11 @@ pub enum Command {
     /// Host-only filesystem maintenance. Preview never deletes files.
     StorageGc {
         dry_run: bool,
+        /// Also prune declared build output from finished workspaces that
+        /// are kept for another reason. A daemon without
+        /// `features::PRUNE_BUILD_OUTPUT` ignores it, so check that first.
+        #[serde(default)]
+        prune_build_output: bool,
     },
     Shutdown,
     /// Keep an otherwise silent connection alive under an idle timeout.

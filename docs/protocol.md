@@ -138,6 +138,11 @@ reviewing proposals. The Rust client refuses these requests to older daemons.
 memories a task saw; see [memory feedback](#memory-feedback). Check it before
 sending any of the three commands. The Rust client refuses them to older daemons.
 
+`prune_build_output` means `storage_gc` applies `prune_build_output`: it also
+deletes declared build output from finished workspaces that GC keeps for
+another reason. An older daemon ignores the field and runs an ordinary sweep;
+the Rust client refuses such a request itself.
+
 `repository_aliases` means the daemon serves `alias_repository` and
 `list_repository_aliases` (see [repository aliases](#repository-aliases)). An
 older daemon refuses both commands as unknown; the Rust client refuses to send

@@ -590,7 +590,27 @@ fn storage_command_supports_status_and_dry_run() {
         Some(Cmd::Storage {
             command: Some(StorageCmd::Gc {
                 dry_run: true,
+                prune_build_output: false,
                 json: true
+            }),
+            json: false
+        })
+    ));
+    let args = Args::try_parse_from([
+        "aether",
+        "storage",
+        "gc",
+        "--prune-build-output",
+        "--dry-run",
+    ])
+    .unwrap();
+    assert!(matches!(
+        args.command,
+        Some(Cmd::Storage {
+            command: Some(StorageCmd::Gc {
+                dry_run: true,
+                prune_build_output: true,
+                json: false
             }),
             json: false
         })

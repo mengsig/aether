@@ -33,17 +33,30 @@ pub(super) struct Snapshot {
     directory: PathBuf,
     manifest: WorkspaceManifest,
     entries: BTreeMap<PathBuf, Stamp>,
+    /// Build output directories: their own stamp is kept, their contents not.
+    skipped: BTreeSet<PathBuf>,
 }
 
 impl Snapshot {
-    pub fn capture(directory: &Path, manifest: &WorkspaceManifest) -> crate::Result<Self> {
+    pub fn capture(
+        directory: &Path,
+        manifest: &WorkspaceManifest,
+        skipped: &BTreeSet<PathBuf>,
+    ) -> crate::Result<Self> {
         if manifest.workspace != directory.join(WORKSPACE) || !manifest.source.is_absolute() {
             return Err(invalid("workspace manifest names a different GC candidate"));
         }
+        debug_assert!(
+            skipped
+                .iter()
+                .all(|path| path.starts_with(&manifest.workspace)),
+            "only workspace build output is skipped"
+        );
         let mut snapshot = Self {
             directory: directory.to_path_buf(),
             manifest: manifest.clone(),
             entries: BTreeMap::new(),
+            skipped: skipped.clone(),
         };
         snapshot.walk(directory, 0, false)?;
         snapshot.record(&manifest.source)?;
@@ -169,7 +182,7 @@ impl Snapshot {
         if metadata.file_type().is_symlink() && !git_metadata {
             return Ok(());
         }
-        if metadata.is_file() {
+        if metadata.is_file() || (metadata.is_dir() && self.skipped.contains(path)) {
             return Ok(());
         }
         if !metadata.is_dir() {

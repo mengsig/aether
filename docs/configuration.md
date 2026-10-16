@@ -224,6 +224,10 @@ workspace_grace_seconds = 3600
 backups_keep = 3
 gc_interval_seconds = 3600
 # free_space_floor_bytes = 5368709120
+# build_output_dirs = ["target", "node_modules", ".venv", "__pycache__", "dist"]
+
+# [storage.repository_build_output_dirs]
+# "/home/user/src/example" = ["target", "build"]
 ```
 
 Per-kind day overrides inherit `retention_days`, except artifacts and event
@@ -246,6 +250,23 @@ Ignored files and paths it cannot safely inspect may also protect a workspace;
 retention never overrides the work-preservation checks. Inventory and cleanup
 are bounded per pass, so large directories may take several sweeps and byte
 counts marked partial are lower bounds.
+
+Build output is the exception. A directory named in `build_output_dirs`
+(anywhere in the workspace) that Git reports as ignored in its entirety is
+sized by its disk blocks, without the per-workspace entry limit, and does not
+protect the workspace. Before GC removes such a workspace it deletes that build
+output, then runs every check again with nothing excluded. A directory holding
+a tracked file, a symlink, or one only covered by your global excludes file
+is not build output. `repository_build_output_dirs` replaces the list for the
+workspaces of one source checkout, keyed by its absolute path. Names are plain
+directory names; `.git`, `..` and paths are refused.
+
+GC keeps a workspace with other unsaved work, and its build output with it.
+`aether storage gc --prune-build-output` also deletes the build output of such
+workspaces when their owners are finished and the grace period has passed;
+add `--dry-run` to list each path and its bytes first. Workspaces of live or
+resumable agents are never touched. Each run inspects the same bounded number of
+workspaces as a sweep, so repeat it while the report says `truncated`.
 
 Migration backups keep **both** the newest `backups_keep` snapshots and every
 snapshot within the retention window. Unrecognized files are preserved. Logs

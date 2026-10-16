@@ -4,10 +4,11 @@ pub async fn storage(
     endpoint: impl Into<aether_client::Endpoint>,
     gc: bool,
     dry_run: bool,
+    prune_build_output: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let client = connect(&endpoint.into()).await?;
-    let report = client.storage(gc, dry_run).await?;
+    let report = client.storage(gc, dry_run, prune_build_output).await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -61,6 +62,7 @@ pub async fn storage(
                             .unwrap_or("unknown path"),
                         entry["reason"].as_str().unwrap_or("see JSON report")
                     );
+                    print_build_output(entry);
                 }
             }
         }
@@ -69,4 +71,15 @@ pub async fn storage(
         println!("Available: {bytes} bytes");
     }
     Ok(())
+}
+
+fn print_build_output(entry: &serde_json::Value) {
+    for output in entry["build_output"].as_array().into_iter().flatten() {
+        println!(
+            "    build output {} {}: {} bytes",
+            output["action"].as_str().unwrap_or("kept"),
+            output["path"].as_str().unwrap_or("unknown path"),
+            output["bytes"].as_u64().unwrap_or(0)
+        );
+    }
 }

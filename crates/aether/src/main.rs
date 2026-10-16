@@ -208,14 +208,15 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             Cmd::Serve { allow_remote } => cli::serve(socket, allow_remote).await,
             Cmd::Schema => cli::schema(),
             Cmd::Storage { command, json } => {
-                let (gc, dry_run, json) = match command {
+                let (gc, dry_run, prune_build_output, json) = match command {
                     Some(StorageCmd::Gc {
                         dry_run,
+                        prune_build_output,
                         json: gc_json,
-                    }) => (true, dry_run, json || gc_json),
-                    None => (false, true, json),
+                    }) => (true, dry_run, prune_build_output, json || gc_json),
+                    None => (false, true, false, json),
                 };
-                cli::storage(endpoint, gc, dry_run, json).await
+                cli::storage(endpoint, gc, dry_run, prune_build_output, json).await
             }
             Cmd::Retention { command } => match command {
                 RetentionCmd::Preview { json } => cli::retention_preview(endpoint, json).await,

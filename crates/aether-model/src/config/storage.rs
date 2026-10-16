@@ -1,4 +1,6 @@
+use std::collections::BTreeMap;
 use std::num::{NonZeroU16, NonZeroU32};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +22,11 @@ pub struct StorageSection {
     pub gc_interval_seconds: NonZeroU32,
     /// None uses the scheduler's floor; zero disables the low-disk guard.
     pub free_space_floor_bytes: Option<u64>,
+    /// Directory names whose wholly Git-ignored copies a finished workspace
+    /// may lose to GC: regenerable build output, never source.
+    pub build_output_dirs: Vec<String>,
+    /// Replaces `build_output_dirs` for workspaces of one source checkout.
+    pub repository_build_output_dirs: BTreeMap<PathBuf, Vec<String>>,
 }
 
 impl Default for StorageSection {
@@ -36,6 +43,10 @@ impl Default for StorageSection {
             backups_keep: const { NonZeroU16::new(3).unwrap() },
             gc_interval_seconds: const { NonZeroU32::new(3600).unwrap() },
             free_space_floor_bytes: None,
+            build_output_dirs: ["target", "node_modules", ".venv", "__pycache__", "dist"]
+                .map(String::from)
+                .to_vec(),
+            repository_build_output_dirs: BTreeMap::new(),
         }
     }
 }
@@ -44,6 +55,52 @@ impl StorageSection {
     pub fn days(&self, override_days: Option<u16>) -> u16 {
         override_days.unwrap_or(self.retention_days)
     }
+
+    /// The build output names for workspaces of `source`.
+    pub fn build_output_dirs_for(&self, source: &Path) -> &[String] {
+        self.repository_build_output_dirs
+            .get(source)
+            .unwrap_or(&self.build_output_dirs)
+    }
+
+    /// Names are matched against single path components; a separator, `..`
+    /// or `.git` could make GC delete something that is not build output.
+    pub fn validate(&self) -> Result<(), String> {
+        check_build_output_names("storage.build_output_dirs", &self.build_output_dirs)?;
+        for (repository, names) in &self.repository_build_output_dirs {
+            let shown = repository.display();
+            if !repository.is_absolute()
+                || repository
+                    .components()
+                    .any(|part| part == Component::ParentDir)
+            {
+                return Err(format!(
+                    "storage.repository_build_output_dirs key `{shown}` must be an absolute \
+                     path without `..`"
+                ));
+            }
+            check_build_output_names(
+                &format!("storage.repository_build_output_dirs.\"{shown}\""),
+                names,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn check_build_output_names(setting: &str, names: &[String]) -> Result<(), String> {
+    for name in names {
+        let plain = Path::new(name).components().collect::<Vec<_>>();
+        if !matches!(plain.as_slice(), [Component::Normal(part)] if *part == name.as_str())
+            || name.contains('\0')
+            || name.eq_ignore_ascii_case(".git")
+        {
+            return Err(format!(
+                "{setting}: `{name}` must be one plain directory name, not `.git`"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -67,6 +124,28 @@ mod tests {
     }
 
     #[test]
+    fn build_output_defaults_and_repository_override() {
+        let config: AetherConfig = toml::from_str("").unwrap();
+        let defaults = ["target", "node_modules", ".venv", "__pycache__", "dist"];
+        assert_eq!(config.storage.build_output_dirs, defaults);
+        assert_eq!(config.storage.validate(), Ok(()));
+        let config: AetherConfig = toml::from_str(
+            "[storage]\nbuild_output_dirs = []\n\
+             [storage.repository_build_output_dirs]\n\"/srv/repo\" = [\"build\"]\n",
+        )
+        .unwrap();
+        assert_eq!(config.storage.validate(), Ok(()));
+        let names = config.storage.build_output_dirs_for("/srv/repo".as_ref());
+        assert_eq!(names, ["build"]);
+        assert!(
+            config
+                .storage
+                .build_output_dirs_for("/srv/other".as_ref())
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn invalid_storage_is_rejected_at_load() {
         let dir = tempfile::tempdir().unwrap();
         for setting in [
@@ -78,6 +157,16 @@ mod tests {
             "workspace_grace_seconds = -1",
             "free_space_floor_bytes = -1",
             "retentoin_days = 14",
+            "build_output_dirs = [\"target/debug\"]",
+            "build_output_dirs = [\"..\"]",
+            "build_output_dirs = [\".\"]",
+            "build_output_dirs = [\"\"]",
+            "build_output_dirs = [\".git\"]",
+            "build_output_dirs = [\"/target\"]",
+            "build_output_dirs = \"target\"",
+            "repository_build_output_dirs = { \"relative/repo\" = [\"target\"] }",
+            "repository_build_output_dirs = { \"/srv/../repo\" = [\"target\"] }",
+            "repository_build_output_dirs = { \"/srv/repo\" = [\"a/b\"] }",
         ] {
             std::fs::write(
                 dir.path().join("config.toml"),

@@ -46,6 +46,12 @@ impl Runtime {
     /// A preview uses exactly the cleanup checks but never mutates files.
     /// Reports are bounded inventories, not a reservation against later writes.
     pub fn storage_gc(&self, dry_run: bool) -> Result<Value> {
+        self.storage_gc_with(dry_run, false)
+    }
+
+    /// `prune_build_output` also clears build output from finished workspaces
+    /// that are kept for another reason.
+    pub fn storage_gc_with(&self, dry_run: bool, prune_build_output: bool) -> Result<Value> {
         let _guard = if dry_run {
             None
         } else {
@@ -56,14 +62,14 @@ impl Runtime {
             )
         };
         let config = &self.models.config().storage;
+        let grace = Duration::from_secs(u64::from(config.workspace_grace_seconds));
         let workspaces = if config.days(config.workspaces_days) == 0 {
             json!({"disabled": true, "reason": "workspace cleanup disabled"})
+        } else if prune_build_output {
+            serde_json::to_value(self.gc_workspaces_pruning_build_output(grace, dry_run)?)
+                .map_err(invalid)?
         } else {
-            serde_json::to_value(self.gc_workspaces(
-                Duration::from_secs(u64::from(config.workspace_grace_seconds)),
-                dry_run,
-            )?)
-            .map_err(invalid)?
+            serde_json::to_value(self.gc_workspaces(grace, dry_run)?).map_err(invalid)?
         };
         let mut report = json!({
             "at": aether_core::time::now(), "dry_run": dry_run,

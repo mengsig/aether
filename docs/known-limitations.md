@@ -111,6 +111,10 @@ looks like a boundary and is not one.
   Ordinary linked source worktrees are supported. Broad ancestor scopes and
   `allowed_paths` permission alone do not establish workspace ownership;
   explicit workspace roots, manifest relationships and resource leases do.
+- Build output pruning deletes a declared directory outside the commit hold,
+  so a long deletion does not stall the daemon. New agents in that workspace
+  are held back, but a finished owner resumed during the deletion can see its
+  build output disappear and must rebuild. Removal still rechecks everything.
 
 - An agent's private temp directory only covers programs that honour
   `TMPDIR`, `TMP` or `TEMP`. A tool that writes to a hardcoded `/tmp` path

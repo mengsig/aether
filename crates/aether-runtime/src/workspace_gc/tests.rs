@@ -301,23 +301,32 @@ async fn unsaved_source_snapshot_and_integration_journals_are_preserved() {
     assert!(entry.reason.contains("baseline is not saved"), "{entry:?}");
 }
 
+fn preview(grace: Duration, now: SystemTime) -> Sweep {
+    Sweep {
+        grace,
+        dry_run: true,
+        prune_kept: false,
+        now,
+    }
+}
+
 #[tokio::test]
 async fn grace_boundary_is_inclusive_and_future_timestamps_stay_protected() {
     let f = fixture().await;
     let mut candidate =
         workspace::gc::Candidate::new(f.manifest.workspace.parent().unwrap().to_owned());
-    candidate.measure(true).unwrap();
+    candidate.measure(true, &[]).unwrap();
     let latest = candidate.modified;
     let grace = Duration::from_secs(100);
     let just_before = latest + grace - Duration::from_nanos(1);
     let report = f
         .runtime
-        .gc_workspaces_at(grace, true, just_before)
+        .gc_workspaces_at(preview(grace, just_before))
         .unwrap();
     assert_eq!(report.workspaces[0].action, WorkspaceGcAction::Kept);
     let report = f
         .runtime
-        .gc_workspaces_at(grace, true, latest + grace)
+        .gc_workspaces_at(preview(grace, latest + grace))
         .unwrap();
     assert_eq!(
         report.workspaces[0].action,
@@ -738,3 +747,5 @@ async fn preview_reports_each_workspace_protection_reason() {
     assert!(report.workspaces[0].reason.contains("commits missing"));
     assert!(f.manifest.workspace.exists());
 }
+
+mod build_output;

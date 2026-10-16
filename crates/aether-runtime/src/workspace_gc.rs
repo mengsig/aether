@@ -10,7 +10,8 @@ use aether_core::id::AgentId;
 use aether_store::AgentFilter;
 use serde::{Deserialize, Serialize};
 
-use crate::{Result, Runtime, RuntimeError, SchedulerState, workspace};
+use crate::workspace::gc::BuildOutputAction;
+use crate::{CommitHold, Result, Runtime, RuntimeError, SchedulerState, workspace};
 
 const MAX_CANDIDATES: usize = 16;
 const MAX_DIRECTORY_ENTRIES: usize = 128;
@@ -23,6 +24,21 @@ pub(crate) struct WorkspaceGcCursor {
 }
 
 struct Reservation<'a>(&'a Runtime);
+
+#[derive(Debug, Clone, Copy)]
+struct Sweep {
+    grace: Duration,
+    dry_run: bool,
+    /// Also prune build output of workspaces kept for another reason.
+    prune_kept: bool,
+    now: SystemTime,
+}
+
+/// Held from the owner check through removal in a real sweep.
+struct Gate<'a> {
+    _hold: Option<CommitHold<'a>>,
+    _sched: Option<parking_lot::MutexGuard<'a, SchedulerState>>,
+}
 
 impl Drop for Reservation<'_> {
     fn drop(&mut self) {
@@ -47,6 +63,17 @@ pub struct WorkspaceGcEntry {
     pub bytes_complete: bool,
     pub action: WorkspaceGcAction,
     pub reason: String,
+    /// Wholly ignored build output; its bytes are part of `bytes`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub build_output: Vec<WorkspaceBuildOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceBuildOutput {
+    pub path: PathBuf,
+    /// Allocated disk bytes, as `du` counts them.
+    pub bytes: u64,
+    pub action: BuildOutputAction,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -61,19 +88,95 @@ pub struct WorkspaceGcReport {
     pub workspaces: Vec<WorkspaceGcEntry>,
 }
 
+impl WorkspaceGcReport {
+    /// Pruned build output counts as removed even when its workspace stays.
+    fn add(
+        &mut self,
+        candidate: &workspace::gc::Candidate,
+        action: WorkspaceGcAction,
+        reason: String,
+    ) {
+        let bytes_with = |wanted: BuildOutputAction| -> u64 {
+            candidate
+                .build_output
+                .iter()
+                .filter(|output| output.action == wanted)
+                .map(|output| output.bytes)
+                .sum()
+        };
+        let pruned = bytes_with(BuildOutputAction::Pruned);
+        let would_prune = bytes_with(BuildOutputAction::WouldPrune);
+        debug_assert!(
+            pruned + would_prune <= candidate.bytes,
+            "build output is in bytes"
+        );
+        debug_assert!(pruned == 0 || !self.dry_run, "a preview never prunes");
+        match action {
+            WorkspaceGcAction::Kept => {
+                self.bytes_kept = self.bytes_kept.saturating_add(candidate.bytes - pruned);
+                self.bytes_removed = self.bytes_removed.saturating_add(pruned);
+                self.bytes_eligible = self.bytes_eligible.saturating_add(pruned + would_prune);
+            }
+            WorkspaceGcAction::WouldRemove => {
+                self.bytes_kept = self.bytes_kept.saturating_add(candidate.bytes);
+                self.bytes_eligible = self.bytes_eligible.saturating_add(candidate.bytes);
+            }
+            WorkspaceGcAction::Removed => {
+                self.bytes_removed = self.bytes_removed.saturating_add(candidate.bytes);
+                self.bytes_eligible = self.bytes_eligible.saturating_add(candidate.bytes);
+            }
+        }
+        self.workspaces.push(WorkspaceGcEntry {
+            workspace: candidate.directory.join("workspace"),
+            bytes: candidate.bytes,
+            bytes_complete: candidate.bytes_complete,
+            action,
+            reason,
+            build_output: candidate
+                .build_output
+                .iter()
+                .map(|output| WorkspaceBuildOutput {
+                    path: output.path.clone(),
+                    bytes: output.bytes,
+                    action: output.action,
+                })
+                .collect(),
+        });
+    }
+}
+
 impl Runtime {
     /// Remove old, clean delegated worktrees whose saved state is retained
     /// elsewhere. Each candidate is independent; refusals appear in the report.
+    /// Declared build output is pruned only from workspaces then removed.
     pub fn gc_workspaces(&self, grace: Duration, dry_run: bool) -> Result<WorkspaceGcReport> {
-        self.gc_workspaces_at(grace, dry_run, SystemTime::now())
+        let sweep = Sweep {
+            grace,
+            dry_run,
+            prune_kept: false,
+            now: SystemTime::now(),
+        };
+        self.gc_workspaces_at(sweep)
     }
 
-    fn gc_workspaces_at(
+    /// Like `gc_workspaces`, and also prune the declared build output of
+    /// finished workspaces that are kept for another reason.
+    pub fn gc_workspaces_pruning_build_output(
         &self,
         grace: Duration,
         dry_run: bool,
-        now: SystemTime,
     ) -> Result<WorkspaceGcReport> {
+        let sweep = Sweep {
+            grace,
+            dry_run,
+            prune_kept: true,
+            now: SystemTime::now(),
+        };
+        self.gc_workspaces_at(sweep)
+    }
+
+    fn gc_workspaces_at(&self, sweep: Sweep) -> Result<WorkspaceGcReport> {
+        let dry_run = sweep.dry_run;
         let mut report = WorkspaceGcReport {
             dry_run,
             ..Default::default()
@@ -138,7 +241,7 @@ impl Runtime {
                 cursor.pending.pop_front();
             }
             let mut candidate = workspace::gc::Candidate::new(directory);
-            let outcome = self.gc_workspace_candidate(&root, &mut candidate, grace, dry_run, now);
+            let outcome = self.gc_workspace_candidate(&root, &mut candidate, sweep);
             // Restoration failures are fatal and visible, including after a
             // refusal. Drop only provides a second cleanup attempt.
             candidate.restore_permissions()?;
@@ -151,24 +254,7 @@ impl Runtime {
                 Err(error @ RuntimeError::Internal(_)) => return Err(error),
                 Err(error) => (WorkspaceGcAction::Kept, error.to_string()),
             };
-            match action {
-                WorkspaceGcAction::Kept | WorkspaceGcAction::WouldRemove => {
-                    report.bytes_kept = report.bytes_kept.saturating_add(candidate.bytes);
-                }
-                WorkspaceGcAction::Removed => {
-                    report.bytes_removed = report.bytes_removed.saturating_add(candidate.bytes);
-                }
-            }
-            if action != WorkspaceGcAction::Kept {
-                report.bytes_eligible = report.bytes_eligible.saturating_add(candidate.bytes);
-            }
-            report.workspaces.push(WorkspaceGcEntry {
-                workspace: candidate.directory.join("workspace"),
-                bytes: candidate.bytes,
-                bytes_complete: candidate.bytes_complete,
-                action,
-                reason,
-            });
+            report.add(&candidate, action, reason);
         }
         Ok(report)
     }
@@ -177,9 +263,7 @@ impl Runtime {
         &self,
         root: &Path,
         candidate: &mut workspace::gc::Candidate,
-        grace: Duration,
-        dry_run: bool,
-        now: SystemTime,
+        sweep: Sweep,
     ) -> Result<WorkspaceGcAction> {
         let name = candidate
             .directory
@@ -195,12 +279,12 @@ impl Runtime {
             return Err(invalid("workspace GC candidate must be a real directory"));
         }
         let workspace_path = candidate.directory.join("workspace");
-        let _integration = if dry_run {
+        let _integration = if sweep.dry_run {
             None
         } else {
             workspace::gc::integration_lock(root, false)?
         };
-        let _reservation = if dry_run {
+        let _reservation = if sweep.dry_run {
             None
         } else {
             let _hold = self.hold();
@@ -210,49 +294,164 @@ impl Runtime {
             // Keep creation out until permission restoration, including on errors.
             Some(Reservation(self))
         };
-        let result = (|| {
-            candidate.measure(dry_run)?;
-            let manifest = candidate.inspect(root)?;
-            candidate.recheck(&manifest)?;
-            let _hold = (!dry_run).then(|| self.hold());
-            let agents = self.store.agents(&AgentFilter::default())?;
-            let sched = self.sched.lock();
-            self.gc_agent_blocker(&agents, &workspace_path, Some(manifest.parent), &sched)?;
-            let _sched = if dry_run {
-                drop(sched);
-                None
-            } else {
-                Some(sched)
-            };
-            let owners = manifest_owners(&agents, Some(manifest.parent));
-            let latest = agents
-                .iter()
-                .filter(|agent| {
-                    owners.contains(&agent.id)
-                        || scope_owns_workspace(&agent.scope, &workspace_path)
-                })
-                .map(|agent| SystemTime::from(agent.updated_at))
-                .fold(candidate.modified, SystemTime::max);
-            if !grace_elapsed(now, latest, grace) {
-                return Err(invalid("workspace is within the grace period"));
-            }
-            candidate.recheck_unchanged(&manifest)?;
-            if dry_run {
-                return Ok(WorkspaceGcAction::WouldRemove);
-            }
-            candidate.remove(&manifest).map_err(|error| {
-                RuntimeError::Internal(format!(
-                    "workspace GC removal failed and may be partial: {error}"
-                ))
-            })?;
-            Ok(WorkspaceGcAction::Removed)
-        })();
+        let result = self.collect_candidate(root, candidate, &workspace_path, sweep);
         if let Err(error) = candidate.restore_permissions() {
             return Err(RuntimeError::Internal(format!(
                 "workspace GC permission restoration failed: {error}; candidate result: {result:?}"
             )));
         }
         result
+    }
+
+    fn collect_candidate(
+        &self,
+        root: &Path,
+        candidate: &mut workspace::gc::Candidate,
+        workspace_path: &Path,
+        sweep: Sweep,
+    ) -> Result<WorkspaceGcAction> {
+        let names = self.build_output_names(candidate)?;
+        candidate.measure(sweep.dry_run, &names)?;
+        // Only a preservation refusal falls back to pruning; a failed recheck
+        // means the workspace changed and nothing is deleted.
+        let manifest = match candidate.inspect(root) {
+            Ok(manifest) => manifest,
+            Err(RuntimeError::Invalid(reason))
+                if sweep.prune_kept && !candidate.build_output.is_empty() =>
+            {
+                return Err(self.prune_kept_build_output(
+                    root,
+                    candidate,
+                    workspace_path,
+                    sweep,
+                    reason,
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        candidate.recheck(&manifest)?;
+        let gate = self.gc_gate(&manifest, workspace_path, sweep, candidate.modified)?;
+        candidate.recheck_unchanged(&manifest)?;
+        if sweep.dry_run {
+            candidate.mark_build_output(BuildOutputAction::WouldPrune);
+            return Ok(WorkspaceGcAction::WouldRemove);
+        }
+        if candidate.build_output.is_empty() {
+            remove_candidate(candidate, &manifest)?;
+            drop(gate);
+            return Ok(WorkspaceGcAction::Removed);
+        }
+        // Deleting build output can take long: do it outside the commit hold.
+        // The reservation still keeps new agents out of this workspace.
+        drop(gate);
+        candidate.prune_build_output()?;
+        self.remove_pruned(root, candidate, workspace_path, sweep)
+    }
+
+    fn build_output_names(&self, candidate: &workspace::gc::Candidate) -> Result<Vec<String>> {
+        let storage = &self.models.config().storage;
+        if storage.repository_build_output_dirs.is_empty() {
+            return Ok(storage.build_output_dirs.clone());
+        }
+        Ok(storage.build_output_dirs_for(&candidate.source()?).to_vec())
+    }
+
+    /// Run every check again, now with nothing excluded, then remove. Grace
+    /// uses the first pass's age: pruning itself touched the parent directories.
+    fn remove_pruned(
+        &self,
+        root: &Path,
+        pruned: &mut workspace::gc::Candidate,
+        workspace_path: &Path,
+        sweep: Sweep,
+    ) -> Result<WorkspaceGcAction> {
+        debug_assert!(!sweep.dry_run, "a preview never prunes");
+        pruned.restore_permissions().map_err(|error| {
+            RuntimeError::Internal(format!(
+                "workspace GC permission restoration failed: {error}"
+            ))
+        })?;
+        let mut strict = workspace::gc::Candidate::new(pruned.directory.clone());
+        let result = (|| {
+            strict.measure(false, &[])?;
+            let manifest = strict.inspect(root)?;
+            strict.recheck(&manifest)?;
+            let _gate = self.gc_gate(&manifest, workspace_path, sweep, pruned.modified)?;
+            strict.recheck_unchanged(&manifest)?;
+            remove_candidate(&mut strict, &manifest)?;
+            Ok(WorkspaceGcAction::Removed)
+        })();
+        if let Err(error) = strict.restore_permissions() {
+            return Err(RuntimeError::Internal(format!(
+                "workspace GC permission restoration failed: {error}; candidate result: {result:?}"
+            )));
+        }
+        result
+    }
+
+    /// The workspace stays, but its owners are finished and past grace: its
+    /// build output can go. Returns the reason the workspace is kept.
+    fn prune_kept_build_output(
+        &self,
+        root: &Path,
+        candidate: &mut workspace::gc::Candidate,
+        workspace_path: &Path,
+        sweep: Sweep,
+        reason: String,
+    ) -> RuntimeError {
+        let outcome = (|| {
+            let manifest = candidate.manifest(root)?;
+            drop(self.gc_gate(&manifest, workspace_path, sweep, candidate.modified)?);
+            candidate.confirm_build_output()?;
+            if sweep.dry_run {
+                candidate.mark_build_output(BuildOutputAction::WouldPrune);
+                return Ok(());
+            }
+            candidate.prune_build_output()
+        })();
+        match outcome {
+            Ok(()) => invalid(reason),
+            Err(RuntimeError::Invalid(why)) => {
+                invalid(format!("{reason}; build output kept: {why}"))
+            }
+            Err(error) => error,
+        }
+    }
+
+    /// Owners must be finished and past grace. A real sweep returns holding
+    /// the commit hold and scheduler lock, so no turn starts before removal.
+    fn gc_gate(
+        &self,
+        manifest: &workspace::WorkspaceManifest,
+        workspace_path: &Path,
+        sweep: Sweep,
+        modified: SystemTime,
+    ) -> Result<Gate<'_>> {
+        let hold = (!sweep.dry_run).then(|| self.hold());
+        let agents = self.store.agents(&AgentFilter::default())?;
+        let sched = self.sched.lock();
+        self.gc_agent_blocker(&agents, workspace_path, Some(manifest.parent), &sched)?;
+        let sched = if sweep.dry_run {
+            drop(sched);
+            None
+        } else {
+            Some(sched)
+        };
+        let owners = manifest_owners(&agents, Some(manifest.parent));
+        let latest = agents
+            .iter()
+            .filter(|agent| {
+                owners.contains(&agent.id) || scope_owns_workspace(&agent.scope, workspace_path)
+            })
+            .map(|agent| SystemTime::from(agent.updated_at))
+            .fold(modified, SystemTime::max);
+        if !grace_elapsed(sweep.now, latest, sweep.grace) {
+            return Err(invalid("workspace is within the grace period"));
+        }
+        Ok(Gate {
+            _hold: hold,
+            _sched: sched,
+        })
     }
 
     fn gc_agent_blocker(
@@ -344,6 +543,17 @@ impl Runtime {
         }
         Ok(())
     }
+}
+
+fn remove_candidate(
+    candidate: &mut workspace::gc::Candidate,
+    manifest: &workspace::WorkspaceManifest,
+) -> Result<()> {
+    candidate.remove(manifest).map_err(|error| {
+        RuntimeError::Internal(format!(
+            "workspace GC removal failed and may be partial: {error}"
+        ))
+    })
 }
 
 fn final_status(status: AgentStatusKind) -> bool {

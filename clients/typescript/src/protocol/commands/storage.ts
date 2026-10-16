@@ -8,6 +8,7 @@
 export interface StorageGcCommand {
   "cmd": "storage_gc";
   "dry_run": boolean;
+  "prune_build_output"?: boolean;
 }
 
 export function storageGc(args: Omit<StorageGcCommand, "cmd">): StorageGcCommand {

@@ -59,7 +59,7 @@ impl Fixture {
         };
         let manifest = create(&managed, &source, AgentId::new()).unwrap();
         let mut candidate = Candidate::new(manifest.workspace.parent().unwrap().to_path_buf());
-        candidate.measure(false).unwrap();
+        candidate.measure(false, &[]).unwrap();
         assert_eq!(candidate.inspect(&managed).unwrap(), manifest);
         candidate.recheck(&manifest).unwrap();
         Self {
@@ -110,7 +110,7 @@ fn changed_packed_refs_prevent_removal() {
     git_ok(&fixture.source, &["pack-refs", "--all"]);
     let managed = fixture.candidate.directory.parent().unwrap();
     let mut candidate = Candidate::new(fixture.candidate.directory.clone());
-    candidate.measure(false).unwrap();
+    candidate.measure(false, &[]).unwrap();
     candidate.inspect(managed).unwrap();
     candidate.recheck(&fixture.manifest).unwrap();
     let packed = fixture.source.join(".git/packed-refs");
@@ -263,4 +263,126 @@ fn snapshot_rejects_parent_traversal_git_directory_aliases() {
         error.to_string().contains("parent Git directory pointers"),
         "{error}"
     );
+}
+
+#[test]
+fn partly_tracked_build_output_is_walked_like_source() {
+    let fixture = Fixture::new();
+    let workspace = &fixture.manifest.workspace;
+    fs::create_dir(workspace.join("ignored-dir")).unwrap();
+    fs::write(workspace.join("ignored-dir/kept"), "tracked\n").unwrap();
+    git_ok(workspace, &["add", "-f", "ignored-dir/kept"]);
+    git_ok(workspace, &["commit", "-qm", "track one build file"]);
+    fs::write(workspace.join("ignored-dir/extra"), "precious\n").unwrap();
+    let mut candidate = Candidate::new(fixture.candidate.directory.clone());
+    candidate
+        .measure(false, &["ignored-dir".to_owned()])
+        .unwrap();
+    assert!(candidate.build_output.is_empty());
+    let error = candidate
+        .inspect(fixture.candidate.directory.parent().unwrap())
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("dirty, untracked, or ignored"),
+        "{error}"
+    );
+}
+
+#[test]
+fn wholly_ignored_build_output_is_skipped_but_its_directory_is_watched() {
+    let fixture = Fixture::new();
+    let output = fixture.manifest.workspace.join("nested/ignored-dir");
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join("object"), "build\n").unwrap();
+    let mut candidate = Candidate::new(fixture.candidate.directory.clone());
+    candidate
+        .measure(true, &["ignored-dir".to_owned()])
+        .unwrap();
+    assert_eq!(candidate.build_output.len(), 1);
+    assert_eq!(candidate.build_output[0].path, output);
+    assert!(candidate.build_output[0].bytes > 0);
+    let manifest = candidate
+        .inspect(fixture.candidate.directory.parent().unwrap())
+        .unwrap();
+    candidate.recheck(&manifest).unwrap();
+    fs::write(output.join("new"), "rebuilt\n").unwrap();
+    assert!(candidate.recheck_unchanged(&manifest).is_err());
+}
+
+#[test]
+fn status_records_skip_rename_origins() {
+    let output = b"R  renamed\0!! origin/\0!! target/\0?? notes\0!! a/b/__pycache__/\0!! file\0";
+    let records = build_output::status_records(output).unwrap();
+    assert_eq!(records.len(), 5);
+    let ignored = build_output::ignored_directories(output).unwrap();
+    let expected: BTreeSet<_> = ["target", "a/b/__pycache__"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    assert_eq!(ignored, expected);
+    assert!(build_output::status_records(b"!!\0").is_err());
+    assert!(build_output::status_records(b"R  renamed\0").is_err());
+}
+
+fn measured_build_output(fixture: &Fixture) -> (Candidate, PathBuf) {
+    let output = fixture.manifest.workspace.join("nested/ignored-dir");
+    fs::create_dir_all(output.join("deep")).unwrap();
+    fs::write(output.join("deep/object"), "build\n").unwrap();
+    let mut candidate = Candidate::new(fixture.candidate.directory.clone());
+    candidate
+        .measure(false, &["ignored-dir".to_owned()])
+        .unwrap();
+    assert_eq!(candidate.build_output.len(), 1);
+    (candidate, output)
+}
+
+#[test]
+fn pruning_removes_nested_build_output_through_pinned_handles() {
+    let fixture = Fixture::new();
+    let (mut candidate, output) = measured_build_output(&fixture);
+    candidate.confirm_build_output().unwrap();
+    candidate.prune_build_output().unwrap();
+    assert!(!output.exists());
+    assert!(fixture.manifest.workspace.join("nested/tracked").is_file());
+}
+
+#[test]
+fn pruning_never_follows_an_ancestor_swapped_for_a_symlink() {
+    let fixture = Fixture::new();
+    let (mut candidate, _) = measured_build_output(&fixture);
+    let nested = fixture.manifest.workspace.join("nested");
+    let outside = fixture.source.parent().unwrap().join("outside");
+    fs::rename(&nested, &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, &nested).unwrap();
+    assert!(candidate.prune_build_output().is_err());
+    assert!(outside.join("ignored-dir/deep/object").is_file());
+}
+
+#[test]
+fn pruning_refuses_a_replaced_directory() {
+    let fixture = Fixture::new();
+    let (mut candidate, output) = measured_build_output(&fixture);
+    fs::rename(&output, fixture.manifest.workspace.join("nested/moved")).unwrap();
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join("precious"), "keep\n").unwrap();
+    let error = candidate.prune_build_output().unwrap_err();
+    assert!(error.to_string().contains("changed during GC"), "{error}");
+    assert!(output.join("precious").is_file());
+}
+
+#[test]
+fn build_output_force_added_after_measuring_is_not_confirmed() {
+    let fixture = Fixture::new();
+    let (candidate, output) = measured_build_output(&fixture);
+    candidate.confirm_build_output().unwrap();
+    git_ok(
+        &fixture.manifest.workspace,
+        &["add", "-f", "nested/ignored-dir/deep/object"],
+    );
+    let error = candidate.confirm_build_output().unwrap_err();
+    assert!(
+        error.to_string().contains("no longer wholly ignored"),
+        "{error}"
+    );
+    assert!(output.join("deep/object").is_file());
 }

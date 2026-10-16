@@ -614,6 +614,7 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
             config.remote.address().map_err(&bad)?;
             config.serve.address().map_err(&bad)?;
             config.agents.validate().map_err(&bad)?;
+            config.storage.validate().map_err(&bad)?;
             for server in &config.mcp.servers {
                 server.validate().map_err(&bad)?;
             }

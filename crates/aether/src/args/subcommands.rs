@@ -668,6 +668,10 @@ pub(crate) enum StorageCmd {
     Gc {
         #[arg(long)]
         dry_run: bool,
+        /// Also delete ignored build output (`target/`, `node_modules/`, ...)
+        /// from finished workspaces that are kept for another reason.
+        #[arg(long)]
+        prune_build_output: bool,
         #[arg(long)]
         json: bool,
     },

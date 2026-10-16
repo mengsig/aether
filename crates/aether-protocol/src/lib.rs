@@ -182,6 +182,8 @@ pub mod features {
     pub const MEMORY_CONTEXT: &str = "memory_context";
     /// Storage inventory and host-only filesystem garbage collection.
     pub const STORAGE: &str = "storage";
+    /// The daemon applies `Command::StorageGc.prune_build_output`.
+    pub const PRUNE_BUILD_OUTPUT: &str = "prune_build_output";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
 }

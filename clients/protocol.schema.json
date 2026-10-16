@@ -2154,6 +2154,11 @@
             },
             "dry_run": {
               "type": "boolean"
+            },
+            "prune_build_output": {
+              "default": false,
+              "description": "Also prune declared build output from finished workspaces that\nare kept for another reason. A daemon without\n`features::PRUNE_BUILD_OUTPUT` ignores it, so check that first.",
+              "type": "boolean"
             }
           },
           "required": [

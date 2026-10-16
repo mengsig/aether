@@ -315,6 +315,7 @@ where
                                                     features::MEMORY_CONTEXT.into(),
                                                     features::MEMORY_FEEDBACK.into(),
                                                     features::STORAGE.into(),
+                                                    features::PRUNE_BUILD_OUTPUT.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,
