@@ -122,7 +122,12 @@ fn process_running(pid: Pid) -> bool {
             let (_, rest) = stat.rsplit_once(')').expect("proc stat command");
             !rest.trim_start().starts_with('Z')
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(Errno::ESRCH as i32) =>
+        {
+            false
+        }
         Err(error) => panic!("reading process state: {error}"),
     }
 }

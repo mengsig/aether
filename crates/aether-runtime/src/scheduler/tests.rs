@@ -181,6 +181,7 @@ async fn exhaustion_canary_cannot_overlap_a_usage_refresh_claim() {
         crate::provider_refresh::RefreshState {
             last_attempt: Instant::now(),
             in_flight: true,
+            quarantined: false,
         },
     );
     assert!(!providers::claim_canary(&runtime, "codex", agent.id));
@@ -194,4 +195,48 @@ async fn exhaustion_canary_cannot_overlap_a_usage_refresh_claim() {
         .in_flight = false;
     assert!(providers::claim_canary(&runtime, "codex", agent.id));
     assert_eq!(runtime.sched.lock().probing["codex"], agent.id);
+}
+
+#[tokio::test]
+async fn quarantined_usage_refresh_does_not_prevent_exhaustion_recovery() {
+    let (runtime, _dir) = engine_runtime().await;
+    let mut agent = engine_agent(&runtime);
+    agent.status = AgentStatus::Blocked {
+        reason: BlockReason::Exhausted {
+            model: ModelRef::new("claude-code", "haiku"),
+            class: aether_core::agent::ExhaustionClass::UsageLimit,
+            since: now(),
+            reported_reset: None,
+            next_probe: now(),
+            probes: 0,
+            detail: "spent".into(),
+        },
+    };
+    runtime
+        .store
+        .commit(
+            aether_store::Commit::new().mutate(aether_store::Mutation::UpsertAgent(agent.clone())),
+        )
+        .unwrap();
+    runtime.sched.lock().usage_refresh.insert(
+        "claude-code".into(),
+        crate::provider_refresh::RefreshState {
+            last_attempt: Instant::now(),
+            in_flight: false,
+            quarantined: true,
+        },
+    );
+    assert_eq!(
+        due_canaries(&runtime, &[agent.clone()], now())["claude-code"],
+        agent.id
+    );
+    tick(&runtime).unwrap();
+    let woken = runtime.store.agent(agent.id).unwrap().unwrap();
+    assert!(!matches!(
+        woken.status,
+        AgentStatus::Blocked {
+            reason: BlockReason::Exhausted { .. }
+        }
+    ));
+    assert_eq!(runtime.sched.lock().probing["claude-code"], agent.id);
 }

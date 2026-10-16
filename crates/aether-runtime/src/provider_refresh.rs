@@ -16,22 +16,20 @@ mod tests;
 pub(crate) struct RefreshState {
     pub last_attempt: Instant,
     pub in_flight: bool,
+    pub quarantined: bool,
 }
 
 struct Claim {
     runtime: Arc<Runtime>,
     provider: String,
-    release: bool,
 }
 
 impl Drop for Claim {
     fn drop(&mut self) {
-        if self.release {
-            let mut sched = self.runtime.sched.lock();
-            if let Some(state) = sched.usage_refresh.get_mut(&self.provider) {
-                debug_assert!(state.in_flight);
-                state.in_flight = false;
-            }
+        let mut sched = self.runtime.sched.lock();
+        if let Some(state) = sched.usage_refresh.get_mut(&self.provider) {
+            debug_assert!(state.in_flight);
+            state.in_flight = false;
         }
     }
 }
@@ -87,6 +85,9 @@ impl Runtime {
         }
         let interval = Duration::from_secs(self.models.config().providers.usage_refresh_interval);
         if let Some(previous) = sched.usage_refresh.get(provider) {
+            if previous.quarantined {
+                return Err("quarantined");
+            }
             if previous.in_flight {
                 return Err("in_flight");
             }
@@ -101,12 +102,12 @@ impl Runtime {
             RefreshState {
                 last_attempt: at,
                 in_flight: true,
+                quarantined: false,
             },
         );
         Ok(Claim {
             runtime: self.clone(),
             provider: provider.to_owned(),
-            release: true,
         })
     }
 
@@ -116,7 +117,12 @@ impl Runtime {
     ) -> (&'static str, Option<String>) {
         let claim = match self.claim_usage_refresh(&provider.id) {
             Ok(claim) => claim,
-            Err(status) => return (status, None),
+            Err(status) => {
+                let error = (status == "quarantined").then(|| {
+                    "usage refresh cleanup failed; further refreshes disabled until restart".into()
+                });
+                return (status, error);
+            }
         };
         let cancel = self.shutdown.child_token();
         let _cancel_on_drop = cancel.clone().drop_guard();
@@ -133,7 +139,7 @@ impl Runtime {
 }
 
 async fn run_refresh(
-    mut claim: Claim,
+    claim: Claim,
     provider: ProviderDef,
     cancel: CancellationToken,
 ) -> std::result::Result<Option<()>, String> {
@@ -142,25 +148,36 @@ async fn run_refresh(
     let timeout = Duration::from_secs(runtime.models.config().providers.usage_refresh_timeout);
     let work = probe::read(&runtime, &provider, cancel.clone());
     tokio::pin!(work);
-    let (finished, result) = tokio::select! {
-        result = &mut work => (true, result),
-        _ = tokio::time::sleep(timeout) => (false, Err("usage refresh timed out".into())),
-        _ = cancel.cancelled() => (false, Err("usage refresh cancelled".into())),
+    debug_assert!(runtime.sched.lock().usage_refresh[&provider.id].in_flight);
+    debug_assert!(!timeout.is_zero());
+    let failure = tokio::select! {
+        result = &mut work => return record_refresh(&runtime, &provider.id, result, &cancel),
+        _ = tokio::time::sleep(timeout) => "usage refresh timed out",
+        _ = cancel.cancelled() => "usage refresh cancelled",
     };
-    if !finished {
-        cancel.cancel();
-        claim.release = false;
-        // An uncooperative adapter is quarantined rather than overlapping another probe.
-        match tokio::time::timeout(Duration::from_secs(5), &mut work).await {
-            Ok(_) => claim.release = true,
-            Err(_) => {
-                return Err(
-                    "usage refresh cleanup timed out; provider refresh quarantined until restart"
-                        .into(),
-                );
+    cancel.cancel();
+    match tokio::time::timeout(Duration::from_secs(5), &mut work).await {
+        Ok(Ok(_)) => Err(failure.into()),
+        Ok(Err(error)) => Err(format!("{failure}; {error}")),
+        Err(_) => {
+            if let Some(state) = runtime.sched.lock().usage_refresh.get_mut(&provider.id) {
+                debug_assert!(state.in_flight);
+                state.quarantined = true;
             }
+            Err(
+                "usage refresh cleanup timed out; provider refresh quarantined until restart"
+                    .into(),
+            )
         }
     }
+}
+
+fn record_refresh(
+    runtime: &Runtime,
+    provider: &str,
+    result: std::result::Result<Option<Value>, String>,
+    cancel: &CancellationToken,
+) -> std::result::Result<Option<()>, String> {
     let Some(payload) = result? else {
         return Ok(None);
     };
@@ -169,7 +186,6 @@ async fn run_refresh(
     }
     let usage = ProviderUsage::from_engine_payload(&payload, now())
         .ok_or_else(|| "usage refresh returned no valid quota windows".to_owned())?;
-    crate::scheduler::record_quota(&runtime, &provider.id, usage).map_err(|e| e.to_string())?;
-    claim.release = true;
+    crate::scheduler::record_quota(runtime, provider, usage).map_err(|e| e.to_string())?;
     Ok(Some(()))
 }

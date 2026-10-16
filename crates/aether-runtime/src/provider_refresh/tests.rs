@@ -364,8 +364,11 @@ async fn uncooperative_cleanup_quarantines_refreshes_instead_of_overlapping() {
         .unwrap();
     assert_eq!(row["status"], "error");
     assert!(row["error"].as_str().unwrap().contains("quarantined"));
-    assert!(runtime.sched.lock().usage_refresh["codex"].in_flight);
-    assert_eq!(refresh(&runtime).await["status"], "in_flight");
+    assert!(!runtime.sched.lock().usage_refresh["codex"].in_flight);
+    assert!(runtime.sched.lock().usage_refresh["codex"].quarantined);
+    let repeated = refresh(&runtime).await;
+    assert_eq!(repeated["status"], "quarantined");
+    assert!(repeated["error"].as_str().unwrap().contains("restart"));
     assert_eq!(engine.reads.load(Ordering::SeqCst), 1);
     assert!(runtime.sched.lock().backoff.is_empty());
     runtime.shutdown().await;

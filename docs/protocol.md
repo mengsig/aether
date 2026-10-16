@@ -759,7 +759,7 @@ Explicit refresh requires `operate` access and returns a `provider_usage` reply:
 
 ```json
 {"cmd":"refresh_provider_usage","provider":"codex"}
-{"reply":"provider_usage","data":{"providers":[{"provider":"codex","headroom":{"windows":[],"observed_at":null,"age_seconds":null,"stale":true},"status":"error","error":"probe timed out"}]}}
+{"reply":"provider_usage","data":{"providers":[{"provider":"codex","headroom":{"windows":[],"observed_at":null,"age_seconds":null,"stale":true},"status":"error","error":"usage refresh timed out"}]}}
 ```
 
 Omit `provider` to consider every enabled registry provider. The harness/MCP
@@ -775,10 +775,11 @@ Each result includes `provider`, `headroom`, and one of these `status` values:
 | Status | Meaning |
 | --- | --- |
 | `refreshed` | The probe supplied a new usage observation. |
-| `cached` | Usage is fresh; no probe was needed. |
-| `in_flight` | A refresh owns this provider; no overlapping probe starts. |
-| `backoff` | The minimum interval between attempts has not elapsed. |
-| `unsupported` | Probe turns are disabled for this provider. |
+| `cached` | Usage is fresh, or the minimum attempt interval has not elapsed. Check `headroom.stale` before using it. |
+| `in_flight` | A refresh or exhaustion canary owns this provider; no overlapping refresh starts. |
+| `backoff` | The scheduler is backing this provider off; no refresh starts. |
+| `unsupported` | The adapter has no usage read and probe turns are disabled. |
+| `quarantined` | A previous refresh could not confirm cleanup; further refreshes are disabled until daemon restart. |
 | `error` | The probe failed, timed out, or cannot run through this provider's adapter; `error` explains why. |
 
 Refresh considers only stale observations, preserves cached headroom on failure,
@@ -786,9 +787,10 @@ and reports provider errors independently. It never chooses a route.
 `providers.usage_refresh_interval` (default 600 seconds) spaces attempts,
 including failed and unsupported attempts. `providers.usage_refresh_timeout`
 (default 15 seconds) bounds the probe; both settings must be positive integers
-in `config.toml`. Cancellation allows up to three additional seconds for cleanup.
-If cleanup cannot complete, the provider remains `in_flight` until daemon
-restart so another refresh cannot overlap an unclosed probe.
+in `config.toml`. Cancellation allows up to five additional seconds for cleanup.
+If cleanup cannot complete, further refreshes are quarantined until daemon
+restart. The live claim is released when the work future is dropped; ordinary
+exhaustion recovery canaries remain eligible. Quarantine does not change backoff.
 
 ## Workspace review
 

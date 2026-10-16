@@ -110,7 +110,8 @@ opting an API provider in returns a per-provider error. Results include each
 provider's cached headroom and a status, with an error message when a probe
 fails, so one provider's failure does not hide the others. A timed-out probe
 is cancelled, with up to five further seconds for cleanup. If cleanup cannot
-finish, that provider stays `in_flight` until daemon restart to avoid overlap.
+finish, that provider returns `quarantined` for further refreshes until daemon
+restart. This does not block the scheduler's ordinary exhaustion recovery canaries.
 
 
 One signed-in native CLI **or** one configured API provider is enough.

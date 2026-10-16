@@ -419,6 +419,7 @@ mod tests {
             ("ping", &[]),
             ("preview_retention", &[]),
             ("providers", &[]),
+            ("refresh_provider_usage", &[]),
             (
                 "publish_artifact",
                 &["content_type", "name", "summary", "task", "text"],
