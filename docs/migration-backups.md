@@ -26,16 +26,25 @@ decision for each file. See [storage configuration](configuration.md#storage).
 
 ## Restoring a backup
 
-Stop the daemon in an orderly way first, then decompress the snapshot over
-the database with the `zstd` tool and remove the old write-ahead files:
+`aether stop` returns once the daemon has accepted the request, before it has
+finished writing the database. The daemon holds an exclusive lock on
+`aether.db.lock` until its process exits, so run the restore under that lock:
+`flock` waits for the daemon to be gone and keeps a new one from starting
+until the restore is done.
 
 ```sh
 aether stop
 cd ~/.local/share/aether            # the directory holding aether.db
-cp aether.db aether.db.before-restore
-zstd -d -f migration-backups/schema-21-before-22-<id>.sqlite.zst -o aether.db
-rm -f aether.db-wal aether.db-shm
+flock aether.db.lock sh -euc '
+  cp aether.db aether.db.before-restore
+  zstd -d -f migration-backups/schema-21-before-22-<id>.sqlite.zst -o aether.db
+  rm -f aether.db-wal aether.db-shm
+'
 ```
+
+Without `flock` (macOS has none by default), wait until
+`lsof aether.db aether.db.lock` lists no process before running the three
+commands, and start no daemon until they are done.
 
 The file is a single standard zstd frame, so `unzstd` or any zstd library
 gives the same bytes. To look at a snapshot without restoring it, decompress

@@ -380,8 +380,24 @@ mod tests {
         assert_eq!(report.bytes_removed, 12);
         assert!(!oldest.exists() && !legacy.exists());
         assert!(middle.exists() && newest.exists());
+        assert_eq!(
+            prune_backups(dir.path(), retention(14, 3, 2), now, false)
+                .unwrap()
+                .bytes_removed,
+            0
+        );
+    }
+    #[test]
+    fn the_cap_applies_when_age_cleanup_is_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let oldest = backup(dir.path(), 0);
+        let middle = backup(dir.path(), 1);
+        let newest = backup(dir.path(), 2);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100 * 86400);
         let report = prune_backups(dir.path(), retention(0, 3, 2), now, false).unwrap();
-        assert_eq!((report.bytes, report.bytes_removed), (12, 0));
+        assert_eq!((report.bytes, report.bytes_removed), (18, 6));
+        assert!(!oldest.exists());
+        assert!(middle.exists() && newest.exists());
     }
     #[test]
     fn disabled_unrecognized_and_symlink_files_are_preserved() {
