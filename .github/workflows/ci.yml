@@ -3,11 +3,12 @@ name: ci
 # Every job runs on a GitHub-hosted runner with a read-only token and no secrets,
 # so a pull request from a fork gets nothing a public clone would not.
 on:
-  # No path filter here: a workflow that a filter skips leaves a required check
+  # No PR path filter: a workflow that a path filter skips leaves a required check
   # waiting forever. The jobs start, and stop early for a documentation change.
   pull_request:
-  push:
     branches: [main]
+  push:
+    branches: [main, next]
     # Documentation alone starts nothing; the same paths as scripts/ci_scope.sh.
     paths:
       - "**"
