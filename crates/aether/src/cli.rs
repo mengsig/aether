@@ -63,6 +63,7 @@ use providers::health_segments;
 pub use providers::{auth, login, logout, models, providers};
 
 mod status;
+mod units;
 pub use status::{mcp_bridge, mcp_list, mcp_serve, status};
 
 mod agents;

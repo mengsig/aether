@@ -25,6 +25,7 @@ aether-model = { workspace = true }
 aether-engine = { workspace = true }
 aether-memory = { workspace = true }
 anyhow = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 qrcode = { workspace = true }
 fs4 = { workspace = true }
