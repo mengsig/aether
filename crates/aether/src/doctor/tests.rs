@@ -553,11 +553,37 @@ fn an_optional_mcp_token_connects_and_doctor_says_so_without_the_secret() {
     assert!(
         check
             .detail
-            .contains("connected without a token (auth = \"optional\"): notes (NOTES_TOKEN unset)"),
+            .contains("reached without a token (auth = \"optional\"): notes (NOTES_TOKEN unset)"),
         "{}",
         check.detail
     );
     assert!(!check.detail.contains("FILES_TOKEN"), "{}", check.detail);
+}
+
+#[test]
+fn an_optional_mcp_server_that_did_not_answer_is_not_called_connected() {
+    let health = [with_auth(
+        "notes",
+        McpServerState::Failed,
+        McpAuthState::Anonymous,
+    )];
+    let check = check_mcp(1, &health, "aether");
+    assert_eq!(check.level, Level::Warn);
+    assert!(
+        check.detail.contains("0 of 1 server(s) connected"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check.detail.contains("not answering: notes"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        !check.detail.contains("connected without"),
+        "{}",
+        check.detail
+    );
 }
 
 #[test]
