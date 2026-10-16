@@ -4,6 +4,173 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## 1.1.0
+
+Delegated agents now share a warm, size-bounded build cache outside their
+workspaces, and an operator can diff, integrate or discard a child's work,
+answer pending approvals in batches, follow `aether events` as a filtered
+timeline and name agents by name, prefix or `@last` in every command.
+Provider quota headroom and reset times are visible, and stale usage can be
+refreshed on request. `aether update` shows the release notes and warns
+before a one-way migration, and a daemon that outlives an update keeps its
+MCP tools. Protocol version 23.
+
+### New
+
+- **Delegated builds share an Aether-owned build cache.** Agents in a
+  repository workspace build into a cache outside it, one partition per
+  repository and run under `aether.build-cache` beside `aether.db`, so a
+  run's isolated children share warm output instead of each building a cold
+  `target/`. `[build_cache]` sets the root and the exported variables
+  (default `CARGO_TARGET_DIR`); they are set for engine CLIs and host
+  commands and are writable inside the engine sandboxes. Storage GC keeps
+  the cache within `[build_cache] max_bytes` (default 15% of its
+  filesystem), evicting partitions no live agent leases, least recently used
+  first; the disk guard does the same when the disk runs low. Only
+  partitions Aether marked as its own are evicted. `aether storage` lists
+  each partition's bytes, last use and leases. A client can name its own
+  directory with `config.build_cache` behind the `build_cache` feature.
+- **Review a child's work from the CLI.** `aether workspace diff`,
+  `integrate` and `discard`, and the protocol commands `workspace_diff`,
+  `workspace_integrate` and `workspace_discard` behind the
+  `workspace_review` feature, land or drop an isolated child's worktree
+  without asking its parent. The diff carries files, diffstat, commits and a
+  patch capped at 256 KiB. Integration runs the agent tool's preflight and
+  conflict check and names every conflicting path without writing. Discard
+  refuses while any live agent works in the worktree unless forced. Each
+  turn records its workspace HEAD at start and end, so commits are
+  attributed to turns.
+- **Pending approvals in one list, answered in batches.** `aether approvals`
+  lists pending approvals with their agent, tool, arguments, side-effect
+  class and age, filtered by `--agent`, `--subtree` or `--run`.
+  `aether approve` and `aether deny` take `--all-pending` with one of those
+  scopes, confirm the count (`--yes` skips it) and answer only that snapshot.
+- **`aether events` is a usable timeline.** On a terminal it shows the
+  latest 50 matching events; `--tail N` bounds any mode and `-f` follows.
+  Filter with `--agent`, `--run`, `--task`, `--type`, `--family`, `--since`
+  and `--grep`; `--json` prints one event per line.
+- **Names, prefixes and `@last` wherever an id is expected.** Every CLI
+  argument that takes an agent, run, task, approval or schedule id accepts a
+  unique id prefix, with or without its `agt_`-style part, an exact name
+  unique among live agents or schedules, `@last` for the newest agent of the
+  current run, and `@viewed` for the agent a running TUI shows. Ambiguity is
+  refused with the newest candidates listed. Memory scopes and the
+  `aether events` and `aether workspace` filters resolve the same way.
+- **Provider quota headroom with reset times.** `aether providers`, the TUI
+  usage view, the `providers` reply and a new read-only `provider_usage`
+  MCP tool show each provider's remaining percentage and reset time per
+  window, and whether the report is stale. `[providers] usage_stale_after`
+  (default 900 seconds) sets when it is.
+- **Stale provider usage can be refreshed on request.** The
+  `refresh_provider_usage` protocol command and MCP tool, behind the
+  `provider_usage_refresh` feature, renew stale observations without
+  starting ordinary work. A probe spends a small native engine turn, so each
+  provider must opt in with `usage_probe = "turn"` in `providers.toml`; the
+  default is `"disabled"`. Attempts are spaced by
+  `providers.usage_refresh_interval` (600 seconds) and bounded by
+  `providers.usage_refresh_timeout` (15 seconds). A probe whose cleanup
+  cannot be confirmed quarantines further refreshes of that provider until
+  the daemon restarts.
+- **Notes on an agent's transcript that wake nothing.** `append_note`
+  (protocol 23, `notes` feature, operate access) records a note on an agent
+  without queueing a message or starting a turn. With `context: digest` the
+  agent's next turn sees it in a compact list. The TUI, `aether replay` and
+  the phone's activity feed and conversation show notes.
+- **`aether update` shows what a release asks of you.** Before downloading,
+  it prints the target release's summary and the "Before updating" notes of
+  every release it crosses, read from the `CHANGELOG.md` each release now
+  publishes. When one announces a one-way store migration it asks for
+  confirmation; `--yes` skips the question and no answer is a no.
+  `aether status` and `aether doctor` show "running X, installed Y" for a
+  local daemon, doctor warns while they differ, and `status --json` adds
+  `installed_version`.
+- **Migration backups are compressed and capped.** A schema migration
+  writes its pre-migration snapshot as a verified zstd file
+  (`.sqlite.zst`), and storage GC keeps at most
+  `[storage] migration_backups_keep` (default 2) of them whatever their age.
+  [Restoring a compressed backup](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)
+  is documented.
+- **Storage GC can prune ignored build output.** Declared build directories
+  (`target/`, `node_modules/`, `.venv/`, `__pycache__/` and `dist/` by
+  default, configurable per repository) that Git ignores no longer keep a
+  finished workspace from being collected, and
+  `aether storage gc --prune-build-output [--dry-run]` deletes that output
+  before re-running every safety check.
+- **Claude Code telemetry carries Aether ids.** When
+  `CLAUDE_CODE_ENABLE_TELEMETRY` is set in the daemon's environment, Claude
+  Code children get `aether.run_id`, `aether.agent_id` and `aether.task_id`
+  appended to `OTEL_RESOURCE_ATTRIBUTES` and a `TRACEPARENT` derived from the
+  run. Aether does not turn telemetry on itself.
+
+### Fixed
+
+- **A daemon that outlives `aether update` keeps its MCP tools.** The daemon
+  launched whatever binary was installed as its MCP bridge, so after an
+  update every new native session got a bridge that spoke a protocol the
+  daemon did not, and lost its Aether tools. The daemon now publishes its
+  own image into an owner-only `<data>/bin` at startup and bridges from it.
+  `aether status` prints the bridge path and `aether storage` lists the
+  copies under `bridge_copies`.
+- **Clients negotiate a common protocol on every transport.** A local client
+  asked only for its own protocol, so a newer client refused an older daemon
+  that spoke an older version both knew; only SSH retried. Unix, TCP and SSH
+  now negotiate down the same way, and the Rust client refuses a command the
+  connection cannot carry before sending it. An MCP bridge that cannot reach
+  a usable daemon now stays up and explains why in every tool call.
+- **A missing MCP token fails auth instead of connecting anonymously.** A
+  server whose `token_env` names an unset or empty variable is reported as
+  `auth_failed` with the variable it expected and is never contacted.
+  `mcp list`, the TUI and doctor show each server's auth state.
+- **Doctor reports unreachable local providers.** No-auth local servers are
+  probed with a short timeout and reported "not reachable at host:port"
+  instead of ready, and doctor fails when the default model's provider is
+  not ready. The TUI shows its `/login` hint only for the new `no_model`
+  error and otherwise keeps the daemon's message.
+- **Unknown slash commands reach the attached agent.** A `/name` that is not
+  an Aether command is sent verbatim to the viewed live agent, so Archon's
+  `/answer`, `/approve`, `/reject`, `/merge` and `/archon` work from the TUI
+  and plain mode. The first one in a session says it was forwarded; with no
+  live agent in view it is still refused.
+- **Status forecasts spend from recent usage.** A run's rate covers the last
+  15 minutes of usage instead of its lifetime, so an idle run forecasts
+  nothing. Human output of `aether status` and `aether storage` prints tokens
+  and bytes in readable units; `--json` keeps exact values.
+
+### Protocol
+
+The protocol is now version 23; this build still serves clients from 17.
+
+- **21:** the `no_model` error code for creating an agent with no model named
+  and no default. Older clients get `invalid_argument`.
+- **22:** `workspace_diff`, `workspace_integrate` and `workspace_discard`,
+  behind the `workspace_review` feature.
+- **23:** `append_note`, behind the `notes` feature, and the `not_started`
+  replay frame that holds notes of an agent with no turn. Older clients do
+  not receive that frame.
+- Additive in this release: `headroom` on each `providers` row,
+  `config.build_cache` on `create_agent` behind the `build_cache` feature,
+  `refresh_provider_usage` behind the `provider_usage_refresh` feature,
+  `prune_build_output` on `storage_gc` behind the feature of that name, and
+  `auth` on MCP server health.
+
+### Before updating
+
+- **Agents build into Aether's build cache.** Agents in a repository
+  workspace now get `CARGO_TARGET_DIR` pointing at a partition under
+  `aether.build-cache` beside `aether.db` instead of building into the
+  worktree's `target/`. Storage GC evicts unleased partitions once they hold
+  more than 15% of that filesystem. Set `[build_cache] root` or `max_bytes`
+  to change this, or `env = []` to export nothing (see
+  [Build cache](https://github.com/mengsig/aether/blob/main/docs/configuration.md#build-cache)).
+- **At most two migration backups are kept.** Storage GC now removes
+  migration backups beyond the newest `[storage] migration_backups_keep`
+  (default 2) whatever their age, where it used to keep the newest three.
+  Raise it before updating to keep more.
+- **An MCP server with a missing token stops connecting.** A server whose
+  `token_env` variable is unset or empty used to connect without a token; it
+  now fails auth. Set the variable, or mark the server `auth = "optional"`
+  if it is meant to work without one.
+
 ## 1.0.10
 
 Each agent now gets its own private temp directory instead of sharing the
