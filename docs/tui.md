@@ -622,6 +622,11 @@ listed. A few take an argument directly: `/theme nord`, `/mouse scroll`,
 These tables are generated from `crates/aether-tui/src/commands/`; regenerate
 them with `AETHER_BLESS_DOCS=1 cargo test -p aether-tui --test docs_tables`.
 
+A `/name` missing from this table goes to the viewed agent as an ordinary
+message, verbatim, so another program's commands (Archon's `/answer 3 yes`)
+reach the agent that reads them. The first one in a session says so. With no
+live agent in view it stays an unknown command and nothing is sent.
+
 ## View modes
 
 A view mode changes presentation of the viewed agent's retained transcript.

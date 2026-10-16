@@ -39,6 +39,13 @@ impl App {
                 },
             )));
         }
+        // Another program's vocabulary (Archon's `/answer 3 yes`) reaches a live
+        // agent verbatim; with none to receive it, it stays an unknown command.
+        if let InputAction::Command(SlashCommand::Unknown(_)) = &parsed
+            && self.selected.is_some_and(|id| !self.is_terminal(id))
+        {
+            return InputAction::Message(text.trim().to_owned());
+        }
         parsed
     }
 

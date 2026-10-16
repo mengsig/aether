@@ -209,3 +209,97 @@ fn inbox_text_splits_into_user_bubbles_and_notes() {
     );
     assert!(split_inbox_text("   ").is_empty());
 }
+
+fn sent_messages(effects: &[Effect]) -> Vec<(AgentId, String)> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Request {
+                command: Command::SendMessage { to, content, .. },
+                ..
+            } => Some((*to, content.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn unknown_slash_commands_reach_the_viewed_agent_verbatim() {
+    let (mut app, id) = app_with_agent();
+    app.input.set_text("/answer 3 yes");
+    let effects = app.reduce(key(KeyCode::Enter));
+    assert_eq!(sent_messages(&effects), [(id, "/answer 3 yes".to_owned())]);
+    assert_eq!(
+        app.live_flash(),
+        Some("/answer is not an Aether command; sent to root")
+    );
+    app.flash = None;
+    for line in [
+        "/a 3 no",
+        "/approve 7",
+        "/reject 7 too broad",
+        "/merge 12",
+        "/archon status",
+        "/Answer 1  Yes",
+    ] {
+        app.input.set_text(line);
+        let effects = app.reduce(key(KeyCode::Enter));
+        assert_eq!(sent_messages(&effects), [(id, line.to_owned())], "{line}");
+        assert_eq!(app.live_flash(), None, "{line} repeats the notice");
+        assert!(app.input.text.is_empty(), "{line} stays in the draft");
+    }
+}
+
+#[test]
+fn unknown_slash_commands_without_a_live_agent_stay_unknown() {
+    let mut app = app_with_status(TuiOptions::default());
+    app.input.set_text("/answer 3 yes");
+    let effects = app.reduce(key(KeyCode::Enter));
+    assert!(sent_messages(&effects).is_empty(), "{effects:?}");
+    assert!(
+        app.live_flash()
+            .unwrap()
+            .contains("unknown command /answer")
+    );
+
+    let (mut app, id) = app_with_agent();
+    app.tree.nodes.get_mut(&id).unwrap().agent.status = AgentStatus::Completed { summary: None };
+    app.input.set_text("/answer 3 yes");
+    let effects = app.reduce(key(KeyCode::Enter));
+    assert!(sent_messages(&effects).is_empty(), "{effects:?}");
+    assert!(
+        app.live_flash()
+            .unwrap()
+            .contains("unknown command /answer")
+    );
+}
+
+#[test]
+fn registry_commands_and_view_modes_still_run_with_an_agent_in_view() {
+    let (app, _) = app_with_agent();
+    assert_eq!(
+        app.parse_input("/help"),
+        InputAction::Command(SlashCommand::Help)
+    );
+    assert!(matches!(
+        app.parse_input("/focus"),
+        InputAction::Command(SlashCommand::ViewMode(Some(_)))
+    ));
+    assert_eq!(
+        app.parse_input("  /answer 3 yes "),
+        InputAction::Message("/answer 3 yes".into())
+    );
+}
+
+#[test]
+fn typed_unknown_slash_commands_pass_the_popup_to_the_agent() {
+    for line in ["/answer 3 yes", "/archon", "/merge"] {
+        let (mut app, id) = app_with_agent();
+        for c in line.chars() {
+            app.reduce(key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.input.text, line);
+        let effects = app.reduce(key(KeyCode::Enter));
+        assert_eq!(sent_messages(&effects), [(id, line.to_owned())], "{line}");
+    }
+}

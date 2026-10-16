@@ -891,6 +891,38 @@ mod tests {
     }
 
     #[test]
+    fn unknown_slash_commands_reach_the_session_agent_verbatim() {
+        let mut app = app_with_transcript(&[]);
+        let agent = app.selected.expect("session agent");
+        let mut out = Printer::new(Vec::new());
+        for line in ["/answer 3 yes", "/approve 7", "/archon status"] {
+            let effects = submit_line(&mut app, &mut out, line).expect("plain line");
+            let sent: Vec<_> = effects
+                .iter()
+                .filter_map(|effect| match effect {
+                    Effect::Request {
+                        command: Command::SendMessage { to, content, .. },
+                        ..
+                    } => Some((*to, content.as_str())),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(sent, [(agent, line)], "{line}");
+        }
+        out.drain(&app).expect("drain");
+        assert!(output(&out).contains("/answer is not an Aether command; sent to assistant"));
+
+        app.selected = None;
+        let effects = submit_line(&mut app, &mut out, "/answer 3 yes").expect("plain line");
+        assert!(effects.is_empty(), "{effects:?}");
+        assert!(
+            app.live_flash()
+                .expect("notice")
+                .contains("unknown command /answer")
+        );
+    }
+
+    #[test]
     fn mode_switch_does_not_replay_suppressed_cells_or_stream_prefixes() {
         use aether_client::SubscriptionFrame;
         use aether_core::event::{Actor, Event, EventDraft, EventKind};

@@ -102,6 +102,7 @@ impl App {
             queue_sends: BTreeSet::new(),
             disconnect_reply_noticed: false,
             disconnect_notice_shown: false,
+            forwarded_command_noticed: false,
             auth: Vec::new(),
             default_effort: None,
             terminal_focused: true,

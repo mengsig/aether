@@ -5,7 +5,7 @@ use super::images::Outgoing;
 use super::transcript::ScrollIntent;
 use super::{
     AgentId, AgentPatch, AgentTree, App, ApprovalDefault, ApprovalPolicy, Command, Effect, Effort,
-    InputAction, ModelChain, ShowFilter, Then, commands,
+    InputAction, ModelChain, ShowFilter, Then,
 };
 
 impl App {
@@ -351,7 +351,7 @@ impl App {
     pub(super) fn submit_input(&mut self) -> Vec<Effect> {
         let text = self.input.take();
         self.dirty = true;
-        let text = match commands::parse(&text) {
+        let text = match self.parse_input(&text) {
             // A command leaves the attached images for the message after it.
             InputAction::Command(cmd) => return self.run_command(cmd),
             InputAction::Empty if self.input.images.is_empty() => return Vec::new(),
@@ -369,6 +369,7 @@ impl App {
         // this every time) must not start a second agent.
         match self.selected.filter(|id| !self.is_terminal(*id)) {
             Some(agent) => {
+                self.notice_forwarded_command(agent, &message.text);
                 // The reply lands at the bottom: follow it, leaving any older window.
                 let mut effects = self.scroll(ScrollIntent::Latest);
                 effects.extend(self.send_message(agent, message));
@@ -381,5 +382,22 @@ impl App {
                     .collect()
             }
         }
+    }
+
+    /// Says once that a `/name` Aether lacks went to the agent, so a typo stays visible.
+    fn notice_forwarded_command(&mut self, agent: AgentId, text: &str) {
+        // Only `parse_input` forwarding yields a message that starts with `/`.
+        let Some(name) = text.strip_prefix('/') else {
+            return;
+        };
+        if self.forwarded_command_noticed {
+            return;
+        }
+        let name = name.split_whitespace().next().unwrap_or_default();
+        self.forwarded_command_noticed = true;
+        self.flash(format!(
+            "/{name} is not an Aether command; sent to {}",
+            self.agent_display_name(agent)
+        ));
     }
 }

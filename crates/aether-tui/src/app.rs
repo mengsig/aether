@@ -176,6 +176,8 @@ pub struct App {
     /// Same one-per-outage guard for the runner's "connection lost" report,
     /// fired once per failed in-flight reply.
     disconnect_notice_shown: bool,
+    /// The first unknown `/name` sent on to an agent says so once; later ones go quietly.
+    forwarded_command_noticed: bool,
     /// Provider sign-in status for the login picker.
     pub auth: Vec<AuthInfo>,
     /// Effort chosen before any agent existed; applied to the next root.
