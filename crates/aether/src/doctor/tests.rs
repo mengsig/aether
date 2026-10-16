@@ -361,6 +361,7 @@ fn provider_info(provider: &str, base_url: &str) -> aether_protocol::ProviderInf
         configured: true,
         auth_source: None,
         health: aether_core::provider::ProviderHealth::idle(provider),
+        headroom: Default::default(),
     }
 }
 
