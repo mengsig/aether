@@ -376,6 +376,59 @@ async fn only_marked_partitions_in_aethers_own_trash_are_removed_later() {
     assert!(swept.errors[0].contains("not an evicted partition"));
 }
 
+#[tokio::test]
+async fn a_leftover_holding_a_client_named_cache_stays_in_the_trash() {
+    let f = Fixture::new(0).await;
+    let trash = f.root.join(TRASH);
+    let left = trash.join("01LEFTOVER");
+    build_marked(&left, SystemTime::now());
+    fs::File::create_new(trash.join(TRASH_MARKER)).unwrap();
+    let links = f._cache.path().join("links");
+    fs::create_dir(&links).unwrap();
+    std::os::unix::fs::symlink(&left, links.join("client")).unwrap();
+    let (mut client, _) = f.agent(AgentStatus::Completed { summary: None }, 1, 0);
+    client.config.build_cache = Some(links.join("client/cargo-target"));
+    f.runtime
+        .apply(Commit::new().mutate(Mutation::UpsertAgent(client)))
+        .unwrap();
+
+    let swept = f.gc(false);
+    assert!(built(&left), "a client's directory is never removed");
+    assert!(
+        swept.errors.iter().any(|e| e.contains("left in place")),
+        "{:?}",
+        swept.errors
+    );
+}
+
+#[tokio::test]
+async fn a_partly_failed_deletion_stays_marked_and_finishes_later() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let f = Fixture::new(0).await;
+    let (_, partition) = f.agent(AgentStatus::Completed { summary: None }, 5, 8);
+    let sealed = partition.join("cargo-target/debug");
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o500)).unwrap();
+
+    let failed = f.gc(false);
+    assert_eq!(entry(&failed, &partition).action, "evicted");
+    assert_eq!(failed.errors.len(), 1, "{:?}", failed.errors);
+    let [left] = <[_; 1]>::try_from(
+        fs::read_dir(f.root.join(TRASH))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| !path.ends_with(TRASH_MARKER))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(is_marked(&left, PARTITION_MARKER), "the marker goes last");
+
+    let sealed = left.join("cargo-target/debug");
+    fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+    let finished = f.gc(false);
+    assert!(finished.errors.is_empty(), "{:?}", finished.errors);
+    assert!(!left.exists());
+}
+
 #[test]
 fn a_trash_that_is_a_link_is_refused() {
     let dir = tempfile::tempdir().unwrap();

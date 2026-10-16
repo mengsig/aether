@@ -443,8 +443,9 @@ as an operator's own target directory or a partition made before this
 release, is reported and kept. So is a partition that holds, or lies
 inside, a directory a client named with `config.build_cache`. Evicted
 partitions are renamed into `<root>/.evicting` and then deleted; a deletion
-that fails is retried at the next sweep, and nothing in `.evicting` that
-Aether did not move there is removed. A failed agent woken later builds
+that fails is retried at the next sweep (each partition's marker is
+removed last), and nothing in `.evicting` that Aether did not move there,
+or that holds a client's directory, is removed. A failed agent woken later builds
 cold again. The
 agents of one run share a partition and can read and overwrite each other's
 output; partitions of different runs are separate directories under one

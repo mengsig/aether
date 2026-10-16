@@ -87,6 +87,19 @@ struct Claims {
     clients: Vec<PathBuf>,
 }
 
+impl Claims {
+    /// Whether `path` holds or lies inside a client's directory, comparing
+    /// both as written and with links resolved.
+    fn touches_client(&self, path: &Path) -> bool {
+        let real = resolve(path);
+        self.clients.iter().any(|dir| {
+            [path, real.as_path()]
+                .into_iter()
+                .any(|path| dir.starts_with(path) || path.starts_with(dir))
+        })
+    }
+}
+
 impl Runtime {
     /// Report the cache under `root` and, unless `dry_run`, evict it to its
     /// budget. Leases are read and partitions moved aside under the commit
@@ -98,37 +111,46 @@ impl Runtime {
     ) -> crate::Result<BuildCacheReport> {
         debug_assert!(root.is_absolute(), "{} is not absolute", root.display());
         let trash = root.join(TRASH);
-        let mut errors = Vec::new();
-        if !dry_run {
-            empty_trash(&trash, &mut errors);
-        }
         let mut report = scan(root).map_err(invalid)?;
-        report.errors = errors;
-        if !report.entries.iter().any(|entry| entry.run.is_some()) {
+        let partitions = report.entries.iter().any(|entry| entry.run.is_some());
+        let leftovers = !dry_run && fs::symlink_metadata(&trash).is_ok();
+        if !partitions && !leftovers {
             return Ok(report);
         }
-        let max_bytes = match self.models.config().build_cache.max_bytes {
-            Some(bytes) => bytes,
-            None => fs4::total_space(root).map_err(invalid)? / 100 * DEFAULT_BUDGET_PERCENT,
-        };
-        report.max_bytes = Some(max_bytes);
+        if partitions {
+            report.max_bytes = Some(match self.models.config().build_cache.max_bytes {
+                Some(bytes) => bytes,
+                None => fs4::total_space(root).map_err(invalid)? / 100 * DEFAULT_BUDGET_PERCENT,
+            });
+        }
         let hold = (!dry_run).then(|| self.hold());
         let sched = self.sched.lock();
         let engine_turns = self.engine_turns.lock();
         let in_flight = self.in_flight_agents(&sched, &engine_turns)?;
         let claims = self.build_cache_claims(root, &in_flight)?;
-        let chosen = plan(&mut report, &claims, max_bytes);
+        let chosen = match report.max_bytes {
+            Some(max_bytes) => plan(&mut report, &claims, max_bytes),
+            None => Vec::new(),
+        };
         if dry_run {
             return Ok(report);
         }
+        let left = trash_leftovers(&trash, &claims, &mut report.errors);
         let moved = move_to_trash(&mut report, &chosen, &trash);
         drop((engine_turns, sched, hold));
         for (index, path) in moved {
-            match fs::remove_dir_all(&path) {
+            match remove_partition(&path) {
                 Ok(()) => report.bytes_removed += report.entries[index].bytes,
                 Err(error) => report
                     .errors
                     .push(format!("removing {}: {error}", path.display())),
+            }
+        }
+        for path in left {
+            if let Err(error) = remove_partition(&path) {
+                report
+                    .errors
+                    .push(format!("removing {}: {error}", path.display()));
             }
         }
         Ok(report)
@@ -198,13 +220,7 @@ fn plan(report: &mut BuildCacheReport, claims: &Claims, max_bytes: u64) -> Vec<u
             entry.leased_by.clone_from(&owner.holders);
             entry.last_used = entry.last_used.max(owner.last_active);
         }
-        let real = resolve(&entry.path);
-        let client = claims.clients.iter().any(|dir| {
-            [&entry.path, &real]
-                .into_iter()
-                .any(|path| dir.starts_with(path) || path.starts_with(dir))
-        });
-        if client {
+        if claims.touches_client(&entry.path) {
             entry.reason = "holds a client's build cache";
         } else if !entry.leased_by.is_empty() {
             entry.reason = "leased by an agent of its run";
@@ -325,42 +341,71 @@ fn is_marked(dir: &Path, marker: &str) -> bool {
     fs::symlink_metadata(dir.join(marker)).is_ok_and(|meta| meta.is_file())
 }
 
-/// Delete the partitions earlier evictions moved aside but could not
-/// remove. Only marked partitions in Aether's own trash are touched.
-fn empty_trash(trash: &Path, errors: &mut Vec<String>) {
+/// The partitions earlier evictions moved aside but could not remove: only
+/// marked ones in Aether's own trash that hold no client's directory.
+fn trash_leftovers(trash: &Path, claims: &Claims, errors: &mut Vec<String>) -> Vec<PathBuf> {
     match open_trash(trash, false) {
         Ok(true) => {}
-        Ok(false) => return,
+        Ok(false) => return Vec::new(),
         Err(error) => {
             errors.push(format!("trash {}: {error}", trash.display()));
-            return;
+            return Vec::new();
         }
     }
     let entries = match fs::read_dir(trash) {
         Ok(entries) => entries,
         Err(error) => {
             errors.push(format!("reading {}: {error}", trash.display()));
-            return;
+            return Vec::new();
         }
     };
+    let mut left = Vec::new();
     for entry in entries {
-        let removed = entry.and_then(|entry| {
-            let path = entry.path();
-            if entry.file_name() == TRASH_MARKER {
-                return Ok(());
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                errors.push(format!("reading {}: {error}", trash.display()));
+                continue;
             }
-            if !entry.file_type()?.is_dir() || !is_marked(&path, PARTITION_MARKER) {
-                return Err(io::Error::other(format!(
-                    "{} is not an evicted partition; left in place",
-                    path.display()
-                )));
-            }
-            fs::remove_dir_all(&path)
-        });
-        if let Err(error) = removed {
-            errors.push(format!("emptying {}: {error}", trash.display()));
+        };
+        let path = entry.path();
+        if entry.file_name() == TRASH_MARKER {
+            continue;
+        }
+        let real_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if !real_dir || !is_marked(&path, PARTITION_MARKER) || claims.touches_client(&path) {
+            errors.push(format!(
+                "{} is not an evicted partition; left in place",
+                path.display()
+            ));
+            continue;
+        }
+        left.push(path);
+    }
+    left
+}
+
+/// Delete a marked partition, its marker last, so a deletion that fails
+/// part way still leaves it marked for the next sweep to finish.
+fn remove_partition(partition: &Path) -> io::Result<()> {
+    debug_assert!(
+        is_marked(partition, PARTITION_MARKER),
+        "{}",
+        partition.display()
+    );
+    for entry in fs::read_dir(partition)? {
+        let entry = entry?;
+        if entry.file_name() == PARTITION_MARKER {
+            continue;
+        }
+        if entry.file_type()?.is_dir() {
+            fs::remove_dir_all(entry.path())?;
+        } else {
+            fs::remove_file(entry.path())?;
         }
     }
+    fs::remove_file(partition.join(PARTITION_MARKER))?;
+    fs::remove_dir(partition)
 }
 
 /// Bytes, repositories and partitions under `root`. Below the configured
