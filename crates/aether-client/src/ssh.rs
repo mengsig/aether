@@ -30,28 +30,10 @@ impl Carrier {
     }
 }
 
-/// Connect at the newest version the host serves, trying each this build
-/// can speak from its own down to the oldest.
+/// Connect at the newest version both this build and the host speak, each
+/// attempt on a carrier of its own.
 pub(crate) async fn connect(remote: &SshRemote) -> Result<Client> {
-    let versions =
-        aether_protocol::compat::MIN_PROTOCOL_VERSION..=aether_protocol::PROTOCOL_VERSION;
-    let mut refusals: Vec<String> = Vec::new();
-    for version in versions.rev() {
-        match connect_version(remote, version).await {
-            Err(ClientError::Incompatible(refusal)) if refusals.is_empty() => {
-                refusals.push(refusal);
-            }
-            Err(ClientError::Incompatible(refusal)) => {
-                refusals.push(format!("protocol {version} also refused: {refusal}"));
-            }
-            result => return result,
-        }
-    }
-    debug_assert!(
-        !refusals.is_empty(),
-        "the window holds at least one version"
-    );
-    Err(ClientError::Incompatible(refusals.join("; ")))
+    crate::negotiation::newest_common(|version| connect_version(remote, version)).await
 }
 
 async fn connect_version(remote: &SshRemote, version: u32) -> Result<Client> {
@@ -63,9 +45,9 @@ async fn connect_version(remote: &SshRemote, version: u32) -> Result<Client> {
     .await;
     match welcome {
         Ok(Ok(welcome)) => {
-            if welcome.protocol_version != version || welcome.instance_id.is_empty() {
+            if welcome.instance_id.is_empty() {
                 return Err(ClientError::Malformed(
-                    "remote returned an invalid welcome version or instance identity".into(),
+                    "remote returned a welcome without an instance identity".into(),
                 ));
             }
             finish_connection(&mut client, remote, welcome).await?;

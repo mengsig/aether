@@ -97,6 +97,11 @@ impl Runtime {
                 .map_err(invalid)?,
             )
             .map_err(invalid)?;
+            if let Some(dir) = aether_core::bridge_bin::default_dir(&paths.store) {
+                report["bridge_copies"] =
+                    serde_json::to_value(sweep_bridge_copies(&dir, dry_run).map_err(invalid)?)
+                        .map_err(invalid)?;
+            }
             report["logs"] =
                 serde_json::to_value(inventory(&paths.logs).map_err(invalid)?).map_err(invalid)?;
             report["database_bytes"] = json!(fs::metadata(&paths.store).map_err(invalid)?.len());
@@ -238,6 +243,35 @@ fn prune_backups(
             reason,
         });
     }
+    Ok(report)
+}
+
+/// Daemons' copies of their own build, removed once their daemon is gone.
+fn sweep_bridge_copies(dir: &Path, dry_run: bool) -> io::Result<FileReport> {
+    let mut report = FileReport::default();
+    for file in aether_core::bridge_bin::sweep(dir, dry_run)? {
+        tracing::info!(path = %file.path.display(), action = file.action.as_str(), reason = file.reason, bytes = file.bytes, "bridge copy decision");
+        report.bytes += file.bytes;
+        match file.action {
+            aether_core::bridge_bin::SweepAction::Kept => {}
+            aether_core::bridge_bin::SweepAction::WouldRemove => {
+                report.bytes_eligible += file.bytes
+            }
+            aether_core::bridge_bin::SweepAction::Removed => {
+                report.bytes_eligible += file.bytes;
+                report.bytes_removed += file.bytes;
+            }
+        }
+        report.entries.push(FileDecision {
+            path: file.path,
+            bytes: file.bytes,
+            action: file.action.as_str(),
+            reason: file.reason,
+        });
+    }
+    debug_assert!(
+        report.bytes_removed <= report.bytes_eligible && report.bytes_eligible <= report.bytes
+    );
     Ok(report)
 }
 

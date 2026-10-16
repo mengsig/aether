@@ -818,6 +818,7 @@ fn quota_failures_raise_an_alert_and_mark_the_child_result() {
             window: QuotaWindow {
                 used_percent: 100,
                 window_minutes: Some(10_080),
+                resets_at: None,
             },
             usage: None,
         },

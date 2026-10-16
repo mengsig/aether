@@ -23,6 +23,7 @@ pub async fn storage(
         "event_history",
         "agent_temp",
         "build_cache",
+        "bridge_copies",
     ] {
         let value = &report[kind];
         if let Some(bytes) = value["bytes"].as_u64() {

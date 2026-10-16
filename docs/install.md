@@ -164,6 +164,13 @@ aether
 
 Agents resume when the daemon starts again.
 
+Until then, the old daemon keeps launching its own build as each agent's MCP
+bridge, not the new binary, so its engines keep their Aether tools. At startup
+a daemon links (or copies, where it cannot link) the executable it runs to
+`bin/aether-<version>-<id>` beside its database, and `aether status` prints that
+path on its `bridge` line. A clean shutdown removes the copy, and storage
+maintenance removes the copy of a daemon that has gone.
+
 A client and a daemon from different builds talk only when their protocol
 versions allow it: a daemon serves its own protocol version and a few before
 it, never a newer one, and refuses any other client ([Protocol](protocol.md)).

@@ -141,6 +141,7 @@ pub enum HarnessAction {
         offset: usize,
         max_chars: usize,
     },
+    ProviderUsage,
     ListModels {
         provider: Option<String>,
     },

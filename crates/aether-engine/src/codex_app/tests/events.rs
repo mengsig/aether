@@ -209,3 +209,40 @@ fn requested_interrupt_keeps_native_exhaustion_errors() {
     assert_eq!(outcome.error.as_deref(), Some("Weekly limit reached"));
     assert!(!outcome.interrupted);
 }
+
+#[test]
+fn recorded_rate_limits_retain_resets_through_normalization() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/codex_rate_limits.json"
+    ))
+    .unwrap();
+    for with_reset in [true, false] {
+        let mut params = fixture["params"].clone();
+        if !with_reset {
+            for name in ["primary", "secondary"] {
+                params["rateLimits"][name]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("resetsAt");
+            }
+        }
+        let mut state = TurnState::new(turn(None, false));
+        let events = state.notification(fixture["method"].as_str().unwrap(), &params);
+        let [EngineEvent::RateLimit { payload }] = &events[..] else {
+            panic!("rate limit event");
+        };
+        let usage = aether_core::provider::ProviderUsage::from_engine_payload(
+            payload,
+            aether_core::time::now(),
+        )
+        .unwrap();
+        assert_eq!(usage.windows.len(), 2);
+        for (window, seconds) in usage.windows.iter().zip([2000000000, 2000500000]) {
+            assert_eq!(
+                window.quota.resets_at.map(|at| at.timestamp()),
+                with_reset.then_some(seconds)
+            );
+        }
+        assert_eq!(usage.windows[0].quota.used_percent, 42);
+    }
+}

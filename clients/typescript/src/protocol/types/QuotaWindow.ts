@@ -7,6 +7,7 @@
  * wire from the CLI; normalized here so every reader agrees.
  */
 export interface QuotaWindow {
+  "resets_at"?: string | null;
   "used_percent": number;
   "window_minutes"?: number | null;
 }

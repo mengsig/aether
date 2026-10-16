@@ -22,6 +22,7 @@ export interface DaemonStatus {
   "agents_suspended"?: number;
   "agents_waiting": number;
   "approval_default"?: ApprovalDefault;
+  "bridge"?: string | null;
   "default_model"?: ModelRef | null;
   "engine_turns_running"?: number;
   "engines"?: Array<string>;

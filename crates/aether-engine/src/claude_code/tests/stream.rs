@@ -466,3 +466,39 @@ fn parses_errors_unknown_lines_and_rate_limits() {
         EngineEvent::RateLimit { .. }
     ));
 }
+
+#[test]
+fn recorded_rate_limit_event_retains_resets_through_normalization() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/claude_rate_limit_event.json"
+    ))
+    .unwrap();
+    for with_reset in [true, false] {
+        let mut event = fixture.clone();
+        if !with_reset {
+            for name in ["five_hour", "seven_day"] {
+                event["rate_limit_info"]["unifiedWindows"][name]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("resetsAt");
+            }
+        }
+        let events = parse_line(&event.to_string(), &mut ParseState::default());
+        let [EngineEvent::RateLimit { payload }] = &events[..] else {
+            panic!("rate limit event");
+        };
+        let usage = aether_core::provider::ProviderUsage::from_engine_payload(
+            payload,
+            aether_core::time::now(),
+        )
+        .unwrap();
+        assert_eq!(usage.windows.len(), 2);
+        for (window, seconds) in usage.windows.iter().zip([2000000000, 2000500000]) {
+            assert_eq!(
+                window.quota.resets_at.map(|at| at.timestamp()),
+                with_reset.then_some(seconds)
+            );
+        }
+        assert_eq!(usage.windows[1].quota.used_percent, 73);
+    }
+}

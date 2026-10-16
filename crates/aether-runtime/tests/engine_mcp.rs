@@ -302,6 +302,7 @@ async fn the_bridge_is_offered_the_harness_and_mcp_tools_and_nothing_else() {
     // Every harness tool an engine's agent steers itself with, plus the
     // MCP surface. Losing one silently strands the agent mid-turn.
     for expected in [
+        "provider_usage",
         "list_agents",
         "list_tasks",
         "read_task",
@@ -605,5 +606,46 @@ async fn the_bridge_can_inspect_its_assigned_work_without_approval() {
     if let Some(finish) = h.finish.take() {
         finish.send(()).unwrap();
     }
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn provider_usage_bridge_tool_returns_unknown_enabled_providers_read_only() {
+    let mut h = harness().await;
+    let agent = start_agent(&h);
+    let bridge = tokio::time::timeout(Duration::from_secs(5), h.ready.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let (reply, is_error) = tokio::time::timeout(
+        Duration::from_secs(5),
+        h.runtime
+            .engine_tool(agent, &bridge.token, "provider_usage".into(), json!({})),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(!is_error, "{reply}");
+    let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+    let rows = reply["providers"].as_array().unwrap();
+    let registry = aether_model::registry::Registry::builtin();
+    let expected: Vec<_> = registry
+        .providers()
+        .iter()
+        .filter(|p| p.enabled)
+        .map(|p| p.id.as_str())
+        .collect();
+    let actual: Vec<_> = rows
+        .iter()
+        .map(|row| row["provider"].as_str().unwrap())
+        .collect();
+    assert_eq!(actual, expected);
+    for row in rows {
+        assert_eq!(row["headroom"]["windows"], json!([]));
+        assert_eq!(row["headroom"]["stale"], true);
+        assert_eq!(row["headroom"]["observed_at"], serde_json::Value::Null);
+    }
+    assert!(h.store.pending_approvals().unwrap().is_empty());
+    h.finish.take().unwrap().send(()).unwrap();
     h.runtime.shutdown().await;
 }

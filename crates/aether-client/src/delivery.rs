@@ -138,22 +138,6 @@ impl crate::Client {
                 .unwrap_or(welcome.protocol_version)
                 >= 18
         });
-        if !modern
-            && matches!(
-                command,
-                Command::CompletePath { .. }
-                    | Command::ListWorkspaces { .. }
-                    | Command::ValidateWorkspace { .. }
-                    | Command::GetGitSummary { .. }
-                    | Command::GetAttention
-            )
-        {
-            return Err(crate::ClientError::Protocol(aether_protocol::ErrorReply {
-                code: aether_protocol::ErrorCode::Unimplemented,
-                message: "host services require protocol 18; update Aether on the remote host"
-                    .into(),
-            }));
-        }
         if !modern && !legacy_keyed_command(command) {
             if let Some(key) = key_slot(command) {
                 *key = None;

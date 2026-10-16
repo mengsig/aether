@@ -4725,6 +4725,13 @@
           "default": "yolo",
           "description": "What a new agent's approval policy defaults to."
         },
+        "bridge": {
+          "description": "The executable engines launch as the MCP bridge: the daemon's own\nbuild. Absent when engines have no bridge, and on older daemons.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "default_model": {
           "anyOf": [
             {
@@ -10488,6 +10495,40 @@
       ],
       "type": "object"
     },
+    "ProviderHeadroom": {
+      "description": "Read-time projection of the latest report; unknown usage is always stale.",
+      "properties": {
+        "age_seconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "observed_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "windows": {
+          "items": {
+            "$ref": "#/$defs/WindowHeadroom"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "windows",
+        "stale"
+      ],
+      "type": "object"
+    },
     "ProviderHealth": {
       "description": "One provider's scheduling picture. Derived state: the scheduler rebuilds\nit from the turns in flight and the feedback providers have given.",
       "properties": {
@@ -10604,6 +10645,15 @@
             "string",
             "null"
           ]
+        },
+        "headroom": {
+          "$ref": "#/$defs/ProviderHeadroom",
+          "default": {
+            "age_seconds": null,
+            "observed_at": null,
+            "stale": true,
+            "windows": []
+          }
         },
         "health": {
           "$ref": "#/$defs/ProviderHealth"
@@ -10851,6 +10901,13 @@
     "QuotaWindow": {
       "description": "A subscription usage window as an engine reported it. Opaque JSON on the\nwire from the CLI; normalized here so every reader agrees.",
       "properties": {
+        "resets_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "used_percent": {
           "description": "How much of the window is spent, 0-100 (clamped).",
           "format": "uint64",
@@ -15356,6 +15413,46 @@
         "instance_id",
         "schema_version",
         "pid"
+      ],
+      "type": "object"
+    },
+    "WindowHeadroom": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "remaining_percent": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "resets_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resets_in_seconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "window_minutes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "remaining_percent"
       ],
       "type": "object"
     },

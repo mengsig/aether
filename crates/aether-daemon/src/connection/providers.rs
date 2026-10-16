@@ -100,6 +100,7 @@ pub(super) async fn providers(daemon: &Daemon) -> Result<Reply, ErrorReply> {
         } else {
             (false, None)
         };
+        let health = rt.provider_health_for(&provider.id).map_err(map_err)?;
         out.push(ProviderInfo {
             provider: provider.id.clone(),
             name: provider.name.clone(),
@@ -112,7 +113,8 @@ pub(super) async fn providers(daemon: &Daemon) -> Result<Reply, ErrorReply> {
             enabled: provider.enabled,
             configured,
             auth_source,
-            health: rt.provider_health_for(&provider.id).map_err(map_err)?,
+            headroom: rt.provider_headroom(health.usage.as_ref(), aether_core::time::now()),
+            health,
         });
     }
     Ok(Reply::Providers(out))

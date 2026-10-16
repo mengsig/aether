@@ -13,6 +13,9 @@ use serde_json::Value;
 use crate::model::{ModelErrorClass, ModelRef};
 use crate::time::Timestamp;
 
+mod headroom;
+pub use headroom::{ProviderHeadroom, WindowHeadroom};
+
 /// A subscription usage window as an engine reported it. Opaque JSON on the
 /// wire from the CLI; normalized here so every reader agrees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -22,6 +25,8 @@ pub struct QuotaWindow {
     /// Length of the window in minutes, when the engine says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_minutes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<Timestamp>,
 }
 
 impl QuotaWindow {
@@ -39,6 +44,7 @@ impl QuotaWindow {
             return Some(Self {
                 used_percent: percent.round().clamp(0.0, 100.0) as u64,
                 window_minutes: window.get("windowDurationMins").and_then(Value::as_u64),
+                resets_at: reset_time(window),
             });
         }
         let windows = payload.get("unifiedWindows")?;
@@ -53,6 +59,7 @@ impl QuotaWindow {
             return Some(Self {
                 used_percent: (utilization * 100.0).round().clamp(0.0, 100.0) as u64,
                 window_minutes: Some(minutes),
+                resets_at: reset_time(&windows[name]),
             });
         }
         None
@@ -69,6 +76,10 @@ impl QuotaWindow {
             format!("{minutes}m")
         })
     }
+}
+
+fn reset_time(window: &Value) -> Option<Timestamp> {
+    Timestamp::from_timestamp(window.get("resetsAt")?.as_i64()?, 0)
 }
 
 /// One named account limit, including limits outside the preferred scheduling window.
@@ -89,55 +100,11 @@ impl ProviderUsage {
     pub fn from_engine_payload(payload: &Value, observed_at: Timestamp) -> Option<Self> {
         // Require at least one valid scheduling window.
         let preferred = QuotaWindow::from_engine_payload(payload)?;
-        let mut windows = Vec::new();
-        if ["primary", "secondary"].iter().any(|name| {
-            payload
-                .get(name)
-                .and_then(|w| w.get("usedPercent"))
-                .and_then(Value::as_f64)
-                .is_some()
-        }) {
-            for name in ["primary", "secondary"] {
-                let Some(value) = payload.get(name) else {
-                    continue;
-                };
-                let Some(percent) = value.get("usedPercent").and_then(Value::as_f64) else {
-                    continue;
-                };
-                windows.push(UsageWindow {
-                    name: name.into(),
-                    quota: QuotaWindow {
-                        used_percent: percent.round().clamp(0.0, 100.0) as u64,
-                        window_minutes: value.get("windowDurationMins").and_then(Value::as_u64),
-                    },
-                });
-            }
-        } else {
-            let reported = payload.get("unifiedWindows")?.as_object()?;
-            let mut names: Vec<_> = reported.keys().collect();
-            names.sort_by_key(|name| match name.as_str() {
-                "five_hour" => (0, name.as_str()),
-                "seven_day" => (1, name.as_str()),
-                _ => (2, name.as_str()),
-            });
-            for name in names {
-                let Some(utilization) = reported[name].get("utilization").and_then(Value::as_f64)
-                else {
-                    continue;
-                };
-                windows.push(UsageWindow {
-                    name: name.clone(),
-                    quota: QuotaWindow {
-                        used_percent: (utilization * 100.0).round().clamp(0.0, 100.0) as u64,
-                        window_minutes: match name.as_str() {
-                            "five_hour" => Some(300),
-                            "seven_day" => Some(10_080),
-                            _ => None,
-                        },
-                    },
-                });
-            }
+        let mut windows = codex_windows(payload);
+        if windows.is_empty() {
+            windows = claude_windows(payload)?;
         }
+        debug_assert!(!windows.is_empty());
         debug_assert_eq!(windows.first().map(|w| w.quota), Some(preferred));
         Some(Self {
             observed_at,
@@ -148,6 +115,56 @@ impl ProviderUsage {
     pub fn preferred_window(&self) -> Option<QuotaWindow> {
         self.windows.first().map(|window| window.quota)
     }
+}
+
+fn codex_windows(payload: &Value) -> Vec<UsageWindow> {
+    let mut windows = Vec::new();
+    for name in ["primary", "secondary"] {
+        let Some(value) = payload.get(name) else {
+            continue;
+        };
+        let Some(percent) = value.get("usedPercent").and_then(Value::as_f64) else {
+            continue;
+        };
+        windows.push(UsageWindow {
+            name: name.into(),
+            quota: QuotaWindow {
+                used_percent: percent.round().clamp(0.0, 100.0) as u64,
+                window_minutes: value.get("windowDurationMins").and_then(Value::as_u64),
+                resets_at: reset_time(value),
+            },
+        });
+    }
+    windows
+}
+
+fn claude_windows(payload: &Value) -> Option<Vec<UsageWindow>> {
+    let reported = payload.get("unifiedWindows")?.as_object()?;
+    let mut names: Vec<_> = reported.keys().collect();
+    names.sort_by_key(|name| match name.as_str() {
+        "five_hour" => (0, name.as_str()),
+        "seven_day" => (1, name.as_str()),
+        _ => (2, name.as_str()),
+    });
+    let mut windows = Vec::new();
+    for name in names {
+        let Some(utilization) = reported[name].get("utilization").and_then(Value::as_f64) else {
+            continue;
+        };
+        windows.push(UsageWindow {
+            name: name.clone(),
+            quota: QuotaWindow {
+                used_percent: (utilization * 100.0).round().clamp(0.0, 100.0) as u64,
+                window_minutes: match name.as_str() {
+                    "five_hour" => Some(300),
+                    "seven_day" => Some(10_080),
+                    _ => None,
+                },
+                resets_at: reset_time(&reported[name]),
+            },
+        });
+    }
+    Some(windows)
 }
 
 /// Why a provider is being avoided, and until when.

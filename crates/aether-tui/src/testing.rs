@@ -111,6 +111,7 @@ fn reply_status(app: &mut App, then: Then, agents_suspended: u32) {
             run_budget_usd: None,
             mcp: Vec::new(),
             low_disk: None,
+            bridge: None,
         })),
     });
 }
@@ -372,6 +373,7 @@ pub fn populated_app() -> App {
             run_budget_usd: None,
             mcp: Vec::new(),
             low_disk: None,
+            bridge: None,
         })),
     });
     let ev = |seq, kind| {

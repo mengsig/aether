@@ -475,6 +475,7 @@ fn inspector_shows_the_first_error_line_and_the_quota_behind_it() {
                 quota: QuotaWindow {
                     used_percent: 100,
                     window_minutes: Some(10_080),
+                    resets_at: None,
                 },
             }],
         },

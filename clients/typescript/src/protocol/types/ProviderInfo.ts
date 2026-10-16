@@ -2,6 +2,7 @@
 // Do not edit: change the Rust types and regenerate.
 
 import type {
+  ProviderHeadroom,
   ProviderHealth,
 } from "../../protocol.ts";
 
@@ -17,6 +18,7 @@ export interface ProviderInfo {
   "enabled": boolean;
   "engine": boolean;
   "family"?: string | null;
+  "headroom"?: ProviderHeadroom;
   "health": ProviderHealth;
   "models": number;
   "name": string;

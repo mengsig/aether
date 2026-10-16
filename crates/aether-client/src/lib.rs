@@ -34,6 +34,7 @@ pub use delivery::key_command;
 pub use outbox::{Unreadable, Unresolved};
 pub use resolution::{Settlement, Undecided};
 mod memory_feedback;
+mod negotiation;
 mod operations;
 mod records;
 mod ssh;
@@ -172,28 +173,41 @@ impl std::fmt::Debug for Client {
 }
 
 impl Client {
-    /// Connect to the daemon socket and perform the handshake.
+    /// Connect to the daemon socket at the newest protocol both sides speak.
     pub async fn connect(path: impl AsRef<Path>) -> Result<Client> {
-        let stream = UnixStream::connect(path.as_ref()).await?;
-        Self::open(Transport::Unix(stream)).await
+        let path = path.as_ref();
+        negotiation::newest_common(|version| async move {
+            let stream = UnixStream::connect(path).await?;
+            Self::open_at(Transport::Unix(stream), None, version).await
+        })
+        .await
     }
 
     /// Connect to a daemon's TCP listener, which authorizes on the token
-    /// alone. The connection is kept alive under the daemon's idle timeout.
+    /// alone, at the newest protocol both sides speak. The connection is kept
+    /// alive under the daemon's idle timeout.
     pub async fn connect_tcp(addr: SocketAddr, token: impl Into<String>) -> Result<Client> {
-        let stream = tokio::net::TcpStream::connect(addr).await?;
-        let _ = stream.set_nodelay(true);
-        Self::open_with_token(Transport::Tcp(stream), Some(token.into())).await
+        let token = token.into();
+        negotiation::newest_common(|version| {
+            let token = token.clone();
+            async move {
+                let stream = tokio::net::TcpStream::connect(addr).await?;
+                let _ = stream.set_nodelay(true);
+                Self::open_at(Transport::Tcp(stream), Some(token), version).await
+            }
+        })
+        .await
     }
 
-    /// Wrap a transport and perform the handshake.
+    /// Wrap a transport and perform the handshake at this build's protocol.
+    /// A transport is one connection, so there is no older version to retry.
     pub async fn open(transport: Transport) -> Result<Client> {
-        Self::open_with_token(transport, None).await
+        Self::open_at(transport, None, aether_protocol::PROTOCOL_VERSION).await
     }
 
-    async fn open_with_token(transport: Transport, token: Option<String>) -> Result<Client> {
+    async fn open_at(transport: Transport, token: Option<String>, version: u32) -> Result<Client> {
         let mut client = Self::from_transport(transport);
-        let welcome = client.handshake(token).await?;
+        let welcome = client.handshake_version(token, version).await?;
         client.keep_alive(welcome.idle_timeout_secs);
         client.welcome = Some(welcome);
         Ok(client)
@@ -303,11 +317,6 @@ impl Client {
             })
     }
 
-    async fn handshake(&self, token: Option<String>) -> Result<Welcome> {
-        self.handshake_version(token, aether_protocol::PROTOCOL_VERSION)
-            .await
-    }
-
     async fn handshake_version(&self, token: Option<String>, version: u32) -> Result<Welcome> {
         let mut hello = Hello::new("aether", env!("CARGO_PKG_VERSION"));
         hello.protocol_version = version;
@@ -315,8 +324,17 @@ impl Client {
             Some(token) => hello.with_token(token),
             None => hello,
         };
+        debug_assert!(
+            (aether_protocol::compat::MIN_PROTOCOL_VERSION..=aether_protocol::PROTOCOL_VERSION)
+                .contains(&version),
+            "a hello only asks for a version this build speaks, got {version}"
+        );
         match self.request(Command::Hello(hello)).await {
-            Ok(Reply::Welcome(w)) => Ok(w),
+            Ok(Reply::Welcome(w)) if w.protocol_version == version => Ok(w),
+            Ok(Reply::Welcome(w)) => Err(ClientError::Malformed(format!(
+                "asked for protocol {version} and the daemon answered with {}",
+                w.protocol_version
+            ))),
             Ok(other) => Err(unexpected("welcome", &other)),
             Err(ClientError::Protocol(e)) if e.code == ErrorCode::Incompatible => {
                 Err(ClientError::Incompatible(version_skew(&e.message)))
@@ -342,6 +360,7 @@ impl Client {
                 "use Client::subscribe to receive subscription frames".into(),
             ));
         }
+        self.check_introduced(&command)?;
         self.check_images_supported(&command)?;
         let keyed = self.prepare_remote_command(&mut command)?;
         let mutating = self.carrier.is_some() && delivery::is_mutating(&command);
@@ -487,8 +506,9 @@ fn unexpected(expected: &'static str, got: &Reply) -> ClientError {
 /// this client - `aether`, an orchestration application - not to the library.
 fn version_skew(daemon_said: &str) -> String {
     format!(
-        "{daemon_said}. This build speaks protocol {}, so the daemon answering that socket is \
-         from a different build",
+        "{daemon_said}. This build speaks protocol {} to {}, so the daemon answering that \
+         socket is from a different build",
+        aether_protocol::compat::MIN_PROTOCOL_VERSION,
         aether_protocol::PROTOCOL_VERSION
     )
 }

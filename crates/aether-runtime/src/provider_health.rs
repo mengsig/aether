@@ -6,6 +6,39 @@ use aether_core::{
 use std::collections::{BTreeSet, HashMap};
 
 impl Runtime {
+    /// Derive freshness at read time without probing or changing scheduling state.
+    pub fn provider_headroom(
+        &self,
+        usage: Option<&aether_core::provider::ProviderUsage>,
+        at: Timestamp,
+    ) -> aether_core::provider::ProviderHeadroom {
+        aether_core::provider::ProviderHeadroom::from_usage(
+            usage,
+            at,
+            std::time::Duration::from_secs(self.models.config().providers.usage_stale_after),
+        )
+    }
+
+    /// All enabled providers, including subscriptions with no observation yet.
+    pub fn provider_usage(&self) -> serde_json::Value {
+        let at = now();
+        let sched = self.sched.lock();
+        let providers: Vec<_> = self
+            .models
+            .registry()
+            .providers()
+            .iter()
+            .filter(|provider| provider.enabled)
+            .map(|provider| {
+                serde_json::json!({
+                    "provider": provider.id,
+                    "headroom": self.provider_headroom(sched.quotas.get(&provider.id), at),
+                })
+            })
+            .collect();
+        serde_json::json!({"providers": providers})
+    }
+
     /// What each provider is carrying, what it may carry, whether the
     /// scheduler is holding it back, what it has been failing with and where
     /// a turn last went instead. Providers with nothing in flight and no

@@ -209,6 +209,8 @@ mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};
 mod access;
 pub use access::Access;
+mod introduced;
+pub use introduced::Introduced;
 
 #[cfg(test)]
 mod tests;

@@ -98,6 +98,20 @@ the wire changes are:
 A version 17 daemon cannot decode these commands and ignores the new keys, so
 it refuses a version 18 hello as outside its window rather than dropping them.
 
+The Rust client negotiates on every transport that can open a fresh
+connection: the Unix socket, the token listener and SSH. Its first hello asks
+for this build's newest version. When the daemon refuses it, the client
+connects again at the newest version that is in both windows, read from the
+refusal ("this daemon speaks A to B"), or one older when the refusal does not
+say. It stops when no version is left in common, and reports both windows.
+
+A command a newer version added is refused by the client, before it is
+written, when the connection speaks an older version: the error is
+`unimplemented` and names the version it needs. A command added within a
+version is announced by a `Welcome` feature instead, and refused the same way
+when the daemon does not list it. `Command::introduced` in `aether-protocol`
+classifies every command.
+
 The versioning contract and negotiation are defined in `aether-protocol`'s
 `PROTOCOL_VERSION` and `compat` module.
 
@@ -702,3 +716,23 @@ aether memory feedback list <memory> --json
 Recording also accepts `--invocation <id>`. All three accept `--json`.
 `list` ends with the ranking in one line, for example `ranking factor 1.08
 (3 helped, 1 hurt across the latest 20 tasks)`.
+
+## Provider quota headroom
+
+The `providers` reply adds `headroom` to each provider row. The read-only
+`provider_usage` harness/MCP tool returns `{"providers": [{"provider": "id",
+"headroom": {...}}]}` for every enabled registry provider, including custom
+subscriptions. Neither read performs a probe or changes scheduling decisions.
+
+`headroom.windows` contains `name`, `window_minutes`, `remaining_percent`,
+`resets_at` (UTC timestamp or null) and `resets_in_seconds` (or null). Its
+`observed_at` and `age_seconds` describe the single report shared by all windows.
+`stale` becomes true when that report is older than `providers.usage_stale_after`
+seconds in `config.toml` (default 900). An unobserved provider has `windows: []`,
+null observation and age, and `stale: true`. Usage is currently held in memory;
+restarting the daemon makes it unknown until another report arrives.
+
+Remaining percentages and reset countdowns are clamped at zero. A passed reset
+does not imply replenished credit: only a new provider report changes the usage.
+Future observation timestamps have age zero to tolerate clock skew. Older clients
+can ignore the added fields; new clients default missing headroom to unknown.

@@ -56,6 +56,7 @@ fn root_agents_work_in_the_launch_directory_and_quota_is_tracked() {
             window: QuotaWindow {
                 used_percent: 58,
                 window_minutes: Some(300),
+                resets_at: None,
             },
             usage: None,
         },

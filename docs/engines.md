@@ -80,6 +80,14 @@ change native tool permissions or approval settings for other MCP servers.
 See the [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
 for the native MCP approval setting.
 
+When the bridge cannot reach a daemon it can speak with (none listens on the
+socket, or the daemon is from a build with no protocol version in common),
+it keeps serving rather than exiting. `initialize` succeeds, `tools/list`
+offers the permission handler and an `aether_unavailable` tool whose
+description says why, and every tool call returns that explanation as a tool
+error: the socket, both protocol windows and the fix (`aether stop`, then
+start Aether again).
+
 ## Claude context windows
 
 A context window is how much a model can work with in one request:

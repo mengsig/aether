@@ -63,6 +63,7 @@ fn status(pid: u32) -> DaemonStatus {
         run_budget_usd: None,
         mcp: Vec::new(),
         low_disk: None,
+        bridge: None,
     }
 }
 

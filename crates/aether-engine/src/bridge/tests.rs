@@ -371,3 +371,139 @@ async fn protocol_behavior_and_daemon_errors_are_preserved() {
     }
     fixture.close_input().await;
 }
+
+/// A daemon newer than this bridge: it refuses every hello this build can
+/// send, in the words the daemon uses.
+fn refusing_daemon(socket: &Path) -> JoinHandle<()> {
+    let listener = UnixListener::bind(socket).expect("listen");
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let Some(line) = lines.next_line().await.expect("read hello") else {
+                continue;
+            };
+            let frame: ClientFrame = aether_protocol::decode(&line).expect("decode hello");
+            let refusal = format!(
+                "client protocol {} is not served: this daemon speaks 90 to 91",
+                aether_protocol::PROTOCOL_VERSION
+            );
+            let line = aether_protocol::encode(&ServerFrame::Reply {
+                id: frame.id,
+                result: Err(ErrorReply::new(ErrorCode::Incompatible, refusal)),
+            })
+            .expect("encode refusal");
+            write.write_all(line.as_bytes()).await.expect("refuse");
+        }
+    })
+}
+
+/// Drive a bridge through a whole engine session against a daemon it cannot
+/// use, and return the explanation each tool call answered with.
+async fn session_without_a_daemon(socket: PathBuf) -> String {
+    let (engine, bridge_io) = tokio::io::duplex(64 * 1024);
+    let (read, mut input) = tokio::io::split(engine);
+    let (bridge_read, bridge_write) = tokio::io::split(bridge_io);
+    let bridge = tokio::spawn(serve(
+        socket,
+        AgentId::new(),
+        TOKEN.into(),
+        BufReader::new(bridge_read),
+        bridge_write,
+    ));
+    let mut output = BufReader::new(read).lines();
+    let mut exchange = async |request: Value| {
+        let mut line = serde_json::to_string(&request).expect("encode request");
+        line.push('\n');
+        input
+            .write_all(line.as_bytes())
+            .await
+            .expect("write request");
+        let reply = tokio::time::timeout(DEADLINE, output.next_line())
+            .await
+            .expect("bridge reply must not block")
+            .expect("read reply")
+            .expect("the bridge keeps serving");
+        serde_json::from_str::<Value>(&reply).expect("one JSON reply per line")
+    };
+    let initialized =
+        exchange(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})).await;
+    assert_eq!(initialized["result"]["serverInfo"]["name"], "aether");
+    let listed = exchange(json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})).await;
+    let tools = listed["result"]["tools"].as_array().expect("a tool list");
+    let names: Vec<_> = tools.iter().map(|tool| tool["name"].clone()).collect();
+    assert_eq!(
+        names,
+        vec![json!("permission"), json!("aether_unavailable")]
+    );
+    let reason = tools[1]["description"]
+        .as_str()
+        .expect("description")
+        .to_owned();
+    for (id, name) in [
+        (3, "send_message"),
+        (4, "permission"),
+        (5, "aether_unavailable"),
+    ] {
+        let reply = exchange(json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": {"name": name, "arguments": {}}}))
+        .await;
+        assert_eq!(reply["id"], id);
+        assert_eq!(reply["result"]["isError"], true, "{reply}");
+        assert_eq!(
+            reply["result"]["content"][0]["text"],
+            reason.as_str(),
+            "{name}"
+        );
+    }
+    input.shutdown().await.expect("stdio EOF");
+    tokio::time::timeout(DEADLINE, bridge)
+        .await
+        .expect("EOF stops the bridge")
+        .expect("bridge task")
+        .expect("bridge succeeds");
+    reason
+}
+
+#[tokio::test]
+async fn a_bridge_without_a_daemon_explains_itself_on_every_tool_call() {
+    let dir = tempfile::tempdir().expect("temporary socket directory");
+    let socket = dir.path().join("absent.sock");
+    let reason = session_without_a_daemon(socket.clone()).await;
+    let ours = format!(
+        "speaks protocol {} to {}",
+        aether_protocol::compat::MIN_PROTOCOL_VERSION,
+        aether_protocol::PROTOCOL_VERSION
+    );
+    for expected in [
+        &socket.display().to_string(),
+        &ours,
+        "unknown",
+        "`aether stop`",
+    ] {
+        assert!(reason.contains(expected), "missing {expected}: {reason}");
+    }
+}
+
+#[tokio::test]
+async fn a_bridge_against_an_incompatible_daemon_names_both_windows() {
+    let dir = tempfile::tempdir().expect("temporary socket directory");
+    let socket = dir.path().join("daemon.sock");
+    let daemon = refusing_daemon(&socket);
+    let reason = session_without_a_daemon(socket.clone()).await;
+    daemon.abort();
+    let ours = format!(
+        "speaks protocol {} to {}",
+        aether_protocol::compat::MIN_PROTOCOL_VERSION,
+        aether_protocol::PROTOCOL_VERSION
+    );
+    for expected in [
+        &socket.display().to_string(),
+        &ours,
+        "the daemon serves protocol 90 to 91",
+        "`aether stop`",
+    ] {
+        assert!(reason.contains(expected), "missing {expected}: {reason}");
+    }
+}

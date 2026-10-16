@@ -143,6 +143,11 @@ pub(super) async fn dispatch_authorized(
                 run_budget_usd: s.run_budget_usd,
                 mcp: s.mcp,
                 low_disk: s.low_disk,
+                bridge: rt
+                    .config()
+                    .bridge
+                    .as_ref()
+                    .map(|bridge| bridge.command.display().to_string()),
             }))
         }
         Command::Shutdown | Command::Subscribe { .. } | Command::Unsubscribe { .. } => {

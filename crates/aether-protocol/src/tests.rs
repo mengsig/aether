@@ -455,6 +455,7 @@ fn provider_info() -> ProviderInfo {
     use aether_core::model::ModelErrorClass;
     use aether_core::provider::{ErrorTally, FallbackRecord, ProviderBackoff, QuotaWindow};
     ProviderInfo {
+        headroom: Default::default(),
         provider: "anthropic".into(),
         name: "Anthropic".into(),
         protocol: "anthropic-messages".into(),
@@ -476,6 +477,7 @@ fn provider_info() -> ProviderInfo {
             quota: Some(QuotaWindow {
                 used_percent: 40,
                 window_minutes: Some(300),
+                resets_at: None,
             }),
             recent_errors: vec![ErrorTally {
                 class: ModelErrorClass::RateLimit,
@@ -669,3 +671,6 @@ fn a_feedback_list_without_a_ranking_decodes_as_unranked() {
         serde_json::json!({"helped":0, "hurt":0, "factor":1.0})
     );
 }
+
+#[path = "tests/provider_headroom.rs"]
+mod provider_headroom;

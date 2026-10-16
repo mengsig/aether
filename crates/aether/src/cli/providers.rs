@@ -191,6 +191,11 @@ pub async fn providers(
             p.model_count(),
             health_segments(&p.health).join(" · ")
         );
+        if let Some(usage) = &p.health.usage {
+            for window in &usage.windows {
+                println!("  {}", sane(&window.quota.headroom_label(&window.name)));
+            }
+        }
     }
     Ok(())
 }
