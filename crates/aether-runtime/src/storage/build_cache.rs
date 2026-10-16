@@ -13,6 +13,9 @@ const POLICY: &str = "reported only; build cache partitions are not evicted yet"
 /// walk gets its own, larger bound.
 const MAX_CACHE_ENTRIES: usize = 4_000_000;
 
+/// Directories open at once while walking; deeper ones are left uncounted.
+const MAX_DEPTH: usize = 128;
+
 #[derive(Debug, Serialize)]
 pub(super) struct BuildCacheReport {
     root: PathBuf,
@@ -25,11 +28,13 @@ pub(super) struct BuildCacheReport {
     /// Entries that could not be read, so `bytes` misses them.
     unreadable: usize,
     truncated: bool,
+    #[serde(skip)]
+    budget: usize,
 }
 
 /// Bytes, repositories and partitions under `root`. Below the configured
 /// root, links are never followed, and files a running build deletes
-/// mid-walk are skipped.
+/// mid-walk are skipped. Every entry read, at any level, spends the budget.
 pub(super) fn report(root: &Path) -> io::Result<BuildCacheReport> {
     debug_assert!(root.is_absolute(), "{} is not absolute", root.display());
     let mut report = BuildCacheReport {
@@ -40,6 +45,7 @@ pub(super) fn report(root: &Path) -> io::Result<BuildCacheReport> {
         partitions: 0,
         unreadable: 0,
         truncated: false,
+        budget: MAX_CACHE_ENTRIES,
     };
     match fs::metadata(root) {
         Ok(meta) if meta.is_dir() => {}
@@ -52,61 +58,87 @@ pub(super) fn report(root: &Path) -> io::Result<BuildCacheReport> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(report),
         Err(error) => return Err(error),
     }
-    let mut budget = MAX_CACHE_ENTRIES;
-    for repository in real_dirs(root, &mut report) {
+    for repository in report.real_dirs(root) {
         report.repositories += 1;
-        for partition in real_dirs(&repository, &mut report) {
+        for partition in report.real_dirs(&repository) {
             report.partitions += 1;
-            add_tree(partition, &mut report, &mut budget);
+            report.add_tree(&partition);
         }
     }
-    debug_assert!(budget <= MAX_CACHE_ENTRIES, "{budget}");
+    debug_assert!(report.budget <= MAX_CACHE_ENTRIES, "{}", report.budget);
     Ok(report)
 }
 
-/// The directories directly in `dir`, links and files left out.
-fn real_dirs(dir: &Path, report: &mut BuildCacheReport) -> Vec<PathBuf> {
-    let Some(entries) = report.readable(fs::read_dir(dir)) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(|entry| report.readable(entry))
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .map(|entry| entry.path())
-        .collect()
-}
-
-/// Add the blocks of everything under `top`, itself included, spending one
-/// unit of `budget` per entry.
-fn add_tree(top: PathBuf, report: &mut BuildCacheReport, budget: &mut usize) {
-    let mut pending = vec![top];
-    while let Some(path) = pending.pop() {
-        if *budget == 0 {
-            report.truncated = true;
-            return;
-        }
-        *budget -= 1;
-        let Some(meta) = report.readable(fs::symlink_metadata(&path)) else {
-            continue;
-        };
-        report.bytes = report
-            .bytes
-            .saturating_add(meta.blocks().saturating_mul(512));
-        if !meta.is_dir() {
-            continue;
-        }
-        let Some(entries) = report.readable(fs::read_dir(&path)) else {
-            continue;
-        };
-        pending.extend(
-            entries
-                .filter_map(|entry| report.readable(entry))
-                .map(|entry| entry.path()),
-        );
-    }
-}
-
 impl BuildCacheReport {
+    /// The directories directly in `dir`, links and files left out.
+    fn real_dirs(&mut self, dir: &Path) -> Vec<PathBuf> {
+        let Some(entries) = self.readable(fs::read_dir(dir)) else {
+            return Vec::new();
+        };
+        let mut dirs = Vec::new();
+        for entry in entries {
+            if !self.spend() {
+                break;
+            }
+            let Some(entry) = self.readable(entry) else {
+                continue;
+            };
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                dirs.push(entry.path());
+            }
+        }
+        dirs
+    }
+
+    /// Add the blocks of everything under `top`, itself included. Open
+    /// directories are held one per level, so memory follows depth, not width.
+    fn add_tree(&mut self, top: &Path) {
+        let Some(entries) = self.add_entry(top) else {
+            return;
+        };
+        let mut open = vec![entries];
+        while let Some(entries) = open.last_mut() {
+            let Some(entry) = entries.next() else {
+                open.pop();
+                continue;
+            };
+            if !self.spend() {
+                return;
+            }
+            let Some(entry) = self.readable(entry) else {
+                continue;
+            };
+            let Some(child) = self.add_entry(&entry.path()) else {
+                continue;
+            };
+            if open.len() == MAX_DEPTH {
+                self.truncated = true;
+                continue;
+            }
+            open.push(child);
+        }
+    }
+
+    /// Count `path`'s own blocks; its entries if it is a real directory.
+    fn add_entry(&mut self, path: &Path) -> Option<fs::ReadDir> {
+        let meta = self.readable(fs::symlink_metadata(path))?;
+        self.bytes = self.bytes.saturating_add(meta.blocks().saturating_mul(512));
+        if !meta.is_dir() {
+            return None;
+        }
+        self.readable(fs::read_dir(path))
+    }
+
+    /// Take one entry from the budget, or mark the report truncated.
+    fn spend(&mut self) -> bool {
+        if self.budget == 0 {
+            self.truncated = true;
+            return false;
+        }
+        self.budget -= 1;
+        true
+    }
+
     /// What a read gave, if anything. A path removed mid-walk is expected;
     /// any other failure is counted so the total is known to be short.
     fn readable<T>(&mut self, read: io::Result<T>) -> Option<T> {
@@ -154,6 +186,31 @@ mod tests {
             "the linked file is not counted: {seen:?}"
         );
         assert_eq!((seen.unreadable, seen.truncated), (0, false));
+    }
+
+    #[test]
+    fn the_budget_bounds_every_level_and_marks_the_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("cache");
+        let partition = root.join("repo-0123/run_one");
+        fs::create_dir_all(&partition).unwrap();
+        for i in 0..10 {
+            fs::write(partition.join(i.to_string()), b"x").unwrap();
+        }
+        let mut seen = report(&root).unwrap();
+        assert_eq!(
+            (seen.budget, seen.truncated),
+            (MAX_CACHE_ENTRIES - 12, false)
+        );
+
+        seen.budget = 5;
+        seen.truncated = false;
+        seen.add_tree(&partition);
+        assert_eq!((seen.budget, seen.truncated), (0, true), "{seen:?}");
+        assert!(
+            seen.real_dirs(&root).is_empty(),
+            "nothing is read past the bound"
+        );
     }
 
     #[test]
