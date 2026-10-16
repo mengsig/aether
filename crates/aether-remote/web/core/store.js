@@ -10,7 +10,8 @@ import { clearLocalState, interruptedReceipts, dismissReceipt, mergeLedger } fro
 import { createDrafts, restoreSnapshot, saveSnapshot } from './persistence.js';
 /** @typedef {import('../types.js').State} State */
 /** @typedef {import('../types.js').Transport} Transport */
-const NOTE_PAGE = 200;
+const NOTE_PAGE = 1000;
+const NOTE_PAGES = 50;
 /** @returns {State} */
 function initialState() {
   return {ready:false,connection:'offline',connectionDetail:'Not connected',role:'observer',agents:[],attention:[],activity:[],
@@ -279,19 +280,28 @@ export class RemoteStore {
     transcripts[id] = [...merged.values()].sort((a,b)=>a.seq-b.seq);
     this.completeTranscripts.add(id); this.patch({transcripts});
   }
-  /** The agent's latest notes after `after`: `get_transcript` holds its messages only. */
+  /** Every note of the agent after `after`, page by page: `get_transcript` holds its messages only. */
   /** @param {string} id @param {number} after */
   async fetchNotes(id, after) {
-    // No event's type is `note.appended`, so `child_types` keeps children's events off the page.
-    const reply = await this.transport.request({cmd:'get_events',after:0,limit:NOTE_PAGE,
-      query:{before:Number.MAX_SAFE_INTEGER,agent:id,types:['custom'],child_types:['note.appended']}});
-    if (reply.reply !== 'events') throw new Error('Unexpected note history reply');
-    const records = array(reply.data, 'Note history');
-    if (records.length > NOTE_PAGE) throw new Error('Note history exceeded the requested limit');
-    return records.flatMap(record => {
-      const entry = object(record, 'event').agent_id === id ? noteEntry(record) : null;
-      return entry && entry.seq > after ? [entry] : [];
-    });
+    /** @type {import('../types.js').TranscriptEntry[]} */ const notes = [];
+    let cursor = after;
+    for (let page = 0; page < NOTE_PAGES; page += 1) {
+      // No event's type is `note.appended`, so `child_types` keeps children's events off the page.
+      const reply = await this.transport.request({cmd:'get_events',after:cursor,limit:NOTE_PAGE,
+        query:{agent:id,types:['custom'],child_types:['note.appended']}});
+      if (reply.reply !== 'events') throw new Error('Unexpected note history reply');
+      const records = array(reply.data, 'Note history');
+      if (records.length > NOTE_PAGE) throw new Error('Note history exceeded the requested limit');
+      for (const record of records) {
+        const event = object(record, 'event'); const seq = integer(event.seq, 'event.seq');
+        if (seq <= cursor) throw new Error('Note history is out of order');
+        cursor = seq;
+        const entry = event.agent_id === id ? noteEntry(event) : null;
+        if (entry) notes.push(entry);
+      }
+      if (records.length < NOTE_PAGE) return notes;
+    }
+    throw new Error(`Note history is longer than the ${NOTE_PAGE * NOTE_PAGES} events a phone reads`);
   }
   async refreshTranscripts() {
     await Promise.all(Object.keys(this.state.transcripts).map(id => this.loadTranscript(id).catch(error => {

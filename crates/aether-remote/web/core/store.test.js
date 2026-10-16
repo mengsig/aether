@@ -188,3 +188,24 @@ test('a note joins its agent conversation when it loads and when it arrives',asy
     assert.equal(live.at(-1).message.role,'note');assert.equal(store.get().activity.at(-1).detail,'review passed');
   } finally {store.dispose();}
 });
+
+test('notes behind more than a page of other custom events still load',async()=>{
+  const fixtures=createFixtures(); const agent='agt_00000000000000000000000002';
+  const custom=(seq,name,payload)=>({seq,at:'2026-10-12T00:00:00Z',agent_id:agent,kind:{type:'custom',name,payload}});
+  const events=[custom(10,'note.appended',{text:'first',context:'none'}),
+    ...Array.from({length:1200},(_,index)=>custom(11+index,'context.usage',{tokens:index})),
+    custom(1300,'note.appended',{text:'last',context:'digest'})];
+  let pages=0;
+  const transport={onFrame:()=>()=>{},onConnection:()=>()=>{},request:async command=>{
+    if (command.cmd!=='get_events') return readCommand(fixtures,command);
+    pages+=1; assert.equal(command.query.agent,agent); assert.deepEqual(command.query.types,['custom']); assert.equal(command.query.before,undefined);
+    return {reply:'events',data:events.filter(event=>event.seq>command.after).slice(0,command.limit)};
+  }};
+  const store=createStore(transport,{storage:null});
+  try {
+    await store.loadTranscript(agent);
+    const notes=store.get().transcripts[agent].filter(entry=>entry.message.role==='note');
+    assert.deepEqual(notes.map(entry=>entry.message.content[0].text),['first','last']);
+    assert.equal(pages,2);
+  } finally {store.dispose();}
+});
