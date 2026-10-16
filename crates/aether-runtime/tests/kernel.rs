@@ -131,6 +131,8 @@ mod background_tools;
 mod budget_delegation;
 #[path = "kernel/budgets.rs"]
 mod budgets;
+#[path = "kernel/build_cache.rs"]
+mod build_cache;
 #[path = "kernel/cancellation_races.rs"]
 mod cancellation_races;
 #[path = "kernel/cancellation_restart.rs"]

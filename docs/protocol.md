@@ -152,6 +152,15 @@ them to one.
 [memories in context](#memories-in-context)). An older daemon refuses the
 command as unknown; the Rust client refuses to send it to one.
 
+`build_cache` means `create_agent` accepts `config.build_cache`: an absolute
+directory the agent's builds use instead of Aether's per-repository
+partition (see [build cache](configuration.md#build-cache)). Its children
+inherit it. It must be absolute, valid UTF-8, without `..`, and not `/`; a
+paired device cannot send it, and agents delegating with the `delegate` tool
+cannot set it. A client must check the feature before sending the field: an
+older daemon ignores it and the agent builds elsewhere. The Rust client
+refuses such a create itself.
+
 ## Naming a checkout
 
 An agent's memory is scoped by `scope.repository`. Left unset, the daemon

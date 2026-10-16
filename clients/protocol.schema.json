@@ -384,6 +384,13 @@
             ]
           }
         },
+        "build_cache": {
+          "description": "Build cache directory a client accounts for itself, used instead of\nAether's own per-repository partition. Children inherit it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "concurrency": {
           "description": "At most this many of the agent's descendants, at any depth, run at\nonce; the rest queue. Never counts the agent itself. `None` (the\nshipped default, matching what an omitted field deserializes to)\nleaves the whole subtree bounded only by the daemon's global limit -\na nonzero default here would be a WHOLE-SUBTREE cap, not a per-level\none, and would starve every grandchild once it filled.\nSet explicitly, it bounds a supervisor's entire subtree,\nso pick it for the fan-out you actually want below that supervisor,\nnot per level.",
           "format": "uint",

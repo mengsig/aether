@@ -11,6 +11,7 @@ class AgentConfig(TypedDict, total=False):
     Per-agent configuration the runtime enforces.
     """
     approval: _protocol.ApprovalPolicy  # optional
+    build_cache: str | None  # optional
     concurrency: int | None  # optional
     cost_budget: float | None  # optional
     deadline: str | None  # optional

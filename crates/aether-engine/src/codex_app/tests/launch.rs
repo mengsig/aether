@@ -72,19 +72,21 @@ async fn exec_server_hides_provider_auth_while_app_server_keeps_it() {
 }
 
 #[tokio::test]
-async fn fresh_and_resumed_app_servers_get_the_agent_temp_dir() {
+async fn fresh_and_resumed_app_servers_get_the_agent_temp_dir_and_build_cache() {
     let dir = tempfile::tempdir().unwrap();
     let leaf = dir.path().join("0123456789AB");
     std::fs::create_dir(&leaf).unwrap();
+    let cache = dir.path().join("cargo-target");
     crate::test_script::write(
         &dir.path().join("codex"),
-        "#!/bin/sh\nprintf '%s|%s|%s' \"$TMPDIR\" \"$TMP\" \"$TEMP\" > \"$TMPDIR/seen\"\nexit 1\n",
+        "#!/bin/sh\nprintf '%s|%s|%s|%s' \"$TMPDIR\" \"$TMP\" \"$TEMP\" \"$CARGO_TARGET_DIR\" > \"$TMPDIR/seen\"\nexit 1\n",
     );
     let engine = CodexAppEngine::new(dir.path().join("codex").to_str().unwrap(), "0.162.1");
     for session in [None, Some("th")] {
         let mut t = turn(session, false);
         t.cwd = dir.path().into();
         t.temp_dir = Some(leaf.clone());
+        t.build_env = vec![("CARGO_TARGET_DIR".into(), cache.clone())];
         t.mcp = None;
         let mut run = engine.run(t, CancellationToken::new()).await.unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -93,7 +95,8 @@ async fn fresh_and_resumed_app_servers_get_the_agent_temp_dir() {
         .await
         .expect("fake app-server exited");
         let seen = std::fs::read_to_string(leaf.join("seen")).unwrap();
-        assert_eq!(seen, format!("{0}|{0}|{0}", leaf.display()), "{session:?}");
+        let expected = format!("{0}|{0}|{0}|{1}", leaf.display(), cache.display());
+        assert_eq!(seen, expected, "{session:?}");
         std::fs::remove_file(leaf.join("seen")).unwrap();
     }
 }
@@ -135,6 +138,34 @@ fn codex_commands_get_the_agent_temp_dir_and_may_write_it() {
             "{session:?} network={network}"
         );
     }
+}
+
+#[test]
+fn codex_commands_get_the_build_cache_and_may_write_it() {
+    let engine = CodexAppEngine::new("codex", "0.162.1");
+    let mut t = turn(None, false);
+    t.temp_dir = Some(PathBuf::from("/var/t/0123456789AB"));
+    t.build_env = vec![(
+        "CARGO_TARGET_DIR".into(),
+        "/var/cache/r/run/cargo-target".into(),
+    )];
+    let args = engine.args(&t);
+    let set = "shell_environment_policy.set.CARGO_TARGET_DIR=\"/var/cache/r/run/cargo-target\"";
+    assert!(args.windows(2).any(|pair| pair == ["-c", set]), "{args:?}");
+    assert_eq!(
+        turn_params(&t, "th", false)["sandboxPolicy"]["writableRoots"],
+        json!([
+            "/shared",
+            "/var/t/0123456789AB",
+            "/var/cache/r/run/cargo-target"
+        ])
+    );
+    t.summary_only = true;
+    assert_eq!(
+        turn_params(&t, "th", false)["sandboxPolicy"],
+        json!({"type": "readOnly"}),
+        "a summary turn stays read-only"
+    );
 }
 
 /// Writes an executable shell script named `codex` under a fresh temp

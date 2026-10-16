@@ -9,6 +9,7 @@
 pub mod approval;
 pub mod artifacts;
 pub mod attachments;
+mod build_cache;
 pub mod bus;
 mod cancellation;
 pub mod commands;

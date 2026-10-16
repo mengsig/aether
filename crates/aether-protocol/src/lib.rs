@@ -184,6 +184,9 @@ pub mod features {
     pub const STORAGE: &str = "storage";
     /// The daemon applies `Command::StorageGc.prune_build_output`.
     pub const PRUNE_BUILD_OUTPUT: &str = "prune_build_output";
+    /// The daemon accepts `AgentConfig.build_cache`. A daemon without it
+    /// ignores the field, so check this first.
+    pub const BUILD_CACHE: &str = "build_cache";
     /// Host evidence about memories a task saw, with append-only records and retractions.
     pub const MEMORY_FEEDBACK: &str = "memory_feedback";
 }

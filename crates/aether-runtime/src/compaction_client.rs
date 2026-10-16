@@ -422,6 +422,7 @@ mod tests {
                 hidden_env: vec![],
                 tool_hidden_env: vec![],
                 temp_dir: None,
+                build_env: Vec::new(),
                 mcp: None,
             },
         };

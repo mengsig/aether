@@ -162,8 +162,14 @@ impl ClaudeCodeEngine {
                 "allowUnsandboxedCommands": false,
                 "network": {"strictAllowlist": true, "allowedDomains": [], "deniedDomains": ["*"]}
             });
-            if let Some(dir) = &turn.temp_dir {
-                settings["sandbox"]["filesystem"] = json!({"allowWrite": [dir.to_string_lossy()]});
+            let writable: Vec<_> = turn
+                .temp_dir
+                .iter()
+                .chain(turn.build_env.iter().map(|(_, dir)| dir))
+                .map(|dir| dir.to_string_lossy())
+                .collect();
+            if !writable.is_empty() {
+                settings["sandbox"]["filesystem"] = json!({"allowWrite": writable});
             }
             settings["permissions"] = json!({"deny": ["WebFetch(domain:*)", "WebSearch"]});
         }
@@ -298,6 +304,7 @@ impl Engine for ClaudeCodeEngine {
             cwd,
             &turn.hidden_env,
             turn.temp_dir.as_deref(),
+            &turn.build_env,
             user_message_line(&turn.prompt, &turn.images),
             true,
             Some(input::interrupt_line()),

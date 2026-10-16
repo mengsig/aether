@@ -44,6 +44,9 @@ pub struct ToolContext {
     /// This agent's private temp dir, created on first use and exported to
     /// host commands as TMPDIR, TMP and TEMP. `None` leaves the daemon's own.
     pub temp_dir: Option<PathBuf>,
+    /// Build cache variables and the directories they name, created on use
+    /// and exported to host commands. Container commands never get them.
+    pub build_env: Vec<(String, PathBuf)>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -56,6 +59,7 @@ impl std::fmt::Debug for ToolContext {
             .field("cwd", &self.cwd)
             .field("env", &self.env.keys().collect::<Vec<_>>())
             .field("temp_dir", &self.temp_dir)
+            .field("build_env", &self.build_env)
             .finish_non_exhaustive()
     }
 }

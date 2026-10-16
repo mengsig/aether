@@ -312,6 +312,10 @@ pub struct AgentConfig {
     /// Engine-native host setup the session loads; omitted on the wire when full.
     #[serde(default, skip_serializing_if = "HostContext::is_full")]
     pub host_context: HostContext,
+    /// Build cache directory a client accounts for itself, used instead of
+    /// Aether's own per-repository partition. Children inherit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_cache: Option<PathBuf>,
 }
 
 impl Default for AgentConfig {
@@ -331,6 +335,7 @@ impl Default for AgentConfig {
             leaf: false,
             concurrency: None,
             host_context: HostContext::Full,
+            build_cache: None,
         }
     }
 }

@@ -38,6 +38,7 @@ fn turn(cwd: PathBuf) -> EngineTurn {
         hidden_env: vec!["ANTHROPIC_API_KEY".into()],
         tool_hidden_env: vec!["ANTHROPIC_API_KEY".into()],
         temp_dir: None,
+        build_env: Vec::new(),
         mcp: None,
     }
 }

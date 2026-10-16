@@ -300,6 +300,14 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 config.store_path.with_extension("delegated-workspaces"),
             ),
             agent_temp_root,
+            build_cache_root: Some(
+                models
+                    .config()
+                    .build_cache
+                    .root
+                    .clone()
+                    .unwrap_or_else(|| config.store_path.with_extension("build-cache")),
+            ),
             bridge: std::env::current_exe()
                 .ok()
                 .map(|command| aether_runtime::BridgeConfig {

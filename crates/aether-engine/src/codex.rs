@@ -129,7 +129,7 @@ impl CodexEngine {
             args.push("-c".into());
             args.push(format!("mcp_servers.aether.args={}", json!(mcp.args)));
         }
-        args.extend(crate::codex_temp_env_args(turn.temp_dir.as_deref()));
+        args.extend(crate::codex_env_args(turn));
         for dir in &turn.extra_dirs {
             args.push("--add-dir".into());
             args.push(dir.to_string_lossy().into_owned());
@@ -274,6 +274,7 @@ impl Engine for CodexEngine {
             cwd,
             &turn.hidden_env,
             turn.temp_dir.as_deref(),
+            &turn.build_env,
             turn.prompt.clone(),
             false,
             None,

@@ -205,6 +205,7 @@ impl Runtime {
         {
             config.instructions.clone_from(&p.config.instructions);
         }
+        crate::build_cache::settle(&mut config, parent.as_ref(), by)?;
         // §3.2 for approvals: a child inherits its parent's policy and may
         // only gate more than it, never less. A root with nothing asked for
         // gets the daemon's configured default.
