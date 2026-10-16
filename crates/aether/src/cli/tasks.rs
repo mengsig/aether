@@ -1,4 +1,4 @@
-use super::{AgentId, EventKind, EventQuery, SubscriptionFrame, TaskQuery, connect, short};
+use super::{AgentId, EventKind, TaskQuery, connect, short};
 use aether_core::model::{ContentBlock, ToolResultBlock};
 use anyhow::Context as _;
 
@@ -61,68 +61,6 @@ pub async fn task_create(
         return Ok(());
     }
     println!("{} {}", task.id, task.status.kind());
-    Ok(())
-}
-
-pub async fn events(
-    socket: impl Into<aether_client::Endpoint>,
-    follow: bool,
-    after: u64,
-    agent: Option<String>,
-    json: bool,
-) -> anyhow::Result<()> {
-    let socket = socket.into();
-    let client = connect(&socket).await?;
-    let agent = agent
-        .map(|a| a.parse::<AgentId>())
-        .transpose()
-        .context("invalid agent id")?;
-    let query = EventQuery {
-        agent,
-        ..Default::default()
-    };
-    // One event per line either way, so `--follow --json` is a stream a
-    // caller reads as it arrives rather than a document it waits for.
-    let print = |e: &aether_core::event::Event| -> anyhow::Result<()> {
-        if json {
-            println!("{}", serde_json::to_string(e)?);
-            return Ok(());
-        }
-        println!(
-            "{:>7} {} {:<24} {} {}",
-            e.seq,
-            e.at.format("%H:%M:%S%.3f"),
-            e.type_name(),
-            e.agent_id.map(|a| a.to_string()).unwrap_or_default(),
-            super::sane(&summarize(&e.kind))
-        );
-        Ok(())
-    };
-    if !follow {
-        let mut cursor = after;
-        loop {
-            let page = client.events(cursor, 1000, query.clone()).await?;
-            if page.is_empty() {
-                break;
-            }
-            for e in page {
-                anyhow::ensure!(e.seq > cursor, "event page did not advance past {cursor}");
-                cursor = e.seq;
-                print(&e)?;
-            }
-        }
-        return Ok(());
-    }
-    let mut sub = client.subscribe(Some(after), query, false).await?;
-    while let Some(frame) = sub.next().await {
-        match frame {
-            SubscriptionFrame::Event(e) => print(&e)?,
-            SubscriptionFrame::Lagged { capacity } => anyhow::bail!(
-                "event subscription exceeded {capacity} queued frames; resume with --after using the last sequence printed"
-            ),
-            SubscriptionFrame::Delta { .. } => {}
-        }
-    }
     Ok(())
 }
 

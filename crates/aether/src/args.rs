@@ -326,17 +326,7 @@ pub(crate) enum Cmd {
         json: bool,
     },
     /// Print events, optionally following live.
-    Events {
-        #[arg(long, short = 'f')]
-        follow: bool,
-        #[arg(long, default_value_t = 0)]
-        after: u64,
-        #[arg(long)]
-        agent: Option<String>,
-        /// One event per line, so `-f --json` is a stream.
-        #[arg(long)]
-        json: bool,
-    },
+    Events(crate::cli::EventArgs),
     /// Send a message to an agent.
     Send {
         agent: String,

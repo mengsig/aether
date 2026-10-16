@@ -68,6 +68,7 @@ struct Stub {
     hostile_text: bool,
     event_count: Option<u64>,
     stale_events: bool,
+    event_follow: bool,
     hostile_saved_model: bool,
     reject_models: bool,
     invalid_models: bool,
@@ -85,6 +86,7 @@ impl Default for Stub {
             hostile_text: false,
             event_count: None,
             stale_events: false,
+            event_follow: false,
             hostile_saved_model: false,
             reject_models: false,
             invalid_models: false,
@@ -212,9 +214,17 @@ async fn cli_with_socket(
                 } if stub.event_count.is_some() => {
                     assert_eq!(query.agent, Some(AGENT.parse().unwrap()));
                     let after = if stub.stale_events { 0 } else { *after };
+                    let count = stub.event_count.unwrap();
+                    let seqs: Vec<_> = match query.before {
+                        Some(before) => {
+                            assert_eq!(after, 0, "before cannot combine with a nonzero after");
+                            let before = if stub.stale_events { count + 1 } else { before };
+                            (1..before.min(count + 1)).rev().take(*limit).collect()
+                        }
+                        None => (after + 1..=count).take(*limit).collect(),
+                    };
                     Ok(Reply::Events(
-                        (after + 1..=stub.event_count.unwrap())
-                            .take(*limit)
+                        seqs.into_iter()
                             .map(|seq| {
                                 Event::from_draft(
                                     EventDraft::new(
@@ -268,7 +278,7 @@ async fn cli_with_socket(
                 Command::Status => Ok(Reply::Status(
                     serde_json::from_value(json!({
                         "instance_id": "stub", "version": "stub", "pid": 1, "started_at": AT,
-                        "last_seq": 0, "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
+                        "last_seq": stub.event_count.unwrap_or(0), "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
                         "agents_blocked": 0, "tasks_active": 0, "pending_approvals": 0,
                         "usage_total": aether_core::model::Usage::default(), "mcp": [hostile_mcp()],
                         "providers": [{"provider": HOSTILE, "running": 0, "backoff": {"reason": HOSTILE, "until": AT}}]
@@ -522,6 +532,40 @@ async fn cli_with_socket(
                 },
             )
             .await;
+            if let Command::Subscribe {
+                after, ref query, ..
+            } = frame.command
+                && stub.event_follow
+                && query.agent.is_some()
+            {
+                let count = stub.event_count.unwrap();
+                assert_eq!(after, Some(count));
+                assert_eq!(query.types, ["compaction.failed"]);
+                for (offset, error) in [(1, "absent"), (2, "failed live")] {
+                    let event = Event::from_draft(
+                        EventDraft::new(
+                            Actor::System,
+                            EventKind::CompactionFailed {
+                                error: error.into(),
+                                models: vec![],
+                            },
+                        )
+                        .agent(AGENT.parse().unwrap()),
+                        EventId::new(),
+                        count + offset,
+                        AT.parse().unwrap(),
+                    );
+                    write_frame(
+                        &mut write,
+                        ServerFrame::Event {
+                            sub: next_sub - 1,
+                            event,
+                        },
+                    )
+                    .await;
+                }
+                break;
+            }
             if matches!(frame.command, Command::CreateAgent(ref spec) if spec.objective.is_some()) {
                 run_created = true;
                 continue;
@@ -1901,3 +1945,6 @@ mod proposal_lookup_tests;
 
 #[path = "cli_regressions/memory_feedback.rs"]
 mod feedback_cli_tests;
+
+#[path = "cli_regressions/events.rs"]
+mod events;
