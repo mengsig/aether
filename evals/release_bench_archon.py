@@ -46,13 +46,14 @@ def archon_layout(trial_dir):
 
 
 def config_toml(model_ref):
-    """Archon's config: dedicated Aether, the arm's model only, at low effort, nothing extra."""
+    """Archon's config: dedicated Aether, the arm's model only, at low effort, budgets enforced, nothing extra."""
     assert "/" in model_ref, "an Archon model names its engine and variant"
     model = json.dumps(model_ref)
     return "\n".join([
         "[aether]", 'mode = "dedicated"', "",
         "[orchestrator]", f"model = {model}", 'effort = "low"', "wake_on_success = false", "",
         "[models]", f"allow = [{model}]", 'max_effort = "low"', "",
+        "[limits]", "budgets_enabled = true", "",
         "[lavish]", 'enabled = "off"', "",
         "[worktrees]", "keep_on_success = true", ""])
 

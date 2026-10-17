@@ -1,4 +1,5 @@
 """Release bench: statistics, gate, scheduling, budget, selection and frozen sets, without a model."""
+import argparse
 import random
 import tempfile
 import unittest
@@ -6,6 +7,7 @@ from pathlib import Path
 
 import release_bench_stats as stats
 from harness_bench_treatments import native_command
+from release_bench import _band, carried
 from release_bench_arms import build_arm, parse_arms
 from release_bench_calibrate import (
     SELECTION_DEFAULTS,
@@ -312,6 +314,25 @@ class TaskSetTests(unittest.TestCase):
             (target / "tasks.jsonl").write_text(text)
             with self.assertRaises(ValueError):
                 load_set(target)
+
+    def test_a_carried_set_keeps_its_recorded_rates_minus_recalibrated_templates(self):
+        specs = [self._spec("tiny-0"), self._spec("tiny-1"), {**self._spec("other-0"), "template": "other"}]
+        rates = {spec["id"]: {"haiku": 1.0, "luna": 0.5, "haiku_n": 2, "luna_n": 2} for spec in specs}
+        with tempfile.TemporaryDirectory() as directory:
+            write_set(Path(directory, "v1"), specs, {"calibration": rates})
+            kept, carried_rates = carried(Path(directory, "v1"), {"other"})
+            self.assertEqual([spec["id"] for spec in kept], ["tiny-0", "tiny-1"])
+            self.assertEqual(carried_rates["tiny-1"]["luna"], 0.5)
+            self.assertEqual(task_rates([rec("x-0", "haiku/native", True)]).keys() & carried_rates.keys(), set())
+            write_set(Path(directory, "bare"), specs, {})
+            with self.assertRaises(SystemExit):
+                carried(Path(directory, "bare"), None)
+
+    def test_a_band_is_two_ordered_fractions(self):
+        self.assertEqual(_band("0,1"), (0.0, 1.0))
+        for text in ("0.8,0.2", "0.5", "a,b", "0,1.5"):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                _band(text)
 
     def test_meta_holds_only_scalars(self):
         spec = self._spec()

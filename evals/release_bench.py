@@ -91,6 +91,10 @@ def parse_args(argv):
     calibrate.add_argument("--max-size", type=int, default=SELECTION_DEFAULTS["max_size"])
     calibrate.add_argument("--accept-off-target", action="store_true",
                            help="freeze even when the set misses its targets, recorded as not accepted")
+    calibrate.add_argument("--carry", type=Path, help="a frozen set whose tasks join the pool with their recorded "
+                           "calibration rates; its tasks of --templates are left out")
+    calibrate.add_argument("--haiku-band", type=_band, default=SELECTION_DEFAULTS["haiku_band"],
+                           help="eligible native Haiku pass rates, LOW,HIGH (default 0.2,0.8)")
     _pool_options(calibrate, budget=25.0)
     calibrate.set_defaults(repeats=4)
     report = commands.add_parser("report", help="re-render the report of a finished run")
@@ -99,6 +103,16 @@ def parse_args(argv):
     if getattr(args, "jobs", 1) < 1 or getattr(args, "repeats", 1) < 1:
         parser.error("--jobs and --repeats must be at least 1")
     return args
+
+
+def _band(text):
+    try:
+        low, high = (float(part) for part in text.split(","))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"expected LOW,HIGH, got {text!r}") from error
+    if not 0 <= low < high <= 1:
+        raise argparse.ArgumentTypeError(f"a band needs 0 <= LOW < HIGH <= 1, got {text!r}")
+    return (low, high)
 
 
 def _run_dir(kind, run_id):
@@ -271,7 +285,8 @@ def _write_report(run_dir, config, records, stop_reason, started=None):
                                      expected)
     if overall == "PASS" and not config["set"]["accepted"]:
         overall = "INCONCLUSIVE"
-        text = text.replace("# Release bench: PASS", "# Release bench: INCONCLUSIVE (gate passed on an off-target set)", 1)
+        text = text.replace("# Release bench: PASS",
+                            "# Release bench: INCONCLUSIVE (gate passed on an off-target set)", 1)
     (run_dir / "report.md").write_text(text)
     save_json(str(run_dir / "verdict.json"), {"overall": overall, "stop_reason": stop_reason,
                                                "models": {model: {key: verdict[key] for key in
@@ -286,8 +301,13 @@ def command_report(args):
     run_dir = args.run_dir.resolve()
     config = json.loads((run_dir / "config.json").read_text())
     if "binaries" not in config:
-        return _write_calibration(run_dir, config, read_results(str(run_dir / "results.jsonl")),
-                                  dict(SELECTION_DEFAULTS), None, False)
+        templates = config["candidates"]["templates"]
+        carry_rates = carried(Path(config["carry"]), set(templates.split(",")) if templates else None)[1] \
+            if config.get("carry") else None
+        band = tuple(config.get("haiku_band", SELECTION_DEFAULTS["haiku_band"]))
+        records = read_results(str(run_dir / "results.jsonl"))
+        return _write_calibration(run_dir, config, records, {**SELECTION_DEFAULTS, "haiku_band": band}, None, False,
+                                  carry_rates)
     stop = json.loads((run_dir / "verdict.json").read_text()).get("stop_reason") if (
         run_dir / "verdict.json").exists() else None
     return _write_report(run_dir, config, read_results(str(run_dir / "results.jsonl")), stop)
@@ -303,15 +323,33 @@ def _verified_candidates(args):
     return specs
 
 
+def carried(path, recalibrated):
+    """(specs, rates) of a frozen set's tasks, rates as recorded at its calibration, minus `recalibrated` templates."""
+    manifest, specs = load_set(path)
+    kept = [spec for spec in specs if not recalibrated or spec["template"] not in recalibrated]
+    missing = [spec["id"] for spec in kept if spec["id"] not in manifest.get("calibration", {})]
+    if missing:
+        raise SystemExit(f"{path} records no calibration rates for {missing[:5]}")
+    rates = {spec["id"]: {"template": spec["template"], "family": spec["family"], "infra": 0, "cost": 0.0,
+                          "carried": True, **manifest["calibration"][spec["id"]]} for spec in kept}
+    assert all(0 <= row["haiku"] <= 1 and 0 <= row["luna"] <= 1 for row in rates.values()), "rates are fractions"
+    return kept, rates
+
+
 def command_calibrate(args):
     specs = _verified_candidates(args)
     log(f"{len(specs)} candidates verified")
+    templates = set(args.templates.split(",")) if args.templates else None
+    carry_specs, carry_rates = carried(args.carry, templates) if args.carry else ([], {})
+    if {spec["id"] for spec in specs} & set(carry_rates):
+        raise SystemExit("a carried task is also a candidate; recalibrate its template with --templates")
     run_dir = _run_dir("calibration", args.run_id)
     binary, sha = _pin(args.price_binary, run_dir, "pricing")
     arm_keys = ["haiku/native", "luna/native"]
     config = {"candidates": {"count": args.count, "first_seed": args.first_seed, "templates": args.templates},
               "arms": arm_keys, "repeats": args.repeats, "jobs": args.jobs, "timeout": args.timeout,
-              "seed": args.seed, "price_binary_sha256": sha}
+              "seed": args.seed, "price_binary_sha256": sha, "haiku_band": list(args.haiku_band),
+              "carry": str(args.carry) if args.carry else None}
     _config_check(run_dir, config)
     log(f"calibration directory {run_dir}")
     context = {"run_dir": str(run_dir), "work_dir": _work_dir(args.work_root, run_dir), "binaries": {},
@@ -320,22 +358,29 @@ def command_calibrate(args):
     records, stop_reason = execute(specs, arm_keys, args, run_dir, context)
     if stop_reason:
         log(f"calibration incomplete: {stop_reason}")
-    settings = {**SELECTION_DEFAULTS, "min_size": args.min_size, "max_size": args.max_size}
-    return _write_calibration(run_dir, config, records, settings, args.freeze and (args.freeze, specs),
-                              args.accept_off_target)
+    settings = {**SELECTION_DEFAULTS, "min_size": args.min_size, "max_size": args.max_size,
+                "haiku_band": args.haiku_band}
+    return _write_calibration(run_dir, config, records, settings,
+                              args.freeze and (args.freeze, specs + carry_specs), args.accept_off_target, carry_rates)
 
 
-def _write_calibration(run_dir, config, records, settings, freeze, accept_off_target):
+def _write_calibration(run_dir, config, records, settings, freeze, accept_off_target, carry_rates=None):
     """calibration.md from the records (re-selecting is free on a resumed run), then the frozen set if asked.
 
-    A set that misses its targets is frozen only with `accept_off_target`, and its manifest says so."""
+    `carry_rates` are tasks measured by an earlier calibration. A set that misses its
+    targets is frozen only with `accept_off_target`, and its manifest says so."""
     assert records, "a calibration needs at least one trial"
     assert settings["min_size"] <= settings["max_size"], "the set's size bounds are ordered"
-    rates = task_rates(records)
+    measured = task_rates(records)
+    rates = {**(carry_rates or {}), **measured}
+    assert len(rates) == len(measured) + len(carry_rates or {}), "a carried task is never measured again"
     chosen = select(rates, settings)
     spent = sum(item["cost_usd"] or 0 for item in records)
-    header = [f"- Candidates: {len(rates)}; trials: {len(records)}; arms: {', '.join(config['arms'])}; "
+    header = [f"- Candidates: {len(measured)}; trials: {len(records)}; arms: {', '.join(config['arms'])}; "
               f"repeats: {config['repeats']}", f"- Priced spend: ${spent:.2f} API-equivalent"]
+    if carry_rates:
+        header.append(f"- Carried from `{config['carry']}` with the rates its calibration recorded: "
+                      f"{len(carry_rates)} tasks")
     text = render_calibration(rates, chosen, settings, header)
     (run_dir / "calibration.md").write_text(text)
     print(text)

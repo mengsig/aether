@@ -187,7 +187,8 @@ state["calls"].append(args)
 state.setdefault("aether_env", sorted(key for key in os.environ if key.startswith("AETHER_")))
 code, out = 0, {}
 if args[0] == "setup":
-    assert 'mode = "dedicated"' in open(os.path.join(os.environ["ARCHON_CONFIG_DIR"], "config.toml")).read()
+    config = open(os.path.join(os.environ["ARCHON_CONFIG_DIR"], "config.toml")).read()
+    assert 'mode = "dedicated"' in config and "budgets_enabled = true" in config
 elif args[:2] == ["daemon", "run"]:
     state["aether"] = os.path.realpath(shutil.which("aether"))
 elif args[:2] == ["repo", "add"]:
