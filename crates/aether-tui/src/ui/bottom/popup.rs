@@ -375,11 +375,15 @@ fn header(popup: &Popup, theme: &Theme) -> Line<'static> {
     }
 }
 
-/// The left column: what Enter/Tab inserts.
+/// The left column: what Enter/Tab inserts, and a host command's argument hint.
 fn label(item: &PopupItem, ellipsis: &str) -> String {
     match item {
         PopupItem::Mode { name, .. } => format!("/{name}"),
         PopupItem::Command { name, .. } => format!("/{name}"),
+        // The host's argument hint is the only place it is shown.
+        PopupItem::HostCommand { name, usage, .. } if !usage.is_empty() => {
+            format!("/{name} {usage}")
+        }
         PopupItem::HostCommand { name, .. } => format!("/{name}"),
         PopupItem::File { path } => path.clone(),
         PopupItem::Agent { name, .. } => format!("@{name}"),

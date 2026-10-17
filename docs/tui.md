@@ -661,12 +661,12 @@ menu. `aether tui --host-commands <PATH>` reads a JSON file:
 ]}
 ```
 
-Each command appears in the `/` popup after the built-ins, marked with the
-host's name (`· archon`; `· host` when `host` is left out), and in `/help`.
+Each command appears in the `/` popup after the built-ins, with its
+argument hint and marked with the host's name (`· archon`; `· host` when `host` is left out), and in `/help`.
 Choosing or typing one sends the line, as typed, to the viewed agent; the
 TUI never runs it. A name is lowercase `[a-z][a-z0-9-]*` without the slash.
-An entry that is malformed, repeated or named like a built-in command or one
-of its aliases is left out, and a missing or unreadable file loads no
+An entry that is malformed, repeated or named like a built-in command, one
+of its aliases or a view mode is left out, and a missing or unreadable file loads no
 commands; either way the TUI starts and says why once.
 
 ## View modes

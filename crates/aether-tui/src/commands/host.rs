@@ -74,6 +74,29 @@ impl HostCommands {
         })
     }
 
+    /// Drop each command `taken` claims, naming it in `warning`, so a
+    /// listed host command never runs something local instead.
+    pub fn refuse_taken(&mut self, taken: impl Fn(&str) -> bool, reason: &str) {
+        let before = self.commands.len();
+        let mut refused = Vec::new();
+        self.commands.retain(|c| {
+            let free = !taken(&c.name);
+            if !free {
+                refused.push(format!("/{} refused: {reason}", c.name));
+            }
+            free
+        });
+        debug_assert_eq!(before, self.commands.len() + refused.len());
+        if refused.is_empty() {
+            return;
+        }
+        let refused = refused.join("; ");
+        self.warning = Some(match self.warning.take() {
+            Some(warning) => format!("{warning}; {refused}"),
+            None => format!("host commands: {refused}"),
+        });
+    }
+
     /// Read `path`. Never an error: a missing or broken file leaves no
     /// commands and a warning, so the TUI still starts.
     pub fn load(path: &Path) -> Self {

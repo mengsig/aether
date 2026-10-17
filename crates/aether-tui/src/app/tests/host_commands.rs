@@ -147,3 +147,33 @@ fn a_host_commands_warning_shows_once_at_start() {
         "{flash}"
     );
 }
+
+#[test]
+fn a_host_command_named_like_a_view_mode_is_refused_at_start_and_the_mode_still_runs() {
+    let host =
+        HostCommands::parse(r#"{"version":1,"commands":[{"name":"focus"},{"name":"answer"}]}"#)
+            .unwrap();
+    let options = TuiOptions {
+        host_commands: host,
+        ..TuiOptions::default()
+    };
+    assert!(options.view_modes.modes.contains_key("focus"));
+    let app = app_with_status(options);
+    let names: Vec<_> = app
+        .options
+        .host_commands
+        .commands
+        .iter()
+        .map(|c| c.name.as_str())
+        .collect();
+    assert_eq!(names, ["answer"]);
+    let flash = app.live_flash().unwrap();
+    assert!(
+        flash.contains("/focus refused: shadows a view mode"),
+        "{flash}"
+    );
+    assert!(matches!(
+        app.parse_input("/focus"),
+        InputAction::Command(SlashCommand::ViewMode(Some(_)))
+    ));
+}

@@ -374,3 +374,24 @@ fn fit_words_cuts_only_between_words() {
     assert_eq!(fit_words("unbreakable words", 1, "…"), "");
     assert_eq!(fit_words("a b", 0, "~"), "");
 }
+
+#[test]
+fn a_host_command_row_shows_its_args_about_and_host() {
+    let mut app = app();
+    app.options.host_commands = crate::commands::HostCommands::parse(
+        r#"{"version":1,"host":"archon","commands":[
+            {"name":"answer","args":"<n> <text>","about":"answer question n"}
+        ]}"#,
+    )
+    .unwrap();
+    let dot = app.theme.glyphs().dot;
+    let rows = rows_of(&app, &slash("answer"));
+    let row = rows
+        .iter()
+        .find(|r| r.contains("/answer"))
+        .expect("host row");
+    assert_eq!(
+        row.trim_end(),
+        format!("  /answer <n> <text>  answer question n {dot} archon")
+    );
+}

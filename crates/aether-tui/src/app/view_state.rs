@@ -15,7 +15,11 @@ pub(super) fn ticks_in(ms: u64) -> u64 {
 }
 
 impl App {
-    pub fn new(options: TuiOptions) -> Self {
+    pub fn new(mut options: TuiOptions) -> Self {
+        let modes = &options.view_modes.modes;
+        options
+            .host_commands
+            .refuse_taken(|name| modes.contains_key(name), "shadows a view mode");
         let theme = Theme::resolve(ThemeSpec {
             ascii: options.ascii,
             reduced_motion: options.reduced_motion,
