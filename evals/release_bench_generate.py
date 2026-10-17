@@ -76,7 +76,7 @@ def main(argv=None):
         if result["ok"]:
             specs.append(spec)
     if args.output:
-        args.output.write_text("".join(canonical_json(spec) + "\n" for spec in specs))
+        args.output.write_text("".join(canonical_json(spec) + "\n" for spec in specs), encoding="utf-8")
     print(f"{len(specs)} verified, {failures} rejected")
     return 1 if failures else 0
 

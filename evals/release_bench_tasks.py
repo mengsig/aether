@@ -97,7 +97,7 @@ def _write_files(root, files):
                 target.unlink()
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text)
+        target.write_text(text, encoding="utf-8")
 
 
 def _git(workspace, *args):
@@ -149,13 +149,20 @@ def write_set(directory, specs, manifest):
         raise ValueError("a frozen set holds each task once")
     directory.mkdir(parents=True, exist_ok=True)
     hashes = {spec["id"]: task_hash(spec) for spec in specs}
-    with open(directory / "tasks.jsonl", "w") as stream:
+    with open(directory / "tasks.jsonl", "w", encoding="utf-8") as stream:
         for spec in sorted(specs, key=lambda s: s["id"]):
             stream.write(canonical_json(spec) + "\n")
     full = {**manifest, "format": SET_FORMAT, "task_count": len(specs),
             "task_hashes": dict(sorted(hashes.items())), "set_sha256": set_hash(hashes)}
     (directory / "manifest.json").write_text(json.dumps(full, indent=2, sort_keys=True) + "\n")
     return full
+
+
+def _jsonl_lines(text):
+    """JSON Lines records split on "\n" only: str.splitlines also breaks on U+2028, U+0085 and form feeds,
+    which canonical JSON leaves unescaped inside strings."""
+    assert "\r" not in text, "a frozen set is written with plain newlines"
+    return text.split("\n")
 
 
 def load_set(directory):
@@ -165,7 +172,7 @@ def load_set(directory):
     if manifest.get("format") != SET_FORMAT:
         raise ValueError(f"{directory}: unsupported set format {manifest.get('format')!r}")
     specs = [validate_spec(json.loads(line)) for line in
-             (directory / "tasks.jsonl").read_text().splitlines() if line.strip()]
+             _jsonl_lines((directory / "tasks.jsonl").read_text(encoding="utf-8")) if line.strip()]
     hashes = {spec["id"]: task_hash(spec) for spec in specs}
     if hashes != manifest["task_hashes"]:
         changed = sorted(set(hashes.items()) ^ set(manifest["task_hashes"].items()))

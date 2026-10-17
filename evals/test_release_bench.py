@@ -244,6 +244,12 @@ class TaskSetTests(unittest.TestCase):
                 "prompt": "fix it", "files": {"a.py": "x = 1\n"}, "history": [], "tags": {}, "meta": {"k": 1},
                 "hidden": "import unittest\n", "checks": 2, "solution": {"a.py": "x = 2\n"}}
 
+    def test_line_separators_inside_strings_survive_a_round_trip(self):
+        spec = {**self._spec(), "files": {"a.py": "s = '\u2028\x85\x0c\x1c'\n"}}
+        with tempfile.TemporaryDirectory() as directory:
+            write_set(Path(directory, "v1"), [spec], {})
+            self.assertEqual(load_set(Path(directory, "v1"))[1][0]["files"], spec["files"])
+
     def test_frozen_set_round_trips_and_detects_tampering(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory, "v1")
@@ -253,7 +259,7 @@ class TaskSetTests(unittest.TestCase):
             self.assertEqual([spec["id"] for spec in specs], ["tiny-0", "tiny-1"])
             with self.assertRaises(FileExistsError):
                 write_set(target, [self._spec()], {})
-            text = (target / "tasks.jsonl").read_text().replace("x = 2", "x = 3")
+            text = (target / "tasks.jsonl").read_text(encoding="utf-8").replace("x = 2", "x = 3")
             (target / "tasks.jsonl").write_text(text)
             with self.assertRaises(ValueError):
                 load_set(target)

@@ -45,7 +45,7 @@ def run_adapter_trial(command, condition, task_text, workspace, timeout, trial_d
     """Run an external harness (the Archon arm) through the adapter contract in docs/release-bench.md."""
     assert Path(command).is_file() and os.access(command, os.X_OK), f"adapter is not executable: {command}"
     prompt_path, usage_path = Path(trial_dir, "prompt.txt"), Path(trial_dir, "adapter-usage.json")
-    prompt_path.write_text(task_text)
+    prompt_path.write_text(task_text, encoding="utf-8")
     env, stripped = sanitized_native_env()
     env.update(extra_env, BENCH_PROMPT_FILE=str(prompt_path), BENCH_WORKSPACE=str(workspace),
                BENCH_MODEL=condition["model"], BENCH_EFFORT=condition["effort"], BENCH_USAGE_FILE=str(usage_path))

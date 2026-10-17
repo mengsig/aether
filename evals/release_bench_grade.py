@@ -32,7 +32,7 @@ def grade(workspace, hidden_source, expected_checks, scratch_dir, timeout=GRADE_
     Path(scratch_dir).mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="grade-", dir=scratch_dir) as holder:
         hidden_path = Path(holder) / "hidden_checks.py"
-        hidden_path.write_text(hidden_source)
+        hidden_path.write_text(hidden_source, encoding="utf-8")
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONHASHSEED": "0",
                "HOME": holder, "TMPDIR": holder, "LC_ALL": "C.UTF-8", "TZ": "UTC"}
         command = [sys.executable, "-I", "-B", os.path.abspath(__file__), "--run", str(workspace), str(hidden_path)]
@@ -124,7 +124,7 @@ def run_hidden(workspace, hidden_path):
 def _declared_names(hidden_path):
     """Test method names read from the source, for a module that cannot be imported."""
     import ast
-    tree = ast.parse(Path(hidden_path).read_text())
+    tree = ast.parse(Path(hidden_path).read_text(encoding="utf-8"))
     return [f"{node.name}.{item.name}" for node in tree.body if isinstance(node, ast.ClassDef)
             for item in node.body if isinstance(item, ast.FunctionDef) and item.name.startswith("test")]
 
