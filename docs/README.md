@@ -56,6 +56,8 @@ show. Reports are never pooled across protocol versions. To run a comparison
 yourself, see the [evaluation tooling](../evals/README.md) and its
 [protocol](../evals/harness_bench_protocol.md).
 
+- [Release bench A/A check of set v1](release-bench-2026-10-18-aa.md): Aether
+  1.1.0 against itself on 92 tasks and six arms, 552 trials; the gate passes.
 - [Native versus Aether, six cases, second sitting](harness-bench-2026-10-11.md):
   Haiku 5.5 and GPT-6 Luna at medium effort, 72 trials on six held-out-graded
   tasks under protocol version 2, with paired statistics.

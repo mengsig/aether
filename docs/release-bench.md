@@ -161,11 +161,77 @@ At low effort both models are nearly deterministic on a given task: most tasks
 sit at 0 % or 100 % for a model, and few in between. The targets therefore
 apply to the set's mean, which gives a regression room to show on either side.
 
-Selecting on measured rates favors tasks that looked mid-range by chance, so a
-fresh run of the frozen set usually shows rates a little nearer the extremes
-than `calibration.md` reports. Recalibrate when the native pass rates in
+Selecting on measured rates favors tasks whose measured rate erred toward the
+target by chance, so a fresh run of the frozen set usually shows rates further
+from the targets than `calibration.md` reports. Recalibrate when the native pass rates in
 release runs drift well away from the targets, for example after a model
 update.
+
+### Set v1
+
+Set v1 was calibrated on 2026-10-17 from 143 candidates (11 seeds of each of
+the 13 templates). Each ran twice on both native arms: 572 trials, USD 6.33
+API-equivalent, 61 minutes at 8 trials at once, no infrastructure error.
+
+- **Luna** passed 149 of 286 trials. The chosen 92 tasks have a mean native
+  Luna pass rate of 30 %, on target.
+- **Haiku** passed 281 of 286 trials. Its only misses were one run each of
+  three `query` tasks and two `ranges` tasks. The chosen set's mean native
+  Haiku pass rate is 97 %, far above the 50 % target.
+
+No template brought native Haiku near 50 %. That held across long interacting
+specs, hidden edge cases, multi-defect audits, tracebacks, an exact JavaScript
+port and exact algorithms. In pilots, most Haiku misses traced back to an
+ambiguous doc or a check the doc did not cover. Those were fixed rather than
+kept. The one genuine pilot miss, a config rule, did not recur in calibration.
+This matches the earlier [harness measurements](benchmarks.md), where Haiku 5.5
+passed over 99 % of hidden checks on much larger tasks. Fair tasks of 5–15 tool calls with
+deterministic checks do not stretch Haiku 5.5 at low effort.
+
+**v1 therefore misses the Haiku calibration target.** Its Haiku tier still
+detects a candidate that loses tasks the last release solved, which is what a
+release gate needs. It has almost no room to show an improvement, and few tasks
+on which old and new can disagree. The Luna tier has room on both sides.
+
+Dropping the tasks native Haiku always passes leaves 5 of 143 candidates, too
+few for a set. Outcomes are nearly deterministic per task. A Haiku rate near
+50 % therefore needs about half the set to be tasks Haiku consistently fails yet
+a reference solves, such as competition-grade algorithm problems with
+documented input sizes and time limits. That is a new task family, left as a
+follow-up.
+
+### A/A check of v1
+
+`make bench-release` with Aether 1.1.0 as both `OLD` and `NEW` ran all 552
+trials (92 tasks × 6 arms, `JOBS=6`) in 101 minutes for USD 6.90
+API-equivalent, with no infrastructure error. Its verdict was **PASS** on both
+tiers.
+
+| Arm | Pass rate [95 % CI] | Check fraction | Cost / trial | Median time |
+| --- | --- | ---: | ---: | ---: |
+| `haiku/native` | 97 % [92 %, 100 %] | 99 % | USD 0.018 | 49 s |
+| `haiku/old` | 97 % [92 %, 100 %] | 99 % | USD 0.018 | 45 s |
+| `haiku/new` | 97 % [92 %, 100 %] | 99 % | USD 0.022 | 48 s |
+| `luna/native` | 45 % [35 %, 54 %] | 80 % | USD 0.004 | 25 s |
+| `luna/old` | 47 % [37 %, 58 %] | 84 % | USD 0.007 | 36 s |
+| `luna/new` | 49 % [39 %, 60 %] | 85 % | USD 0.007 | 35 s |
+
+- **Haiku gate:** pass rate +0.0 points [−3.3, +3.3]; McNemar 2 against 2,
+  p = 1.000. The cost ratio was ×1.22 [×1.05, ×1.41], so the report printed a
+  warning but no FAIL. Most of that gap comes from two `pricing` trials, whose
+  Haiku cost ranges from USD 0.03 to 0.21. Cost per trial is heavy-tailed, so
+  read a single cost warning with care.
+- **Luna gate:** pass rate +2.2 points [−8.7, +12.0]; McNemar 16 against 18,
+  p = 0.864; cost ×1.03 [×0.87, ×1.22].
+
+Luna passed about 47 % of v1 here, against 30 % in calibration. The trim toward
+30 % kept tasks that looked hard for Luna by chance (see above), and Luna's
+outcomes vary more between runs than Haiku's.
+
+The run took longer than an hour at `JOBS=6`. Other work on the host held it at
+the load gate for about 3 minutes in all, so `JOBS=8` or more shortens it when
+memory allows. Calibration ran at `JOBS=8` without trouble. The full report is
+[release-bench-2026-10-18-aa.md](release-bench-2026-10-18-aa.md).
 
 ## The Archon arm (adapter contract)
 
