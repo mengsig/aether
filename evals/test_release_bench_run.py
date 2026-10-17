@@ -1,12 +1,15 @@
 """Release bench execution without a model: scheduling, the pool, resume, spend caps and the Archon launcher."""
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from collections import Counter
+from contextlib import closing
 from pathlib import Path
 
 from release_bench_archon import archon_layout, run_archon_trial
@@ -22,7 +25,15 @@ from release_bench_spend import (
     stop_marked,
 )
 from release_bench_tasks import materialize
-from release_bench_trial import _fresh_path, _guard, trial_name
+from release_bench_trial import (
+    SHORT_TMP_MAX,
+    _fresh_path,
+    _guard,
+    _price_from_store,
+    _solve,
+    trial_env,
+    trial_name,
+)
 
 PRICE_TABLE = {"models": [
     {"model": {"provider": "claude-code", "model": "claude-haiku-5-5"},
@@ -175,6 +186,74 @@ class SpendTests(unittest.TestCase):
         finally:
             child.kill()
             child.wait()
+
+
+
+def write_store(data_dir, agents):
+    """An Aether store holding one cumulative usage event per named agent."""
+    data_dir.mkdir(parents=True)
+    with closing(sqlite3.connect(data_dir / "aether.db")) as db, db:
+        db.execute("CREATE TABLE events (seq INTEGER PRIMARY KEY, body TEXT)")
+        for seq, agent in enumerate(agents, 1):
+            total = {"input_tokens": 1000, "output_tokens": 100, "cache_read_tokens": 0, "cache_write_tokens": 0,
+                     "reasoning_tokens": 0, "cost_usd": 0.0, "cost_complete": False}
+            body = {"agent_id": agent, "kind": {"type": "agent.usage_updated", "total": total}}
+            db.execute("INSERT INTO events VALUES (?, ?)", (seq, json.dumps(body)))
+
+
+def unit(agent, cost, updates):
+    return {"agent_id": agent, "usage_updates": updates, "usage": {"api_equivalent_cost_usd": cost}}
+
+
+class TrialIsolationTests(unittest.TestCase):
+    CONTEXT = {"price_manifest": {"price_table": PRICE_TABLE}}
+    ARM = {"model": "haiku", "harness": "new"}
+
+    def test_a_deep_trial_directory_still_gets_a_socket_sized_tmpdir(self):
+        with tempfile.TemporaryDirectory() as root:
+            trial_dir = Path(root, *["nested-directory-name"] * 6)
+            env, other = trial_env(trial_dir, "m"), trial_env(Path(root, "other"), "n")
+            try:
+                socket = Path(env["TMPDIR"], "aether-codex-abcdef", "exec.sock")
+                self.assertLessEqual(len(env["TMPDIR"]), SHORT_TMP_MAX)
+                self.assertLess(len(str(socket).encode()), 108)
+                self.assertFalse(Path(env["TMPDIR"]).is_relative_to(trial_dir))
+                self.assertNotEqual(env["TMPDIR"], other["TMPDIR"])
+            finally:
+                os.rmdir(env["TMPDIR"])
+                os.rmdir(other["TMPDIR"])
+
+    def test_the_tmpdir_is_removed_when_the_harness_crashes(self):
+        seen = {}
+
+        def crash(*args):
+            seen["tmp"] = Path(args[-1]["TMPDIR"])
+            (seen["tmp"] / "exec.sock").write_text("x")
+            raise RuntimeError("harness crashed")
+        with tempfile.TemporaryDirectory() as root, unittest.mock.patch("release_bench_trial._solve_in", crash):
+            result = {}
+            with self.assertRaises(RuntimeError):
+                _solve(self.ARM, "task", root, Path(root, "trial"), self.CONTEXT, result, "m")
+        self.assertFalse(seen["tmp"].exists())
+        self.assertNotIn("tmpdir_cleanup_error", result)
+
+    def _row(self, root, units, store_agents):
+        write_store(Path(root, "data"), store_agents)
+        return {"trial_dir": root, "usage_report": {"units": units}}
+
+    def test_agents_that_never_reached_a_model_do_not_unprice_the_trial(self):
+        with tempfile.TemporaryDirectory() as root:
+            row = self._row(root, [unit("a", 0.0015, 3), unit("b", None, 0), unit("c", None, 0)], ["a"])
+            self.assertAlmostEqual(_price_from_store(row, self.ARM, self.CONTEXT), 0.0015)
+            self.assertIn("2 agent(s)", row["price_note"])
+
+    def test_an_unpriced_agent_with_usage_keeps_the_trial_unpriced(self):
+        for units, store in (([unit("a", 0.0015, 3), unit("b", None, 2)], ["a", "b"]),
+                             ([unit("a", 0.0015, 3), unit("b", None, 0)], ["a", "b"])):
+            with self.subTest(units=units), tempfile.TemporaryDirectory() as root:
+                row = self._row(root, units, store)
+                self.assertIsNone(_price_from_store(row, self.ARM, self.CONTEXT))
+                self.assertNotIn("price_note", row)
 
 
 FAKE_ARCHON = r'''
