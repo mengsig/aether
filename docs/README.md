@@ -10,6 +10,8 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
 - [Prerequisite details](prerequisites.md): optional programs and feature-specific setup.
 - [Configuration](configuration.md): common settings, defaults, and storage paths.
 - [Harness measurements](benchmarks.md): the detailed comparisons formerly in the README.
+- [Release bench](release-bench.md): `make bench-release`, the calibrated
+  pre-release comparison of the last release, the candidate and the native CLIs.
 - [Development](development.md): build, test, and CI entry points.
 - [Architecture](../ARCHITECTURE.md): ownership, execution paths, persistence,
   and where code lives.

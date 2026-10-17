@@ -50,6 +50,20 @@ answering from a naive free-text summary). Recall is exact match on the value.
 Results append to `evals/results/*.jsonl` with the raw answers so misses can
 be inspected.
 
+## Release bench
+
+`make bench-release OLD=path/to/last/aether` runs the frozen, calibrated task
+set in `bench/release-set/` on Haiku 5.5 and GPT-6 Luna, each natively, through
+the last release and through the candidate, and gates the candidate on its pass
+rate and cost. `make bench-calibrate` builds a new set from the generated
+templates in `release_bench_families/`. See
+[docs/release-bench.md](../docs/release-bench.md).
+
+```sh
+# No model calls: statistics, gate, pool, selection, frozen-set integrity.
+python3 -m unittest discover -s evals -p 'test_release_bench*.py'
+```
+
 ## Native harness and coordinator pilot
 
 `harness_bench.py` compares the installed native Claude Code/Codex CLIs with

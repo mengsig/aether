@@ -1,7 +1,8 @@
 # Harness measurements
 
 These measurements were moved from the README. They describe the named trials,
-not a guarantee of parity for other tasks, models, or CLI versions.
+not a guarantee of parity for other tasks, models, or CLI versions. The
+repeatable pre-release comparison is the [release bench](release-bench.md).
 
 ## Measured against the native harnesses
 
