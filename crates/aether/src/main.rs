@@ -171,6 +171,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             mouse: false,
             yolo: false,
             no_yolo: false,
+            host_commands: None,
         }) {
             Cmd::Tui {
                 agent,
@@ -178,6 +179,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 mouse,
                 yolo,
                 no_yolo,
+                host_commands,
             } => {
                 cli::tui(
                     endpoint,
@@ -191,6 +193,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                         reduced_motion,
                         plain,
                         ascii,
+                        host_commands,
                     },
                 )
                 .await

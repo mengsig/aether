@@ -86,6 +86,7 @@ pub async fn tui(
         reduced_motion,
         plain,
         ascii,
+        host_commands,
     } = display;
     let _guard = crate::logging::init("aether.log", false)?;
     let theme_flag = theme
@@ -213,6 +214,11 @@ pub async fn tui(
         reduced_motion,
         ascii,
         board_open: prefs.board_open,
+        // A missing or broken file warns in the TUI rather than stopping it.
+        host_commands: host_commands
+            .as_deref()
+            .map(aether_tui::commands::HostCommands::load)
+            .unwrap_or_default(),
         // Keys are ids this client wrote; a hand-edited bad key is not an agent to restore to.
         // Plain mode has no queue to show or edit, so it must not send these unseen.
         queued: if plain {

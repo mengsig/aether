@@ -64,6 +64,8 @@ pub struct TuiOptions {
     pub ascii: bool,
     /// Saved board state from `ui.toml`; `None` opens it on terminals ≥140 cols.
     pub board_open: Option<bool>,
+    /// Slash commands the host program behind the agents runs, from `--host-commands`.
+    pub host_commands: crate::commands::HostCommands,
     /// Tab-queued messages restored from `ui.toml`, per agent.
     pub queued: std::collections::BTreeMap<AgentId, Vec<String>>,
 }

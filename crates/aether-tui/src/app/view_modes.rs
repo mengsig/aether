@@ -39,12 +39,21 @@ impl App {
                 },
             )));
         }
+        let InputAction::Command(SlashCommand::Unknown(name)) = &parsed else {
+            return parsed;
+        };
         // Another program's vocabulary (Archon's `/answer 3 yes`) reaches a live
         // agent verbatim; with none to receive it, it stays an unknown command.
-        if let InputAction::Command(SlashCommand::Unknown(_)) = &parsed
-            && self.selected.is_some_and(|id| !self.is_terminal(id))
-        {
+        let live = self.selected.is_some_and(|id| !self.is_terminal(id));
+        if live {
             return InputAction::Message(text.trim().to_owned());
+        }
+        let host = &self.options.host_commands;
+        if host.find(name).is_some() {
+            return InputAction::Command(SlashCommand::Invalid(format!(
+                "/{name} is for {}; view a live agent to send it",
+                host.host
+            )));
         }
         parsed
     }

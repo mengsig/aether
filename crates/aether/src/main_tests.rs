@@ -462,6 +462,23 @@ mod mouse_options {
             );
         }
     }
+
+    #[test]
+    fn host_commands_is_an_optional_path_on_tui() {
+        let parsed = |flags: &[&str]| {
+            let args = Args::try_parse_from(["aether", "tui"].iter().chain(flags)).unwrap();
+            let Some(Cmd::Tui { host_commands, .. }) = args.command else {
+                panic!("TUI command")
+            };
+            host_commands
+        };
+        assert_eq!(parsed(&[]), None);
+        assert_eq!(
+            parsed(&["--host-commands", "/home/user/commands.json"]),
+            Some(std::path::PathBuf::from("/home/user/commands.json"))
+        );
+        assert!(Args::try_parse_from(["aether", "tui", "--host-commands"]).is_err());
+    }
 }
 
 #[cfg(test)]

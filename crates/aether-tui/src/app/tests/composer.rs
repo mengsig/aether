@@ -210,7 +210,7 @@ fn inbox_text_splits_into_user_bubbles_and_notes() {
     assert!(split_inbox_text("   ").is_empty());
 }
 
-fn sent_messages(effects: &[Effect]) -> Vec<(AgentId, String)> {
+pub(super) fn sent_messages(effects: &[Effect]) -> Vec<(AgentId, String)> {
     effects
         .iter()
         .filter_map(|effect| match effect {

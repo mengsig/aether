@@ -30,7 +30,14 @@ impl App {
         let show_archived = options.show_archived;
         let mouse = options.mouse;
         let startup_flash = options.startup_flash.clone();
-        let startup_error = options.startup_error.clone();
+        let startup_error = [
+            options.startup_error.as_deref(),
+            options.host_commands.warning.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let startup_error = (!startup_error.is_empty()).then(|| startup_error.join("; "));
         let theme_choice = options.theme.clone();
         let (keys, key_notices) = crate::keys::KeyBindings::load(&options.keys);
         let mut app = Self {

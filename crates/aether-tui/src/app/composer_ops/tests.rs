@@ -1244,6 +1244,7 @@ fn arrows_and_pages_scroll_an_overflowing_help_panel_not_the_transcript() {
         &app.theme,
         &app.keys,
         app.help_modes(),
+        &app.options.host_commands,
     );
     assert!(max > page, "the fixture must overflow by more than a page");
     let draft = app.input.text.clone();

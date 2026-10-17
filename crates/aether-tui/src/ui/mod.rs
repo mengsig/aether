@@ -167,6 +167,7 @@ fn render_panes(frame: &mut Frame, app: &App, cache: &mut ViewCache) {
                     theme,
                     &app.keys,
                     app.help_modes(),
+                    &app.options.host_commands,
                 );
                 cache.regions.view = popup;
                 cache.regions.transcript.height = cache

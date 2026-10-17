@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use crate::commands::{KEYS, KeyGroup};
+use crate::commands::{HostCommands, KEYS, KeyGroup};
 use crate::keys::KeyBindings;
 use crate::ui::bottom::popup::{area_above, fit_words};
 use crate::ui::theme::tokens::Theme;
@@ -206,8 +206,26 @@ fn lines_with_modes(
     theme: &Theme,
     keys: &KeyBindings,
     catalog: Option<&crate::view_modes::Catalog>,
+    host: &HostCommands,
 ) -> Vec<Line<'static>> {
     let mut lines = lines(width, theme, keys);
+    if !host.commands.is_empty() {
+        let mut rows = vec![
+            Line::default(),
+            Line::styled(format!("  {}", host.heading()), theme.title()),
+        ];
+        rows.extend(host.help_rows().map(|(usage, about)| {
+            Line::styled(
+                fit_words(
+                    &format!("  {usage}  {about}"),
+                    usize::from(width),
+                    theme.glyphs().ellipsis,
+                ),
+                theme.text(),
+            )
+        }));
+        lines.splice(lines.len() - FOOT_ROWS..lines.len() - FOOT_ROWS, rows);
+    }
     if let Some(catalog) = catalog {
         let mut modes = vec![Line::default(), Line::styled("  View modes", theme.title())];
         modes.extend(catalog.ordered().map(|mode| {
@@ -261,8 +279,9 @@ pub fn scroll_range(
     theme: &Theme,
     keys: &KeyBindings,
     catalog: Option<&crate::view_modes::Catalog>,
+    host: &HostCommands,
 ) -> (usize, usize) {
-    let total = lines_with_modes(composer.width, theme, keys, catalog).len();
+    let total = lines_with_modes(composer.width, theme, keys, catalog, host).len();
     let shown = usize::from(composer.y);
     if total <= shown {
         return (0, 0);
@@ -280,8 +299,9 @@ pub fn render(
     theme: &Theme,
     keys: &KeyBindings,
     catalog: Option<&crate::view_modes::Catalog>,
+    host: &HostCommands,
 ) -> Rect {
-    let mut lines = lines_with_modes(composer.width, theme, keys, catalog);
+    let mut lines = lines_with_modes(composer.width, theme, keys, catalog, host);
     let area = area_above(composer, u16::try_from(lines.len()).unwrap_or(u16::MAX));
     if area.is_empty() {
         return area;
@@ -379,7 +399,15 @@ mod tests {
         let composer = Rect::new(0, height - 3, width, 3);
         terminal
             .draw(|f| {
-                render(f, composer, scroll, theme, &KeyBindings::default(), None);
+                render(
+                    f,
+                    composer,
+                    scroll,
+                    theme,
+                    &KeyBindings::default(),
+                    None,
+                    &HostCommands::default(),
+                );
             })
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
@@ -532,7 +560,13 @@ mod tests {
         ] {
             let height = 16;
             let composer = Rect::new(0, height - 3, 80, 3);
-            let (page, max) = scroll_range(composer, &theme, &KeyBindings::default(), None);
+            let (page, max) = scroll_range(
+                composer,
+                &theme,
+                &KeyBindings::default(),
+                None,
+                &HostCommands::default(),
+            );
             assert!(max > 0 && page > 0, "the fixture must not fit");
             let full = lines(80, &theme, &KeyBindings::default());
             let last_key: String = full[full.len() - FOOT_ROWS - 1]
@@ -570,7 +604,8 @@ mod tests {
                 Rect::new(0, height - 3, 80, 3),
                 &theme,
                 &KeyBindings::default(),
-                None
+                None,
+                &HostCommands::default(),
             )
             .1,
             0
@@ -581,6 +616,26 @@ mod tests {
             rows[usize::from(height) - 4].starts_with("  ↓ 1 more · ↑↓"),
             "{rows:#?}"
         );
+    }
+
+    #[test]
+    fn help_lists_host_commands_under_their_host() {
+        let theme = Theme::resolve(ThemeSpec::default());
+        let host = HostCommands::parse(
+            r#"{"version":1,"host":"archon","commands":[{"name":"answer","args":"<n> <text>","about":"answer question n"}]}"#,
+        )
+        .unwrap();
+        let text = |host: &HostCommands| -> Vec<String> {
+            lines_with_modes(80, &theme, &KeyBindings::default(), None, host)
+                .iter()
+                .map(|line| line.to_string())
+                .collect()
+        };
+        let rows = text(&host);
+        let heading = rows.iter().position(|r| r == "  Host commands (archon)");
+        let heading = heading.expect("host heading");
+        assert_eq!(rows[heading + 1], "  /answer <n> <text>  answer question n");
+        assert_eq!(rows.len(), text(&HostCommands::default()).len() + 3);
     }
 
     #[test]

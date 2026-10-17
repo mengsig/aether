@@ -480,6 +480,13 @@ impl<W: Write> Printer<W> {
             for (command, description) in crate::commands::help_commands() {
                 self.line(&format!("{command} - {description}"))?;
             }
+            let host = &app.options.host_commands;
+            if !host.commands.is_empty() {
+                self.line(&host.heading())?;
+                for (usage, about) in host.help_rows() {
+                    self.line(&format!("{usage} - {about}"))?;
+                }
+            }
             self.line("View modes")?;
             for mode in app.view_modes.ordered() {
                 self.line(&format!(

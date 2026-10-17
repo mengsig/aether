@@ -261,6 +261,8 @@ pub struct TuiDisplayOptions {
     pub reduced_motion: bool,
     pub plain: bool,
     pub ascii: bool,
+    /// `--host-commands`: the host program's slash commands for the menu.
+    pub host_commands: Option<PathBuf>,
 }
 
 /// The protocol schema on stdout, stable enough to diff: the generator in

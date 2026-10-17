@@ -70,6 +70,11 @@ pub(crate) enum Cmd {
         yolo: bool,
         #[arg(long = "no-yolo", overrides_with = "yolo")]
         no_yolo: bool,
+        /// A JSON file of slash commands the host program behind the agents
+        /// runs (`{"version":1,"commands":[...]}`); the menu lists them and
+        /// sends them to the viewed agent as typed.
+        #[arg(long, value_name = "PATH")]
+        host_commands: Option<PathBuf>,
     },
     /// Run the daemon.
     Daemon {

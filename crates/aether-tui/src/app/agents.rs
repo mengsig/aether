@@ -390,10 +390,11 @@ impl App {
         let Some(name) = text.strip_prefix('/') else {
             return;
         };
-        if self.forwarded_command_noticed {
+        let name = name.split_whitespace().next().unwrap_or_default();
+        // The host announced this one, so it is no typo.
+        if self.forwarded_command_noticed || self.options.host_commands.find(name).is_some() {
             return;
         }
-        let name = name.split_whitespace().next().unwrap_or_default();
         self.forwarded_command_noticed = true;
         self.flash(format!(
             "/{name} is not an Aether command; sent to {}",

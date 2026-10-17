@@ -650,6 +650,25 @@ message, verbatim, so another program's commands (Archon's `/answer 3 yes`)
 reach the agent that reads them. The first one in a session says so. With no
 live agent in view it stays an unknown command and nothing is sent.
 
+### Host commands
+
+A program that runs Aether for its own agents can list its commands in the
+menu. `aether tui --host-commands <PATH>` reads a JSON file:
+
+```json
+{"version": 1, "host": "archon", "commands": [
+  {"name": "answer", "args": "<n> <text>", "about": "answer question n"}
+]}
+```
+
+Each command appears in the `/` popup after the built-ins, marked with the
+host's name (`· archon`; `· host` when `host` is left out), and in `/help`.
+Choosing or typing one sends the line, as typed, to the viewed agent; the
+TUI never runs it. A name is lowercase `[a-z][a-z0-9-]*` without the slash.
+An entry that is malformed, repeated or named like a built-in command or one
+of its aliases is left out, and a missing or unreadable file loads no
+commands; either way the TUI starts and says why once.
+
 ## View modes
 
 A view mode changes presentation of the viewed agent's retained transcript.

@@ -544,6 +544,7 @@ impl App {
             &self.theme,
             &self.keys,
             self.help_modes(),
+            &self.options.host_commands,
         );
         let scroll = self.bottom.shortcuts_scroll;
         let next = match key.code {
@@ -664,13 +665,11 @@ impl App {
                 }
             }
             Some(PopupItem::Command { name, usage, .. }) => {
-                let needs_arg = usage.starts_with('<');
-                if complete || needs_arg {
-                    self.input.set_text(format!("/{name} "));
-                    return PopupKeyOutcome::Consumed;
-                }
-                self.input.set_text(format!("/{name}"));
-                PopupKeyOutcome::SubmitCommand
+                self.accept_command(name, usage, complete)
+            }
+            // Submitted like any message; `parse_input` sends it to the agent verbatim.
+            Some(PopupItem::HostCommand { name, usage, .. }) => {
+                self.accept_command(&name, &usage, complete)
             }
             Some(PopupItem::File { path }) => {
                 self.replace_mention(&path);
@@ -689,6 +688,17 @@ impl App {
             None if complete => PopupKeyOutcome::Consumed,
             None => PopupKeyOutcome::Pass,
         }
+    }
+
+    /// Put `/name` in the draft: run it on Enter unless it needs an argument.
+    fn accept_command(&mut self, name: &str, usage: &str, complete: bool) -> PopupKeyOutcome {
+        let needs_arg = usage.starts_with('<');
+        if complete || needs_arg {
+            self.input.set_text(format!("/{name} "));
+            return PopupKeyOutcome::Consumed;
+        }
+        self.input.set_text(format!("/{name}"));
+        PopupKeyOutcome::SubmitCommand
     }
 
     /// Replace the `@query` token before the cursor with `text` and a space.

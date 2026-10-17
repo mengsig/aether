@@ -65,6 +65,12 @@ pub enum PopupItem {
         usage: &'static str,
         about: &'static str,
     },
+    /// A command the host behind the agent runs; `about` ends with its marker.
+    HostCommand {
+        name: String,
+        usage: String,
+        about: String,
+    },
     File {
         path: String,
     },
@@ -141,6 +147,7 @@ pub fn items(popup: &Popup, app: &App) -> Vec<PopupItem> {
                         .then_some(Match::Exact);
                     (item, alias.or_else(|| fuzzy_match(spec.name, query)))
                 })
+                .chain(host_items(app, query))
                 .chain(app.view_modes.modes.values().map(|mode| {
                     (
                         PopupItem::Mode {
@@ -183,6 +190,25 @@ pub fn items(popup: &Popup, app: &App) -> Vec<PopupItem> {
             .map(|text| PopupItem::History { text })
             .collect(),
     }
+}
+
+/// The host's commands after the built-ins, each marked with the host's name.
+fn host_items<'a>(
+    app: &'a App,
+    query: &'a str,
+) -> impl Iterator<Item = (PopupItem, Option<Match>)> + 'a {
+    let host = &app.options.host_commands;
+    let dot = app.theme.glyphs().dot;
+    host.commands.iter().map(move |command| {
+        let item = PopupItem::HostCommand {
+            name: command.name.clone(),
+            usage: command.args.clone(),
+            about: format!("{} {dot} {}", command.about, host.host)
+                .trim_start()
+                .to_owned(),
+        };
+        (item, fuzzy_match(&command.name, query))
+    })
 }
 
 /// Agents other than the viewed one: its children first, then the rest in
@@ -354,6 +380,7 @@ fn label(item: &PopupItem, ellipsis: &str) -> String {
     match item {
         PopupItem::Mode { name, .. } => format!("/{name}"),
         PopupItem::Command { name, .. } => format!("/{name}"),
+        PopupItem::HostCommand { name, .. } => format!("/{name}"),
         PopupItem::File { path } => path.clone(),
         PopupItem::Agent { name, .. } => format!("@{name}"),
         PopupItem::History { text } => first_line(text, ellipsis),
@@ -364,6 +391,7 @@ fn description(item: &PopupItem) -> String {
     match item {
         PopupItem::Mode { about, .. } => about.clone(),
         PopupItem::Command { about, .. } => (*about).to_owned(),
+        PopupItem::HostCommand { about, .. } => about.clone(),
         PopupItem::Agent { role, .. } => role.clone(),
         PopupItem::File { .. } | PopupItem::History { .. } => String::new(),
     }

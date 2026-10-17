@@ -235,6 +235,8 @@ fn shift_key(code: KeyCode) -> AppEvent {
 
 mod operator_commands;
 
+mod host_commands;
+
 mod preferences;
 
 mod archiving;
