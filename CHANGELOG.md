@@ -76,6 +76,13 @@ MCP tools. Protocol version 23.
   without queueing a message or starting a turn. With `context: digest` the
   agent's next turn sees it in a compact list. The TUI, `aether replay` and
   the phone's activity feed and conversation show notes.
+- **A host can add its slash commands to the TUI menu.** `aether tui
+  --host-commands <PATH>` reads a JSON file of commands, which appear in the
+  `/` popup and `/help` after the built-ins, marked with the host's name
+  (Archon's `/answer`, for example). Choosing one sends the line to the
+  viewed agent; the TUI never runs it. A malformed, repeated or built-in
+  named entry is left out, and an unreadable file loads none; the TUI starts
+  and says why once.
 - **`aether update` shows what a release asks of you.** Before downloading,
   it prints the target release's summary and the "Before updating" notes of
   every release it crosses, read from the `CHANGELOG.md` each release now
