@@ -1,0 +1,678 @@
+{
+  "calibration": {
+    "batching-0": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "batching-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "batching-7": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "billing-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "billing-7": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "billing-8": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "billing-9": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "bucket-0": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "bucket-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "bucket-10": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "bucket-2": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "bucket-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "bucket-7": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "config-0": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "config-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "config-2": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "config-4": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "config-6": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "cron-0": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "cron-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "cron-10": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "cron-2": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "cron-6": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "cron-8": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "diff-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "diff-10": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "diff-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "diff-6": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "diff-7": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "duration-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "duration-10": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "duration-2": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "duration-3": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "duration-4": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "duration-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "duration-6": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "duration-7": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "duration-8": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "duration-9": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "ledger-0": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "ledger-2": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "ledger-4": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "ledger-6": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "ledger-9": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "pricing-0": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "pricing-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "pricing-10": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "pricing-2": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "pricing-3": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "pricing-4": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "pricing-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "pricing-6": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "pricing-7": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "pricing-8": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "pricing-9": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-0": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-10": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-2": {
+      "haiku": 0.5,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-3": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-4": {
+      "haiku": 0.5,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-6": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-7": {
+      "haiku": 0.5,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-8": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "query-9": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "ranges-0": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "ranges-4": {
+      "haiku": 0.5,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "ranges-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "ranges-8": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "ranges-9": {
+      "haiku": 0.5,
+      "haiku_n": 2,
+      "luna": 1.0,
+      "luna_n": 2
+    },
+    "slug-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "slug-10": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "slug-2": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "slug-3": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "slug-4": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "slug-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "slug-6": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "slug-7": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "slug-8": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "slug-9": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "versions-0": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "versions-1": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "versions-10": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "versions-2": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "versions-3": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "versions-4": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "versions-5": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "versions-6": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "versions-7": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    },
+    "versions-8": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.5,
+      "luna_n": 2
+    },
+    "versions-9": {
+      "haiku": 1.0,
+      "haiku_n": 2,
+      "luna": 0.0,
+      "luna_n": 2
+    }
+  },
+  "calibration_config": {
+    "arms": [
+      "haiku/native",
+      "luna/native"
+    ],
+    "candidates": {
+      "count": 143,
+      "first_seed": 0,
+      "templates": null
+    },
+    "jobs": 8,
+    "price_binary_sha256": "6350ccf0072061b6a9f865d3b816368662530c521beea50d53764fbb9cb0c2ec",
+    "repeats": 2,
+    "seed": 0,
+    "timeout": 600
+  },
+  "format": 1,
+  "selection": {
+    "haiku_target": 0.5,
+    "luna_target": 0.3,
+    "max_size": 120,
+    "max_template_share": 0.2,
+    "min_repeats": 2,
+    "min_size": 80
+  },
+  "set_sha256": "a54f5849ef2685121354eeabaa465a9380a08c1025467f444fc7a0f1026d2e97",
+  "task_count": 92,
+  "task_hashes": {
+    "batching-0": "de643dc2dfa7af7daa836cb2d068f3cf059bb7319cb04e15297259bc840aa4cd",
+    "batching-5": "b5c275034917b6140f42a06d28103606e52b678feffd4937e58b9a0a5879823d",
+    "batching-7": "53a94c702e483f3ea0bc05e1c40b2e8f177bcf94381682823ca68c65806f871e",
+    "billing-1": "7bfa5f4592ee6fef7056c6785a21a4f49becf1f5228b90a5876818631188becb",
+    "billing-7": "d4efd1638934ece13be32b073dca70818e1a8e1458e555fd4588dd81644b32e4",
+    "billing-8": "8c8ba583b4c124ff482c8858ab49e0523f21dddf6b37390ccdabe2570a39d944",
+    "billing-9": "9db4c85d2e2bcdd1f4059aa970cd2bc9a7ff1c8435d2729fff2a5d238fdd6dda",
+    "bucket-0": "46f18b5f4654b2abd1c1d6710ad055f3475d875b54995a170bf77749b2bc3cdc",
+    "bucket-1": "fd505b6f01d8ca8c3956885d04ec846fbf3aad222024550aedc82d81cb691b30",
+    "bucket-10": "35ec013ff15be67fb8a86c372107c48e61f40fd62b11b65c8773128f8801e03c",
+    "bucket-2": "df1e2562deaa0d2fa96a0c0f971f45b2d995abbc707497086d1441b7a0f24deb",
+    "bucket-5": "f0b5711dd2081e4b6d0ffc3497646b20a640acc3b5c13947bd1bc47e1cb3bc7b",
+    "bucket-7": "d079af5a15be462ca2de0a86522ebebd3741e7a0c73fa9f3444d1754959be9e8",
+    "config-0": "ff23edc35270283f429055615f4f5b4d532e974c89926064171f2982c4d00bed",
+    "config-1": "b12f4e9a673556a1e1ca4d87249d5350617e3bf1850f6ebfa7b0752175a7369e",
+    "config-2": "e9cc3e5c76ebe50dc8af23463ebdeb044f4d6b25ecfdd16e9932a454fe5c037b",
+    "config-4": "fe95c08b4710a8ce8cdfae15db249317e3e9a70f5325056e20ee8d037562abc2",
+    "config-6": "3b7b0be36d1d0d92df7973427828a0530a6b0a044019df19510dad33cde17b00",
+    "cron-0": "e56e2bb55f687d244a7edcb110c7d3e7c5d48b313dd55a0e044f2f5f61ac4df3",
+    "cron-1": "de8a1b84e425886410f592ee19282ce964b1bd0652c74895296d047596db3d04",
+    "cron-10": "10f28fdfdd099cbde6c6b81ff448b9f3d5f6c699dc6047bbb8a68fd85b46ed03",
+    "cron-2": "8336edcee4a05ecf99b4e80c8072cd90dd38c3a32ee85b47365be2cc15ca611b",
+    "cron-6": "f49552f2f0c08d8f5c5c512550d892a07b8eef67ae91ef2ce749a3573d02cdd5",
+    "cron-8": "89fa12dfe5ecab422271df7d81a48e70b061741471cb0911471bf35c9fbe6599",
+    "diff-1": "22e06ac460d39511aee3897aaa8ce387c136e0f441236c211636f95cdb1cfc5b",
+    "diff-10": "ab54a104d68fcd0704ffac9a46acdeecbb56fc82b34af4654b46438b13cf7501",
+    "diff-5": "6f183d9671a5b3a4adc5c6091463c5534350ad155f91323a8cddfc48d537e604",
+    "diff-6": "66172eca0a2a01460fc0c0c6b3375b93ad4466feec7d9b96b77eb7f6dbb2acdc",
+    "diff-7": "91de01378b2e015aeaabb521b62b84eedb11baaa4a7a43eef73d584cfcbe1095",
+    "duration-1": "1a1e0919c522368e6cdd17b0124f440327bb333acc241eba82a88269ad03a0ad",
+    "duration-10": "de34edf2031e2d29c4a050960de0268b105744faaf6adb59db078e89882ab483",
+    "duration-2": "946492f91f2feeb1d76d428d6160b6e01c1f1dc54af89cf10e2a0795e4280505",
+    "duration-3": "91d57a654a57845c26183b52a85e192d89bea4a6c48180c1ba4fdd0d47a5d045",
+    "duration-4": "dd185bae13408a04e5e4834bb6a81972038fb54e37f43f5e5d79f14ea083f005",
+    "duration-5": "40529706a93e31b8833b9461e57b6a6f39302c7158ae586c68a709bccd85b4dd",
+    "duration-6": "c3f0a936f0b79d0913473b2feffd4c5004ec18b3e9692997e41b3ab923dbe48b",
+    "duration-7": "46bb03b2b0634fbd47ca2a9a304fd22311b5e46fc3ee95f680d292c9893fc176",
+    "duration-8": "92b232de12788b515e29525a1306a7c71e87deb95beea91e724577d7ee32b79b",
+    "duration-9": "d7ac556bd2d3283ca9d7dbd12e5f0a507bed72f69526c9f683022b4b1f405828",
+    "ledger-0": "aa47d91bf181731c4cd88c287c727e2394ae91cec67e5ebffc9235c89b0515f2",
+    "ledger-2": "f9f3264d3e34dff1b06ed247e5ebf3934d08322e032357a1460633c965e3ef5f",
+    "ledger-4": "29ef13931b470258178c6503af813ff41679a45830cc652e613e7ef4e7240246",
+    "ledger-6": "b7e4108b0e18ea17095e8a9cd475e60816d5e51bb9888796dc39622eb639a2a8",
+    "ledger-9": "9777319c4de08092a9006f196296269c8ec799e6732e8381ce04c639302f3297",
+    "pricing-0": "26d0b873361afa786eedb73b81ff708602fe85c042e85678304b21d8f5e733b2",
+    "pricing-1": "29147b122fb3b85283b0d01e9df103695f0a7f46b311031e2f7b841b6a49cf7d",
+    "pricing-10": "a7b57ead925e292960ea6db576d6dc60fcc7e942ab8f2c9535dca6e44a8bb049",
+    "pricing-2": "7d951e793be92462cf6e670c3b8b3144e3db2ea426d2b4eaf5ef7a13fcfa3287",
+    "pricing-3": "44e6e1e10f0d2ad0a769fa8516222942c15019e0b9b8ede680bb0a7349e8a404",
+    "pricing-4": "204975e7ee0e5f22ef0b4b84f53261e82120f9e64562c99bf3a3ae6bf4f5fdfe",
+    "pricing-5": "bd929b0265815c610753bb5118cbab628d9f670dc20e0d47a407fe3ccc5dc555",
+    "pricing-6": "e6f07564497ef402496f2100b4cee181762f18630e3bc31b8e5844762fbe4ecd",
+    "pricing-7": "a625d4a14b115595723431b97b86cbd820a6cc83c0b9e93f450e454d81c15f71",
+    "pricing-8": "3676146b09ac6ed236cd9148cf0e2ef574d3cc5587e5c2ffb0f6ae8f85e8396e",
+    "pricing-9": "e7b88f58d6274321ba412abdacbdf466795655fd700e1a07da8adcef34e623c1",
+    "query-0": "cfd86cca0010275c09dba673946bfb9c806a477d8c25d9fc51da48a546f3cb25",
+    "query-1": "eabb372ffeb60e7f82f160a1ea40a74524242fb0c4a020c53ef6ecc943d9bc2f",
+    "query-10": "227c63e839046e674062489a9c0529f92315d895b7f18e12c9b0fe90ca366448",
+    "query-2": "85612bcbf2c59a6ba374b6335f0da0c5c20409bd4325c8baa79831c8d4f0a031",
+    "query-3": "8d0f0f12e83fab8051bf17373a16f503ef9c841de702ea3ceafd43825b5c87b4",
+    "query-4": "7ed15d0e00f41b01baaa13670dd77d9243acc77e2a7dcb648caf95744dba2b76",
+    "query-5": "57c945da145c279089bd0f563f96b0e3f81cbee0b7a60f1c69980a8e49a4837b",
+    "query-6": "cd69f35c855710b558d34309e165a802361a4589df1861ff1ed51cdffb32037e",
+    "query-7": "d86120e0c5f60fc6ab943308dd645ff8e39d5cf8a68ea969392d7bb95c5b2d0f",
+    "query-8": "58a567aaded98b91c54e870b6340ad925ef0c9dba25bce4e568b1e493cb24621",
+    "query-9": "52d2413e58e201486aa3e9f658f2394c305fa14904ab5fda9ddeb7aed4f04000",
+    "ranges-0": "6c2df8b69b5ac6e590a2d8dcf848643d136826721bc2d5009588470d0307023c",
+    "ranges-4": "5c884acefaa186f19827d90759b0bb472814bbf32b5594f41f4495958f2aea68",
+    "ranges-5": "d7c58d6125c11f1488034a77d3fb0d9f3e21c425b6d34501785348afdc8ed14c",
+    "ranges-8": "8b1c1cbf0e607b1aeb10a68306c29624ff9f787e18fb488369bb10049743004c",
+    "ranges-9": "5be5e01097e8d528fb7b9930d040d91be23f6594c880f8e828160f0efc593434",
+    "slug-1": "287cc709c965f33efb33548831a237725c5ce708cc84fc0c8506686ad73becec",
+    "slug-10": "6af39a9ca0c5be22d809af7ea96fbf6d0fe29f8c9bdf43c918223efb01bbff4b",
+    "slug-2": "b86551d62964051b0d703f953fb35f8f141cb86173185e091331dbf92cdaad43",
+    "slug-3": "09a43010d52503c89910b0d9a3f9c7125e951fb4a3f23a1858dfaa4db2701302",
+    "slug-4": "a12d11aea954029e599789de7380de2a0f1e0e54ddb575f0b62612da5471aa83",
+    "slug-5": "c2b1f730091322ca322559ec724783f4e5f26512ef5f7238df74d4934def323f",
+    "slug-6": "7f761409c76de6dc098dea63295132f756e2972b23e1358bb50628033d6d4ac3",
+    "slug-7": "d57d9492f3f730d09eca22cedf84d4e980ac260c6dddfb547f585649524dfd49",
+    "slug-8": "57fe4a41d81be56e022f686f8af1e9989e03efa73e2cb4f12979bcfbde81f526",
+    "slug-9": "2cf99f4c2dead79c695acac1309ca55560874ad26ba1da0947c457641545810d",
+    "versions-0": "82a57b1e6868046a03f1f57001a8a949f1ef0cecbb87d8de560252ed9983b44d",
+    "versions-1": "3a43b5cb0cec8c69c82cf249b1c731d71aaa98667d43c858cfb833cf9b343e6e",
+    "versions-10": "94aad2f4daa89529d1a23d3d83017b3cd07e8361f2a832c4962207544e3813ef",
+    "versions-2": "4e73f1eec2b2fe603d3d98be8230c37855c0385834bba68b5eb8210fe5790794",
+    "versions-3": "7c8361741fab7cbd08838c00f7b5277edff2b05f1a4b86a6f20bf4fa0d6ee5be",
+    "versions-4": "38f53a190c48cde7f2e969f5ef23d03758a4e6db1a1191e4b3313821052767f3",
+    "versions-5": "27d13b146c4e320b6b52fcfe2617c31f90f3fa2c839f21a913d56b66ff418489",
+    "versions-6": "a2ebb1f74adecd2c54d6d49c34353add95bb9c90b02003c8cd654edfdc3477a5",
+    "versions-7": "202396d7f15868f99797e98b526d0f362579c3bf6f1a3fbc42e223aa0a5197d6",
+    "versions-8": "e8bea5321de9f2936fc636507db16ec3b4d840a97807956fd4b2f5f14f234aa7",
+    "versions-9": "bdbfeb23bd89f7f7e05297797aa35087e1e79f823462da1dfde97115af001d8d"
+  },
+  "version": "v1"
+}
