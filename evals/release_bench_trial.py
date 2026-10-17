@@ -117,23 +117,23 @@ def _price(row, arm, context):
 
 
 def _price_from_store(row, arm, context):
-    """The trial's cost from its Aether store, when every unpriced agent recorded no usage at all, else None.
+    """The trial's cost from its Aether store, when every unpriced unit recorded no tokens, else None.
 
-    An agent whose every invocation failed before a model call (a sandbox that did
-    not start, say) records no usage and spent nothing; it must not unprice the trial."""
+    A turn that failed before any model call (a sandbox that did not start, say) or
+    ended without one spent nothing; it must not unprice the trial."""
     units = (row.get("usage_report") or {}).get("units") or []
     unpriced = [unit for unit in units if unit["usage"].get("api_equivalent_cost_usd") is None]
-    if not unpriced or any(unit.get("usage_updates") != 0 for unit in unpriced):
+    if not unpriced or any(unit["usage"].get("total_tokens") for unit in unpriced):
         return None
     probe = AetherStoreProbe(Path(row["trial_dir"], "data"), price_of(context["price_manifest"]["price_table"],
                                                                        arm["model"]))
     cost = probe()
-    silent = {unit["agent_id"] for unit in unpriced}
-    priced = {unit["agent_id"] for unit in units} - silent
-    if cost is None or silent & set(probe.totals):
+    if cost is None:
         return None
-    assert cost >= 0 and set(probe.totals) == priced, "the store holds usage for exactly the priced agents"
-    row["price_note"] = f"{len(silent)} agent(s) recorded no usage and are priced at zero"
+    priced = {unit["agent_id"] for unit in units if unit["usage"].get("api_equivalent_cost_usd") is not None}
+    assert cost >= 0 and priced <= set(probe.totals), "every agent with priced usage is in the store"
+    assert set(probe.totals) <= {unit["agent_id"] for unit in units}, "the store holds no agent the report lacks"
+    row["price_note"] = f"{len(unpriced)} unit(s) recorded no tokens and are priced at zero"
     return cost
 
 

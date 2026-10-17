@@ -201,8 +201,8 @@ def write_store(data_dir, agents):
             db.execute("INSERT INTO events VALUES (?, ?)", (seq, json.dumps(body)))
 
 
-def unit(agent, cost, updates):
-    return {"agent_id": agent, "usage_updates": updates, "usage": {"api_equivalent_cost_usd": cost}}
+def unit(agent, cost, tokens):
+    return {"agent_id": agent, "usage": {"api_equivalent_cost_usd": cost, "total_tokens": tokens}}
 
 
 class TrialIsolationTests(unittest.TestCase):
@@ -241,20 +241,24 @@ class TrialIsolationTests(unittest.TestCase):
         write_store(Path(root, "data"), store_agents)
         return {"trial_dir": root, "usage_report": {"units": units}}
 
-    def test_agents_that_never_reached_a_model_do_not_unprice_the_trial(self):
+    def test_turns_that_never_reached_a_model_do_not_unprice_the_trial(self):
+        units = [unit("a", 0.0015, 1100), unit("a", None, 0), unit("b", None, None), unit("c", None, None)]
         with tempfile.TemporaryDirectory() as root:
-            row = self._row(root, [unit("a", 0.0015, 3), unit("b", None, 0), unit("c", None, 0)], ["a"])
+            row = self._row(root, units, ["a"])
             self.assertAlmostEqual(_price_from_store(row, self.ARM, self.CONTEXT), 0.0015)
-            self.assertIn("2 agent(s)", row["price_note"])
+            self.assertIn("3 unit(s)", row["price_note"])
 
-    def test_an_unpriced_agent_with_usage_keeps_the_trial_unpriced(self):
-        for units, store in (([unit("a", 0.0015, 3), unit("b", None, 2)], ["a", "b"]),
-                             ([unit("a", 0.0015, 3), unit("b", None, 0)], ["a", "b"])):
-            with self.subTest(units=units), tempfile.TemporaryDirectory() as root:
-                row = self._row(root, units, store)
-                self.assertIsNone(_price_from_store(row, self.ARM, self.CONTEXT))
-                self.assertNotIn("price_note", row)
+    def test_an_unpriced_unit_with_tokens_keeps_the_trial_unpriced(self):
+        with tempfile.TemporaryDirectory() as root:
+            row = self._row(root, [unit("a", 0.0015, 1100), unit("b", None, 1100)], ["a", "b"])
+            self.assertIsNone(_price_from_store(row, self.ARM, self.CONTEXT))
+            self.assertNotIn("price_note", row)
 
+    def test_a_store_agent_missing_from_the_report_is_a_bug(self):
+        with tempfile.TemporaryDirectory() as root:
+            row = self._row(root, [unit("a", 0.0015, 1100), unit("b", None, None)], ["a", "z"])
+            with self.assertRaises(AssertionError):
+                _price_from_store(row, self.ARM, self.CONTEXT)
 
 FAKE_ARCHON = r'''
 import json, os, shutil, sqlite3, subprocess, sys
