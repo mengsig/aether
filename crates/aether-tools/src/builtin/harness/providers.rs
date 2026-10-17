@@ -8,7 +8,7 @@ impl Tool for RefreshProviderUsage {
     fn descriptor(&self) -> ToolDescriptor {
         crate::builtin::descriptor(
             "refresh_provider_usage",
-            "Refresh stale quota headroom for one provider or every enabled provider. Only providers opted into usage_probe=turn may spend an engine turn. Fresh, in-flight and backed-off providers are skipped; results include per-provider status and errors. Does not choose a route.",
+            "Refresh stale quota headroom for one or all enabled providers. Only usage_probe=turn providers may spend a turn; fresh, in-flight and backed-off ones are skipped.",
             json!({
                 "type":"object",
                 "properties":{"provider":{"type":"string", "minLength":1}},

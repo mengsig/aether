@@ -151,6 +151,8 @@ async fn leaf_api_requests_remove_only_coordination_tools() {
         "list_tasks",
         "read_task",
         "list_models",
+        "provider_usage",
+        "refresh_provider_usage",
     ];
     for name in removed {
         assert!(root_tools.iter().any(|tool| tool.name == name), "{name}");

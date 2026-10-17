@@ -233,6 +233,8 @@ pub(crate) const LEAF_WITHHELD_TOOLS: &[&str] = &[
     "list_tasks",
     "read_task",
     "list_models",
+    "provider_usage",
+    "refresh_provider_usage",
 ];
 
 pub struct Runtime {

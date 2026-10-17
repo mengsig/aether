@@ -97,7 +97,7 @@ impl Tool for ProviderUsage {
     fn descriptor(&self) -> ToolDescriptor {
         harness_descriptor(
             "provider_usage",
-            "Read cached quota headroom, reset times and observation age for every enabled provider. Unknown usage is stale; this read-only tool never probes providers or chooses a route.",
+            "Read cached quota headroom, reset times and age for every enabled provider. Never probes.",
             json!({"type":"object", "properties":{}, "additionalProperties":false}),
         )
     }

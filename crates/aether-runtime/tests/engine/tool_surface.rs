@@ -64,6 +64,8 @@ async fn leaf_engine_tools_remove_only_coordination_tools() {
         "list_tasks",
         "read_task",
         "list_models",
+        "provider_usage",
+        "refresh_provider_usage",
     ];
     for name in removed {
         assert!(root.iter().any(|tool| tool.name == name), "{name}");
@@ -90,6 +92,12 @@ async fn leaf_engine_tools_remove_only_coordination_tools() {
     assert_eq!(
         serde_json::to_vec(&leaf).unwrap(),
         serde_json::to_vec(&expected).unwrap()
+    );
+    let bytes = |specs: &[aether_core::model::ToolSpec]| serde_json::to_vec(specs).unwrap().len();
+    let provider_bytes = bytes(&root) - bytes(&leaf);
+    assert!(
+        provider_bytes > 0,
+        "a leaf must carry less tool text than a parent"
     );
     let est = aether_context::estimate::TokenEstimator;
     println!(
