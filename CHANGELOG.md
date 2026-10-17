@@ -4,7 +4,12 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
-## Unreleased
+## 1.1.1
+
+Delegated swarms can now coordinate directly: workers find their siblings with
+`list_peers`, message them with a `send_message` that stays within the team,
+and read the recipe from `swarm_playbook`. The swarm tools are withheld from
+agents they cannot help, so a lone root agent's tool list barely grows.
 
 ### New
 
