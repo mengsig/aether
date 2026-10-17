@@ -117,7 +117,7 @@ check_python_suites() {
     step "CI scope tests (which changes skip the Rust checks)"
     python3 -m unittest discover -s scripts -p test_ci_scope.py
     step "release bench tests (statistics, gate, pool, selection; no model calls)"
-    python3 -m unittest discover -s evals -p test_release_bench.py
+    python3 -m unittest discover -s evals -p 'test_release_bench*.py'
     step "client generator layout tests"
     python3 -m unittest discover -s scripts -p 'test_generate_clients_*.py'
     step "python client tests"

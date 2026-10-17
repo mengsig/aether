@@ -1,19 +1,20 @@
-"""Choose the frozen release set from calibration runs of the native arms.
+"""Choose the frozen release set from calibration runs of the native arms, and judge it.
 
-A task is eligible when every repeat ran cleanly (no infra error) and it is
-not saturated: a task both models always solve, or neither ever solves, cannot
-show a harness change on either tier and only adds cost. Low-effort models are
-nearly deterministic on a given task, so most tasks sit at 0% or 100% per model;
-the set's mean pass rate, not each task's, is steered to the targets. Tasks
-nearest the Haiku target are preferred, a subset is chosen greedily so the mean
-Haiku pass rate lands near its target and Luna's near its own (lower) target,
-and no template dominates.
+A task is eligible when every repeat ran cleanly (no infra error), each model
+has enough counted repeats, and native Haiku passes it between 20% and 80% of
+the time: a task Haiku always or never solves cannot show a harness change on
+its tier. Within the eligible pool, tasks nearest the Haiku target are kept
+first, no template dominates, and the subset is trimmed so the mean Haiku and
+Luna pass rates approach their targets. `acceptance` then says whether the
+set meets the targets; an unaccepted set is frozen only on request, marked as
+such, and the runner refuses it without an explicit override.
 """
 import math
 from collections import Counter, defaultdict
 
 SELECTION_DEFAULTS = {"haiku_target": 0.5, "luna_target": 0.3, "min_size": 80, "max_size": 120,
-                      "max_template_share": 0.2, "min_repeats": 2}
+                      "max_template_share": 0.2, "min_repeats": 2, "haiku_band": (0.2, 0.8),
+                      "haiku_tolerance": 0.10, "luna_band": (0.25, 0.35)}
 
 
 def task_rates(records):
@@ -35,17 +36,37 @@ def task_rates(records):
     return rates
 
 
-def _saturated(row):
-    return row["haiku"] == row["luna"] and row["haiku"] in (0, 1)
-
-
 def eligible(rates, settings):
-    assert settings["min_repeats"] >= 1, "a rate needs at least one counted repeat"
+    """Tasks with clean, repeated runs whose native Haiku pass rate lies inside the band."""
+    low, high = settings["haiku_band"]
+    assert settings["min_repeats"] >= 1 and 0 <= low < high <= 1, "a usable band and repeat floor"
     chosen = sorted(task for task, row in rates.items()
                     if row["infra"] == 0 and row["haiku_n"] >= settings["min_repeats"]
-                    and row["luna_n"] >= settings["min_repeats"] and not _saturated(row))
+                    and row["luna_n"] >= settings["min_repeats"] and low <= row["haiku"] <= high)
     assert all(rates[task]["haiku"] is not None and rates[task]["luna"] is not None for task in chosen)
     return chosen
+
+
+def acceptance(rates, chosen, settings):
+    """{"accepted", "reasons", ...}: whether the chosen set meets its size and pass-rate targets."""
+    settings = {**SELECTION_DEFAULTS, **(settings or {})}
+    reasons = []
+    if len(chosen) < settings["min_size"]:
+        reasons.append(f"{len(chosen)} in-band tasks (< {settings['min_size']})")
+    result = {"tasks": len(chosen), "haiku_pass": None, "luna_pass": None}
+    if chosen:
+        result.update(summary(rates, chosen))
+        haiku, luna = result["haiku_pass"], result["luna_pass"]
+        if abs(haiku - settings["haiku_target"]) > settings["haiku_tolerance"]:
+            reasons.append(f"mean Haiku pass {haiku:.0%} is not within {settings['haiku_tolerance']:.0%} "
+                           f"of {settings['haiku_target']:.0%}")
+        low, high = settings["luna_band"]
+        if not low <= luna <= high:
+            reasons.append(f"mean Luna pass {luna:.0%} is outside {low:.0%}-{high:.0%}")
+    assert len(chosen) == len(set(chosen)), "a task is chosen once"
+    result.update(accepted=not reasons, reasons=reasons)
+    assert result["accepted"] == (not reasons) and (result["accepted"] <= bool(chosen)), "acceptance is consistent"
+    return result
 
 
 def _distance(rates, chosen, settings):
@@ -93,8 +114,8 @@ def render(rates, chosen, settings, header):
     settings = {**SELECTION_DEFAULTS, **(settings or {})}
     pool = eligible(rates, settings)
     lines = ["# Release-set calibration", "", *header, "",
-             f"Eligible: no infra error, at least {settings['min_repeats']} counted repeats per model, and not "
-             "saturated (solved every time by both native models, or never by either).", "",
+             f"Eligible: no infra error, at least {settings['min_repeats']} counted repeats per model, and a "
+             f"native Haiku pass rate from {settings['haiku_band'][0]:.0%} to {settings['haiku_band'][1]:.0%}.", "",
              "| Template | Candidates | Haiku pass | Luna pass | Eligible | Chosen |", "|---|---:|---:|---:|---:|---:|"]
     by_template = defaultdict(list)
     for task, row in rates.items():
@@ -110,6 +131,12 @@ def render(rates, chosen, settings, header):
                   f"**{result['haiku_pass']:.0%}**, mean native Luna pass rate **{result['luna_pass']:.0%}**."]
     else:
         lines += ["", "No task was eligible."]
+    verdict = acceptance(rates, chosen, settings)
+    lines += ["", "## Acceptance: " + ("**accepted**" if verdict["accepted"] else "**NOT accepted**"), ""]
+    lines += [f"- {reason}" for reason in verdict["reasons"]] or [
+        f"- Targets met: at least {settings['min_size']} tasks, Haiku mean within "
+        f"{settings['haiku_tolerance']:.0%} of {settings['haiku_target']:.0%}, Luna mean inside "
+        f"{settings['luna_band'][0]:.0%}-{settings['luna_band'][1]:.0%}."]
     return "\n".join(lines) + "\n"
 
 

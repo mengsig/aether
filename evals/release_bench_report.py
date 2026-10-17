@@ -33,18 +33,20 @@ def arm_summary(records, arm, seed=0):
     seconds = [item["seconds"] for item in good if item["seconds"] is not None]
     pass_ci = bootstrap(tasks, lambda rows: mean(row["pass"] for row in rows), seed=seed) if tasks else None
     return {"arm": arm, "trials": len(mine), "infra": len(mine) - len(good), "tasks": len(tasks),
+            "harness_failures": sum(1 for item in good if item.get("harness_failure")),
             "pass": pass_ci, "fraction": mean(row["fraction"] for row in tasks),
             "cost_mean": mean(costs), "cost_total": sum(costs), "unpriced": len(good) - len(costs),
             "median_seconds": statistics.median(seconds) if seconds else None}
 
 
-def _arm_table(summaries):
-    lines = ["| Arm | Trials | Infra errors | Pass rate [95% CI] | Check fraction | Cost / trial | Total cost "
-             "| Median time |", "|---|---:|---:|---|---:|---:|---:|---:|"]
+def _arm_table(summaries, planned):
+    lines = ["| Arm | Trials / planned | Infra errors | Harness failures | Pass rate [95% CI] | Check fraction "
+             "| Cost / trial | Total cost | Median time |", "|---|---:|---:|---:|---|---:|---:|---:|---:|"]
     for row in summaries:
         unpriced = f" ({row['unpriced']} unpriced)" if row["unpriced"] else ""
         seconds = "–" if row["median_seconds"] is None else f"{row['median_seconds']:.0f}s"
-        lines.append(f"| {row['arm']} | {row['trials']} | {row['infra']} | {_interval(row['pass'], _pct)} "
+        lines.append(f"| {row['arm']} | {row['trials']} / {planned} | {row['infra']} | {row['harness_failures']} "
+                     f"| {_interval(row['pass'], _pct)} "
                      f"| {_pct(row['fraction'])} | {_usd(row['cost_mean'])} | {_usd(row['cost_total'])}{unpriced} "
                      f"| {seconds} |")
     return lines
@@ -61,8 +63,9 @@ def _comparison_lines(label, result):
 def _gate_lines(model, verdict):
     lines = [f"### {model}: **{verdict['verdict']}**", ""]
     lines += _comparison_lines("candidate vs old", verdict["comparison"])
-    lines += [f"- Infra error rate (old + candidate): {verdict['infra_rate']:.1%}"]
-    lines += [f"- Fails because: {reason}" for reason in verdict["reasons"]]
+    lines += ["- Infra error rate: " + ", ".join(f"{arm} {rate:.1%}" for arm, rate in verdict["infra_rate"].items())]
+    label = "Fails because" if verdict["verdict"] == "FAIL" else "Inconclusive because"
+    lines += [f"- {label}: {reason}" for reason in verdict["reasons"]]
     lines += [f"- Warning: {warning}" for warning in verdict["warnings"]]
     return lines
 
@@ -82,11 +85,14 @@ def _family_table(records, arms):
     return lines
 
 
-def gate_verdicts(records, models, settings, seed=0):
-    """{model: gate result} for every model tier with both an old and a new arm."""
-    arms = {item["arm"] for item in records}
-    return {model: gate(records, f"{model}/old", f"{model}/new", settings, seed)
-            for model in models if {f"{model}/old", f"{model}/new"} <= arms}
+def gate_verdicts(records, models, settings, expected, seed=0):
+    """{model: gate result} for every model tier the plan gave both an old and a new arm.
+
+    A tier that was planned but never ran is judged on no records, so it is INCONCLUSIVE, not left out."""
+    planned = set(expected["arms"])
+    assert {item["arm"] for item in records} <= planned, "every record belongs to a planned arm"
+    return {model: gate(records, f"{model}/old", f"{model}/new", settings, seed, expected)
+            for model in models if {f"{model}/old", f"{model}/new"} <= planned}
 
 
 def overall_verdict(verdicts):
@@ -98,14 +104,15 @@ def overall_verdict(verdicts):
     return "PASS" if outcomes == {"PASS"} else "INCONCLUSIVE"
 
 
-def render(records, header, models, settings, seed=0):
-    """The full report; `header` is a list of "- key: value" provenance lines."""
+def render(records, header, models, settings, expected, seed=0):
+    """The full report; `header` is a list of "- key: value" provenance lines, `expected` the planned matrix."""
     assert records, "a report needs at least one trial"
-    arms = sorted({item["arm"] for item in records})
-    verdicts = gate_verdicts(records, models, settings, seed)
+    arms = sorted(expected["arms"])
+    verdicts = gate_verdicts(records, models, settings, expected, seed)
     overall = overall_verdict(verdicts)
-    lines = [f"# Release bench: {overall}", "", *header, "",
-             "## Arms", "", *_arm_table([arm_summary(records, arm, seed) for arm in arms]), "", "## Release gate", ""]
+    planned = len(expected["tasks"]) * expected["repeats"]
+    lines = [f"# Release bench: {overall}", "", *header, "", "## Arms", "",
+             *_arm_table([arm_summary(records, arm, seed) for arm in arms], planned), "", "## Release gate", ""]
     if not verdicts:
         lines += ["No model tier ran both an old and a candidate arm, so there is no verdict.", ""]
     for model, verdict in verdicts.items():

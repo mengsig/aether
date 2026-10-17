@@ -1,5 +1,4 @@
 """Release bench: statistics, gate, scheduling, budget, selection and frozen sets, without a model."""
-import json
 import random
 import tempfile
 import unittest
@@ -10,15 +9,15 @@ from harness_bench_treatments import native_command
 from release_bench_arms import build_arm, parse_arms
 from release_bench_calibrate import (
     SELECTION_DEFAULTS,
+    acceptance,
     eligible,
     select,
     summary,
     task_rates,
 )
-from release_bench_pool import Gates, read_results, run_pool, schedule
-from release_bench_report import overall_verdict
+from release_bench_report import gate_verdicts, overall_verdict
 from release_bench_tasks import load_set, validate_spec, write_set
-from release_bench_trial import infra_error, record
+from release_bench_trial import harness_failure, infra_error, record
 
 
 def rec(task, arm, passed, cost=0.01, repeat=0, infra=None, fraction=None, template="t"):
@@ -29,11 +28,16 @@ def rec(task, arm, passed, cost=0.01, repeat=0, infra=None, fraction=None, templ
             "seconds": 1}
 
 
-def paired(outcomes_old, outcomes_new, cost_old=0.01, cost_new=0.01):
+def paired(outcomes_old, outcomes_new, cost_old=0.01, cost_new=0.01, repeat=0):
     records = []
     for index, (old, new) in enumerate(zip(outcomes_old, outcomes_new)):
-        records += [rec(f"task-{index}", "haiku/old", old, cost_old), rec(f"task-{index}", "haiku/new", new, cost_new)]
+        records += [rec(f"task-{index}", "haiku/old", old, cost_old, repeat),
+                    rec(f"task-{index}", "haiku/new", new, cost_new, repeat)]
     return records
+
+
+def plan(tasks, repeats=1, arms=("haiku/old", "haiku/new")):
+    return {"arms": list(arms), "tasks": [f"task-{index}" for index in range(tasks)], "repeats": repeats}
 
 
 class McNemarAndBootstrapTests(unittest.TestCase):
@@ -66,11 +70,11 @@ class McNemarAndBootstrapTests(unittest.TestCase):
     def test_repeats_average_per_task_and_infra_errors_are_excluded(self):
         records = [rec("a", "haiku/old", True, repeat=0), rec("a", "haiku/old", False, repeat=1),
                    rec("a", "haiku/old", False, repeat=2, infra="harness_error: x"),
-                   rec("a", "haiku/old", True, cost=None, repeat=3)]
+                   rec("a", "haiku/old", True, cost=0.03, repeat=3)]
         row = stats.per_task(records, "haiku/old")["a"]
         self.assertAlmostEqual(row["pass"], 2 / 3)
         self.assertEqual(row["n"], 3)
-        self.assertAlmostEqual(row["cost"], 0.01)
+        self.assertAlmostEqual(row["cost"], 0.05 / 3)
 
 
 class GateTests(unittest.TestCase):
@@ -118,7 +122,92 @@ class GateTests(unittest.TestCase):
         broken += [rec(f"x-{index}", "haiku/new", False, infra="harness_error: x") for index in range(10)]
         verdict = stats.gate(broken, "haiku/old", "haiku/new")
         self.assertEqual(verdict["verdict"], "INCONCLUSIVE")
-        self.assertIn("infra", verdict["reasons"][0])
+        self.assertIn("haiku/new infra", verdict["reasons"][0])
+        self.assertEqual(verdict["infra_rate"]["haiku/old"], 0)
+
+    def test_outages_on_one_arm_alone_are_inconclusive(self):
+        # 3 of 40 trials overall stays under 10%, but 3 of 20 on the candidate does not.
+        records = paired([True] * 20, [True] * 20)
+        for item in records[1:7:2]:
+            item["infra_error"] = "provider: 529"
+        self.assertEqual(stats.gate(records, "haiku/old", "haiku/new")["verdict"], "INCONCLUSIVE")
+
+    def test_candidate_only_crashes_fail_the_gate(self):
+        old = [True] * 40
+        new = [index % 4 != 0 for index in range(40)]
+        records = paired(old, new)
+        for item in records:
+            if item["arm"] == "haiku/new" and not item["passed"]:
+                item["harness_failure"] = "no model output: exit 101"
+        verdict = stats.gate(records, "haiku/old", "haiku/new", expected=plan(40))
+        self.assertEqual(verdict["verdict"], "FAIL", verdict["reasons"])
+        self.assertEqual(verdict["infra_rate"]["haiku/new"], 0)
+
+
+class IncompleteMatrixTests(unittest.TestCase):
+    OLD, NEW = "haiku/old", "haiku/new"
+
+    def test_a_complete_matrix_passes(self):
+        records = paired([True, False] * 15, [True, False] * 15)
+        self.assertEqual(stats.gate(records, self.OLD, self.NEW, expected=plan(30))["verdict"], "PASS")
+
+    def test_a_budget_stop_is_inconclusive(self):
+        records = paired([True, False] * 15, [True, False] * 15)[:-6]
+        verdict = stats.gate(records, self.OLD, self.NEW, expected=plan(30))
+        self.assertEqual(verdict["verdict"], "INCONCLUSIVE")
+        self.assertIn("haiku/old ran 27 of 30", " ".join(verdict["reasons"]))
+
+    def test_a_partial_repeat_is_inconclusive(self):
+        records = paired([True, False] * 15, [True, False] * 15) + paired([True] * 10, [True] * 10, repeat=1)
+        verdict = stats.gate(records, self.OLD, self.NEW, expected=plan(30, repeats=2))
+        self.assertEqual(verdict["verdict"], "INCONCLUSIVE")
+        self.assertIn("40 of 60", verdict["reasons"][0])
+
+    def test_a_missing_tier_is_inconclusive_overall(self):
+        records = paired([True, False] * 15, [True, False] * 15)
+        expected = plan(30, arms=("haiku/old", "haiku/new", "luna/old", "luna/new"))
+        verdicts = gate_verdicts(records, ["haiku", "luna"], {}, expected)
+        self.assertEqual(verdicts["haiku"]["verdict"], "PASS")
+        self.assertEqual(verdicts["luna"]["verdict"], "INCONCLUSIVE")
+        self.assertEqual(overall_verdict(verdicts), "INCONCLUSIVE")
+
+    def test_an_incomplete_failure_fails_only_under_the_sequential_plan(self):
+        records = paired([True] * 30, [False] * 30)
+        settings = {"confidence": stats.sequential_confidence(0.95)}
+        verdict = stats.gate(records, self.OLD, self.NEW, settings, expected=plan(60))
+        self.assertEqual(verdict["verdict"], "INCONCLUSIVE")
+        self.assertIn("would fail", verdict["warnings"][0])
+        settings["sequential"] = True
+        self.assertEqual(stats.gate(records, self.OLD, self.NEW, settings, expected=plan(60))["verdict"], "FAIL")
+
+
+class PricingCoverageTests(unittest.TestCase):
+    OLD, NEW = "haiku/old", "haiku/new"
+
+    def test_no_prices_at_all_block_the_pass(self):
+        records = paired([True] * 30, [True] * 30, cost_old=None, cost_new=None)
+        verdict = stats.gate(records, self.OLD, self.NEW, expected=plan(30))
+        self.assertEqual(verdict["verdict"], "INCONCLUSIVE")
+        self.assertIn("cost could not be compared", verdict["reasons"][0])
+
+    def test_prices_missing_on_one_arm_block_the_pass(self):
+        records = paired([True] * 30, [True] * 30)
+        for item in records:
+            if item["arm"] == self.NEW and item["task"] in {f"task-{index}" for index in range(5)}:
+                item["cost_usd"] = None
+        verdict = stats.gate(records, self.OLD, self.NEW, expected=plan(30))
+        self.assertEqual(verdict["verdict"], "INCONCLUSIVE")
+        self.assertIn("83% of paired tasks are priced", verdict["reasons"][0])
+
+    def test_an_unpriced_repeat_unprices_its_task(self):
+        records = [rec("a", self.OLD, True, cost=0.01, repeat=0), rec("a", self.OLD, True, cost=None, repeat=1)]
+        self.assertIsNone(stats.per_task(records, self.OLD)["a"]["cost"])
+
+    def test_missing_prices_keep_an_established_fail(self):
+        records = paired([True] * 30, [False] * 30, cost_old=None, cost_new=None)
+        verdict = stats.gate(records, self.OLD, self.NEW, expected=plan(30))
+        self.assertEqual(verdict["verdict"], "FAIL")
+        self.assertIn("pass rate", verdict["reasons"][0])
 
     def test_interim_looks_count_once_and_split_the_error_rate(self):
         self.assertAlmostEqual(stats.sequential_confidence(0.95), 1 - 0.05 / 3)
@@ -130,60 +219,6 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(stats.interim_fail(records, "haiku/old", "haiku/new", settings))
         failing = paired([True] * 30, [False] * 30)
         self.assertEqual(stats.interim_fail(failing, "haiku/old", "haiku/new", settings)["verdict"], "FAIL")
-
-
-class ScheduleAndPoolTests(unittest.TestCase):
-    def test_schedule_keeps_a_task_s_arms_together_and_rotates_them(self):
-        arms = ["haiku/native", "haiku/old", "haiku/new"]
-        order = schedule(["a", "b", "c", "d"], arms, 2, seed=1)
-        self.assertEqual(len(order), 24)
-        self.assertEqual(len(set(order)), 24)
-        blocks = [order[index:index + 3] for index in range(0, 24, 3)]
-        self.assertTrue(all(len({(task, repeat) for task, repeat, _ in block}) == 1 for block in blocks))
-        self.assertGreater(len({block[0][2] for block in blocks}), 1)
-
-    def _pool(self, directory, order, budget=10.0, cost=0.01):
-        def run_one(triple):
-            task, repeat, arm = triple
-            return {**rec(task, arm, True, cost=cost, repeat=repeat), "checks_passed": 1, "checks_total": 1}
-        gates = Gates(load_max=10_000, mem_min_gb=0, budget_usd=budget, unpriced_usd={"haiku": 0.5, "luna": 0.4})
-        return run_pool(order, run_one, lambda triple: triple[2].split("/")[0], jobs=3, gates=gates,
-                        results_path=str(Path(directory, "results.jsonl")), log=lambda _line: None)
-
-    def test_pool_records_every_trial_and_resumes(self):
-        order = schedule(["a", "b"], ["haiku/old", "haiku/new"], 2, seed=0)
-        with tempfile.TemporaryDirectory() as directory:
-            records, stopped = self._pool(directory, order[:5])
-            self.assertIsNone(stopped)
-            self.assertEqual(len(records), 5)
-            records, _ = self._pool(directory, order)
-            self.assertEqual(len(records), 8)
-            self.assertEqual(len(read_results(str(Path(directory, "results.jsonl")))), 8)
-
-    def test_pool_stops_admitting_at_the_budget(self):
-        order = schedule([f"t{index}" for index in range(20)], ["haiku/old"], 1, seed=0)
-        with tempfile.TemporaryDirectory() as directory:
-            records, stopped = self._pool(directory, order, budget=1.2, cost=0.3)
-        self.assertIn("budget", stopped)
-        self.assertLessEqual(sum(item["cost_usd"] for item in records), 1.2 + 0.5)
-        self.assertGreaterEqual(len(records), 2)
-
-    def test_torn_results_line_is_refused(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory, "results.jsonl")
-            path.write_text(json.dumps(rec("a", "haiku/old", True)) + "\n{\"task\": \n")
-            with self.assertRaises(ValueError):
-                read_results(str(path))
-
-    def test_budget_reservations_settle_to_actual_spend(self):
-        gates = Gates(load_max=1, mem_min_gb=0, budget_usd=1.0, unpriced_usd={"haiku": 0.5, "luna": 0.4})
-        self.assertTrue(gates.reserve("haiku"))
-        self.assertTrue(gates.reserve("haiku"))
-        self.assertFalse(gates.reserve("luna"))
-        gates.settle("haiku", 0.05)
-        gates.settle("haiku", None)
-        self.assertAlmostEqual(gates.spent_usd, 0.55)
-        self.assertAlmostEqual(gates.reserved_usd, 0.0)
 
 
 class SelectionTests(unittest.TestCase):
@@ -211,13 +246,27 @@ class SelectionTests(unittest.TestCase):
 
     def test_infra_errors_make_a_task_ineligible(self):
         records = self._records({"x-0": ("x", 0.5, 0.25)})
-        records[0]["infra_error"] = "harness_error: boom"
-        self.assertEqual(eligible(task_rates(records), {"min_repeats": 3}), [])
+        records[0]["infra_error"] = "provider: 529"
+        self.assertEqual(eligible(task_rates(records), {**SELECTION_DEFAULTS, "min_repeats": 3}), [])
 
-    def test_saturated_tasks_are_ineligible(self):
+    def test_only_tasks_inside_the_haiku_band_are_eligible(self):
         measured = task_rates(self._records({"all-0": ("a", 1, 1), "none-0": ("a", 0, 0), "split-0": ("a", 1, 0),
-                                             "mid-0": ("a", 0.5, 0.5)}))
-        self.assertEqual(eligible(measured, SELECTION_DEFAULTS), ["mid-0", "split-0"])
+                                             "mid-0": ("a", 0.5, 0.5), "low-0": ("a", 0.25, 0),
+                                             "high-0": ("a", 0.75, 1)}))
+        self.assertEqual(eligible(measured, SELECTION_DEFAULTS), ["high-0", "low-0", "mid-0"])
+
+    def test_acceptance_needs_the_size_and_both_targets(self):
+        rates = {f"t-{index}": ("t", 0.5, 0.5 if index == 0 else 0.25) for index in range(8)}
+        measured = task_rates(self._records(rates))
+        chosen = sorted(rates)
+        self.assertTrue(acceptance(measured, chosen, {"min_size": 8})["accepted"])
+        small = acceptance(measured, chosen, {"min_size": 9})
+        self.assertFalse(small["accepted"])
+        self.assertIn("8 in-band tasks", small["reasons"][0])
+        easy = task_rates(self._records({task: ("t", 0.75, 0.75) for task in rates}))
+        verdict = acceptance(easy, chosen, {"min_size": 8})
+        self.assertEqual(len(verdict["reasons"]), 2)
+        self.assertFalse(acceptance(measured, [], {})["accepted"])
 
 
 class ArmTests(unittest.TestCase):
@@ -279,19 +328,38 @@ class TrialRecordTests(unittest.TestCase):
         return {"trial_dir": "/x", "started_at": "2026-01-01T00:00:00Z", "workflow_status": "completed",
                 "usage_report": {"usage": {"output_tokens": 10}}, **extra}
 
-    def test_a_pass_needs_every_check_and_no_infra_error(self):
-        grade = {"passed": 4, "total": 4, "failed": [], "error": None}
-        self.assertTrue(record(self.SPEC, self.ARM, 0, self._row(), grade, 0.01, 100)["passed"])
-        broken = record(self.SPEC, self.ARM, 0, self._row(harness_error="boom"), grade, None, None)
+    GRADE = {"passed": 4, "total": 4, "failed": [], "error": None}
+
+    def test_a_pass_needs_every_check_and_no_failure(self):
+        self.assertTrue(record(self.SPEC, self.ARM, 0, self._row(), self.GRADE, 0.01, 100)["passed"])
+        broken = record(self.SPEC, self.ARM, 0, self._row(bench_error="OSError: disk"), self.GRADE, None, None)
         self.assertFalse(broken["passed"])
-        self.assertIn("harness_error", broken["infra_error"])
-        partial = record(self.SPEC, self.ARM, 0, self._row(), {**grade, "passed": 3}, 0.01, 100)
+        self.assertIn("bench", broken["infra_error"])
+        partial = record(self.SPEC, self.ARM, 0, self._row(), {**self.GRADE, "passed": 3}, 0.01, 100)
         self.assertEqual((partial["passed"], partial["fraction"]), (False, 0.75))
 
-    def test_a_failed_workflow_without_model_output_is_infra(self):
-        row = self._row(workflow_status="failed", usage_report={"usage": {"output_tokens": 0}}, exit_code=1)
-        self.assertIn("no model output", infra_error(row))
-        self.assertIsNone(infra_error(self._row(workflow_status="failed")))
+    def test_a_candidate_crash_is_a_counted_failure(self):
+        row = self._row(workflow_status="failed", usage_report={"usage": {"output_tokens": 0}}, exit_code=101,
+                        workflow_error="thread 'main' panicked")
+        self.assertIsNone(infra_error(row, "new"))
+        self.assertIn("no model output", harness_failure(row, "new"))
+        crashed = record(self.SPEC, self.ARM, 0, row, self.GRADE, 0.0, 0)
+        self.assertEqual((crashed["passed"], crashed["infra_error"]), (False, None))
+        self.assertIn("cleanup_error", harness_failure(self._row(cleanup_error="socket left"), "old"))
+
+    def test_only_outages_and_native_cli_failures_are_infra(self):
+        silent = self._row(workflow_status="failed", usage_report={"usage": {"output_tokens": 0}}, exit_code=1)
+        self.assertIn("no model output", infra_error(silent, "native"))
+        self.assertIsNone(infra_error(self._row(workflow_status="failed"), "native"))
+        outage = self._row(workflow_status="failed", workflow_error="HTTP 529: Overloaded")
+        self.assertIn("provider", infra_error(outage, "new"))
+        self.assertIsNone(harness_failure(outage, "native"))
+
+    def test_a_spend_stop_is_a_harness_failure_on_every_arm(self):
+        row = self._row(spend_stop="spend $0.51 reached the trial allowance $0.50")
+        self.assertIsNone(infra_error(row, "native"))
+        self.assertIn("spend guard", harness_failure(row, "native"))
+        self.assertFalse(record(self.SPEC, self.ARM, 0, row, self.GRADE, 0.52, 9)["passed"])
 
 
 if __name__ == "__main__":

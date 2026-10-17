@@ -344,8 +344,17 @@ prerelease is in `*`, `1.x` or `>=1.0.0`. Bounds such as `<2.0.0-0` produced
 from partial versions, tildes and carets do not count as written.""",
     False: """A version with a prerelease is compared like any other version: it is
 in an alternative when it satisfies every comparator. So `1.5.0-beta` is in
-`>=1.0.0 <2.0.0` and in `1.x`, while `2.0.0-beta` is in neither (`1.x` is
-`<2.0.0-0`).""",
+`>=1.0.0 <2.0.0` and in `1.x`. `2.0.0-beta` is in `>=1.0.0 <2.0.0` too (it
+is lower than `2.0.0`), but not in `1.x` or `>=1.0.0 <2.0.0-0`: the bound
+`<2.0.0-0` excludes every prerelease of 2.0.0.""",
+}
+# (version, range, in it?) for every example PRERELEASE_TEXT states; the reference must agree with each.
+PRERELEASE_EXAMPLES = {
+    True: [("1.2.3-beta.4", ">=1.2.3-alpha.1 <2.0.0", True), ("1.2.4-beta", ">=1.2.3-alpha.1 <2.0.0", False),
+           ("1.2.3-beta.4", "*", False), ("1.2.3-beta.4", "1.x", False), ("1.2.3-beta.4", ">=1.0.0", False)],
+    False: [("1.5.0-beta", ">=1.0.0 <2.0.0", True), ("1.5.0-beta", "1.x", True),
+            ("2.0.0-beta", ">=1.0.0 <2.0.0", True), ("2.0.0-beta", "1.x", False),
+            ("2.0.0-beta", ">=1.0.0 <2.0.0-0", False)],
 }
 
 HIDDEN = r'''
@@ -455,6 +464,8 @@ class HiddenRangeChecks(unittest.TestCase):
         versions = ["1.2.3-beta.4", "1.2.4-beta", "2.0.0-beta", "1.5.0-beta", "1.2.3-alpha.0", "0.0.0-0"]
         self.assert_like_reference([(version, text) for text in ranges for version in versions]
                                    + self.cases(ranges, rng))
+        for version, text, inside in @@DOC_EXAMPLES@@:
+            self.assertIs(satisfies(version, text), inside, (version, text))
 
     def test_alternatives_and_whitespace(self):
         rng = random.Random(@@SEED@@ + 5)
@@ -503,6 +514,11 @@ def generate(seed, rng):
     files = {"README.md": f"# {pkg}\n\nPlugin host compatibility. Range rules: `docs/versions.md`.\n",
              f"{pkg}/__init__.py": "", f"{pkg}/ranges.py": fill(STARTER), "tests/__init__.py": "",
              "tests/test_ranges.py": fill(VISIBLE_TESTS, PKG=pkg), "docs/versions.md": doc}
-    hidden = fill(HIDDEN, PKG=pkg, SEED=seed, REFERENCE=reference_block(solution))
+    examples = PRERELEASE_EXAMPLES[options["strict"]]
+    reference = {"__name__": "release_bench_reference"}
+    exec(compile(solution, "release_bench_reference", "exec"), reference)
+    wrong = [example for example in examples if reference["satisfies"](example[0], example[1]) is not example[2]]
+    assert not wrong, f"versions-{seed}: the doc's prerelease examples disagree with the reference: {wrong}"
+    hidden = fill(HIDDEN, PKG=pkg, SEED=seed, REFERENCE=reference_block(solution), DOC_EXAMPLES=repr(examples))
     return make_spec(family="docspec", template="versions", seed=seed, prompt=fill(rng.choice(PROMPTS), PKG=pkg),
                      files=files, hidden=hidden, solution={f"{pkg}/ranges.py": solution}, meta=options)

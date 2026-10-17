@@ -10,7 +10,7 @@ from collections import defaultdict
 
 BOOTSTRAP_SAMPLES = 4000
 GATE_DEFAULTS = {"accuracy_margin": 0.05, "cost_margin": 0.15, "confidence": 0.95,
-                 "max_infra_rate": 0.10, "min_tasks": 20}
+                 "max_infra_rate": 0.10, "min_tasks": 20, "min_priced_share": 0.95, "sequential": False}
 INTERIM_LOOKS = (0.5, 0.75)
 
 
@@ -22,7 +22,8 @@ def counted(records):
 def per_task(records, arm):
     """{task: {"pass", "fraction", "cost", "n"}} averaged over the arm's counted repeats.
 
-    Cost averages only the priced repeats and is None when none is priced."""
+    Cost is None unless every counted repeat is priced: a mean over the cheap
+    repeats alone would understate the task."""
     grouped = defaultdict(list)
     for item in counted(records):
         if item["arm"] == arm:
@@ -32,7 +33,8 @@ def per_task(records, arm):
         priced = [item["cost_usd"] for item in items if item["cost_usd"] is not None]
         result[task] = {"pass": sum(item["passed"] for item in items) / len(items),
                         "fraction": sum(item["fraction"] for item in items) / len(items),
-                        "cost": sum(priced) / len(priced) if priced else None, "n": len(items)}
+                        "cost": sum(priced) / len(priced) if len(priced) == len(items) else None,
+                        "n": len(items)}
     assert all(0 <= row["pass"] <= 1 and 0 <= row["fraction"] <= 1 for row in result.values()), "rates are in [0, 1]"
     return result
 
@@ -118,44 +120,104 @@ def compare(records, old_arm, new_arm, confidence=0.95, seed=0):
     return result
 
 
-def infra_rate(records, arms):
-    chosen = [item for item in records if item["arm"] in arms]
+def infra_rate(records, arm):
+    """The share of one arm's trials that said nothing about the harness (bench steps, provider outages)."""
+    chosen = [item for item in records if item["arm"] == arm]
     return sum(1 for item in chosen if item["infra_error"]) / len(chosen) if chosen else 0.0
 
 
-def gate(records, old_arm, new_arm, settings=None, seed=0):
-    """The release verdict for one model tier: PASS, FAIL or INCONCLUSIVE (which also blocks a release).
+def missing_trials(records, arm, expected):
+    """How many of the expected (task, repeat) cells of `arm` have no record at all."""
+    assert expected["repeats"] > 0 and expected["tasks"], "an expected matrix has tasks and repeats"
+    present = {(item["task"], item["repeat"]) for item in records if item["arm"] == arm}
+    cells = {(task, repeat) for task in expected["tasks"] for repeat in range(expected["repeats"])}
+    assert present <= cells, f"{arm} has trials outside the expected matrix"
+    return len(cells - present)
 
-    FAIL when, at the configured confidence, the candidate's pass rate is more than
-    `accuracy_margin` below the old release's, or its cost more than `cost_margin` above it."""
-    settings = {**GATE_DEFAULTS, **(settings or {})}
-    assert 0 < settings["accuracy_margin"] < 1 and settings["cost_margin"] > 0, "margins are positive"
-    # A one-sided bound at `confidence` is a two-sided interval at 2 * confidence - 1.
-    comparison = compare(records, old_arm, new_arm, 2 * settings["confidence"] - 1, seed)
-    infra = infra_rate(records, (old_arm, new_arm))
+
+def _fail_reasons(comparison, settings):
+    """Reasons the candidate is significantly worse, and warnings for point estimates past a margin."""
     reasons, warnings = [], []
-    if comparison["tasks"] < settings["min_tasks"]:
-        reasons.append(f"only {comparison['tasks']} paired tasks (< {settings['min_tasks']})")
-    if infra > settings["max_infra_rate"]:
-        reasons.append(f"infra error rate {infra:.0%} > {settings['max_infra_rate']:.0%}")
-    if reasons:
-        return {"verdict": "INCONCLUSIVE", "reasons": reasons, "warnings": warnings, "infra_rate": infra,
-                "comparison": comparison, "settings": settings}
-    point, _, high = comparison["pass"]
-    if high < -settings["accuracy_margin"]:
-        reasons.append(f"pass rate {point:+.1%} (upper bound {high:+.1%} < -{settings['accuracy_margin']:.0%})")
-    elif point < -settings["accuracy_margin"]:
-        warnings.append(f"pass rate point estimate {point:+.1%} is below -{settings['accuracy_margin']:.0%}")
-    if comparison["cost_ratio"] is None:
-        warnings.append("cost could not be compared (no task priced on both arms)")
-    else:
+    if comparison["pass"] is not None:
+        point, _, high = comparison["pass"]
+        if high < -settings["accuracy_margin"]:
+            reasons.append(f"pass rate {point:+.1%} (upper bound {high:+.1%} < -{settings['accuracy_margin']:.0%})")
+        elif point < -settings["accuracy_margin"]:
+            warnings.append(f"pass rate point estimate {point:+.1%} is below -{settings['accuracy_margin']:.0%}")
+    if comparison["cost_ratio"] is not None:
         ratio, low, _ = comparison["cost_ratio"]
         if low > 1 + settings["cost_margin"]:
             reasons.append(f"cost x{ratio:.2f} (lower bound x{low:.2f} > x{1 + settings['cost_margin']:.2f})")
         elif ratio > 1 + settings["cost_margin"]:
             warnings.append(f"cost point estimate x{ratio:.2f} is above x{1 + settings['cost_margin']:.2f}")
-    return {"verdict": "FAIL" if reasons else "PASS", "reasons": reasons, "warnings": warnings,
-            "infra_rate": infra, "comparison": comparison, "settings": settings}
+    return reasons, warnings
+
+
+def _unreliable(records, comparison, arms, settings):
+    """Reasons the data cannot support any verdict: too few paired tasks, or too many outages on an arm."""
+    reasons = []
+    if comparison["tasks"] < settings["min_tasks"]:
+        reasons.append(f"only {comparison['tasks']} paired tasks (< {settings['min_tasks']})")
+    for arm in arms:
+        rate = infra_rate(records, arm)
+        if rate > settings["max_infra_rate"]:
+            reasons.append(f"{arm} infra error rate {rate:.0%} > {settings['max_infra_rate']:.0%}")
+    return reasons
+
+
+def _incomplete(records, arms, expected):
+    """Reasons the planned matrix did not finish: a missing tier, a budget stop or a partial repeat."""
+    if expected is None:
+        return []
+    planned = len(expected["tasks"]) * expected["repeats"]
+    missing = {arm: missing_trials(records, arm, expected) for arm in arms}
+    return [f"{arm} ran {planned - count} of {planned} planned trials" for arm, count in missing.items() if count]
+
+
+def _unpriced(comparison, settings):
+    """Why the cost gate cannot be judged: too few tasks priced on both arms, or none."""
+    if not comparison["tasks"]:
+        return []
+    share = comparison.get("priced_tasks", 0) / comparison["tasks"]
+    if comparison["cost_ratio"] is None:
+        return [f"cost could not be compared ({comparison.get('priced_tasks', 0)} tasks priced on both arms)"]
+    if share < settings["min_priced_share"]:
+        return [f"only {share:.0%} of paired tasks are priced on both arms (< {settings['min_priced_share']:.0%})"]
+    return []
+
+
+def gate(records, old_arm, new_arm, settings=None, seed=0, expected=None):
+    """The release verdict for one model tier: PASS, FAIL or INCONCLUSIVE (which also blocks a release).
+
+    FAIL when, at the configured confidence, the candidate's pass rate is more than
+    `accuracy_margin` below the old release's, or its cost more than `cost_margin` above it.
+    `expected` ({"tasks", "repeats"}) is the planned matrix; trials missing from it make
+    the verdict INCONCLUSIVE, unless a sequential look (settings["sequential"]) found a FAIL.
+    Missing prices block only the PASS: a FAIL on the evidence there is stands."""
+    settings = {**GATE_DEFAULTS, **(settings or {})}
+    assert 0 < settings["accuracy_margin"] < 1 and settings["cost_margin"] > 0, "margins are positive"
+    assert 0 < settings["min_priced_share"] <= 1, "the priced share is a fraction"
+    # A one-sided bound at `confidence` is a two-sided interval at 2 * confidence - 1.
+    comparison = compare(records, old_arm, new_arm, 2 * settings["confidence"] - 1, seed)
+    arms = (old_arm, new_arm)
+    unreliable, incomplete = _unreliable(records, comparison, arms, settings), _incomplete(records, arms, expected)
+    fails, warnings = _fail_reasons(comparison, settings)
+    if unreliable:
+        verdict, reasons = "INCONCLUSIVE", unreliable + incomplete
+        warnings += [f"would fail: {reason}" for reason in fails]
+    elif fails and (not incomplete or settings["sequential"]):
+        verdict, reasons = "FAIL", fails
+        warnings += [f"stopped before the plan finished: {reason}" for reason in incomplete]
+    elif incomplete:
+        verdict, reasons = "INCONCLUSIVE", incomplete
+        warnings += [f"would fail: {reason}" for reason in fails]
+    else:
+        reasons = _unpriced(comparison, settings)
+        verdict = "INCONCLUSIVE" if reasons else "PASS"
+    assert verdict != "PASS" or not (fails or unreliable or incomplete or reasons), "a PASS has nothing against it"
+    return {"verdict": verdict, "reasons": reasons, "warnings": warnings,
+            "infra_rate": {arm: infra_rate(records, arm) for arm in arms}, "comparison": comparison,
+            "settings": settings}
 
 
 def reached_looks(records, old_arm, new_arm, planned_tasks, looks=INTERIM_LOOKS):

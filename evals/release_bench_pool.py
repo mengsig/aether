@@ -1,13 +1,17 @@
 """Parallel, resumable, budget- and load-gated execution of release-bench trials.
 
-Trials of one (task, repeat) run back to back with a rotated arm order, so
-with enough workers every arm of a task runs at the same time, under the same
-load and provider weather: the pairs the statistics compare stay paired.
+Trials of one (task, repeat) run back to back, so with enough workers every
+arm of a task runs at the same time, under the same load and provider
+weather: the pairs the statistics compare stay paired. Arm order within a
+block is shuffled, and old/new order alternates exactly per model tier.
+Every admitted trial is journalled before it starts; a resumed run charges an
+attempt that never recorded a result its full reservation.
 """
 import json
 import os
 import random
 import threading
+import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from harness_bench_process import terminate_owned_process_groups
@@ -16,17 +20,28 @@ GATE_POLL_SECONDS = 5
 
 
 def schedule(task_ids, arm_keys, repeats, seed):
-    """(task, repeat, arm) triples: tasks shuffled, each task's arms adjacent and rotated per task."""
+    """(task, repeat, arm) triples: one block per (repeat, task) in seeded order, its arms adjacent.
+
+    Each block's arms are shuffled; then, per model tier, `old` runs before `new`
+    in alternate blocks, so neither binary systematically goes first."""
     assert len(set(task_ids)) == len(task_ids) and task_ids, "schedule each task once"
-    assert repeats > 0 and arm_keys, "schedule at least one repeat of one arm"
+    assert repeats > 0 and len(set(arm_keys)) == len(arm_keys) and arm_keys, "schedule distinct arms"
     rng = random.Random(seed)
     tasks = list(task_ids)
     rng.shuffle(tasks)
+    models = sorted({key.split("/")[0] for key in arm_keys})
     order = []
-    for repeat in range(repeats):
-        for position, task in enumerate(tasks):
-            shift = (position + repeat) % len(arm_keys)
-            order += [(task, repeat, arm) for arm in arm_keys[shift:] + arm_keys[:shift]]
+    for block, (repeat, task) in enumerate((repeat, task) for repeat in range(repeats) for task in tasks):
+        arms = list(arm_keys)
+        rng.shuffle(arms)
+        for index, model in enumerate(models):
+            old, new = f"{model}/old", f"{model}/new"
+            if old in arms and new in arms:
+                i, j = arms.index(old), arms.index(new)
+                old_first = (block + index) % 2 == 0
+                if (i < j) != old_first:
+                    arms[i], arms[j] = arms[j], arms[i]
+        order += [(task, repeat, arm) for arm in arms]
     assert len(order) == len(task_ids) * len(arm_keys) * repeats, "every cell is scheduled exactly once"
     return order
 
@@ -68,11 +83,9 @@ def available_memory_gb():
 class Gates:
     """Admission control: host load, free memory and the run's spend budget."""
 
-    def __init__(self, load_max, mem_min_gb, budget_usd, unpriced_usd):
+    def __init__(self, load_max, mem_min_gb, budget_usd):
         assert load_max > 0 and mem_min_gb >= 0 and budget_usd > 0, "gate limits are positive"
-        assert all(value > 0 for value in unpriced_usd.values()), "an unpriced trial is assumed to cost something"
         self.load_max, self.mem_min_gb, self.budget_usd = load_max, mem_min_gb, budget_usd
-        self.unpriced_usd = dict(unpriced_usd)
         self.spent_usd = 0.0
         self.reserved_usd = 0.0
 
@@ -86,17 +99,18 @@ class Gates:
             return f"available memory {memory:.1f} GB < {self.mem_min_gb} GB"
         return None
 
-    def reserve(self, model):
+    def reserve(self, amount_usd):
         """Hold a trial's worst case against the budget; False when it no longer fits."""
-        worst = self.unpriced_usd[model]
-        if self.spent_usd + self.reserved_usd + worst > self.budget_usd:
+        assert amount_usd > 0, "a trial reserves a positive worst case"
+        if self.spent_usd + self.reserved_usd + amount_usd > self.budget_usd:
             return False
-        self.reserved_usd += worst
+        self.reserved_usd += amount_usd
         return True
 
-    def settle(self, model, cost_usd):
-        self.reserved_usd -= self.unpriced_usd[model]
-        self.spent_usd += self.unpriced_usd[model] if cost_usd is None else cost_usd
+    def settle(self, amount_usd, cost_usd):
+        """Release a reservation for what the trial cost; an unpriced trial is charged all of it."""
+        self.reserved_usd -= amount_usd
+        self.spent_usd += amount_usd if cost_usd is None else cost_usd
         assert self.reserved_usd > -1e-9 and self.spent_usd >= 0, "spend accounting went negative"
 
 
@@ -113,62 +127,108 @@ def _await_host(gates, log, stop):
         stop.wait(GATE_POLL_SECONDS)
 
 
-def run_pool(order, run_one, model_of, *, jobs, gates, results_path, log, should_stop=None):
+def read_attempts(path):
+    """Trial starts journalled by earlier invocations of the same run."""
+    if not os.path.exists(path):
+        return []
+    attempts = []
+    with open(path) as stream:
+        for line in stream:
+            # A start torn by a crash still names its trial only if it parses; one that does not never ran.
+            if line.strip().endswith("}"):
+                attempts.append(json.loads(line))
+    assert all(len(trial_key(item)) == 3 and item["reserve_usd"] > 0 for item in attempts), "attempts are trials"
+    return attempts
+
+
+def charge_history(gates, records, attempts, reservation_of):
+    """Charge the budget for recorded trials and for every abandoned attempt; returns the abandoned count."""
+    for item in records:
+        cost = item["cost_usd"]
+        gates.spent_usd += reservation_of(trial_key(item)) if cost is None else cost
+    recorded = {trial_key(item) for item in records}
+    starts = {}
+    for item in attempts:
+        starts.setdefault(trial_key(item), []).append(item["reserve_usd"])
+    abandoned = 0
+    for key, reserves in starts.items():
+        # A recorded trial's last start is the one that recorded it; every other start was abandoned.
+        lost = reserves[:-1] if key in recorded else reserves
+        gates.spent_usd += sum(lost)
+        abandoned += len(lost)
+    assert gates.spent_usd >= 0 and abandoned >= 0, "history charges are nonnegative"
+    return abandoned
+
+
+def run_pool(order, run_one, reservation_of, *, jobs, gates, results_path, attempts_path, log, should_stop=None):
     """Run `order` (skipping trials already in `results_path`) on `jobs` workers; returns every record.
 
     `run_one(triple) -> record` must never raise for a trial's own failure.
     `should_stop(records)` may end the run early; budget exhaustion also stops admission."""
     assert jobs > 0, "a pool needs at least one worker"
     records = read_results(results_path)
+    abandoned = charge_history(gates, records, read_attempts(attempts_path), reservation_of)
     done = {trial_key(item) for item in records}
-    for item in records:
-        gates.spent_usd += gates.unpriced_usd[item["model"]] if item["cost_usd"] is None else item["cost_usd"]
     pending = [triple for triple in order if tuple(triple) not in done]
-    log(f"{len(done)} trial(s) already recorded, {len(pending)} to run on {jobs} worker(s)")
-    lock, stop, stopped_reason = threading.Lock(), threading.Event(), [None]
-    with open(results_path, "a") as sink, ThreadPoolExecutor(max_workers=jobs) as pool:
-        running = {}
+    log(f"{len(done)} trial(s) already recorded, {abandoned} abandoned attempt(s) charged "
+        f"(${gates.spent_usd:.2f} spent), {len(pending)} to run on {jobs} worker(s)")
+    state = {"records": records, "running": {}, "lock": threading.Lock(), "stop": threading.Event(),
+             "gates": gates, "log": log, "reservation_of": reservation_of}
+    with open(results_path, "a") as sink, open(attempts_path, "a") as journal, \
+            ThreadPoolExecutor(max_workers=jobs) as pool:
+        state["sink"] = sink
         try:
-            for triple in pending:
-                while len(running) >= jobs:
-                    _collect(wait(running, return_when=FIRST_COMPLETED).done, running, records, sink, lock,
-                             gates, log)
-                    if should_stop is not None and stopped_reason[0] is None:
-                        stopped_reason[0] = should_stop(records)
-                if stopped_reason[0]:
-                    break
-                _await_host(gates, log, stop)
-                reserved = gates.reserve(model_of(triple))
-                while not reserved and running:
-                    _collect(wait(running, return_when=FIRST_COMPLETED).done, running, records, sink, lock,
-                             gates, log)
-                    reserved = gates.reserve(model_of(triple))
-                if not reserved:
-                    stopped_reason[0] = f"budget ${gates.budget_usd:.2f} reached (${gates.spent_usd:.2f} spent)"
-                    break
-                running[pool.submit(run_one, triple)] = triple
-            _collect(wait(running).done, running, records, sink, lock, gates, log)
+            reason = _admit_all(pending, run_one, pool, journal, jobs, should_stop, state)
+            _collect(wait(state["running"]).done, state)
         except BaseException:
-            stop.set()
+            state["stop"].set()
             terminate_owned_process_groups()
             raise
-    if stopped_reason[0]:
-        log(f"stopped early: {stopped_reason[0]}")
-    return records, stopped_reason[0]
+    if reason:
+        log(f"stopped early: {reason}")
+    return records, reason
 
 
-def _collect(finished, running, records, sink, lock, gates, log):
+def _admit_all(pending, run_one, pool, journal, jobs, should_stop, state):
+    """Submit trials while the budget, host and early-stop rule allow; returns why it stopped, or None."""
+    running, gates = state["running"], state["gates"]
+    reason = None
+    for triple in pending:
+        while len(running) >= jobs:
+            _collect(wait(running, return_when=FIRST_COMPLETED).done, state)
+            if should_stop is not None and reason is None:
+                reason = should_stop(state["records"])
+        if reason:
+            return reason
+        _await_host(gates, state["log"], state["stop"])
+        amount = state["reservation_of"](tuple(triple))
+        while not gates.reserve(amount):
+            if not running:
+                return f"budget ${gates.budget_usd:.2f} reached (${gates.spent_usd:.2f} spent)"
+            _collect(wait(running, return_when=FIRST_COMPLETED).done, state)
+        task, repeat, arm = triple
+        journal.write(json.dumps({"task": task, "repeat": repeat, "arm": arm, "reserve_usd": amount,
+                                  "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
+        journal.flush()
+        os.fsync(journal.fileno())
+        running[pool.submit(run_one, triple)] = triple
+    return reason
+
+
+def _collect(finished, state):
+    gates = state["gates"]
     for future in finished:
-        triple = running.pop(future)
+        triple = state["running"].pop(future)
         item = future.result()
         assert trial_key(item) == tuple(triple), f"record {trial_key(item)} does not match its trial {triple}"
-        with lock:
-            gates.settle(item["model"], item["cost_usd"])
-            sink.write(json.dumps(item, sort_keys=True) + "\n")
-            sink.flush()
-            records.append(item)
+        with state["lock"]:
+            gates.settle(state["reservation_of"](tuple(triple)), item["cost_usd"])
+            state["sink"].write(json.dumps(item, sort_keys=True) + "\n")
+            state["sink"].flush()
+            state["records"].append(item)
         cost = "unpriced" if item["cost_usd"] is None else f"${item['cost_usd']:.4f}"
-        verdict = "INFRA" if item["infra_error"] else ("pass" if item["passed"] else "fail")
-        log(f"[{len(records)}] {item['arm']:<12} {item['task']:<16} r{item['repeat']} {verdict:<5} "
-            f"{item['checks_passed']}/{item['checks_total']} {cost} {item['seconds'] or 0:.0f}s "
-            f"(spent ${gates.spent_usd:.2f})")
+        verdict = ("INFRA" if item["infra_error"] else "HARN" if item.get("harness_failure")
+                   else "pass" if item["passed"] else "fail")
+        state["log"](f"[{len(state['records'])}] {item['arm']:<12} {item['task']:<16} r{item['repeat']} "
+                     f"{verdict:<5} {item['checks_passed']}/{item['checks_total']} {cost} "
+                     f"{item['seconds'] or 0:.0f}s (spent ${gates.spent_usd:.2f})")

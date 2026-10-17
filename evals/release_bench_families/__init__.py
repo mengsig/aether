@@ -10,6 +10,7 @@ import random
 from . import (
     algo_batching,
     algo_diff,
+    delegation_workstreams,
     docspec_config,
     docspec_cron,
     docspec_duration,
@@ -18,8 +19,10 @@ from . import (
     edgecase_bucket,
     edgecase_ranges,
     edgecase_slug,
+    longctx_protocol,
     multibug_billing,
     port_pricing,
+    refactor_exporters,
     traceback_ledger,
 )
 
@@ -37,6 +40,9 @@ TEMPLATES = {
     "billing": multibug_billing.generate,
     "ledger": traceback_ledger.generate,
     "pricing": port_pricing.generate,
+    "exporters": refactor_exporters.generate,
+    "workstreams": delegation_workstreams.generate,
+    "protocol": longctx_protocol.generate,
 }
 
 

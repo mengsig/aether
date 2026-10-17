@@ -24,12 +24,13 @@ import release_bench_families as families
 from harness_bench import fetch_price_table, save_json
 from harness_bench_assets import native_cli_provenance, pin_binary
 from harness_bench_metadata import native_configured_defaults
-from release_bench_arms import UNPRICED_TRIAL_USD, build_arm, parse_arms
-from release_bench_calibrate import SELECTION_DEFAULTS, select, task_rates
+from release_bench_arms import build_arm, parse_arms
+from release_bench_calibrate import SELECTION_DEFAULTS, acceptance, select, task_rates
 from release_bench_calibrate import render as render_calibration
 from release_bench_generate import verify
 from release_bench_pool import Gates, read_results, run_pool, schedule
 from release_bench_report import render
+from release_bench_spend import DELEGATION_AGENTS, reservation_usd
 from release_bench_stats import (
     GATE_DEFAULTS,
     interim_fail,
@@ -50,7 +51,7 @@ def log(message):
 
 
 def _pool_options(parser, budget):
-    parser.add_argument("--jobs", type=int, default=6, help="trials at once (default 6)")
+    parser.add_argument("--jobs", type=int, default=10, help="trials at once (default 10)")
     parser.add_argument("--load-max", type=float, default=16.0, help="start no trial above this 1-minute load")
     parser.add_argument("--mem-min-gb", type=float, default=2.0, help="start no trial below this free memory")
     parser.add_argument("--budget", type=float, default=budget, help="stop admitting trials at this spend (USD)")
@@ -71,13 +72,15 @@ def parse_args(argv):
     run.add_argument("--old", type=Path, required=True, help="aether binary of the last release")
     run.add_argument("--new", type=Path, required=True, help="aether binary of the release candidate")
     run.add_argument("--arms", default="all", help='"all", a model tier, or keys such as haiku/native,luna/new')
-    run.add_argument("--archon-bin", type=Path, help="adapter executable for the optional Archon arm")
+    run.add_argument("--archon-bin", type=Path, help="archon executable; adds an Archon arm per model tier")
+    run.add_argument("--allow-off-target", action="store_true",
+                     help="run a set whose calibration missed its acceptance targets (never a release verdict)")
     run.add_argument("--limit", type=int, help="only the first N tasks of the set (smoke runs)")
     run.add_argument("--early-stop", action="store_true", help="stop at an interim look on a decisive FAIL")
     run.add_argument("--accuracy-margin", type=float, default=GATE_DEFAULTS["accuracy_margin"])
     run.add_argument("--cost-margin", type=float, default=GATE_DEFAULTS["cost_margin"])
     run.add_argument("--confidence", type=float, default=GATE_DEFAULTS["confidence"])
-    _pool_options(run, budget=15.0)
+    _pool_options(run, budget=20.0)
     calibrate = commands.add_parser("calibrate", help="run generated candidates on the native arms")
     calibrate.add_argument("--count", type=int, default=200, help="candidates to generate")
     calibrate.add_argument("--first-seed", type=int, default=0)
@@ -86,6 +89,8 @@ def parse_args(argv):
     calibrate.add_argument("--freeze", type=Path, help="write the chosen set here (e.g. bench/release-set/v2)")
     calibrate.add_argument("--min-size", type=int, default=SELECTION_DEFAULTS["min_size"])
     calibrate.add_argument("--max-size", type=int, default=SELECTION_DEFAULTS["max_size"])
+    calibrate.add_argument("--accept-off-target", action="store_true",
+                           help="freeze even when the set misses its targets, recorded as not accepted")
     _pool_options(calibrate, budget=25.0)
     calibrate.set_defaults(repeats=4)
     report = commands.add_parser("report", help="re-render the report of a finished run")
@@ -142,10 +147,17 @@ def _pin(binary, run_dir, role):
     return pin_binary(str(binary), str(run_dir / role))
 
 
+def _agents(spec, harness):
+    """Model-calling agents one trial may run at once: the root, its delegates, and Archon's orchestrator."""
+    agents = 1 + (DELEGATION_AGENTS if spec["meta"].get("allow_delegation") else 0)
+    return agents + (1 if harness == "archon" else 0)
+
+
 def execute(specs, arm_keys, args, run_dir, context, should_stop=None):
     """Schedule, run and collect every (task, repeat, arm) of a run; returns (records, stop reason)."""
     by_id = {spec["id"]: spec for spec in specs}
     assert len(by_id) == len(specs), "task ids are unique"
+    table = context["price_manifest"]["price_table"]
 
     def run_one(triple):
         task, repeat, key = triple
@@ -153,16 +165,23 @@ def execute(specs, arm_keys, args, run_dir, context, should_stop=None):
         arm = build_arm(model, harness, allow_delegation=bool(by_id[task]["meta"].get("allow_delegation")))
         return run_release_trial(by_id[task], arm, repeat, context)
 
+    def reservation_of(triple):
+        task, _, key = triple
+        model, harness = key.split("/")
+        return reservation_usd(table, model, _agents(by_id[task], harness))
+
     order = schedule(sorted(by_id), arm_keys, args.repeats, args.seed)
-    gates = Gates(args.load_max, args.mem_min_gb, args.budget, UNPRICED_TRIAL_USD)
-    return run_pool(order, run_one, lambda triple: triple[2].split("/")[0], jobs=args.jobs, gates=gates,
-                    results_path=str(run_dir / "results.jsonl"), log=log, should_stop=should_stop)
+    gates = Gates(args.load_max, args.mem_min_gb, args.budget)
+    return run_pool(order, run_one, reservation_of, jobs=args.jobs, gates=gates,
+                    results_path=str(run_dir / "results.jsonl"), attempts_path=str(run_dir / "attempts.jsonl"),
+                    log=log, should_stop=should_stop)
 
 
 def _header(config, records, stop_reason, started):
     spent = sum(item["cost_usd"] or 0 for item in records)
+    accepted = "" if config["set"].get("accepted") else " **(off target: not a release verdict)**"
     lines = [f"- Task set: `{config['set']['path']}` ({config['set']['tasks']} tasks, "
-             f"sha256 `{config['set']['sha256'][:16]}`)",
+             f"sha256 `{config['set']['sha256'][:16]}`){accepted}",
              f"- Old: `{config['binaries']['old']['sha256'][:16]}`, candidate: "
              f"`{config['binaries']['new']['sha256'][:16]}`" + (" (same binary: an A/A run)"
                                                                  if config["binaries"]["old"]["sha256"]
@@ -182,18 +201,34 @@ def _header(config, records, stop_reason, started):
 def _gate_settings(args):
     """Gate settings; with early stopping every look, the final one included, gets a share of the error rate."""
     confidence = sequential_confidence(args.confidence) if args.early_stop else args.confidence
-    return {"accuracy_margin": args.accuracy_margin, "cost_margin": args.cost_margin, "confidence": confidence}
+    return {"accuracy_margin": args.accuracy_margin, "cost_margin": args.cost_margin, "confidence": confidence,
+            "sequential": bool(args.early_stop)}
+
+
+def _accepted(manifest, args):
+    """Whether the set met its calibration targets; an off-target set runs only when asked to."""
+    acceptance = manifest.get("acceptance") or {}
+    if acceptance.get("accepted") is True:
+        return True
+    reasons = "; ".join(acceptance.get("reasons") or ["its manifest records no acceptance"])
+    if not args.allow_off_target:
+        raise SystemExit(f"{args.set} missed its calibration targets ({reasons}); "
+                         "pass --allow-off-target (ALLOW_OFF_TARGET=1) to run it anyway")
+    log(f"running an off-target set: {reasons}")
+    return False
 
 
 def command_run(args):
     manifest, specs = load_set(args.set)
+    accepted = _accepted(manifest, args)
     specs = sorted(specs, key=lambda spec: spec["id"])[:args.limit] if args.limit else specs
     arm_keys = parse_arms(args.arms, archon=args.archon_bin is not None)
     run_dir = _run_dir("runs", args.run_id)
     old, old_sha = _pin(args.old, run_dir, "old")
     new, new_sha = _pin(args.new, run_dir, "new")
     native = {name: native_cli_provenance(name) for name in ("claude", "codex")}
-    config = {"set": {"path": str(args.set), "sha256": manifest["set_sha256"], "tasks": len(specs)},
+    config = {"set": {"path": str(args.set), "sha256": manifest["set_sha256"], "tasks": len(specs),
+                      "accepted": accepted, "task_ids": sorted(spec["id"] for spec in specs)},
               "binaries": {"old": {"sha256": old_sha}, "new": {"sha256": new_sha}},
               "native": {name: {"version": info["version"]} for name, info in native.items()},
               "arms": arm_keys, "repeats": args.repeats, "jobs": args.jobs, "timeout": args.timeout,
@@ -231,7 +266,12 @@ def _early_stop(args, planned_tasks):
 def _write_report(run_dir, config, records, stop_reason, started=None):
     if not records:
         raise SystemExit("no trial finished; nothing to report")
-    text, overall, verdicts = render(records, _header(config, records, stop_reason, started), MODELS, config["gate"])
+    expected = {"arms": config["arms"], "tasks": config["set"]["task_ids"], "repeats": config["repeats"]}
+    text, overall, verdicts = render(records, _header(config, records, stop_reason, started), MODELS, config["gate"],
+                                     expected)
+    if overall == "PASS" and not config["set"]["accepted"]:
+        overall = "INCONCLUSIVE"
+        text = text.replace("# Release bench: PASS", "# Release bench: INCONCLUSIVE (gate passed on an off-target set)", 1)
     (run_dir / "report.md").write_text(text)
     save_json(str(run_dir / "verdict.json"), {"overall": overall, "stop_reason": stop_reason,
                                                "models": {model: {key: verdict[key] for key in
@@ -247,7 +287,7 @@ def command_report(args):
     config = json.loads((run_dir / "config.json").read_text())
     if "binaries" not in config:
         return _write_calibration(run_dir, config, read_results(str(run_dir / "results.jsonl")),
-                                  dict(SELECTION_DEFAULTS), None)
+                                  dict(SELECTION_DEFAULTS), None, False)
     stop = json.loads((run_dir / "verdict.json").read_text()).get("stop_reason") if (
         run_dir / "verdict.json").exists() else None
     return _write_report(run_dir, config, read_results(str(run_dir / "results.jsonl")), stop)
@@ -281,11 +321,14 @@ def command_calibrate(args):
     if stop_reason:
         log(f"calibration incomplete: {stop_reason}")
     settings = {**SELECTION_DEFAULTS, "min_size": args.min_size, "max_size": args.max_size}
-    return _write_calibration(run_dir, config, records, settings, args.freeze and (args.freeze, specs))
+    return _write_calibration(run_dir, config, records, settings, args.freeze and (args.freeze, specs),
+                              args.accept_off_target)
 
 
-def _write_calibration(run_dir, config, records, settings, freeze):
-    """calibration.md from the records (re-selecting is free on a resumed run), then the frozen set if asked."""
+def _write_calibration(run_dir, config, records, settings, freeze, accept_off_target):
+    """calibration.md from the records (re-selecting is free on a resumed run), then the frozen set if asked.
+
+    A set that misses its targets is frozen only with `accept_off_target`, and its manifest says so."""
     assert records, "a calibration needs at least one trial"
     assert settings["min_size"] <= settings["max_size"], "the set's size bounds are ordered"
     rates = task_rates(records)
@@ -299,11 +342,13 @@ def _write_calibration(run_dir, config, records, settings, freeze):
     if not freeze:
         return 0
     directory, specs = freeze
-    if len(chosen) < settings["min_size"]:
-        raise SystemExit(f"only {len(chosen)} eligible tasks (< {settings['min_size']}); not freezing")
+    verdict = acceptance(rates, chosen, settings)
+    if not verdict["accepted"] and not (accept_off_target and chosen):
+        raise SystemExit(f"the set misses its targets ({'; '.join(verdict['reasons'])}); not freezing "
+                         "(--accept-off-target freezes it marked as not accepted)")
     chosen_specs = [spec for spec in specs if spec["id"] in set(chosen)]
     stats = {task: {key: rates[task][key] for key in ("haiku", "luna", "haiku_n", "luna_n")} for task in chosen}
-    write_set(directory, chosen_specs, {"version": directory.name, "calibration": stats,
+    write_set(directory, chosen_specs, {"version": directory.name, "calibration": stats, "acceptance": verdict,
                                         "calibration_config": config, "selection": settings})
     shutil.copy(run_dir / "calibration.md", directory / "calibration.md")
     log(f"froze {len(chosen_specs)} tasks into {directory}")

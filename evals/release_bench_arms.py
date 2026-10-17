@@ -3,19 +3,19 @@
 An arm is one harness on one model tier. Every model tier has a native arm
 (the plain CLI, the drift reference) and two Aether arms that differ only in
 the binary: `old` (the last release) and `new` (the candidate). The optional
-Archon arm runs an operator-supplied adapter (see docs/release-bench.md).
+Archon arm queues the task on a private Archon over the candidate binary.
+Every arm runs under its tier's spend allowance (release_bench_spend), which
+a live guard enforces; harness-native caps are set to the same figure where
+the harness has one.
 """
 from harness_bench_config import COMMON_SUFFIX, SOLO_SUFFIX
 from harness_bench_treatments import lower_tier_conditions
+from release_bench_spend import ALLOWANCE_USD
 
 MODELS = ("haiku", "luna")
 HARNESSES = ("native", "old", "new")
-# Per-trial caps. Claude-backed arms stop at a dollar cap; Codex reports no
-# dollar cost to Aether and `codex exec` takes no cap, so Luna arms get a token cap and the timeout.
-HAIKU_COST_CAP_USD = 0.50
+# Codex reports no dollar cost to Aether, so Aether's own cap on Luna arms is in tokens; the guard prices them.
 LUNA_TOKEN_CAP = 4_000_000
-# Spend assumed for a trial whose cost could not be priced, when guarding the run's budget.
-UNPRICED_TRIAL_USD = {"haiku": HAIKU_COST_CAP_USD, "luna": 0.40}
 CONDITION_KEYS = {"haiku": ("native-haiku-low", "aether-single-haiku-low"),
                   "luna": ("native-luna-low", "aether-single-luna-low")}
 
@@ -32,9 +32,9 @@ def _condition(model, harness, allow_delegation):
     condition = dict(conditions[native_key if harness == "native" else aether_key])
     if harness == "native":
         if model == "haiku":
-            condition["max_budget_usd"] = HAIKU_COST_CAP_USD
+            condition["max_budget_usd"] = ALLOWANCE_USD[model]
         return condition
-    condition["budget"] = {"cost_budget": HAIKU_COST_CAP_USD} if model == "haiku" else {"token_budget": LUNA_TOKEN_CAP}
+    condition["budget"] = {"cost_budget": ALLOWANCE_USD[model]} if model == "haiku" else {"token_budget": LUNA_TOKEN_CAP}
     return condition
 
 
@@ -45,7 +45,8 @@ def build_arm(model, harness, allow_delegation=False):
         _, aether_key = CONDITION_KEYS[model]
         model_ref = lower_tier_conditions(SOLO_SUFFIX)[aether_key]["model"]
         return {"key": key, "model": model, "harness": harness, "binary_role": None,
-                "condition": {"kind": "adapter", "model": model_ref, "effort": "low",
+                "condition": {"kind": "archon", "model": model_ref, "effort": "low",
+                              "budget_usd": ALLOWANCE_USD[model],
                               "suffix": COMMON_SUFFIX if allow_delegation else SOLO_SUFFIX}}
     condition = _condition(model, harness, allow_delegation)
     assert condition["effort"] == "low", "every arm of the release bench runs at low effort"

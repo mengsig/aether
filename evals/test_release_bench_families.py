@@ -1,9 +1,11 @@
 """Release bench templates: one seed of each is deterministic, fair and solvable, and grading is strict."""
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
 import release_bench_families as families
+from release_bench_families.docspec_versions import PRERELEASE_EXAMPLES
 from release_bench_generate import verify
 from release_bench_grade import grade
 from release_bench_tasks import canonical_json, materialize
@@ -29,6 +31,69 @@ class TemplateTests(unittest.TestCase):
         specs = families.candidates(len(families.TEMPLATES) * 2, first_seed=5)
         self.assertEqual({spec["template"] for spec in specs}, set(families.TEMPLATES))
         self.assertEqual(len({spec["id"] for spec in specs}), len(specs))
+
+
+def grade_with(spec, solution, root):
+    """Grade the starter with `solution` files written over it."""
+    workspace = materialize(spec, Path(root, "workspace"))
+    for path, text in solution.items():
+        Path(workspace, path).parent.mkdir(parents=True, exist_ok=True)
+        Path(workspace, path).write_text(text)
+    return grade(workspace, spec["hidden"], spec["checks"], Path(root, "grade"))
+
+
+class HarnessFamilyTests(unittest.TestCase):
+    """The refactor, delegation and long-context templates grade the behaviour they are for."""
+
+    def test_a_consolidation_that_drops_the_exporters_quirks_fails(self):
+        for seed in range(3):
+            spec = families.generate("exporters", seed)
+            exporters = next(path for path in spec["solution"] if path.endswith("/exporters.py"))
+            naive = re.sub(r"(columns=\([^)]*\))[^)]*\)", r"\1)", spec["solution"][exporters])
+            self.assertNotEqual(naive, spec["solution"][exporters], "the seed has quirks to drop")
+            with tempfile.TemporaryDirectory() as root:
+                result = grade_with(spec, {**spec["solution"], exporters: naive}, root)
+            self.assertLess(result["passed"], result["total"], seed)
+
+    def test_exporters_that_keep_their_own_formatting_fail(self):
+        spec = families.generate("exporters", 1)
+        rows = {path: text for path, text in spec["solution"].items() if path.endswith("rows.py")}
+        with tempfile.TemporaryDirectory() as root:
+            result = grade_with(spec, rows, root)
+        self.assertLess(result["passed"], result["total"])
+        self.assertGreater(result["passed"], 0, "the untouched exporters still produce the right output")
+
+    def test_workstreams_pass_only_with_every_package_fixed(self):
+        spec = families.generate("workstreams", 2)
+        self.assertTrue(spec["meta"]["allow_delegation"])
+        self.assertEqual(len(spec["solution"]), 4)
+        for left_out in spec["solution"]:
+            partial = {path: text for path, text in spec["solution"].items() if path != left_out}
+            with tempfile.TemporaryDirectory() as root:
+                result = grade_with(spec, partial, root)
+            self.assertLess(result["passed"], result["total"], left_out)
+
+    def test_the_protocol_doc_is_long_and_every_planted_bug_is_checked(self):
+        spec = families.generate("protocol", 3)
+        doc = next(text for path, text in spec["files"].items() if path.endswith("protocol.md"))
+        self.assertGreater(len(doc), 40_000)
+        self.assertEqual(spec["checks"], len(spec["meta"]["bugs"].split(",")) + 1)
+        with tempfile.TemporaryDirectory() as scratch:
+            result = verify(spec, scratch=scratch)
+        self.assertTrue(result["ok"], result["problems"])
+        self.assertEqual(result["starter"]["passed"], 0)
+
+    def test_the_versions_doc_examples_hold_under_both_policies(self):
+        seen = set()
+        for seed in range(8):
+            spec = families.generate("versions", seed)
+            strict = spec["meta"]["strict"]
+            seen.add(strict)
+            doc = spec["files"]["docs/versions.md"]
+            for _, text, _ in PRERELEASE_EXAMPLES[strict]:
+                self.assertIn(f"`{text}`", doc)
+        self.assertEqual(seen, {True, False})
+        self.assertIn(("2.0.0-beta", ">=1.0.0 <2.0.0", True), PRERELEASE_EXAMPLES[False])
 
 
 class GradeTests(unittest.TestCase):
