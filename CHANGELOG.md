@@ -31,7 +31,8 @@ agents they cannot help, so a lone root agent's tool list barely grows.
 - **Swarm tools cost nothing where they cannot help.** `list_peers` is
   offered only to delegated agents, since a root agent has no peers, and
   `swarm_playbook` only to agents that may delegate. A lone root agent's
-  tool list grows by 185 bytes over 1.1.0, the playbook's short descriptor;
+  tool list grows by 185 bytes over 1.1.0: 173 from the playbook's short
+  descriptor and 12 from a `send_message` description tweak;
   the playbook's text is returned by the call, not carried in the
   description.
 
