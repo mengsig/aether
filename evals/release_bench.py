@@ -42,7 +42,7 @@ from release_bench_trial import TRIAL_TIMEOUT_SECONDS, run_release_trial
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRATCH = REPO_ROOT / "target" / "release-bench"
-DEFAULT_SET = REPO_ROOT / "bench" / "release-set" / "v1"
+DEFAULT_SET = REPO_ROOT / "bench" / "release-set" / "v2"
 MODELS = ("haiku", "luna")
 
 
@@ -86,7 +86,7 @@ def parse_args(argv):
     calibrate.add_argument("--first-seed", type=int, default=0)
     calibrate.add_argument("--templates", help="comma-separated templates (default: all)")
     calibrate.add_argument("--price-binary", type=Path, required=True, help="aether binary whose price table is used")
-    calibrate.add_argument("--freeze", type=Path, help="write the chosen set here (e.g. bench/release-set/v2)")
+    calibrate.add_argument("--freeze", type=Path, help="write the chosen set here (e.g. bench/release-set/v3)")
     calibrate.add_argument("--min-size", type=int, default=SELECTION_DEFAULTS["min_size"])
     calibrate.add_argument("--max-size", type=int, default=SELECTION_DEFAULTS["max_size"])
     calibrate.add_argument("--accept-off-target", action="store_true",

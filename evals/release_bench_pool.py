@@ -173,7 +173,8 @@ def run_pool(order, run_one, reservation_of, *, jobs, gates, results_path, attem
     log(f"{len(done)} trial(s) already recorded, {abandoned} abandoned attempt(s) charged "
         f"(${gates.spent_usd:.2f} spent), {len(pending)} to run on {jobs} worker(s)")
     state = {"records": records, "running": {}, "lock": threading.Lock(), "stop": threading.Event(),
-             "gates": gates, "log": log, "reservation_of": reservation_of}
+             "gates": gates, "log": log, "reservation_of": reservation_of,
+             "held_seconds": {"host": 0.0, "budget": 0.0}}
     with open(results_path, "a") as sink, open(attempts_path, "a") as journal, \
             ThreadPoolExecutor(max_workers=jobs) as pool:
         state["sink"] = sink
@@ -184,6 +185,9 @@ def run_pool(order, run_one, reservation_of, *, jobs, gates, results_path, attem
             state["stop"].set()
             terminate_owned_process_groups()
             raise
+    held = state["held_seconds"]
+    log(f"a free worker waited {held['host'] / 60:.1f} min on the host gate and "
+        f"{held['budget'] / 60:.1f} min for budget headroom")
     if reason:
         log(f"stopped early: {reason}")
     return records, reason
@@ -200,12 +204,17 @@ def _admit_all(pending, run_one, pool, journal, jobs, should_stop, state):
                 reason = should_stop(state["records"])
         if reason:
             return reason
+        held = time.monotonic()
         _await_host(gates, state["log"], state["stop"])
+        state["held_seconds"]["host"] += time.monotonic() - held
         amount = state["reservation_of"](tuple(triple))
+        held = time.monotonic()
         while not gates.reserve(amount):
             if not running:
                 return f"budget ${gates.budget_usd:.2f} reached (${gates.spent_usd:.2f} spent)"
             _collect(wait(running, return_when=FIRST_COMPLETED).done, state)
+        # A free worker waited for budget headroom: the price of reserving every trial's worst case.
+        state["held_seconds"]["budget"] += time.monotonic() - held
         task, repeat, arm = triple
         journal.write(json.dumps({"task": task, "repeat": repeat, "arm": arm, "reserve_usd": amount,
                                   "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
