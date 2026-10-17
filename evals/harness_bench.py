@@ -135,14 +135,15 @@ def save_json(path, obj):
     os.replace(tmp, path)
 
 
-def run_native_trial(condition, task_text, workspace, timeout, trial_dir, result):
+def run_native_trial(condition, task_text, workspace, timeout, trial_dir, result, extra_env=None):
     is_claude = condition["kind"] == "native-claude"
     command_builder = native_claude_command if is_claude else native_codex_command
     prompt = native_prompt(condition, task_text, workspace)
     assert task_text.strip() in prompt, "a native prompt always carries the whole task"
     command = native_command(condition, command_builder(prompt, condition.get("model"), condition.get("effort")))
     env, stripped_env = sanitized_native_env()
-    result["env_isolation"] = {"stripped_vars": stripped_env}
+    env.update(extra_env or {})
+    result["env_isolation"] = {"stripped_vars": stripped_env, "extra_vars": sorted(extra_env or {})}
     result["configured_defaults"] = native_configured_defaults("claude" if is_claude else "codex")
     overrides = CLAUDE_PERMISSION_OVERRIDES if is_claude else CODEX_PERMISSION_OVERRIDES
     result["permission_overrides"] = [flag for flag in overrides if flag in command]
@@ -170,6 +171,8 @@ def _spawn_root(client, condition, task_text):
         options = {"effort": condition["effort"]} if "effort" in condition else {}
         if "tools" in condition:
             options["tools"] = condition["tools"]
+        if "budget" in condition:
+            options["budget"] = condition["budget"]
         agent = client.create_agent(role="assistant", objective=task_text, model=condition["model"], long_lived=False, **options)
         return agent["id"], condition.get("effort")
     if kind == "aether-coordinator-team":
@@ -327,10 +330,13 @@ def capture_stopped_run(env, run_id, root_id, trial_dir, result, requested_effor
         result["usage_error"] = str(error)
 
 
-def run_aether_trial(binary, condition, task_text, workspace, timeout, trial_dir, real_claude, result):
+def run_aether_trial(binary, condition, task_text, workspace, timeout, trial_dir, real_claude, result,
+                     extra_env=None):
     """Run one trial on its own daemon; its private socket directory never outlives it."""
     env = isolated_env(trial_dir)
     result["env_isolation"] = {"stripped_vars": strip_live_routing_env(env, keep=_AETHER_ISOLATED_ENV_KEYS)}
+    assert not set(extra_env or {}) & _AETHER_ISOLATED_ENV_KEYS, "extra_env never redirects the trial's daemon"
+    env.update(extra_env or {})
     env["AETHER_SOCKET"], socket_dir = isolated_socket_path(trial_dir)
     try:
         result["env_isolation"]["socket_in_runtime_dir"] = socket_dir is not None

@@ -126,6 +126,10 @@ def native_command(condition, command):
         assert condition["kind"] == "native-claude", "only Claude Code takes --disallowedTools"
         # The option takes several values, so it goes ahead of another option, never next to the prompt.
         command[2:2] = ["--disallowedTools", condition["disallowed_tools"]]
+    if "max_budget_usd" in condition:
+        assert condition["kind"] == "native-claude", "only Claude Code takes --max-budget-usd"
+        assert condition["max_budget_usd"] > 0, "a spend cap is a positive amount"
+        command[2:2] = ["--max-budget-usd", str(condition["max_budget_usd"])]
     if loads_user_mcp(condition):
         assert command.count(STRICT_MCP_FLAG) == 1, "only a Claude command carries the strict MCP flag"
         command.remove(STRICT_MCP_FLAG)

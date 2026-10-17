@@ -52,12 +52,17 @@ class AetherClient(_AetherClient):
     # ----- helpers -----------------------------------------------------------
 
     def create_agent(self, role="assistant", objective=None, model=None, long_lived=True, effort=None, parent=None,
-                     tools=None):
+                     tools=None, budget=None):
+        """`budget` sets any of the config's `max_turns`, `token_budget` and `cost_budget`."""
         config = {"long_lived": long_lived, "approval": {"require_for": []}}
         if effort:
             config["effort"] = effort
         if tools is not None:
             config["tools"] = tools
+        if budget:
+            unknown = set(budget) - {"max_turns", "token_budget", "cost_budget"}
+            assert not unknown, f"unknown budget keys: {sorted(unknown)}"
+            config.update(budget)
         model_ref = None
         if model:
             provider, name = model.split("/", 1)
