@@ -2141,3 +2141,32 @@ fn login_without_a_terminal_explains_what_is_needed() {
     );
     assert!(!message.contains("os error"), "{message}");
 }
+
+#[test]
+fn a_bad_config_is_reported_once_by_the_daemon_and_by_doctor() {
+    for config in ["[model\n", "bogus_key = 1\n"] {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("config")).unwrap();
+        std::fs::write(root.path().join("config/config.toml"), config).unwrap();
+
+        let daemon = run_isolated(root.path(), &["daemon", "--foreground"]);
+        let message = stderr(&daemon);
+        assert!(!daemon.status.success(), "{message}");
+        assert!(!message.contains("using default"), "{message}");
+        let key = if config.starts_with('[') {
+            "TOML parse error"
+        } else {
+            "bogus_key"
+        };
+        assert_eq!(message.matches(key).count(), 1, "{message}");
+
+        let doctor = run_isolated(root.path(), &["doctor"]);
+        assert_eq!(doctor.status.code(), Some(2), "{}", stderr(&doctor));
+        let report = stdout(&doctor);
+        let failures = report
+            .lines()
+            .filter(|l| l.starts_with("fail  config"))
+            .count();
+        assert_eq!(failures, 1, "{report}");
+    }
+}

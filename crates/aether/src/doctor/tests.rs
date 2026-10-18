@@ -1217,3 +1217,27 @@ fn the_agent_temp_root_is_judged_at_its_real_path() {
     assert!(default.detail.contains("its owner"), "{default:?}");
     assert_eq!(configured.level, Level::Fail, "{configured:?}");
 }
+
+#[test]
+fn an_unresolvable_default_model_fails_naming_the_key() {
+    let dir = tempfile::tempdir().expect("dir");
+    let p = paths(dir.path());
+    std::fs::create_dir_all(&p.config_dir).expect("mkdir");
+    for bad in ["nosuch/model", "not-a-model-ref"] {
+        std::fs::write(
+            p.config_dir.join("config.toml"),
+            format!("[model]\ndefault = \"{bad}\"\n"),
+        )
+        .expect("write");
+        let check = check_config(&p);
+        assert_eq!(check.level, Level::Fail, "{bad}");
+        assert!(check.detail.contains("model.default"), "{}", check.detail);
+        assert!(check.detail.contains(bad), "{}", check.detail);
+    }
+    std::fs::write(
+        p.config_dir.join("config.toml"),
+        "[model]\ndefault = \"codex/gpt-6-luna\"\n",
+    )
+    .expect("write");
+    assert_eq!(check_config(&p).level, Level::Ok);
+}

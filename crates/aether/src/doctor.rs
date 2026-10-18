@@ -239,6 +239,13 @@ pub fn check_config(paths: &Paths) -> Check {
             "name the successor in config.toml's [model] section",
         );
     }
+    if let Some(problem) = unresolvable_default_model(&registry, &config.model) {
+        return Check::fail(
+            "config",
+            problem,
+            "pick one of the models `aether models` lists, or remove the key",
+        );
+    }
     Check::ok(
         "config",
         format!(
@@ -247,6 +254,23 @@ pub fn check_config(paths: &Paths) -> Check {
             config.mcp.servers.len()
         ),
     )
+}
+
+/// `[model] default` when it names nothing the registry can resolve. A retired
+/// model is reported by the retirement check with its successor instead.
+fn unresolvable_default_model(
+    registry: &aether_model::Registry,
+    model: &aether_model::config::ModelSection,
+) -> Option<String> {
+    let text = model.default.as_deref()?;
+    let resolved = aether_core::model::ModelRef::parse(text).map(|r| registry.resolve(&r));
+    match resolved {
+        Some(Ok(_)) => None,
+        Some(Err(e)) if e.is_retirement() => None,
+        _ => Some(format!(
+            "model.default `{text}` is not a known model (expected provider/model)"
+        )),
+    }
 }
 
 /// What this binary found on the daemon socket. A daemon that answered but
