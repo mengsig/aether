@@ -309,14 +309,14 @@ fn allowed_roots(ctx: &ToolContext) -> Result<Vec<PathBuf>, ToolError> {
                     roots.push(p);
                 }
             }
-            // Shell logs live here, and the tool results point the agent at them.
-            if let Some(Ok(p)) = ctx.temp_dir.as_ref().map(std::fs::canonicalize) {
-                roots.push(p);
-            }
         }
         None => roots.push(std::fs::canonicalize(&ctx.cwd).map_err(|e| {
             ToolError::Internal(format!("cwd {} unavailable: {e}", ctx.cwd.display()))
         })?),
+    }
+    // Shell logs live here, and the tool results point the agent at them.
+    if let Some(Ok(p)) = ctx.temp_dir.as_ref().map(std::fs::canonicalize) {
+        roots.push(p);
     }
     Ok(roots)
 }
@@ -671,6 +671,20 @@ mod tests {
         std::os::unix::fs::symlink("loop", dir.path().join("loop")).unwrap();
         assert_eq!(resource_paths(&ctx, "loop"), vec![root.join("loop")]);
         assert!(resolve_path(&ctx, "loop").is_err());
+    }
+
+    #[test]
+    fn the_agent_temp_dir_is_in_scope_with_or_without_a_workspace_root() {
+        let work = tempfile::tempdir().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let log = temp.path().join("output.log");
+        std::fs::write(&log, "x").unwrap();
+        let mut ctx = ctx_in(work.path());
+        assert!(resolve_path(&ctx, &log).is_err());
+        ctx.temp_dir = Some(temp.path().to_path_buf());
+        assert!(resolve_path(&ctx, &log).is_ok());
+        ctx.scope.workspace_root = None;
+        assert!(resolve_path(&ctx, &log).is_ok());
     }
 
     #[test]
