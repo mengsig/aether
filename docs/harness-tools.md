@@ -33,8 +33,8 @@ native tool discovery. The schemas in `aether-tools/src/builtin/harness.rs`
 `complete_task` and `fail_task` bound their payloads and refuse an oversized
 or malformed one with a tool error that names the field; the task stays open
 and the agent may retry. `summary` and `error` are at most 256 KiB (262144
-bytes). `structured`, when present, must be a JSON object (not `null`, an array,
-a string or a number; omit it to send none) of at most 1 MiB serialized. Put
+bytes). `structured`, when present, must be a JSON object (not an array, a string
+or a number; `null` counts as omitted and sends none) of at most 1 MiB serialized. Put
 bulk output in an artifact and reference it from the summary.
 
 The protocol `create_agent` command also requires explicit `config.effort` whenever

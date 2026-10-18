@@ -31,15 +31,15 @@ fn check_text_len(field: &str, text: &str) -> Result<(), ToolError> {
     Ok(())
 }
 
-/// `structured` must be an object, so `null` is refused too: the caller
-/// leaves the field out to send nothing.
+/// `structured` must be an object; an explicit `null` counts as omitted,
+/// since models routinely send it for an optional field.
 fn check_structured(input: &Value) -> Result<(), ToolError> {
-    let Some(structured) = input.get("structured") else {
+    let Some(structured) = input.get("structured").filter(|v| !v.is_null()) else {
         return Ok(());
     };
     if !structured.is_object() {
         return Err(ToolError::InvalidInput(
-            "structured must be a JSON object; omit it to send none".into(),
+            "structured must be a JSON object, or null/omitted to send none".into(),
         ));
     }
     let size = structured.to_string().len();
@@ -68,7 +68,7 @@ impl Tool for CompleteTask {
                 "properties": {
                     "summary": {"type": "string", "description": "Durable summary of what was done and where."},
                     "artifacts": {"type": "array", "items": {"type": "string"}, "description": "Artifact ids (art_...) to attach."},
-                    "structured": {"type": "object", "description": "Optional machine-readable result."}
+                    "structured": {"type": "object", "description": "Optional machine-readable result; null or omitted sends none."}
                 },
                 "required": ["summary"],
                 "additionalProperties": false
@@ -138,7 +138,7 @@ impl Tool for FailTask {
                 "type": "object",
                 "properties": {
                     "error": {"type": "string"},
-                    "structured": {"type": "object", "description": "Optional machine-readable failure detail."}
+                    "structured": {"type": "object", "description": "Optional machine-readable failure detail; null or omitted sends none."}
                 },
                 "required": ["error"],
                 "additionalProperties": false

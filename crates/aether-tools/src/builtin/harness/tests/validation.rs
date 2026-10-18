@@ -307,7 +307,7 @@ async fn remember_rejects_out_of_range_importance_and_confidence() {
 async fn result_tools_require_an_object_for_structured() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = ctx_in(dir.path());
-    for bad in [json!([1, 2]), json!(null), json!("s"), json!(3)] {
+    for bad in [json!([1, 2]), json!("s"), json!(3)] {
         let complete = act(
             &CompleteTask,
             &ctx,
@@ -331,6 +331,37 @@ async fn result_tools_require_an_object_for_structured() {
     )
     .await;
     assert!(ok.is_ok(), "{ok:?}");
+}
+
+#[tokio::test]
+async fn result_tools_treat_null_structured_as_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_in(dir.path());
+    let complete = act(
+        &CompleteTask,
+        &ctx,
+        json!({"summary": "d", "structured": null}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        complete,
+        HarnessAction::CompleteTask {
+            summary: "d".into(),
+            artifacts: vec![],
+            structured: None
+        }
+    );
+    let fail = act(&FailTask, &ctx, json!({"error": "e", "structured": null}))
+        .await
+        .unwrap();
+    assert_eq!(
+        fail,
+        HarnessAction::FailTask {
+            error: "e".into(),
+            structured: None
+        }
+    );
 }
 
 #[tokio::test]
