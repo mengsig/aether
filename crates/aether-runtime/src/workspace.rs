@@ -1592,9 +1592,15 @@ mod tests {
     use super::*;
 
     fn process_umask() -> u32 {
-        let status = fs::read_to_string("/proc/self/status").unwrap();
-        let line = status.lines().find(|l| l.starts_with("Umask:")).unwrap();
-        u32::from_str_radix(line["Umask:".len()..].trim(), 8).unwrap()
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("probe");
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o777)
+            .open(&path)
+            .unwrap();
+        0o777 & !(fs::metadata(&path).unwrap().permissions().mode() & 0o777)
     }
 
     fn git_ok(repo: &Path, args: &[&str]) -> Vec<u8> {

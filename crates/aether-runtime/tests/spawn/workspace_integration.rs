@@ -2,12 +2,21 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 fn process_umask() -> u32 {
-    let status = std::fs::read_to_string("/proc/self/status").expect("process status");
-    let line = status
-        .lines()
-        .find(|line| line.starts_with("Umask:"))
-        .expect("umask line");
-    u32::from_str_radix(line["Umask:".len()..].trim(), 8).expect("octal umask")
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = tempfile::tempdir().expect("probe dir");
+    let path = dir.path().join("probe");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o777)
+        .open(&path)
+        .expect("probe file");
+    0o777
+        & !(std::fs::metadata(&path)
+            .expect("probe mode")
+            .permissions()
+            .mode()
+            & 0o777)
 }
 
 fn git(root: &std::path::Path, args: &[&str]) {
