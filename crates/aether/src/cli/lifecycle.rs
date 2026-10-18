@@ -10,39 +10,8 @@ mod tests;
 
 /// Run `[serve]`: webhooks in, event subscriptions out, until interrupted.
 pub async fn serve(socket: PathBuf, allow_remote: bool) -> anyhow::Result<()> {
-    let models = aether_model::Models::load(None)?;
-    let section = models.config().serve.clone();
-    let address = section
-        .address()
-        .map_err(|reason| anyhow::anyhow!(reason))?;
-    let mut webhooks = Vec::new();
-    for hook in &section.webhooks {
-        webhooks.push(aether_client::serve::Webhook {
-            path: hook.path.clone(),
-            agent: hook.agent.clone(),
-            source: hook.source.clone(),
-            secret: secret_from(&hook.secret_env, &hook.path)?,
-        });
-    }
-    let mut subscriptions = Vec::new();
-    for out in &section.subscriptions {
-        // `ServeSection::address` already refused a subscription without one.
-        let name = out.secret_env.as_deref().unwrap_or_default();
-        subscriptions.push(aether_client::serve::Subscription {
-            url: out.url.clone(),
-            events: out.events.clone(),
-            secret: secret_from(name, &out.url)?,
-            max_attempts: out.max_attempts,
-            dead_letter: out.dead_letter.clone(),
-        });
-    }
-    let config = aether_client::serve::ServeConfig {
-        address,
-        allow_remote: allow_remote || section.allow_remote,
-        webhooks,
-        subscriptions,
-    };
-
+    let config = load_serve_config(allow_remote)?;
+    let _log = crate::logging::init("serve.log", true)?;
     let client = connect(&socket).await?;
     // Live from here on: an event that predates this process was the previous
     // one's to deliver, and replaying the log would post it all again.
@@ -72,6 +41,42 @@ pub async fn serve(socket: PathBuf, allow_remote: bool) -> anyhow::Result<()> {
         None => println!("aether serve: posting events, no inbound listener configured"),
     })
     .await
+}
+
+fn load_serve_config(allow_remote: bool) -> anyhow::Result<aether_client::serve::ServeConfig> {
+    let models = aether_model::Models::load(None)?;
+    let section = models.config().serve.clone();
+    let address = section
+        .address()
+        .map_err(|reason| anyhow::anyhow!(reason))?;
+    let mut webhooks = Vec::new();
+    for hook in &section.webhooks {
+        webhooks.push(aether_client::serve::Webhook {
+            path: hook.path.clone(),
+            agent: hook.agent.clone(),
+            source: hook.source.clone(),
+            secret: webhook_secret(&hook.secret_env, &hook.path)?,
+        });
+    }
+    let mut subscriptions = Vec::new();
+    for out in &section.subscriptions {
+        // `ServeSection::address` already refused a subscription without one.
+        let name = out.secret_env.as_deref().unwrap_or_default();
+        subscriptions.push(aether_client::serve::Subscription {
+            url: out.url.clone(),
+            events: out.events.clone(),
+            secret: secret_from(name, &out.url)?,
+            max_attempts: out.max_attempts,
+            dead_letter: out.dead_letter.clone(),
+        });
+    }
+    Ok(aether_client::serve::ServeConfig {
+        address,
+        allow_remote: allow_remote || section.allow_remote,
+        replay_path: aether_protocol::paths::data_dir().join("webhook-replay.db"),
+        webhooks,
+        subscriptions,
+    })
 }
 
 fn serve_events(
@@ -111,6 +116,20 @@ fn serve_events(
             }
         },
     )
+}
+
+fn webhook_secret(variable: &str, route: &str) -> anyhow::Result<String> {
+    let secret = secret_from(variable, route)?;
+    validate_webhook_secret(&secret, variable, route)?;
+    Ok(secret)
+}
+
+fn validate_webhook_secret(secret: &str, variable: &str, route: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        secret.len() >= aether_client::serve::signature::MIN_SECRET_BYTES,
+        "{variable} for webhook route {route} must contain at least 32 bytes; set {variable} to a strong random secret before running aether serve"
+    );
+    Ok(())
 }
 
 /// A secret from the environment. Aether stores none, so an unset variable is

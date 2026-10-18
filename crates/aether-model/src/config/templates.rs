@@ -208,8 +208,9 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # named, never stored: a delivery carries `X-Aether-Timestamp`,
 # `X-Aether-Nonce` and `X-Aether-Signature: sha256=<hex>`, the HMAC-SHA256 of
 # "<timestamp>.<nonce>.<body>", and one outside five minutes or with a nonce
-# already seen is refused. A subscription must name a secret - an unsigned
-# delivery tells the receiver nothing - and must be https unless the receiver
+# already seen is refused, including after restart (webhook-replay.db).
+# Webhook secrets need at least 32 bytes. A subscription must name a secret;
+# unsigned delivery tells the receiver nothing. It must be https unless the receiver
 # is on this machine, since Aether terminates no TLS and an event body carries
 # model content. Redirects are never followed.
 #

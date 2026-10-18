@@ -57,6 +57,7 @@ dependencies = [
  "hyper-util",
  "rand 0.10.3",
  "reqwest",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",

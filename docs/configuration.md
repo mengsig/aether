@@ -482,3 +482,43 @@ cold again. The
 agents of one run share a partition and can read and overwrite each other's
 output; partitions of different runs are separate directories under one
 user, not an operating-system boundary.
+
+## Signed webhook door
+
+`aether serve` reads `[[serve.webhook]]` routes from `config.toml`. Each
+route's `secret_env` must name an environment variable containing at least
+32 bytes of signing secret (after trimming surrounding whitespace). Use a
+strong random value, for example `openssl rand -hex 32`, and a different
+secret for every inbound route and outbound subscription. Startup errors
+name the route and environment variable to fix without printing the secret.
+
+POST the exact JSON body with one each of `X-Aether-Timestamp` (Unix seconds),
+`X-Aether-Nonce` (1–128 letters, digits, `_` or `-`), and
+`X-Aether-Signature: sha256=<hex>`. The signature is HMAC-SHA256 over
+`<timestamp>.<nonce>.<body>`. Missing, repeated, empty or malformed signature
+headers return 401; timestamps outside ±300 seconds and replayed deliveries
+return 409. Bodies over 1 MiB return 413, including uploads declaring a much
+larger size. Rejections log the route, status and a fixed reason, without
+logging credentials or request bodies. `aether serve` writes these warnings
+to stderr and the managed `serve.log` stream under the data directory
+(`logs/serve.log/segments-v1/events.0.log`).
+
+An optional `X-Aether-Delivery-Id` (1–128 letters, digits, `_` or `-`) provides
+the replay key. Without it, Aether hashes the signature and timestamp. The
+signed nonce is also remembered, so changing or removing the optional ID
+cannot bypass replay detection. Duplicate delivery-ID headers are refused.
+
+Replay records live in `webhook-replay.db` beside `aether.db` in the data
+directory (`AETHER_DATA_DIR` overrides it). The file is owner-only and
+survives `aether serve` restarts. Admission is committed before dispatch;
+concurrent listeners sharing that file cannot both accept a delivery.
+Records expire 630 seconds after admission: two 300-second windows cover
+future-dated signatures, plus 30 seconds for clock skew. Expired records are
+pruned on writes. Each route can retain 100,000 deliveries; saturation or
+storage failure returns 503 and never evicts a live record to admit work.
+
+Keep this file when restarting or upgrading. It is separate from the daemon
+store and requires no daemon schema migration. A first upgrade from an
+in-memory-only guard cannot recover deliveries accepted by the old process.
+An accepted delivery stays consumed if subsequent dispatch fails; when
+retrying, use a fresh nonce, timestamp and delivery ID as appropriate.

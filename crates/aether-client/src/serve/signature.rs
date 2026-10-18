@@ -27,6 +27,12 @@ pub const HEADER_TIMESTAMP: &str = "x-aether-timestamp";
 /// the receiver has not seen.
 pub const HEADER_NONCE: &str = "x-aether-nonce";
 
+/// Optional sender delivery identifier; the signed nonce is always checked too.
+pub const HEADER_DELIVERY_ID: &str = "x-aether-delivery-id";
+
+/// Minimum inbound signing key length in bytes.
+pub const MIN_SECRET_BYTES: usize = 32;
+
 /// The only prefix accepted, so the algorithm is never inferred.
 const PREFIX: &str = "sha256=";
 

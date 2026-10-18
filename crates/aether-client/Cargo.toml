@@ -26,6 +26,7 @@ hex = { workspace = true }
 hmac = { workspace = true }
 rand = { workspace = true }
 reqwest = { workspace = true }
+rusqlite = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs", "process"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

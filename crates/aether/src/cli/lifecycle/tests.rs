@@ -97,3 +97,14 @@ fn event(sub: u64, seq: u64) -> ServerFrame {
         ),
     }
 }
+
+#[test]
+fn short_webhook_secret_names_the_route_and_environment_fix() {
+    let error = super::validate_webhook_secret("x", "AETHER_TEST_HOOK_SECRET", "/hooks/ci")
+        .expect_err("short secrets must fail before connecting to a daemon");
+    let message = error.to_string();
+    assert!(message.contains("AETHER_TEST_HOOK_SECRET"));
+    assert!(message.contains("/hooks/ci"));
+    assert!(message.contains("at least 32 bytes"));
+    assert!(super::validate_webhook_secret(&"x".repeat(32), "SECRET", "/hook").is_ok());
+}

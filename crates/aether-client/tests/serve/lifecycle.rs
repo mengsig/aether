@@ -4,6 +4,7 @@ fn serve_config(webhooks: Vec<Webhook>, subscriptions: Vec<Subscription>) -> Ser
     ServeConfig {
         address: Some("127.0.0.1:0".parse().expect("addr")),
         allow_remote: false,
+        replay_path: std::path::PathBuf::new(),
         webhooks,
         subscriptions,
     }

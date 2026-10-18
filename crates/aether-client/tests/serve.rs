@@ -19,7 +19,7 @@ use http_body_util::{BodyExt as _, Full};
 use hyper::body::Bytes;
 use tokio_util::sync::CancellationToken;
 
-const SECRET: &str = "a shared secret";
+const SECRET: &str = "test-only-signing-secret-32-bytes-long";
 
 /// A daemon double: answers plausibly and remembers what it was asked.
 #[derive(Debug, Default)]
@@ -104,6 +104,7 @@ struct Serving {
     address: SocketAddr,
     sink: Arc<Recording>,
     shutdown: CancellationToken,
+    _state: tempfile::TempDir,
 }
 
 impl Serving {
@@ -112,6 +113,15 @@ impl Serving {
     }
 
     async fn start_with(webhooks: Vec<Webhook>, agents: Vec<Agent>) -> Serving {
+        let state = tempfile::tempdir().expect("replay state");
+        Self::start_in(webhooks, agents, state).await
+    }
+
+    async fn start_in(
+        webhooks: Vec<Webhook>,
+        agents: Vec<Agent>,
+        state: tempfile::TempDir,
+    ) -> Serving {
         let sink = Arc::new(Recording {
             agents,
             ..Default::default()
@@ -119,6 +129,7 @@ impl Serving {
         let config = ServeConfig {
             address: Some("127.0.0.1:0".parse().expect("addr")),
             allow_remote: false,
+            replay_path: state.path().join("webhook-replay.db"),
             webhooks,
             subscriptions: Vec::new(),
         };
@@ -137,6 +148,7 @@ impl Serving {
             address,
             sink,
             shutdown,
+            _state: state,
         }
     }
 
@@ -206,6 +218,8 @@ fn hook() -> Webhook {
     }
 }
 
+#[path = "serve/hardening.rs"]
+mod hardening;
 #[path = "serve/inbound.rs"]
 mod inbound;
 #[path = "serve/lifecycle.rs"]

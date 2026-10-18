@@ -12,9 +12,11 @@
 //! Both doors are written against [`CommandSink`] and a plain event stream,
 //! so the tests drive them without a daemon.
 
+mod headers;
 mod inbound;
 mod outbound;
 pub mod replay;
+mod request;
 pub mod signature;
 
 use std::net::SocketAddr;
@@ -40,6 +42,8 @@ pub struct ServeConfig {
     /// Bind outside loopback. Off by default: a webhook creates work on this
     /// machine, and Aether terminates no TLS.
     pub allow_remote: bool,
+    /// Durable replay state; shared by every restart of this door.
+    pub replay_path: PathBuf,
     pub webhooks: Vec<Webhook>,
     pub subscriptions: Vec<Subscription>,
 }

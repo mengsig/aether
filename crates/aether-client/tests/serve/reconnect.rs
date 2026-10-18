@@ -77,6 +77,7 @@ async fn serving_over(socket: &Path) -> (SocketAddr, CancellationToken) {
     let config = ServeConfig {
         address: Some("127.0.0.1:0".parse().expect("addr")),
         allow_remote: false,
+        replay_path: socket.with_extension("replay.db"),
         webhooks: vec![hook()],
         subscriptions: Vec::new(),
     };

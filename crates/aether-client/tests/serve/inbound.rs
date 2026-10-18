@@ -273,6 +273,7 @@ async fn shared_route_secrets_are_refused_before_listening() {
     let config = ServeConfig {
         address: Some("127.0.0.1:0".parse().unwrap()),
         allow_remote: false,
+        replay_path: std::path::PathBuf::new(),
         webhooks: vec![first, second],
         subscriptions: Vec::new(),
     };
@@ -294,7 +295,7 @@ async fn a_delivery_cannot_authenticate_on_another_route() {
     let first = hook();
     let mut second = hook();
     second.path = "/hooks/other".into();
-    second.secret = "another route key".into();
+    second.secret = "another-route-test-only-key-32-bytes-long".into();
     let serving = Serving::start(vec![first, second]).await;
     let delivery = Delivery::signed("{}", SECRET);
     assert_eq!(serving.post("/hooks/ci", &delivery).await.0, 202);
@@ -308,6 +309,7 @@ async fn an_outbound_signing_key_cannot_authenticate_an_inbound_route() {
     let config = ServeConfig {
         address: Some("127.0.0.1:0".parse().unwrap()),
         allow_remote: false,
+        replay_path: std::path::PathBuf::new(),
         webhooks: vec![hook()],
         subscriptions: vec![Subscription {
             url: "https://receiver.example/events".into(),
