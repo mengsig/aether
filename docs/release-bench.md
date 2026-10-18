@@ -2,9 +2,9 @@
 
 `make bench-release` compares the last release of Aether with a release
 candidate, and both with the plain native CLIs, on a frozen set of short coding
-tasks. It is meant to run before every release: it costs about USD 15
-API-equivalent at most, runs trials in parallel, and prints a Markdown report
-ending in a PASS or FAIL verdict.
+tasks. It is meant to run before every release. It runs trials in parallel,
+stops starting them at `BUDGET` (USD 20 API-equivalent), and prints a Markdown
+report that ends in a PASS, FAIL or INCONCLUSIVE verdict.
 
 ```sh
 make build                                     # the candidate: target/release/aether
@@ -33,18 +33,49 @@ Aether. Pass `ARMS=haiku`, `ARMS=luna` or explicit keys such as
 
 Each trial gets a fresh git workspace with the task's files. The workspace
 sits under the work root, outside the repository, so no solver can read the
-generators and their reference solutions. Each trial also gets its own TMPDIR,
-XDG cache and state, and, for Aether arms, its own daemon, config, data
-directory and socket. Trials therefore run side by side (`JOBS=6` by default).
+generators and their reference solutions. Each trial also gets its own XDG
+cache and state, and, for Aether arms, its own daemon, config, data directory
+and socket. Its TMPDIR is a fresh, short directory under `/var/tmp`
+(`RELEASE_BENCH_TMP_ROOT`), removed when the trial ends. A short TMPDIR matters
+because harnesses bind Unix sockets under it, and socket paths must fit in 108
+bytes. Trials therefore run side by side (`JOBS=10` by default).
 A trial starts only while the 1-minute load is at most `LOAD_MAX` (16) and at
 least 2 GB of memory is free.
 
-Caps per trial: a 600 s timeout; USD 0.50 for Claude arms (`--max-budget-usd`
-natively, `cost_budget` through Aether); 4 M tokens for Luna through Aether
-(Codex reports no cost to Aether, and `codex exec` takes no cap). Before
-starting a trial, the run reserves that trial's worst case against `BUDGET`
-(USD 15). It stops starting trials when the reservation would not fit, and the
-report says so.
+Every (task, repeat) is one block: its arms run back to back, in a shuffled
+order. Within each model tier, `old` runs before `new` in exactly half of the
+blocks, alternating, so neither binary systematically gets the warmer cache or
+the quieter minute.
+
+Caps per trial:
+
+- A 600 s timeout.
+- A spend allowance of USD 0.50 on Haiku arms and USD 0.15 on Luna arms. The
+  harness's own cap applies where it has one: `--max-budget-usd` for Claude
+  Code, `cost_budget` for Aether on Claude, Archon's item budget. Codex and
+  Aether on Codex have none, so every arm also runs under a spend guard. The
+  guard reads the trial's usage as it is written (Claude Code's stream,
+  Codex's session log, Aether's event store), prices it on the run's pinned
+  table each second, and stops every process of the trial at the allowance.
+  A stopped trial counts as a failure of its arm.
+- Before starting a trial, the run reserves the trial's worst case against
+  `BUDGET`: the allowance plus two calls at the model's largest possible
+  price per agent it may run (a full context window and a full output). Those
+  two calls are one finished between two polls and one in flight at the stop.
+  That is USD 1.54 for a Haiku trial and USD 0.35 for a Luna trial, more for
+  delegation tasks. The run stops starting trials when a reservation no longer
+  fits.
+- A trial whose usage cannot be priced is charged its whole reservation. The
+  exception is an Aether turn that recorded no tokens, because it failed or
+  ended before any model call (a sandbox that did not start, say). Such a turn
+  spent nothing and is priced at zero. The trial's cost then comes from every
+  agent's cumulative usage in its event store, and `price_note` in its
+  `result.json` says so.
+
+An interrupted run resumes when started again with the same `--run-id`. The
+run journals every trial start before the trial begins (`attempts.jsonl`). A
+resumed run moves the directory of a trial that never recorded a result aside
+as `<name>.abandoned-N`, and charges that attempt its whole reservation.
 
 After the solver stops, hidden checks (a `unittest` module the solver never
 sees) run against the workspace in a separate, isolated Python process. A trial
@@ -67,14 +98,34 @@ reported too.
 - **Drift:** `old` against `native`, for reference only.
 - **Per family:** pass rates by task family.
 
+Trials end in one of three ways:
+
+- **Counted:** graded by the hidden checks.
+- **Harness failure:** counted as a failed trial. On Aether and Archon arms
+  this covers a crash, an exit without model output, a telemetry or cleanup
+  error, or a root left blocked. On every arm it covers a stop by the spend
+  guard. The harness under test answers for all of these, so a candidate that
+  crashes loses those tasks.
+- **Infrastructure error:** excluded. That is a failure of the bench's own
+  steps, or a provider outage named in the error (overloaded, rate limit, 429,
+  5xx, connection reset). On the native drift reference, a CLI that produced
+  no output at all is one too.
+
 The verdict for a tier is:
 
 - **FAIL** when, at 95 % one-sided confidence, the candidate's pass rate is more
   than 5 points below the old release's, or its cost is more than 15 % above it.
-- **INCONCLUSIVE** when fewer than 20 tasks were paired, or more than 10 % of
-  the tier's old/new trials hit an infrastructure error. An infrastructure
-  error is a harness crash, no model output at all, or a cleanup failure. These
-  trials are excluded, not counted as failures.
+- **INCONCLUSIVE** in any of these cases:
+  - fewer than 20 tasks were paired;
+  - more than 10 % of the old arm's or of the candidate arm's trials hit an
+    infrastructure error (each arm is checked on its own);
+  - the planned matrix did not finish: a tier that never ran, a stop at the
+    budget, or a repeat that ran only partly;
+  - fewer than 95 % of the paired tasks are priced on both arms, so the cost
+    gate cannot be judged.
+
+  A FAIL on accuracy stands without prices. A FAIL on an unfinished matrix
+  stands only under `--early-stop`, whose looks are planned for it.
 - **PASS** otherwise.
 
 The overall verdict is FAIL when any tier fails, PASS when every tier passes,
@@ -82,7 +133,7 @@ and INCONCLUSIVE otherwise (also when no tier ran both an old and a candidate
 arm). The make target exits 0 only on PASS. A point estimate beyond a margin that is not
 significant is listed as a warning.
 
-`EXTRA=--early-stop` looks at the gate when half and when three quarters of
+`EARLY_STOP=1` looks at the gate when half and when three quarters of
 the tasks are paired. It stops only for a decisive FAIL, never for a pass. Each
 of the three looks (the final gate included) then uses a Bonferroni share of
 the 5 % error rate.
@@ -99,14 +150,16 @@ mix the two.
 | --- | --- | --- |
 | `OLD` | required | aether binary of the last release |
 | `NEW` | `target/release/aether` | aether binary of the candidate |
-| `SET` | `bench/release-set/v1` | frozen task set |
+| `SET` | `bench/release-set/v2` | frozen task set |
 | `ARMS` | `all` | `all`, `haiku`, `luna`, or comma-separated arm keys |
-| `JOBS` | 6 | trials at once |
+| `JOBS` | 10 | trials at once |
 | `LOAD_MAX` | 16 | start no trial above this 1-minute load |
-| `BUDGET` | 15 | USD API-equivalent; stop starting trials beyond it |
+| `BUDGET` | 20 | USD API-equivalent; stop starting trials beyond it |
 | `REPEATS` | 1 | runs of every (task, arm) |
-| `ARCHON_BIN` | unset | adds an Archon arm per tier, through the adapter below |
-| `EXTRA` | unset | more `release_bench.py run` options, such as `--limit 10` or `--early-stop` |
+| `ARCHON_BIN` | unset | an `archon` executable; adds an Archon arm per tier (below) |
+| `EARLY_STOP` | unset | `1` turns on the interim looks |
+| `ALLOW_OFF_TARGET` | unset | `1` runs a set whose calibration missed its targets; its verdict is then at most INCONCLUSIVE |
+| `EXTRA` | unset | more `release_bench.py run` options, such as `--limit 10` |
 
 Set `RELEASE_BENCH_WORK_ROOT` to move the workspaces. The default is
 `$TMPDIR/aether-release-bench`.
@@ -131,6 +184,22 @@ model:
 | traceback | `ledger` | fix a crash from a log and traceback, then the silent defects the same input exposes |
 | port | `pricing` | finish an exact Python port of a legacy JavaScript module (coercion, rounding and key-order quirks) |
 | algo | `diff`, `batching` | replace a plausible heuristic with the exact algorithm the doc defines (a minimal line diff with fixed tie-breaks; the cheapest batch plan under tie rules) |
+| refactor | `exporters` | merge three or four copy-pasted exporters into one shared `format_row` while every exporter keeps its exact output, quirks included |
+| delegation | `workstreams` | fix four unrelated packages, each against its own README; the prompt asks for one sub-agent per package |
+| longctx | `protocol` | fix a decoder against a 57 KB protocol spec whose errata, in the middle of the document, override the message table |
+
+The last three are the harness slice. Their checks are deterministic like the
+others:
+
+- `exporters` diffs each exporter against the starter on generated rows.
+  Parsing the file's syntax tree, it also checks that every exporter calls
+  `format_row` and that none formats a field itself.
+- `workstreams` passes only when all four packages match their READMEs. Its
+  spec allows delegation, so Aether and Archon arms run without the
+  work-alone instruction, and the record keeps how many agents each trial
+  started.
+- `protocol` checks each planted defect, and that every message type in the
+  spec decodes.
 
 `python3 evals/release_bench_generate.py --count N` generates candidates and
 keeps only fair ones:
@@ -146,16 +215,33 @@ rules.
 ### Calibrating a new set
 
 ```sh
-make bench-calibrate FREEZE=bench/release-set/v2   # NEW's price table; CAL_BUDGET=25, CAL_REPEATS=3
+make bench-calibrate FREEZE=bench/release-set/v3   # NEW's price table; CAL_BUDGET=25, CAL_REPEATS=3
 ```
 
 This runs `COUNT` (200) verified candidates `CAL_REPEATS` times on the two
-native arms. A task is eligible when it never hit an infrastructure error and
-is not saturated: a task both models solve every time, or neither ever solves,
-cannot show a change on either tier, so it only adds cost. The run then trims
-the eligible tasks (80–120, no template above 20 %) so the mean native Haiku
-pass rate lands near 50 % and Luna's near 30 %, preferring tasks whose own
-Haiku rate is nearest 50 %, and freezes the set.
+native arms (`TEMPLATES=a,b` limits the templates). A task is eligible when it
+never hit an infrastructure error and native Haiku passed it in 20–80 % of its
+runs. A task Haiku always or never solves cannot show a change on its tier. The
+run then trims the eligible tasks (80–120, no template above 20 %) so the mean
+native Haiku pass rate lands near 50 % and Luna's near 30 %, preferring tasks
+whose own Haiku rate is nearest 50 %.
+
+The set is **accepted** when it holds at least 80 tasks, its mean Haiku rate is
+within 10 points of 50 %, and its mean Luna rate is within 25–35 %.
+`calibration.md` lists every reason a set is not accepted. Calibration freezes
+only an accepted set, unless `ACCEPT_OFF_TARGET=1`. A set frozen that way
+records `accepted: false` in its manifest, and `make bench-release` refuses it
+without `ALLOW_OFF_TARGET=1`. Even then, the overall verdict is at most
+INCONCLUSIVE, so an off-target set can show a FAIL but never pass a release.
+
+Two options save a full recalibration (pass them through `EXTRA`):
+
+- `--carry bench/release-set/vN` adds that set's tasks to the pool, with the
+  rates its calibration recorded, so only new or changed templates are run.
+  Tasks of the templates named in `TEMPLATES` are left out, since those are
+  measured afresh.
+- `--haiku-band LOW,HIGH` changes the eligible Haiku band. Acceptance still
+  judges the set against the targets.
 
 At low effort both models are nearly deterministic on a given task: most tasks
 sit at 0 % or 100 % for a model, and few in between. The targets therefore
@@ -202,6 +288,8 @@ follow-up.
 
 ### A/A check of v1
 
+Superseded by the [A/A check of v2](#aa-check-of-v2).
+
 `make bench-release` with Aether 1.1.0 as both `OLD` and `NEW` ran all 552
 trials (92 tasks × 6 arms, `JOBS=6`) in 101 minutes for USD 6.90
 API-equivalent, with no infrastructure error. Its verdict was **PASS** on both
@@ -233,24 +321,168 @@ the load gate for about 3 minutes in all, so `JOBS=8` or more shortens it when
 memory allows. Calibration ran at `JOBS=8` without trouble. The full report is
 [release-bench-2026-10-18-aa.md](release-bench-2026-10-18-aa.md).
 
-## The Archon arm (adapter contract)
+### Set v2
 
-`ARCHON_BIN=/path/to/adapter` adds `haiku/archon` and `luna/archon`. The
-adapter is any executable. It runs with the task workspace as its working
-directory and these variables set:
+Set v2, the default since 2026-10-18, replaces v1. It is **not accepted**: its
+mean native Haiku pass rate is 95 %, far from the 50 % target, so
+`make bench-release` runs it only with `ALLOW_OFF_TARGET=1`, and its overall
+verdict is at most INCONCLUSIVE. v1 predates the acceptance check, so it is
+refused the same way.
 
-| Variable | Value |
-| --- | --- |
-| `BENCH_PROMPT_FILE` | file holding the exact task text every arm gets |
-| `BENCH_WORKSPACE` | the workspace (also the working directory) |
-| `BENCH_MODEL` | `claude-code/claude-haiku-5-5` or `codex/gpt-6-luna` |
-| `BENCH_EFFORT` | `low` |
-| `BENCH_USAGE_FILE` | where the adapter may write `{"api_equivalent_usd": number, "total_tokens": number}` |
+v2 was built by `make bench-calibrate` with `COUNT=40 CAL_REPEATS=2`,
+`TEMPLATES=exporters,workstreams,protocol,versions`, `ACCEPT_OFF_TARGET=1` and
+`EXTRA="--carry bench/release-set/v1 --haiku-band 0,1 --min-size 100"`:
 
-The adapter edits the workspace and exits 0 on success. Its stdout and stderr
-are kept in the trial directory. The bench grades the workspace as for every
-other arm and kills the adapter's process group at the timeout. Without a
-usage file the trial counts as unpriced, and the budget assumes its worst case.
+- **Measured:** 40 new candidates, 10 seeds of each of the three harness
+  templates and of the regenerated `versions` template, whose doc now states
+  its prerelease boundaries. Each ran twice on both native arms: 160 trials,
+  USD 1.97 API-equivalent, 48 minutes, no infrastructure error.
+- **Carried:** v1's 81 tasks outside `versions`, with the rates v1's
+  calibration recorded for them.
+
+Native outcomes of the measured templates:
+
+| Template | Haiku passed | Luna passed | Mean time |
+| --- | ---: | ---: | ---: |
+| `exporters` | 15 of 20 | 11 of 20 | 32 s |
+| `protocol` | 20 of 20 | 6 of 20 | 34 s |
+| `versions` | 20 of 20 | 0 of 20 | 106 s |
+| `workstreams` | 20 of 20 | 19 of 20 | 35 s |
+
+On 16 of its 20 `workstreams` runs, Claude Code started four sub-agents, one
+per package. The template does exercise delegation, but Haiku solves it either
+way.
+
+Only 8 of the 121 tasks in the pool fall inside the 20–80 % Haiku band: three
+`exporters`, three `query` and two `ranges` tasks. That is far short of a set.
+The band was therefore widened explicitly to 0–100 %, and the selection
+trimmed the pool toward the Luna target. The result has 110 tasks, a mean
+native Haiku pass rate of 95 % and a mean Luna pass rate of 30 %. The slice
+from the new templates is 8 `exporters`, 7 `protocol`, 4 `workstreams` and 10
+`versions` tasks. Its [calibration.md](../bench/release-set/v2/calibration.md)
+records the shortfall.
+
+The finding of v1 mostly stands. Fair tasks of 5–15 tool calls, with
+deterministic checks, rarely stretch Haiku 5.5 at low effort. Neither
+delegation nor a 57 KB spec with errata did, and exact specs did not either.
+The invariant-preserving refactor is the exception: Haiku passed 15 of 20
+`exporters` runs in calibration, and 3 of the set's 8 `exporters` tasks fall
+inside the band. One such family cannot carry a set. A Haiku tier near 50 %
+needs many tasks Haiku consistently fails yet a reference solves. That is a
+new, deliberately hard family, left to a follow-up decision.
+
+### A/A check of v2
+
+`make bench-release` ran with Aether 1.1.0 as both `OLD` and `NEW` and
+`ALLOW_OFF_TARGET=1`. It completed all 660 trials (110 tasks × 6 arms,
+`JOBS=10`) for USD 9.12 API-equivalent, with no infrastructure error and no
+harness failure. The gate **passed on both tiers**. The overall verdict is
+INCONCLUSIVE, as it must be on an off-target set. The full report is
+[release-bench-2026-10-18-aa-v2.md](release-bench-2026-10-18-aa-v2.md).
+
+| Arm | Pass rate [95 % CI] | Check fraction | Cost / trial | Median time |
+| --- | --- | ---: | ---: | ---: |
+| `haiku/native` | 95 % [91 %, 99 %] | 99 % | USD 0.020 | 48 s |
+| `haiku/old` | 95 % [90 %, 98 %] | 99 % | USD 0.021 | 49 s |
+| `haiku/new` | 95 % [91 %, 99 %] | 99 % | USD 0.021 | 48 s |
+| `luna/native` | 35 % [25 %, 44 %] | 74 % | USD 0.005 | 23 s |
+| `luna/old` | 54 % [45 %, 63 %] | 87 % | USD 0.007 | 33 s |
+| `luna/new` | 44 % [35 %, 53 %] | 84 % | USD 0.006 | 29 s |
+
+- **Haiku gate:** pass rate +0.9 points [−2.7, +4.5]; McNemar 3 against 4,
+  p = 1.000; cost ×0.99 [×0.85, ×1.17].
+- **Luna gate:** pass rate −10.0 points [−19.1, −0.9]; McNemar 24 against 13,
+  p = 0.099; cost ×0.84 [×0.75, ×0.95]. The point estimate is beyond the
+  5-point margin, so the report warns. The bound does not establish a drop
+  beyond the margin, so the gate does not fail.
+
+Both Luna arms ran the same binary, yet 37 of the 110 tasks came out
+differently on them. Luna's outcome on a task varies from run to run, and the
+v1 A/A run showed +2.2 points the other way. At one repeat, the Luna bound's
+half-width is about 9 points, so the tier confirms a drop beyond 5 points
+only when the true drop is about 14 points or more. Haiku's tier is far
+tighter, but it can show only losses. `REPEATS=2` narrows both bounds, at
+twice the cost and time.
+
+On the harness slice, every arm passed every `workstreams` task. Both Aether
+arms and Claude Code started 2–5 sub-agents on each, while Codex worked alone.
+Every Haiku arm passed all 7 `protocol` tasks; the Luna arms passed 1 of 21
+trials. On `exporters`, every Haiku arm passed 5 of 8, against 1 to 6 of 8 on
+the Luna arms.
+
+Two trials of the first leg were unpriced and charged their reservations:
+
+- `workstreams-5` on `luna/old` had one root turn that ended with no tokens.
+  Such turns are now priced at zero (above), and its store prices the trial
+  at USD 0.033.
+- `pricing-4` on `luna/new` hit Aether's own token budget, which left its one
+  turn non-terminal. Its recorded usage (USD 0.060) is a floor, so it stays
+  unpriced.
+
+The USD 9.12 counts both trials at their store prices, and the abandoned
+attempt at USD 0.12.
+
+**Runtime.** The trials took 670 trial-minutes, so 10 at once with no waiting
+would take 67 minutes. `pricing`, `versions` and `query` take 55 % of that.
+The host gate never held a trial. The budget did. A reservation is a trial's
+worst case: USD 1.54 for a Haiku trial and USD 5.70 for Haiku on a delegation
+task, about 75 times a typical trial's cost. Trials are admitted strictly in
+schedule order, so one reservation that does not fit holds back every trial
+behind it. Late in the run, actual spend plus reservations in flight nears
+`BUDGET`, and fewer trials run at once:
+
+- The first leg, at `BUDGET=14`, also charged its two unpriced trials USD 1.13
+  each. It was down to one trial at a time after 461 trials and 64 minutes,
+  and was interrupted there.
+- The second leg resumed at the default `BUDGET=20` and ran the last 199
+  trials in 31 minutes. Its free workers waited 25 worker-minutes for budget
+  headroom.
+
+The whole run took 95 minutes. A full v2 run at the defaults therefore takes
+somewhat over an hour: 67 minutes of work, plus budget waits late in the run.
+By the arithmetic above, `BUDGET=30` would leave room for 10 Haiku trials
+plus a delegation trial to the end of the run. It does not change what a run
+costs, only the worst case it may reach.
+
+## The Archon arm
+
+`ARCHON_BIN=/path/to/archon` adds `haiku/archon` and `luna/archon`. Each trial
+runs its task through a private Archon whose Aether is the candidate binary
+(`NEW`):
+
+- **Isolated state.** The trial gets its own `ARCHON_CONFIG_DIR`,
+  `ARCHON_DATA_DIR` and `ARCHON_SOCKET`, and an empty `AETHER_CONFIG_DIR` as the
+  operator config Archon seeds from. Variables that could reach a live Aether
+  are removed. The trial's `PATH` starts with a link to the candidate, so
+  Archon's dedicated mode starts the candidate as its own `aetherd`, in the
+  trial's data directory and beside the trial's socket.
+- **One item.** `archon setup` and `archon daemon run --detach` start Archon.
+  The workspace is registered as a repository that ships locally, and the task
+  text is queued as one item of the `direct` pipeline. The item runs on the
+  arm's model at low effort (the orchestrator too), with the arm's allowance as
+  Archon's item budget. Review, report, proposal and merge are all off.
+- **Result.** `archon queue wait` bounds the item by the trial timeout, and a
+  timed-out item is cancelled. The newest run branch that holds commits
+  becomes the graded workspace. Without one, the starting commit is graded.
+  `archon daemon stop` then stops both daemons.
+- **Usage.** Usage comes from every agent in the trial's Aether store,
+  orchestrator included, priced on the run's table. The same store feeds the
+  spend guard while the item runs.
+
+The commands and their exit codes are kept in the trial directory as
+`archon-commands.json`, and the item with its runs as `archon-item.json`. A
+failed item, or a failing `archon` command, is graded on whatever the
+workspace holds. It is a harness failure when no model output came first, and
+so is a failure to stop.
+
+A smoke run on 2026-10-18 used Archon 1.2.5 with Aether 1.1.0 as the
+candidate. It ran one `batching` task of set v1 on `haiku/new` and `haiku/archon`
+(`ARMS=haiku/new,haiku/archon EXTRA="--limit 1"`). Every `archon` command
+exited 0, and the item's run branch was graded: 9 of 9 checks on both arms. The
+Archon trial took 56 s and cost USD 0.020 over two agents (orchestrator and
+stage), against USD 0.011 and 51 s for one Aether agent. The spend guard peaked
+at USD 0.019, and both daemons stopped cleanly. The Archon arm is not part of
+the A/A run below, to keep it within its budget.
 
 ## Tests
 
@@ -258,7 +490,20 @@ usage file the trial counts as unpriced, and the budget assumes its worst case.
 python3 -m unittest discover -s evals -p 'test_release_bench*.py'
 ```
 
-These tests cover the statistics (McNemar, bootstrap, the gate, interim
-looks), the scheduling, budget and resume logic of the pool, selection,
-frozen-set integrity, arm caps, trial records and one generated task per
-template. None of them calls a model.
+These tests cover:
+
+- the statistics: McNemar, the bootstrap, the gate (including incomplete
+  matrices, per-arm outages, candidate-only crashes and missing prices), and
+  interim looks;
+- the pool: counterbalanced scheduling, budget reservations against runaway
+  trials, and resume after an interrupt;
+- the spend guard, including stopping marked processes;
+- trial isolation: a TMPDIR short enough for sockets, removed after a crash,
+  and pricing of turns that never reached a model;
+- calibration: the band, selection and acceptance;
+- frozen-set integrity, arm caps and trial records;
+- the Archon launcher, against a fake `archon`;
+- one generated task per template, and the harness templates' checks against
+  partial and quirk-dropping solutions.
+
+None of them calls a model.
