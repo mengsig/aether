@@ -230,17 +230,9 @@ def _admit_all(pending, run_one, pool, journal, jobs, should_stop, state):
                 reason = should_stop(state["records"])
         if reason:
             return reason
-        held = time.monotonic()
-        _await_host(gates, state["log"], state["stop"])
-        state["held_seconds"]["host"] += time.monotonic() - held
         amount = state["reservation_of"](tuple(triple))
-        held = time.monotonic()
-        while not gates.reserve(amount):
-            if not running:
-                return f"budget ${gates.budget_usd:.2f} reached (${gates.spent_usd:.2f} spent)"
-            _collect(wait(running, return_when=FIRST_COMPLETED).done, state)
-        # A free worker waited for budget headroom: the price of reserving every trial's worst case.
-        state["held_seconds"]["budget"] += time.monotonic() - held
+        if not _admit(amount, state):
+            return f"budget ${gates.budget_usd:.2f} reached (${gates.spent_usd:.2f} spent)"
         task, repeat, arm = triple
         journal.write(json.dumps({"task": task, "repeat": repeat, "arm": arm, "reserve_usd": amount,
                                   "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
@@ -248,6 +240,28 @@ def _admit_all(pending, run_one, pool, journal, jobs, should_stop, state):
         os.fsync(journal.fileno())
         running[pool.submit(run_one, triple)] = triple
     return reason
+
+
+def _admit(amount, state):
+    """Reserve `amount` once the host gate is open; False when the budget cannot hold it with nothing running.
+
+    The host is checked again after every wait for budget headroom, since load and
+    memory change while running trials finish: admission follows an open gate at once."""
+    running, gates = state["running"], state["gates"]
+    assert amount > 0, "a trial reserves a positive worst case"
+    while True:
+        held = time.monotonic()
+        _await_host(gates, state["log"], state["stop"])
+        state["held_seconds"]["host"] += time.monotonic() - held
+        if gates.reserve(amount):
+            assert gates.reserved_usd >= amount - 1e-9, "the reservation is held while the trial runs"
+            return True
+        if not running:
+            return False
+        # A free worker waits for budget headroom: the price of reserving every trial's worst case.
+        held = time.monotonic()
+        _collect(wait(running, return_when=FIRST_COMPLETED).done, state)
+        state["held_seconds"]["budget"] += time.monotonic() - held
 
 
 def _collect(finished, state):

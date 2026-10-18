@@ -112,11 +112,33 @@ def _price(row, arm, context):
         return usage.get("api_equivalent_usd"), usage.get("total_tokens")
     rebuild_trial_usage(row, context["price_manifest"])
     summary = trial_summary(row)
+    if summary["cost_priced"] and arm["harness"] == "native" and arm["model"] == "luna":
+        return _with_codex_descendants(row, arm, context, summary)
     if summary["cost_priced"]:
         return summary["api_equivalent_usd"], summary["tokens"]
     if arm["harness"] in ("old", "new"):
         return _price_from_store(row, arm, context), summary["tokens"]
     return None, summary["tokens"]
+
+
+def _with_codex_descendants(row, arm, context, summary):
+    """A native Codex trial's cost and tokens with its subagent threads, whose usage only their rollouts hold.
+
+    Without the root's rollout the subagents cannot be counted, so the trial stays unpriced."""
+    assert summary["api_equivalent_usd"] is not None, "the root's own usage is priced"
+    probe = CodexRolloutProbe(row["raw_logs"]["stdout"], price_of(context["price_manifest"]["price_table"],
+                                                                  arm["model"]))
+    if probe() is None:
+        row["price_note"] = "the root's Codex rollout was not found, so its subagents' spend is unknown"
+        return None, summary["tokens"]
+    children = probe.descendants()
+    row["descendant_count"] = len(children)
+    row["descendant_usage"] = {thread: {"api_equivalent_usd": usd, "total_tokens": tokens}
+                               for thread, (usd, tokens) in children.items()}
+    cost = summary["api_equivalent_usd"] + sum(usd for usd, _ in children.values())
+    tokens = (summary["tokens"] or 0) + sum(tokens for _, tokens in children.values())
+    assert cost >= summary["api_equivalent_usd"], "subagents add spend, never remove it"
+    return cost, tokens
 
 
 def _price_from_store(row, arm, context):

@@ -65,7 +65,8 @@ because harnesses bind Unix sockets under it, and socket paths must fit in 108
 bytes. Trials therefore run side by side, 6 at once by default (`JOBS`), a
 level this 12-core host takes beside other work.
 A trial starts only while the 1-minute load is at most `LOAD_MAX` (16) and at
-least 2 GB of memory is free.
+least 2 GB of memory is free. A trial that waited for budget headroom checks
+the host again before it starts, since the load may have risen meanwhile.
 
 Every (task, repeat) is one block: its arms run back to back, in a shuffled
 order. Within each model tier, `old` runs before `new` in exactly half of the
@@ -80,8 +81,12 @@ Caps per trial:
   Code, `cost_budget` for Aether on Claude, Archon's item budget. Codex and
   Aether on Codex have none, so every arm also runs under a spend guard. The
   guard reads the trial's usage as it is written (Claude Code's stream,
-  Codex's session log, Aether's event store), prices it on the run's pinned
+  Codex's session logs, Aether's event store), prices it on the run's pinned
   table each second, and stops every process of the trial at the allowance.
+  Codex writes each subagent's usage to a session log of its own, which names
+  the root's session in its first line, so the guard follows those logs too,
+  and the trial's final cost adds them to the root's. A native Codex trial
+  whose root session log cannot be found stays unpriced.
   A stopped trial counts as a failure of its arm. Unknown spend is not taken
   as zero: when the guard has no usage to read for 30 s (Codex's session log
   cannot be found, say, or the store cannot be read), it stops the trial too.
@@ -95,7 +100,7 @@ Caps per trial:
   | Aether `old`, `new` | 1, 5 | `[scheduler] max_concurrent_turns` in the trial daemon's `config.toml`, engine turns included |
   | Archon | 2, 6 (the orchestrator counts) | the same key in the operator config Archon seeds its Aether from |
   | Claude Code | 2, 5 | `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` of 1 or 4, beside the root |
-  | Codex | 2, 5 | `-c agents.max_concurrent_threads_per_session=1` or `4` |
+  | Codex | 2, 5 | `max_concurrent_threads_per_session` of 1 or 4, under both `agents` and `features.multi_agent_v2` (Codex reads the one its multi-agent version uses) |
 
   The native CLIs take no subagent limit below 1, so a native trial may run
   two agents even on a solo task. Over the limit, Aether queues the turn, and
@@ -470,7 +475,12 @@ tighter, but it can show only losses. `REPEATS=2` narrows both bounds, at
 twice the cost and time.
 
 On the harness slice, every arm passed every `workstreams` task. Both Aether
-arms and Claude Code started 2–5 sub-agents on each, while Codex worked alone.
+arms and Claude Code started 2–5 sub-agents on each. Codex started 3 on
+`workstreams-7` and 4 on `workstreams-8`, though the report counts none: this
+run did not yet read Codex's subagent logs. Their USD 0.014 is missing from
+the `luna/native` cost (USD 0.569 of USD 0.583, still USD 0.005 a trial) and
+from the USD 9.12 below. Native Luna is the drift reference, so the gate is
+unaffected.
 Every Haiku arm passed all 7 `protocol` tasks; the Luna arms passed 1 of 21
 trials. On `exporters`, every Haiku arm passed 5 of 8, against 1 to 6 of 8 on
 the Luna arms.
@@ -571,7 +581,9 @@ These tests cover:
 - the pool: counterbalanced scheduling, budget reservations against runaway
   trials, and resume after an interrupt, also twice after a torn journal line;
 - the spend guard, including unknown spend, a source that recovers within the
-  grace period, and stopping marked processes;
+  grace period, stopping marked processes, and Codex subagents that spend
+  while the root idles (in the guard and in the trial's final cost);
+- the host gate, checked again when the load rises during a budget wait;
 - trial isolation: a TMPDIR short enough for sockets, removed after a crash,
   and pricing of turns that never reached a model;
 - calibration: the band, selection, the template share of the final set, the

@@ -1,7 +1,7 @@
 """Per-trial spend allowance: a live guard that stops a runaway trial, and the budget reservation it implies.
 
 While a trial runs, its spend is read from what its harness writes anyway
-(Claude Code's stream-json, Codex's session rollout, Aether's event store) and
+(Claude Code's stream-json, Codex's session rollouts, Aether's event store) and
 priced on the run's pinned table. When it reaches the arm's allowance, every
 process carrying the trial's marker is stopped. The run's budget reserves the
 allowance plus the worst overshoot: calls finished but not yet seen, and the
@@ -127,23 +127,49 @@ class ClaudeStreamProbe:
 
 
 class CodexRolloutProbe:
-    """Spend of a `codex exec --json` run, from the cumulative token counts in its session rollout."""
+    """Spend of a `codex exec --json` run and every subagent thread it spawned, from their session rollouts.
+
+    A subagent's rollout opens with a session_meta naming the root's session (and its parent
+    thread); each thread's last cumulative token count is its usage, priced separately."""
 
     def __init__(self, stdout_path, price, codex_home=None):
         self.tail, self.price = JsonlTail(stdout_path), price
         self.home = Path(codex_home or os.environ.get("CODEX_HOME") or Path.home() / ".codex")
-        self.thread_id = self.rollout = None
-        self.total = None
+        self.thread_id = self.root_name = None
+        self.rollouts, self.totals, self.foreign = {}, {}, set()
 
-    def _find_rollout(self):
+    def _days(self):
         days = {datetime.date.today(), datetime.date.today() - datetime.timedelta(days=1),
                 datetime.datetime.now(datetime.timezone.utc).date()}
-        for day in sorted(days):
-            folder = self.home / "sessions" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}"
-            found = sorted(folder.glob(f"rollout-*{self.thread_id}.jsonl")) if folder.is_dir() else []
+        folders = (self.home / "sessions" / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}" for day in sorted(days))
+        return [folder for folder in folders if folder.is_dir()]
+
+    def _find_root(self):
+        for folder in self._days():
+            found = sorted(folder.glob(f"rollout-*{self.thread_id}.jsonl"))
             if found:
-                return JsonlTail(found[0])
-        return None
+                self.root_name = found[0].name
+                self.rollouts[self.thread_id] = JsonlTail(found[0])
+                return
+
+    def _find_descendants(self):
+        """Adopt every rollout started since the root whose header places it in the root's session."""
+        assert self.root_name is not None and self.thread_id in self.rollouts, "the root's rollout is found first"
+        known = {tail.path for tail in self.rollouts.values()}
+        for folder in self._days():
+            # Rollout names begin with their start time, so a descendant's sorts after the root's.
+            for path in sorted(folder.glob("rollout-*.jsonl")):
+                if path.name <= self.root_name or path in known or path in self.foreign:
+                    continue
+                meta = _rollout_header(path)
+                if meta is None:
+                    continue  # Its header is not written yet; the next poll reads it.
+                member = self.thread_id in (meta.get("session_id"), meta.get("parent_thread_id"))
+                if member or meta.get("parent_thread_id") in self.rollouts:
+                    assert isinstance(meta.get("id"), str), f"{path}: a session_meta names its thread"
+                    self.rollouts[meta["id"]] = JsonlTail(path)
+                else:
+                    self.foreign.add(path)
 
     def __call__(self):
         for event in self.tail.read():
@@ -151,19 +177,58 @@ class CodexRolloutProbe:
                 self.thread_id = event["thread_id"]
         if self.thread_id is None:
             return None
-        self.rollout = self.rollout or self._find_rollout()
-        if self.rollout is None:
+        if self.root_name is None:
+            self._find_root()
+        if self.root_name is None:
             return None
-        for event in self.rollout.read():
-            payload = event.get("payload") if event.get("type") == "event_msg" else None
-            info = payload.get("info") if isinstance(payload, dict) and payload.get("type") == "token_count" else None
-            if isinstance(info, dict) and isinstance(info.get("total_token_usage"), dict):
-                self.total = info["total_token_usage"]
-        # A rollout without a token count yet is a session whose first model call has not finished.
+        self._find_descendants()
+        for thread, rollout in self.rollouts.items():
+            total = _last_token_total(rollout.read())
+            if total is not None:
+                self.totals[thread] = total
+        # A thread without a token count yet has not finished its first model call.
         try:
-            return 0.0 if self.total is None else _priced(normalize_usage(self.total, "codex"), self.price)
+            return sum(_priced(normalize_usage(total, "codex"), self.price) for total in self.totals.values())
         except UsageError as error:
             raise ProbeError(f"Codex usage: {error}") from error
+
+    def descendants(self):
+        """{thread id: (USD, tokens)} of every subagent thread seen so far, the root excluded."""
+        assert self.thread_id is not None, "descendants are known only once the root thread is"
+        try:
+            usages = {thread: normalize_usage(total, "codex") for thread, total in self.totals.items()
+                      if thread != self.thread_id}
+        except UsageError as error:
+            raise ProbeError(f"Codex usage: {error}") from error
+        return {thread: (_priced(usage, self.price), usage["total_tokens"] or 0) for thread, usage in usages.items()}
+
+
+def _rollout_header(path):
+    """The session_meta payload a rollout opens with, or None while its first line is incomplete."""
+    try:
+        with path.open("rb") as stream:
+            line = stream.readline()
+    except OSError as error:
+        raise ProbeError(f"{path}: {error}") from error
+    if not line.endswith(b"\n"):
+        return None
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return {}  # Not a rollout Codex wrote, so no thread of this run.
+    payload = event.get("payload") if isinstance(event, dict) and event.get("type") == "session_meta" else None
+    return payload if isinstance(payload, dict) else {}
+
+
+def _last_token_total(events):
+    """The last cumulative token usage among a rollout's events, or None when they carry none."""
+    total = None
+    for event in events:
+        payload = event.get("payload") if event.get("type") == "event_msg" else None
+        info = payload.get("info") if isinstance(payload, dict) and payload.get("type") == "token_count" else None
+        if isinstance(info, dict) and isinstance(info.get("total_token_usage"), dict):
+            total = info["total_token_usage"]
+    return total
 
 
 class AetherStoreProbe:

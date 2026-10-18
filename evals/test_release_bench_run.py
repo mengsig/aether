@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import unittest.mock
@@ -14,6 +15,8 @@ from pathlib import Path
 
 import harness_bench as hb
 import release_bench
+import release_bench_pool
+import release_bench_trial
 from harness_bench_config import scheduler_config_toml
 from release_bench_archon import archon_layout, run_archon_trial
 from release_bench_arms import agent_cap, build_arm
@@ -167,6 +170,39 @@ class PoolTests(unittest.TestCase):
             self.assertAlmostEqual(gates.spent_usd, 0.02, msg="the torn start never ran, so it is not charged")
 
 
+class HostRecheckTests(unittest.TestCase):
+    def test_load_that_rises_during_a_budget_wait_holds_the_next_trial(self):
+        load, readings, first_checks = {"value": 0.0}, [], threading.Event()
+        started = {}
+
+        def getloadavg():
+            readings.append(load["value"])
+            if len(readings) == 2:
+                first_checks.set()
+            if load["value"] > 16 and readings.count(load["value"]) >= 3:
+                load["value"] = 0.0  # The load recovers after a few polls.
+            return (readings[-1], 0.0, 0.0)
+
+        def run_one(triple):
+            started[triple[0]] = list(readings)
+            if triple[0] == "a":
+                # The second trial passed its first host check and now waits for budget; load spikes.
+                self.assertTrue(first_checks.wait(5))
+                load["value"] = 99.0
+            return rec(triple[0], triple[2], triple[1], 0.01)
+        gates = Gates(load_max=16, mem_min_gb=0, budget_usd=1.0)
+        with tempfile.TemporaryDirectory() as directory, \
+                unittest.mock.patch.object(release_bench_pool.os, "getloadavg", getloadavg), \
+                unittest.mock.patch.object(release_bench_pool, "GATE_POLL_SECONDS", 0.01):
+            records, stopped = run_pool([("a", 0, "haiku/old"), ("b", 0, "haiku/old")], run_one, lambda _: 0.7,
+                                        jobs=2, gates=gates, results_path=str(Path(directory, "r.jsonl")),
+                                        attempts_path=str(Path(directory, "a.jsonl")), log=lambda _line: None)
+        self.assertIsNone(stopped)
+        self.assertEqual(len(records), 2)
+        self.assertIn(99.0, started["b"], "the gate looked at the host again after the budget wait")
+        self.assertLessEqual(started["b"][-1], 16, "the second trial started only once the load recovered")
+
+
 class SpendTests(unittest.TestCase):
     def test_the_reservation_covers_the_allowance_and_the_overshoot(self):
         self.assertAlmostEqual(max_call_usd(PRICE_TABLE, "haiku"), (200_000 * 1.25 + 64_000 * 5.0) / 1e6)
@@ -260,6 +296,83 @@ class SpendTests(unittest.TestCase):
 
 
 
+def codex_rollout(folder, started, thread, meta, totals):
+    """A Codex session rollout: its session_meta header, then one cumulative token count per (input, output)."""
+    lines = [{"type": "session_meta", "payload": {"id": thread, **meta}}]
+    for tokens_in, tokens_out in totals:
+        usage = {"input_tokens": tokens_in, "cached_input_tokens": 0, "cache_write_input_tokens": 0,
+                 "output_tokens": tokens_out, "reasoning_output_tokens": 0, "total_tokens": tokens_in + tokens_out}
+        lines.append({"type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": usage}}})
+    path = folder / f"rollout-{started}-{thread}.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    return path
+
+
+class CodexDescendantTests(unittest.TestCase):
+    """A native Codex root that idles while its subagent spends: the guard and the final cost both see the child."""
+
+    def _session(self, root):
+        stdout, home = Path(root, "native-stdout.jsonl"), Path(root, "codex")
+        stdout.write_text('{"type": "thread.started", "thread_id": "root"}\n')
+        day = time.localtime()
+        folder = home / "sessions" / f"{day.tm_year:04d}" / f"{day.tm_mon:02d}" / f"{day.tm_mday:02d}"
+        folder.mkdir(parents=True)
+        codex_rollout(folder, "2026-10-18T05-00-00", "earlier", {"session_id": "root"}, [(10**6, 10**5)])
+        codex_rollout(folder, "2026-10-18T05-08-37", "root", {"session_id": "root"}, [(1000, 100)])
+        return stdout, home, folder
+
+    def test_a_child_crossing_the_allowance_stops_an_idle_root(self):
+        price = price_of(PRICE_TABLE, "haiku")
+        with tempfile.TemporaryDirectory() as root:
+            stdout, home, folder = self._session(root)
+            probe = CodexRolloutProbe(stdout, price, codex_home=home)
+            self.assertAlmostEqual(probe(), 0.0015, msg="the root alone; an older rollout is never adopted")
+            codex_rollout(folder, "2026-10-18T05-08-40", "stranger", {"session_id": "other"}, [(10**6, 10**5)])
+            codex_rollout(folder, "2026-10-18T05-08-46", "child",
+                                  {"session_id": "root", "parent_thread_id": "root"}, [(1000, 100), (10**6, 10**5)])
+            codex_rollout(folder, "2026-10-18T05-08-50", "grandchild", {"parent_thread_id": "child"}, [(2000, 0)])
+            stopped = []
+            with SpendGuard(probe, 0.15, "m", poll_seconds=0.01, stop=stopped.append) as guard:
+                deadline = time.monotonic() + 2
+                while not stopped and time.monotonic() < deadline:
+                    time.sleep(0.01)
+            self.assertEqual(stopped, ["m"])
+            self.assertAlmostEqual(guard.peak_usd, 0.0015 + 1.5 + 0.002)
+            self.assertEqual(set(probe.totals), {"root", "child", "grandchild"})
+            self.assertEqual(probe.descendants()["child"], (1.5, 1_100_000))
+
+    def test_a_rollout_whose_header_is_still_being_written_is_read_later(self):
+        price = price_of(PRICE_TABLE, "haiku")
+        with tempfile.TemporaryDirectory() as root:
+            stdout, home, folder = self._session(root)
+            probe = CodexRolloutProbe(stdout, price, codex_home=home)
+            torn = folder / "rollout-2026-10-18T05-08-46-child.jsonl"
+            torn.write_text('{"type": "session_meta", "payload": {"id": "child", "session_')
+            self.assertAlmostEqual(probe(), 0.0015)
+            codex_rollout(folder, "2026-10-18T05-08-46", "child", {"session_id": "root"}, [(10**6, 0)])
+            self.assertAlmostEqual(probe(), 1.0015)
+
+    def test_settlement_charges_the_children_and_counts_them(self):
+        price = price_of(PRICE_TABLE, "haiku")
+        arm = {"model": "luna", "harness": "native"}
+        summary = {"cost_priced": True, "api_equivalent_usd": 0.0015, "tokens": 1100}
+        with tempfile.TemporaryDirectory() as root, \
+                unittest.mock.patch.object(release_bench_trial, "rebuild_trial_usage", lambda *_: None), \
+                unittest.mock.patch.object(release_bench_trial, "trial_summary", lambda _row: dict(summary)), \
+                unittest.mock.patch.object(release_bench_trial, "price_of", lambda *_: price):
+            stdout, home, folder = self._session(root)
+            codex_rollout(folder, "2026-10-18T05-08-46", "child", {"session_id": "root"}, [(10**6, 10**5)])
+            row = {"raw_logs": {"stdout": str(stdout)}}
+            with unittest.mock.patch.dict(os.environ, {"CODEX_HOME": str(home)}):
+                cost, tokens = release_bench_trial._price(row, arm, {"price_manifest": {"price_table": {}}})
+                self.assertAlmostEqual(cost, 1.5015)
+                self.assertEqual((tokens, row["descendant_count"]), (1100 + 1_100_000, 1))
+                (folder / "rollout-2026-10-18T05-08-37-root.jsonl").unlink()
+                cost, _ = release_bench_trial._price(row, arm, {"price_manifest": {"price_table": {}}})
+        self.assertIsNone(cost, "without the root's rollout the subagents' spend is unknown")
+        self.assertIn("subagents' spend is unknown", row["price_note"])
+
+
 def write_store(data_dir, agents):
     """An Aether store holding one cumulative usage event per named agent."""
     data_dir.mkdir(parents=True)
@@ -348,7 +461,8 @@ class AgentCapTests(unittest.TestCase):
         native = build_arm("haiku", "native", allow_delegation=True)
         self.assertEqual(native["condition"]["native_env"], {"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4"})
         luna = build_arm("luna", "native")["condition"]
-        self.assertEqual(luna["codex_config"], ["-c", "agents.max_concurrent_threads_per_session=1"])
+        self.assertEqual(luna["codex_config"], ["-c", "agents.max_concurrent_threads_per_session=1",
+                                                "-c", "features.multi_agent_v2.max_concurrent_threads_per_session=1"])
         with self.assertRaises(AssertionError):
             scheduler_config_toml(0)
 
@@ -411,6 +525,7 @@ class AgentCapTests(unittest.TestCase):
         self.assertEqual(claude["env_isolation"]["extra_vars"], ["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", "TMPDIR"])
         command, env = launched["codex"]
         self.assertIn("agents.max_concurrent_threads_per_session=4", command)
+        self.assertIn("features.multi_agent_v2.max_concurrent_threads_per_session=4", command)
         self.assertNotIn("CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", env)
 
 

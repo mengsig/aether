@@ -49,7 +49,9 @@ def _condition(model, harness, allow_delegation):
             condition["max_budget_usd"] = ALLOWANCE_USD[model]
             condition["native_env"] = {"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": str(cap - 1)}
         else:
-            condition["codex_config"] = ["-c", f"agents.max_concurrent_threads_per_session={cap - 1}"]
+            # Codex reads the subagent limit from a different table under each multi-agent version.
+            condition["codex_config"] = ["-c", f"agents.max_concurrent_threads_per_session={cap - 1}",
+                                         "-c", f"features.multi_agent_v2.max_concurrent_threads_per_session={cap - 1}"]
         return condition
     condition["budget"] = {"cost_budget": ALLOWANCE_USD[model]} if model == "haiku" else {"token_budget": LUNA_TOKEN_CAP}
     condition["max_concurrent_turns"] = cap
