@@ -379,6 +379,8 @@ class InstallerTests(unittest.TestCase):
             ("//cdn.test/f", "https://cdn.test/f"),
             ("/root/f", "https://example.test/root/f"),
             ("f.sha256", "https://example.test/a/b/f.sha256"),
+            ("?token=abc", "https://example.test/a/b/asset.tar.gz?token=abc"),
+            ("#frag", "https://example.test/a/b/asset.tar.gz#frag"),
             ("", ""),
         )
         for location, expected in cases:

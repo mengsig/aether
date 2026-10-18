@@ -139,6 +139,11 @@ redirect_target() {
   case "$location" in
     //?*) say "https:$location" ;;
     /*) say "https://$host$location" ;;
+    \?* | \#*)
+      path=/
+      case "$rest" in */*) path=/${rest#*/} ;; esac
+      say "https://$host${path%%[?#]*}$location"
+      ;;
     *)
       path=/
       case "$rest" in */*) path=/${rest#*/} ;; esac
