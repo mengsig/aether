@@ -82,10 +82,13 @@ pub(crate) async fn drain_stderr_until(
         }
     };
     let mut output = if truncated {
+        // Each side is masked on its own: a key cut by the gap has no
+        // marker the redactor could pair across the separator.
+        let redactor = aether_core::redact::Redactor::default();
         format!(
             "{}\n[stderr truncated]\n{}",
-            String::from_utf8_lossy(&head),
-            String::from_utf8_lossy(tail.make_contiguous())
+            redactor.redact(&String::from_utf8_lossy(&head)),
+            redactor.redact(&String::from_utf8_lossy(tail.make_contiguous()))
         )
     } else {
         String::from_utf8_lossy(tail.make_contiguous()).into_owned()
@@ -115,6 +118,22 @@ mod tests {
         assert!(output.ends_with("\ntail\n"));
         assert!(output.len() <= 3 * (STDERR_HEAD_BYTES + STDERR_TAIL_BYTES) + 32);
         assert_eq!(drain_stderr(&b"ordinary\n"[..]).await.text, "ordinary\n");
+    }
+
+    #[tokio::test]
+    async fn a_private_key_cut_by_the_truncation_gap_is_masked() {
+        let mut bytes = vec![b'x'; STDERR_HEAD_BYTES + 100];
+        bytes.extend(b"\n-----BEGIN PRIVATE KEY-----\nSECRETBODYAAA\n");
+        bytes.extend(vec![b'y'; STDERR_TAIL_BYTES]);
+        bytes.extend(b"\nSECRETBODYBBB\n-----END PRIVATE KEY-----\nafter\n");
+        let output = drain_stderr(&bytes[..]).await.text;
+        assert!(output.contains("[stderr truncated]"));
+        assert!(
+            !output.contains("SECRETBODY"),
+            "{}",
+            &output[output.len() - 200..]
+        );
+        assert!(output.ends_with("after\n"));
     }
 
     #[tokio::test]
