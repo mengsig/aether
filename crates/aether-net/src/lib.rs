@@ -159,6 +159,8 @@ pub fn is_public(ip: &IpAddr) -> bool {
                 || o[0] >= 240
                 // IETF protocol assignments (192.0.0.0/24).
                 || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                // Deprecated 6to4 relay anycast.
+                || (o[0] == 192 && o[1] == 88 && o[2] == 99)
                 // Carrier-grade NAT and the benchmarking range.
                 || (o[0] == 100 && (64..128).contains(&o[1]))
                 || (o[0] == 198 && (18..20).contains(&o[1])))
@@ -177,6 +179,14 @@ pub fn is_public(ip: &IpAddr) -> bool {
                 // Unique local and link-local.
                 || (seg[0] & 0xfe00) == 0xfc00
                 || (seg[0] & 0xffc0) == 0xfe80
+                // Deprecated, documentation and translation-only ranges are not destinations.
+                || (seg[0] & 0xffc0) == 0xfec0
+                || seg[..6] == [0; 6]
+                || seg[..3] == [0x64, 0xff9b, 1]
+                || seg[..2] == [0x2001, 0]
+                || seg[..2] == [0x2001, 0xdb8]
+                || seg[..4] == [0x100, 0, 0, 0]
+                || seg[..6] == [0, 0, 0, 0, 0xffff, 0]
                 || embedded.is_some_and(|v4| !is_public(&IpAddr::V4(v4))))
         }
     }
@@ -269,6 +279,19 @@ mod tests {
             "2002:7f00:1::1",
             "2002:c0a8:101::1",
             "ff02::1",
+            "192.88.99.1",
+            "::10.0.0.1",
+            "::8.8.8.8",
+            "fec0::1",
+            "febf:ffff::1",
+            "feff:ffff::1",
+            "64:ff9b:1::a00:1",
+            "64:ff9b:1::808:808",
+            "2001:0:4136:e378:8000:63bf:f5ff:fffe",
+            "2001:db8::1",
+            "100::1",
+            "::ffff:0:10.0.0.1",
+            "::ffff:0:8.8.8.8",
         ] {
             let parsed: IpAddr = ip.parse().expect(ip);
             assert!(!is_public(&parsed), "{ip} must not count as public");
