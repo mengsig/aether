@@ -28,7 +28,7 @@ TARGETS = (
 RECEIPT = ".aether-receipt"
 # Everything install.sh may call, besides the downloader and the hash tool.
 BASE_TOOLS = ("grep", "cut", "head", "tr", "basename", "mkdir", "tar", "gzip",
-              "cp", "chmod", "mv", "rm", "mktemp")
+              "cp", "chmod", "mv", "rm", "mktemp", "sed", "tail")
 ALL_TOOLS = BASE_TOOLS + ("curl", "wget", "sha256sum", "shasum")
 FAKE_UNAME = """#!/bin/sh
 case "$1" in
@@ -77,13 +77,28 @@ class RecordingHandler(http.server.SimpleHTTPRequestHandler):
     """Serves one sandbox's files and records each path asked for."""
     requested = None
     redirect = None
+    redirect_chain = 0
 
     def log_message(self, format, *args):
         pass
 
+    @staticmethod
+    def split_hop(path):
+        """Splits '/hop/N/rest' into (N, '/rest'); other paths are hop 0."""
+        parts = path.split("/", 3)
+        if parts[:2] == ["", "hop"]:
+            return int(parts[2]), "/" + parts[3]
+        return 0, path
+
     def do_GET(self):
         assert self.requested is not None, "bind `requested` in a subclass per server"
         self.requested.append(self.path)
+        depth, self.path = self.split_hop(self.path)
+        if depth < self.redirect_chain:
+            self.send_response(302)
+            self.send_header("Location", f"/hop/{depth + 1}{self.path}")
+            self.end_headers()
+            return
         if self.redirect:
             self.send_response(302)
             self.send_header("Location", self.redirect)
@@ -352,6 +367,51 @@ class InstallerTests(unittest.TestCase):
                     self.assertIn("could not download", result.stderr)
                     self.assertEqual(len(sandbox.requested), 1)
                     self.assertEqual(destination.requested, [], "HTTP redirect was never fetched")
+
+    def test_redirect_target_follows_https_and_refuses_the_rest(self):
+        script = INSTALLER.read_text()
+        script = script[:script.rstrip("\n").rfind("\n") + 1]
+        shell = shells()[0]
+        sandbox = Sandbox(self)
+        current = "https://example.test/a/b/asset.tar.gz?x=1"
+        cases = (
+            ("https://cdn.test/f", "https://cdn.test/f"),
+            ("//cdn.test/f", "https://cdn.test/f"),
+            ("/root/f", "https://example.test/root/f"),
+            ("f.sha256", "https://example.test/a/b/f.sha256"),
+            ("", ""),
+        )
+        for location, expected in cases:
+            with self.subTest(location=location):
+                header = f"  Location: {location} [following]\r\n" if location else ""
+                headers = sandbox.root / "headers"
+                headers.write_text(f"  HTTP/1.1 302 Found\r\n{header}")
+                result = sandbox.run(shell, script=f'{script}redirect_target "{current}" "{headers}"\n')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+        for location in ("http://cdn.test/f", "ftp://cdn.test/f"):
+            with self.subTest(location=location):
+                headers.write_text(f"  Location: {location}\r\n")
+                result = sandbox.run(shell, script=f'{script}redirect_target "{current}" "{headers}"\n')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"refused redirect to non-https URL '{location}'", result.stderr)
+
+    @unittest.skipUnless(shutil.which("openssl") and shutil.which("wget"), "needs openssl and wget")
+    def test_wget_follows_https_redirects_up_to_the_limit(self):
+        for shell in shells():
+            with self.subTest(shell=shell):
+                sandbox = Sandbox(self, tls=True)
+                write_release(sandbox.www / "latest" / "download", "9.9.9")
+                sandbox.handler.redirect_chain = 3
+                path = sandbox.tools(BASE_TOOLS + ("wget", "sha256sum"))
+                result = sandbox.run(shell, path=path)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(sandbox.installed_version(), "aether 9.9.9")
+                sandbox.handler.redirect_chain = 6
+                sandbox.install_dir.joinpath("aether").unlink()
+                result = sandbox.run(shell, path=path)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("more than 5 redirects", result.stderr)
 
     def test_plain_http_redirect_is_refused(self):
         for downloader in ("curl", "wget"):

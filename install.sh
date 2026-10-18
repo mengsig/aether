@@ -111,6 +111,70 @@ resolve_release_url() {
   say "$base/download/$version"
 }
 
+MAX_REDIRECTS=5
+
+# Prints the https URL a `wget -S` header dump redirects to, or nothing when
+# there is no redirect. Fails on a hop that is not https. Arguments: current URL, header file.
+redirect_target() {
+  current=$1
+  headers=$2
+  location=$(sed -n 's/^[[:space:]]*[Ll][Oo][Cc][Aa][Tt][Ii][Oo][Nn]:[[:space:]]*//p' "$headers" |
+    tail -n 1 | tr -d '\r')
+  location=${location% \[following\]}
+  [ -n "$location" ] || return 0
+  case "$current" in
+    https://?*) ;;
+    *) fail "could not download $current: only https URLs may be redirected" ;;
+  esac
+  case "${location%%/*}" in
+    *:)
+      case "$location" in
+        https://?*) say "$location"; return ;;
+      esac
+      fail "could not download $current: refused redirect to non-https URL '$location'"
+      ;;
+  esac
+  rest=${current#https://}
+  host=${rest%%/*}
+  case "$location" in
+    //?*) say "https:$location" ;;
+    /*) say "https://$host$location" ;;
+    *)
+      path=/
+      case "$rest" in */*) path=/${rest#*/} ;; esac
+      path=${path%%[?#]*}
+      say "https://$host${path%/*}/$location"
+      ;;
+  esac
+}
+
+# wget cannot follow redirects only while they stay https, so each hop is
+# fetched with redirects off and its Location is checked here.
+wget_download() {
+  url=$1
+  dest=$2
+  case "$url" in
+    http://*)
+      wget --max-redirect=0 -q -T 60 -O "$dest" "$url" ||
+        fail "could not download $url; wget redirects are disabled for safety, install curl for HTTPS redirects"
+      return
+      ;;
+  esac
+  wget --help 2>&1 | grep -q -- '--max-redirect' ||
+    fail "this wget cannot limit redirects (busybox?); install curl"
+  headers="$dest.headers"
+  hops=0
+  while ! wget --https-only --max-redirect=0 -S -T 60 -O "$dest" "$url" 2>"$headers"; do
+    next=$(redirect_target "$url" "$headers") || exit 1
+    [ -n "$next" ] || fail "could not download $url; check the version and your network"
+    hops=$((hops + 1))
+    [ "$hops" -le "$MAX_REDIRECTS" ] ||
+      fail "could not download $url: more than $MAX_REDIRECTS redirects"
+    url=$next
+  done
+  rm -f "$headers"
+}
+
 download() {
   url=$1
   dest=$2
@@ -122,12 +186,7 @@ download() {
       --connect-timeout 15 --max-time 600 --output "$dest" "$url" ||
       fail "could not download $url; check the version and your network"
   elif have wget; then
-    case "$url" in
-      http://*) set -- --max-redirect=0 ;;
-      *) set -- --https-only --max-redirect=0 ;;
-    esac
-    wget "$@" -q -T 60 -O "$dest" "$url" ||
-      fail "could not download $url; wget redirects are disabled for safety, install curl for HTTPS redirects"
+    wget_download "$url" "$dest"
   else
     fail "curl or wget is needed to download Aether"
   fi
