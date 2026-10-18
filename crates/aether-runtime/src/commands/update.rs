@@ -182,12 +182,12 @@ impl Runtime {
         if let Some(i) = update.instructions {
             c.instructions = Some(i);
         }
-        if update.max_turns.is_some() {
-            c.max_turns = update.max_turns;
-        }
         // `Some(0)` clears, as it does for `concurrency`: without that there
-        // is no way to remove a budget, and a stored 0 fails the agent on its
+        // is no way to remove a limit, and a stored 0 fails the agent on its
         // next tick.
+        if let Some(n) = update.max_turns {
+            c.max_turns = (n > 0).then_some(n);
+        }
         if let Some(b) = update.token_budget {
             c.token_budget = (b > 0).then_some(b);
         }

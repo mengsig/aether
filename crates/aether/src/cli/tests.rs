@@ -520,6 +520,14 @@ fn an_imported_error_string_is_stripped_before_it_is_summarized() {
 }
 
 #[test]
+fn deadline_in_the_past_is_refused_naming_the_value() {
+    let err = parse_deadline("2020-01-01T00:00:00Z").expect_err("past");
+    let message = err.to_string();
+    assert!(message.contains("2020-01-01T00:00:00Z"), "{message}");
+    assert!(message.contains("not in the future"), "{message}");
+}
+
+#[test]
 fn deadline_parses_an_instant_or_removes_it() {
     assert_eq!(parse_deadline("none").expect("none"), DeadlineUpdate::Clear);
     assert_eq!(parse_deadline("NONE").expect("none"), DeadlineUpdate::Clear);

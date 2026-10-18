@@ -348,3 +348,27 @@ async fn a_budget_stop_does_not_re_terminate_the_subtree_it_cancelled() {
         AgentStatusKind::Cancelled
     );
 }
+
+/// `0` clears a turn limit like it clears the budgets.
+#[tokio::test]
+async fn zero_clears_the_turn_limit() {
+    let h = harness(vec![]).await;
+    let mut s = spec("limited");
+    s.objective = None;
+    let (agent, _) = h.runtime.create_agent(s, Actor::user()).expect("create");
+    let update = |update: aether_runtime::AgentUpdate| {
+        h.runtime.update_agent(agent.id, update, Actor::user())
+    };
+    update(aether_runtime::AgentUpdate {
+        max_turns: Some(3),
+        ..Default::default()
+    })
+    .expect("set");
+    update(aether_runtime::AgentUpdate {
+        max_turns: Some(0),
+        ..Default::default()
+    })
+    .expect("clear");
+    let stored = h.store.agent(agent.id).expect("a").expect("exists");
+    assert_eq!(stored.config.max_turns, None);
+}

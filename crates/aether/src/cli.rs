@@ -468,14 +468,17 @@ pub struct SetKnobs {
     pub effort: Option<String>,
     #[arg(long)]
     pub instructions: Option<String>,
+    /// Most turns the agent may take; 0 clears the limit.
     #[arg(long)]
     pub max_turns: Option<u32>,
+    /// Most tokens the agent may spend; 0 clears the budget.
     #[arg(long)]
     pub token_budget: Option<u64>,
+    /// Most dollars the agent may spend; 0 clears the budget.
     #[arg(long)]
     pub cost_budget: Option<f64>,
-    /// Wall-clock stop, RFC 3339; a later instant extends an existing one,
-    /// and `none` removes it.
+    /// Wall-clock stop, RFC 3339, in the future; a later instant extends an
+    /// existing one, and `none` removes it.
     #[arg(long)]
     pub deadline: Option<String>,
     /// Expose only these tools; repeat for several.

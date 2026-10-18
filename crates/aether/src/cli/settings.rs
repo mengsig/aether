@@ -80,6 +80,13 @@ pub(super) fn parse_deadline(spec: &str) -> anyhow::Result<DeadlineUpdate> {
     let at = spec
         .parse::<aether_core::time::Timestamp>()
         .map_err(|e| anyhow!("deadline must be RFC 3339, or none: {e}"))?;
+    let now = aether_core::time::now();
+    if at <= now {
+        bail!(
+            "deadline {spec} is not in the future (now {}); use a later instant, or none to remove it",
+            now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        );
+    }
     Ok(DeadlineUpdate::Set(at))
 }
 
