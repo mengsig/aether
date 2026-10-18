@@ -24,6 +24,12 @@ pub(super) fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<Too
         run: Some(agent.run),
         ..Default::default()
     })?);
+    let mut subtree_spend = aether_core::model::Usage::default();
+    for id in runtime.store.subtree_ids(agent.id)? {
+        if let Some(member) = runtime.store.agent(id)? {
+            subtree_spend += member.stats.usage;
+        }
+    }
     let used_percent = agent
         .stats
         .context_tokens
@@ -37,6 +43,12 @@ pub(super) fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<Too
         "task": ctx.task,
         "context": {"tokens": agent.stats.context_tokens, "window": window, "used_percent": used_percent, "at_compaction_threshold": used_percent.map(|percent| percent >= 75.0)},
         "remaining_token_budget": agent.remaining_budget(),
+        "cost_budget": agent.config.cost_budget,
+        "subtree_cost_spent_usd": subtree_spend.cost_usd,
+        "subtree_cost_is_a_floor": !subtree_spend.cost_complete,
+        "max_turns": agent.config.max_turns,
+        "turns_taken": agent.stats.turns,
+        "deadline": agent.config.deadline.map(|at| at.to_rfc3339()),
         "concurrency": {
             "global_max_concurrent_turns": runtime.config.max_concurrent_turns,
             "own_subtree_max_concurrent_turns": agent.config.concurrency,
