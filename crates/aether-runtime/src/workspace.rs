@@ -1209,7 +1209,8 @@ fn stream_blob(repo: &Path, entry: &Entry, file: &File) -> crate::Result<()> {
     Ok(())
 }
 
-fn regular_file_mode(target: &Path, executable: bool) -> crate::Result<u32> {
+// None means the target is new: it is created with the default mode and the umask applies.
+fn regular_file_mode(target: &Path, executable: bool) -> crate::Result<Option<u32>> {
     let existing = match fs::symlink_metadata(target) {
         Ok(metadata) if metadata.file_type().is_file() => {
             Some(metadata.permissions().mode() & 0o777)
@@ -1225,7 +1226,7 @@ fn regular_file_mode(target: &Path, executable: bool) -> crate::Result<u32> {
         Err(error) => return Err(io_error("cannot inspect target permissions", target, error)),
     };
     let Some(mode) = existing else {
-        return Ok(if executable { 0o700 } else { 0o600 });
+        return Ok(None);
     };
     if executable {
         // Keep the parent's read/write access. Content replacement does not
@@ -1233,12 +1234,12 @@ fn regular_file_mode(target: &Path, executable: bool) -> crate::Result<u32> {
         // Existing execute access is preserved. Only a newly executable file
         // gains owner execution and execution for classes with read access.
         if mode & 0o111 != 0 {
-            Ok(mode)
+            Ok(Some(mode))
         } else {
-            Ok(mode | 0o100 | ((mode & 0o044) >> 2))
+            Ok(Some(mode | 0o100 | ((mode & 0o044) >> 2)))
         }
     } else {
-        Ok(mode & !0o111)
+        Ok(Some(mode & !0o111))
     }
 }
 
@@ -1253,16 +1254,22 @@ fn write_entry(repo: &Path, root: &Path, path: &Path, entry: &Entry) -> crate::R
             std::os::unix::fs::symlink(&link, &temporary)
                 .map_err(|error| io_error("cannot create symlink", &temporary, error))?;
         } else {
-            let mode = regular_file_mode(&target, entry.mode == 0o100755)?;
+            let executable = entry.mode == 0o100755;
+            let existing_mode = regular_file_mode(&target, executable)?;
+            let create_mode = if executable { 0o755 } else { 0o644 };
             let file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .mode(0o600)
+                .mode(existing_mode.map_or(create_mode, |_| 0o600))
                 .open(&temporary)
                 .map_err(|error| io_error("cannot create workspace file", &temporary, error))?;
             stream_blob(repo, entry, &file)?;
-            file.set_permissions(fs::Permissions::from_mode(mode))
-                .map_err(|error| io_error("cannot set workspace file mode", &temporary, error))?;
+            if let Some(mode) = existing_mode {
+                file.set_permissions(fs::Permissions::from_mode(mode))
+                    .map_err(|error| {
+                        io_error("cannot set workspace file mode", &temporary, error)
+                    })?;
+            }
             file.sync_all()
                 .map_err(|error| io_error("cannot sync workspace file", &temporary, error))?;
         }
@@ -1584,6 +1591,12 @@ pub(crate) fn integrate(
 mod tests {
     use super::*;
 
+    fn process_umask() -> u32 {
+        let status = fs::read_to_string("/proc/self/status").unwrap();
+        let line = status.lines().find(|l| l.starts_with("Umask:")).unwrap();
+        u32::from_str_radix(line["Umask:".len()..].trim(), 8).unwrap()
+    }
+
     fn git_ok(repo: &Path, args: &[&str]) -> Vec<u8> {
         let output = Command::new("git")
             .arg("-C")
@@ -1651,7 +1664,7 @@ mod tests {
                 .permissions()
                 .mode()
                 & 0o777,
-            0o700
+            0o755 & !process_umask()
         );
         assert_eq!(
             before_index,
@@ -1722,7 +1735,7 @@ mod tests {
     }
 
     #[test]
-    fn integration_preserves_private_modes_and_creates_private_files() {
+    fn integration_preserves_existing_modes_and_creates_new_files_under_umask() {
         let (_temp, source, managed) = repo();
         for name in ["tracked.txt", "removed.txt"] {
             fs::set_permissions(source.join(name), fs::Permissions::from_mode(0o600)).unwrap();
@@ -1748,11 +1761,12 @@ mod tests {
         .unwrap();
 
         landed(integrate(&managed, &manifest));
+        let umask = process_umask();
         for (name, expected) in [
             ("tracked.txt", 0o600),
             ("removed.txt", 0o700),
-            ("new.txt", 0o600),
-            ("new.sh", 0o700),
+            ("new.txt", 0o644 & !umask),
+            ("new.sh", 0o755 & !umask),
         ] {
             let mode = fs::metadata(source.join(name))
                 .unwrap()

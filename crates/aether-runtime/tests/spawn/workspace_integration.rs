@@ -1,4 +1,14 @@
 use super::*;
+use std::os::unix::fs::PermissionsExt;
+
+fn process_umask() -> u32 {
+    let status = std::fs::read_to_string("/proc/self/status").expect("process status");
+    let line = status
+        .lines()
+        .find(|line| line.starts_with("Umask:"))
+        .expect("umask line");
+    u32::from_str_radix(line["Umask:".len()..].trim(), 8).expect("octal umask")
+}
 
 fn git(root: &std::path::Path, args: &[&str]) {
     let output = std::process::Command::new("git")
@@ -386,6 +396,12 @@ async fn terminal_child_integration_preserves_parent_edits_and_is_repeatable() {
 
     std::fs::write(root.join("parent_only.txt"), "keep parent\n").expect("parent edit");
     std::fs::write(child_root.join("child_only.txt"), "from child\n").expect("child edit");
+    std::fs::write(child_root.join("child_bin.sh"), "#!/bin/sh\n").expect("child script");
+    std::fs::set_permissions(
+        child_root.join("child_bin.sh"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("child script mode");
     complete(&h, &child_bridge).await;
     assert!(
         child_root.exists(),
@@ -410,6 +426,18 @@ async fn terminal_child_integration_preserves_parent_edits_and_is_repeatable() {
         std::fs::read_to_string(root.join("tracked.txt")).expect("preserved dirty baseline"),
         "dirty before delegation\n"
     );
+    let umask = process_umask();
+    for (name, expected) in [
+        ("child_only.txt", 0o644 & !umask),
+        ("child_bin.sh", 0o755 & !umask),
+    ] {
+        let mode = std::fs::metadata(root.join(name))
+            .expect("integrated metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, expected, "{name}");
+    }
     let (second, is_error) = integrate(&h, &parent_bridge, child).await;
     assert!(!is_error, "{second}");
     let repeated: serde_json::Value = serde_json::from_str(&second).expect("report JSON");
