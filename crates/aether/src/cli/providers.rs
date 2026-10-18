@@ -3,12 +3,22 @@ use super::{CancellationToken, ProviderHealth, acted, connect_or_start, sane};
 pub async fn login(provider: String, api_key: bool, method: Option<String>) -> anyhow::Result<()> {
     use aether_model::LoginMethod;
     use aether_model::auth::interaction::TerminalInteraction;
+    use std::io::IsTerminal as _;
     let models = aether_model::Models::load(None)?;
-    if let Some(cli) = models
+    let cli_handoff = models
         .registry()
         .provider(&provider)
-        .and_then(|p| p.auth.cli.clone())
+        .and_then(|p| p.auth.cli.clone());
+    if cli_handoff.is_none()
+        && models.registry().provider(&provider).is_some()
+        && !std::io::stdin().is_terminal()
     {
+        anyhow::bail!(
+            "`aether login {provider}` needs a terminal to read the credential; \
+             run it in a terminal (--api-key selects the API-key prompt)"
+        );
+    }
+    if let Some(cli) = cli_handoff {
         eprintln!(
             "{}: {} · handing off to `{} {}`",
             sane(&provider),
@@ -41,11 +51,29 @@ pub async fn login(provider: String, api_key: bool, method: Option<String>) -> a
 
 pub async fn logout(provider: String, json: bool) -> anyhow::Result<()> {
     let models = aether_model::Models::load(None)?;
+    if models.registry().provider(&provider).is_none() {
+        let known: Vec<&str> = models
+            .registry()
+            .providers()
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        anyhow::bail!(
+            "unknown provider `{provider}`; valid providers: {}",
+            known.join(", ")
+        );
+    }
+    let stored = models.credential_store().read(&provider).await?.is_some();
     models.logout(&provider).await?;
+    let line = if stored {
+        format!("removed credentials for {provider}")
+    } else {
+        format!("no stored credentials for {provider}; nothing to remove")
+    };
     acted(
         json,
-        &format!("removed credentials for {provider}"),
-        serde_json::json!({"provider": provider, "removed": true}),
+        &line,
+        serde_json::json!({"provider": provider, "removed": stored}),
     )
 }
 

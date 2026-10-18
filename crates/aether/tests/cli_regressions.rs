@@ -2102,3 +2102,42 @@ fn closed_stdout_pipe_exits_without_panicking() {
         output.status
     );
 }
+
+fn run_isolated(root: &std::path::Path, args: &[&str]) -> Output {
+    isolated_command(root, args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn logout_rejects_unknown_providers_and_reports_nothing_removed() {
+    let root = tempfile::tempdir().unwrap();
+    let unknown = run_isolated(root.path(), &["logout", "nosuch"]);
+    assert!(!unknown.status.success());
+    let message = stderr(&unknown);
+    assert!(message.contains("unknown provider `nosuch`"), "{message}");
+    assert!(message.contains("openai"), "{message}");
+
+    let empty = run_isolated(root.path(), &["logout", "openai"]);
+    assert!(empty.status.success(), "{}", stderr(&empty));
+    assert!(
+        stdout(&empty).contains("nothing to remove"),
+        "{}",
+        stdout(&empty)
+    );
+    assert!(!stdout(&empty).contains("removed credentials"));
+}
+
+#[test]
+fn login_without_a_terminal_explains_what_is_needed() {
+    let root = tempfile::tempdir().unwrap();
+    let output = run_isolated(root.path(), &["login", "openai"]);
+    assert!(!output.status.success());
+    let message = stderr(&output);
+    assert!(
+        message.contains("terminal") && message.contains("--api-key"),
+        "{message}"
+    );
+    assert!(!message.contains("os error"), "{message}");
+}
