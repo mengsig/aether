@@ -80,7 +80,7 @@ impl Runtime {
     ) -> Result<tokio::sync::mpsc::Sender<turn_engine::EngineRequest>> {
         let turns = self.engine_turns.lock();
         match turns.get(&agent) {
-            Some(h) if h.token == token => Ok(h.tx.clone()),
+            Some(h) if aether_protocol::auth::constant_time_eq(&h.token, token) => Ok(h.tx.clone()),
             Some(_) => Err(RuntimeError::Invalid("engine token mismatch".into())),
             None => Err(RuntimeError::Invalid(format!(
                 "no engine turn is running for {agent}"
@@ -157,5 +157,25 @@ impl Runtime {
         reply_rx
             .await
             .map_err(|_| RuntimeError::Internal("engine turn dropped the request".into()))
+    }
+}
+
+/// A fresh 256-bit capability for one engine turn.
+pub(crate) fn mint_engine_token() -> String {
+    hex::encode(rand::random::<[u8; 32]>())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn engine_tokens_are_full_length_hex_and_unique() {
+        let tokens: std::collections::HashSet<_> =
+            (0..128).map(|_| super::mint_engine_token()).collect();
+        assert_eq!(tokens.len(), 128);
+        assert!(
+            tokens.iter().all(
+                |token| token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+            )
+        );
     }
 }

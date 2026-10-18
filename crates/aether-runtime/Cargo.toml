@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 aether-core = { workspace = true }
+aether-protocol = { workspace = true }
 aether-store = { workspace = true }
 aether-model = { workspace = true }
 aether-tools = { workspace = true }
@@ -42,7 +43,6 @@ tempfile = { workspace = true }
 
 [dev-dependencies]
 aether-client = { workspace = true }
-aether-protocol = { workspace = true }
 aether-tui = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 async-trait = { workspace = true }

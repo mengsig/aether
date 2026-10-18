@@ -288,7 +288,7 @@ pub(crate) async fn execute(
         if cancel.is_cancelled() {
             return Ok(EngineLink::Done(Next::Cancelled(Some("cancelled".into()))));
         }
-        let token = ulid::Ulid::generate().to_string();
+        let token = crate::engine_access::mint_engine_token();
         turn.mcp = Some(McpBridge {
             command: bridge.command.clone(),
             args: vec![

@@ -325,6 +325,12 @@ async fn the_bridge_is_offered_the_harness_and_mcp_tools_and_nothing_else() {
         assert!(!offered.contains(&absent.to_owned()), "{offered:?}");
     }
 
+    let mut altered = bridge.token.clone();
+    let last = altered.pop().expect("nonempty token");
+    altered.push(if last == '0' { '1' } else { '0' });
+    assert_eq!(altered.len(), 64);
+    assert!(h.runtime.engine_tools(bridge.agent, &altered).is_err());
+
     // A stale token cannot reach the turn at all.
     assert!(
         h.runtime
