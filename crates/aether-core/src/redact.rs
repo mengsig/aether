@@ -14,7 +14,7 @@ pub struct Redactor {
     patterns: Vec<(Regex, &'static str)>,
 }
 
-const RULE_COUNT: usize = 17;
+const RULE_COUNT: usize = 19;
 
 static DEFAULT_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     // One rule per key shape the distribution can hold: every credentialed
@@ -56,6 +56,15 @@ static DEFAULT_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(||
         (r"\bhf_[A-Za-z0-9]{30,}", "[REDACTED:huggingface_token]"),
         (
             r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+            "[REDACTED:private_key]",
+        ),
+        // Truncated captures: a tail that starts inside a key, or a key whose end was cut.
+        (
+            r"\A[A-Za-z0-9+/=\r\n ]*-----END [A-Z ]*PRIVATE KEY-----",
+            "[REDACTED:private_key]",
+        ),
+        (
+            r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*\z",
             "[REDACTED:private_key]",
         ),
     ];
@@ -173,6 +182,20 @@ mod tests {
         for control in ["see hf_model docs", "task_live_run ok", "eyJ short", "xox"] {
             assert_eq!(r.redact(control).as_ref(), control);
         }
+    }
+
+    #[test]
+    fn masks_private_keys_cut_by_truncation() {
+        let r = Redactor::default();
+        let headless = "Zm9vYmFy\nYmF6cXV4\n-----END RSA PRIVATE KEY-----\nnext line";
+        let out = r.redact(headless);
+        assert!(
+            !out.contains("Zm9vYmFy") && out.contains("next line"),
+            "{out}"
+        );
+        let endless = "log\n-----BEGIN PRIVATE KEY-----\nZm9vYmFy\nYmF6cXV4";
+        let out = r.redact(endless);
+        assert!(!out.contains("Zm9vYmFy") && out.starts_with("log"), "{out}");
     }
 
     #[test]
