@@ -302,3 +302,68 @@ async fn remember_rejects_out_of_range_importance_and_confidence() {
         other => panic!("{other:?}"),
     }
 }
+
+#[tokio::test]
+async fn result_tools_require_an_object_for_structured() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_in(dir.path());
+    for bad in [json!([1, 2]), json!(null), json!("s"), json!(3)] {
+        let complete = act(
+            &CompleteTask,
+            &ctx,
+            json!({"summary": "d", "structured": bad}),
+        )
+        .await;
+        assert!(
+            matches!(&complete, Err(ToolError::InvalidInput(m)) if m.contains("structured")),
+            "{bad}: {complete:?}"
+        );
+        let fail = act(&FailTask, &ctx, json!({"error": "e", "structured": bad})).await;
+        assert!(
+            matches!(&fail, Err(ToolError::InvalidInput(m)) if m.contains("structured")),
+            "{bad}: {fail:?}"
+        );
+    }
+    let ok = act(
+        &CompleteTask,
+        &ctx,
+        json!({"summary": "d", "structured": {"k": 1}}),
+    )
+    .await;
+    assert!(ok.is_ok(), "{ok:?}");
+}
+
+#[tokio::test]
+async fn result_tools_bound_text_and_structured_size() {
+    use super::super::tasks::{MAX_RESULT_TEXT_BYTES, MAX_STRUCTURED_BYTES};
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_in(dir.path());
+    let big = "x".repeat(MAX_RESULT_TEXT_BYTES + 1);
+    let r = act(&CompleteTask, &ctx, json!({"summary": big})).await;
+    assert!(
+        matches!(&r, Err(ToolError::InvalidInput(m)) if m.contains("summary")),
+        "{r:?}"
+    );
+    let r = act(&FailTask, &ctx, json!({"error": big})).await;
+    assert!(
+        matches!(&r, Err(ToolError::InvalidInput(m)) if m.contains("error")),
+        "{r:?}"
+    );
+    let huge = json!({"blob": "x".repeat(MAX_STRUCTURED_BYTES)});
+    let r = act(
+        &CompleteTask,
+        &ctx,
+        json!({"summary": "d", "structured": huge}),
+    )
+    .await;
+    assert!(
+        matches!(&r, Err(ToolError::InvalidInput(m)) if m.contains("structured")),
+        "{r:?}"
+    );
+    let at_limit = "x".repeat(MAX_RESULT_TEXT_BYTES);
+    assert!(
+        act(&CompleteTask, &ctx, json!({"summary": at_limit}))
+            .await
+            .is_ok()
+    );
+}

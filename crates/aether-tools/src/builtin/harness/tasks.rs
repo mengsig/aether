@@ -14,6 +14,44 @@ use std::collections::BTreeSet;
 
 // ----- complete_task / fail_task -------------------------------------------
 
+/// Largest `summary` or `error`, in bytes: far above a review or ship report
+/// and still a single bounded read for the parent.
+pub const MAX_RESULT_TEXT_BYTES: usize = 256 * 1024;
+/// Largest `structured` object, serialized, in bytes.
+pub const MAX_STRUCTURED_BYTES: usize = 1024 * 1024;
+
+fn check_text_len(field: &str, text: &str) -> Result<(), ToolError> {
+    if text.len() > MAX_RESULT_TEXT_BYTES {
+        return Err(ToolError::InvalidInput(format!(
+            "{field} is {} bytes; the limit is {MAX_RESULT_TEXT_BYTES}. Shorten it and keep \
+             the detail in an artifact or in `structured`",
+            text.len()
+        )));
+    }
+    Ok(())
+}
+
+/// `structured` must be an object, so `null` is refused too: the caller
+/// leaves the field out to send nothing.
+fn check_structured(input: &Value) -> Result<(), ToolError> {
+    let Some(structured) = input.get("structured") else {
+        return Ok(());
+    };
+    if !structured.is_object() {
+        return Err(ToolError::InvalidInput(
+            "structured must be a JSON object; omit it to send none".into(),
+        ));
+    }
+    let size = structured.to_string().len();
+    if size > MAX_STRUCTURED_BYTES {
+        return Err(ToolError::InvalidInput(format!(
+            "structured is {size} bytes; the limit is {MAX_STRUCTURED_BYTES}. Store the bulk \
+             in an artifact and reference it"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct CompleteTask;
 
@@ -54,6 +92,7 @@ impl Tool for CompleteTask {
         _ctx: &ToolContext,
         _cancel: CancellationToken,
     ) -> Result<ToolExecution, ToolError> {
+        check_structured(&input)?;
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Input {
@@ -71,6 +110,7 @@ impl Tool for CompleteTask {
         if summary.trim().is_empty() {
             return Err(ToolError::InvalidInput("summary is empty".into()));
         }
+        check_text_len("summary", &summary)?;
         let artifacts = artifacts
             .iter()
             .map(|a| parse_id::<ArtifactId>(a, "artifact id"))
@@ -122,6 +162,7 @@ impl Tool for FailTask {
         _ctx: &ToolContext,
         _cancel: CancellationToken,
     ) -> Result<ToolExecution, ToolError> {
+        check_structured(&input)?;
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Input {
@@ -133,6 +174,7 @@ impl Tool for FailTask {
         if error.trim().is_empty() {
             return Err(ToolError::InvalidInput("error is empty".into()));
         }
+        check_text_len("error", &error)?;
         Ok(ToolExecution::Action(HarnessAction::FailTask {
             error,
             structured,

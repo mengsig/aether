@@ -30,6 +30,13 @@ native tool discovery. The schemas in `aether-tools/src/builtin/harness.rs`
 | Preserve knowledge | `remember`, `request_checkpoint` | Stores reusable knowledge or requests validated context compaction. |
 | Repeat work | `create_schedule`, `list_schedules`, `update_schedule` | Durable interval/cron triggers, delivery history, pause/resume/cancel. |
 
+`complete_task` and `fail_task` bound their payloads and refuse an oversized
+or malformed one with a tool error that names the field; the task stays open
+and the agent may retry. `summary` and `error` are at most 256 KiB (262144
+bytes). `structured`, when present, must be a JSON object (not `null`, an array,
+a string or a number; omit it to send none) of at most 1 MiB serialized. Put
+bulk output in an artifact and reference it from the summary.
+
 The protocol `create_agent` command also requires explicit `config.effort` whenever
 `parent` is set: `low`, `medium`, `high`, `xhigh` or `max`. Missing effort is refused
 before creating an agent or task. Roots may omit effort and use the model default;
