@@ -707,7 +707,9 @@ where
         });
         let stderr_text = stderr.text;
         if !response_done {
-            let tail: String = stderr_text
+            // Masked before the tail is cut, so a key's BEGIN marker is still in view.
+            let masked = aether_core::redact::Redactor::default().redact(&stderr_text);
+            let tail: String = masked
                 .lines()
                 .rev()
                 .take(6)
@@ -720,9 +722,6 @@ where
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "unknown".into());
             let session_lost = stderr.session_lost;
-            let tail = aether_core::redact::Redactor::default()
-                .redact(&tail)
-                .into_owned();
             let _ = tx
                 .send(EngineEvent::Done(EngineOutcome {
                     is_error: true,
