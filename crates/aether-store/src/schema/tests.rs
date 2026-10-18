@@ -1037,7 +1037,7 @@ fn a_v22_store_gains_the_creation_order_listing_indexes() {
 }
 
 #[test]
-fn v25_gives_lease_renewals_the_run_of_their_agent() {
+fn v25_gives_lease_and_memory_events_the_run_of_their_agent() {
     let directory = tempfile::tempdir().expect("directory");
     let conn = database_at(&directory.path().join("aether.db"), 24);
     conn.execute_batch(
@@ -1047,7 +1047,8 @@ fn v25_gives_lease_renewals_the_run_of_their_agent() {
              (1,'ev_1','2026-10-01T00:00:00Z','lease.renewed','lease','agt_a',NULL,'{\"agent_id\":\"agt_a\",\"run\":null}'),
              (2,'ev_2','2026-10-01T00:00:00Z','lease.renewed','lease','agt_a','run_other','{\"run\":\"run_other\"}'),
              (3,'ev_3','2026-10-01T00:00:00Z','lease.renewed','lease','agt_gone',NULL,'{}'),
-             (4,'ev_4','2026-10-01T00:00:00Z','agent.ready','agent','agt_a',NULL,'{}');",
+             (4,'ev_4','2026-10-01T00:00:00Z','agent.ready','agent','agt_a',NULL,'{}'),
+             (5,'ev_5','2026-10-01T00:00:00Z','memory.rejected','memory','agt_a',NULL,'{}');",
     )
     .expect("seed");
 
@@ -1066,5 +1067,10 @@ fn v25_gives_lease_renewals_the_run_of_their_agent() {
     assert_eq!(body["run"], "run_a");
     assert_eq!(row("ev_2").0.as_deref(), Some("run_other"));
     assert_eq!(row("ev_3").0, None, "no agent row, no run to give");
-    assert_eq!(row("ev_4").0, None, "only lease renewals are rewritten");
+    assert_eq!(
+        row("ev_4").0,
+        None,
+        "only the kinds that omitted it are rewritten"
+    );
+    assert_eq!(row("ev_5").0.as_deref(), Some("run_a"));
 }

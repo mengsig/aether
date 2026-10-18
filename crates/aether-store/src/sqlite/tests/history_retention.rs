@@ -717,21 +717,34 @@ fn unscoped_events_are_not_orphaned_by_run_deletion() {
 }
 
 #[test]
-fn the_v25_migration_releases_a_run_pinned_by_a_runless_lease_renewal() {
+fn the_v25_migration_releases_a_run_pinned_by_runless_lease_and_memory_events() {
     let f = Fixture::new();
     f.store
         .import(
-            vec![ImportedEvent {
-                id: EventId::new(),
-                at: f.agent.created_at,
-                draft: EventDraft::new(
-                    Actor::Scheduler,
-                    EventKind::LeaseRenewed {
-                        expires_at: f.agent.created_at,
-                    },
-                )
-                .agent(f.agent.id),
-            }],
+            vec![
+                ImportedEvent {
+                    id: EventId::new(),
+                    at: f.agent.created_at,
+                    draft: EventDraft::new(
+                        Actor::Scheduler,
+                        EventKind::LeaseRenewed {
+                            expires_at: f.agent.created_at,
+                        },
+                    )
+                    .agent(f.agent.id),
+                },
+                ImportedEvent {
+                    id: EventId::new(),
+                    at: f.agent.created_at,
+                    draft: EventDraft::new(
+                        Actor::System,
+                        EventKind::MemoryRejected {
+                            reason: "duplicate".into(),
+                        },
+                    )
+                    .agent(f.agent.id),
+                },
+            ],
             vec![],
         )
         .unwrap();

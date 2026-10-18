@@ -434,17 +434,17 @@ CREATE TABLE engine_session_ownership (
 );
 "#;
 
-// Lease renewals were committed without a run, which pinned every run that
-// outlived one heartbeat against history retention. Give each agent event the
-// run its agent belongs to, in the column and in the stored body. No other
-// kind was found to omit it.
+// Lease renewals and memory admission events were committed without a run,
+// which pinned the run against history retention. Give those agent events the
+// run their agent belongs to, in the column and in the stored body.
 const V25: &str = r#"
 UPDATE events
 SET run = (SELECT agents.run FROM agents WHERE agents.id = events.agent_id),
     body = json_set(events.body, '$.run',
                     (SELECT agents.run FROM agents WHERE agents.id = events.agent_id))
 WHERE run IS NULL
-  AND type = 'lease.renewed'
+  AND type IN ('lease.renewed', 'memory.candidate', 'memory.accepted',
+               'memory.rejected', 'memory.superseded')
   AND agent_id IN (SELECT id FROM agents);
 "#;
 
