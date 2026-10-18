@@ -596,6 +596,21 @@ fn bind_private_socket(
 /// other aether daemon can bind between the probe and the bind; something
 /// still answering here is a foreign listener and keeps its socket.
 async fn remove_stale_socket(socket: &Path, address: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::FileTypeExt as _;
+
+    match std::fs::symlink_metadata(socket) {
+        Ok(found) => anyhow::ensure!(
+            found.file_type().is_socket(),
+            "{} exists and is not a socket; refusing to replace it",
+            socket.display()
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(
+                anyhow::Error::new(e).context(format!("checking the socket {}", socket.display()))
+            );
+        }
+    }
     match tokio::net::UnixStream::connect(address).await {
         Ok(_) => anyhow::bail!(
             "an aether daemon is already listening on {}",
@@ -893,6 +908,52 @@ mod tests {
             "failed staging cleaned"
         );
         drop(peer);
+    }
+
+    #[tokio::test]
+    async fn a_regular_file_at_the_socket_path_is_refused_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("aetherd.sock");
+        std::fs::write(&socket, "precious").unwrap();
+        let error = remove_stale_socket(&socket, &socket).await.unwrap_err();
+        assert!(error.to_string().contains("not a socket"), "{error}");
+        assert_eq!(std::fs::read_to_string(&socket).unwrap(), "precious");
+    }
+
+    #[tokio::test]
+    async fn a_symlink_at_the_socket_path_is_refused_and_its_target_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        std::fs::write(&target, "precious").unwrap();
+        let socket = dir.path().join("aetherd.sock");
+        std::os::unix::fs::symlink(&target, &socket).unwrap();
+        remove_stale_socket(&socket, &socket).await.unwrap_err();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "precious");
+        assert!(
+            std::fs::symlink_metadata(&socket)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_directory_at_the_socket_path_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("aetherd.sock");
+        std::fs::create_dir(&socket).unwrap();
+        remove_stale_socket(&socket, &socket).await.unwrap_err();
+        assert!(socket.is_dir());
+    }
+
+    #[tokio::test]
+    async fn a_stale_socket_is_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("aetherd.sock");
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        assert!(socket.exists(), "closing a listener leaves its pathname");
+        remove_stale_socket(&socket, &socket).await.unwrap();
+        assert!(!socket.exists());
     }
 
     #[test]
