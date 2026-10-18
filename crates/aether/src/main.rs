@@ -76,7 +76,29 @@ fn mouse_flag(mouse: bool, no_mouse: bool) -> Option<bool> {
     }
 }
 
+/// Exit status of a process killed by SIGPIPE, the convention for a closed pipe.
+const BROKEN_PIPE_EXIT: i32 = 141;
+
+/// `println!` panics when stdout is a closed pipe (`aether models | head -1`).
+/// Exit quietly there like other Unix tools; every other panic reports as usual.
+fn install_broken_pipe_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        if message.starts_with("failed printing to std") && message.contains("Broken pipe") {
+            std::process::exit(BROKEN_PIPE_EXIT);
+        }
+        default_hook(info);
+    }));
+}
+
 fn main() -> std::process::ExitCode {
+    install_broken_pipe_hook();
     let matches = Args::command().get_matches();
     let mut command_matches = &matches;
     let mut json = false;

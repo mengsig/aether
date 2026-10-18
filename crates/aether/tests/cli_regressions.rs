@@ -2077,3 +2077,28 @@ mod feedback_cli_tests;
 
 #[path = "cli_regressions/events.rs"]
 mod events;
+
+#[test]
+fn closed_stdout_pipe_exits_without_panicking() {
+    let home = tempfile::tempdir().unwrap();
+    // `schema` needs no daemon; every command prints through the same panic hook.
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_aether"))
+        .arg("schema")
+        .env("HOME", home.path())
+        .env("XDG_DATA_HOME", home.path().join("data"))
+        .env("XDG_CONFIG_HOME", home.path().join("config"))
+        .env("XDG_RUNTIME_DIR", home.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(
+        matches!(output.status.code(), Some(0 | 141)),
+        "{:?}",
+        output.status
+    );
+}
