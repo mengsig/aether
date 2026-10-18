@@ -113,6 +113,39 @@ resolve_release_url() {
 
 MAX_REDIRECTS=5
 
+# Prints an absolute path (starting with /) without its . and .. segments,
+# as wget sends it, so later relative redirects resolve against the real URL.
+remove_dot_segments() {
+  rest=${1#/}
+  output=""
+  while :; do
+    segment=${rest%%/*}
+    case "$segment" in
+      .) trailing=/ ;;
+      ..) output=${output%/*}; trailing=/ ;;
+      *) output="$output/$segment"; trailing="" ;;
+    esac
+    case "$rest" in
+      */*) rest=${rest#*/} ;;
+      *) break ;;
+    esac
+  done
+  say "$output$trailing"
+}
+
+# Prints an https URL with dot segments removed from its path.
+normalize_url() {
+  rest=${1#https://}
+  authority_path=${rest%%[?#]*}
+  suffix=${rest#"$authority_path"}
+  host=${authority_path%%/*}
+  case "$authority_path" in
+    */*) path=$(remove_dot_segments "/${authority_path#*/}") ;;
+    *) path="" ;;
+  esac
+  say "https://$host$path$suffix"
+}
+
 # Prints the https URL a `wget -S` header dump redirects to, or nothing when
 # there is no redirect. Fails on a hop that is not https. Arguments: current URL, header file.
 redirect_target() {
@@ -129,7 +162,7 @@ redirect_target() {
   case "${location%%/*}" in
     *:)
       case "$location" in
-        https://?*) say "$location"; return ;;
+        https://?*) normalize_url "$location"; return ;;
       esac
       fail "could not download $current: refused redirect to non-https URL '$location'"
       ;;
@@ -141,11 +174,11 @@ redirect_target() {
   path=/
   case "$hostpath" in */*) path=/${hostpath#*/} ;; esac
   case "$location" in
-    //?*) say "https:$location" ;;
-    /*) say "https://$host$location" ;;
-    \?*) say "https://$host$path$location" ;;
-    \#*) say "$withoutfragment$location" ;;
-    *) say "https://$host${path%/*}/$location" ;;
+    //?*) normalize_url "https:$location" ;;
+    /*) normalize_url "https://$host$location" ;;
+    \?*) normalize_url "https://$host$path$location" ;;
+    \#*) normalize_url "$withoutfragment$location" ;;
+    *) normalize_url "https://$host${path%/*}/$location" ;;
   esac
 }
 

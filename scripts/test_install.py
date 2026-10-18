@@ -381,6 +381,9 @@ class InstallerTests(unittest.TestCase):
             ("f.sha256", "https://example.test/a/b/f.sha256"),
             ("?token=abc", "https://example.test/a/b/asset.tar.gz?token=abc"),
             ("#frag", "https://example.test/a/b/asset.tar.gz?x=1#frag"),
+            ("..", "https://example.test/a/"),
+            ("../up/./f", "https://example.test/a/up/f"),
+            ("https://cdn.test/x/../y/.", "https://cdn.test/y/"),
             ("", ""),
         )
         for location, expected in cases:
@@ -399,6 +402,10 @@ class InstallerTests(unittest.TestCase):
                 headers.write_text(f"  Location: {location}\r\n")
                 result = sandbox.run(shell, script=f'{script}redirect_target "{current}" "{headers}"\n')
                 self.assertEqual(result.stdout.strip(), expected, result.stderr)
+        current = "https://example.test/a/"
+        headers.write_text("  Location: asset\r\n")
+        result = sandbox.run(shell, script=f'{script}redirect_target "{current}" "{headers}"\n')
+        self.assertEqual(result.stdout.strip(), "https://example.test/a/asset", result.stderr)
         for location in ("http://cdn.test/f", "ftp://cdn.test/f"):
             with self.subTest(location=location):
                 headers.write_text(f"  Location: {location}\r\n")
