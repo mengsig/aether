@@ -157,6 +157,12 @@ impl StdioTransport {
         timeout: Duration,
         background: Option<&crate::background::BackgroundProcesses>,
     ) -> Result<Self, McpError> {
+        if let Some(name) = env.keys().find(|key| hidden_env.contains(key)) {
+            return Err(McpError::Transport(format!(
+                "`env` sets `{name}`, a credential the daemon hides from tool children; \
+                 remove it from the server's `env`"
+            )));
+        }
         let mut command = tokio::process::Command::new(program);
         command
             .args(args)
@@ -743,6 +749,33 @@ mod tests {
         // Several data lines are one event.
         let split = "data: {\"jsonrpc\":\"2.0\",\"id\":1,\ndata: \"result\":{}}\n\n";
         assert!(sse_reply(split, 1).is_some(), "{split}");
+    }
+
+    #[tokio::test]
+    async fn a_configured_env_key_that_is_hidden_is_refused_by_name() {
+        let env = std::collections::BTreeMap::from([("MCP_TOKEN".to_owned(), "x".to_owned())]);
+        let error = StdioTransport::spawn(
+            std::path::Path::new("true"),
+            &[],
+            &env,
+            &["MCP_TOKEN".to_owned()],
+            None,
+            Duration::from_secs(5),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("MCP_TOKEN"), "{error}");
+
+        let allowed = StdioTransport::spawn(
+            std::path::Path::new("true"),
+            &[],
+            &env,
+            &["OTHER".to_owned()],
+            None,
+            Duration::from_secs(5),
+            None,
+        );
+        assert!(allowed.is_ok(), "an unrelated hidden name must not block");
     }
 
     #[cfg(target_os = "linux")]

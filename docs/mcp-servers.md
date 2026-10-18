@@ -44,6 +44,11 @@ without a token. Both name the variable, never its value. Over the protocol,
 `auth_failed` or `anonymous`. A server that failed auth also has
 `state: "failed"` and an `error` that starts with `auth_failed`.
 
+The token variable is hidden from every tool child, engine and stdio MCP
+server, so an agent's shell cannot read it. A stdio server's `env` may not set
+a name the daemon hides (this variable, a provider key, a `[listen]` or
+`[serve]` secret): the server then fails to start with an error naming the key.
+
 ## Caller identity
 
 A server configured with `send_caller_meta = true` is told which agent each

@@ -643,7 +643,7 @@ fn tool_registry(
 }
 
 /// Every variable naming a secret this daemon reads: the TCP transport's
-/// token and each `[serve]` hook secret. They join the daemon's own reach in
+/// token, each `[serve]` hook secret and each MCP server's `token_env`. They join the daemon's own reach in
 /// the environment stripped from every tool child, engine and MCP server, so
 /// an agent's shell cannot read the credential that drives the fleet.
 ///
@@ -660,6 +660,13 @@ fn daemon_secret_env(
     let mut names = vec![config.listen.token_env.clone()];
     names.extend(tcp.and_then(|listen| listen.token_env.clone()));
     names.extend(config.serve.webhooks.iter().map(|h| h.secret_env.clone()));
+    names.extend(
+        config
+            .mcp
+            .servers
+            .iter()
+            .filter_map(|s| s.token_env.clone()),
+    );
     names.extend(
         config
             .serve
@@ -939,9 +946,30 @@ mod tests {
                 ..Default::default()
             });
 
+        config
+            .mcp
+            .servers
+            .push(aether_model::config::McpServerSection {
+                name: "issues".into(),
+                url: Some("https://issues.example/mcp".into()),
+                token_env: Some("MCP_TOKEN".into()),
+                command: None,
+                args: Vec::new(),
+                env: Default::default(),
+                cwd: None,
+                auth: Default::default(),
+                classes: Default::default(),
+                send_caller_meta: false,
+            });
+
         let tools = tool_registry(&config, &aether_model::registry::Registry::builtin(), None);
         let hidden = tools.hidden_env();
-        for name in ["FLEET_TOKEN", "HOOK_SECRET", "SUBSCRIPTION_SECRET"] {
+        for name in [
+            "FLEET_TOKEN",
+            "HOOK_SECRET",
+            "SUBSCRIPTION_SECRET",
+            "MCP_TOKEN",
+        ] {
             assert!(hidden.contains(&name.to_owned()), "{name} reaches a child");
             assert!(
                 tools.engine_hidden_env().contains(&name.to_owned()),
