@@ -22,6 +22,7 @@ POLL_SECONDS = 0.002
 # What undoes the newest migration block, for when the previous release is
 # already on this build's schema. Add the next block's undo when it lands.
 REWINDS = {
+    25: (),  # a data backfill: no schema to drop, only the stamp goes back
     24: ("DROP TABLE engine_session_ownership",),
 }
 
