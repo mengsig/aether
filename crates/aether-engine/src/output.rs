@@ -81,17 +81,19 @@ pub(crate) async fn drain_stderr_until(
             Err(error) => break Some(error),
         }
     };
+    // Each side is masked on its own: a key cut by the gap has no marker
+    // the redactor could pair across the separator.
+    let redactor = aether_core::redact::Redactor::default();
     let mut output = if truncated {
-        // Each side is masked on its own: a key cut by the gap has no
-        // marker the redactor could pair across the separator.
-        let redactor = aether_core::redact::Redactor::default();
         format!(
             "{}\n[stderr truncated]\n{}",
             redactor.redact(&String::from_utf8_lossy(&head)),
             redactor.redact(&String::from_utf8_lossy(tail.make_contiguous()))
         )
     } else {
-        String::from_utf8_lossy(tail.make_contiguous()).into_owned()
+        redactor
+            .redact(&String::from_utf8_lossy(tail.make_contiguous()))
+            .into_owned()
     };
     if let Some(error) = read_error {
         output.push_str(&format!("\n[stderr read error: {error}]"));
@@ -118,6 +120,9 @@ mod tests {
         assert!(output.ends_with("\ntail\n"));
         assert!(output.len() <= 3 * (STDERR_HEAD_BYTES + STDERR_TAIL_BYTES) + 32);
         assert_eq!(drain_stderr(&b"ordinary\n"[..]).await.text, "ordinary\n");
+        let keyed =
+            drain_stderr(&b"bad key sk-ant-api03-NOTAREALKEYbutkeyshaped0123456789\n"[..]).await;
+        assert!(!keyed.text.contains("NOTAREALKEY") && keyed.text.contains("[REDACTED"));
     }
 
     #[tokio::test]
