@@ -227,6 +227,7 @@ pub(super) async fn drive(
     let inbox_before = ctx.agent.inbox_cursor;
     let mut activity_seen = false;
     let mut receipt_seen = false;
+    let mut request_after_stop = false;
     let mut receipt_input_cursor = inbox_before;
     let mut steering = Steering::new(inbox_before);
     // Delivered between context assembly and now: hand it over straight away.
@@ -309,12 +310,15 @@ pub(super) async fn drive(
                 }
                 let active = ev.as_ref().is_some_and(|event| event_has_activity(event, ctx));
                 if let Some(EngineEvent::Done(outcome)) = &ev {
-                    let stopped = engine_cancel.is_cancelled() || park.as_ref().is_some_and(|park| park.stop_requested);
+                    // A requested park stop only loses usage if a request began after it.
+                    let stopped = engine_cancel.is_cancelled() || (request_after_stop && park.as_ref().is_some_and(|park| park.stop_requested));
                     observe_closing(outcome, stopped, steering.sent_up_to, &mut receipt_seen, &mut receipt_input_cursor);
-                } else if ev.as_ref().is_some_and(|event| {
-                    event_may_start_request(event) || (settled.is_some() && uncovers_held_receipt(event))
-                }) {
-                    receipt_seen = false;
+                } else if let Some(event) = ev.as_ref() {
+                    let starts_request = event_may_start_request(event);
+                    if starts_request || (settled.is_some() && uncovers_held_receipt(event)) {
+                        receipt_seen = false;
+                    }
+                    request_after_stop |= starts_request && park.as_ref().is_some_and(|park| park.stop_requested);
                 }
                 activity_seen |= active;
                 state.interruption = interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref());

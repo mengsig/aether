@@ -279,14 +279,18 @@ pub(super) fn record_park(
     park: &Park,
     outcome: &EngineOutcome,
 ) -> Result<()> {
+    // The stop the runtime asked for after a turn-ending tool reads as a
+    // tool_use stop reason, not as an engine failure.
+    let requested_stop = park.stop_requested && outcome.stop_reason.as_deref() == Some("tool_use");
+    let is_error = outcome.is_error && !requested_stop;
     let mut commit = Commit::new().event(ctx.draft(EventKind::Custom {
         name: "engine.parked".into(),
         payload: json!({
             "engine": kind.as_str(),
             "stopped_by": stopped_by(park, outcome),
             "interrupted": outcome.interrupted,
-            "is_error": outcome.is_error,
-            "error": outcome.error.as_deref().map(|e| clamp(e, MAX_ENGINE_ERROR)),
+            "is_error": is_error,
+            "error": outcome.error.as_deref().filter(|_| is_error).map(|e| clamp(e, MAX_ENGINE_ERROR)),
             "refused_calls": park.refused,
             "refused_first": park.refused_names,
             "background_ids": park.background,

@@ -362,6 +362,35 @@ async fn native_park_stop_of_an_in_flight_request_is_interrupted() {
 }
 
 #[tokio::test]
+async fn native_park_stop_with_no_request_in_flight_stays_complete() {
+    let mut h = harness(Duration::from_secs(30)).await;
+    let worker = start_coordinator(&h);
+    let turn = turn_of(&mut h, worker).await;
+    let events = turn.events.upgrade().expect("live engine");
+    events
+        .send(EngineEvent::UsageDelta {
+            usage: Usage {
+                input_tokens: 100,
+                output_tokens: 10,
+                ..Default::default()
+            },
+        })
+        .await
+        .expect("request usage");
+    let (reply, error) = call(&h, &turn, "wait_for", json!({"timeout_seconds": 3600})).await;
+    assert!(!error, "{reply}");
+    assert!(turn.observed.stopped());
+    turn.end
+        .send(())
+        .expect("native closing result after interrupt");
+    let ended = wait_for_park(&h, worker).await;
+    assert_eq!(ended.stats.usage.total_tokens(), 110);
+    assert!(ended.stats.usage.cost_complete);
+    assert_eq!(ended.stats.usage.cost_gap, None);
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn park_stop_after_closing_receipt_stays_complete() {
     let measured = Usage {
         input_tokens: 100,
