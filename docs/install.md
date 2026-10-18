@@ -56,7 +56,10 @@ Running the installer again replaces the binary in place, by a rename, so an
 `aether` that is running keeps working until it exits.
 
 A mirror serves the same layout as GitHub: `<base>/latest/download/<asset>` and
-`<base>/download/<tag>/<asset>`. It must be `https://`; plain `http://` is
+`<base>/download/<tag>/<asset>`. Userinfo (`@`) is refused. Redirects must use
+HTTPS. Wget does not reliably restrict redirect schemes, so its downloads
+must serve assets directly without redirects; install curl for redirecting
+servers (including GitHub releases). The base must be `https://`; plain `http://` is
 accepted only for `127.0.0.1`, `localhost` and `[::1]`. `aether update` reads
 the same variable.
 

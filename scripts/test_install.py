@@ -10,6 +10,7 @@ import io
 import os
 from pathlib import Path
 import shutil
+import ssl
 import subprocess
 import tarfile
 import tempfile
@@ -75,6 +76,7 @@ def write_release(directory, version, digest=None):
 class RecordingHandler(http.server.SimpleHTTPRequestHandler):
     """Serves one sandbox's files and records each path asked for."""
     requested = None
+    redirect = None
 
     def log_message(self, format, *args):
         pass
@@ -82,13 +84,18 @@ class RecordingHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         assert self.requested is not None, "bind `requested` in a subclass per server"
         self.requested.append(self.path)
+        if self.redirect:
+            self.send_response(302)
+            self.send_header("Location", self.redirect)
+            self.end_headers()
+            return
         super().do_GET()
 
 
 class Sandbox:
     """A fake home, a fake release server and the tools one run may see."""
 
-    def __init__(self, test):
+    def __init__(self, test, tls=False):
         scratch = ROOT / "target" / "install-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         temporary = tempfile.TemporaryDirectory(dir=scratch)
@@ -103,14 +110,30 @@ class Sandbox:
         self.requested = []
         recording = type("Handler", (RecordingHandler,), {"requested": self.requested})
         handler = functools.partial(recording, directory=str(self.www))
+        self.handler = recording
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        self.certificate = self.enable_tls() if tls else None
         serve = functools.partial(self.server.serve_forever, poll_interval=0.01)
         thread = threading.Thread(target=serve, daemon=True)
         thread.start()
         test.addCleanup(thread.join)
         test.addCleanup(self.server.server_close)
         test.addCleanup(self.server.shutdown)
-        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        scheme = "https" if tls else "http"
+        self.base_url = f"{scheme}://127.0.0.1:{self.server.server_address[1]}"
+
+    def enable_tls(self):
+        certificate = self.root / "certificate.pem"
+        key = self.root / "key.pem"
+        subprocess.run([
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", str(key), "-out", str(certificate), "-days", "1",
+            "-subj", "/CN=localhost", "-addext", "subjectAltName=IP:127.0.0.1",
+        ], check=True, capture_output=True, timeout=30)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certificate, key)
+        self.server.socket = context.wrap_socket(self.server.socket, server_side=True)
+        return certificate
 
     def tools(self, names, fake_uname=False):
         """A new directory holding only `names` and `uname`, for use as PATH."""
@@ -141,6 +164,11 @@ class Sandbox:
         }
         if uname:
             environment["FAKE_UNAME_S"], environment["FAKE_UNAME_M"] = uname
+        if self.certificate:
+            environment["CURL_CA_BUNDLE"] = str(self.certificate)
+            wgetrc = self.root / "wgetrc"
+            wgetrc.write_text(f"ca_certificate = {self.certificate}\n")
+            environment["WGETRC"] = str(wgetrc)
         environment.update(env)
         return subprocess.run(
             [shell], input=script if script is not None else INSTALLER.read_text(),
@@ -303,6 +331,41 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(sandbox.installed_version(), "aether 9.9.9")
 
+    @unittest.skipUnless(shutil.which("openssl"), "needs openssl for local TLS")
+    def test_https_install_and_downgrade_rejection(self):
+        for downloader in ("curl", "wget"):
+            if not shutil.which(downloader):
+                continue
+            for shell in shells():
+                with self.subTest(downloader=downloader, shell=shell):
+                    sandbox = Sandbox(self, tls=True)
+                    write_release(sandbox.www / "latest" / "download", "9.9.9")
+                    path = sandbox.tools(BASE_TOOLS + (downloader, "sha256sum"))
+                    result = sandbox.run(shell, path=path)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(sandbox.installed_version(), "aether 9.9.9")
+                    destination = Sandbox(self)
+                    sandbox.handler.redirect = destination.base_url + "/release"
+                    sandbox.requested.clear()
+                    result = sandbox.run(shell, path=path)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("could not download", result.stderr)
+                    self.assertEqual(len(sandbox.requested), 1)
+                    self.assertEqual(destination.requested, [], "HTTP redirect was never fetched")
+
+    def test_plain_http_redirect_is_refused(self):
+        for downloader in ("curl", "wget"):
+            if not shutil.which(downloader):
+                continue
+            for shell, sandbox in self.each_shell():
+                sandbox.handler.redirect = "http://example.invalid/release"
+                path = sandbox.tools(BASE_TOOLS + (downloader, "sha256sum"))
+                result = sandbox.run(shell, path=path)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("could not download", result.stderr)
+                self.assertEqual(len(sandbox.requested), 1)
+                self.assertFalse(sandbox.install_dir.exists())
+
     def test_without_a_hash_tool_nothing_is_installed(self):
         for shell, sandbox in self.each_shell():
             write_release(sandbox.www / "latest" / "download", "9.9.9")
@@ -318,6 +381,7 @@ class InstallerTests(unittest.TestCase):
             ({"AETHER_VERSION": "v1.2.3/../.."}, "AETHER_VERSION must look like v1.0.0"),
             ({"AETHER_INSTALL_BASE_URL": "http://example.com/releases"}, "must be an https:// URL"),
             ({"AETHER_INSTALL_BASE_URL": "http://127.0.0.1.example.com"}, "must be an https:// URL"),
+            ({"AETHER_INSTALL_BASE_URL": "http://127.0.0.1:1@example.invalid"}, "must not contain userinfo"),
             ({"AETHER_INSTALL_DIR": "relative/bin"}, "must be an absolute path"),
         )
         for env, message in cases:

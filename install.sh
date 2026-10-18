@@ -82,6 +82,9 @@ resolve_base_url() {
   base=${AETHER_INSTALL_BASE_URL:-$DEFAULT_BASE_URL}
   base=${base%/}
   case "$base" in
+    *@*) fail "AETHER_INSTALL_BASE_URL must not contain userinfo (@)" ;;
+  esac
+  case "$base" in
     https://?*) ;;
     http://127.0.0.1 | http://127.0.0.1[:/]* | http://localhost | http://localhost[:/]*) ;;
     http://\[::1\] | http://\[::1\][:/]*) ;;
@@ -112,12 +115,19 @@ download() {
   url=$1
   dest=$2
   if have curl; then
-    curl --fail --silent --show-error --location --retry 2 \
+    protocols='=https'
+    case "$url" in http://*) protocols='=http,https' ;; esac
+    curl --proto "$protocols" --proto-redir '=https' \
+      --fail --silent --show-error --location --retry 2 \
       --connect-timeout 15 --max-time 600 --output "$dest" "$url" ||
       fail "could not download $url; check the version and your network"
   elif have wget; then
-    wget -q -T 60 -O "$dest" "$url" ||
-      fail "could not download $url; check the version and your network"
+    case "$url" in
+      http://*) set -- --max-redirect=0 ;;
+      *) set -- --https-only --max-redirect=0 ;;
+    esac
+    wget "$@" -q -T 60 -O "$dest" "$url" ||
+      fail "could not download $url; wget redirects are disabled for safety, install curl for HTTPS redirects"
   else
     fail "curl or wget is needed to download Aether"
   fi
