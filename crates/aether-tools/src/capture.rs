@@ -12,6 +12,8 @@ use crate::tool::{ToolContext, ToolError};
 
 pub(crate) const PAGE_BYTES: usize = 24_000;
 const CAPTURE_BYTES: u64 = 8 * 1024 * 1024;
+/// Default cap for a foreground command's log; the artifact copy is bounded by it too.
+pub(crate) const FOREGROUND_CAPTURE_BYTES: u64 = 256 * 1024 * 1024;
 const TRUNCATED: &[u8] = b"\n[output truncated: capture byte limit reached]\n";
 
 #[derive(Debug)]
@@ -28,21 +30,34 @@ pub(crate) struct Capture {
 }
 
 impl Capture {
-    pub fn new(ctx: &ToolContext) -> Result<Arc<Self>, ToolError> {
-        Self::create(ctx, false)
+    pub fn new(ctx: &ToolContext, limit: u64) -> Result<Arc<Self>, ToolError> {
+        Self::create(ctx, false, limit)
     }
 
     pub fn background(ctx: &ToolContext) -> Result<Arc<Self>, ToolError> {
-        Self::create(ctx, true)
+        Self::create(ctx, true, CAPTURE_BYTES)
     }
 
-    fn create(ctx: &ToolContext, background: bool) -> Result<Arc<Self>, ToolError> {
+    fn create(ctx: &ToolContext, background: bool, limit: u64) -> Result<Arc<Self>, ToolError> {
+        assert!(
+            limit > TRUNCATED.len() as u64,
+            "capture limit {limit} cannot hold the truncation marker"
+        );
+        // The agent temp dir keeps logs out of the worktree, where they would make a
+        // finished workspace look dirty to GC. Without one, fall back to the cwd.
+        let parent = match &ctx.temp_dir {
+            Some(dir) => {
+                aether_core::agent_temp::ensure_leaf(dir, &ctx.instance_id)
+                    .map_err(|e| ToolError::Internal(format!("agent temp dir: {e}")))?;
+                dir
+            }
+            None => &ctx.cwd,
+        };
         // An exclusive private directory avoids overwriting user files or following
-        // existing symlinks. Ignore its contents so even `git status` stays read-only
-        // from the repository's perspective. Keeping it in cwd also mounts it in containers.
+        // existing symlinks. Its `.gitignore` keeps the cwd fallback clean for git.
         let directory = tempfile::Builder::new()
             .prefix(".aether-shell-")
-            .tempdir_in(&ctx.cwd)?;
+            .tempdir_in(parent)?;
         aether_core::private_file::write(&directory.path().join(".gitignore"), b"*\n")?;
         let path = directory.path().join("output.log");
         use std::os::unix::fs::OpenOptionsExt;
@@ -63,7 +78,7 @@ impl Capture {
             path,
             directory,
             dropped: AtomicU64::new(0),
-            limit: if background { CAPTURE_BYTES } else { u64::MAX },
+            limit,
             reader,
             writer: tokio::sync::Mutex::new(tokio::fs::File::from_std(writer)),
             size: AtomicU64::new(0),
@@ -213,9 +228,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn foreground_capture_is_bounded_and_lives_in_the_agent_temp_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("t");
+        let mut ctx = ctx_in(dir.path());
+        aether_core::agent_temp::prepare_root(&root, &ctx.instance_id).unwrap();
+        ctx.temp_dir = Some(aether_core::agent_temp::leaf_path(&root, ctx.agent_id));
+        let limit = 4096;
+        let log = Capture::new(&ctx, limit).unwrap();
+        assert!(log.path.starts_with(ctx.temp_dir.as_ref().unwrap()));
+        assert!(!std::fs::read_dir(dir.path()).unwrap().any(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".aether-shell-")
+        }));
+        let chunk = vec![b'x'; 1000];
+        for _ in 0..8 {
+            log.append(&chunk).await.unwrap();
+        }
+        assert_eq!(log.size(), limit);
+        assert_eq!(std::fs::metadata(&log.path).unwrap().len(), limit);
+        assert_eq!(log.dropped(), 8000 - (limit as usize - TRUNCATED.len()));
+        let (tail, _) = log.page(limit - TRUNCATED.len() as u64, true).unwrap();
+        assert_eq!(tail.as_bytes(), TRUNCATED);
+    }
+
+    #[tokio::test]
     async fn pages_preserve_unicode_across_boundaries_and_incomplete_writes() {
         let dir = tempfile::tempdir().unwrap();
-        let log = Capture::new(&ctx_in(dir.path())).unwrap();
+        let log = Capture::new(&ctx_in(dir.path()), FOREGROUND_CAPTURE_BYTES).unwrap();
         let prefix = "x".repeat(PAGE_BYTES - 1);
         log.append(prefix.as_bytes()).await.unwrap();
         let crab = "🦀".as_bytes();
@@ -238,7 +280,7 @@ mod tests {
     #[tokio::test]
     async fn log_write_failure_is_visible_and_signals_the_process_owner() {
         let dir = tempfile::tempdir().unwrap();
-        let log = Capture::new(&ctx_in(dir.path())).unwrap();
+        let log = Capture::new(&ctx_in(dir.path()), FOREGROUND_CAPTURE_BYTES).unwrap();
         // A read-only handle deterministically fails writes without relying on disk space.
         *log.writer.lock().await =
             tokio::fs::File::from_std(std::fs::File::open(&log.path).unwrap());

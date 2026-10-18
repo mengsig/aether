@@ -181,13 +181,16 @@ Direct API agents receive `bash`, `shell_output`, `shell_processes`,
 file tools; these Aether workspace tools are not added to their MCP catalog.
 
 Every shell command writes combined stdout/stderr to a private, randomly named
-`.aether-shell-*/output.log` file in its working directory. Tool results include
-`output_path`; use `read_file` line windows, `grep`, `tail`, or `dd` through
-`bash` to retrieve the relevant part. Logs preserve raw bytes, including terminal
-control sequences. They survive process exit, stop, and handle cleanup, and
-remain until removed from the workspace. They are workspace files, not subject
-to artifact retention. Each private log directory contains a `.gitignore` so
-capturing output does not make the repository dirty.
+`.aether-shell-*/output.log` file in the agent's temp directory, so a finished
+workspace stays clean for GC. Without an agent temp directory the file is in the
+working directory instead, beside a `.gitignore` that keeps the repository clean.
+Tool results include `output_path`; use `read_file` line windows, `grep`,
+`tail`, or `dd` through `bash` to retrieve the relevant part (container
+commands reach it through `read_file`). Logs preserve raw bytes, including
+terminal control sequences. A foreground log is capped at 256 MiB and ends
+with a truncation marker when the command wrote more. Logs survive process
+exit, stop, and handle cleanup, and remain until removed. They are files, not
+subject to artifact retention.
 
 Large foreground results also keep an immutable artifact copy for the inspector,
 export, and `read_artifact`. These copies stream to disk without buffering the

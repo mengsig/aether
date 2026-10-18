@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::background::BackgroundProcesses;
-use crate::capture::{Capture, pump};
+use crate::capture::{Capture, FOREGROUND_CAPTURE_BYTES, pump};
 use crate::exec::{Teardown, prepare};
 use crate::output::OutputPolicy;
 use crate::tool::{Tool, ToolContext, ToolError, ToolExecution, parse_input};
@@ -43,6 +43,8 @@ pub fn shell_resources(ctx: &ToolContext) -> Vec<ResourceKey> {
 #[derive(Debug)]
 pub struct BashTool {
     pub output: OutputPolicy,
+    /// Most bytes of one foreground command's output kept in its log and artifact.
+    pub capture_limit: u64,
     processes: Arc<BackgroundProcesses>,
 }
 
@@ -50,6 +52,7 @@ impl BashTool {
     pub fn new(processes: Arc<BackgroundProcesses>) -> Self {
         Self {
             output: OutputPolicy::default(),
+            capture_limit: FOREGROUND_CAPTURE_BYTES,
             processes,
         }
     }
@@ -203,7 +206,7 @@ impl Tool for BashTool {
         }
         let prepared = prepare(&command, ctx)?;
         let mut cmd = prepared.command;
-        let capture = Capture::new(ctx)?;
+        let capture = Capture::new(ctx, self.capture_limit)?;
         let mut child = cmd.spawn()?;
         let mut guard = GroupGuard {
             pgid: child.id().map(|p| Pid::from_raw(p as i32)),
@@ -532,6 +535,35 @@ mod tests {
         // §12.3), so it is queued behind a holder but never fences one out.
         assert!(tool.leases_resources(&json!({"command": "cargo build", "background": true})));
     }
+    #[tokio::test]
+    async fn foreground_output_past_the_cap_is_neither_kept_nor_stored_beyond_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = Arc::new(crate::testing::MemorySink::default());
+        let mut ctx = ctx_in(dir.path());
+        ctx.artifacts = sink.clone();
+        let mut tool = BashTool::new(Arc::new(BackgroundProcesses::new()));
+        tool.capture_limit = 100_000;
+        let ToolExecution::Outcome(out) = tool
+            .execute(
+                json!({"command": "head -c 400000 /dev/zero | tr '\\0' x"}),
+                &ctx,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("expected an outcome");
+        };
+        let path = out.structured.as_ref().unwrap()["output_path"]
+            .as_str()
+            .unwrap();
+        assert_eq!(std::fs::metadata(path).unwrap().len(), 100_000);
+        let stored = sink.stored();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].1.len(), 100_000);
+        assert!(stored[0].1.ends_with(b"capture byte limit reached]\n"));
+    }
+
     #[tokio::test]
     async fn large_output_is_retrievable_after_the_foreground_call() {
         let dir = tempfile::tempdir().unwrap();

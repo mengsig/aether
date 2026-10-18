@@ -309,6 +309,10 @@ fn allowed_roots(ctx: &ToolContext) -> Result<Vec<PathBuf>, ToolError> {
                     roots.push(p);
                 }
             }
+            // Shell logs live here, and the tool results point the agent at them.
+            if let Some(Ok(p)) = ctx.temp_dir.as_ref().map(std::fs::canonicalize) {
+                roots.push(p);
+            }
         }
         None => roots.push(std::fs::canonicalize(&ctx.cwd).map_err(|e| {
             ToolError::Internal(format!("cwd {} unavailable: {e}", ctx.cwd.display()))
