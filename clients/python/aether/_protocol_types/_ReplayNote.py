@@ -12,6 +12,7 @@ class ReplayNote(TypedDict, total=False):
     """
     at: str
     context: _protocol.NoteContext  # optional
+    level: _protocol.NoteLevel  # optional
     links: list[str]  # optional
     seq: int
     text: str

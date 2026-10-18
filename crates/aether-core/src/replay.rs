@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::event::{Actor, Event, EventKind};
 use crate::id::{AgentId, ApprovalId, ArtifactId, InvocationId, SnapshotId, ToolCallId};
 use crate::model::{ContentBlock, MessageRole, ModelRef, StopReason, Usage};
-use crate::note::{Note, NoteContext};
+use crate::note::{Note, NoteContext, NoteLevel};
 use crate::snapshot::ContextLayer;
 use crate::time::Timestamp;
 use crate::tool::{ApprovalDecision, SideEffectClass};
@@ -77,6 +77,8 @@ pub struct ReplayNote {
     pub links: Vec<String>,
     #[serde(default)]
     pub context: NoteContext,
+    #[serde(default, skip_serializing_if = "NoteLevel::is_info")]
+    pub level: NoteLevel,
 }
 
 impl ReplayNote {
@@ -87,6 +89,7 @@ impl ReplayNote {
             text: note.text,
             links: note.links,
             context: note.context,
+            level: note.level,
         }
     }
 }

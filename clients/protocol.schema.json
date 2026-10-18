@@ -11567,6 +11567,9 @@
           "$ref": "#/$defs/NoteContext",
           "default": "none"
         },
+        "level": {
+          "$ref": "#/$defs/NoteLevel"
+        },
         "links": {
           "items": {
             "type": "string"

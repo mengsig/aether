@@ -3,6 +3,7 @@
 
 import type {
   NoteContext,
+  NoteLevel,
 } from "../../protocol.ts";
 
 /**
@@ -11,6 +12,7 @@ import type {
 export interface ReplayNote {
   "at": string;
   "context"?: NoteContext;
+  "level"?: NoteLevel;
   "links"?: Array<string>;
   "seq": number;
   "text": string;

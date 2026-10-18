@@ -409,11 +409,15 @@ fn another_agents_events_never_reach_the_replay() {
 }
 
 fn note(text: &str) -> EventKind {
+    leveled_note(text, crate::note::NoteLevel::Info)
+}
+
+fn leveled_note(text: &str, level: crate::note::NoteLevel) -> EventKind {
     let note = Note {
         text: text.to_owned(),
         links: vec!["https://example.com/1".into()],
         context: NoteContext::None,
-        level: crate::note::NoteLevel::Info,
+        level,
     };
     note.draft(AgentId::new(), crate::id::RunId::new(), Actor::user())
         .expect("a valid note")
@@ -438,6 +442,24 @@ fn notes_replay_in_the_turn_they_follow_and_before_the_first_turn() {
     assert_eq!(frames[0].notes[1].seq, 4);
     assert_eq!(frames[0].notes[1].links, ["https://example.com/1"]);
     assert_eq!(frames[0].messages.len(), 1, "a note is not a message");
+}
+
+#[test]
+fn a_replayed_note_keeps_its_level() {
+    use crate::note::NoteLevel;
+    let mut log = Log::new();
+    log.push(leveled_note("done", NoteLevel::Applied));
+    log.push(EventKind::AgentStarted { turn: 1 });
+    log.push(leveled_note("no", NoteLevel::Refused));
+    log.push(note("plain"));
+    let notes = &log.frames()[0].notes;
+    let levels: Vec<NoteLevel> = notes.iter().map(|n| n.level).collect();
+    assert_eq!(
+        levels,
+        [NoteLevel::Applied, NoteLevel::Refused, NoteLevel::Info]
+    );
+    let wire = serde_json::to_value(&notes[2]).expect("serialises");
+    assert!(wire.get("level").is_none(), "{wire}");
 }
 
 #[test]
