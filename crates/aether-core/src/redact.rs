@@ -144,11 +144,11 @@ pub fn redact_argv(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     let mut hide_next = false;
     for arg in args {
-        // A long secret-looking flag is still a flag even where a value was expected:
-        // `--auth --token SECRET` must hide SECRET, so `--token` is not masked itself.
-        let name = arg.split_once('=').map_or(arg.as_str(), |(name, _)| name);
-        let is_long_flag = name.starts_with("--") && SECRET_FLAG.is_match(name);
-        if std::mem::take(&mut hide_next) && !is_long_flag {
+        // Which argument is a value cannot be known, so the one after a secret
+        // flag is always hidden. A hidden secret-looking flag hides its successor too.
+        if std::mem::take(&mut hide_next) {
+            hide_next =
+                SECRET_FLAG.is_match(arg.split_once('=').map_or(arg.as_str(), |(name, _)| name));
             out.push("[REDACTED]".to_owned());
             continue;
         }
@@ -218,9 +218,13 @@ mod tests {
         let out = redact_argv(&argv(&["--password=hello SECRETTAIL", "x"]));
         assert_eq!(out, ["--password=[REDACTED]", "x"]);
         let out = redact_argv(&argv(&["--token", "-SECRETARG", "--verbose"]));
-        assert_eq!(out, ["--token", "[REDACTED]", "--verbose"]);
+        assert_eq!(out, ["--token", "[REDACTED]", "[REDACTED]"]);
         let out = redact_argv(&argv(&["--auth", "--token", "SECRET"]));
-        assert_eq!(out, ["--auth", "--token", "[REDACTED]"]);
+        assert_eq!(out, ["--auth", "[REDACTED]", "[REDACTED]"]);
+        let out = redact_argv(&argv(&["--auth", "-token", "SECRET"]));
+        assert_eq!(out, ["--auth", "[REDACTED]", "[REDACTED]"]);
+        let out = redact_argv(&argv(&["--token", "--SECRETARG"]));
+        assert_eq!(out, ["--token", "[REDACTED]"]);
     }
 
     /// One planted key per credentialed provider the distribution ships, so
