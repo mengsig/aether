@@ -12,6 +12,7 @@ fn note(text: &str, context: NoteContext) -> Note {
         text: text.into(),
         links: vec!["https://example.com/pr/1".into()],
         context,
+        level: aether_core::note::NoteLevel::Info,
     }
 }
 

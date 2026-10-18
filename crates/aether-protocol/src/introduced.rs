@@ -36,6 +36,7 @@ impl Command {
             Self::StorageStatus | Self::StorageGc { .. } => Introduced::Feature(features::STORAGE),
             Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
             | Self::WorkspaceDiscard { .. } => Introduced::Feature(features::WORKSPACE_REVIEW),
+            Self::AppendNote { level, .. } if !level.is_info() => Introduced::Version(24),
             Self::AppendNote { .. } => Introduced::Feature(features::NOTES),
 
             Self::GetAttention | Self::CompletePath { .. } | Self::ListWorkspaces { .. }
@@ -142,6 +143,24 @@ mod tests {
                 command.name()
             );
         }
+    }
+
+    #[test]
+    fn a_leveled_note_needs_protocol_24() {
+        let agent = aether_core::id::AgentId::new();
+        for level in ["applied", "refused"] {
+            let wire = json!({"cmd": "append_note", "agent": agent, "text": "hi", "level": level});
+            assert_eq!(
+                command(wire).introduced(),
+                Introduced::Version(24),
+                "{level}"
+            );
+        }
+        let info = json!({"cmd": "append_note", "agent": agent, "text": "hi", "level": "info"});
+        assert_eq!(
+            command(info).introduced(),
+            Introduced::Feature(features::NOTES)
+        );
     }
 
     #[test]

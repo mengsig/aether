@@ -40,6 +40,12 @@ a command is optional, so an older client's requests decode unchanged; the
 test `no_command_requires_a_field_an_older_client_would_not_send` holds that
 against the live schema.
 
+Version 24 adds a `level` to `append_note`: `info` (the default), `applied`
+or `refused`. A level other than `info` needs a daemon on version 24 or later;
+the Rust client refuses it to an older one before sending. The level rides in
+the note event's payload, which older clients decode without it, so they show
+the note as a plain one.
+
 Version 23 adds `append_note`, advertised by the `notes` feature, and the
 `not_started` turn outcome: `replay` of an agent that has taken no turn
 returns one turn-0 frame holding its notes. Clients on versions 17 through 22
@@ -297,6 +303,16 @@ payload is the note, and the reply, `NoteAppended`, carries that event's
 text. `replay` puts it in the frame of the turn it follows; notes on an agent
 that has taken no turn replay as a turn-0 frame whose outcome is
 `not_started`.
+
+`level` says what the note reports: `info` (the default, a plain remark),
+`applied` (a host carried out an operator command such as `/answer 3 yes`) or
+`refused` (it declined). A host calls `append_note` to show that result at
+once, instead of waiting for a model turn. The TUI shows the note as its own
+row, labelled `note`, `applied` or `refused`, and the level is part of the
+event's payload for any other subscriber. `info` is left out of the payload.
+The level changes only how people see the note; it never wakes the agent or
+reaches the model, which sees a note only through `context: digest`. The Rust
+client sends it with `Client::append_note`.
 
 `context` is `none` by default: only people see the note. With `digest` the
 agent's next turn is also given it, in a compact list in its runtime state:

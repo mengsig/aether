@@ -1491,7 +1491,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 let mut parts = vec![note.text.trim()];
                 parts.extend(note.links.iter().map(String::as_str));
                 let text = NoticeText::joined(&parts, NoticeSeparator::Dot);
-                notice(t, at, NoticeKind::Note, text);
+                notice(t, at, NoticeKind::Note(note.level), text);
             }
         }
         EventKind::Custom { name, payload } if name == "store.write_failed" => {

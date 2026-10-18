@@ -28,6 +28,27 @@ pub enum NoteContext {
     Digest,
 }
 
+/// How a note reads on screen: a plain remark, or the result of something a
+/// host did for the operator. It never reaches the model on its own.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteLevel {
+    #[default]
+    Info,
+    /// The host carried out what the operator asked.
+    Applied,
+    /// The host declined what the operator asked.
+    Refused,
+}
+
+impl NoteLevel {
+    pub fn is_info(&self) -> bool {
+        *self == Self::Info
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Note {
     /// At most [`MAX_NOTE_BYTES`] bytes.
@@ -37,6 +58,8 @@ pub struct Note {
     pub links: Vec<String>,
     #[serde(default)]
     pub context: NoteContext,
+    #[serde(default, skip_serializing_if = "NoteLevel::is_info")]
+    pub level: NoteLevel,
 }
 
 impl Note {
@@ -104,6 +127,7 @@ mod tests {
             text: text.to_owned(),
             links: Vec::new(),
             context: NoteContext::None,
+            level: NoteLevel::Info,
         }
     }
 
@@ -112,6 +136,7 @@ mod tests {
         let mut written = note("3 items shipped");
         written.links = vec!["https://example.com/pr/1".into()];
         written.context = NoteContext::Digest;
+        written.level = NoteLevel::Refused;
         let draft = written
             .draft(AgentId::new(), RunId::new(), Actor::user())
             .expect("a valid note");
@@ -123,6 +148,17 @@ mod tests {
     fn context_defaults_to_none_and_links_to_empty() {
         let decoded: Note = serde_json::from_value(serde_json::json!({"text": "hi"})).unwrap();
         assert_eq!(decoded, note("hi"));
+    }
+
+    #[test]
+    fn an_info_note_keeps_the_wire_form_older_readers_know() {
+        let wire = serde_json::to_value(note("hi")).unwrap();
+        assert!(wire.get("level").is_none(), "{wire}");
+        let mut applied = note("hi");
+        applied.level = NoteLevel::Applied;
+        let wire = serde_json::to_value(&applied).unwrap();
+        assert_eq!(wire["level"], "applied");
+        assert_eq!(serde_json::from_value::<Note>(wire).unwrap(), applied);
     }
 
     #[test]

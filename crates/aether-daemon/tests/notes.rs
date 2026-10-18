@@ -50,7 +50,7 @@ async fn a_note_is_recorded_without_starting_a_turn() {
     let appended = host
         .ok(
             json!({"cmd":"append_note", "agent":agent, "text":"3 items shipped",
-            "links":["https://example.com/pr/1"], "context":"digest"}),
+            "links":["https://example.com/pr/1"], "context":"digest", "level":"applied"}),
         )
         .await;
     let seq = appended["seq"].as_u64().expect("the note's seq");
@@ -61,6 +61,7 @@ async fn a_note_is_recorded_without_starting_a_turn() {
     assert_eq!(note["kind"]["name"], "note.appended", "{note}");
     assert_eq!(note["kind"]["payload"]["text"], "3 items shipped");
     assert_eq!(note["kind"]["payload"]["context"], "digest");
+    assert_eq!(note["kind"]["payload"]["level"], "applied");
     assert!(!kinds(&after).contains(&"agent.started"), "{after:?}");
     let replay = host.ok(json!({"cmd":"replay", "agent":agent})).await;
     assert_eq!(replay[0]["turn"], 0, "{replay}");

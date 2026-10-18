@@ -1,7 +1,7 @@
 // Generated from clients/protocol.schema.json by scripts/generate_clients.py.
 // Do not edit: change the Rust types and regenerate.
 
-export const PROTOCOL_VERSION = 23;
+export const PROTOCOL_VERSION = 24;
 export const MIN_PROTOCOL_VERSION = 17;
 
 export * from "./protocol/commands/accept.ts";
@@ -223,6 +223,7 @@ export * from "./protocol/types/ModelRef.ts";
 export * from "./protocol/types/NetworkPolicy.ts";
 export * from "./protocol/types/NewApprovalRule.ts";
 export * from "./protocol/types/NoteContext.ts";
+export * from "./protocol/types/NoteLevel.ts";
 export * from "./protocol/types/OpenLoop.ts";
 export * from "./protocol/types/OperatorMemoryScope.ts";
 export * from "./protocol/types/OperatorMemorySpec.ts";

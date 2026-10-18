@@ -236,7 +236,7 @@ pub enum NoticeKind {
         schedule: Option<ScheduleId>,
     },
     /// A note a client appended; it woke nobody.
-    Note,
+    Note(aether_core::note::NoteLevel),
 }
 
 #[derive(Debug, Clone, PartialEq)]

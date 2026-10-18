@@ -284,7 +284,7 @@ pub fn category(model: &CellModel) -> Category {
             | NoticeKind::Handoff
             | NoticeKind::Cancelled
             | NoticeKind::Trigger { .. }
-            | NoticeKind::Note => Status,
+            | NoticeKind::Note(_) => Status,
         },
         CellModel::Compaction(_) => Compaction,
         CellModel::Separator { .. } => Usage,

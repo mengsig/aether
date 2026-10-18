@@ -163,7 +163,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// 23: `append_note`, behind the `notes` feature, and the `not_started` replay
 /// frame holding notes of an agent with no turn. `compat` withholds that frame.
-pub const PROTOCOL_VERSION: u32 = 23;
+///
+/// 24: `append_note` takes a `level` (`info`, `applied` or `refused`) and
+/// records it in the note event. Older clients ignore the field and show the
+/// note as plain; a level other than `info` is refused to a daemon below 24.
+pub const PROTOCOL_VERSION: u32 = 24;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {

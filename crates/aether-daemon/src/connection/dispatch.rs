@@ -277,11 +277,13 @@ pub(super) async fn dispatch_authorized(
             text,
             links,
             context,
+            level,
         } => {
             let note = aether_core::note::Note {
                 text,
                 links,
                 context,
+                level,
             };
             let seq = rt.append_note(agent, &note, by).map_err(map_err)?;
             Ok(Reply::NoteAppended { seq })

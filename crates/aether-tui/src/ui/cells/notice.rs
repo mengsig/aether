@@ -3,6 +3,7 @@
 
 use std::borrow::Cow;
 
+use aether_core::note::NoteLevel;
 use ratatui::text::Line;
 
 use super::text::{Layout, cap_layout, clean, plain, span, truncate, under, wrap_text_layout};
@@ -39,9 +40,9 @@ pub fn layout(cell: &CellModel, width: u16, detail: bool, theme: &Theme) -> Layo
             text,
         } if !detail => one_row(&authored(text, theme), width, theme),
         CellModel::Notice {
-            kind: NoticeKind::Note,
+            kind: NoticeKind::Note(level),
             text,
-        } => note(&authored(text, theme), width, theme),
+        } => note(*level, &authored(text, theme), width, theme),
         CellModel::Notice { text, .. } => {
             let mut rows = sentence(Tone::Neutral, &authored(text, theme), width, theme);
             if detail && let Some(payload) = text.detail_payload() {
@@ -115,12 +116,16 @@ fn one_row(text: &str, width: usize, theme: &Theme) -> Layout {
     Layout::unmapped(vec![Line::from(truncate(row, width, theme))])
 }
 
-/// `note` in the accent, then the client's text at full brightness: apart
-/// from the dim status notices and from anything the agent said.
-fn note(text: &str, width: usize, theme: &Theme) -> Layout {
-    let label = "note";
+/// A label (`note`, `applied` or `refused`), then the client's text at full
+/// brightness: apart from the dim status notices and from anything the agent said.
+fn note(level: NoteLevel, text: &str, width: usize, theme: &Theme) -> Layout {
+    let (label, hue) = match level {
+        NoteLevel::Info => ("note", theme.accent()),
+        NoteLevel::Applied => ("applied", theme.success()),
+        NoteLevel::Refused => ("refused", theme.failure()),
+    };
     let first = vec![
-        span(label, theme.accent().patch(theme.title())),
+        span(label, hue.patch(theme.title())),
         span(" ", theme.text()),
     ];
     let indent = " ".repeat(label.len() + 1);

@@ -413,6 +413,7 @@ fn note(text: &str) -> EventKind {
         text: text.to_owned(),
         links: vec!["https://example.com/1".into()],
         context: NoteContext::None,
+        level: crate::note::NoteLevel::Info,
     };
     note.draft(AgentId::new(), crate::id::RunId::new(), Actor::user())
         .expect("a valid note")

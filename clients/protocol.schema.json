@@ -2645,6 +2645,10 @@
               "$ref": "#/$defs/NoteContext",
               "default": "none"
             },
+            "level": {
+              "$ref": "#/$defs/NoteLevel",
+              "description": "Needs protocol 24 unless `info`; the TUI shows `applied` and\n`refused` notes as the result of a host command."
+            },
             "links": {
               "items": {
                 "type": "string"
@@ -10061,6 +10065,27 @@
         }
       ]
     },
+    "NoteLevel": {
+      "description": "How a note reads on screen: a plain remark, or the result of something a\nhost did for the operator. It never reaches the model on its own.",
+      "oneOf": [
+        {
+          "enum": [
+            "info"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "applied",
+          "description": "The host carried out what the operator asked.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The host declined what the operator asked.",
+          "type": "string"
+        }
+      ]
+    },
     "OpenLoop": {
       "description": "Something the run left unfinished.",
       "oneOf": [
@@ -16083,7 +16108,7 @@
     "$ref": "#/$defs/ClientFrame"
   },
   "min_protocol_version": 17,
-  "protocol_version": 23,
+  "protocol_version": 24,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },

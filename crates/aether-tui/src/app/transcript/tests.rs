@@ -2112,6 +2112,7 @@ fn a_note_is_its_own_notice_and_starts_nothing() {
         text: "3 items shipped".into(),
         links: vec!["https://example.com/pull/12".into()],
         context: aether_core::note::NoteContext::None,
+        level: aether_core::note::NoteLevel::Info,
     };
     let draft = note
         .draft(agent, aether_core::id::RunId::new(), Actor::user())
@@ -2121,8 +2122,35 @@ fn a_note_is_its_own_notice_and_starts_nothing() {
     let models = feed.models(agent);
     assert_eq!(models.len(), before + 1, "one cell for one note");
     assert!(
-        matches!(models.last(), Some(CellModel::Notice { kind: NoticeKind::Note, text })
+        matches!(models.last(), Some(CellModel::Notice { kind: NoticeKind::Note(_), text })
         if text.as_str() == "3 items shipped · https://example.com/pull/12"),
         "{models:?}"
     );
+}
+
+#[test]
+fn a_note_keeps_its_level_in_the_notice() {
+    let mut feed = Feed::new();
+    let (agent, _) = feed.spawn(None, "orchestrator", "assistant");
+    for level in [
+        aether_core::note::NoteLevel::Applied,
+        aether_core::note::NoteLevel::Refused,
+    ] {
+        let note = aether_core::note::Note {
+            text: "/answer 3 yes".into(),
+            links: Vec::new(),
+            context: aether_core::note::NoteContext::None,
+            level,
+        };
+        let draft = note
+            .draft(agent, aether_core::id::RunId::new(), Actor::user())
+            .expect("a valid note");
+        feed.on(agent, draft.kind);
+        let models = feed.models(agent);
+        assert!(
+            matches!(models.last(), Some(CellModel::Notice { kind: NoticeKind::Note(seen), .. })
+            if *seen == level),
+            "{models:?}"
+        );
+    }
 }

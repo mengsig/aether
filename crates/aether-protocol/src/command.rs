@@ -155,6 +155,10 @@ pub enum Command {
         links: Vec<String>,
         #[serde(default)]
         context: aether_core::note::NoteContext,
+        /// Needs protocol 24 unless `info`; the TUI shows `applied` and
+        /// `refused` notes as the result of a host command.
+        #[serde(default, skip_serializing_if = "aether_core::note::NoteLevel::is_info")]
+        level: aether_core::note::NoteLevel,
     },
     /// Recreate a failed or cancelled agent from its last checkpoint, as a
     /// new agent linked to it.

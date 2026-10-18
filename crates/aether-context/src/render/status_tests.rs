@@ -287,6 +287,7 @@ fn digest_note(text: &str, links: &[&str]) -> Note {
         text: text.into(),
         links: links.iter().map(|link| (*link).to_owned()).collect(),
         context: aether_core::note::NoteContext::Digest,
+        level: aether_core::note::NoteLevel::Info,
     }
 }
 

@@ -129,12 +129,14 @@ impl Client {
             text,
             links,
             context,
+            level,
         } = note;
         let command = Command::AppendNote {
             agent,
             text,
             links,
             context,
+            level,
         };
         match self.request(command).await? {
             Reply::NoteAppended { seq } => Ok(seq),

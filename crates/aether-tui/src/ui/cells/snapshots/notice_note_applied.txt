@@ -1,0 +1,16 @@
+── unicode 80 compact
+applied /answer 3 yes: answered question 3
+── unicode 80 detail
+applied /answer 3 yes: answered question 3
+── unicode 120 compact
+applied /answer 3 yes: answered question 3
+── unicode 120 detail
+applied /answer 3 yes: answered question 3
+── ascii 80 compact
+applied /answer 3 yes: answered question 3
+── ascii 80 detail
+applied /answer 3 yes: answered question 3
+── ascii 120 compact
+applied /answer 3 yes: answered question 3
+── ascii 120 detail
+applied /answer 3 yes: answered question 3

@@ -441,11 +441,25 @@ fn fixtures() -> Vec<(&'static str, CellModel)> {
         (
             "notice_note",
             CellModel::Notice {
-                kind: NoticeKind::Note,
+                kind: NoticeKind::Note(aether_core::note::NoteLevel::Info),
                 text: NoticeText::joined(&[
                     &format!("3 items shipped: {}", "the release notes are ready for review ".repeat(3).trim_end()),
                     "https://example.com/pull/12",
                 ], NoticeSeparator::Dot),
+            },
+        ),
+        (
+            "notice_note_applied",
+            CellModel::Notice {
+                kind: NoticeKind::Note(aether_core::note::NoteLevel::Applied),
+                text: NoticeText::joined(&["/answer 3 yes: answered question 3"], NoticeSeparator::Dot),
+            },
+        ),
+        (
+            "notice_note_refused",
+            CellModel::Notice {
+                kind: NoticeKind::Note(aether_core::note::NoteLevel::Refused),
+                text: NoticeText::joined(&["/answer 9 yes: no open question 9"], NoticeSeparator::Dot),
             },
         ),
         (

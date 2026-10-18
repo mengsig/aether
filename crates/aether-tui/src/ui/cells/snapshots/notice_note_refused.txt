@@ -1,0 +1,16 @@
+── unicode 80 compact
+refused /answer 9 yes: no open question 9
+── unicode 80 detail
+refused /answer 9 yes: no open question 9
+── unicode 120 compact
+refused /answer 9 yes: no open question 9
+── unicode 120 detail
+refused /answer 9 yes: no open question 9
+── ascii 80 compact
+refused /answer 9 yes: no open question 9
+── ascii 80 detail
+refused /answer 9 yes: no open question 9
+── ascii 120 compact
+refused /answer 9 yes: no open question 9
+── ascii 120 detail
+refused /answer 9 yes: no open question 9

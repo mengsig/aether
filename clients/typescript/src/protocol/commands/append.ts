@@ -4,6 +4,7 @@
 import type {
   AgentId,
   NoteContext,
+  NoteLevel,
 } from "../../protocol.ts";
 
 /**
@@ -15,6 +16,7 @@ export interface AppendNoteCommand {
   "cmd": "append_note";
   "agent": AgentId;
   "context"?: NoteContext;
+  "level"?: NoteLevel;
   "links"?: Array<string>;
   "text": string;
 }
