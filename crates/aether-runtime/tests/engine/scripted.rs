@@ -145,7 +145,7 @@ impl Engine for ScriptedEngine {
                 let _ = events
                     .send(EngineEvent::ToolResult {
                         tool_use_id: "call-1".into(),
-                        content: "src/ tests/".into(),
+                        content: "src/ tests/\nANTHROPIC_API_KEY=sk-ant-api03-NOTAREALKEYbutkeyshaped0123456789".into(),
                         is_error: false,
                     })
                     .await;

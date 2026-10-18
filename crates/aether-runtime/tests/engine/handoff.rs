@@ -31,6 +31,11 @@ async fn a_tool_the_engine_ran_leaves_its_result_in_the_transcript() {
                     && content.iter().any(|c| matches!(c, aether_core::model::ToolResultBlock::Text { text } if text.contains("src/"))))
         })
     });
+    let stored = format!("{entries:?}");
+    assert!(
+        !stored.contains("NOTAREALKEY") && stored.contains("[REDACTED"),
+        "the tool output's key is masked in the transcript"
+    );
     assert!(called, "the engine's tool call is in the transcript");
     assert!(
         answered,

@@ -94,6 +94,11 @@ impl ToolRuntime {
         Self { redactor }
     }
 
+    /// The redactor every tool and engine result passes through before it is recorded.
+    pub fn redactor(&self) -> &Redactor {
+        &self.redactor
+    }
+
     /// Fill in what the call is about before it is recorded: the resources
     /// it touches, and - for classes whose outcome is kept - its idempotency
     /// key. The agent runtime calls this before `tool.requested` so the event

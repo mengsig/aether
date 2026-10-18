@@ -720,6 +720,9 @@ where
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "unknown".into());
             let session_lost = stderr.session_lost;
+            let tail = aether_core::redact::Redactor::default()
+                .redact(&tail)
+                .into_owned();
             let _ = tx
                 .send(EngineEvent::Done(EngineOutcome {
                     is_error: true,

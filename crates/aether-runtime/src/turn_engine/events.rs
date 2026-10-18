@@ -550,6 +550,13 @@ pub(super) fn handle_event(
                 tracing::debug!(agent = %ctx.agent.id, %tool_use_id, "tool result for an unknown call");
                 return Ok(());
             };
+            // Native engine tools print whatever the shell holds; mask it
+            // before it reaches the event log, as the API tool path does.
+            let content = runtime
+                .tool_runtime
+                .redactor()
+                .redact(&content)
+                .into_owned();
             // The bridge's actual reply wins over a killed engine's synthetic
             // rejection, and consumes one receipt even for identical calls.
             let (content, is_error) = match state
