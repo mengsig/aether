@@ -235,7 +235,7 @@ impl Tool for SendMessage {
             json!({
                 "type": "object",
                 "properties": {
-                    "to": {"type": "string", "description": "Recipient agent ID (`agt_...`) from delegate.agent_id, inspect_state, or an Aether inbox sender. Display names and native paths such as `/root` are not IDs."},
+                    "to": {"type": "string", "description": "Recipient agent ID (`agt_...`) from delegate.agent_id, list_peers, inspect_state, or an Aether inbox sender. Display names and native paths such as `/root` are not IDs."},
                     "content": {"type": "string"},
                     "subtree": {"type": "boolean", "default": false, "description": "Deliver to the recipient and every live descendant instead of the recipient alone."}
                 },

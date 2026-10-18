@@ -4,6 +4,38 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## 1.1.1
+
+Delegated swarms can now coordinate directly: workers find their siblings with
+`list_peers`, message them with a `send_message` that stays within the team,
+and read the recipe from `swarm_playbook`. The swarm tools are withheld from
+agents they cannot help, so a lone root agent's tool list barely grows.
+
+### New
+
+- **Swarms: delegated peers find and message each other.** A lead can split
+  one change across parallel leaf workers in isolated workspaces, and the
+  workers coordinate directly instead of relaying through the lead.
+  `list_peers` pages a delegated agent's siblings (id, name, role, status,
+  task and a short objective), and a sibling's `send_message` wakes a peer
+  waiting on its inbox or on `wait_for(message_from)`. `swarm_playbook`
+  returns the recipe: disjoint tasks with owned paths, `leaf: true` workers
+  with `allowed_paths`, peer coordination, and integration in plan order.
+
+### Changed
+
+- **A delegated agent's messages stay within its team.** `send_message` from
+  a delegated agent reaches only its parent's subtree and its own ancestors,
+  and a `subtree=true` fan-out only its parent's subtree. A refused message
+  is an error the model sees, naming the rule. Root agents keep their reach.
+- **Swarm tools cost nothing where they cannot help.** `list_peers` is
+  offered only to delegated agents, since a root agent has no peers, and
+  `swarm_playbook` only to agents that may delegate. A lone root agent's
+  tool list grows by 185 bytes over 1.1.0: 173 from the playbook's short
+  descriptor and 12 from a `send_message` description tweak;
+  the playbook's text is returned by the call, not carried in the
+  description.
+
 ## 1.1.0
 
 Delegated agents now share a warm, size-bounded build cache outside their
@@ -76,6 +108,13 @@ MCP tools. Protocol version 23.
   without queueing a message or starting a turn. With `context: digest` the
   agent's next turn sees it in a compact list. The TUI, `aether replay` and
   the phone's activity feed and conversation show notes.
+- **A host can add its slash commands to the TUI menu.** `aether tui
+  --host-commands <PATH>` reads a JSON file of commands, which appear in the
+  `/` popup and `/help` after the built-ins, marked with the host's name
+  (Archon's `/answer`, for example). Choosing one sends the line to the
+  viewed agent; the TUI never runs it. A malformed, repeated or built-in
+  named entry is left out, and an unreadable file loads none; the TUI starts
+  and says why once.
 - **`aether update` shows what a release asks of you.** Before downloading,
   it prints the target release's summary and the "Before updating" notes of
   every release it crosses, read from the `CHANGELOG.md` each release now

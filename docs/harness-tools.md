@@ -2,8 +2,11 @@
 
 An agent created with `leaf: true` cannot delegate children. Aether omits
 delegation, fleet, task-listing, model-listing, and schedule tools from both
-native and API model tool lists. `leaf` is set at creation and cannot be changed
-on a live agent.
+native and API model tool lists, and `swarm_playbook`, which is for the lead. A
+delegated leaf keeps `send_message`, `inspect_state` and `list_peers`, so
+workers can coordinate with each other. `leaf` is set at creation and cannot be
+changed on a live agent. A root agent has no peers, so it is not offered
+`list_peers`.
 
 API agents receive these tools through the model tool catalog. CLI engines
 receive them through MCP server `aether`; deferred catalogs use the engine's
@@ -18,7 +21,9 @@ native tool discovery. The schemas in `aether-tools/src/builtin/harness.rs`
 | Inspect delegated work | `list_agents`, `list_tasks`, `read_task` | Scoped metadata pages and bounded task/result reads, including completed descendants. |
 | Delegate | `delegate` | Creates a tracked child and task; requires explicit `model` (`provider/model`) and `effort`; neither is inherited. Returned agent and task IDs are different identifiers. `workspace_mode` selects a shared workspace (the default) or an isolated Git worktree. `host_context` (`full` or `lean`) is inherited from the parent when omitted; see [lean host context](engines.md#lean-host-context). |
 | Integrate a child workspace | `integrate_workspace` | Applies an isolated child's changes to its parent's workspace after the child finishes, with conflict checks. The child workspace is retained. |
-| Steer | `send_message` | Messages an agent; `subtree=true` also delivers to its live descendants. |
+| Steer | `send_message` | Messages an agent; `subtree=true` also delivers to its live descendants. A delegated agent reaches its parent's subtree and its own ancestors; a `subtree=true` message only its parent's subtree. Root agents are not limited. |
+| Coordinate with peers | `list_peers` | The other agents the caller's parent delegated: id, name, role, status, task and a short objective. Offered to delegated agents only. |
+| Run a swarm | `swarm_playbook` | How a lead plans disjoint tasks, delegates leaf workers in isolated workspaces, how peers coordinate, and how the lead integrates in plan order. Offered to agents that may delegate, not to leaves. |
 | Stop work | `cancel_agent` | Cancels an agent and its live descendants through runtime authority checks. |
 | Return a result | `complete_task`, `fail_task` | Settles the assigned task with a summary or error and optional structured data. |
 | Wait or ask | `wait_for`, `ask_user` | Durable waits for tasks/messages/time, or a question for the person. |
@@ -143,6 +148,10 @@ releases quarantine keys. See [restart recovery](../ARCHITECTURE.md#safety-accou
 for delegated work (agent rows include model and configured effort): each defaults to ten entries and allows at most 25. Pass
 `next_after` as `after` for the next page. Lists reflect current state and include
 settled work; agents outside the caller's delegated subtree are excluded.
+
+`list_peers` pages the same way. Its rows are the caller's siblings, the caller
+excluded; a message from one wakes a sibling waiting on its inbox or on
+`wait_for(message_from=...)` for that sender.
 
 `read_task` returns a character page of the serialized task record, including
 its result and structured data. It defaults to 2,000 characters and allows at

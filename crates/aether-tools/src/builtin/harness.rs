@@ -13,11 +13,13 @@ use crate::tool::{HarnessAction, Tool, ToolContext, ToolError, ToolExecution, pa
 
 mod delegation;
 mod memory;
+mod playbook;
 mod providers;
 mod tasks;
 
 pub use delegation::{CancelAgent, Delegate, IntegrateWorkspace, SendMessage};
 pub use memory::Remember;
+pub use playbook::{SWARM_PLAYBOOK, SwarmPlaybook};
 pub use providers::RefreshProviderUsage;
 pub use tasks::{CompleteTask, FailTask, WaitFor};
 
@@ -40,6 +42,7 @@ pub fn all() -> Vec<Arc<dyn Tool>> {
         Arc::new(Remember),
         Arc::new(RequestCheckpoint),
         Arc::new(AskUser),
+        Arc::new(SwarmPlaybook),
     ];
     tools.extend(super::inspection::all());
     tools

@@ -162,10 +162,8 @@ fn unavailable_to_engine(runtime: &Arc<Runtime>, ctx: &TurnCtx, name: &str) -> S
     if ctx.agent.config.leaf && name == "delegate" {
         return "Leaf agents cannot delegate children: do the work yourself, or ask your parent to staff it".into();
     }
-    if ctx.agent.config.leaf && crate::LEAF_WITHHELD_TOOLS.contains(&name) {
-        return format!(
-            "`{name}` is withheld from leaf agents: coordination tools belong to the parent"
-        );
+    if let Some(reason) = crate::withheld_by_position(&ctx.agent, name) {
+        return format!("`{name}` is withheld from {reason}");
     }
     let withheld = runtime
         .tools

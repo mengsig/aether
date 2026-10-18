@@ -93,10 +93,8 @@ pub(super) fn unavailable(
     if agent.config.leaf && name == "delegate" {
         return "Leaf agents cannot delegate children: do the work yourself, or ask your parent to staff it".into();
     }
-    if agent.config.leaf && crate::LEAF_WITHHELD_TOOLS.contains(&name) {
-        return format!(
-            "`{name}` is withheld from leaf agents: coordination tools belong to the parent"
-        );
+    if let Some(reason) = crate::withheld_by_position(agent, name) {
+        return format!("`{name}` is withheld from {reason}");
     }
     match runtime
         .tools
@@ -229,6 +227,7 @@ pub(super) fn decides(action: &HarnessAction) -> Decides {
         | HarnessAction::UpdateSchedule { .. }
         | HarnessAction::InspectState
         | HarnessAction::ListAgents { .. }
+        | HarnessAction::ListPeers { .. }
         | HarnessAction::ListTasks { .. }
         | HarnessAction::ReadTask { .. }
         | HarnessAction::ReadArtifact { .. }

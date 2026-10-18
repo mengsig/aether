@@ -21,7 +21,7 @@ fn visible(task: &Task, ids: &BTreeSet<AgentId>) -> bool {
         || task.creator.agent_id().is_some_and(|id| ids.contains(&id))
 }
 
-fn outcome(value: Value) -> ToolOutcome {
+pub(crate) fn outcome(value: Value) -> ToolOutcome {
     ToolOutcome {
         content: value.to_string(),
         structured: Some(value),
@@ -29,7 +29,7 @@ fn outcome(value: Value) -> ToolOutcome {
     }
 }
 
-fn brief(text: &str, limit: usize) -> Value {
+pub(crate) fn brief(text: &str, limit: usize) -> Value {
     json!({"text":text.chars().take(limit).collect::<String>(), "truncated":text.chars().count() > limit})
 }
 

@@ -76,6 +76,8 @@ async fn leaf_cannot_delegate_even_when_the_tool_is_called_directly() {
             ("delegate", json!({"role":"worker", "objective":"check", "model":"anthropic/claude-sonnet-5-5", "effort":"low", "leaf":false})),
             ("integrate_workspace", json!({"child_agent_id": AgentId::new().to_string()})),
             ("list_agents", json!({})),
+            ("swarm_playbook", json!({})),
+            ("list_peers", json!({})),
         ], None),
         ScriptedClient::tool_call("complete_task", json!({"summary":"done"})),
     ]).await;
@@ -102,6 +104,8 @@ async fn leaf_cannot_delegate_even_when_the_tool_is_called_directly() {
         ("delegate", "Leaf agents cannot delegate children"),
         ("integrate_workspace", "withheld from leaf agents"),
         ("list_agents", "withheld from leaf agents"),
+        ("swarm_playbook", "withheld from leaf agents"),
+        ("list_peers", "withheld from root agents"),
     ] {
         let call = events
             .iter()
@@ -153,6 +157,7 @@ async fn leaf_api_requests_remove_only_coordination_tools() {
         "list_models",
         "provider_usage",
         "refresh_provider_usage",
+        "swarm_playbook",
     ];
     for name in removed {
         assert!(root_tools.iter().any(|tool| tool.name == name), "{name}");
@@ -167,6 +172,12 @@ async fn leaf_api_requests_remove_only_coordination_tools() {
         serde_json::to_value(expected).unwrap()
     );
     assert!(leaf_tools.iter().any(|tool| tool.name == "complete_task"));
+    for tools in [root_tools, leaf_tools] {
+        assert!(
+            !tools.iter().any(|tool| tool.name == "list_peers"),
+            "a root agent has no peers"
+        );
+    }
 }
 
 #[tokio::test]

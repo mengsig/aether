@@ -126,6 +126,11 @@ pub enum HarnessAction {
         after: Option<AgentId>,
         limit: usize,
     },
+    /// Agents sharing the caller's parent, the caller excluded.
+    ListPeers {
+        after: Option<AgentId>,
+        limit: usize,
+    },
     ListTasks {
         after: Option<TaskId>,
         limit: usize,

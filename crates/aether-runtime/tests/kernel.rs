@@ -209,6 +209,8 @@ mod operator_rename;
 mod parent_waits;
 #[path = "kernel/pause_recovery.rs"]
 mod pause_recovery;
+#[path = "kernel/peers.rs"]
+mod peers;
 #[path = "kernel/prompt_integrity.rs"]
 mod prompt_integrity;
 #[path = "kernel/provider_probes.rs"]

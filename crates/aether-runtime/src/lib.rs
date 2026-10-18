@@ -22,6 +22,7 @@ pub mod memory_context;
 pub mod memory_curation;
 mod memory_feedback;
 pub mod notes;
+mod peers;
 pub mod recovery;
 mod repository_aliases;
 pub mod resources;
@@ -221,7 +222,7 @@ impl SchedulerState {
 pub(crate) type CommitHold<'a> = aether_store::Hold<'a>;
 
 /// Coordination tools a leaf agent never sees: it cannot delegate, so
-/// the fleet, task and schedule surfaces would only cost it prefix tokens.
+/// the fleet, task, schedule and swarm-lead surfaces would only cost it prefix tokens.
 pub(crate) const LEAF_WITHHELD_TOOLS: &[&str] = &[
     "delegate",
     "integrate_workspace",
@@ -235,7 +236,25 @@ pub(crate) const LEAF_WITHHELD_TOOLS: &[&str] = &[
     "list_models",
     "provider_usage",
     "refresh_provider_usage",
+    "swarm_playbook",
 ];
+
+/// Tools a root agent never sees: without a parent it has no peers.
+pub(crate) const ROOT_WITHHELD_TOOLS: &[&str] = &["list_peers"];
+
+/// Why `agent`'s place in the tree withholds tool `name` from it, if it does.
+pub(crate) fn withheld_by_position(
+    agent: &aether_core::agent::Agent,
+    name: &str,
+) -> Option<&'static str> {
+    if agent.config.leaf && LEAF_WITHHELD_TOOLS.contains(&name) {
+        return Some("leaf agents: coordination tools belong to the parent");
+    }
+    if agent.parent.is_none() && ROOT_WITHHELD_TOOLS.contains(&name) {
+        return Some("root agents: only a delegated agent has peers");
+    }
+    None
+}
 
 pub struct Runtime {
     pub(crate) store: Arc<dyn Store>,

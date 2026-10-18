@@ -24,6 +24,7 @@ fn task_limit() -> usize {
 #[derive(Debug)]
 pub enum InspectionTool {
     Agents,
+    Peers,
     Tasks,
     Task,
     Artifact,
@@ -32,6 +33,7 @@ pub enum InspectionTool {
 pub fn all() -> Vec<Arc<dyn Tool>> {
     vec![
         Arc::new(InspectionTool::Agents),
+        Arc::new(InspectionTool::Peers),
         Arc::new(InspectionTool::Tasks),
         Arc::new(InspectionTool::Task),
         Arc::new(InspectionTool::Artifact),
@@ -46,6 +48,11 @@ impl Tool for InspectionTool {
                 "list_agents",
                 "List yourself and your delegated descendants, including completed agents. Returns bounded metadata including model and effort in agent-ID order. Pass next_after as after for another page; each call reads current state.",
                 json!({"type":"object","properties":{"after":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":MAX_LIST_ITEMS,"default":10}},"additionalProperties":false}),
+            ),
+            Self::Peers => (
+                "list_peers",
+                "List the other agents your parent delegated. Pass next_after as after for more.",
+                json!({"type":"object","properties":{"after":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":MAX_LIST_ITEMS}},"additionalProperties":false}),
             ),
             Self::Tasks => (
                 "list_tasks",
@@ -75,7 +82,7 @@ impl Tool for InspectionTool {
         _: CancellationToken,
     ) -> Result<ToolExecution, ToolError> {
         let action = match self {
-            Self::Agents | Self::Tasks => {
+            Self::Agents | Self::Peers | Self::Tasks => {
                 #[derive(Deserialize)]
                 #[serde(deny_unknown_fields)]
                 struct Input {
@@ -89,15 +96,21 @@ impl Tool for InspectionTool {
                         "limit must be between 1 and {MAX_LIST_ITEMS}"
                     )));
                 }
+                let agent_cursor = || {
+                    input
+                        .after
+                        .as_deref()
+                        .map(str::parse::<AgentId>)
+                        .transpose()
+                        .map_err(|e| ToolError::InvalidInput(format!("invalid agent cursor: {e}")))
+                };
                 match self {
                     Self::Agents => HarnessAction::ListAgents {
-                        after: input
-                            .after
-                            .map(|id| id.parse::<AgentId>())
-                            .transpose()
-                            .map_err(|e| {
-                                ToolError::InvalidInput(format!("invalid agent cursor: {e}"))
-                            })?,
+                        after: agent_cursor()?,
+                        limit: input.limit,
+                    },
+                    Self::Peers => HarnessAction::ListPeers {
+                        after: agent_cursor()?,
                         limit: input.limit,
                     },
                     _ => HarnessAction::ListTasks {
@@ -273,6 +286,7 @@ mod tests {
         let ctx = ctx_in(dir.path());
         let cases: Vec<(&dyn Tool, Value)> = vec![
             (&InspectionTool::Agents, json!({"bogus": 1})),
+            (&InspectionTool::Peers, json!({"bogus": 1})),
             (&InspectionTool::Tasks, json!({"bogus": 1})),
             (
                 &InspectionTool::Artifact,

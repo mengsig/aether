@@ -83,6 +83,9 @@ pub(crate) async fn apply_action(
         HarnessAction::ListAgents { after, limit } => {
             crate::inspection::agents(runtime, ctx.agent.id, after, limit)
         }
+        HarnessAction::ListPeers { after, limit } => {
+            crate::peers::list(runtime, ctx.agent.id, after, limit)
+        }
         HarnessAction::ListTasks { after, limit } => {
             crate::inspection::tasks(runtime, ctx.agent.id, after, limit)
         }
@@ -529,6 +532,11 @@ pub(crate) async fn apply_action(
             content,
             subtree,
         } => {
+            if let Some(refusal) =
+                crate::peers::message_reach_refusal(runtime, &ctx.agent, to, subtree)?
+            {
+                return Ok(ToolOutcome::error(refusal));
+            }
             let blocks = vec![ContentBlock::text(content)];
             if subtree {
                 return match runtime.fan_out_message(to, blocks, ctx.base_actor.clone()) {

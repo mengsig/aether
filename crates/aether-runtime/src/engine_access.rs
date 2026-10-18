@@ -1,4 +1,4 @@
-use crate::{LEAF_WITHHELD_TOOLS, Result, Runtime, RuntimeError, turn_engine};
+use crate::{Result, Runtime, RuntimeError, turn_engine, withheld_by_position};
 use aether_core::id::AgentId;
 use std::{collections::HashMap, sync::Arc};
 
@@ -96,7 +96,7 @@ impl Runtime {
         self.tools
             .specs_for(&agent.config.tools, &agent.scope)
             .into_iter()
-            .filter(|spec| !agent.config.leaf || !LEAF_WITHHELD_TOOLS.contains(&spec.name.as_str()))
+            .filter(|spec| withheld_by_position(agent, &spec.name).is_none())
             .collect()
     }
 
