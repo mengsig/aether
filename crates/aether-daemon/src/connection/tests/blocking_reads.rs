@@ -3,7 +3,6 @@ use super::*;
 use crate::authz::AuthContext;
 use aether_core::id::{AgentId, RunId};
 use aether_protocol::Command;
-use std::sync::Barrier;
 
 /// Heavy reads must leave the async worker: with the only blocking thread
 /// held, each one parks off-worker, and `Ping` still answers.
@@ -16,10 +15,10 @@ fn heavy_reads_wait_off_the_async_worker_and_ping_still_answers() {
         .unwrap();
     runtime.block_on(async {
         let (daemon, _config) = daemon().await;
-        let release = Arc::new(Barrier::new(2));
-        let held = release.clone();
+        // Dropping `release` on an assertion failure also frees the thread.
+        let (release, held) = std::sync::mpsc::channel::<()>();
         let hold = tokio::task::spawn_blocking(move || {
-            held.wait();
+            let _ = held.recv();
         });
         let reads = [
             Command::ListAgents {
@@ -46,7 +45,7 @@ fn heavy_reads_wait_off_the_async_worker_and_ping_still_answers() {
             let pong = run(&daemon, &AuthContext::Local, Command::Ping).await;
             assert!(matches!(pong, Ok(aether_protocol::Reply::Ok)), "{name}");
         }
-        release.wait();
+        drop(release);
         hold.await.unwrap();
         daemon.runtime.shutdown().await;
     });
