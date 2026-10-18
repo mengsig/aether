@@ -96,7 +96,7 @@ async fn answer_request(
     };
     let (headers, body) = match authenticate(&hook, request).await {
         Ok(delivery) => delivery,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let route = hook.path.clone();
     let admitted = tokio::task::spawn_blocking(move || {
@@ -118,24 +118,24 @@ async fn answer_request(
 
 async fn signed_headers(
     request: &Request<Incoming>,
-) -> Result<SignedHeaders, Response<Full<Bytes>>> {
+) -> Result<SignedHeaders, Box<Response<Full<Bytes>>>> {
     let length = request
         .headers()
         .get(hyper::header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
     if length.is_some_and(|length| length > MAX_BODY_BYTES as u64) {
-        return Err(refuse(
+        return Err(Box::new(refuse(
             StatusCode::PAYLOAD_TOO_LARGE,
             "the body is too large",
             "body exceeds limit",
-        ));
+        )));
     }
     match SignedHeaders::parse(request.headers()) {
         Ok(headers) => Ok(headers),
         Err(why) => {
             tokio::time::sleep(BAD_SIGNATURE_DELAY).await;
-            Err(refuse(StatusCode::UNAUTHORIZED, &why, &why))
+            Err(Box::new(refuse(StatusCode::UNAUTHORIZED, &why, &why)))
         }
     }
 }
@@ -143,7 +143,7 @@ async fn signed_headers(
 async fn authenticate(
     hook: &Webhook,
     request: Request<Incoming>,
-) -> Result<(SignedHeaders, Bytes), Response<Full<Bytes>>> {
+) -> Result<(SignedHeaders, Bytes), Box<Response<Full<Bytes>>>> {
     let headers = signed_headers(&request).await?;
     let body = read_body(request.into_body()).await?;
     if !signature::verify(
@@ -152,16 +152,16 @@ async fn authenticate(
         &headers.signature,
     ) {
         tokio::time::sleep(BAD_SIGNATURE_DELAY).await;
-        return Err(refuse(
+        return Err(Box::new(refuse(
             StatusCode::UNAUTHORIZED,
             "the signature does not match the stamp and body",
             "signature mismatch",
-        ));
+        )));
     }
     Ok((headers, body))
 }
 
-async fn read_body(body: Incoming) -> Result<Bytes, Response<Full<Bytes>>> {
+async fn read_body(body: Incoming) -> Result<Bytes, Box<Response<Full<Bytes>>>> {
     match tokio::time::timeout(
         BODY_READ_TIMEOUT,
         Limited::new(body, MAX_BODY_BYTES).collect(),
@@ -169,21 +169,23 @@ async fn read_body(body: Incoming) -> Result<Bytes, Response<Full<Bytes>>> {
     .await
     {
         Ok(Ok(collected)) => Ok(collected.to_bytes()),
-        Ok(Err(error)) if error.downcast_ref::<LengthLimitError>().is_some() => Err(refuse(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "the body is too large",
-            "body exceeds limit",
-        )),
-        Ok(Err(_)) => Err(refuse(
+        Ok(Err(error)) if error.downcast_ref::<LengthLimitError>().is_some() => {
+            Err(Box::new(refuse(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "the body is too large",
+                "body exceeds limit",
+            )))
+        }
+        Ok(Err(_)) => Err(Box::new(refuse(
             StatusCode::BAD_REQUEST,
             "the body did not arrive",
             "body read failed",
-        )),
-        Err(_) => Err(refuse(
+        ))),
+        Err(_) => Err(Box::new(refuse(
             StatusCode::REQUEST_TIMEOUT,
             "the body did not arrive inside the read timeout",
             "body read timed out",
-        )),
+        ))),
     }
 }
 
