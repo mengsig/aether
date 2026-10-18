@@ -197,4 +197,29 @@ fn final_sync_reports_without_failing_when_a_reader_prevents_a_full_checkpoint()
     assert!(store.sync().unwrap());
 }
 
+#[test]
+fn fleet_usage_reads_an_agent_without_stats_as_default_usage() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mut billed = agent();
+    billed.stats.usage.input_tokens = 7;
+    let bare = agent();
+    store
+        .commit(
+            Commit::new()
+                .mutate(Mutation::UpsertAgent(billed))
+                .mutate(Mutation::UpsertAgent(bare.clone())),
+        )
+        .unwrap();
+    store
+        .conn
+        .lock()
+        .execute(
+            "UPDATE agents SET body = json_remove(body, '$.stats') WHERE id = ?1",
+            [bare.id.to_string()],
+        )
+        .unwrap();
+    assert!(store.agent(bare.id).unwrap().is_some(), "still decodes");
+    assert_eq!(store.fleet_usage().unwrap().input_tokens, 7);
+}
+
 mod engine_sessions;

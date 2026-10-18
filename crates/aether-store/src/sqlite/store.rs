@@ -342,11 +342,13 @@ impl Store for SqliteStore {
             "SELECT json_extract(body, '$.stats.usage') FROM agents WHERE status != ?1",
         )?;
         let rows = stmt.query_map([AgentStatusKind::Imported.as_str()], |row| {
-            row.get::<_, String>(0)
+            row.get::<_, Option<String>>(0)
         })?;
         let mut total = Usage::default();
         for row in rows {
-            let usage: Usage = serde_json::from_str(&row?)
+            // An omitted stats or usage field reads as default usage, as in `Agent`.
+            let Some(json) = row? else { continue };
+            let usage: Usage = serde_json::from_str(&json)
                 .map_err(|e| StoreError::Corrupt(format!("invalid agent usage: {e}")))?;
             total += usage;
         }
