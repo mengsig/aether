@@ -132,10 +132,10 @@ impl ToolEffects {
     /// Whether an action may still run once the turn's end is decided.
     ///
     /// Engines emit a parallel tool batch as separate bridge calls, so the
-    /// siblings of the parking call arrive after it: refusing them all loses
-    /// a `delegate` or a closing `remember` silently. A second decision and
-    /// descendant cancellation are refused; a further wait merges into the
-    /// one already recorded.
+    /// siblings of the parking call arrive after it. Read-only inspection
+    /// still answers; anything that starts work or delivers an effect, a
+    /// second decision and descendant cancellation are refused; a further
+    /// wait merges into the one already recorded.
     ///
     /// `long_lived`: a settle for such an agent only parks it on
     /// `Waiting(Inbox)` rather than ending it, so it is legitimate after an
@@ -160,6 +160,7 @@ impl ToolEffects {
         }
         match decides(action) {
             Decides::Nothing => true,
+            Decides::Effect => false,
             Decides::MergingWait => matches!(self.next, Some(Next::Waiting(_))),
             // Self-guarding like the arm above: a long_lived settle only
             // ever records `Waiting`, never `Completed`/`Failed`, but this
@@ -202,6 +203,10 @@ pub(super) enum Decides {
     /// Settles the task, but only parks a long_lived agent on `Inbox` rather
     /// than ending it - legitimate after an earlier park for that agent only.
     Settles,
+    /// Starts work or delivers an effect (a spawn, a message, a memory, a
+    /// schedule, a merge): refused once the turn is over, so a batched
+    /// sibling cannot act after the model was told to stop.
+    Effect,
     /// A question: its own guards (asked-once, no pending approval, no
     /// genuine terminal settle) decide whether it merges like a wait.
     Asks,
@@ -216,15 +221,17 @@ pub(super) fn decides(action: &HarnessAction) -> Decides {
             if *wait {
                 Decides::MergingWait
             } else {
-                Decides::Nothing
+                Decides::Effect
             }
         }
-        HarnessAction::IntegrateWorkspace { .. } => Decides::Nothing,
+        HarnessAction::IntegrateWorkspace { .. }
+        | HarnessAction::CreateSchedule { .. }
+        | HarnessAction::UpdateSchedule { .. }
+        | HarnessAction::SendMessage { .. }
+        | HarnessAction::Remember { .. } => Decides::Effect,
         HarnessAction::CompleteTask { .. } | HarnessAction::FailTask { .. } => Decides::Settles,
         HarnessAction::AskUser { .. } => Decides::Asks,
-        HarnessAction::CreateSchedule { .. }
-        | HarnessAction::ListSchedules { .. }
-        | HarnessAction::UpdateSchedule { .. }
+        HarnessAction::ListSchedules { .. }
         | HarnessAction::InspectState
         | HarnessAction::ListAgents { .. }
         | HarnessAction::ListPeers { .. }
@@ -234,9 +241,7 @@ pub(super) fn decides(action: &HarnessAction) -> Decides {
         | HarnessAction::RefreshProviderUsage { .. }
         | HarnessAction::ProviderUsage
         | HarnessAction::ListModels { .. }
-        | HarnessAction::SendMessage { .. }
         | HarnessAction::CancelAgent { .. }
-        | HarnessAction::Remember { .. }
         | HarnessAction::RequestCheckpoint { .. } => Decides::Nothing,
     }
 }

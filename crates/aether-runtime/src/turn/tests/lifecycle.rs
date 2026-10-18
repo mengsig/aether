@@ -261,3 +261,62 @@ async fn an_unwinding_turn_takes_its_engine_slot_with_it() {
     );
     assert_eq!(runtime.sched.lock().on_engine(), 0);
 }
+
+/// After a wait parks the turn, a batched sibling that starts work or
+/// delivers an effect is refused; read-only calls still answer.
+#[test]
+fn admits_after_park_refuses_effects_and_admits_reads() {
+    use aether_core::id::ScheduleId;
+    use aether_core::model::{Effort, ModelRef};
+    use aether_core::schedule::ScheduleAction;
+    use aether_tools::WorkspaceMode;
+
+    let effects = ToolEffects {
+        next: Some(Next::Waiting(WaitCondition::Inbox)),
+        ..Default::default()
+    };
+    let delegate = |wait| HarnessAction::Delegate {
+        role: "worker".into(),
+        name: None,
+        objective: "do it".into(),
+        instructions: None,
+        model: ModelRef::new("p", "m"),
+        effort: Effort::Low,
+        scope: None,
+        workspace_mode: WorkspaceMode::Shared,
+        wait,
+        leaf: false,
+        host_context: None,
+    };
+    let refused = [
+        delegate(false),
+        HarnessAction::SendMessage {
+            to: AgentId::new(),
+            content: "hi".into(),
+            subtree: false,
+        },
+        HarnessAction::UpdateSchedule {
+            id: ScheduleId::new(),
+            action: ScheduleAction::Pause,
+        },
+        HarnessAction::IntegrateWorkspace {
+            child: AgentId::new(),
+        },
+    ];
+    for action in &refused {
+        assert!(!effects.admits_after_park(action, false), "{action:?}");
+        assert!(!effects.admits_after_park(action, true), "{action:?}");
+    }
+    let admitted = [
+        delegate(true),
+        HarnessAction::InspectState,
+        HarnessAction::ListAgents {
+            after: None,
+            limit: 5,
+        },
+        HarnessAction::ListSchedules { id: None },
+    ];
+    for action in &admitted {
+        assert!(effects.admits_after_park(action, false), "{action:?}");
+    }
+}

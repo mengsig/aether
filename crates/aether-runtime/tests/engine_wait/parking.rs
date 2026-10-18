@@ -263,10 +263,9 @@ async fn a_stopped_engine_that_never_reports_still_parks() {
 }
 
 /// Engines emit a parallel tool batch as separate bridge calls, so the
-/// siblings of the parking call arrive after it. Refusing them loses real
-/// work: two of three delegated children, a closing `remember`, or the
-/// turn's own first question - only a genuine second decision, like
-/// the second question at the end, is refused.
+/// siblings of the parking call arrive after it. Waits and the turn's own
+/// first question merge into the park; a `remember` that would deliver an
+/// effect and a genuine second decision are refused.
 #[tokio::test]
 async fn a_parallel_batch_survives_the_call_that_parks_it() {
     let mut h = harness(Duration::from_secs(30)).await;
@@ -298,10 +297,11 @@ async fn a_parallel_batch_survives_the_call_that_parks_it() {
         &h,
         &first,
         "remember",
-        json!({"text": "the batch note must survive the park", "kind": "lesson"}),
+        json!({"text": "the batch note must not outlive the park", "kind": "lesson"}),
     )
     .await;
-    assert!(!is_error, "the closing note was dropped: {reply}");
+    assert!(is_error, "a note was stored after the turn ended: {reply}");
+    assert!(reply.starts_with(TURN_IS_OVER), "{reply}");
 
     // The turn's *first* question is a merging wait too, exactly like
     // the `delegate` above - it folds into the wait the batch already
@@ -340,12 +340,12 @@ async fn a_parallel_batch_survives_the_call_that_parks_it() {
     assert_eq!(
         h.store
             .memories(&MemoryQuery {
-                exact_text: Some("the batch note must survive the park".into()),
+                exact_text: Some("the batch note must not outlive the park".into()),
                 ..Default::default()
             })
             .expect("memories")
             .len(),
-        1
+        0
     );
     assert_eq!(
         events(h.store.as_ref())
@@ -356,8 +356,8 @@ async fn a_parallel_batch_survives_the_call_that_parks_it() {
         "only the first question is ever recorded, never the refused second one"
     );
     let park = custom(h.store.as_ref(), coordinator, "engine.parked").expect("recorded");
-    assert_eq!(park["refused_calls"], json!(1));
-    assert_eq!(park["refused_first"], json!(["ask_user"]));
+    assert_eq!(park["refused_calls"], json!(2));
+    assert_eq!(park["refused_first"], json!(["remember", "ask_user"]));
     h.runtime.shutdown().await;
 }
 

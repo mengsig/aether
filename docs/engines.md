@@ -506,8 +506,10 @@ it to `None`, Codex ignores the close and turns the signal into
 `turn/interrupt`. If your adapter has a wind-down timer of its own, set it from
 that `Duration`, never longer. What follows the ask:
 
-- Calls that do not decide the turn's end are still served, so a parallel
-  batch does not lose its siblings; one that would decide it again is refused.
+- Read-only calls are still served. A call that would decide the end again,
+  or start work or deliver an effect (`delegate` without a wait,
+  `send_message`, `remember`, schedule create or update,
+  `integrate_workspace`), is refused with the turn-over message.
 - Permission prompts are not put to a person. A rule the operator wrote in
   advance still decides; without one the prompt is denied. For an agent whose
   approval policy gates the call's class, that means a parked-batch sibling is
