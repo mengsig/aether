@@ -14,6 +14,7 @@ pub mod codex_app;
 pub mod contract;
 pub mod detect;
 mod offline;
+pub mod orphans;
 mod output;
 mod process_interrupt;
 mod usage;
@@ -593,9 +594,22 @@ where
     // Do not hold stdin open after the runtime drops its final input sender.
     let interrupt_input = input_tx.downgrade();
 
-    tokio::spawn(async move {
-        let _ = stdin.write_all(first_input.as_bytes()).await;
-        let _ = stdin.flush().await;
+    let engine_record = orphans::EngineRecord::register(pid);
+    let stdin_error = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    let stdin_error_writer = stdin_error.clone();
+    let mut stdin_task = tokio::spawn(async move {
+        let first = async {
+            stdin.write_all(first_input.as_bytes()).await?;
+            stdin.flush().await
+        }
+        .await;
+        if let Err(error) = first {
+            tracing::warn!(%error, "could not write the first input to the engine");
+            *stdin_error_writer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(format!("stdin write error: {error}"));
+        }
         // Ends as soon as every sender is gone; immediately when none is kept.
         while let Some(line) = input_rx.recv().await {
             if stdin.write_all(line.as_bytes()).await.is_err() {
@@ -608,6 +622,7 @@ where
     let stderr_stop = CancellationToken::new();
     let mut stderr_task = tokio::spawn(output::drain_stderr_until(stderr, stderr_stop.clone()));
     tokio::spawn(async move {
+        let _engine_record = engine_record;
         let mut lines = output::BoundedLines::new(stdout);
         let mut response_done = false;
         let mut stdout_error = None;
@@ -722,11 +737,20 @@ where
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "unknown".into());
             let session_lost = stderr.session_lost;
+            // A write error races the exit it follows; a kept-open stdin never ends.
+            let _ =
+                tokio::time::timeout(std::time::Duration::from_millis(200), &mut stdin_task).await;
+            let stdin_error = stdin_error
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+                .map(|error| format!("; {error}"))
+                .unwrap_or_default();
             let _ = tx
                 .send(EngineEvent::Done(EngineOutcome {
                     is_error: true,
                     error: Some(format!(
-                        "{program} exited ({status_text}) without a result{}: {tail}",
+                        "{program} exited ({status_text}) without a result{stdin_error}{}: {tail}",
                         stdout_error
                             .as_ref()
                             .map(|error| format!("; {error}"))

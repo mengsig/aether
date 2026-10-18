@@ -219,3 +219,14 @@ isolation depend on the installed engine version and the platform; see
   real microphone, speakers or downloaded model, so real audio hardware,
   latency and output-device routing are unverified on any given machine. See
   [limits, privacy and verification](voice.md#limits-privacy-and-verification).
+
+## Daemon crashes
+
+- After a hard kill of the daemon (`kill -9`, power loss) its engine
+  processes keep running until the next daemon start, which kills the process
+  group of every engine it recorded, but only while the recorded pid and
+  start time still match a live group leader. This needs Linux (it reads
+  `/proc`); on macOS nothing is recorded or reaped, and the orphans must be
+  stopped by hand. An engine's descendants that left its process group, or a
+  group whose leader had already exited, are not reaped. A graceful stop
+  leaves none.

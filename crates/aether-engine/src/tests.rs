@@ -253,3 +253,71 @@ async fn process_crash_without_a_result_has_no_closing_accounting() {
     assert!(!outcome.closing_accounting);
     assert_eq!(outcome.usage, Usage::default());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_write_to_an_engine_that_already_exited_is_reported() {
+    let mut run = run_process(
+        "sh",
+        vec!["-c".into(), "exit 0".into()],
+        PathBuf::from("/"),
+        &[],
+        None,
+        &[],
+        "x".repeat(1 << 20),
+        false,
+        None,
+        CancellationToken::new(),
+        |_| Vec::new(),
+    )
+    .await
+    .expect("spawn sh");
+    let mut error = None;
+    while let Some(event) = run.events.recv().await {
+        if let EngineEvent::Done(outcome) = event {
+            error = outcome.error;
+        }
+    }
+    let error = error.expect("an outcome error");
+    assert!(error.contains("stdin write error"), "{error}");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recorded_engine_is_reaped_by_the_next_start() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(
+        dir.path(),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
+    orphans::init(dir.path()).unwrap();
+    let mut run = run_process(
+        "sleep",
+        vec!["60".into()],
+        PathBuf::from("/"),
+        &[],
+        None,
+        &[],
+        String::new(),
+        false,
+        None,
+        CancellationToken::new(),
+        |_| Vec::new(),
+    )
+    .await
+    .expect("spawn sleep");
+    assert!(std::fs::read_dir(dir.path()).unwrap().count() >= 1);
+    let reaped = orphans::reap(dir.path()).unwrap();
+    assert_eq!(reaped.len(), 1, "{reaped:?}");
+    let done = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while let Some(event) = run.events.recv().await {
+            if let EngineEvent::Done(outcome) = event {
+                return Some(outcome);
+            }
+        }
+        None
+    })
+    .await
+    .expect("the reaped engine ends");
+    assert!(done.expect("an outcome").is_error);
+}

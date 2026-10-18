@@ -279,6 +279,15 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     );
     let tools = Arc::new(builtins.with_mcp(mcp.clone()));
     let bridge = bridge::Bridge::prepare(&store_path);
+    // Appended to the whole file name: `a.db` and `a.sqlite` are distinct stores.
+    let mut engine_registry = store_path.clone().into_os_string();
+    engine_registry.push(".engines");
+    let engine_registry = std::path::PathBuf::from(engine_registry);
+    let reaped = aether_engine::orphans::init(&engine_registry)
+        .map_err(|error| anyhow::anyhow!("preparing {}: {error}", engine_registry.display()))?;
+    if !reaped.is_empty() {
+        tracing::warn!(pids = ?reaped, "killed engine processes a previous daemon left running");
+    }
     let agent_temp_root = agent_temp::prepare(
         models.config().agents.temp_root.as_deref(),
         &store_path,

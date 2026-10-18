@@ -18,6 +18,7 @@ aether-memory = { workspace = true }
 aether-model = { workspace = true }
 aether-tools = { workspace = true }
 aether-runtime = { workspace = true }
+aether-engine = { workspace = true }
 aether-protocol = { workspace = true }
 aether-remote = { workspace = true }
 async-trait = { workspace = true }
@@ -36,7 +37,6 @@ ignore = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-aether-engine = { workspace = true }
 aether-client = { workspace = true }
 aether-remote = { workspace = true, features = ["test-support"] }
 chrono = { workspace = true }
