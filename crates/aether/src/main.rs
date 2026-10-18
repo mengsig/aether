@@ -256,6 +256,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             Cmd::Run {
                 workspace,
                 objective,
+                file,
                 model,
                 role,
                 effort,
@@ -267,12 +268,16 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 repository_root,
                 json,
             } => {
+                let objective = match file {
+                    Some(path) => cli::text_from_file(&path)?,
+                    None => cli::text_from_process_stdin(objective, true)?,
+                };
                 return cli::run(
                     endpoint,
                     explicit_socket,
                     cli::RunOptions {
                         workspace,
-                        objective: objective.join(" "),
+                        objective,
                         model,
                         role,
                         effort,
@@ -347,7 +352,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 images,
                 subtree,
                 json,
-            } => cli::send(endpoint, agent, text.join(" "), images, subtree, json).await,
+            } => cli::send(endpoint, agent, text, images, subtree, json).await,
             Cmd::Approvals { scope, json } => {
                 cli::pending_approvals(endpoint, cli::RuleScopeArgs::from(scope), json).await
             }

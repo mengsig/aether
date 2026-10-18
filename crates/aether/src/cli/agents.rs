@@ -132,12 +132,16 @@ pub async fn archive(
 pub async fn send(
     socket: impl Into<aether_client::Endpoint>,
     agent: super::AgentRef,
-    text: String,
+    text: Vec<String>,
     images: Vec<PathBuf>,
     subtree: bool,
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
+    let text = super::text_from_process_stdin(text, images.is_empty())?;
+    if text.trim().is_empty() && images.is_empty() {
+        bail!("nothing to send: give the text as an argument, or pipe it in or use `-` for stdin");
+    }
     // Read before connecting: a bad file is refused without a daemon.
     let attachments = images
         .iter()
@@ -217,9 +221,10 @@ pub async fn trigger(
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
+    super::input::validate_trigger_source(&source)?;
+    let payload = super::input::parse_trigger_payload(&payload)?;
     let client = connect(&socket).await?;
     let id = agent.resolve(&client, &socket).await?;
-    let payload = serde_json::from_str(&payload).unwrap_or(serde_json::Value::String(payload));
     client.trigger(id, source.clone(), payload).await?;
     acted(
         json,

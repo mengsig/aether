@@ -155,8 +155,13 @@ pub(crate) enum Cmd {
         /// Workspace on the selected host; required for --remote.
         #[arg(long)]
         workspace: Option<PathBuf>,
-        /// The objective, as one argument or several words.
+        /// The objective, as one argument or several words; `-` or nothing
+        /// reads it from stdin.
+        #[arg(conflicts_with = "file")]
         objective: Vec<String>,
+        /// Read the objective from a file.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
         /// Model as provider/model, or a fallback chain:
         /// `provider/model,provider/model` (default: the configured default).
         #[arg(long)]
@@ -344,6 +349,7 @@ pub(crate) enum Cmd {
     /// Send a message to an agent.
     Send {
         agent: cli::AgentRef,
+        /// The message; `-` or nothing reads it from stdin.
         text: Vec<String>,
         /// Attach an image file (PNG, JPEG, GIF or WebP); repeat for more.
         #[arg(long = "image", value_name = "FILE")]
@@ -432,7 +438,7 @@ pub(crate) enum Cmd {
         agent: cli::AgentRef,
         /// Where it comes from, e.g. `ci` or `cron`.
         source: String,
-        /// JSON payload; plain text is wrapped as a string.
+        /// JSON payload; quote plain text as a JSON string.
         #[arg(long, default_value = "null")]
         payload: String,
         #[arg(long)]

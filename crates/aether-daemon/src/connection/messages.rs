@@ -17,6 +17,17 @@ pub(super) async fn dispatch(
 ) -> Result<Reply, ErrorReply> {
     let has_images =
         matches!(&command, Command::SendMessage { attachments, .. } if !attachments.is_empty());
+    if let Command::SendMessage {
+        content,
+        attachments,
+        ..
+    } = &command
+    {
+        // An empty message would wake the agent for a paid turn with nothing to read.
+        if content.trim().is_empty() && attachments.is_empty() {
+            return Err(ErrorReply::invalid("a message needs text or an image"));
+        }
+    }
     if !has_images {
         return send(&daemon.runtime, command, by, submission);
     }

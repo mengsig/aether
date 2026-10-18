@@ -80,6 +80,9 @@ pub use agents::{
     wake,
 };
 
+mod input;
+pub use input::{text_from_file, text_from_process_stdin};
+
 mod tasks;
 #[cfg(test)]
 use tasks::summarize;

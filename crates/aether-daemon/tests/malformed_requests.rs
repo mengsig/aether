@@ -38,6 +38,10 @@ async fn command_decode_errors_are_correlated_and_leave_the_connection_usable() 
             ),
             (json!({"cmd":"forget_memory", "id":9999}), "invalid type"),
             (json!({"cmd":"create_memory"}), "spec"),
+            (
+                json!({"cmd":"send_message", "to":"agt_00000000000000000000000000", "content":"  "}),
+                "needs text",
+            ),
             (json!({"cmd":"unknown-command"}), "unknown-command"),
         ];
         for (frame, problem) in cases {
