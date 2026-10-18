@@ -26,6 +26,31 @@ pub(super) fn text_safe_end(bytes: &[u8], max: usize) -> usize {
     }
 }
 
+/// The most raw artifact bytes one `ReadArtifact` reply carries. Base64 adds a
+/// third, and the reply must stay under the client's 64 MiB frame cap.
+pub(super) const MAX_ARTIFACT_READ_BYTES: usize = 32 * 1024 * 1024;
+
+/// Up to `max_bytes` (itself capped at `clamp`) of the artifact, cut at a
+/// text boundary, and whether more follows. Reads one byte past the cap so
+/// that "exactly at the cap" is not reported as truncated.
+pub(super) fn read_artifact_slice(
+    store: &dyn aether_store::Store,
+    id: aether_core::id::ArtifactId,
+    max_bytes: usize,
+    clamp: usize,
+) -> aether_store::Result<(Vec<u8>, bool)> {
+    let cap = max_bytes.min(clamp);
+    let mut bytes = store
+        .read_artifact_range(id, 0, cap.saturating_add(1))?
+        .unwrap_or_default();
+    assert!(bytes.len() <= cap.saturating_add(1), "the store over-read");
+    let truncated = bytes.len() > cap;
+    if truncated {
+        bytes.truncate(text_safe_end(&bytes, cap));
+    }
+    Ok((bytes, truncated))
+}
+
 /// Run `work` on the blocking pool. A panic in it is the connection's
 /// internal error, not a lost reply.
 pub(super) async fn blocking<T: Send + 'static>(
@@ -609,16 +634,12 @@ pub(super) async fn dispatch_authorized(
                 .artifact(id)
                 .map_err(store_err)?
                 .ok_or_else(|| ErrorReply::not_found(id))?;
-            let bytes = store
-                .read_artifact_bytes(id)
-                .map_err(store_err)?
-                .unwrap_or_default();
-            let truncated = bytes.len() > max_bytes;
-            let slice = if truncated {
-                &bytes[..text_safe_end(&bytes, max_bytes)]
-            } else {
-                &bytes[..]
-            };
+            let store = rt.store().clone();
+            let read = blocking(move || {
+                read_artifact_slice(store.as_ref(), id, max_bytes, MAX_ARTIFACT_READ_BYTES)
+            })
+            .await?;
+            let (slice, truncated) = read.map_err(store_err)?;
             Ok(Reply::ArtifactBytes {
                 artifact,
                 base64: base64::engine::general_purpose::STANDARD.encode(slice),
