@@ -134,22 +134,18 @@ redirect_target() {
       fail "could not download $current: refused redirect to non-https URL '$location'"
       ;;
   esac
-  rest=${current#https://}
-  host=${rest%%/*}
+  withoutfragment=${current%%\#*}
+  rest=${withoutfragment#https://}
+  hostpath=${rest%%\?*}
+  host=${hostpath%%/*}
+  path=/
+  case "$hostpath" in */*) path=/${hostpath#*/} ;; esac
   case "$location" in
     //?*) say "https:$location" ;;
     /*) say "https://$host$location" ;;
-    \?* | \#*)
-      path=/
-      case "$rest" in */*) path=/${rest#*/} ;; esac
-      say "https://$host${path%%[?#]*}$location"
-      ;;
-    *)
-      path=/
-      case "$rest" in */*) path=/${rest#*/} ;; esac
-      path=${path%%[?#]*}
-      say "https://$host${path%/*}/$location"
-      ;;
+    \?*) say "https://$host$path$location" ;;
+    \#*) say "$withoutfragment$location" ;;
+    *) say "https://$host${path%/*}/$location" ;;
   esac
 }
 
