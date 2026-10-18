@@ -80,8 +80,10 @@ def _solve(arm, task_text, workspace, trial_dir, context, result, marker):
         _solve_in(arm, task_text, workspace, trial_dir, context, result, marker, env)
     finally:
         # The harness's own temporary files are not evidence; a failure to remove them is reported.
-        shutil.rmtree(env["TMPDIR"], onexc=lambda _f, path, error: result.setdefault(
-            "tmpdir_cleanup_error", f"{path}: {error}"))
+        try:
+            shutil.rmtree(env["TMPDIR"])
+        except OSError as error:
+            result["tmpdir_cleanup_error"] = f"{env['TMPDIR']}: {error}"
 
 
 def _solve_in(arm, task_text, workspace, trial_dir, context, result, marker, env):
@@ -100,6 +102,7 @@ def _solve_in(arm, task_text, workspace, trial_dir, context, result, marker, env
     result["spend_guard"] = {"allowance_usd": guard.allowance_usd, "peak_usd": round(guard.peak_usd, 6)}
     if guard.tripped:
         result["spend_stop"] = guard.tripped
+        result["spend_unobserved"] = guard.unobserved
 
 
 def _price(row, arm, context):
@@ -165,7 +168,8 @@ def infra_error(row, harness):
     if row.get("bench_error"):
         return f"bench: {str(row['bench_error'])[:300]}"
     if row.get("spend_stop"):
-        return None
+        # The native reference cannot be blamed for a spend source the bench could not read.
+        return f"bench: {row['spend_stop']}" if harness == "native" and row.get("spend_unobserved") else None
     outage = _outage(row)
     if outage:
         return outage

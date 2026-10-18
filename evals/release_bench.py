@@ -51,7 +51,7 @@ def log(message):
 
 
 def _pool_options(parser, budget):
-    parser.add_argument("--jobs", type=int, default=10, help="trials at once (default 10)")
+    parser.add_argument("--jobs", type=int, default=6, help="trials at once (default 6)")
     parser.add_argument("--load-max", type=float, default=16.0, help="start no trial above this 1-minute load")
     parser.add_argument("--mem-min-gb", type=float, default=2.0, help="start no trial below this free memory")
     parser.add_argument("--budget", type=float, default=budget, help="stop admitting trials at this spend (USD)")
@@ -281,14 +281,14 @@ def _write_report(run_dir, config, records, stop_reason, started=None):
     if not records:
         raise SystemExit("no trial finished; nothing to report")
     expected = {"arms": config["arms"], "tasks": config["set"]["task_ids"], "repeats": config["repeats"]}
-    text, overall, verdicts = render(records, _header(config, records, stop_reason, started), MODELS, config["gate"],
-                                     expected)
+    text, overall, verdicts, gaps = render(records, _header(config, records, stop_reason, started), MODELS,
+                                           config["gate"], expected)
     if overall == "PASS" and not config["set"]["accepted"]:
         overall = "INCONCLUSIVE"
         text = text.replace("# Release bench: PASS",
                             "# Release bench: INCONCLUSIVE (gate passed on an off-target set)", 1)
     (run_dir / "report.md").write_text(text)
-    save_json(str(run_dir / "verdict.json"), {"overall": overall, "stop_reason": stop_reason,
+    save_json(str(run_dir / "verdict.json"), {"overall": overall, "stop_reason": stop_reason, "incomplete": gaps,
                                                "models": {model: {key: verdict[key] for key in
                                                                   ("verdict", "reasons", "warnings")}
                                                           for model, verdict in verdicts.items()}})
@@ -392,7 +392,8 @@ def _write_calibration(run_dir, config, records, settings, freeze, accept_off_ta
         raise SystemExit(f"the set misses its targets ({'; '.join(verdict['reasons'])}); not freezing "
                          "(--accept-off-target freezes it marked as not accepted)")
     chosen_specs = [spec for spec in specs if spec["id"] in set(chosen)]
-    stats = {task: {key: rates[task][key] for key in ("haiku", "luna", "haiku_n", "luna_n")} for task in chosen}
+    keys = ("haiku", "luna", "haiku_n", "luna_n", "haiku_seconds", "luna_seconds")
+    stats = {task: {key: rates[task].get(key) for key in keys} for task in chosen}
     write_set(directory, chosen_specs, {"version": directory.name, "calibration": stats, "acceptance": verdict,
                                         "calibration_config": config, "selection": settings})
     shutil.copy(run_dir / "calibration.md", directory / "calibration.md")
@@ -401,6 +402,8 @@ def _write_calibration(run_dir, config, records, settings, freeze, accept_off_ta
 
 
 def main(argv=None):
+    if sys.version_info < (3, 11):
+        raise SystemExit(f"the release bench needs Python 3.11 or newer, not {sys.version.split()[0]}")
     args = parse_args(sys.argv[1:] if argv is None else argv)
     handlers = {"run": command_run, "calibrate": command_calibrate, "report": command_report}
     return handlers[args.command](args)

@@ -13,6 +13,7 @@ from release_bench_calibrate import (
     SELECTION_DEFAULTS,
     acceptance,
     eligible,
+    release_minutes,
     select,
     summary,
     task_rates,
@@ -77,6 +78,43 @@ class McNemarAndBootstrapTests(unittest.TestCase):
         self.assertAlmostEqual(row["pass"], 2 / 3)
         self.assertEqual(row["n"], 3)
         self.assertAlmostEqual(row["cost"], 0.05 / 3)
+
+
+class RepeatPairingTests(unittest.TestCase):
+    OLD, NEW = "haiku/old", "haiku/new"
+
+    def _identical(self, tasks=20, repeats=10):
+        """Both arms pass repeats 0-4 and fail 5-9 of every task."""
+        return [rec(f"task-{index}", arm, repeat < 5, repeat=repeat)
+                for index in range(tasks) for repeat in range(repeats) for arm in (self.OLD, self.NEW)]
+
+    def test_outages_on_different_repeats_do_not_fake_a_regression(self):
+        # Old loses a failing repeat and new a passing one: averaging each arm's survivors would show -11%.
+        records = self._identical()
+        for item in records:
+            if (item["arm"], item["repeat"]) in ((self.OLD, 9), (self.NEW, 0)):
+                item["infra_error"] = "provider: 529"
+        verdict = stats.gate(records, self.OLD, self.NEW, expected=plan(20, repeats=10))
+        self.assertEqual(verdict["verdict"], "PASS", verdict["reasons"])
+        self.assertEqual(verdict["comparison"]["pass"], (0, 0, 0))
+        self.assertEqual(verdict["comparison"]["pairs"], 160)
+        self.assertEqual(verdict["comparison"]["old_only"] + verdict["comparison"]["new_only"], 0)
+
+    def test_cost_is_compared_on_the_matched_repeats_only(self):
+        records = self._identical(tasks=1, repeats=2)
+        for item in records:
+            if item["arm"] == self.OLD and item["repeat"] == 1:
+                item["cost_usd"], item["infra_error"] = 0.05, "provider: 529"
+            if item["arm"] == self.NEW and item["repeat"] == 1:
+                item["cost_usd"] = None
+        (old, new), = stats._paired_tasks(records, self.OLD, self.NEW)
+        self.assertEqual((old["n"], new["n"]), (1, 1))
+        self.assertEqual((old["cost"], new["cost"]), (0.01, 0.01))
+
+    def test_a_task_with_no_matched_repeat_is_not_paired(self):
+        records = [rec("a", self.OLD, True, repeat=0), rec("a", self.NEW, True, repeat=1)]
+        self.assertEqual(stats.compare(records, self.OLD, self.NEW)["tasks"], 0)
+        self.assertEqual(stats.discordant(records, self.OLD, self.NEW), (0, 0, 0))
 
 
 class GateTests(unittest.TestCase):
@@ -183,6 +221,40 @@ class IncompleteMatrixTests(unittest.TestCase):
         self.assertEqual(stats.gate(records, self.OLD, self.NEW, settings, expected=plan(60))["verdict"], "FAIL")
 
 
+class ReferenceArmTests(unittest.TestCase):
+    """An overall PASS needs every planned arm to finish, the native and Archon references included."""
+
+    def _verdict(self, records, arms):
+        expected = plan(30, arms=arms)
+        verdicts = gate_verdicts(records, ["haiku"], {}, expected)
+        return verdicts["haiku"]["verdict"], overall_verdict(verdicts, stats.matrix_gaps(records, expected))
+
+    def test_a_missing_native_reference_blocks_the_pass(self):
+        records = paired([True, False] * 15, [True, False] * 15)
+        arms = ("haiku/native", "haiku/old", "haiku/new")
+        self.assertEqual(self._verdict(records, arms), ("PASS", "INCONCLUSIVE"))
+        records += [rec(f"task-{index}", "haiku/native", True) for index in range(29)]
+        self.assertEqual(self._verdict(records, arms), ("PASS", "INCONCLUSIVE"))
+        self.assertEqual(stats.matrix_gaps(records, plan(30, arms=arms)),
+                         ["haiku/native ran 29 of 30 planned trials"])
+        records.append(rec("task-29", "haiku/native", False))
+        self.assertEqual(self._verdict(records, arms), ("PASS", "PASS"))
+
+    def test_a_missing_archon_arm_blocks_the_pass(self):
+        records = paired([True, False] * 15, [True, False] * 15)
+        records += [rec(f"task-{index}", "haiku/archon", True) for index in range(10)]
+        self.assertEqual(self._verdict(records, ("haiku/old", "haiku/new", "haiku/archon")),
+                         ("PASS", "INCONCLUSIVE"))
+
+    def test_a_plan_without_references_can_pass(self):
+        records = paired([True, False] * 15, [True, False] * 15)
+        self.assertEqual(self._verdict(records, ("haiku/old", "haiku/new")), ("PASS", "PASS"))
+
+    def test_a_failure_stands_while_a_reference_is_missing(self):
+        records = paired([True] * 30, [False] * 30)
+        self.assertEqual(self._verdict(records, ("haiku/native", "haiku/old", "haiku/new")), ("FAIL", "FAIL"))
+
+
 class PricingCoverageTests(unittest.TestCase):
     OLD, NEW = "haiku/old", "haiku/new"
 
@@ -269,6 +341,42 @@ class SelectionTests(unittest.TestCase):
         verdict = acceptance(easy, chosen, {"min_size": 8})
         self.assertEqual(len(verdict["reasons"]), 2)
         self.assertFalse(acceptance(measured, [], {})["accepted"])
+
+
+class ReleaseTimeTests(unittest.TestCase):
+    def _rates(self, seconds):
+        return {f"t-{index}": {"template": f"t{index % 8}", "family": "f", "infra": 0, "cost": 0.0,
+                               "haiku": 0.5, "luna": 0.3, "haiku_n": 4, "luna_n": 4,
+                               "haiku_seconds": haiku, "luna_seconds": luna}
+                for index, (haiku, luna) in enumerate(seconds)}
+
+    def test_release_minutes_count_three_arms_per_tier(self):
+        rates = self._rates([(60, 20), (120, 40)])
+        self.assertAlmostEqual(release_minutes(rates, sorted(rates), jobs=1), (180 * 3 + 60 * 3.9) / 60)
+        self.assertAlmostEqual(release_minutes(rates, sorted(rates), jobs=6),
+                               release_minutes(rates, sorted(rates), jobs=1) / 6)
+        self.assertIsNone(release_minutes({"x": {"haiku_seconds": 5}}, ["x"], jobs=6))
+
+    def test_selection_drops_the_slowest_tasks_until_the_run_fits(self):
+        rates = self._rates([(100, 40)] * 80 + [(400, 100)] * 10)
+        # 80 fast tasks need 101 min on 6 workers; each slow one adds 4.4 min.
+        chosen = select(rates, {"min_size": 80, "max_size": 120, "max_release_minutes": 110})
+        self.assertLessEqual(release_minutes(rates, chosen, 6), 110)
+        self.assertEqual(len(chosen), 81)
+        self.assertEqual(sum(1 for task in chosen if rates[task]["haiku_seconds"] == 400), 1)
+        floor = select(rates, {"min_size": 85, "max_size": 120, "max_release_minutes": 60})
+        self.assertEqual(len(floor), 85, "trimming for time stops at min_size")
+
+    def test_a_run_too_long_or_of_unknown_length_is_not_accepted(self):
+        slow = self._rates([(300, 100)] * 80)
+        verdict = acceptance(slow, sorted(slow), {})
+        self.assertFalse(verdict["accepted"])
+        self.assertIn("min on 6 workers", verdict["reasons"][0])
+        self.assertTrue(acceptance(slow, sorted(slow), {"max_release_minutes": 400})["accepted"])
+        untimed = {task: {**row, "haiku_seconds": None} for task, row in slow.items()}
+        self.assertIn("no calibration timing", acceptance(untimed, sorted(untimed), {"max_release_minutes": 400})
+                      ["reasons"][0])
+        self.assertEqual(len(select(untimed, {})), 80)
 
 
 class ArmTests(unittest.TestCase):
@@ -375,6 +483,15 @@ class TrialRecordTests(unittest.TestCase):
         outage = self._row(workflow_status="failed", workflow_error="HTTP 529: Overloaded")
         self.assertIn("provider", infra_error(outage, "new"))
         self.assertIsNone(harness_failure(outage, "native"))
+
+    def test_unobservable_spend_is_the_bench_s_fault_only_on_the_native_reference(self):
+        row = self._row(spend_stop="spend could not be observed for 30s: no usage source", spend_unobserved=True)
+        self.assertIn("bench", infra_error(row, "native"))
+        self.assertIsNone(infra_error(row, "new"))
+        self.assertIn("spend guard", harness_failure(row, "new"))
+        native = record(self.SPEC, {**self.ARM, "key": "haiku/native", "harness": "native"}, 0, row, self.GRADE,
+                        None, None)
+        self.assertEqual((native["passed"], native["harness_failure"]), (False, None))
 
     def test_a_spend_stop_is_a_harness_failure_on_every_arm(self):
         row = self._row(spend_stop="spend $0.51 reached the trial allowance $0.50")

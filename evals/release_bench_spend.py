@@ -113,6 +113,8 @@ class ClaudeStreamProbe:
         self.tail, self.price, self.usage = JsonlTail(stdout_path), price, {}
 
     def __call__(self):
+        if not self.tail.path.exists():
+            return None
         for event in self.tail.read():
             message = event.get("message") if event.get("type") == "assistant" else None
             if isinstance(message, dict) and message.get("id") and isinstance(message.get("usage"), dict):
@@ -156,8 +158,9 @@ class CodexRolloutProbe:
             info = payload.get("info") if isinstance(payload, dict) and payload.get("type") == "token_count" else None
             if isinstance(info, dict) and isinstance(info.get("total_token_usage"), dict):
                 self.total = info["total_token_usage"]
+        # A rollout without a token count yet is a session whose first model call has not finished.
         try:
-            return None if self.total is None else _priced(normalize_usage(self.total, "codex"), self.price)
+            return 0.0 if self.total is None else _priced(normalize_usage(self.total, "codex"), self.price)
         except UsageError as error:
             raise ProbeError(f"Codex usage: {error}") from error
 
@@ -241,13 +244,18 @@ def stop_marked(value):
 class SpendGuard:
     """A thread that stops a trial's processes once `probe()` reaches `allowance_usd`.
 
-    `tripped` holds why it stopped them, or None; `peak_usd` the highest spend it saw."""
+    `probe()` returns the spend so far, or None while no usage source can be read;
+    unknown spend, like a ProbeError, is tolerated for `unobservable_seconds`, then
+    the trial is stopped and `unobserved` set. `tripped` holds why it stopped them,
+    or None; `peak_usd` the highest spend it saw."""
 
-    def __init__(self, probe, allowance_usd, marker, poll_seconds=POLL_SECONDS, stop=stop_marked):
+    def __init__(self, probe, allowance_usd, marker, poll_seconds=POLL_SECONDS, stop=stop_marked,
+                 unobservable_seconds=UNOBSERVABLE_SECONDS):
         assert allowance_usd > 0 and poll_seconds > 0, "a guard needs a positive allowance and poll interval"
+        assert unobservable_seconds > 0, "unknown spend is tolerated for a bounded, positive time"
         self.probe, self.allowance_usd, self.marker = probe, allowance_usd, marker
-        self.poll_seconds, self.stop = poll_seconds, stop
-        self.tripped, self.peak_usd = None, 0.0
+        self.poll_seconds, self.stop, self.unobservable_seconds = poll_seconds, stop, unobservable_seconds
+        self.tripped, self.unobserved, self.peak_usd = None, False, 0.0
         self._done = threading.Event()
         self._thread = threading.Thread(target=self._watch, name=f"spend-guard {marker}", daemon=True)
 
@@ -261,21 +269,25 @@ class SpendGuard:
         return False
 
     def _watch(self):
-        failing_since, error = None, None
+        unknown_since, why = None, "no usage source has appeared"
         while not self._done.wait(self.poll_seconds):
             try:
                 spent = self.probe()
-                failing_since = None
             except ProbeError as caught:
-                failing_since, error = failing_since or time.monotonic(), caught
-                if time.monotonic() - failing_since < UNOBSERVABLE_SECONDS:
-                    continue
-                self._trip(f"spend could not be observed for {UNOBSERVABLE_SECONDS}s: {error}")
-                return
+                spent, why = None, str(caught)
             except Exception as caught:  # noqa: BLE001 - an unguarded trial must not keep running
                 self._trip(f"spend guard failed: {type(caught).__name__}: {caught}")
                 return
-            self.peak_usd = max(self.peak_usd, spent or 0.0)
+            if spent is None:
+                unknown_since = unknown_since or time.monotonic()
+                if time.monotonic() - unknown_since >= self.unobservable_seconds:
+                    self.unobserved = True
+                    self._trip(f"spend could not be observed for {self.unobservable_seconds}s: {why}")
+                    return
+                continue
+            assert spent >= 0, f"a probe reported negative spend {spent}"
+            unknown_since, why = None, "no usage source has appeared"
+            self.peak_usd = max(self.peak_usd, spent)
             if self.peak_usd >= self.allowance_usd:
                 self._trip(f"spend ${self.peak_usd:.3f} reached the trial allowance ${self.allowance_usd:.2f}")
                 return

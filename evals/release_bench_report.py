@@ -2,7 +2,15 @@
 import statistics
 from collections import defaultdict
 
-from release_bench_stats import bootstrap, compare, counted, gate, mean, per_task
+from release_bench_stats import (
+    bootstrap,
+    compare,
+    counted,
+    gate,
+    matrix_gaps,
+    mean,
+    per_task,
+)
 
 
 def _pct(value):
@@ -95,13 +103,14 @@ def gate_verdicts(records, models, settings, expected, seed=0):
             for model in models if {f"{model}/old", f"{model}/new"} <= planned}
 
 
-def overall_verdict(verdicts):
-    """FAIL when any tier fails, PASS when every tier passes, else INCONCLUSIVE (also with no tier at all)."""
+def overall_verdict(verdicts, gaps=()):
+    """FAIL when any tier fails; PASS only when every tier passes and every planned arm finished
+    (`gaps` lists the arms that did not); else INCONCLUSIVE, also with no tier at all."""
     outcomes = {verdict["verdict"] for verdict in verdicts.values()}
     assert outcomes <= {"PASS", "FAIL", "INCONCLUSIVE"}, f"unknown tier verdicts: {outcomes}"
     if "FAIL" in outcomes:
         return "FAIL"
-    return "PASS" if outcomes == {"PASS"} else "INCONCLUSIVE"
+    return "PASS" if outcomes == {"PASS"} and not gaps else "INCONCLUSIVE"
 
 
 def render(records, header, models, settings, expected, seed=0):
@@ -109,10 +118,15 @@ def render(records, header, models, settings, expected, seed=0):
     assert records, "a report needs at least one trial"
     arms = sorted(expected["arms"])
     verdicts = gate_verdicts(records, models, settings, expected, seed)
-    overall = overall_verdict(verdicts)
+    gaps = matrix_gaps(records, expected)
+    overall = overall_verdict(verdicts, gaps)
     planned = len(expected["tasks"]) * expected["repeats"]
     lines = [f"# Release bench: {overall}", "", *header, "", "## Arms", "",
-             *_arm_table([arm_summary(records, arm, seed) for arm in arms], planned), "", "## Release gate", ""]
+             *_arm_table([arm_summary(records, arm, seed) for arm in arms], planned), ""]
+    if gaps:
+        lines += ["The planned matrix did not finish, so the run cannot pass:", "",
+                  *[f"- {gap}" for gap in gaps], ""]
+    lines += ["## Release gate", ""]
     if not verdicts:
         lines += ["No model tier ran both an old and a candidate arm, so there is no verdict.", ""]
     for model, verdict in verdicts.items():
@@ -126,4 +140,4 @@ def render(records, header, models, settings, expected, seed=0):
         lines += ["", "A large change here between two reports means the models or native CLIs moved, "
                   "not Aether.", ""]
     lines += ["## Pass rate by family", "", *_family_table(records, arms), ""]
-    return "\n".join(lines), overall, verdicts
+    return "\n".join(lines), overall, verdicts, gaps

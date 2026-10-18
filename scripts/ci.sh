@@ -81,6 +81,20 @@ check_client_drift() {
   fi
 }
 
+check_release_bench_min_python() {
+  # docs/release-bench.md promises Python 3.11; run the suite there too when one is installed.
+  step "release bench tests on Python 3.11, the oldest supported"
+  if command -v python3.11 >/dev/null; then
+    python3.11 -m unittest discover -s evals -p 'test_release_bench*.py'
+  elif command -v uv >/dev/null && uv python find 3.11 >/dev/null 2>&1; then
+    uv run --no-project --no-python-downloads --python 3.11 \
+      python -m unittest discover -s evals -p 'test_release_bench*.py'
+  else
+    printf '\033[1;33mno Python 3.11 found: the release bench is tested on %s only\033[0m\n' \
+      "$(python3 --version)"
+  fi
+}
+
 check_python_suites() {
   # The hand-written halves of each client (handshake, id multiplexing,
   # keepalive, failure settling) are not touched by the drift check above, and
@@ -118,6 +132,7 @@ check_python_suites() {
     python3 -m unittest discover -s scripts -p test_ci_scope.py
     step "release bench tests (statistics, gate, pool, selection; no model calls)"
     python3 -m unittest discover -s evals -p 'test_release_bench*.py'
+    check_release_bench_min_python
     step "client generator layout tests"
     python3 -m unittest discover -s scripts -p 'test_generate_clients_*.py'
     step "python client tests"

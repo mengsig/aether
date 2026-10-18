@@ -38,7 +38,8 @@ cache and state, and, for Aether arms, its own daemon, config, data directory
 and socket. Its TMPDIR is a fresh, short directory under `/var/tmp`
 (`RELEASE_BENCH_TMP_ROOT`), removed when the trial ends. A short TMPDIR matters
 because harnesses bind Unix sockets under it, and socket paths must fit in 108
-bytes. Trials therefore run side by side (`JOBS=10` by default).
+bytes. Trials therefore run side by side, 6 at once by default (`JOBS`), a
+level this 12-core host takes beside other work.
 A trial starts only while the 1-minute load is at most `LOAD_MAX` (16) and at
 least 2 GB of memory is free.
 
@@ -57,7 +58,11 @@ Caps per trial:
   guard reads the trial's usage as it is written (Claude Code's stream,
   Codex's session log, Aether's event store), prices it on the run's pinned
   table each second, and stops every process of the trial at the allowance.
-  A stopped trial counts as a failure of its arm.
+  A stopped trial counts as a failure of its arm. Unknown spend is not taken
+  as zero: when the guard has no usage to read for 30 s (Codex's session log
+  cannot be found, say, or the store cannot be read), it stops the trial too.
+  That is a harness failure on an Aether or Archon arm, and an infrastructure
+  error on a native arm, where only the bench's reading failed.
 - Before starting a trial, the run reserves the trial's worst case against
   `BUDGET`: the allowance plus two calls at the model's largest possible
   price per agent it may run (a full context window and a full output). Those
@@ -76,6 +81,8 @@ An interrupted run resumes when started again with the same `--run-id`. The
 run journals every trial start before the trial begins (`attempts.jsonl`). A
 resumed run moves the directory of a trial that never recorded a result aside
 as `<name>.abandoned-N`, and charges that attempt its whole reservation.
+A start torn by a crash, an unterminated last journal line, never reached
+its trial: the resumed run cuts it before journalling new starts.
 
 After the solver stops, hidden checks (a `unittest` module the solver never
 sees) run against the workspace in a separate, isolated Python process. A trial
@@ -91,8 +98,10 @@ reported too.
 - **Gate, per model tier:** the candidate (`new`) against the last release
   (`old`), on the same tasks and repeats.
   - The pass-rate difference with a one-sided 95 % bound, from a paired
-    bootstrap over tasks. Repeats of a task are averaged first, so the task is
-    the unit of resampling.
+    bootstrap over tasks. Only the (task, repeat) cells that both arms counted
+    are compared, so an outage on one arm never leaves the other averaging
+    repeats it lacks. Each task's matched repeats are averaged first, so the
+    task is the unit of resampling. Cost is paired the same way.
   - An exact McNemar test on the discordant pass/fail pairs.
   - The cost ratio new/old, with its bound.
 - **Drift:** `old` against `native`, for reference only.
@@ -128,9 +137,12 @@ The verdict for a tier is:
   stands only under `--early-stop`, whose looks are planned for it.
 - **PASS** otherwise.
 
-The overall verdict is FAIL when any tier fails, PASS when every tier passes,
-and INCONCLUSIVE otherwise (also when no tier ran both an old and a candidate
-arm). The make target exits 0 only on PASS. A point estimate beyond a margin that is not
+The overall verdict is FAIL when any tier fails. It is PASS when every tier
+passes and every planned arm ran all its trials, the native and Archon arms
+included: an unfinished drift reference blocks the PASS, and the report lists
+what is missing. It is INCONCLUSIVE otherwise, also when no tier ran both an
+old and a candidate arm. Arms left out on purpose (`ARMS=...`) are not
+planned, so they block nothing. The make target exits 0 only on PASS. A point estimate beyond a margin that is not
 significant is listed as a warning.
 
 `EARLY_STOP=1` looks at the gate when half and when three quarters of
@@ -152,7 +164,7 @@ mix the two.
 | `NEW` | `target/release/aether` | aether binary of the candidate |
 | `SET` | `bench/release-set/v2` | frozen task set |
 | `ARMS` | `all` | `all`, `haiku`, `luna`, or comma-separated arm keys |
-| `JOBS` | 10 | trials at once |
+| `JOBS` | 6 | trials at once |
 | `LOAD_MAX` | 16 | start no trial above this 1-minute load |
 | `BUDGET` | 20 | USD API-equivalent; stop starting trials beyond it |
 | `REPEATS` | 1 | runs of every (task, arm) |
@@ -226,8 +238,18 @@ run then trims the eligible tasks (80–120, no template above 20 %) so the mean
 native Haiku pass rate lands near 50 % and Luna's near 30 %, preferring tasks
 whose own Haiku rate is nearest 50 %.
 
+Last, while a release run of the set would outlast an hour, the slowest tasks
+are dropped, down to the minimum size. A release run's length is estimated from
+each task's mean native solve time in calibration. Each tier runs three arms;
+in the v2 A/A the Aether arms took as long as native on Haiku and 1.45 times as
+long on Luna. The sum is then spread over 6 workers that never wait. That is a
+lower bound: load and budget waits come on top.
+
 The set is **accepted** when it holds at least 80 tasks, its mean Haiku rate is
-within 10 points of 50 %, and its mean Luna rate is within 25–35 %.
+within 10 points of 50 %, its mean Luna rate is within 25–35 %, and that
+estimate is at most 60 minutes. Manifests record each task's mean solve times
+from v3 on. A task carried from v1 or v2, which record none, makes the estimate
+unknown, and the set is not accepted.
 `calibration.md` lists every reason a set is not accepted. Calibration freezes
 only an accepted set, unless `ACCEPT_OFF_TARGET=1`. A set frozen that way
 records `accepted: false` in its manifest, and `make bench-release` refuses it
@@ -438,11 +460,15 @@ behind it. Late in the run, actual spend plus reservations in flight nears
   trials in 31 minutes. Its free workers waited 25 worker-minutes for budget
   headroom.
 
-The whole run took 95 minutes. A full v2 run at the defaults therefore takes
-somewhat over an hour: 67 minutes of work, plus budget waits late in the run.
-By the arithmetic above, `BUDGET=30` would leave room for 10 Haiku trials
-plus a delegation trial to the end of the run. It does not change what a run
-costs, only the worst case it may reach.
+The whole run took 95 minutes at `JOBS=10`. At the default of 6 workers, the
+same 670 trial-minutes need at least 112 minutes, before any wait. **v2 misses
+the hourly target**: it needs nearly two hours. Haiku's three arms take 66 % of
+the trial time. Calibration now checks this target (above). With v2's mix of
+Haiku and Luna time, a v3 of 80 tasks fits the hour only at about 85 s of
+native Haiku and Luna time per task, against v2's 111 s. Adding workers does not cure
+it, because this host stalls when heavy jobs overlap. `BUDGET=30` would leave
+room for 10 Haiku trials plus a delegation trial to the end of the run. It does
+not change what a run costs, only the worst case it may reach.
 
 ## The Archon arm
 
@@ -493,17 +519,20 @@ python3 -m unittest discover -s evals -p 'test_release_bench*.py'
 These tests cover:
 
 - the statistics: McNemar, the bootstrap, the gate (including incomplete
-  matrices, per-arm outages, candidate-only crashes and missing prices), and
-  interim looks;
+  matrices, per-arm outages, outages on different repeats of each arm,
+  candidate-only crashes and missing prices), interim looks, and the overall
+  verdict with an unfinished native or Archon arm;
 - the pool: counterbalanced scheduling, budget reservations against runaway
-  trials, and resume after an interrupt;
-- the spend guard, including stopping marked processes;
+  trials, and resume after an interrupt, also twice after a torn journal line;
+- the spend guard, including unknown spend, a source that recovers within the
+  grace period, and stopping marked processes;
 - trial isolation: a TMPDIR short enough for sockets, removed after a crash,
   and pricing of turns that never reached a model;
-- calibration: the band, selection and acceptance;
+- calibration: the band, selection, the release-time estimate and acceptance;
 - frozen-set integrity, arm caps and trial records;
 - the Archon launcher, against a fake `archon`;
 - one generated task per template, and the harness templates' checks against
   partial and quirk-dropping solutions.
 
-None of them calls a model.
+None of them calls a model. `scripts/ci.sh` runs them again on Python 3.11,
+the oldest supported version, when one is installed (`python3.11` or uv's).

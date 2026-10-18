@@ -18,6 +18,9 @@ from release_bench_pool import Gates, read_attempts, read_results, run_pool, sch
 from release_bench_spend import (
     ALLOWANCE_USD,
     MARKER,
+    ClaudeStreamProbe,
+    CodexRolloutProbe,
+    ProbeError,
     SpendGuard,
     max_call_usd,
     price_of,
@@ -143,6 +146,22 @@ class PoolTests(unittest.TestCase):
             start = {"task": "a", "repeat": 0, "arm": "haiku/old", "reserve_usd": 0.7}
             path.write_text(json.dumps(start) + "\n" + '{"task": "b", "rep')
             self.assertEqual(read_attempts(str(path)), [start])
+            path.write_text(json.dumps(start) + "\n" + "garbage\n")
+            with self.assertRaises(ValueError):
+                read_attempts(str(path))
+
+    def test_two_resumes_after_a_torn_attempt_line(self):
+        def run_one(triple):
+            return rec(triple[0], triple[2], triple[1], 0.01)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "attempts.jsonl")
+            path.write_text('{"task": "torn", "rep')
+            self._pool(directory, [("a", 0, "haiku/old")], run_one, jobs=1)
+            self.assertEqual([item["task"] for item in read_attempts(str(path))], ["a"])
+            records, _, gates = self._pool(directory, [("a", 0, "haiku/old"), ("b", 0, "haiku/old")], run_one, jobs=1)
+            self.assertEqual([item["task"] for item in read_attempts(str(path))], ["a", "b"])
+            self.assertEqual(len(records), 2)
+            self.assertAlmostEqual(gates.spent_usd, 0.02, msg="the torn start never ran, so it is not charged")
 
 
 class SpendTests(unittest.TestCase):
@@ -176,6 +195,55 @@ class SpendTests(unittest.TestCase):
                 time.sleep(0.01)
         self.assertEqual(stopped, ["m"])
         self.assertIn("KeyError", guard.tripped)
+
+    def _guard_run(self, probe, seconds=0.3, unobservable=0.08):
+        stopped = []
+        with SpendGuard(probe, 0.5, "m", poll_seconds=0.01, stop=stopped.append,
+                        unobservable_seconds=unobservable) as guard:
+            deadline = time.monotonic() + seconds
+            while not stopped and time.monotonic() < deadline:
+                time.sleep(0.01)
+        return guard, stopped
+
+    def test_spend_that_stays_unknown_stops_the_trial(self):
+        guard, stopped = self._guard_run(lambda: None)
+        self.assertEqual(stopped, ["m"])
+        self.assertTrue(guard.unobserved)
+        self.assertIn("could not be observed", guard.tripped)
+
+    def test_spend_known_again_within_the_grace_period_keeps_the_trial(self):
+        started = time.monotonic()
+
+        def probe():
+            # Unknown, then unreadable, for less than the grace period; then a source appears.
+            elapsed = time.monotonic() - started
+            if elapsed < 0.03:
+                return None
+            if elapsed < 0.06:
+                raise ProbeError("locked")
+            return 0.1
+        guard, stopped = self._guard_run(probe, unobservable=0.15)
+        self.assertEqual(stopped, [])
+        self.assertIsNone(guard.tripped)
+        self.assertAlmostEqual(guard.peak_usd, 0.1)
+
+    def test_probes_tell_a_missing_source_from_zero_spend(self):
+        price = price_of(PRICE_TABLE, "haiku")
+        with tempfile.TemporaryDirectory() as root:
+            stdout, home = Path(root, "stdout.jsonl"), Path(root, "codex")
+            self.assertIsNone(ClaudeStreamProbe(stdout, price)())
+            stdout.write_text('{"type": "system"}\n')
+            self.assertEqual(ClaudeStreamProbe(stdout, price)(), 0)
+            codex = CodexRolloutProbe(stdout, price, codex_home=home)
+            self.assertIsNone(codex(), "no thread yet")
+            with stdout.open("a") as stream:
+                stream.write('{"type": "thread.started", "thread_id": "abc"}\n')
+            self.assertIsNone(codex(), "a thread whose rollout cannot be found")
+            day = time.localtime()
+            folder = home / "sessions" / f"{day.tm_year:04d}" / f"{day.tm_mon:02d}" / f"{day.tm_mday:02d}"
+            folder.mkdir(parents=True)
+            (folder / "rollout-2026-abc.jsonl").write_text('{"type": "session_meta"}\n')
+            self.assertEqual(codex(), 0.0, "a rollout before its first finished call")
 
     def test_stop_marked_ends_every_marked_process(self):
         value = f"test-{os.getpid()}-{time.monotonic_ns()}"

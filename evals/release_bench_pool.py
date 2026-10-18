@@ -128,17 +128,40 @@ def _await_host(gates, log, stop):
 
 
 def read_attempts(path):
-    """Trial starts journalled by earlier invocations of the same run."""
+    """Trial starts journalled by earlier invocations of the same run.
+
+    Every start is written and synced as one line before its trial is submitted,
+    so only an unterminated last line can be torn, and that trial never ran."""
     if not os.path.exists(path):
         return []
-    attempts = []
     with open(path) as stream:
-        for line in stream:
-            # A start torn by a crash still names its trial only if it parses; one that does not never ran.
-            if line.strip().endswith("}"):
-                attempts.append(json.loads(line))
+        lines = stream.read().split("\n")
+    lines.pop()  # The unterminated tail: empty after a clean last write.
+    attempts = []
+    for number, line in enumerate(lines, 1):
+        try:
+            attempts.append(json.loads(line))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{path}:{number}: a complete journal line does not parse") from error
     assert all(len(trial_key(item)) == 3 and item["reserve_usd"] > 0 for item in attempts), "attempts are trials"
     return attempts
+
+
+def cut_torn_tail(path):
+    """Truncate an unterminated last line of a journal, so the next start begins a line of its own.
+
+    Returns how many bytes were cut."""
+    if not os.path.exists(path):
+        return 0
+    with open(path, "rb+") as stream:
+        data = stream.read()
+        keep = data.rfind(b"\n") + 1
+        if keep < len(data):
+            stream.truncate(keep)
+            stream.flush()
+            os.fsync(stream.fileno())
+    assert 0 <= keep <= len(data), "the cut stays inside the file"
+    return len(data) - keep
 
 
 def charge_history(gates, records, attempts, reservation_of):
@@ -168,6 +191,9 @@ def run_pool(order, run_one, reservation_of, *, jobs, gates, results_path, attem
     assert jobs > 0, "a pool needs at least one worker"
     records = read_results(results_path)
     abandoned = charge_history(gates, records, read_attempts(attempts_path), reservation_of)
+    torn = cut_torn_tail(attempts_path)
+    if torn:
+        log(f"cut a torn {torn}-byte start from the end of {attempts_path}: that trial never ran")
     done = {trial_key(item) for item in records}
     pending = [triple for triple in order if tuple(triple) not in done]
     log(f"{len(done)} trial(s) already recorded, {abandoned} abandoned attempt(s) charged "

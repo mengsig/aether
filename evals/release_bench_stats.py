@@ -2,7 +2,9 @@
 
 The unit of resampling is the task: repeats of one task on one arm are
 averaged first, so a task run four times does not count as four independent
-tasks. Pass/fail pairs (same task, same repeat) get an exact McNemar test.
+tasks. Two arms are compared only on the (task, repeat) cells both counted, so
+an outage on one arm never leaves the other averaging repeats it lacks.
+Pass/fail pairs of those cells get an exact McNemar test.
 """
 import math
 import random
@@ -19,24 +21,43 @@ def counted(records):
     return [item for item in records if not item["infra_error"]]
 
 
-def per_task(records, arm):
-    """{task: {"pass", "fraction", "cost", "n"}} averaged over the arm's counted repeats.
+def _task_means(items):
+    """{"pass", "fraction", "cost", "n"} of one task's repeats on one arm.
 
-    Cost is None unless every counted repeat is priced: a mean over the cheap
-    repeats alone would understate the task."""
+    Cost is None unless every repeat is priced: a mean over the cheap repeats
+    alone would understate the task."""
+    assert items and len({item["arm"] for item in items}) == 1, "one task's repeats on one arm"
+    costs = [item["cost_usd"] for item in items]
+    row = {"pass": sum(item["passed"] for item in items) / len(items),
+           "fraction": sum(item["fraction"] for item in items) / len(items),
+           "cost": None if None in costs else sum(costs) / len(costs), "n": len(items)}
+    assert 0 <= row["pass"] <= 1 and 0 <= row["fraction"] <= 1, "rates are in [0, 1]"
+    return row
+
+
+def per_task(records, arm):
+    """{task: {"pass", "fraction", "cost", "n"}} averaged over the arm's counted repeats."""
     grouped = defaultdict(list)
     for item in counted(records):
         if item["arm"] == arm:
             grouped[item["task"]].append(item)
-    result = {}
-    for task, items in grouped.items():
-        priced = [item["cost_usd"] for item in items if item["cost_usd"] is not None]
-        result[task] = {"pass": sum(item["passed"] for item in items) / len(items),
-                        "fraction": sum(item["fraction"] for item in items) / len(items),
-                        "cost": sum(priced) / len(priced) if len(priced) == len(items) else None,
-                        "n": len(items)}
-    assert all(0 <= row["pass"] <= 1 and 0 <= row["fraction"] <= 1 for row in result.values()), "rates are in [0, 1]"
-    return result
+    return {task: _task_means(items) for task, items in grouped.items()}
+
+
+def paired_cells(records, old_arm, new_arm):
+    """{task: [(old record, new record), ...]}: the (task, repeat) cells both arms counted, in repeat order."""
+    assert old_arm != new_arm, "a comparison needs two arms"
+    cells = defaultdict(dict)
+    for item in counted(records):
+        if item["arm"] in (old_arm, new_arm):
+            cell = cells[(item["task"], item["repeat"])]
+            assert item["arm"] not in cell, f"{item['arm']} recorded {item['task']} r{item['repeat']} twice"
+            cell[item["arm"]] = item
+    by_task = defaultdict(list)
+    for (task, _), cell in sorted(cells.items()):
+        if len(cell) == 2:
+            by_task[task].append((cell[old_arm], cell[new_arm]))
+    return dict(by_task)
 
 
 def mean(values):
@@ -77,20 +98,17 @@ def mcnemar_exact(b, c):
 
 def discordant(records, old_arm, new_arm):
     """(b, c, n): pairs passed only by old, only by new, and all counted pairs, matched on task and repeat."""
-    outcomes = defaultdict(dict)
-    for item in counted(records):
-        if item["arm"] in (old_arm, new_arm):
-            outcomes[(item["task"], item["repeat"])][item["arm"]] = item["passed"]
-    pairs = [pair for pair in outcomes.values() if len(pair) == 2]
-    b = sum(1 for pair in pairs if pair[old_arm] and not pair[new_arm])
-    c = sum(1 for pair in pairs if pair[new_arm] and not pair[old_arm])
+    pairs = [pair for cells in paired_cells(records, old_arm, new_arm).values() for pair in cells]
+    b = sum(1 for old, new in pairs if old["passed"] and not new["passed"])
+    c = sum(1 for old, new in pairs if new["passed"] and not old["passed"])
     assert b + c <= len(pairs), "discordant pairs are a subset of the pairs"
     return b, c, len(pairs)
 
 
 def _paired_tasks(records, old_arm, new_arm):
-    old, new = per_task(records, old_arm), per_task(records, new_arm)
-    return [(old[task], new[task]) for task in sorted(set(old) & set(new))]
+    """(old, new) task means over the same matched repeats, one pair per task."""
+    return [(_task_means([old for old, _ in cells]), _task_means([new for _, new in cells]))
+            for _, cells in sorted(paired_cells(records, old_arm, new_arm).items())]
 
 
 def _difference(key):
@@ -172,6 +190,13 @@ def _incomplete(records, arms, expected):
     planned = len(expected["tasks"]) * expected["repeats"]
     missing = {arm: missing_trials(records, arm, expected) for arm in arms}
     return [f"{arm} ran {planned - count} of {planned} planned trials" for arm, count in missing.items() if count]
+
+
+def matrix_gaps(records, expected):
+    """Reasons any planned arm, the native and Archon references included, did not finish its trials."""
+    assert expected["arms"] and len(set(expected["arms"])) == len(expected["arms"]), "a plan has distinct arms"
+    assert {item["arm"] for item in records} <= set(expected["arms"]), "every record belongs to a planned arm"
+    return _incomplete(records, sorted(expected["arms"]), expected)
 
 
 def _unpriced(comparison, settings):

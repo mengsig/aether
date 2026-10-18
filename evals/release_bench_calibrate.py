@@ -5,20 +5,27 @@ has enough counted repeats, and native Haiku passes it between 20% and 80% of
 the time: a task Haiku always or never solves cannot show a harness change on
 its tier. Within the eligible pool, tasks nearest the Haiku target are kept
 first, no template dominates, and the subset is trimmed so the mean Haiku and
-Luna pass rates approach their targets. `acceptance` then says whether the
-set meets the targets; an unaccepted set is frozen only on request, marked as
-such, and the runner refuses it without an explicit override.
+Luna pass rates approach their targets, then the slowest tasks are dropped
+while the release matrix it implies would outlast its wall-time target.
+`acceptance` then says whether the set meets the targets; an unaccepted set is
+frozen only on request, marked as such, and the runner refuses it without an
+explicit override.
 """
 import math
 from collections import Counter, defaultdict
 
 SELECTION_DEFAULTS = {"haiku_target": 0.5, "luna_target": 0.3, "min_size": 80, "max_size": 120,
                       "max_template_share": 0.2, "min_repeats": 2, "haiku_band": (0.2, 0.8),
-                      "haiku_tolerance": 0.10, "luna_band": (0.25, 0.35)}
+                      "haiku_tolerance": 0.10, "luna_band": (0.25, 0.35), "release_jobs": 6,
+                      "max_release_minutes": 60}
+# Release-matrix trial seconds per native calibration second: a native, an old and a new arm per tier.
+# In the v2 A/A the Aether arms took 1.0x native time on Haiku and 1.45x on Luna.
+RELEASE_SECONDS_PER_NATIVE = {"haiku": 1 + 2 * 1.0, "luna": 1 + 2 * 1.45}
 
 
 def task_rates(records):
-    """{task: {"template", "family", "haiku", "luna", "haiku_n", "luna_n", "infra", "cost"}} from calibration records."""
+    """{task: {"template", "family", "infra", "cost", and per model its pass rate, counted repeats ("_n")
+    and mean solve seconds ("_seconds")}} from calibration records."""
     grouped = defaultdict(list)
     for item in records:
         grouped[item["task"]].append(item)
@@ -28,9 +35,11 @@ def task_rates(records):
                "infra": sum(1 for item in items if item["infra_error"]),
                "cost": sum(item["cost_usd"] or 0 for item in items)}
         for model in ("haiku", "luna"):
-            outcomes = [item["passed"] for item in items if item["model"] == model and not item["infra_error"]]
-            row[model] = sum(outcomes) / len(outcomes) if outcomes else None
-            row[f"{model}_n"] = len(outcomes)
+            good = [item for item in items if item["model"] == model and not item["infra_error"]]
+            seconds = [item["seconds"] for item in good if item["seconds"] is not None]
+            row[model] = sum(item["passed"] for item in good) / len(good) if good else None
+            row[f"{model}_n"] = len(good)
+            row[f"{model}_seconds"] = sum(seconds) / len(seconds) if seconds else None
         rates[task] = row
     assert all(row["haiku_n"] + row["luna_n"] + row["infra"] > 0 for row in rates.values()), "every task ran"
     return rates
@@ -45,6 +54,26 @@ def eligible(rates, settings):
                     and row["luna_n"] >= settings["min_repeats"] and low <= row["haiku"] <= high)
     assert all(rates[task]["haiku"] is not None and rates[task]["luna"] is not None for task in chosen)
     return chosen
+
+
+def _release_seconds(row):
+    """Trial seconds one task adds to a release run, or None without calibration timings."""
+    timings = [row.get(f"{model}_seconds") for model in RELEASE_SECONDS_PER_NATIVE]
+    if None in timings:
+        return None
+    return sum(seconds * factor for seconds, factor in zip(timings, RELEASE_SECONDS_PER_NATIVE.values()))
+
+
+def release_minutes(rates, chosen, jobs):
+    """Wall minutes one release run of `chosen` needs on `jobs` workers if they never idle: a lower bound.
+
+    None when a task has no recorded calibration timing (one carried from a set frozen without them)."""
+    assert jobs >= 1, "a release run has at least one worker"
+    per_task = [_release_seconds(rates[task]) for task in chosen]
+    if None in per_task:
+        return None
+    assert all(seconds >= 0 for seconds in per_task), "trial time is non-negative"
+    return sum(per_task) / jobs / 60
 
 
 def acceptance(rates, chosen, settings):
@@ -63,6 +92,13 @@ def acceptance(rates, chosen, settings):
         low, high = settings["luna_band"]
         if not low <= luna <= high:
             reasons.append(f"mean Luna pass {luna:.0%} is outside {low:.0%}-{high:.0%}")
+        minutes = release_minutes(rates, chosen, settings["release_jobs"])
+        result["release_minutes"] = minutes
+        if minutes is None:
+            reasons.append("a chosen task has no calibration timing, so the release run time is unknown")
+        elif minutes > settings["max_release_minutes"]:
+            reasons.append(f"a release run needs at least {minutes:.0f} min on {settings['release_jobs']} workers "
+                           f"(> {settings['max_release_minutes']} min)")
     assert len(chosen) == len(set(chosen)), "a task is chosen once"
     result.update(accepted=not reasons, reasons=reasons)
     assert result["accepted"] == (not reasons) and (result["accepted"] <= bool(chosen)), "acceptance is consistent"
@@ -94,10 +130,24 @@ def select(rates, settings=None):
         if len(chosen) <= settings["max_size"] and not improves:
             break
         chosen.remove(best)
+    chosen = _fit_release_time(rates, chosen, settings)
     assert len(set(chosen)) == len(chosen), "a task is chosen once"
     assert all(Counter(rates[task]["template"] for task in chosen)[rates[task]["template"]] <= cap
                for task in chosen), "no template exceeds its cap"
     return sorted(chosen)
+
+
+def _fit_release_time(rates, chosen, settings):
+    """Drop the slowest tasks, down to min_size, while a release run would outlast its target."""
+    assert settings["max_release_minutes"] > 0, "a release run has a positive time target"
+    kept = sorted(chosen, key=lambda task: (_release_seconds(rates[task]) or 0, task))
+    while len(kept) > settings["min_size"]:
+        minutes = release_minutes(rates, kept, settings["release_jobs"])
+        if minutes is None or minutes <= settings["max_release_minutes"]:
+            break
+        kept.pop()
+    assert len(kept) >= min(len(chosen), settings["min_size"]), "trimming stops at min_size"
+    return kept
 
 
 def summary(rates, chosen):
@@ -127,8 +177,11 @@ def render(rates, chosen, settings, header):
                      f"| {sum(t in pool for t in tasks)} | {sum(t in chosen for t in tasks)} |")
     if chosen:
         result = summary(rates, chosen)
+        minutes = release_minutes(rates, chosen, settings["release_jobs"])
+        timing = "unknown" if minutes is None else f"at least {minutes:.0f} min"
         lines += ["", f"Chosen: **{result['tasks']} tasks**, mean native Haiku pass rate "
-                  f"**{result['haiku_pass']:.0%}**, mean native Luna pass rate **{result['luna_pass']:.0%}**."]
+                  f"**{result['haiku_pass']:.0%}**, mean native Luna pass rate **{result['luna_pass']:.0%}**; "
+                  f"a release run on {settings['release_jobs']} workers takes {timing}."]
     else:
         lines += ["", "No task was eligible."]
     verdict = acceptance(rates, chosen, settings)
@@ -136,7 +189,8 @@ def render(rates, chosen, settings, header):
     lines += [f"- {reason}" for reason in verdict["reasons"]] or [
         f"- Targets met: at least {settings['min_size']} tasks, Haiku mean within "
         f"{settings['haiku_tolerance']:.0%} of {settings['haiku_target']:.0%}, Luna mean inside "
-        f"{settings['luna_band'][0]:.0%}-{settings['luna_band'][1]:.0%}."]
+        f"{settings['luna_band'][0]:.0%}-{settings['luna_band'][1]:.0%}, a release run within "
+        f"{settings['max_release_minutes']} min on {settings['release_jobs']} workers."]
     return "\n".join(lines) + "\n"
 
 
