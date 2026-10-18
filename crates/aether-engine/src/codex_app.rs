@@ -418,6 +418,7 @@ impl Engine for CodexAppEngine {
                 source: e,
             },
         })?;
+        let engine_record = crate::orphans::EngineRecord::register(child.id());
         let stdin = child
             .stdin
             .take()
@@ -437,6 +438,7 @@ impl Engine for CodexAppEngine {
         let stderr_task = tokio::spawn(crate::output::drain_stderr(stderr));
         let version = EngineVersion::parse(&self.version);
         tokio::spawn(async move {
+            let _engine_record = engine_record;
             let mut sandbox = sandbox;
             let sandbox_exit = async {
                 match sandbox.as_mut() {
