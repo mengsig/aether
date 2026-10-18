@@ -83,6 +83,53 @@ fn a_token_is_never_in_the_description() {
 }
 
 #[test]
+fn a_url_password_and_a_secret_argument_are_not_described() {
+    let url = McpTransportSpec::Http {
+        url: "http://user:SECRETURLPW@127.0.0.1:9/mcp".into(),
+        token: None,
+    };
+    let text = url.describe();
+    assert_eq!(text, "http: http://user:[REDACTED]@127.0.0.1:9/mcp");
+
+    let stdio = McpTransportSpec::Stdio {
+        command: PathBuf::from("npx"),
+        args: vec!["server".into(), "--token=SECRETARG".into(), "/srv".into()],
+        env: BTreeMap::new(),
+        cwd: None,
+    };
+    let text = stdio.describe();
+    assert_eq!(text, "stdio: npx server --token=[REDACTED] /srv");
+}
+
+#[test]
+fn a_failure_text_naming_a_url_password_is_masked_in_health() {
+    let spec = McpServerSpec {
+        name: "s".into(),
+        transport: McpTransportSpec::Http {
+            url: "http://user:SECRETURLPW@127.0.0.1:9/mcp".into(),
+            token: None,
+        },
+        classes: BTreeMap::new(),
+        send_caller_meta: true,
+        auth: None,
+    };
+    let slot = ServerSlot {
+        spec,
+        client: tokio::sync::Mutex::new(None),
+        state: Mutex::new(SlotState {
+            state: McpServerState::Failed,
+            tools: Vec::new(),
+            error: Some("connect http://user:SECRETURLPW@127.0.0.1:9/mcp refused".into()),
+            checked_at: None,
+        }),
+    };
+    let health = slot.health();
+    let error = health.error.expect("the failure is kept");
+    assert!(!error.contains("SECRETURLPW"), "{error}");
+    assert!(error.contains("127.0.0.1:9/mcp refused"), "{error}");
+}
+
+#[test]
 fn only_aether_keys_where_a_server_might_read_a_caller_are_refused() {
     for spoof in [
         serde_json::json!({"aether/agent_id": "agt_x"}),

@@ -106,9 +106,76 @@ impl Redactor {
     }
 }
 
+const LOCATOR_SECRET_NAME: &str = r"(?:token|secret|passw(?:or)?d|api[_\-]?key|auth|credential)";
+
+/// Masks what an endpoint or command line can carry: URL passwords, and
+/// secret-looking `name=value` pairs or `--flag value` pairs. Scheme, host,
+/// path and the other arguments stay readable, and the default rules still apply.
+pub fn redact_locator(text: &str) -> Cow<'_, str> {
+    static LOCATOR: LazyLock<Redactor> = LazyLock::new(|| {
+        let assignment =
+            format!(r"(?i)\b([A-Za-z0-9_\-]*{LOCATOR_SECRET_NAME}[A-Za-z0-9_\-]*)=[^\s&]+");
+        let flag_value =
+            format!(r"(?i)(--?[A-Za-z0-9_\-]*{LOCATOR_SECRET_NAME}[A-Za-z0-9_\-]*)(\s+)[^\s-]\S*");
+        // Locator rules run first, so a URL password is masked whole rather than
+        // after a token rule has already rewritten part of it.
+        let mut patterns = vec![
+            compile_rule(
+                r"([A-Za-z][A-Za-z0-9+.\-]*://[^\s/:@]*):[^\s/]*@",
+                "$1:[REDACTED]@",
+            ),
+            compile_rule(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s/:@]+@", "$1[REDACTED]@"),
+            compile_rule(&assignment, "$1=[REDACTED]"),
+            compile_rule(&flag_value, "$1$2[REDACTED]"),
+        ];
+        patterns.extend(DEFAULT_PATTERNS.iter().cloned());
+        Redactor { patterns }
+    });
+    LOCATOR.redact(text)
+}
+
+/// Same rule as the built-in set: a rule that cannot compile stops the process.
+fn compile_rule(pattern: &str, replacement: &'static str) -> (Regex, &'static str) {
+    #[allow(clippy::expect_used)]
+    let compiled = Regex::new(pattern).expect("a built-in redaction rule compiles");
+    (compiled, replacement)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locator_keeps_the_readable_parts_and_masks_secrets() {
+        let out = redact_locator("http://user:SECRETURLPW@127.0.0.1:9/mcp");
+        assert_eq!(out, "http://user:[REDACTED]@127.0.0.1:9/mcp");
+        let out = redact_locator("stdio: npx server --token=SECRETARG /srv/data");
+        assert_eq!(out, "stdio: npx server --token=[REDACTED] /srv/data");
+        let out = redact_locator("stdio: srv --api-key SECRETARG --verbose");
+        assert_eq!(out, "stdio: srv --api-key [REDACTED] --verbose");
+        let out = redact_locator("https://h.example/mcp?access_token=SECRETQ&page=2");
+        assert_eq!(out, "https://h.example/mcp?access_token=[REDACTED]&page=2");
+    }
+
+    #[test]
+    fn locator_masks_a_userinfo_without_password_and_token_shapes() {
+        let out = redact_locator("https://ghp_abcdefghijklmnopqrstuvwxyz1234@h.example/mcp");
+        assert_eq!(out, "https://[REDACTED]@h.example/mcp");
+        let out = redact_locator("stdio: srv ghp_abcdefghijklmnopqrstuvwxyz1234");
+        assert!(!out.contains("ghp_abc"), "{out}");
+    }
+
+    #[test]
+    fn locator_leaves_plain_text_borrowed() {
+        assert!(matches!(
+            redact_locator("http://127.0.0.1:9/mcp"),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            redact_locator("stdio: npx -y srv"),
+            Cow::Borrowed(_)
+        ));
+    }
 
     /// One planted key per credentialed provider the distribution ships, so
     /// the §10 guarantee is not strongest for only the two whose 401 bodies
