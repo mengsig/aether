@@ -43,7 +43,7 @@ mod workspace_review;
 pub use subscription::{Subscription, SubscriptionFrame};
 
 pub use endpoint::{Endpoint, SshRemote};
-pub use sink::{CommandSink, DaemonSink};
+pub use sink::{CommandSink, DaemonSink, DaemonUnavailable, ReconnectingSink};
 pub use start::{StartingDaemon, ensure_daemon, watch_startup};
 pub use transport::{MemoryPeer, Transport};
 

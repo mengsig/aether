@@ -51,7 +51,14 @@ pub async fn serve(socket: PathBuf, allow_remote: bool) -> anyhow::Result<()> {
     } else {
         Some(client.subscribe(None, Default::default(), false).await?)
     };
-    let sink = std::sync::Arc::new(aether_client::DaemonSink(client.clone()));
+    let reconnect_to = socket.clone();
+    let sink = std::sync::Arc::new(aether_client::ReconnectingSink::new(
+        client.clone(),
+        move || {
+            let socket = reconnect_to.clone();
+            async move { connect(&socket).await }
+        },
+    ));
     let shutdown = tokio_util::sync::CancellationToken::new();
     let stopping = shutdown.clone();
     tokio::spawn(async move {

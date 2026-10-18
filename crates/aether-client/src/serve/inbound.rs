@@ -23,7 +23,7 @@ use super::{
     BODY_READ_TIMEOUT, HEADER_READ_TIMEOUT, MAX_BODY_BYTES, MAX_CONNECTIONS, PRE_AUTH_SLOTS,
     ServeConfig,
 };
-use crate::sink::CommandSink;
+use crate::sink::{CommandSink, DaemonUnavailable};
 
 /// How long a peer that failed to sign waits for its refusal. A caller with
 /// the secret is never delayed.
@@ -289,7 +289,7 @@ async fn answer(
     };
     let agent = match resolve(sink, &hook.agent).await {
         Ok(agent) => agent,
-        Err(why) => return refuse(StatusCode::NOT_FOUND, &why),
+        Err(Refusal { status, why }) => return refuse(status, &why),
     };
     match sink
         .call(Command::Trigger {
@@ -310,6 +310,7 @@ async fn answer(
                 .body(Full::new(Bytes::from(body)))
                 .unwrap_or_else(|_| Response::new(Full::new(Bytes::from_static(b"{}"))))
         }
+        Err(e) if is_unavailable(&e) => unavailable(&e),
         Err(e) => refuse(
             StatusCode::BAD_GATEWAY,
             &format!("the daemon refused it: {e}"),
@@ -317,12 +318,34 @@ async fn answer(
     }
 }
 
+struct Refusal {
+    status: StatusCode,
+    why: String,
+}
+
+fn is_unavailable(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<DaemonUnavailable>().is_some()
+}
+
+/// Retryable, unlike an unknown path: the sender should try again shortly.
+fn unavailable(error: &anyhow::Error) -> Response<Full<Bytes>> {
+    tracing::warn!(%error, "webhook not delivered: the daemon is unavailable");
+    refuse(
+        StatusCode::SERVICE_UNAVAILABLE,
+        &format!("the daemon is unavailable; retry shortly ({error})"),
+    )
+}
+
 /// An agent id, or the name of exactly one live agent. A name that is not
 /// unique is refused rather than guessed at.
-async fn resolve(sink: &dyn CommandSink, named: &str) -> Result<AgentId, String> {
+async fn resolve(sink: &dyn CommandSink, named: &str) -> Result<AgentId, Refusal> {
     if let Ok(id) = named.parse::<AgentId>() {
         return Ok(id);
     }
+    let not_found = |why: String| Refusal {
+        status: StatusCode::NOT_FOUND,
+        why,
+    };
     let listed = sink
         .call(Command::ListAgents {
             // Live only: a hook must not wake an agent that has already
@@ -335,18 +358,28 @@ async fn resolve(sink: &dyn CommandSink, named: &str) -> Result<AgentId, String>
             },
         })
         .await
-        .map_err(|e| format!("could not list agents: {e}"))?;
+        .map_err(|e| {
+            if is_unavailable(&e) {
+                return Refusal {
+                    status: StatusCode::SERVICE_UNAVAILABLE,
+                    why: format!("the daemon is unavailable; retry shortly ({e})"),
+                };
+            }
+            not_found(format!("could not list agents: {e}"))
+        })?;
     let Reply::Agents(agents) = listed else {
-        return Err("the daemon answered the agent list with something else".into());
+        return Err(not_found(
+            "the daemon answered the agent list with something else".into(),
+        ));
     };
     let mut matching = agents.iter().filter(|agent| agent.name == named);
     let Some(first) = matching.next() else {
-        return Err(format!("no live agent is named `{named}`"));
+        return Err(not_found(format!("no live agent is named `{named}`")));
     };
     if matching.next().is_some() {
-        return Err(format!(
+        return Err(not_found(format!(
             "`{named}` names more than one live agent; configure the hook with an agent id"
-        ));
+        )));
     }
     Ok(first.id)
 }

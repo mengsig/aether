@@ -212,3 +212,5 @@ mod inbound;
 mod lifecycle;
 #[path = "serve/outbound.rs"]
 mod outbound;
+#[path = "serve/reconnect.rs"]
+mod reconnect;
