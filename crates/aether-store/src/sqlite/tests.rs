@@ -115,6 +115,7 @@ mod transactions;
 
 mod plans;
 mod queries;
+mod subtree;
 
 mod memories;
 

@@ -2,7 +2,7 @@
 //! agent's messages may reach.
 use crate::inspection::{brief, outcome};
 use crate::{Result, Runtime, RuntimeError};
-use aether_core::agent::{Agent, subtree_of};
+use aether_core::agent::Agent;
 use aether_core::id::AgentId;
 use aether_core::tool::ToolOutcome;
 use aether_store::AgentFilter;
@@ -72,13 +72,13 @@ pub(crate) fn message_reach_refusal(
     let Some(parent) = sender.parent else {
         return Ok(None);
     };
-    let fleet = runtime.store.agents(&AgentFilter::default())?;
-    let team = subtree_of(&fleet, parent);
-    debug_assert!(team.is_empty() || team.contains(&sender.id));
-    if team.contains(&to) {
+    let store = &runtime.store;
+    debug_assert!(store.is_descendant(parent, sender.id)?);
+    if store.is_descendant(parent, to)? {
         return Ok(None);
     }
-    if !subtree && ancestors(&fleet, sender).contains(&to) {
+    // `to` is an ancestor of the sender exactly when the sender sits below it.
+    if !subtree && to != sender.id && store.is_descendant(to, sender.id)? {
         return Ok(None);
     }
     let reach = if subtree {
@@ -89,23 +89,6 @@ pub(crate) fn message_reach_refusal(
     Ok(Some(format!(
         "{to} is outside your reach. {reach}; list_peers shows your peers."
     )))
-}
-
-/// `agent`'s ancestors, nearest first, ending at its root.
-fn ancestors(fleet: &[Agent], agent: &Agent) -> Vec<AgentId> {
-    let parents: std::collections::HashMap<AgentId, Option<AgentId>> =
-        fleet.iter().map(|a| (a.id, a.parent)).collect();
-    let mut chain = Vec::new();
-    let mut next = agent.parent;
-    while let Some(id) = next {
-        // A parent cycle cannot be created, but a corrupt store must not hang the sender.
-        if chain.contains(&id) || chain.len() > fleet.len() {
-            break;
-        }
-        chain.push(id);
-        next = parents.get(&id).copied().flatten();
-    }
-    chain
 }
 
 #[cfg(test)]

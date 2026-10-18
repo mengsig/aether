@@ -13,7 +13,7 @@ mod schedule_tests;
 mod schema;
 mod sqlite;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use aether_core::agent::{Agent, AgentStatusKind};
@@ -581,6 +581,11 @@ pub trait Store: Send + Sync {
 
     fn agent(&self, id: AgentId) -> Result<Option<Agent>>;
     fn agents(&self, filter: &AgentFilter) -> Result<Vec<Agent>>;
+    /// Whether `id` is `root` or one of its descendants; false when either is unknown.
+    /// Same answer as `subtree_of(..).contains(&id)` without reading the fleet.
+    fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool>;
+    /// `root` and every descendant of it; empty when `root` is unknown.
+    fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>>;
     /// Whether any agent, including archived and terminal agents, carries this repository scope.
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool>;
 

@@ -140,15 +140,15 @@ pub(super) fn bare_wait_has_no_wake_source(runtime: &Runtime, agent: &Agent) -> 
         return Ok(false);
     }
 
-    let fleet = runtime.store.agents(&AgentFilter::default())?;
-    let subtree: BTreeSet<_> = aether_core::agent::subtree_of(&fleet, agent.id)
-        .into_iter()
-        .collect();
-    if fleet.iter().any(|descendant| {
-        descendant.id != agent.id
-            && !descendant.status.is_terminal()
-            && subtree.contains(&descendant.id)
-    }) {
+    let subtree = runtime.store.subtree_ids(agent.id)?;
+    let live = runtime.store.agents(&AgentFilter {
+        live_only: true,
+        ..Default::default()
+    })?;
+    if live
+        .iter()
+        .any(|other| other.id != agent.id && subtree.contains(&other.id))
+    {
         return Ok(false);
     }
     let pending_tasks = runtime.store.tasks(&TaskFilter {
@@ -187,10 +187,12 @@ pub(super) fn task_in_caller_scope(
     if owner.is_none() && creator.is_none() {
         return Ok(true);
     }
-    let fleet = runtime.store.agents(&AgentFilter::default())?;
-    let subtree = aether_core::agent::subtree_of(&fleet, caller);
-    Ok(owner.is_some_and(|id| subtree.contains(&id))
-        || creator.is_some_and(|id| subtree.contains(&id)))
+    for id in [owner, creator].into_iter().flatten() {
+        if runtime.store.is_descendant(caller, id)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The first `complete_task.artifacts` id, if any, that was not produced by
@@ -203,8 +205,7 @@ pub(super) fn first_artifact_outside_scope(
     if artifacts.is_empty() {
         return Ok(None);
     }
-    let fleet = runtime.store.agents(&AgentFilter::default())?;
-    let subtree = aether_core::agent::subtree_of(&fleet, caller);
+    let subtree = runtime.store.subtree_ids(caller)?;
     for id in artifacts {
         let owned = runtime
             .store

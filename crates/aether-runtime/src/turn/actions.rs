@@ -510,10 +510,7 @@ pub(crate) async fn apply_action(
             }
         }
         HarnessAction::CancelAgent { agent, reason } => {
-            let fleet = runtime.store.agents(&AgentFilter::default())?;
-            if agent == ctx.agent.id
-                || !aether_core::agent::subtree_of(&fleet, ctx.agent.id).contains(&agent)
-            {
+            if agent == ctx.agent.id || !runtime.store.is_descendant(ctx.agent.id, agent)? {
                 return Ok(ToolOutcome::error(
                     "You may only cancel your delegated descendants. Use the descendant agent ID returned by delegation; complete_task or fail_task ends your own task.",
                 ));

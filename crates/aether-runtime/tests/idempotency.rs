@@ -387,6 +387,12 @@ impl Store for CommitLog {
     fn agent(&self, id: AgentId) -> StoreResult<Option<Agent>> {
         self.inner.agent(id)
     }
+    fn is_descendant(&self, root: AgentId, id: AgentId) -> StoreResult<bool> {
+        self.inner.is_descendant(root, id)
+    }
+    fn subtree_ids(&self, root: AgentId) -> StoreResult<std::collections::BTreeSet<AgentId>> {
+        self.inner.subtree_ids(root)
+    }
     fn any_agent_in_repository(&self, repository: &str) -> StoreResult<bool> {
         self.inner.any_agent_in_repository(repository)
     }

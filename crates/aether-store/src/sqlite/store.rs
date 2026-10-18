@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
@@ -319,6 +320,41 @@ impl Store for SqliteStore {
             agents.retain(|a| !a.archived);
         }
         Ok(agents)
+    }
+
+    fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool> {
+        // UNION drops repeated rows, so a corrupt parent cycle ends the walk.
+        Ok(self.read_conn().query_row(
+            "WITH RECURSIVE up(id, parent) AS (
+                 SELECT id, parent FROM agents WHERE id = ?2
+                 UNION
+                 SELECT a.id, a.parent FROM agents a JOIN up ON a.id = up.parent
+             )
+             SELECT EXISTS(SELECT 1 FROM up WHERE id = ?1)",
+            [root.to_string(), id.to_string()],
+            |row| row.get(0),
+        )?)
+    }
+
+    fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>> {
+        let conn = self.read_conn();
+        let mut stmt = conn.prepare_cached(
+            "WITH RECURSIVE down(id) AS (
+                 SELECT id FROM agents WHERE id = ?1
+                 UNION
+                 SELECT a.id FROM agents a JOIN down ON a.parent = down.id
+             )
+             SELECT id FROM down",
+        )?;
+        let rows = stmt.query_map([root.to_string()], |row| row.get::<_, String>(0))?;
+        let mut ids = BTreeSet::new();
+        for row in rows {
+            ids.insert(
+                row?.parse()
+                    .map_err(|e| StoreError::Corrupt(format!("invalid agent id: {e}")))?,
+            );
+        }
+        Ok(ids)
     }
 
     fn task(&self, id: TaskId) -> Result<Option<Task>> {

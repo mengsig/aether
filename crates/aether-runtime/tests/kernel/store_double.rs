@@ -193,6 +193,12 @@ impl Store for CommitsMidPass {
         self.inner.screen_run_expiry(run, before)
     }
 
+    fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool> {
+        self.inner.is_descendant(root, id)
+    }
+    fn subtree_ids(&self, root: AgentId) -> Result<std::collections::BTreeSet<AgentId>> {
+        self.inner.subtree_ids(root)
+    }
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool> {
         self.inner.any_agent_in_repository(repository)
     }
