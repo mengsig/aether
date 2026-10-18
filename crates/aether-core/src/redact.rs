@@ -71,8 +71,9 @@ static DEFAULT_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(||
     rules
         .iter()
         .map(|(re, rep)| {
-            let compiled = Regex::new(re)
-                .unwrap_or_else(|error| panic!("redaction rule {rep} does not compile: {error}"));
+            // A rule that cannot compile must stop the process, not vanish.
+            #[allow(clippy::expect_used)]
+            let compiled = Regex::new(re).expect("a built-in redaction rule compiles");
             (compiled, *rep)
         })
         .collect()
