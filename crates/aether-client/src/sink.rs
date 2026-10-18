@@ -46,6 +46,8 @@ type Connector =
 
 struct Link {
     client: Option<Client>,
+    /// Which connection `client` is; bumped on every reconnect.
+    generation: u64,
     failures: u32,
     retry_at: Option<Instant>,
 }
@@ -76,16 +78,17 @@ impl ReconnectingSink {
             connect: Box::new(move || Box::pin(connect())),
             link: Mutex::new(Link {
                 client: Some(client),
+                generation: 0,
                 failures: 0,
                 retry_at: None,
             }),
         }
     }
 
-    async fn current(&self) -> Result<Client, DaemonUnavailable> {
+    async fn current(&self) -> Result<(Client, u64), DaemonUnavailable> {
         let mut link = self.link.lock().await;
         if let Some(client) = link.client.as_ref().filter(|client| client.is_connected()) {
-            return Ok(client.clone());
+            return Ok((client.clone(), link.generation));
         }
         link.client = None;
         if link.retry_at.is_some_and(|at| Instant::now() < at) {
@@ -102,8 +105,9 @@ impl ReconnectingSink {
                 tracing::info!("reconnected to the daemon");
                 link.failures = 0;
                 link.retry_at = None;
+                link.generation += 1;
                 link.client = Some(client.clone());
-                Ok(client)
+                Ok((client, link.generation))
             }
             Err(error) => {
                 link.failures = link.failures.saturating_add(1);
@@ -126,12 +130,17 @@ fn backoff(failures: u32) -> Duration {
 #[async_trait]
 impl CommandSink for ReconnectingSink {
     async fn call(&self, command: Command) -> anyhow::Result<Reply> {
-        let client = self.current().await?;
+        let (client, generation) = self.current().await?;
         match client.request(command).await {
             Ok(reply) => Ok(reply),
             Err(error) if error.is_connection_failure() => {
                 tracing::warn!(%error, "the daemon connection dropped");
-                self.link.lock().await.client = None;
+                // Only the connection that failed: a request that was in
+                // flight on an old one must not discard its replacement.
+                let mut link = self.link.lock().await;
+                if link.generation == generation {
+                    link.client = None;
+                }
                 Err(DaemonUnavailable(error.to_string()).into())
             }
             Err(error) => Err(error.into()),
