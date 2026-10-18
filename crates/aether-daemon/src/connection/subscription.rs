@@ -1,16 +1,82 @@
 use crate::Daemon;
+use aether_core::id::{AgentId, InvocationId, RunId, TaskId};
 use aether_protocol::{Delta, ErrorReply, ServerFrame};
 use aether_runtime::{BusMessage, DeltaKind};
 use aether_store::EventFilter;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+const CACHE_LIMIT: usize = 4096;
+
+/// What a delta filter needs of an agent. Both fields are fixed at creation.
+#[derive(Clone, Copy)]
+struct AgentRoute {
+    parent: Option<AgentId>,
+    run: RunId,
+}
+
+/// Immutable store lookups kept per subscription, so a streamed delta does
+/// not cost a store read once its agent or invocation has been seen.
+#[derive(Default)]
+struct DeltaCache {
+    agents: HashMap<AgentId, AgentRoute>,
+    invocation_tasks: HashMap<InvocationId, (AgentId, Option<TaskId>)>,
+}
+
+impl DeltaCache {
+    fn agent(
+        &mut self,
+        store: &dyn aether_store::Store,
+        id: AgentId,
+    ) -> aether_store::Result<Option<AgentRoute>> {
+        if let Some(route) = self.agents.get(&id) {
+            return Ok(Some(*route));
+        }
+        let Some(row) = store.agent(id)? else {
+            return Ok(None);
+        };
+        if self.agents.len() >= CACHE_LIMIT {
+            self.agents.clear();
+        }
+        let route = AgentRoute {
+            parent: row.parent,
+            run: row.run,
+        };
+        self.agents.insert(id, route);
+        Ok(Some(route))
+    }
+
+    fn invocation_task(
+        &mut self,
+        store: &dyn aether_store::Store,
+        id: InvocationId,
+    ) -> aether_store::Result<Option<(AgentId, Option<TaskId>)>> {
+        if let Some(owner) = self.invocation_tasks.get(&id) {
+            return Ok(Some(*owner));
+        }
+        let Some(call) = store.invocation(id)? else {
+            return Ok(None);
+        };
+        let Some(snapshot) = store.snapshot(call.snapshot_id)? else {
+            return Ok(None);
+        };
+        if self.invocation_tasks.len() >= CACHE_LIMIT {
+            self.invocation_tasks.clear();
+        }
+        let owner = (snapshot.agent_id, snapshot.task_id);
+        self.invocation_tasks.insert(id, owner);
+        Ok(Some(owner))
+    }
+}
+
 fn delta_matches(
     store: &dyn aether_store::Store,
+    cache: &mut DeltaCache,
     filter: &EventFilter,
-    agent: aether_core::id::AgentId,
-    invocation: aether_core::id::InvocationId,
+    agent: AgentId,
+    invocation: InvocationId,
     control: &SubscriptionControl,
 ) -> bool {
     // Deltas have no event family/type. Those filters select durable events only.
@@ -20,27 +86,24 @@ fn delta_matches(
     if filter.agent.is_none() && filter.run.is_none() && filter.task.is_none() {
         return true;
     }
-    let matched = || -> aether_store::Result<bool> {
-        let Some(row) = store.agent(agent)? else {
+    let mut matched = || -> aether_store::Result<bool> {
+        let Some(route) = cache.agent(store, agent)? else {
             return Ok(false);
         };
         // A child's deltas are of no type, so no `child_types` list takes them.
         let children = !filter.exclude_children && filter.child_types.is_empty();
         if filter
             .agent
-            .is_some_and(|id| id != agent && (!children || row.parent != Some(id)))
-            || filter.run.is_some_and(|run| row.run != run)
+            .is_some_and(|id| id != agent && (!children || route.parent != Some(id)))
+            || filter.run.is_some_and(|run| route.run != run)
         {
             return Ok(false);
         }
         if let Some(task) = filter.task {
-            let Some(call) = store.invocation(invocation)? else {
+            let Some((owner, owner_task)) = cache.invocation_task(store, invocation)? else {
                 return Ok(false);
             };
-            let Some(snapshot) = store.snapshot(call.snapshot_id)? else {
-                return Ok(false);
-            };
-            return Ok(snapshot.agent_id == agent && snapshot.task_id == Some(task));
+            return Ok(owner == agent && owner_task == Some(task));
         }
         Ok(true)
     };
@@ -112,6 +175,7 @@ struct Subscription {
     control: SubscriptionControl,
     last: u64,
     replayed_through: u64,
+    cache: DeltaCache,
 }
 
 impl Subscription {
@@ -185,6 +249,7 @@ impl Subscription {
                 if !self.deltas
                     || !delta_matches(
                         self.store.as_ref(),
+                        &mut self.cache,
                         &self.filter,
                         agent,
                         invocation,
@@ -279,6 +344,7 @@ pub(super) fn spawn_subscription(
             control,
             last,
             replayed_through: last,
+            cache: DeltaCache::default(),
         }
         .run(rx),
     );
@@ -308,6 +374,7 @@ mod tests {
             },
             last: 20,
             replayed_through: 20,
+            cache: DeltaCache::default(),
         };
         let usage = aether_core::model::Usage {
             output_tokens: 5,
@@ -588,6 +655,30 @@ mod device_tests {
     }
 
     #[tokio::test]
+    async fn a_seen_agent_costs_no_further_store_reads() {
+        let (daemon, _config) = crate::connection::tests::daemon().await;
+        let (root, child) = root_and_child(&daemon);
+        let control = control();
+        let mut cache = DeltaCache::default();
+        let filter = EventFilter::for_agent(root.id);
+        let invocation = InvocationId::new();
+        let real = daemon.runtime.store().as_ref();
+        assert!(delta_matches(
+            real, &mut cache, &filter, child.id, invocation, &control
+        ));
+
+        // An empty store answers "no such agent" to any read that is made.
+        let empty = aether_store::SqliteStore::open_in_memory().unwrap();
+        for _ in 0..100 {
+            assert!(delta_matches(
+                &empty, &mut cache, &filter, child.id, invocation, &control
+            ));
+        }
+        assert_eq!(cache.agents.len(), 1);
+        daemon.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn deltas_obey_run_agent_child_and_event_type_filters() {
         let (daemon, _config) = crate::connection::tests::daemon().await;
         let (root, child) = root_and_child(&daemon);
@@ -597,6 +688,7 @@ mod device_tests {
             assert_eq!(
                 delta_matches(
                     daemon.runtime.store().as_ref(),
+                    &mut DeltaCache::default(),
                     &filter,
                     child.id,
                     InvocationId::new(),
@@ -614,6 +706,7 @@ mod device_tests {
         assert!(
             delta_matches(
                 daemon.runtime.store().as_ref(),
+                &mut DeltaCache::default(),
                 &narrowed,
                 root.id,
                 InvocationId::new(),

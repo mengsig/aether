@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 mod attachment_replay;
 mod attachments;
+mod blocking_reads;
 #[cfg(unix)]
 mod credential_directory;
 mod device_gate;

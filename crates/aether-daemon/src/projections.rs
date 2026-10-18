@@ -1,6 +1,6 @@
 //! Read-only projections of authoritative state for clients.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use aether_core::id::{AgentId, RunId};
 use aether_core::model::Usage;
@@ -84,21 +84,18 @@ pub fn build_tree(
     };
     let visible: std::collections::BTreeSet<_> = agents.iter().map(|agent| agent.id).collect();
 
+    let tasks: HashMap<_, _> = tasks.into_iter().map(|t| (t.id, t)).collect();
     let mut nodes: BTreeMap<AgentId, TreeNode> = BTreeMap::new();
     let mut children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
     let mut roots = Vec::new();
     for agent in &agents {
         match agent.parent {
-            Some(p) if agents.iter().any(|a| a.id == p) => {
-                children.entry(p).or_default().push(agent.id)
-            }
+            Some(p) if visible.contains(&p) => children.entry(p).or_default().push(agent.id),
             _ => roots.push(agent.id),
         }
     }
     for agent in agents {
-        let task = agent
-            .current_task
-            .and_then(|id| tasks.iter().find(|t| t.id == id).cloned());
+        let task = agent.current_task.and_then(|id| tasks.get(&id).cloned());
         let waiting_on = Runtime::waiting_on(&agent).into_iter().collect();
         let subtree = subtree_usage.get(&agent.id).copied().unwrap_or_default();
         let hidden_usage = all_children.get(&agent.id).and_then(|children| {
@@ -283,6 +280,35 @@ mod tests {
         assert_eq!(
             parent_node.subtree_usage.input_tokens, 150,
             "archived child's usage still rolls up into the live parent"
+        );
+    }
+
+    /// 2,000 agents of which 100 are visible: every node resolves its
+    /// children and task through lookups, not scans of the whole fleet.
+    #[test]
+    fn a_large_fleet_projects_only_its_visible_agents_with_their_children() {
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let run = RunId::new();
+        let root = agent(None, run, false, 1);
+        upsert(&store, &root);
+        let mut visible_children = Vec::new();
+        for i in 0..1_999 {
+            let child = agent(Some(root.id), run, i >= 99, 1);
+            if !child.archived {
+                visible_children.push(child.id);
+            }
+            upsert(&store, &child);
+        }
+
+        let tree = build_tree(&store, Some(run), false).expect("tree");
+
+        assert_eq!(tree.nodes.len(), 100);
+        assert_eq!(tree.roots, vec![root.id]);
+        assert_eq!(tree.nodes[&root.id].children, visible_children);
+        assert_eq!(tree.nodes[&root.id].subtree_usage.input_tokens, 2_000);
+        assert_eq!(
+            tree.nodes[&root.id].hidden_usage.map(|u| u.input_tokens),
+            Some(1_900)
         );
     }
 

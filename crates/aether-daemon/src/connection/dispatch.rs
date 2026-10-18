@@ -103,6 +103,8 @@ pub(super) async fn dispatch_authorized(
 ) -> Result<Reply, ErrorReply> {
     let rt = &daemon.runtime;
     let store = rt.store().as_ref();
+    // Rule: an arm that scans the store (agents, events, tasks) runs under
+    // `blocking()`, so concurrent clients cannot park every async worker.
     match command {
         Command::Hello(_) => Err(ErrorReply::invalid("already greeted")),
         // Nothing but a frame in: the point is to hold a quiet connection
@@ -209,22 +211,35 @@ pub(super) async fn dispatch_authorized(
             .map_err(store_err)?
             .map(Reply::Agent)
             .ok_or_else(|| ErrorReply::not_found(id)),
-        Command::ListAgents { query } => Ok(Reply::Agents(
-            store.agents(&query.into()).map_err(store_err)?,
-        )),
-        Command::ListRuns { limit } => Ok(Reply::Runs(
-            crate::projections::list_runs(store, limit.clamp(1, 5000)).map_err(store_err)?,
-        )),
-        Command::GetRunReport { run } => Ok(Reply::RunReport(Box::new(
-            crate::projections::build_report(store, run).map_err(store_err)?,
-        ))),
+        Command::ListAgents { query } => {
+            let store = rt.store().clone();
+            let agents = blocking(move || store.agents(&query.into())).await?;
+            Ok(Reply::Agents(agents.map_err(store_err)?))
+        }
+        Command::ListRuns { limit } => {
+            let store = rt.store().clone();
+            let runs = blocking(move || {
+                crate::projections::list_runs(store.as_ref(), limit.clamp(1, 5000))
+            })
+            .await?;
+            Ok(Reply::Runs(runs.map_err(store_err)?))
+        }
+        Command::GetRunReport { run } => {
+            let store = rt.store().clone();
+            let report =
+                blocking(move || crate::projections::build_report(store.as_ref(), run)).await?;
+            Ok(Reply::RunReport(Box::new(report.map_err(store_err)?)))
+        }
         // The daemon reads and writes these paths, not the caller: a run can
         // be far larger than a socket frame. Reaching the socket already
         // means being able to create agents that run commands here, so this
         // is not a wider reach than the caller had.
-        Command::Replay { agent } => Ok(Reply::Replay(
-            crate::projections::replay(store, agent).map_err(store_err)?,
-        )),
+        Command::Replay { agent } => {
+            let store = rt.store().clone();
+            let frames =
+                blocking(move || crate::projections::replay(store.as_ref(), agent)).await?;
+            Ok(Reply::Replay(frames.map_err(store_err)?))
+        }
         // Off the async worker: a transfer holds the store lock for as long
         // as the run is large, and half a gigabyte of import would otherwise
         // stall every other client's command behind it.
@@ -244,9 +259,14 @@ pub(super) async fn dispatch_authorized(
         Command::GetTree {
             run,
             include_archived,
-        } => Ok(Reply::Tree(
-            crate::projections::build_tree(store, run, include_archived).map_err(store_err)?,
-        )),
+        } => {
+            let store = rt.store().clone();
+            let tree = blocking(move || {
+                crate::projections::build_tree(store.as_ref(), run, include_archived)
+            })
+            .await?;
+            Ok(Reply::Tree(tree.map_err(store_err)?))
+        }
         Command::Archive {
             target, archived, ..
         } => Ok(Reply::Agents(
