@@ -10,6 +10,7 @@ mod blocking_reads;
 mod credential_directory;
 mod device_gate;
 mod history_expiry;
+mod pipelined;
 mod provider_usage;
 mod read_artifact;
 mod resolution;

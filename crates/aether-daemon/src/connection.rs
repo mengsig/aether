@@ -9,13 +9,13 @@ use aether_protocol::{
 };
 use aether_remote::Ended;
 use aether_runtime::RuntimeError;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
-use tokio_util::codec::{FramedRead, LinesCodec};
+use tokio_util::codec::{Decoder, FramedRead, LinesCodec};
 use tokio_util::sync::CancellationToken;
 
 use futures::StreamExt as _;
@@ -132,6 +132,7 @@ where
     // raised once the peer is authorized, without disturbing the writer.
     let (read, write) = tokio::io::split(stream);
     let mut lines = FramedRead::new(read, LinesCodec::new_with_max_length(PRE_AUTH_MAX_LINE));
+    let mut pipelined_lines = VecDeque::new();
     let (out_tx, out_rx) = mpsc::channel::<ServerFrame>(1024);
     let (replay_failure_tx, mut replay_failure_rx) = mpsc::channel::<ErrorReply>(1);
 
@@ -171,49 +172,58 @@ where
                 } else {
                     Some(policy.handshake_timeout)
                 };
-                let next = async {
-                    match limit {
-                        Some(limit) => tokio::time::timeout(limit, lines.next()).await,
-                        None => Ok(lines.next().await),
-                    }
-                };
-                let line = tokio::select! {
-                    biased;
-                    _ = revoked(standing.as_ref()) => {
-                        ended = Ended::Revoked;
-                        break
-                    },
-                    _ = connection_cancel.cancelled() => {
-                        if shutdown.is_cancelled() {
-                            ended = Ended::ShuttingDown;
-                        }
-                        break
-                    },
-                    Some(error) = replay_failure_rx.recv() => {
-                        let _ = send_frame(&out_tx, ServerFrame::Reply { id: 0, result: Err(error) }, &connection_cancel).await;
+                let line = match pipelined_lines.pop_front() {
+                    Some(Ok(line)) => line,
+                    Some(Err(error)) => {
+                        tracing::debug!(error = %error, "read failed");
                         break;
-                    },
-                    l = next => match l {
-                        Ok(Some(Ok(l))) => l,
-                        Ok(Some(Err(e))) => { tracing::debug!(error = %e, "read failed"); break }
-                        Ok(None) => break,
-                        Err(_) => {
-                            ended = Ended::TimedOut;
-                            // A peer that never greeted is owed no explanation, and
-                            // giving one would be answering a request it never made.
-                            if standing.is_none() {
-                                tracing::debug!("closed a connection that did not greet in time");
-                                break;
+                    }
+                    None => {
+                        let next = async {
+                            match limit {
+                                Some(limit) => tokio::time::timeout(limit, lines.next()).await,
+                                None => Ok(lines.next().await),
                             }
-                            // Say why, rather than dropping a silent client's socket
-                            // with no explanation on it.
-                            let _ = send_frame(&out_tx, ServerFrame::Reply { id: 0, result: Err(ErrorReply::new(
-                                ErrorCode::Unavailable,
-                                "closed after the idle timeout; send `ping` to hold a quiet connection open",
-                            ))}, &connection_cancel).await;
+                        };
+                        tokio::select! {
+                        biased;
+                        _ = revoked(standing.as_ref()) => {
+                            ended = Ended::Revoked;
                             break
+                        },
+                        _ = connection_cancel.cancelled() => {
+                            if shutdown.is_cancelled() {
+                                ended = Ended::ShuttingDown;
+                            }
+                            break
+                        },
+                        Some(error) = replay_failure_rx.recv() => {
+                            let _ = send_frame(&out_tx, ServerFrame::Reply { id: 0, result: Err(error) }, &connection_cancel).await;
+                            break;
+                        },
+                        l = next => match l {
+                            Ok(Some(Ok(l))) => l,
+                            Ok(Some(Err(e))) => { tracing::debug!(error = %e, "read failed"); break }
+                            Ok(None) => break,
+                            Err(_) => {
+                                ended = Ended::TimedOut;
+                                // A peer that never greeted is owed no explanation, and
+                                // giving one would be answering a request it never made.
+                                if standing.is_none() {
+                                    tracing::debug!("closed a connection that did not greet in time");
+                                    break;
+                                }
+                                // Say why, rather than dropping a silent client's socket
+                                // with no explanation on it.
+                                let _ = send_frame(&out_tx, ServerFrame::Reply { id: 0, result: Err(ErrorReply::new(
+                                    ErrorCode::Unavailable,
+                                    "closed after the idle timeout; send `ping` to hold a quiet connection open",
+                                ))}, &connection_cancel).await;
+                                break
+                            }
+                        },
                         }
-                    },
+                    }
                 };
                 let (id, decoded) = match parse_frame(&line) {
                     Ok(parsed) => parsed,
@@ -275,7 +285,20 @@ where
                                         // construction, so the reader is rebuilt -
                                         // carrying whatever the peer already
                                         // pipelined behind the hello.
-                                        let pipelined = std::mem::take(lines.read_buffer_mut());
+                                        let mut pipelined = std::mem::take(lines.read_buffer_mut());
+                                        let mut codec = LinesCodec::new_with_max_length(MAX_LINE);
+                                        loop {
+                                            match codec.decode(&mut pipelined) {
+                                                Ok(Some(line)) => {
+                                                    pipelined_lines.push_back(Ok(line))
+                                                }
+                                                Ok(None) => break,
+                                                Err(error) => {
+                                                    pipelined_lines.push_back(Err(error));
+                                                    break;
+                                                }
+                                            }
+                                        }
                                         lines = FramedRead::new(
                                             lines.into_inner(),
                                             LinesCodec::new_with_max_length(MAX_LINE),
