@@ -101,3 +101,60 @@ async fn a_resource_lease_blocks_the_second_agent_and_names_the_holder() {
     );
     assert_eq!(h.client.remaining(), 0);
 }
+
+/// A turn that outlives its heartbeat interval commits lease renewals; they
+/// must carry the run, or retention treats the run as referenced from outside.
+#[tokio::test]
+async fn a_run_whose_turn_outlived_a_heartbeat_can_expire() {
+    let h = harness_full(
+        vec![
+            ScriptedClient::tool_call("bash", json!({"command": "sleep 0.6"})),
+            ScriptedClient::tool_call("complete_task", json!({"summary": "done"})),
+        ],
+        |_| {},
+        |c| c.lease_ttl = Duration::from_millis(100),
+        None,
+        None,
+        None,
+        |_| {},
+    )
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(spec("run past a heartbeat"), Actor::user())
+        .expect("agent");
+    let status = h.wait_until(agent.id, |s| s.is_terminal()).await;
+    assert_eq!(status.kind(), AgentStatusKind::Completed, "{status:?}");
+
+    let events = h
+        .store
+        .events(0, 10_000, &EventFilter::for_agent(agent.id))
+        .expect("events");
+    let renewals = events
+        .iter()
+        .filter(|e| matches!(e.kind, EventKind::LeaseRenewed { .. }))
+        .count();
+    assert!(renewals >= 1, "the turn never renewed its lease");
+    assert!(
+        events.iter().all(|e| e.run == Some(agent.run)),
+        "an agent event carries no run"
+    );
+
+    let expiry = h
+        .runtime
+        .expire_run_history(agent.run, now() + chrono::Duration::days(1))
+        .expect("expiry");
+    assert!(
+        matches!(expiry, aether_store::RunExpiry::Expired { .. }),
+        "{expiry:?}"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test]
+#[should_panic(expected = "without a run")]
+async fn committing_an_agent_event_without_a_run_is_refused_in_debug_builds() {
+    let h = harness_configured(vec![], |_| {}, |_| {}).await;
+    let draft = EventDraft::new(Actor::Scheduler, EventKind::AgentReady).agent(AgentId::new());
+    let _ = h.runtime.apply(Commit::new().event(draft));
+}

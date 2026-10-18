@@ -51,6 +51,7 @@ async fn pressure_compaction_preserves_completed_tool_results() {
                     },
                 )
                 .agent(agent.id)
+                .run(agent.run)
                 .run(agent.run),
             );
         }
@@ -66,6 +67,7 @@ async fn pressure_compaction_preserves_completed_tool_results() {
                 },
             )
             .agent(agent.id)
+            .run(agent.run)
             .run(agent.run),
         );
         h.runtime.apply(commit).unwrap();
@@ -510,6 +512,7 @@ async fn manual_compaction_never_requests_a_reply_without_pending_work() {
                             },
                         )
                         .agent(agent.id)
+                        .run(agent.run)
                         .run(agent.run),
                     );
                 }
@@ -625,6 +628,7 @@ async fn a_retired_compactor_fails_with_its_successor() {
                     },
                 )
                 .agent(agent.id)
+                .run(agent.run)
                 .run(agent.run),
             );
         }
@@ -758,7 +762,8 @@ async fn manual_compaction_preserves_an_unsatisfied_wait() {
                             invocation: None,
                         },
                     )
-                    .agent(agent.id),
+                    .agent(agent.id)
+                    .run(agent.run),
                 )
                 .mutate(Mutation::UpsertAgent(waiting)),
         )
@@ -867,7 +872,8 @@ async fn interrupting_a_manual_compaction_does_not_rerun_it() {
                         invocation: None,
                     },
                 )
-                .agent(agent.id),
+                .agent(agent.id)
+                .run(agent.run),
             );
         }
     }

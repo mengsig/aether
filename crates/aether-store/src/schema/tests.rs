@@ -1035,3 +1035,36 @@ fn a_v22_store_gains_the_creation_order_listing_indexes() {
         ]
     );
 }
+
+#[test]
+fn v25_gives_lease_renewals_the_run_of_their_agent() {
+    let directory = tempfile::tempdir().expect("directory");
+    let conn = database_at(&directory.path().join("aether.db"), 24);
+    conn.execute_batch(
+        "INSERT INTO agents(id,parent,role,status,run,created_at,updated_at,body)
+             VALUES ('agt_a',NULL,'root','completed','run_a','2026-10-01T00:00:00Z','2026-10-01T00:00:00Z','{}');
+         INSERT INTO events(seq,id,at,type,family,agent_id,run,body) VALUES
+             (1,'ev_1','2026-10-01T00:00:00Z','lease.renewed','lease','agt_a',NULL,'{\"agent_id\":\"agt_a\",\"run\":null}'),
+             (2,'ev_2','2026-10-01T00:00:00Z','lease.renewed','lease','agt_a','run_other','{\"run\":\"run_other\"}'),
+             (3,'ev_3','2026-10-01T00:00:00Z','lease.renewed','lease','agt_gone',NULL,'{}'),
+             (4,'ev_4','2026-10-01T00:00:00Z','agent.ready','agent','agt_a',NULL,'{}');",
+    )
+    .expect("seed");
+
+    migrate(&conn).expect("migrate");
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+
+    let row = |id: &str| -> (Option<String>, String) {
+        conn.query_row("SELECT run, body FROM events WHERE id = ?1", [id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .expect("event")
+    };
+    let (run, body) = row("ev_1");
+    assert_eq!(run.as_deref(), Some("run_a"));
+    let body: serde_json::Value = serde_json::from_str(&body).expect("body");
+    assert_eq!(body["run"], "run_a");
+    assert_eq!(row("ev_2").0.as_deref(), Some("run_other"));
+    assert_eq!(row("ev_3").0, None, "no agent row, no run to give");
+    assert_eq!(row("ev_4").0, None, "only lease renewals are rewritten");
+}

@@ -718,13 +718,16 @@ pub(crate) async fn apply_action(
             candidate.provenance.agent = Some(ctx.agent.id);
             candidate.provenance.task = ctx.task.as_ref().map(|t| t.id);
             let hold = runtime.hold();
-            let (admission, commit) = runtime.memory.evaluate(
+            let (admission, mut commit) = runtime.memory.evaluate(
                 &hold,
                 candidate,
                 ctx.base_actor.clone(),
                 Some(ctx.agent.id),
                 ctx.task.as_ref().map(|t| t.id),
             )?;
+            for event in &mut commit.events {
+                event.run = Some(ctx.agent.run);
+            }
             runtime.apply_held(hold, commit)?;
             Ok(match admission {
                 aether_memory::Admission::Accepted { record } => {

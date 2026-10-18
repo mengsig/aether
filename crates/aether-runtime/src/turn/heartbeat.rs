@@ -66,7 +66,8 @@ pub(super) fn spawn_heartbeat(runtime: Arc<Runtime>, mut lease: Lease, agent: &A
                         expires_at: lease.expires_at,
                     },
                 )
-                .agent(lease.agent_id);
+                .agent(lease.agent_id)
+                .run(run);
                 let mut commit = Commit::new()
                     .event(draft)
                     .mutate(Mutation::SetLease(lease.clone()));

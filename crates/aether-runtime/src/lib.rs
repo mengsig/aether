@@ -487,6 +487,17 @@ impl Runtime {
         if commit.is_empty() {
             return Ok(Vec::new());
         }
+        debug_assert!(
+            commit
+                .events
+                .iter()
+                .all(|e| e.agent_id.is_none() || e.run.is_some()),
+            "an agent event without a run pins its run against history retention: {:?}",
+            commit
+                .events
+                .iter()
+                .find(|e| e.agent_id.is_some() && e.run.is_none())
+        );
         let events = self.store.commit(commit)?;
         // Published before the next commit can land, so subscribers see the
         // log in seq order; the send never blocks, so the hold stays short.

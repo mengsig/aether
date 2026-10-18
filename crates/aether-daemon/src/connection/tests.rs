@@ -385,7 +385,8 @@ async fn conditional_reply_dispatch_preserves_origin_and_replays_only_identical_
                         question: "Proceed?".into(),
                     },
                 )
-                .agent(agent.id),
+                .agent(agent.id)
+                .run(agent.run),
             ),
         )
         .expect("question")[0]

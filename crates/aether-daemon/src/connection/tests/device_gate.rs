@@ -439,7 +439,9 @@ async fn agent_awaiting_an_answer(
     let asked = EventKind::QuestionAsked {
         question: "Proceed?".into(),
     };
-    let draft = EventDraft::new(Actor::agent(agent.id), asked).agent(agent.id);
+    let draft = EventDraft::new(Actor::agent(agent.id), asked)
+        .agent(agent.id)
+        .run(agent.run);
     let question = carrier
         .runtime
         .apply(aether_store::Commit::new().event(draft))

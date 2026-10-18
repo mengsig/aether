@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 24;
+pub const SCHEMA_VERSION: u32 = 25;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -434,9 +434,23 @@ CREATE TABLE engine_session_ownership (
 );
 "#;
 
+// Lease renewals were committed without a run, which pinned every run that
+// outlived one heartbeat against history retention. Give each agent event the
+// run its agent belongs to, in the column and in the stored body. No other
+// kind was found to omit it.
+const V25: &str = r#"
+UPDATE events
+SET run = (SELECT agents.run FROM agents WHERE agents.id = events.agent_id),
+    body = json_set(events.body, '$.run',
+                    (SELECT agents.run FROM agents WHERE agents.id = events.agent_id))
+WHERE run IS NULL
+  AND type = 'lease.renewed'
+  AND agent_id IN (SELECT id FROM agents);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24,
+    V22, V23, V24, V25,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the

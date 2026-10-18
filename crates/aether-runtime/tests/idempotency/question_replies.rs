@@ -3,6 +3,7 @@ use aether_core::agent::{AgentStatus, ArchiveTarget};
 use aether_core::event::{EventDraft, EventKind};
 
 fn ask(fx: &Fixture, agent: AgentId) -> u64 {
+    let run = fx.store.agent(agent).expect("read").expect("agent").run;
     fx.runtime
         .apply(
             Commit::new().event(
@@ -13,6 +14,7 @@ fn ask(fx: &Fixture, agent: AgentId) -> u64 {
                     },
                 )
                 .agent(agent)
+                .run(run)
                 .parent(fx.store.agent(agent).expect("read").expect("agent").parent),
             ),
         )

@@ -532,7 +532,7 @@ pub(crate) async fn compact(
                 )?));
             let mut superseded = std::collections::BTreeSet::new();
             for candidate in compacted.memory_candidates {
-                let (admission, memory_commit) = runtime.memory.evaluate_batch(
+                let (admission, mut memory_commit) = runtime.memory.evaluate_batch(
                     &hold,
                     candidate,
                     ctx.base_actor.clone(),
@@ -542,6 +542,9 @@ pub(crate) async fn compact(
                 )?;
                 if let aether_memory::Admission::Superseded { old, .. } = admission {
                     superseded.insert(old);
+                }
+                for event in &mut memory_commit.events {
+                    event.run = Some(ctx.agent.run);
                 }
                 commit.events.extend(memory_commit.events);
                 commit.mutations.extend(memory_commit.mutations);

@@ -128,7 +128,8 @@ async fn explicit_requests_do_not_replace_a_pending_model_handoff() {
                         trigger: handoff.clone(),
                     },
                 )
-                .agent(agent.id),
+                .agent(agent.id)
+                .run(agent.run),
             ),
         )
         .expect("request handoff");

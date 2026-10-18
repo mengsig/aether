@@ -48,7 +48,8 @@ fn ask(daemon: &Daemon, agent: AgentId, question: &str) -> u64 {
                         question: question.into(),
                     },
                 )
-                .agent(agent),
+                .agent(agent)
+                .run(daemon.runtime.store().agent(agent).unwrap().unwrap().run),
             ),
         )
         .expect("ask")[0]

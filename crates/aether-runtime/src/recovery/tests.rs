@@ -23,7 +23,8 @@ async fn fixture() -> (Arc<Runtime>, tempfile::TempDir, Agent) {
             Commit::new()
                 .event(
                     EventDraft::new(Actor::System, EventKind::AgentStarted { turn: 1 })
-                        .agent(agent.id),
+                        .agent(agent.id)
+                        .run(agent.run),
                 )
                 .mutate(Mutation::UpsertAgent(agent.clone()))
                 .mutate(Mutation::SetLease(Lease::new(
@@ -75,11 +76,13 @@ fn request_holding(
                         Actor::System,
                         EventKind::ToolRequested { call, side_effect },
                     )
-                    .agent(agent.id),
+                    .agent(agent.id)
+                    .run(agent.run),
                 )
                 .event(
                     EventDraft::new(Actor::System, EventKind::ToolStarted { call: id })
-                        .agent(agent.id),
+                        .agent(agent.id)
+                        .run(agent.run),
                 ),
         )
         .expect("tool in flight");
@@ -106,7 +109,8 @@ fn acquire(runtime: &Runtime, id: AgentId) -> ResourceKey {
                         keys: vec![key.clone()],
                     },
                 )
-                .agent(id),
+                .agent(id)
+                .run(runtime.store.agent(id).unwrap().unwrap().run),
             ),
         )
         .expect("resource acquisition");
@@ -175,7 +179,8 @@ async fn native_reads_and_waits_retry_but_native_writes_and_unknown_mcp_require_
                             outcome: aether_core::tool::ToolOutcome::ok("settled"),
                         },
                     )
-                    .agent(agent.id),
+                    .agent(agent.id)
+                    .run(agent.run),
                 ),
             )
             .expect("settle test call");
@@ -299,7 +304,8 @@ async fn previously_inspected_agents_keep_keys_on_same_boot_and_retry_after_rebo
                 Commit::new()
                     .event(
                         EventDraft::new(Actor::System, EventKind::ToolCancelled { call })
-                            .agent(agent.id),
+                            .agent(agent.id)
+                            .run(agent.run),
                     )
                     .mutate(Mutation::UpsertAgent(agent.clone()))
                     .mutate(Mutation::ClearLease(agent.id)),
@@ -341,9 +347,13 @@ async fn cancelled_unsafe_calls_stay_quarantined_on_the_same_boot_and_retry_afte
             vec![key.clone()],
         );
         runtime
-            .apply(Commit::new().event(
-                EventDraft::new(Actor::System, EventKind::ToolCancelled { call }).agent(agent.id),
-            ))
+            .apply(
+                Commit::new().event(
+                    EventDraft::new(Actor::System, EventKind::ToolCancelled { call })
+                        .agent(agent.id)
+                        .run(agent.run),
+                ),
+            )
             .expect("cancelled before the daemon stopped");
         recover_with_boot_id(
             &runtime,
@@ -416,7 +426,9 @@ async fn running_turns_without_events_retry_and_idle_ready_turns_resume() {
     runtime
         .apply(
             Commit::new().event(
-                EventDraft::new(Actor::System, EventKind::ToolStarted { call }).agent(agent.id),
+                EventDraft::new(Actor::System, EventKind::ToolStarted { call })
+                    .agent(agent.id)
+                    .run(agent.run),
             ),
         )
         .expect("legacy unnamed started call");

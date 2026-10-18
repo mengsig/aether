@@ -491,7 +491,8 @@ async fn a_daemon_stop_mid_compaction_leaves_the_request_for_the_next_start() {
                         invocation: None,
                     },
                 )
-                .agent(agent.id),
+                .agent(agent.id)
+                .run(agent.run),
             );
         }
     }

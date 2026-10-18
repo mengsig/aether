@@ -717,6 +717,50 @@ fn unscoped_events_are_not_orphaned_by_run_deletion() {
 }
 
 #[test]
+fn the_v25_migration_releases_a_run_pinned_by_a_runless_lease_renewal() {
+    let f = Fixture::new();
+    f.store
+        .import(
+            vec![ImportedEvent {
+                id: EventId::new(),
+                at: f.agent.created_at,
+                draft: EventDraft::new(
+                    Actor::Scheduler,
+                    EventKind::LeaseRenewed {
+                        expires_at: f.agent.created_at,
+                    },
+                )
+                .agent(f.agent.id),
+            }],
+            vec![],
+        )
+        .unwrap();
+    assert_eq!(
+        f.expire().unwrap(),
+        RunExpiry::Protected("external or unscoped event reference")
+    );
+
+    {
+        let conn = f.store.conn.lock();
+        conn.execute(
+            "UPDATE meta SET value = '24' WHERE key = 'schema_version'",
+            [],
+        )
+        .unwrap();
+        crate::schema::migrate(&conn).unwrap();
+    }
+    assert_eq!(
+        f.store.screen_run_expiry(f.agent.run, f.cutoff).unwrap(),
+        None
+    );
+    let verdict = f
+        .store
+        .expire_run_history(f.agent.run, f.cutoff, &f.gate.hold())
+        .unwrap();
+    assert!(matches!(verdict, RunExpiry::Expired { .. }), "{verdict:?}");
+}
+
+#[test]
 fn another_runs_inbox_preserves_referenced_task_and_sender() {
     use aether_core::{
         id::InboxItemId,

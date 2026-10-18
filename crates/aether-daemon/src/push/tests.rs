@@ -139,7 +139,17 @@ impl Fixture {
         let kind = EventKind::QuestionAsked {
             question: question.into(),
         };
-        let draft = EventDraft::new(Actor::agent(agent), kind).agent(agent);
+        let run = self
+            .daemon
+            .runtime
+            .store()
+            .agent(agent)
+            .unwrap()
+            .unwrap()
+            .run;
+        let draft = EventDraft::new(Actor::agent(agent), kind)
+            .agent(agent)
+            .run(run);
         self.daemon
             .runtime
             .apply(Commit::new().event(draft))
@@ -319,7 +329,10 @@ async fn events_the_bus_dropped_are_replayed_from_the_store() {
         let kind = EventKind::QuestionAsked {
             question: question.into(),
         };
-        let draft = EventDraft::new(Actor::agent(agent), kind).agent(agent);
+        let run = store.agent(agent).unwrap().unwrap().run;
+        let draft = EventDraft::new(Actor::agent(agent), kind)
+            .agent(agent)
+            .run(run);
         last = store.commit(Commit::new().event(draft)).expect("commit")[0].seq;
     }
 
