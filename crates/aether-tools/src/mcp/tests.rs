@@ -99,6 +99,22 @@ fn a_url_password_and_a_secret_argument_are_not_described() {
     };
     let text = stdio.describe();
     assert_eq!(text, "stdio: npx server --token=[REDACTED] /srv");
+
+    let tail = McpTransportSpec::Stdio {
+        command: PathBuf::from("srv"),
+        args: vec![
+            "--token=abc&SECRETTAIL".into(),
+            "--token".into(),
+            "-SECRETARG".into(),
+        ],
+        env: BTreeMap::new(),
+        cwd: None,
+    };
+    let text = tail.describe();
+    assert!(
+        !text.contains("SECRETTAIL") && !text.contains("SECRETARG"),
+        "{text}"
+    );
 }
 
 #[test]

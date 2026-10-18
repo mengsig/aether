@@ -21,7 +21,7 @@ use std::time::Duration;
 use aether_core::id::{AgentId, TaskId};
 pub use aether_core::mcp::qualified_name;
 use aether_core::mcp::{McpAuth, McpAuthState, McpServerHealth, McpServerState, McpToolInfo};
-use aether_core::redact::redact_locator;
+use aether_core::redact::{redact_argv, redact_locator};
 use aether_core::time::{Timestamp, now};
 use aether_core::tool::SideEffectClass;
 
@@ -114,21 +114,18 @@ impl McpTransportSpec {
     /// One line a person can recognise the server by. Never carries a token,
     /// nor a URL password or a secret-looking argument.
     pub fn describe(&self) -> String {
-        let text = match self {
+        match self {
             Self::Stdio { command, args, .. } => {
-                let mut text = format!("stdio: {}", command.display());
-                for arg in args {
-                    text.push(' ');
-                    text.push_str(arg);
-                }
-                text
+                let mut parts =
+                    vec![redact_locator(&format!("stdio: {}", command.display())).into_owned()];
+                parts.extend(redact_argv(args));
+                parts.join(" ")
             }
             Self::Http { url, token } => {
                 let auth = if token.is_some() { " (token)" } else { "" };
-                format!("http: {url}{auth}")
+                redact_locator(&format!("http: {url}{auth}")).into_owned()
             }
-        };
-        redact_locator(&text).into_owned()
+        }
     }
 }
 

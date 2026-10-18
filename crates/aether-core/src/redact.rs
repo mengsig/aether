@@ -134,6 +134,34 @@ pub fn redact_locator(text: &str) -> Cow<'_, str> {
     LOCATOR.redact(text)
 }
 
+/// Masks the secret values of a command line one argument at a time, so a
+/// value is hidden whole even when it holds `&`, spaces or a leading `-`.
+pub fn redact_argv(args: &[String]) -> Vec<String> {
+    static SECRET_FLAG: LazyLock<Regex> = LazyLock::new(|| {
+        let pattern = format!(r"(?i)^--?[A-Za-z0-9_\-]*{LOCATOR_SECRET_NAME}[A-Za-z0-9_\-]*$");
+        compile_rule(&pattern, "").0
+    });
+    let mut out = Vec::with_capacity(args.len());
+    let mut hide_next = false;
+    for arg in args {
+        if std::mem::take(&mut hide_next) {
+            out.push("[REDACTED]".to_owned());
+            continue;
+        }
+        match arg.split_once('=') {
+            Some((name, _)) if SECRET_FLAG.is_match(name) => {
+                out.push(format!("{name}=[REDACTED]"));
+            }
+            _ if SECRET_FLAG.is_match(arg) => {
+                hide_next = true;
+                out.push(arg.clone());
+            }
+            _ => out.push(redact_locator(arg).into_owned()),
+        }
+    }
+    out
+}
+
 /// Same rule as the built-in set: a rule that cannot compile stops the process.
 fn compile_rule(pattern: &str, replacement: &'static str) -> (Regex, &'static str) {
     #[allow(clippy::expect_used)]
@@ -175,6 +203,18 @@ mod tests {
             redact_locator("stdio: npx -y srv"),
             Cow::Borrowed(_)
         ));
+    }
+
+    #[test]
+    fn argv_masks_each_secret_value_whole() {
+        let argv =
+            |items: &[&str]| -> Vec<String> { items.iter().map(|s| s.to_string()).collect() };
+        let out = redact_argv(&argv(&["--token=abc&SECRETTAIL", "/srv"]));
+        assert_eq!(out, ["--token=[REDACTED]", "/srv"]);
+        let out = redact_argv(&argv(&["--password=hello SECRETTAIL", "x"]));
+        assert_eq!(out, ["--password=[REDACTED]", "x"]);
+        let out = redact_argv(&argv(&["--token", "-SECRETARG", "--verbose"]));
+        assert_eq!(out, ["--token", "[REDACTED]", "--verbose"]);
     }
 
     /// One planted key per credentialed provider the distribution ships, so
