@@ -144,7 +144,11 @@ pub fn redact_argv(args: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     let mut hide_next = false;
     for arg in args {
-        if std::mem::take(&mut hide_next) {
+        // A long secret-looking flag is still a flag even where a value was expected:
+        // `--auth --token SECRET` must hide SECRET, so `--token` is not masked itself.
+        let name = arg.split_once('=').map_or(arg.as_str(), |(name, _)| name);
+        let is_long_flag = name.starts_with("--") && SECRET_FLAG.is_match(name);
+        if std::mem::take(&mut hide_next) && !is_long_flag {
             out.push("[REDACTED]".to_owned());
             continue;
         }
@@ -215,6 +219,8 @@ mod tests {
         assert_eq!(out, ["--password=[REDACTED]", "x"]);
         let out = redact_argv(&argv(&["--token", "-SECRETARG", "--verbose"]));
         assert_eq!(out, ["--token", "[REDACTED]", "--verbose"]);
+        let out = redact_argv(&argv(&["--auth", "--token", "SECRET"]));
+        assert_eq!(out, ["--auth", "--token", "[REDACTED]"]);
     }
 
     /// One planted key per credentialed provider the distribution ships, so
