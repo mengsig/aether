@@ -146,6 +146,9 @@ impl Store for CountingStore {
     fn is_descendant(&self, root: AgentId, id: AgentId) -> StoreResult<bool> {
         self.inner.is_descendant(root, id)
     }
+    fn fleet_usage(&self) -> StoreResult<aether_core::model::Usage> {
+        self.inner.fleet_usage()
+    }
     fn subtree_ids(&self, root: AgentId) -> StoreResult<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
     }
@@ -620,5 +623,38 @@ async fn an_idle_tick_reads_only_budgeted_roots_and_one_live_snapshot() {
     assert_eq!(
         reads.agent_reads, 0,
         "no deadlines means no individual re-reads"
+    );
+}
+
+#[tokio::test]
+async fn status_never_reads_the_whole_fleet() {
+    let store = CountingStore::new(Arc::new(SqliteStore::open_in_memory().expect("store")));
+    let h = harness_full(
+        vec![],
+        |_| {},
+        |_| {},
+        None,
+        None,
+        Some(store.clone()),
+        |_| {},
+    )
+    .await;
+    h.runtime.shutdown().await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(idle_spec(), Actor::user())
+        .expect("agent");
+    store.take();
+
+    let status = h.runtime.status().expect("status");
+    let reads = store.take();
+    assert_eq!(status.agents_live, 1);
+    assert!(
+        reads
+            .agent_filters
+            .iter()
+            .all(|f| f.live_only || f.run == Some(agent.run)),
+        "status read the whole fleet: {:?}",
+        reads.agent_filters
     );
 }

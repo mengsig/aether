@@ -206,3 +206,38 @@ fn ctrl_z_suspends_from_composer_and_overlays_without_changing_the_draft() {
         assert_eq!(app.input.text, "unsent draft");
     }
 }
+
+fn tree_requests(effects: &[Effect]) -> usize {
+    effects
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Effect::Request {
+                    command: Command::GetTree { .. },
+                    ..
+                }
+            )
+        })
+        .count()
+}
+
+#[test]
+fn lease_renewal_does_not_refetch_the_tree_but_a_task_event_does() {
+    let (mut app, id) = app_with_agent();
+    app.tree_in_flight = false;
+    let renewed = event(
+        10,
+        id,
+        EventKind::LeaseRenewed {
+            expires_at: now() + chrono::Duration::seconds(30),
+        },
+    );
+    let effects = app.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(renewed))));
+    assert_eq!(tree_requests(&effects), 0);
+    assert!(!app.tree_stale);
+
+    let started = event(11, id, EventKind::TaskStarted);
+    let effects = app.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(started))));
+    assert_eq!(tree_requests(&effects), 1);
+}

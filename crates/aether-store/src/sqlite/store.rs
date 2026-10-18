@@ -18,7 +18,7 @@ use aether_core::idempotency::{
 use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::MemoryRecord;
-use aether_core::model::Message;
+use aether_core::model::{Message, Usage};
 use aether_core::repository::RepositoryAlias;
 use aether_core::schedule::{Schedule, ScheduleOccurrence};
 use aether_core::snapshot::{Invocation, InvocationSnapshot, SnapshotMemories};
@@ -334,6 +334,23 @@ impl Store for SqliteStore {
             [root.to_string(), id.to_string()],
             |row| row.get(0),
         )?)
+    }
+
+    fn fleet_usage(&self) -> Result<Usage> {
+        let conn = self.read_conn();
+        let mut stmt = conn.prepare_cached(
+            "SELECT json_extract(body, '$.stats.usage') FROM agents WHERE status != ?1",
+        )?;
+        let rows = stmt.query_map([AgentStatusKind::Imported.as_str()], |row| {
+            row.get::<_, String>(0)
+        })?;
+        let mut total = Usage::default();
+        for row in rows {
+            let usage: Usage = serde_json::from_str(&row?)
+                .map_err(|e| StoreError::Corrupt(format!("invalid agent usage: {e}")))?;
+            total += usage;
+        }
+        Ok(total)
     }
 
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>> {

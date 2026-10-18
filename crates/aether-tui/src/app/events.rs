@@ -172,10 +172,14 @@ impl App {
         if let (EventKind::QuestionAsked { question }, Some(agent)) = (&event.kind, agent) {
             self.voice_question(agent, event.seq, question);
         }
-        if matches!(
-            family.as_str(),
-            "agent" | "task" | "lease" | "approval" | "recovery"
-        ) {
+        // Heartbeats change nothing the tree shows.
+        let heartbeat = matches!(event.kind, EventKind::LeaseRenewed { .. });
+        if !heartbeat
+            && matches!(
+                family.as_str(),
+                "agent" | "task" | "lease" | "approval" | "recovery"
+            )
+        {
             self.refresh_tree(&mut effects);
         }
         effects

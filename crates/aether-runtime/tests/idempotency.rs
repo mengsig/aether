@@ -390,6 +390,9 @@ impl Store for CommitLog {
     fn is_descendant(&self, root: AgentId, id: AgentId) -> StoreResult<bool> {
         self.inner.is_descendant(root, id)
     }
+    fn fleet_usage(&self) -> StoreResult<aether_core::model::Usage> {
+        self.inner.fleet_usage()
+    }
     fn subtree_ids(&self, root: AgentId) -> StoreResult<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
     }

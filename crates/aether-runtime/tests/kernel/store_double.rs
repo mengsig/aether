@@ -196,6 +196,9 @@ impl Store for CommitsMidPass {
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool> {
         self.inner.is_descendant(root, id)
     }
+    fn fleet_usage(&self) -> Result<aether_core::model::Usage> {
+        self.inner.fleet_usage()
+    }
     fn subtree_ids(&self, root: AgentId) -> Result<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
     }

@@ -8,6 +8,45 @@ use aether_core::time::{Timestamp, now};
 use aether_store::{AgentFilter, EventFilter, TaskFilter};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Counts `live` agents into the status tallies.
+fn count_live(status: &mut RuntimeStatus, live: &[Agent]) {
+    for agent in live {
+        status.agents_live += 1;
+        if agent.paused {
+            status.agents_paused += 1;
+        }
+        match agent.status.kind() {
+            AgentStatusKind::Running => status.agents_running += 1,
+            AgentStatusKind::Waiting => status.agents_waiting += 1,
+            AgentStatusKind::Blocked => {
+                status.agents_blocked += 1;
+                if matches!(
+                    &agent.status,
+                    AgentStatus::Blocked {
+                        reason: BlockReason::Exhausted { .. }
+                    }
+                ) {
+                    status.agents_suspended += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Runs one status section and logs how long it took, so a slow section on a
+/// real daemon shows up under `RUST_LOG=aether_runtime=debug`.
+fn timed<T>(section: &'static str, f: impl FnOnce() -> T) -> T {
+    let started = std::time::Instant::now();
+    let out = f();
+    tracing::debug!(
+        section,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "status section"
+    );
+    out
+}
+
 /// Receipts read per page while walking a run's recent billing back in time.
 const RECEIPT_PAGE: usize = 256;
 
@@ -18,6 +57,7 @@ impl Runtime {
         // Read before the struct literal: `provider_health` takes the same
         // lock, and a guard living inside the literal would still be held.
         let engine_turns_running = self.sched.lock().on_engine() as u32;
+        let started = std::time::Instant::now();
         let mut status = RuntimeStatus {
             yolo: self.config.yolo,
             network_default: self.config.network_default,
@@ -26,47 +66,21 @@ impl Runtime {
             engine_turns_running,
             run_budget_usd: self.config.run_budget_usd,
             engines,
-            providers: self.provider_health()?,
-            resource_leases: self.resource_holdings(),
-            mcp: self.mcp_health(),
-            low_disk: self.low_disk(),
+            providers: timed("providers", || self.provider_health())?,
+            resource_leases: timed("resource_leases", || self.resource_holdings()),
+            mcp: timed("mcp", || self.mcp_health()),
+            low_disk: timed("low_disk", || self.low_disk()),
             ..Default::default()
         };
-        for agent in self.store.agents(&AgentFilter {
-            live_only: true,
-            ..Default::default()
-        })? {
-            status.agents_live += 1;
-            if agent.paused {
-                status.agents_paused += 1;
-            }
-            match agent.status.kind() {
-                AgentStatusKind::Running => status.agents_running += 1,
-                AgentStatusKind::Waiting => status.agents_waiting += 1,
-                AgentStatusKind::Blocked => {
-                    status.agents_blocked += 1;
-                    if matches!(
-                        &agent.status,
-                        AgentStatus::Blocked {
-                            reason: BlockReason::Exhausted { .. }
-                        }
-                    ) {
-                        status.agents_suspended += 1;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let all = self.store.agents(&AgentFilter::default())?;
-        for agent in &all {
-            // An imported run is an archive of what another machine spent.
-            // Counting it here would bill this daemon for someone else's
-            // work; it is reported under its own run, by `runs report`.
-            if agent.status.kind() != AgentStatusKind::Imported {
-                status.usage_total += agent.stats.usage;
-            }
-        }
-        status.runs = self.run_summaries(&all)?;
+        let live = timed("live_agents", || {
+            self.store.agents(&AgentFilter {
+                live_only: true,
+                ..Default::default()
+            })
+        })?;
+        count_live(&mut status, &live);
+        status.usage_total = timed("usage_total", || self.store.fleet_usage())?;
+        status.runs = timed("runs", || self.run_summaries(&live))?;
         status.tasks_active = self
             .store
             .tasks(&TaskFilter {
@@ -79,20 +93,37 @@ impl Runtime {
             .len() as u32;
         status.pending_approvals = self.store.pending_approvals()?.len() as u32;
         status.approval_default = self.config.approval_default;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "status: total"
+        );
         Ok(status)
     }
 
     /// Every live run's spend, rated over the receipts of its recent window.
-    fn run_summaries(&self, all: &[Agent]) -> Result<Vec<RunSummary>> {
+    /// `live` is the live agents; each live run's members are read by run, so
+    /// a fleet of finished runs is never decoded.
+    fn run_summaries(&self, live: &[Agent]) -> Result<Vec<RunSummary>> {
         let at = now();
         let since = at - chrono::Duration::minutes(RATE_WINDOW_MINUTES);
-        let live_runs: BTreeSet<RunId> =
-            all.iter().filter(|a| a.is_live()).map(|a| a.run).collect();
+        let live_runs: BTreeSet<RunId> = live.iter().map(|a| a.run).collect();
+        let mut members = Vec::new();
+        for run in &live_runs {
+            members.extend(self.store.agents(&AgentFilter {
+                run: Some(*run),
+                ..Default::default()
+            })?);
+        }
+        debug_assert!(live.iter().all(|l| members.iter().any(|m| m.id == l.id)));
         let mut window_start = BTreeMap::new();
         for run in live_runs {
             window_start.extend(self.billing_at(run, since)?);
         }
-        Ok(aether_core::budget::active_runs(all, &window_start, at))
+        Ok(aether_core::budget::active_runs(
+            &members,
+            &window_start,
+            at,
+        ))
     }
 
     /// What each agent of `run` with a usage receipt after `since` had billed

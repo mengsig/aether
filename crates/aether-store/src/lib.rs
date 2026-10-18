@@ -588,6 +588,9 @@ pub trait Store: Send + Sync {
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool>;
     /// `root` and every descendant of it; empty when `root` is unknown.
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>>;
+    /// Usage summed over every agent that is not an imported archive, decoding
+    /// each row's usage alone rather than the whole agent.
+    fn fleet_usage(&self) -> Result<aether_core::model::Usage>;
     /// Whether any agent, including archived and terminal agents, carries this repository scope.
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool>;
 
