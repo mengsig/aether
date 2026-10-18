@@ -1,8 +1,7 @@
 //! What one scheduler tick costs over a large fleet, what the budget
 //! roll-up's skip saves, and what a run report over a deep imported chain
-//! costs. The roll-up reads the whole agent table, terminal
-//! history included, and the tick runs every second, so the size of that read
-//! is the number worth holding to.
+//! costs. Budget passes read only budgeted roots and their subtrees, including
+//! terminal descendants whose spend still counts.
 //!
 //! Ignored by default: a debug build's timings say nothing about the daemon
 //! anyone runs. `scripts/ci.sh` runs it in release; by hand:
@@ -141,23 +140,20 @@ fn seed_fleet(store: &dyn Store) -> aether_store::Result<usize> {
     let mut seeded = 0;
     for _ in 0..SUPERVISORS {
         let supervisor = AgentId::new();
-        let mut commit = Commit::new().mutate(Mutation::UpsertAgent(Agent {
-            status: AgentStatus::Waiting {
-                condition: WaitCondition::Inbox,
-            },
-            config: AgentConfig {
-                // High enough that nothing is stopped: the pass has to total
-                // every subtree before it can say so.
-                cost_budget: Some(1_000_000.0),
-                ..Default::default()
-            },
-            ..row(supervisor, None, at)
-        }));
+        let mut root = row(supervisor, None, at);
+        root.status = AgentStatus::Waiting {
+            condition: WaitCondition::Inbox,
+        };
+        // High enough that the pass totals every subtree without stopping it.
+        root.config.cost_budget = Some(1_000_000.0);
+        let mut commit = Commit::new().mutate(Mutation::UpsertAgent(root));
         seeded += 1;
         for _ in 0..CHILDREN_EACH {
             let mut child = row(AgentId::new(), Some(supervisor), at);
             child.status = AgentStatus::Completed {
-                summary: Some("done".into()),
+                summary: Some(
+                    "Implemented the requested change and verified the affected tests. ".repeat(8),
+                ),
             };
             child.stats.usage = Usage {
                 input_tokens: 1_000,
@@ -196,7 +192,13 @@ fn row(id: AgentId, parent: Option<AgentId>, at: aether_core::time::Timestamp) -
         resume_wait: None,
         restarted_from: None,
         restarted_as: None,
-        config: AgentConfig::default(),
+        config: AgentConfig {
+            instructions: Some(
+                "Follow the task scope, inspect the surrounding code, and verify the change. "
+                    .repeat(60),
+            ),
+            ..Default::default()
+        },
         stats: Default::default(),
         run: Default::default(),
         created_at: at,

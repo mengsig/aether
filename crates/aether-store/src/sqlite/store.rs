@@ -788,6 +788,12 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
             .collect();
         sql.push_str(&format!(" AND status NOT IN ({})", terminal.join(",")));
     }
+    if filter.budgeted_only {
+        sql.push_str(
+            " AND (json_extract(body, '$.config.token_budget') IS NOT NULL
+                 OR json_extract(body, '$.config.cost_budget') IS NOT NULL)",
+        );
+    }
     if !filter.statuses.is_empty() {
         let placeholders: Vec<String> = filter
             .statuses

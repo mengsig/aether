@@ -8,8 +8,7 @@ use aether_core::{
 use aether_store::{AgentFilter, Commit, EventFilter};
 use std::sync::Arc;
 /// The roll-up reads only stored state, so nothing but a commit can change its
-/// verdict. Skipping an unchanged fleet matters: the pass reads the whole agent
-/// table, terminal history included, and the tick runs every second.
+/// verdict. Skip an unchanged fleet to avoid repeating subtree reads.
 pub(super) fn enforce_budgets(runtime: &Arc<Runtime>) -> Result<()> {
     // Read before the pass: a commit landing while it runs was never looked
     // at, and recording a later count would mark it checked and skip it. The
@@ -29,20 +28,21 @@ pub(super) fn enforce_budgets(runtime: &Arc<Runtime>) -> Result<()> {
 /// and warns the person before that. A budget covers the agent and its
 /// descendants: a supervisor's limit is meaningless if delegating escapes it.
 fn check_budgets(runtime: &Arc<Runtime>) -> Result<()> {
-    let all = runtime.store.agents(&AgentFilter::default())?;
-    let budgeted: Vec<&Agent> = all
-        .iter()
-        .filter(|a| {
-            a.is_live() && (a.config.token_budget.is_some() || a.config.cost_budget.is_some())
-        })
-        .collect();
-    if budgeted.is_empty() {
-        return Ok(());
-    }
-    // Terminal descendants still count: their spend already happened.
-    let totals = aether_core::budget::subtree_usage(&all);
+    let budgeted = runtime.store.agents(&AgentFilter {
+        live_only: true,
+        budgeted_only: true,
+        ..Default::default()
+    })?;
     for agent in budgeted {
-        let usage = totals.get(&agent.id).copied().unwrap_or_default();
+        debug_assert!(agent.is_live());
+        debug_assert!(agent.config.token_budget.is_some() || agent.config.cost_budget.is_some());
+        // Terminal descendants still count: their spend already happened.
+        let mut usage = aether_core::model::Usage::default();
+        for id in runtime.store.subtree_ids(agent.id)? {
+            if let Some(member) = runtime.store.agent(id)? {
+                usage += member.stats.usage;
+            }
+        }
         let Some(mut agent) = still_live(runtime, agent.id)? else {
             continue;
         };
@@ -98,13 +98,14 @@ fn still_live(runtime: &Runtime, id: AgentId) -> Result<Option<Agent>> {
 
 /// VISION §3.1: `deadline` is a hard stop like a budget. The coarse tick is
 /// the clock, so an agent stops within a second of its instant.
-pub(super) fn enforce_deadlines(runtime: &Arc<Runtime>) -> Result<()> {
+pub(super) fn enforce_deadlines(runtime: &Arc<Runtime>, live: &[Agent]) -> Result<()> {
     let at = now();
-    let live = runtime.store.agents(&AgentFilter {
-        live_only: true,
-        ..Default::default()
-    })?;
     for agent in live {
+        debug_assert!(agent.is_live());
+        if agent.deadline_passed(at).is_none() {
+            continue;
+        }
+        debug_assert!(agent.config.deadline.is_some());
         let Some(agent) = still_live(runtime, agent.id)? else {
             continue;
         };

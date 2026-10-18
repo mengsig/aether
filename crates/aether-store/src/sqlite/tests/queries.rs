@@ -593,3 +593,42 @@ fn snapshot_memories_follow_the_requested_order_and_match_the_stored_snapshots()
     assert_eq!(found[1].task, Some(task.id));
     assert!(store.snapshot_memories(&[]).expect("empty").is_empty());
 }
+
+#[test]
+fn budget_filter_selects_only_live_budgeted_agents_when_requested() {
+    let store = SqliteStore::open_in_memory().expect("store");
+    let plain = agent();
+    let mut token = agent();
+    token.config.token_budget = Some(0);
+    let mut cost = agent();
+    cost.config.cost_budget = Some(0.0);
+    let mut ended = token.clone();
+    ended.id = aether_core::id::AgentId::new();
+    ended.status = AgentStatus::Completed { summary: None };
+    store
+        .commit(
+            [plain, token.clone(), cost.clone(), ended.clone()]
+                .into_iter()
+                .fold(Commit::new(), |commit, row| {
+                    commit.mutate(Mutation::UpsertAgent(row))
+                }),
+        )
+        .expect("seed");
+    let filter = AgentFilter {
+        budgeted_only: true,
+        live_only: true,
+        ..Default::default()
+    };
+    let rows = store.agents(&filter).expect("budgeted");
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|row| row.id == token.id));
+    assert!(rows.iter().any(|row| row.id == cost.id));
+    let all = store
+        .agents(&AgentFilter {
+            live_only: false,
+            ..filter
+        })
+        .expect("including terminal");
+    assert_eq!(all.len(), 3);
+    assert!(all.iter().any(|row| row.id == ended.id));
+}

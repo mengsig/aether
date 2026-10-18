@@ -57,13 +57,7 @@ pub fn tick(runtime: &Arc<Runtime>) -> Result<()> {
     crate::cancellation::drain(runtime)?;
     expire_backoff(runtime)?;
     enforce_budgets(runtime)?;
-    enforce_deadlines(runtime)?;
-    crate::schedules::tick(runtime, now())?;
-    gate_dependencies(runtime)?;
-    let live = runtime.store.agents(&AgentFilter {
-        live_only: true,
-        ..Default::default()
-    })?;
+    let live = live_after_enforcement(runtime)?;
     let lineage = Lineage::from_store(&live, runtime.store.as_ref())?;
     let mut ready: Vec<Runnable> = Vec::new();
     let at = now();
@@ -149,6 +143,25 @@ pub fn tick(runtime: &Arc<Runtime>) -> Result<()> {
     }
     dispatch(runtime, ready, &lineage);
     Ok(())
+}
+
+/// Reuse the deadline snapshot unless enforcement or dependency gates changed it.
+fn live_after_enforcement(runtime: &Arc<Runtime>) -> Result<Vec<Agent>> {
+    let watermark = runtime.store.commits();
+    let filter = AgentFilter {
+        live_only: true,
+        ..Default::default()
+    };
+    let mut live = runtime.store.agents(&filter)?;
+    enforce_deadlines(runtime, &live)?;
+    crate::schedules::tick(runtime, now())?;
+    gate_dependencies(runtime)?;
+    if runtime.store.commits() != watermark {
+        live = runtime.store.agents(&filter)?;
+    }
+    debug_assert!(live.iter().all(Agent::is_live));
+    debug_assert!(runtime.store.commits() >= watermark);
+    Ok(live)
 }
 
 /// An agent with something to do this tick.

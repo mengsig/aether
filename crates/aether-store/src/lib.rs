@@ -376,6 +376,8 @@ pub struct AgentFilter {
     pub run: Option<RunId>,
     pub statuses: Vec<AgentStatusKind>,
     pub live_only: bool,
+    /// Select agents with a token or cost budget before decoding their bodies.
+    pub budgeted_only: bool,
     /// Leave out agents cleared from the view. Off by default so
     /// every internal walk - subtree, budget rollup, recovery - still sees
     /// them: archiving is a view filter, never a deletion.

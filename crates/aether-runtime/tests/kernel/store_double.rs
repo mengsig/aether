@@ -28,7 +28,7 @@ use aether_store::{
 /// rather than by its arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hook {
-    /// The whole agent table: the read `check_budgets` decides from.
+    /// The budgeted roots: the read `check_budgets` decides from.
     BudgetPassReadsAgents,
     /// This agent's inbox seq while it stands Ready: the scheduler asking
     /// whether it has work, after it took its snapshot of the fleet and
@@ -250,8 +250,10 @@ impl Store for CommitsMidPass {
             ));
         }
         let agents = self.inner.agents(filter)?;
-        if *filter == AgentFilter::default() {
+        if filter.budgeted_only {
             self.fire(Hook::BudgetPassReadsAgents)?;
+        }
+        if *filter == AgentFilter::default() {
             self.fire(Hook::FleetRead)?;
         }
         Ok(agents)

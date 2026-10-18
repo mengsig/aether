@@ -16,6 +16,8 @@ fn lease_event_types() -> Vec<String> {
 struct StoreReads {
     /// Event rows deserialized by every `events()` call.
     rows: usize,
+    agent_filters: Vec<AgentFilter>,
+    agent_reads: usize,
     /// Calls narrowed to the two lease kinds: one quarantine walk each.
     lease_walks: usize,
 }
@@ -138,6 +140,7 @@ impl Store for CountingStore {
         self.inner.latest_exhaustion_incident(agent, model)
     }
     fn agent(&self, id: AgentId) -> StoreResult<Option<Agent>> {
+        self.reads.lock().expect("reads").agent_reads += 1;
         self.inner.agent(id)
     }
     fn is_descendant(&self, root: AgentId, id: AgentId) -> StoreResult<bool> {
@@ -170,6 +173,11 @@ impl Store for CountingStore {
         self.inner.alias_repository(alias, by, hold)
     }
     fn agents(&self, filter: &AgentFilter) -> StoreResult<Vec<Agent>> {
+        self.reads
+            .lock()
+            .expect("reads")
+            .agent_filters
+            .push(filter.clone());
         self.inner.agents(filter)
     }
     fn task(&self, id: TaskId) -> StoreResult<Option<Task>> {
@@ -560,5 +568,57 @@ async fn the_quarantine_walk_reads_only_lease_events_and_only_once_per_agent() {
     assert!(
         held.contains(&(interrupted, vec![key("interrupted-key")])),
         "{held:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_idle_tick_reads_only_budgeted_roots_and_one_live_snapshot() {
+    let store = CountingStore::new(Arc::new(SqliteStore::open_in_memory().expect("store")));
+    let h = harness_full(
+        vec![],
+        |_| {},
+        |_| {},
+        None,
+        None,
+        Some(store.clone()),
+        |_| {},
+    )
+    .await;
+    h.runtime.shutdown().await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(idle_spec(), Actor::user())
+        .expect("agent");
+    let mut agent = agent;
+    agent.status = AgentStatus::Waiting {
+        condition: aether_core::agent::WaitCondition::Inbox,
+    };
+    store
+        .commit(Commit::new().mutate(Mutation::UpsertAgent(agent)))
+        .expect("waiting");
+    store.take();
+
+    aether_runtime::scheduler::tick(&h.runtime).expect("tick");
+    let reads = store.take();
+    assert!(!reads.agent_filters.contains(&AgentFilter::default()));
+    assert_eq!(
+        reads
+            .agent_filters
+            .iter()
+            .filter(|f| f.live_only && !f.budgeted_only)
+            .count(),
+        1
+    );
+    assert_eq!(
+        reads
+            .agent_filters
+            .iter()
+            .filter(|f| f.budgeted_only)
+            .count(),
+        1
+    );
+    assert_eq!(
+        reads.agent_reads, 0,
+        "no deadlines means no individual re-reads"
     );
 }

@@ -209,6 +209,7 @@ impl From<AgentQuery> for aether_store::AgentFilter {
             run: q.run,
             statuses: q.statuses,
             live_only: q.live_only,
+            budgeted_only: false,
             exclude_archived: !q.include_archived,
         }
     }
