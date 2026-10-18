@@ -330,17 +330,58 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(eligible(measured, SELECTION_DEFAULTS), ["high-0", "low-0", "mid-0"])
 
     def test_acceptance_needs_the_size_and_both_targets(self):
-        rates = {f"t-{index}": ("t", 0.5, 0.5 if index == 0 else 0.25) for index in range(8)}
+        rates = {f"t-{index}": (f"t{index}", 0.5, 0.5 if index == 0 else 0.25) for index in range(8)}
         measured = task_rates(self._records(rates))
         chosen = sorted(rates)
         self.assertTrue(acceptance(measured, chosen, {"min_size": 8})["accepted"])
         small = acceptance(measured, chosen, {"min_size": 9})
         self.assertFalse(small["accepted"])
         self.assertIn("8 in-band tasks", small["reasons"][0])
-        easy = task_rates(self._records({task: ("t", 0.75, 0.75) for task in rates}))
+        easy = task_rates(self._records({task: (template, 0.75, 0.75) for task, (template, _, _) in rates.items()}))
         verdict = acceptance(easy, chosen, {"min_size": 8})
         self.assertEqual(len(verdict["reasons"]), 2)
         self.assertFalse(acceptance(measured, [], {})["accepted"])
+
+
+class TemplateShareTests(unittest.TestCase):
+    """No template holds more than 20% of the final set, however far selection trims it."""
+
+    def _rates(self, templates):
+        """Tasks of each template at the given Haiku rates; every task sits on the Luna target."""
+        return {f"{template}-{index}": {"template": template, "family": "f", "infra": 0, "cost": 0.0,
+                                        "haiku": haiku, "luna": 0.3, "haiku_n": 4, "luna_n": 4,
+                                        "haiku_seconds": 1.0, "luna_seconds": 1.0}
+                for template, rates in templates.items() for index, haiku in enumerate(rates)}
+
+    def test_the_cap_holds_against_the_final_size_not_the_maximum(self):
+        # 12 "big" tasks fit 20% of max_size 60, but the set stays at 44, where 20% is 8.
+        rates = self._rates({"big": [0.5] * 8 + [0.25, 0.75] * 2, **{name: [0.5] * 8 for name in "abcd"}})
+        chosen = select(rates, {"min_size": 40, "max_size": 60})
+        counts = summary(rates, chosen)["templates"]
+        self.assertLessEqual(max(counts.values()), 0.2 * len(chosen))
+        self.assertEqual(counts["big"], 8)
+        self.assertEqual({rates[task]["haiku"] for task in chosen if task.startswith("big")}, {0.5},
+                         "the template's tasks farthest from the Haiku target go first")
+        self.assertTrue(acceptance(rates, chosen, {"min_size": 40})["accepted"])
+
+    def test_too_few_templates_shrink_the_set_and_acceptance_says_so(self):
+        # Three templates can never hold 20% each, so capping ends at one task of each.
+        rates = self._rates({"big": [0.5] * 20, "a": [0.5] * 10, "b": [0.5] * 10})
+        chosen = select(rates, {"min_size": 40, "max_size": 60})
+        self.assertEqual(summary(rates, chosen)["templates"], {"a": 1, "b": 1, "big": 1})
+        verdict = acceptance(rates, chosen, {"min_size": 40})
+        self.assertFalse(verdict["accepted"])
+        self.assertEqual(verdict["reasons"][:2], ["3 in-band tasks (< 40)", "template big holds 1 of 3 tasks (> 20%)"])
+        five = self._rates({name: [0.5] * 10 for name in ("big", "a", "b", "c", "d")})
+        self.assertEqual(len(select(five, {"min_size": 40, "max_size": 60})), 50)
+
+    def test_acceptance_refuses_a_set_one_template_dominates(self):
+        rates = self._rates({"big": [0.5] * 3, **{name: [0.5] for name in "abcdefg"}})
+        verdict = acceptance(rates, sorted(rates), {"min_size": 10})
+        self.assertFalse(verdict["accepted"])
+        self.assertEqual(verdict["reasons"], ["template big holds 3 of 10 tasks (> 20%)"])
+        balanced = self._rates({name: [0.5, 0.5] for name in "abcde"})
+        self.assertTrue(acceptance(balanced, sorted(balanced), {"min_size": 10})["accepted"])
 
 
 class ReleaseTimeTests(unittest.TestCase):

@@ -2,10 +2,11 @@
 
 Each trial gets its own Archon config, data and socket. Archon runs in
 dedicated mode, so it starts its own aetherd from the first `aether` on PATH,
-a link to the pinned candidate binary, with its config seeded from an empty
-operator config: nothing from the machine's Archon or Aether is read or
-reached. The task goes in as one `direct` pipeline item, on the arm's model at
-low effort with Archon's own budget cap. Archon ships it locally, and the
+a link to the pinned candidate binary, with its config seeded from an
+operator config that holds only the trial's cap on model turns at once:
+nothing from the machine's Archon or Aether is read or reached. The task goes
+in as one `direct` pipeline item, on the arm's model at low effort with
+Archon's own budget cap. Archon ships it locally, and the
 newest run branch holding commits becomes the graded workspace. Usage is read
 from every agent in the private Aether store and priced on the run's table.
 """
@@ -16,7 +17,7 @@ import time
 from pathlib import Path
 
 from harness_bench import isolated_socket_path, remove_socket_dir
-from harness_bench_config import strip_live_routing_env
+from harness_bench_config import scheduler_config_toml, strip_live_routing_env
 from release_bench_spend import AetherStoreProbe
 
 PIPELINE = "direct"
@@ -58,14 +59,16 @@ def config_toml(model_ref):
         "[worktrees]", "keep_on_success = true", ""])
 
 
-def prepare(layout, aether_binary, model_ref):
-    """Write the trial's Archon config and put the candidate binary first on its PATH."""
+def prepare(layout, aether_binary, model_ref, max_concurrent_turns):
+    """Write the trial's Archon config and put the candidate binary first on its PATH.
+
+    The operator config Archon seeds its Aether from holds only the trial's turn cap."""
     aether_binary = Path(aether_binary).resolve()
     assert aether_binary.is_file(), f"the candidate aether binary exists: {aether_binary}"
     for key in ("config", "data", "bin", "operator"):
         layout[key].mkdir(parents=True, exist_ok=False)
     (layout["bin"] / "aether").symlink_to(aether_binary)
-    (layout["operator"] / "config.toml").write_text("", encoding="utf-8")
+    (layout["operator"] / "config.toml").write_text(scheduler_config_toml(max_concurrent_turns), encoding="utf-8")
     (layout["config"] / "config.toml").write_text(config_toml(model_ref), encoding="utf-8")
     assert (layout["bin"] / "aether").resolve() == aether_binary, "PATH's aether is the candidate"
 
@@ -203,7 +206,7 @@ def run_archon_trial(archon_bin, aether_binary, condition, task_text, workspace,
     """Run one task through a private Archon on the candidate Aether; fills `result` like the other arms."""
     assert condition["kind"] == "archon" and condition["budget_usd"] > 0, "an Archon arm carries its budget"
     layout = archon_layout(trial_dir)
-    prepare(layout, aether_binary, condition["model"])
+    prepare(layout, aether_binary, condition["model"], condition["max_concurrent_turns"])
     env, stripped = archon_env(layout, extra_env)
     log = []
     result["env_isolation"] = {"stripped_vars": stripped, "socket_in_runtime_dir": layout["socket_dir"] is not None}

@@ -12,8 +12,11 @@ from collections import Counter
 from contextlib import closing
 from pathlib import Path
 
+import harness_bench as hb
+import release_bench
+from harness_bench_config import scheduler_config_toml
 from release_bench_archon import archon_layout, run_archon_trial
-from release_bench_arms import build_arm
+from release_bench_arms import agent_cap, build_arm
 from release_bench_pool import Gates, read_attempts, read_results, run_pool, schedule
 from release_bench_spend import (
     ALLOWANCE_USD,
@@ -328,6 +331,89 @@ class TrialIsolationTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 _price_from_store(row, self.ARM, self.CONTEXT)
 
+class AgentCapTests(unittest.TestCase):
+    """Every arm installs the cap on agents at once that its budget reservation counts."""
+    SOLO = {"id": "solo-0", "meta": {}}
+    DELEGATION = {"id": "team-0", "meta": {"allow_delegation": True}}
+
+    def test_the_caps_follow_each_harness_s_limit(self):
+        expected = {("native", False): 2, ("native", True): 5, ("old", False): 1, ("new", True): 5,
+                    ("archon", False): 2, ("archon", True): 6}
+        self.assertEqual({key: agent_cap(*key) for key in expected}, expected)
+        for model in ("haiku", "luna"):
+            for harness in ("old", "new", "archon"):
+                for delegation in (False, True):
+                    arm = build_arm(model, harness, allow_delegation=delegation)
+                    self.assertEqual(arm["condition"]["max_concurrent_turns"], arm["max_agents"])
+        native = build_arm("haiku", "native", allow_delegation=True)
+        self.assertEqual(native["condition"]["native_env"], {"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "4"})
+        luna = build_arm("luna", "native")["condition"]
+        self.assertEqual(luna["codex_config"], ["-c", "agents.max_concurrent_threads_per_session=1"])
+        with self.assertRaises(AssertionError):
+            scheduler_config_toml(0)
+
+    def test_the_reservation_counts_the_cap_the_trial_runs_under(self):
+        seen = {}
+
+        def pool(order, run_one, reservation_of, **_):
+            seen["reserve"] = {triple: reservation_of(triple) for triple in order}
+            seen["arms"] = {triple: run_one(triple) for triple in order}
+            return [], None
+        args = unittest.mock.Mock(repeats=1, seed=0, load_max=16, mem_min_gb=0, budget=100, jobs=1)
+        keys = ["haiku/native", "haiku/old", "haiku/archon"]
+        context = {"price_manifest": {"price_table": PRICE_TABLE}}
+        with tempfile.TemporaryDirectory() as directory, \
+                unittest.mock.patch.object(release_bench, "run_pool", pool), \
+                unittest.mock.patch.object(release_bench, "run_release_trial", lambda spec, arm, *_: arm):
+            release_bench.execute([self.SOLO, self.DELEGATION], keys, args, Path(directory), context)
+        self.assertEqual(len(seen["reserve"]), 6)
+        for triple, arm in seen["arms"].items():
+            self.assertEqual(seen["reserve"][triple], reservation_usd(PRICE_TABLE, "haiku", arm["max_agents"]))
+        caps = {(task, key): arm["max_agents"] for (task, _, key), arm in seen["arms"].items()}
+        self.assertEqual(caps[("team-0", "haiku/old")], 5)
+        self.assertEqual(caps[("solo-0", "haiku/archon")], 2)
+
+    def test_an_aether_trial_s_daemon_starts_under_the_cap(self):
+        condition = build_arm("haiku", "new", allow_delegation=True)["condition"]
+        seen = {}
+
+        def start(binary, env, workspace):
+            seen["config"] = Path(env["AETHER_CONFIG_DIR"], "config.toml").read_text()
+            raise RuntimeError("no daemon in a unit test")
+        with tempfile.TemporaryDirectory() as directory, \
+                unittest.mock.patch.object(hb, "install_claude_receipt_proxy", return_value=directory), \
+                unittest.mock.patch.object(hb, "read_claude_receipts", return_value=[]), \
+                unittest.mock.patch.object(hb, "stop_daemon", return_value=None), \
+                unittest.mock.patch.object(hb, "start_daemon", start):
+            result = {}
+            hb._run_isolated_aether_trial("aether", hb.isolated_env(directory), condition, "task", directory, 5,
+                                          directory, "claude", result)
+        self.assertEqual(seen["config"], "[scheduler]\nmax_concurrent_turns = 5\n")
+        self.assertIn("no daemon", result["workflow_error"])
+
+    def test_native_trials_start_under_the_subagent_caps(self):
+        launched = {}
+
+        def fake(command, cwd, timeout, stdout_path, stderr_path, env):
+            launched[command[0]] = (command, env)
+            Path(stdout_path).write_text("")
+            return {"seconds": 1.0, "exit_code": 0, "timed_out": False, "cleanup_error": None}
+        with tempfile.TemporaryDirectory() as directory, \
+                unittest.mock.patch.object(hb, "run_subprocess_capturing", side_effect=fake), \
+                unittest.mock.patch.object(hb, "native_configured_defaults", return_value={}), \
+                unittest.mock.patch.object(hb, "native_resolved_metadata", return_value=[]):
+            claude = {}
+            for model, result in (("haiku", claude), ("luna", {})):
+                condition = build_arm(model, "native", allow_delegation=True)["condition"]
+                hb.run_native_trial(condition, "task", directory, 5, directory, result, extra_env={"TMPDIR": "/t"})
+        command, env = launched["claude"]
+        self.assertEqual(env["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"], "4")
+        self.assertEqual(claude["env_isolation"]["extra_vars"], ["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", "TMPDIR"])
+        command, env = launched["codex"]
+        self.assertIn("agents.max_concurrent_threads_per_session=4", command)
+        self.assertNotIn("CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS", env)
+
+
 FAKE_ARCHON = r'''
 import json, os, shutil, sqlite3, subprocess, sys
 data = os.environ["ARCHON_DATA_DIR"]
@@ -340,6 +426,7 @@ code, out = 0, {}
 if args[0] == "setup":
     config = open(os.path.join(os.environ["ARCHON_CONFIG_DIR"], "config.toml")).read()
     assert 'mode = "dedicated"' in config and "budgets_enabled = true" in config
+    state["operator_config"] = open(os.path.join(os.environ["AETHER_CONFIG_DIR"], "config.toml")).read()
 elif args[:2] == ["daemon", "run"]:
     state["aether"] = os.path.realpath(shutil.which("aether"))
 elif args[:2] == ["repo", "add"]:
@@ -402,6 +489,8 @@ class ArchonLauncherTests(unittest.TestCase):
             self.assertEqual(result["workflow_status"], "completed")
             self.assertEqual(state["aether"], str(candidate.resolve()))
             self.assertEqual(state["aether_env"], ["AETHER_CONFIG_DIR"])
+            self.assertEqual(state["operator_config"], "[scheduler]\nmax_concurrent_turns = 2\n",
+                             "Archon seeds its Aether with the orchestrator and the stage agent as the turn cap")
             self.assertEqual(state["budget"], f"{ALLOWANCE_USD['haiku']:.2f}")
             self.assertEqual((workspace / "fixed.txt").read_text(), "done\n")
             self.assertEqual(result["archon_result_ref"], "archon/fake")

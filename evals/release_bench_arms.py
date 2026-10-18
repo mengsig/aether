@@ -6,11 +6,12 @@ the binary: `old` (the last release) and `new` (the candidate). The optional
 Archon arm queues the task on a private Archon over the candidate binary.
 Every arm runs under its tier's spend allowance (release_bench_spend), which
 a live guard enforces; harness-native caps are set to the same figure where
-the harness has one.
+the harness has one. Every arm also installs a limit on the model-calling
+agents a trial runs at once, the figure its budget reservation assumes.
 """
 from harness_bench_config import COMMON_SUFFIX, SOLO_SUFFIX
 from harness_bench_treatments import lower_tier_conditions
-from release_bench_spend import ALLOWANCE_USD
+from release_bench_spend import ALLOWANCE_USD, DELEGATION_AGENTS
 
 MODELS = ("haiku", "luna")
 HARNESSES = ("native", "old", "new")
@@ -26,15 +27,32 @@ def arm_key(model, harness):
     return f"{model}/{harness}"
 
 
+def agent_cap(harness, allow_delegation):
+    """Model-calling agents one trial of the arm may run at once: the limit the arm installs and the budget reserves.
+
+    Aether's turn scheduler counts every agent, Archon's orchestrator included. The native
+    CLIs limit only subagents, and to no fewer than one, so a native trial may run two."""
+    assert harness in HARNESSES + ("archon",), f"unknown harness {harness!r}"
+    delegates = DELEGATION_AGENTS if allow_delegation else 0
+    if harness == "native":
+        return 1 + max(1, delegates)
+    return 1 + delegates + (1 if harness == "archon" else 0)
+
+
 def _condition(model, harness, allow_delegation):
     native_key, aether_key = CONDITION_KEYS[model]
     conditions = lower_tier_conditions(COMMON_SUFFIX if allow_delegation else SOLO_SUFFIX)
     condition = dict(conditions[native_key if harness == "native" else aether_key])
+    cap = agent_cap(harness, allow_delegation)
     if harness == "native":
         if model == "haiku":
             condition["max_budget_usd"] = ALLOWANCE_USD[model]
+            condition["native_env"] = {"CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": str(cap - 1)}
+        else:
+            condition["codex_config"] = ["-c", f"agents.max_concurrent_threads_per_session={cap - 1}"]
         return condition
     condition["budget"] = {"cost_budget": ALLOWANCE_USD[model]} if model == "haiku" else {"token_budget": LUNA_TOKEN_CAP}
+    condition["max_concurrent_turns"] = cap
     return condition
 
 
@@ -44,15 +62,17 @@ def build_arm(model, harness, allow_delegation=False):
     if harness == "archon":
         _, aether_key = CONDITION_KEYS[model]
         model_ref = lower_tier_conditions(SOLO_SUFFIX)[aether_key]["model"]
-        return {"key": key, "model": model, "harness": harness, "binary_role": None,
+        cap = agent_cap(harness, allow_delegation)
+        return {"key": key, "model": model, "harness": harness, "binary_role": None, "max_agents": cap,
                 "condition": {"kind": "archon", "model": model_ref, "effort": "low",
-                              "budget_usd": ALLOWANCE_USD[model],
+                              "budget_usd": ALLOWANCE_USD[model], "max_concurrent_turns": cap,
                               "suffix": COMMON_SUFFIX if allow_delegation else SOLO_SUFFIX}}
     condition = _condition(model, harness, allow_delegation)
     assert condition["effort"] == "low", "every arm of the release bench runs at low effort"
     binary_role = None if harness == "native" else harness
     assert (binary_role is None) == condition["kind"].startswith("native-"), "only Aether arms name a binary"
-    return {"key": key, "model": model, "harness": harness, "binary_role": binary_role, "condition": condition}
+    return {"key": key, "model": model, "harness": harness, "binary_role": binary_role,
+            "max_agents": agent_cap(harness, allow_delegation), "condition": condition}
 
 
 def parse_arms(text, archon=False):

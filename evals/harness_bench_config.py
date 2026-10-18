@@ -73,6 +73,13 @@ def strip_live_routing_env(env, keep=()):
     return doomed
 
 
+def scheduler_config_toml(max_concurrent_turns):
+    """An Aether config.toml whose daemon runs at most this many model turns at once, engine turns included."""
+    assert isinstance(max_concurrent_turns, int) and max_concurrent_turns >= 1, \
+        f"a turn cap is a positive integer, not {max_concurrent_turns!r}"
+    return f"[scheduler]\nmax_concurrent_turns = {max_concurrent_turns}\n"
+
+
 # ----- native CLI command assembly ------------------------------------------
 
 

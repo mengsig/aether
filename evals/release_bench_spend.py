@@ -26,6 +26,7 @@ MARKER = "RELEASE_BENCH_TRIAL"
 POLL_SECONDS = 1.0
 # One call finished since the last poll plus the one in flight at the stop, per model-calling agent.
 OVERSHOOT_CALLS = 2
+# Delegates a delegation task may run at once; each arm installs the limit (release_bench_arms.agent_cap).
 DELEGATION_AGENTS = 4
 UNOBSERVABLE_SECONDS = 30
 STOP_GRACE_SECONDS = 5

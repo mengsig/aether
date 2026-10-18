@@ -6,9 +6,10 @@ test:    ; cargo test --workspace
 build:   ; cargo build --release -p aether
 install: ; cargo install --path crates/aether --locked
 
-# Release benchmark (docs/release-bench.md). OLD is the last release's aether
-# binary; NEW defaults to this tree's release build. ALLOW_OFF_TARGET=1 runs a set
-# whose calibration missed its targets; its verdict is then at best INCONCLUSIVE.
+# Release benchmark (docs/release-bench.md): run it only before a release, never in CI.
+# OLD is the last release's aether binary; NEW defaults to this tree's release build.
+# ALLOW_OFF_TARGET=1 runs a set whose calibration missed its targets; its verdict is
+# then at best INCONCLUSIVE.
 PYTHON   ?= python3
 NEW      ?= $(or $(CARGO_TARGET_DIR),target)/release/aether
 SET      ?= bench/release-set/v2

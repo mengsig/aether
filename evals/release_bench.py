@@ -30,7 +30,7 @@ from release_bench_calibrate import render as render_calibration
 from release_bench_generate import verify
 from release_bench_pool import Gates, read_results, run_pool, schedule
 from release_bench_report import render
-from release_bench_spend import DELEGATION_AGENTS, reservation_usd
+from release_bench_spend import reservation_usd
 from release_bench_stats import (
     GATE_DEFAULTS,
     interim_fail,
@@ -161,10 +161,16 @@ def _pin(binary, run_dir, role):
     return pin_binary(str(binary), str(run_dir / role))
 
 
-def _agents(spec, harness):
-    """Model-calling agents one trial may run at once: the root, its delegates, and Archon's orchestrator."""
-    agents = 1 + (DELEGATION_AGENTS if spec["meta"].get("allow_delegation") else 0)
-    return agents + (1 if harness == "archon" else 0)
+def arms_by_task(specs, arm_keys):
+    """{(task, arm key): arm}; each arm installs the agent cap its budget reservation counts."""
+    arms = {}
+    for spec in specs:
+        delegation = bool(spec["meta"].get("allow_delegation"))
+        for key in arm_keys:
+            model, harness = key.split("/")
+            arms[(spec["id"], key)] = build_arm(model, harness, allow_delegation=delegation)
+    assert len(arms) == len(specs) * len(arm_keys), "every (task, arm) has one arm"
+    return arms
 
 
 def execute(specs, arm_keys, args, run_dir, context, should_stop=None):
@@ -172,17 +178,16 @@ def execute(specs, arm_keys, args, run_dir, context, should_stop=None):
     by_id = {spec["id"]: spec for spec in specs}
     assert len(by_id) == len(specs), "task ids are unique"
     table = context["price_manifest"]["price_table"]
+    arms = arms_by_task(specs, arm_keys)
 
     def run_one(triple):
         task, repeat, key = triple
-        model, harness = key.split("/")
-        arm = build_arm(model, harness, allow_delegation=bool(by_id[task]["meta"].get("allow_delegation")))
-        return run_release_trial(by_id[task], arm, repeat, context)
+        return run_release_trial(by_id[task], arms[(task, key)], repeat, context)
 
     def reservation_of(triple):
         task, _, key = triple
-        model, harness = key.split("/")
-        return reservation_usd(table, model, _agents(by_id[task], harness))
+        arm = arms[(task, key)]
+        return reservation_usd(table, arm["model"], arm["max_agents"])
 
     order = schedule(sorted(by_id), arm_keys, args.repeats, args.seed)
     gates = Gates(args.load_max, args.mem_min_gb, args.budget)

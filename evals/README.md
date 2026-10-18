@@ -52,10 +52,11 @@ be inspected.
 
 ## Release bench
 
-`make bench-release OLD=path/to/last/aether` runs the frozen, calibrated task
-set in `bench/release-set/` on Haiku 5.5 and GPT-6 Luna, each natively, through
-the last release and through the candidate, and gates the candidate on its pass
-rate and cost. `make bench-calibrate` builds a new set from the generated
+`make bench-release OLD=path/to/last/aether ALLOW_OFF_TARGET=1` runs the
+frozen task set in `bench/release-set/` on Haiku 5.5 and GPT-6 Luna, each
+natively, through the last release and through the candidate, and gates the
+candidate on its pass rate and cost. Run it only before a release, never per
+change or in CI. `make bench-calibrate` builds a new set from the generated
 templates in `release_bench_families/`. See
 [docs/release-bench.md](../docs/release-bench.md).
 

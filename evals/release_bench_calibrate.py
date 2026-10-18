@@ -4,9 +4,10 @@ A task is eligible when every repeat ran cleanly (no infra error), each model
 has enough counted repeats, and native Haiku passes it between 20% and 80% of
 the time: a task Haiku always or never solves cannot show a harness change on
 its tier. Within the eligible pool, tasks nearest the Haiku target are kept
-first, no template dominates, and the subset is trimmed so the mean Haiku and
-Luna pass rates approach their targets, then the slowest tasks are dropped
-while the release matrix it implies would outlast its wall-time target.
+first, and the subset is trimmed so the mean Haiku and Luna pass rates
+approach their targets, then the slowest tasks are dropped while the release
+matrix it implies would outlast its wall-time target. Last, no template may
+hold more than 20% of the final set.
 `acceptance` then says whether the set meets the targets; an unaccepted set is
 frozen only on request, marked as such, and the runner refuses it without an
 explicit override.
@@ -76,8 +77,14 @@ def release_minutes(rates, chosen, jobs):
     return sum(per_task) / jobs / 60
 
 
+def template_cap(size, settings):
+    """The most tasks one template may hold in a set of `size`: its share of the set, but at least one."""
+    assert size >= 0 and 0 < settings["max_template_share"] <= 1, "a set size and a template share"
+    return max(1, math.floor(settings["max_template_share"] * size))
+
+
 def acceptance(rates, chosen, settings):
-    """{"accepted", "reasons", ...}: whether the chosen set meets its size and pass-rate targets."""
+    """{"accepted", "reasons", ...}: whether the chosen set meets its size, mix and pass-rate targets."""
     settings = {**SELECTION_DEFAULTS, **(settings or {})}
     reasons = []
     if len(chosen) < settings["min_size"]:
@@ -85,6 +92,10 @@ def acceptance(rates, chosen, settings):
     result = {"tasks": len(chosen), "haiku_pass": None, "luna_pass": None}
     if chosen:
         result.update(summary(rates, chosen))
+        template, count = max(result["templates"].items(), key=lambda item: (item[1], item[0]))
+        if count > settings["max_template_share"] * len(chosen):
+            reasons.append(f"template {template} holds {count} of {len(chosen)} tasks "
+                           f"(> {settings['max_template_share']:.0%})")
         haiku, luna = result["haiku_pass"], result["luna_pass"]
         if abs(haiku - settings["haiku_target"]) > settings["haiku_tolerance"]:
             reasons.append(f"mean Haiku pass {haiku:.0%} is not within {settings['haiku_tolerance']:.0%} "
@@ -112,9 +123,11 @@ def _distance(rates, chosen, settings):
 
 
 def select(rates, settings=None):
-    """The chosen task ids: eligible, template-capped, then trimmed toward the targets while above min_size."""
+    """The chosen task ids: eligible, trimmed toward the targets while above min_size, then template-capped.
+
+    The cap holds against the final set's size, so trimming can drop below min_size; acceptance reports that."""
     settings = {**SELECTION_DEFAULTS, **(settings or {})}
-    cap = max(1, math.floor(settings["max_template_share"] * settings["max_size"]))
+    cap = template_cap(settings["max_size"], settings)
     per_template = defaultdict(list)
     for task in eligible(rates, settings):
         per_template[rates[task]["template"]].append(task)
@@ -130,11 +143,29 @@ def select(rates, settings=None):
         if len(chosen) <= settings["max_size"] and not improves:
             break
         chosen.remove(best)
-    chosen = _fit_release_time(rates, chosen, settings)
+    chosen = _cap_templates(rates, _fit_release_time(rates, chosen, settings), settings)
     assert len(set(chosen)) == len(chosen), "a task is chosen once"
-    assert all(Counter(rates[task]["template"] for task in chosen)[rates[task]["template"]] <= cap
-               for task in chosen), "no template exceeds its cap"
+    final_cap = template_cap(len(chosen), settings)
+    assert all(count <= final_cap for count in Counter(rates[task]["template"] for task in chosen).values()), \
+        "no template exceeds its share of the final set"
     return sorted(chosen)
+
+
+def _cap_templates(rates, chosen, settings):
+    """Drop, from the template most over its share, the task farthest from the Haiku target until none is over.
+
+    Each drop shrinks the set and so the cap; the loop still ends, as every pass removes a task."""
+    kept = list(chosen)
+    while kept:
+        counts = Counter(rates[task]["template"] for task in kept)
+        template, count = max(counts.items(), key=lambda item: (item[1], item[0]))
+        if count <= template_cap(len(kept), settings):
+            break
+        worst = max((task for task in kept if rates[task]["template"] == template),
+                    key=lambda task: (abs(rates[task]["haiku"] - settings["haiku_target"]), task))
+        kept.remove(worst)
+    assert set(kept) <= set(chosen), "capping only removes tasks"
+    return kept
 
 
 def _fit_release_time(rates, chosen, settings):

@@ -67,7 +67,7 @@ from harness_bench_config import (
     TEAM_SUFFIX, DEFAULT_COORDINATOR_SUFFIX, CONDITIONS, DEFAULT_CONDITIONS,
     ALL_CONDITIONS, _AETHER_ISOLATED_ENV_KEYS, strip_live_routing_env,
     CLAUDE_PERMISSION_OVERRIDES, CODEX_PERMISSION_OVERRIDES, PROTOCOL_VERSION,
-    native_claude_command, native_codex_command, sanitized_native_env,
+    native_claude_command, native_codex_command, sanitized_native_env, scheduler_config_toml,
 )
 from harness_bench_process import (
     run_subprocess_capturing, _terminate_process_group, own_process_group, disown_process_group,
@@ -142,8 +142,11 @@ def run_native_trial(condition, task_text, workspace, timeout, trial_dir, result
     assert task_text.strip() in prompt, "a native prompt always carries the whole task"
     command = native_command(condition, command_builder(prompt, condition.get("model"), condition.get("effort")))
     env, stripped_env = sanitized_native_env()
+    native_env = condition.get("native_env") or {}
+    assert not any(key.startswith("AETHER_") for key in native_env), "a native setting never routes to Aether"
     env.update(extra_env or {})
-    result["env_isolation"] = {"stripped_vars": stripped_env, "extra_vars": sorted(extra_env or {})}
+    env.update(native_env)
+    result["env_isolation"] = {"stripped_vars": stripped_env, "extra_vars": sorted({*(extra_env or {}), *native_env})}
     result["configured_defaults"] = native_configured_defaults("claude" if is_claude else "codex")
     overrides = CLAUDE_PERMISSION_OVERRIDES if is_claude else CODEX_PERMISSION_OVERRIDES
     result["permission_overrides"] = [flag for flag in overrides if flag in command]
@@ -352,6 +355,10 @@ def run_aether_trial(binary, condition, task_text, workspace, timeout, trial_dir
 def _run_isolated_aether_trial(binary, env, condition, task_text, workspace, timeout, trial_dir, real_claude, result):
     # Both sides of a Claude pair start without the machine user's MCP servers (protocol version 2).
     receipts_dir = install_claude_receipt_proxy(env, trial_dir, real_claude, strict_mcp=not loads_user_mcp(condition))
+    if "max_concurrent_turns" in condition:
+        config_path = Path(env["AETHER_CONFIG_DIR"], "config.toml")
+        assert not config_path.exists(), "an isolated trial's config starts empty"
+        config_path.write_text(scheduler_config_toml(condition["max_concurrent_turns"]), encoding="utf-8")
     setup_started = time.monotonic()
     client = proc = root_id = run_id = requested_effort = None
     solve_started = None

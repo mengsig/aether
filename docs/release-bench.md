@@ -2,18 +2,42 @@
 
 `make bench-release` compares the last release of Aether with a release
 candidate, and both with the plain native CLIs, on a frozen set of short coding
-tasks. It is meant to run before every release. It runs trials in parallel,
-stops starting them at `BUDGET` (USD 20 API-equivalent), and prints a Markdown
-report that ends in a PASS, FAIL or INCONCLUSIVE verdict.
+tasks. It runs trials in parallel, stops starting them at `BUDGET` (USD 20
+API-equivalent), and prints a Markdown report that ends in a PASS, FAIL or
+INCONCLUSIVE verdict.
 
 ```sh
-make build                                     # the candidate: target/release/aether
-make bench-release OLD=path/to/aether-1.1.0    # exit 0 only on PASS
+make build                                                        # the candidate: target/release/aether
+make bench-release OLD=path/to/aether-1.1.0 ALLOW_OFF_TARGET=1    # v2 is off target (below)
 ```
 
 The run needs the `claude` and `codex` CLIs logged in, `git`, and Python 3.11
 or newer. Nothing is installed or written outside `target/release-bench/` and
 the work root (below).
+
+## Status
+
+The release bench is a release-time regression check, not a calibrated gate.
+
+- **Only before a release.** Run `make bench-release` once per release, on
+  the release candidate. Never run it per item, per pull request or in CI;
+  batch work into releases instead. CI (`scripts/ci.sh`) runs only the bench's
+  unit tests, which call no model.
+- **The set is off target.** On the default set, v2, native Haiku passes about
+  95 % of the tasks and native Luna about 30 %. The goal was about 50 % for
+  Haiku. Fair tasks of 5–15 tool calls with deterministic checks do not
+  stretch Haiku 5.5 at low effort ([set v1](#set-v1), [set v2](#set-v2)), so
+  the Haiku tier can show a loss but hardly a gain. A family of deliberately
+  hard tasks that brings Haiku near 50 % is future work.
+- **A run takes about two hours.** A full run of v2 needs at least 112
+  minutes at the default `JOBS=6`, before any wait, not the hour first aimed
+  for ([runtime](#aa-check-of-v2)).
+- **The best verdict is INCONCLUSIVE, by design.** The A/A run of v2, Aether
+  1.1.0 against itself, passed the gate on both tiers, and its overall verdict
+  was INCONCLUSIVE. An off-target set runs only with `ALLOW_OFF_TARGET=1` and
+  can show a FAIL, but never pass a release, so the command exits 1 even when
+  the gate passes. Read the report: a FAIL on either tier stops the release,
+  and "INCONCLUSIVE (gate passed on an off-target set)" is the good outcome.
 
 ## What runs
 
@@ -63,13 +87,27 @@ Caps per trial:
   cannot be found, say, or the store cannot be read), it stops the trial too.
   That is a harness failure on an Aether or Archon arm, and an infrastructure
   error on a native arm, where only the bench's reading failed.
+- A limit on the agents that call a model at once, installed in each arm's
+  harness:
+
+  | Arm | Agents at once (solo task, delegation task) | Installed as |
+  | --- | --- | --- |
+  | Aether `old`, `new` | 1, 5 | `[scheduler] max_concurrent_turns` in the trial daemon's `config.toml`, engine turns included |
+  | Archon | 2, 6 (the orchestrator counts) | the same key in the operator config Archon seeds its Aether from |
+  | Claude Code | 2, 5 | `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` of 1 or 4, beside the root |
+  | Codex | 2, 5 | `-c agents.max_concurrent_threads_per_session=1` or `4` |
+
+  The native CLIs take no subagent limit below 1, so a native trial may run
+  two agents even on a solo task. Over the limit, Aether queues the turn, and
+  the native CLIs refuse the subagent.
 - Before starting a trial, the run reserves the trial's worst case against
   `BUDGET`: the allowance plus two calls at the model's largest possible
-  price per agent it may run (a full context window and a full output). Those
-  two calls are one finished between two polls and one in flight at the stop.
-  That is USD 1.54 for a Haiku trial and USD 0.35 for a Luna trial, more for
-  delegation tasks. The run stops starting trials when a reservation no longer
-  fits.
+  price for each agent the limit above lets it run at once (a full context
+  window and a full output). Those two calls are one finished between two
+  polls and one in flight at the stop. On Haiku that is USD 1.54 for a solo
+  Aether trial and USD 2.58 for a solo native or Archon trial; on Luna, USD
+  0.35 and USD 0.54. Delegation tasks reserve more, up to USD 6.74 for Archon
+  on Haiku. The run stops starting trials when a reservation no longer fits.
 - A trial whose usage cannot be priced is charged its whole reservation. The
   exception is an Aether turn that recorded no tokens, because it failed or
   ended before any model call (a sandbox that did not start, say). Such a turn
@@ -234,9 +272,9 @@ This runs `COUNT` (200) verified candidates `CAL_REPEATS` times on the two
 native arms (`TEMPLATES=a,b` limits the templates). A task is eligible when it
 never hit an infrastructure error and native Haiku passed it in 20–80 % of its
 runs. A task Haiku always or never solves cannot show a change on its tier. The
-run then trims the eligible tasks (80–120, no template above 20 %) so the mean
-native Haiku pass rate lands near 50 % and Luna's near 30 %, preferring tasks
-whose own Haiku rate is nearest 50 %.
+run then trims the eligible tasks (80–120) so the mean native Haiku pass rate
+lands near 50 % and Luna's near 30 %, preferring tasks whose own Haiku rate is
+nearest 50 %.
 
 Last, while a release run of the set would outlast an hour, the slowest tasks
 are dropped, down to the minimum size. A release run's length is estimated from
@@ -245,9 +283,14 @@ in the v2 A/A the Aether arms took as long as native on Haiku and 1.45 times as
 long on Luna. The sum is then spread over 6 workers that never wait. That is a
 lower bound: load and budget waits come on top.
 
-The set is **accepted** when it holds at least 80 tasks, its mean Haiku rate is
-within 10 points of 50 %, its mean Luna rate is within 25–35 %, and that
-estimate is at most 60 minutes. Manifests record each task's mean solve times
+Last, no template may hold more than 20 % of the final set. While one does,
+its task farthest from the Haiku target is dropped. The cap is a share of the
+set as chosen, not of the 120 maximum, so it can take the set below 80 tasks.
+A pool of fewer than five templates can never meet it.
+
+The set is **accepted** when it holds at least 80 tasks, no template holds
+more than 20 % of them, its mean Haiku rate is within 10 points of 50 %, its
+mean Luna rate is within 25–35 %, and that estimate is at most 60 minutes. Manifests record each task's mean solve times
 from v3 on. A task carried from v1 or v2, which record none, makes the estimate
 unknown, and the set is not accepted.
 `calibration.md` lists every reason a set is not accepted. Calibration freezes
@@ -460,6 +503,9 @@ behind it. Late in the run, actual spend plus reservations in flight nears
   trials in 31 minutes. Its free workers waited 25 worker-minutes for budget
   headroom.
 
+Native and Archon trials have since reserved for two agents at once (see the
+caps above), USD 2.58 rather than 1.54 on Haiku, which adds to that pressure.
+
 The whole run took 95 minutes at `JOBS=10`. At the default of 6 workers, the
 same 670 trial-minutes need at least 112 minutes, before any wait. **v2 misses
 the hourly target**: it needs nearly two hours. Haiku's three arms take 66 % of
@@ -477,8 +523,8 @@ runs its task through a private Archon whose Aether is the candidate binary
 (`NEW`):
 
 - **Isolated state.** The trial gets its own `ARCHON_CONFIG_DIR`,
-  `ARCHON_DATA_DIR` and `ARCHON_SOCKET`, and an empty `AETHER_CONFIG_DIR` as the
-  operator config Archon seeds from. Variables that could reach a live Aether
+  `ARCHON_DATA_DIR` and `ARCHON_SOCKET`, and an `AETHER_CONFIG_DIR` as the
+  operator config Archon seeds from, holding only the trial's turn cap. Variables that could reach a live Aether
   are removed. The trial's `PATH` starts with a link to the candidate, so
   Archon's dedicated mode starts the candidate as its own `aetherd`, in the
   trial's data directory and beside the trial's socket.
@@ -528,8 +574,11 @@ These tests cover:
   grace period, and stopping marked processes;
 - trial isolation: a TMPDIR short enough for sockets, removed after a crash,
   and pricing of turns that never reached a model;
-- calibration: the band, selection, the release-time estimate and acceptance;
+- calibration: the band, selection, the template share of the final set, the
+  release-time estimate and acceptance;
 - frozen-set integrity, arm caps and trial records;
+- the agent limit each arm installs (Aether's config, Archon's seed, the
+  native CLIs' settings) and that the reservation counts the same limit;
 - the Archon launcher, against a fake `archon`;
 - one generated task per template, and the harness templates' checks against
   partial and quirk-dropping solutions.
