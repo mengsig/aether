@@ -9,7 +9,9 @@ pub async fn login(provider: String, api_key: bool, method: Option<String>) -> a
         .registry()
         .provider(&provider)
         .and_then(|p| p.auth.cli.clone());
+    let device_flow = !api_key && matches!(method.as_deref(), Some("device" | "device_code"));
     if cli_handoff.is_none()
+        && !device_flow
         && models.registry().provider(&provider).is_some()
         && !std::io::stdin().is_terminal()
     {
