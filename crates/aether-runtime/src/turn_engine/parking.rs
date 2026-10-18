@@ -54,7 +54,7 @@ impl ReapGrace {
 /// end is recorded, so every answer carries the stop. A turn parked on a
 /// question refuses `complete_task`/`fail_task` with a specific message
 /// instead - unless the agent is `long_lived`, whose settle is admitted.
-pub(super) const TURN_IS_OVER: &str = concat!(
+pub(crate) const TURN_IS_OVER: &str = concat!(
     "This turn is over: a harness tool already ended it. Stop now and make no ",
     "further tool calls; you will be woken when there is more to do."
 );

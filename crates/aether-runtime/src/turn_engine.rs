@@ -156,12 +156,12 @@ use budget_stop::{
     stop_for_crossing,
 };
 mod parking;
+pub(crate) use parking::TURN_IS_OVER;
 #[cfg(test)]
 use parking::stopped_by;
 use parking::{
     BACKGROUND_GRACE, MAX_BACKGROUND_IDS, MAX_ENGINE_ERROR, MAX_ENGINE_NAME, Park, ReapGrace,
-    STEER_GRACE, TURN_IS_OVER, clamp, names_exhaustion, park_grace, record_park, start_park,
-    stopping,
+    STEER_GRACE, clamp, names_exhaustion, park_grace, record_park, start_park, stopping,
 };
 mod steering;
 use steering::{Steering, answer_question, record_consumed, steer};

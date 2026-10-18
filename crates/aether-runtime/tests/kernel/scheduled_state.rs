@@ -211,3 +211,44 @@ async fn inspect_state_reports_unset_limits_as_null() {
         assert!(state[field].is_null(), "{field}: {state}");
     }
 }
+
+#[tokio::test]
+async fn an_api_batch_cannot_delegate_or_message_after_a_wait() {
+    let h = harness(vec![ScriptedClient::tool_calls(
+        &[
+            ("wait_for", json!({"wake_at": (now() + chrono::Duration::hours(1)).to_rfc3339()})),
+            (
+                "delegate",
+                json!({"model":"anthropic/claude-sonnet-5-5", "effort":"low", "role": "worker", "objective": "late work", "wait": false}),
+            ),
+            (
+                "send_message",
+                json!({"to": AgentId::new().to_string(), "content": "late"}),
+            ),
+        ],
+        None,
+    )])
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(spec("wait then act"), Actor::user())
+        .unwrap();
+    h.wait_until(agent.id, |s| matches!(s, AgentStatus::Waiting { .. }))
+        .await;
+    let children = h
+        .store
+        .agents(&AgentFilter {
+            parent: Some(agent.id),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(children.is_empty(), "a child was spawned after the wait");
+    let failed = h
+        .store
+        .events(0, 10_000, &EventFilter::for_agent(agent.id))
+        .unwrap()
+        .into_iter()
+        .filter(|e| matches!(&e.kind, EventKind::ToolFailed { error, .. } if error.contains("turn is over")))
+        .count();
+    assert_eq!(failed, 2);
+}

@@ -459,6 +459,16 @@ pub(super) async fn run_tool_calls(
                     }
                     runtime.apply(commit)?;
                 }
+                Ok(ToolExecution::Action(action))
+                    if effects.parked() && decides(&action) == Decides::Effect =>
+                {
+                    runtime.apply(Commit::new().event(ctx.draft(EventKind::ToolFailed {
+                        call: result.call.id,
+                        error: crate::turn_engine::TURN_IS_OVER.to_owned(),
+                        retryable: false,
+                        duration_ms: None,
+                    })))?;
+                }
                 Ok(ToolExecution::Action(action)) => {
                     ctx.agent.stats.tool_calls += 1;
                     let outcome = apply_action(runtime, ctx, action, &mut effects).await?;
