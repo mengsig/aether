@@ -420,8 +420,10 @@ fn source_root_timeout(source: &Path, timeout: Duration) -> crate::Result<PathBu
         .map_err(|error| io_error("cannot resolve Git repository root", Path::new(&top), error))?;
     if top != source {
         return Err(invalid(format!(
-            "workspace source {} must be the Git repository root {}",
+            "workspace source {} must be the Git repository root {}: an isolated child copies the whole repository, \
+             and a child may not be given a wider scope than its parent. Start the agent at {} to delegate isolated, or delegate shared",
             source.display(),
+            top.display(),
             top.display()
         )));
     }
@@ -2047,5 +2049,21 @@ mod tests {
         let nested = source.join("generated/workspaces");
         assert!(create(&nested, &source, AgentId::new()).is_err());
         assert!(!source.join("generated").exists());
+    }
+
+    #[test]
+    fn subdirectory_source_error_names_the_remedy() {
+        let (_temp, source, managed) = repo();
+        let subdir = source.join("sub");
+        fs::create_dir(&subdir).unwrap();
+        let message = create(&managed, &subdir, AgentId::new())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            message.contains("must be the Git repository root"),
+            "{message}"
+        );
+        assert!(message.contains("delegate shared"), "{message}");
+        assert!(message.contains(source.to_str().unwrap()), "{message}");
     }
 }

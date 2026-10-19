@@ -64,6 +64,9 @@ fn managed_workspace(
             target.id
         )));
     };
+    if discarded(managed_root, root) {
+        return Ok(Err(discarded_message(target.id)));
+    }
     let manifest = match workspace::load(managed_root, root) {
         Ok(manifest) => manifest,
         Err(error) => return Ok(Err(error.to_string())),
@@ -78,6 +81,20 @@ fn managed_workspace(
         managed_root: managed_root.clone(),
         manifest,
     }))
+}
+
+fn discarded_message(agent: AgentId) -> String {
+    format!("workspace for agent {agent} was discarded")
+}
+
+/// True when `root` is gone from the managed area: its owner discarded it.
+fn discarded(managed_root: &Path, root: &Path) -> bool {
+    let managed = std::fs::canonicalize(managed_root).unwrap_or_else(|_| managed_root.into());
+    root.starts_with(&managed)
+        && matches!(
+            std::fs::symlink_metadata(root),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        )
 }
 
 /// The first live agent that could still change `workspace`, described: the
@@ -225,6 +242,11 @@ impl Runtime {
             .workspace_root
             .clone()
             .ok_or_else(|| RuntimeError::Invalid(format!("agent {agent} has no workspace")))?;
+        if let Some(managed_root) = self.config.delegated_workspace_root.as_ref()
+            && discarded(managed_root, &root)
+        {
+            return Err(RuntimeError::Invalid(discarded_message(agent)));
+        }
         let windows = heads::turn_windows(self, &target)?;
         match self.own_worktree(&target, &root)? {
             Some(managed) => isolated_diff(&target, &managed, &windows),
