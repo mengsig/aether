@@ -18,6 +18,7 @@ use std::{
 };
 
 const EXTERNAL: standing::Standing = standing::Standing::External;
+const DELIVER: poll::Verdict = poll::Verdict::Deliver(EXTERNAL);
 
 pub(super) struct Fake {
     routes: HashMap<String, Value>,
@@ -210,7 +211,7 @@ fn managed_checkout_generation(
 pub(super) fn comment(id: u64, author: &str, body: &str) -> Value {
     comment_on(id, 1, author, body)
 }
-fn comment_on(id: u64, number: u64, author: &str, body: &str) -> Value {
+pub(super) fn comment_on(id: u64, number: u64, author: &str, body: &str) -> Value {
     json!({"id":id,"body":body,"issue_url":format!("https://api.github.com/repos/o/r/issues/{number}"),"html_url":format!("https://github.com/o/r/issues/{number}#issuecomment-{id}"),"updated_at":"2029-12-31T23:59:00Z","user":{"login":author,"type":"User"}})
 }
 pub(super) fn issue() -> Value {
@@ -500,8 +501,7 @@ async fn disabling_during_poll_rejects_delivery_under_commit_hold() {
             settings.revision,
             &settings.config.repositories[0],
             &candidate,
-            true,
-            &standing::Standing::External
+            DELIVER
         )
         .await
         .is_err()
@@ -594,7 +594,7 @@ async fn thread_dispatch_refusals_leave_no_orphan_agent_or_task() {
         }
         let last_seq = rt.store.last_seq().unwrap();
         let result = rt
-            .github_decide(settings.revision, repo, &candidate, true, &EXTERNAL)
+            .github_decide(settings.revision, repo, &candidate, DELIVER)
             .await;
         match refusal {
             "revision" => assert!(result.unwrap_err().to_string().contains("settings changed")),
@@ -634,15 +634,9 @@ async fn capped_thread_dispatch_does_not_replace_a_terminal_or_paused_agent() {
         let (rt, _dir) = fixture_thread().await;
         let settings = rt.github_settings().unwrap();
         let repo = &settings.config.repositories[0];
-        rt.github_decide(
-            settings.revision,
-            repo,
-            &thread_candidate(2),
-            true,
-            &EXTERNAL,
-        )
-        .await
-        .unwrap();
+        rt.github_decide(settings.revision, repo, &thread_candidate(2), DELIVER)
+            .await
+            .unwrap();
         let first = mapped_agent(&rt, 5);
         let mut agent = rt.store.agent(first).unwrap().unwrap();
         if paused {
@@ -661,7 +655,7 @@ async fn capped_thread_dispatch_does_not_replace_a_terminal_or_paused_agent() {
         let candidate = thread_candidate(3);
         for _ in 0..2 {
             let error = rt
-                .github_decide(settings.revision, repo, &candidate, true, &EXTERNAL)
+                .github_decide(settings.revision, repo, &candidate, DELIVER)
                 .await
                 .unwrap_err();
             assert!(error.to_string().contains("dispatch cap"));
@@ -675,7 +669,7 @@ async fn capped_thread_dispatch_does_not_replace_a_terminal_or_paused_agent() {
         rt.apply(Commit::new().mutate(encode(cap_key.into(), &(now(), 0u32)).unwrap()))
             .unwrap();
         assert!(
-            rt.github_decide(settings.revision, repo, &candidate, true, &EXTERNAL)
+            rt.github_decide(settings.revision, repo, &candidate, DELIVER)
                 .await
                 .unwrap()
         );
@@ -702,8 +696,10 @@ async fn prepared_thread_target_is_discarded_when_another_delivery_wins() {
             settings.revision,
             repo,
             &thread_candidate(2),
-            Some(first),
-            &EXTERNAL
+            Decision::Deliver {
+                target: first,
+                standing: EXTERNAL,
+            }
         )
         .unwrap()
     );
@@ -713,8 +709,10 @@ async fn prepared_thread_target_is_discarded_when_another_delivery_wins() {
             settings.revision,
             repo,
             &thread_candidate(3),
-            Some(second),
-            &EXTERNAL
+            Decision::Deliver {
+                target: second,
+                standing: EXTERNAL,
+            }
         )
         .unwrap()
     );
@@ -1445,8 +1443,10 @@ async fn prepared_github_spawn_rechecks_workspace_gc_admission() {
                 settings.revision,
                 &repo,
                 &thread_candidate(2),
-                Some(prepared),
-                &EXTERNAL,
+                Decision::Deliver {
+                    target: prepared,
+                    standing: EXTERNAL,
+                },
             )
             .unwrap_err();
         assert!(

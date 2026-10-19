@@ -440,7 +440,8 @@ pub(crate) enum GithubWatcherCmd {
         )]
         spawn_network: Option<bool>,
         /// Only these GitHub logins (comma-separated) may dispatch; each still
-        /// needs write access. Omitted keeps an existing repository's list.
+        /// needs write access unless it is an operator login. Omitted keeps an
+        /// existing repository's list.
         #[arg(long, value_delimiter = ',', value_name = "LOGIN,...")]
         allowed_users: Option<Vec<String>>,
         /// Print the result as JSON.
@@ -467,8 +468,8 @@ pub(crate) enum GithubWatcherCmd {
     },
     /// Name the GitHub logins whose own requests carry the local operator's
     /// authority, or --clear so that none does. A listed account is as
-    /// powerful as you are; it must still pass each repository's write check
-    /// and allowlist.
+    /// powerful as you are. It may dispatch without write access, but each
+    /// repository's allowlist still applies.
     OperatorUsers {
         /// GitHub logins with operator authority; replaces the current list.
         #[arg(

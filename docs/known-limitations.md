@@ -64,8 +64,9 @@ looks like a boundary and is not one.
 - **Tailscale HTTPS publishes machine names.** Enabling HTTPS certificates for
   a tailnet lists its machine names in public certificate-transparency logs.
 - **The GitHub watcher turns repository text into agent work.** Who may
-  trigger it is decided by repository permission and the allowlists described
-  in the [GitHub watcher guide](github-watcher.md); the text itself is
+  trigger it is decided by repository permission, the operator logins you name
+  and the allowlists described in the
+  [GitHub watcher guide](github-watcher.md); the text itself is
   untrusted input to a model. Do not point the watcher at a privileged
   workspace.
 

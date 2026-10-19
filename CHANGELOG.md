@@ -4,6 +4,24 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## Unreleased
+
+### Fixed
+
+- **GitHub operator logins dispatch without write access.** A login in the
+  watcher's `operator_users` may dispatch on any watched repository whose
+  `allowed_users`, if set, admits it, without the collaborator-permission
+  lookup. Bots never dispatch, everyone else still needs write access, and
+  operator standing still requires the text's author to be a verified
+  operator login.
+- **An ignored GitHub request someone expects an answer to is no longer
+  silent.** A request ignored from an operator login, or from a human without
+  write access, leaves one notice per thread and reason, naming the
+  repository, thread, login and reason: a note on the thread's live agent, or
+  else a `github.watcher.ignored` event. It never starts a turn. The
+  `ignored` count in `status` is unchanged (see
+  [GitHub watcher](https://github.com/mengsig/aether/blob/main/docs/github-watcher.md#ignored-requests)).
+
 ## 1.2.0
 
 A hardening release. Secrets are masked in more places (native engine output,

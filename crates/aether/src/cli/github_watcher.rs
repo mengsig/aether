@@ -344,11 +344,14 @@ fn dispatch_summary(repository: &GithubRepositoryConfig) -> String {
 }
 
 /// Who may dispatch. The allowlist only narrows, so both forms name the
-/// write-access requirement that always applies.
+/// write-access requirement, which operator logins alone are spared.
 fn requesters_summary(repository: &GithubRepositoryConfig) -> String {
     match &repository.allowed_users {
-        None => "any collaborator with write access".into(),
-        Some(users) => format!("{} (write access still required)", users.join(", ")),
+        None => "any collaborator with write access, or any operator login".into(),
+        Some(users) => format!(
+            "{} (write access still required, except for operator logins)",
+            users.join(", ")
+        ),
     }
 }
 
@@ -358,7 +361,8 @@ fn operators_summary(config: &aether_core::github::GithubWatcherConfig) -> Strin
     match &config.operator_users {
         None => "none (every GitHub request is external content)".into(),
         Some(users) => format!(
-            "{} (operator authority for their own text; write access still required)",
+            "{} (operator authority for their own text; no write access needed, each \
+             repository's allowlist still applies)",
             users.join(", ")
         ),
     }
@@ -605,7 +609,7 @@ mod tests {
         assert!(
             text.contains(
                 "Operator logins: mengsig, octocat (operator authority for their own text; \
-                 write access still required)"
+                 no write access needed, each repository's allowlist still applies)"
             ),
             "{text}"
         );
@@ -626,7 +630,10 @@ mod tests {
         };
         let text = describe(&status, "aether");
         assert!(
-            text.contains("requesters: octocat, monalisa (write access still required)"),
+            text.contains(
+                "requesters: octocat, monalisa (write access still required, except for \
+                 operator logins)"
+            ),
             "{text}"
         );
     }

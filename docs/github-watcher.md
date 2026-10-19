@@ -26,7 +26,8 @@ aether github-watcher status --json
 aether github-watcher add owner/repo --agent <agt_id>
 aether github-watcher add owner/repo --spawn-role worker --spawn-objective "Review the mentioning thread."
 
-# Optional: only these people may dispatch; each still needs write access.
+# Optional: only these people may dispatch; each still needs write access
+# unless it is an operator login.
 aether github-watcher add owner/repo --allowed-users octocat,monalisa
 aether github-watcher allowed-users owner/repo octocat monalisa
 aether github-watcher allowed-users owner/repo --clear
@@ -126,8 +127,10 @@ watcher verified them as an operator's own request (see
 name it.
 
 By default any human collaborator with write access may dispatch (see
-[Coverage, restart safety, and limits](#coverage-restart-safety-and-limits)).
-A repository's optional `allowed_users` narrows that to named GitHub logins:
+[Coverage, restart safety, and limits](#coverage-restart-safety-and-limits)),
+and so may any human account named in the watcher's `operator_users`, with or
+without write access (see [Operator logins](#operator-logins)). A repository's
+optional `allowed_users` narrows both to named GitHub logins:
 
 ```json
 { "repository": "owner/repo", "enabled": true,
@@ -136,11 +139,12 @@ A repository's optional `allowed_users` narrows that to named GitHub logins:
 ```
 
 The allowlist narrows the permission check and never replaces it. A listed
-login must still hold `admin`, `maintain`, or `write` access, so dropping
-someone's access on GitHub revokes them even while they stay listed. Anyone
-not listed is ignored exactly like an unauthorized requester: no delivery, the
-repository's `ignored` counter increases, and no collaborator-permission
-request is spent on them. For a label, the check applies to the actor who
+login that is not an operator login must still hold `admin`, `maintain`, or
+`write` access, so dropping someone's access on GitHub revokes them even while
+they stay listed. Anyone not listed, operator logins included, is ignored
+exactly like an unauthorized requester: no delivery, the repository's
+`ignored` counter increases, and no collaborator-permission request is spent
+on them. For a label, the check applies to the actor who
 applied it. Logins match case-insensitively; the daemon stores them lowercase
 without duplicates. Each must be a GitHub login (1-39 letters, digits, or
 single hyphens, not starting or ending with a hyphen), and at most 100
@@ -170,7 +174,8 @@ aether github-watcher status                             # shows "Operator login
 
 **A listed account is as powerful as you are.** Anyone who controls it, or a
 token that can post as it, can instruct your agents with your authority on
-every watched repository. Losing the account is losing operator authority.
+every watched repository its allowlist admits, whether or not the account has
+write access there. Losing the account is losing operator authority.
 The list is empty unless you set it; list only accounts you would hand your
 terminal to, and clear the list the moment one is in doubt. The list holds
 login names, not account ids: remove a login before its account is renamed or
@@ -181,9 +186,11 @@ poll. Anything short of it is delivered as before, as external content:
 
 - The requester's login is in `operator_users` (matched case-insensitively).
 - The requester may dispatch on that repository: a human account, listed in
-  the repository's `allowed_users` when one is set, with write access. The
-  list never widens this. An operator login that fails it is not delivered at
-  all, exactly like anyone else.
+  the repository's `allowed_users` when one is set. An operator login needs no
+  write access to the repository, so no collaborator-permission lookup is spent
+  on it; a bot never dispatches, whatever its login. An operator login the
+  allowlist excludes, or a bot, is not delivered at all, exactly like anyone
+  else, and leaves a [notice](#ignored-requests).
 - The delivered text is that login's own and nobody else's. GitHub must name
   that account as the author and report that the text was never edited, or
   was last edited by its author. The same holds for the title of an issue or
@@ -236,6 +243,28 @@ Repository collaborators can still submit hostile code or text. Approval mode
 alone is not a filesystem sandbox: use an appropriately isolated workspace or
 container for untrusted repositories. Do not point the watcher at a privileged
 agent merely because a repository is private.
+
+### Ignored requests
+
+An ignored request is counted in the repository's `ignored` total in
+`status`. Most are silent, but two kinds leave a one-line notice naming the
+repository, thread, login and reason: any request by an operator login (for
+example one the allowlist excludes), and any request by a human refused for
+lack of write access. The notice never carries the request's text and never
+starts a turn:
+
+- When the thread has a live agent (the fixed target, or the thread's own
+  agent under thread or automatic dispatch), it is a note on that agent's
+  transcript. The TUI and the phone's activity feed show it, and the agent's
+  next turn reads it in its note digest.
+- Otherwise it is a `github.watcher.ignored` event in the daemon's event log,
+  with `repository`, `number`, `requester`, `reason`, `url` and `notice`:
+  `aether events --type custom` lists it. No agent or checkout is created for
+  an ignored request.
+
+Each thread gets at most one notice per reason, however many requests are
+ignored there for it. Bots and logins the allowlist excludes, other than
+operator logins, stay silent apart from the count.
 
 ## API
 
@@ -309,9 +338,10 @@ label, deduplicated by event ID, independent of subsequent issue edits. The
 payload includes the label name and the actor who applied it.
 
 Authorization requires a human GitHub account with `admin`, `maintain`, or
-`write` permission (or GitHub's explicit push permission). Read/triage access,
-non-collaborators, and bots cannot dispatch. A repository's `allowed_users`,
-when set, is checked first and only narrows this further. Permission lookup failures are
+`write` permission (or GitHub's explicit push permission), or one named in
+`operator_users`. Read/triage access, non-collaborators, and bots cannot
+dispatch. A repository's `allowed_users`, when set, is checked first and only
+narrows this further, for operator logins too. Permission lookup failures are
 visible retryable errors, not authorization. Watcher replies are instructed to
 include `<!-- aether:github-reply -->`; mentioning bodies with that marker are
 ignored. Explicit human-applied labels still work on marked threads. A durable

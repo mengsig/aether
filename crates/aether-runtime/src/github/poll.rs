@@ -457,32 +457,91 @@ async fn authorship(
     Ok(facts)
 }
 
-/// Allowlist, then the write-permission lookup, cached per login for this
-/// pass. A requester the allowlist rejects costs no GitHub request.
-async fn may_dispatch(
+/// Why a requester may not dispatch on a repository.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Refusal {
+    Bot,
+    NotAllowlisted,
+    NoWriteAccess,
+}
+
+impl Refusal {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Bot => "the account is a bot",
+            Self::NotAllowlisted => "the login is not in the repository's allowed_users",
+            Self::NoWriteAccess => "the login lacks repository write access",
+        }
+    }
+
+    /// Stable name for the once-per-thread notice marker.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Bot => "bot",
+            Self::NotAllowlisted => "not-allowlisted",
+            Self::NoWriteAccess => "no-write-access",
+        }
+    }
+}
+
+/// What the watcher does with one undecided request.
+pub(super) enum Verdict {
+    Deliver(Standing),
+    /// `notify` leaves a one-line notice instead of a silent count.
+    Ignore {
+        refusal: Refusal,
+        notify: bool,
+    },
+}
+
+/// Why `actor` may not dispatch on `repo`, or `None` when it may. Bots never
+/// do; the allowlist comes first, so a login it rejects costs no request.
+/// An operator login needs no write access; anyone else's is looked up once
+/// per pass.
+async fn refusal(
     pass: &mut Pass<'_, impl Source>,
+    config: &GithubWatcherConfig,
     repo: &GithubRepositoryConfig,
     permissions: &mut HashMap<String, bool>,
     actor: &Author,
-) -> Result<bool, Error> {
+) -> Result<Option<Refusal>, Error> {
     debug_assert!(
         !actor.login.is_empty(),
         "candidates carry a validated login"
     );
-    if actor.bot || !repo.allows_requester(&actor.login) {
-        return Ok(false);
+    if actor.bot {
+        return Ok(Some(Refusal::Bot));
     }
-    if let Some(allowed) = permissions.get(&actor.login) {
-        return Ok(*allowed);
+    if !repo.allows_requester(&actor.login) {
+        return Ok(Some(Refusal::NotAllowlisted));
     }
-    let allowed = can_push(pass, &actor.login).await?;
-    permissions.insert(actor.login.clone(), allowed);
-    Ok(allowed)
+    if config.is_operator(&actor.login) {
+        return Ok(None);
+    }
+    let allowed = match permissions.get(&actor.login) {
+        Some(allowed) => *allowed,
+        None => {
+            let allowed = can_push(pass, &actor.login).await?;
+            permissions.insert(actor.login.clone(), allowed);
+            allowed
+        }
+    };
+    Ok((!allowed).then_some(Refusal::NoWriteAccess))
 }
 
-/// Standing of a request that may dispatch. The text's author must be able
-/// to dispatch too, which costs a lookup only for a label on another
-/// operator's text.
+/// Whether an ignored request is reported rather than only counted: always
+/// for an operator login, and for any human refused for lack of write access.
+fn notifies(config: &GithubWatcherConfig, candidate: &Candidate, refusal: Refusal) -> bool {
+    debug_assert!(!candidate.login.is_empty(), "candidates carry a login");
+    debug_assert!(
+        refusal != Refusal::NoWriteAccess || !candidate.bot,
+        "a bot is refused as a bot before any write-access lookup"
+    );
+    config.is_operator(&candidate.login) || refusal == Refusal::NoWriteAccess
+}
+
+/// Standing of a request that may dispatch. The text's author must be an
+/// operator login that may dispatch too; that costs no permission lookup.
 async fn standing_of(
     pass: &mut Pass<'_, impl Source>,
     config: &GithubWatcherConfig,
@@ -497,7 +556,9 @@ async fn standing_of(
     }
     let author_allowed = match &candidate.author {
         Some(author) if config.is_operator(&author.login) => {
-            may_dispatch(pass, repo, permissions, author).await?
+            refusal(pass, config, repo, permissions, author)
+                .await?
+                .is_none()
         }
         _ => false,
     };
@@ -542,15 +603,18 @@ async fn dispatch(
             login: candidate.login.clone(),
             bot: candidate.bot,
         };
-        let allowed = may_dispatch(pass, repo, &mut permissions, &requester).await?;
-        let standing = if allowed {
-            let config = &settings.config;
-            standing_of(pass, config, repo, &mut permissions, &authorship, candidate).await?
-        } else {
-            Standing::External
+        let config = &settings.config;
+        let verdict = match refusal(pass, config, repo, &mut permissions, &requester).await? {
+            None => Verdict::Deliver(
+                standing_of(pass, config, repo, &mut permissions, &authorship, candidate).await?,
+            ),
+            Some(refusal) => Verdict::Ignore {
+                refusal,
+                notify: notifies(config, candidate, refusal),
+            },
         };
         match runtime
-            .github_decide(settings.revision, repo, candidate, allowed, &standing)
+            .github_decide(settings.revision, repo, candidate, verdict)
             .await
         {
             Ok(true) => decisions += 1,

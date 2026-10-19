@@ -202,7 +202,8 @@ aether github-watcher add owner/repo --agent AGENT_ID
 aether github-watcher add owner/repo \
   --spawn-role reviewer --spawn-objective "Review the requesting thread."
 
-# Only these people may dispatch; each still needs write access.
+# Only these people may dispatch; each still needs write access unless it
+# is an operator login.
 aether github-watcher allowed-users owner/repo alice bob
 
 # These people's own requests carry your authority. Off unless you set it.
@@ -218,10 +219,13 @@ backfill old requests.
 A GitHub request reaches an agent as external content from a collaborator
 with write access, never as an instruction from you. The one exception is
 opt-in: a login named in `operator-users` speaks with your authority, for text
-the watcher verified that account wrote and nobody else edited. Such an
-account is as powerful as you are, so name only accounts you would hand your
-terminal to. It answers no approval prompt and changes no approval, network,
-or sandbox setting.
+the watcher verified that account wrote and nobody else edited. Such a login
+may dispatch on every watched repository whose allowlist admits it, even
+without write access there. Such an account is as powerful as you are, so name
+only accounts you would hand your terminal to. It answers no approval prompt
+and changes no approval, network, or sandbox setting. A request ignored from
+an operator login, or from someone without write access, leaves a one-line
+notice on the thread's agent or in `aether events` instead of silence.
 See [routing, authorization, and setup](github-watcher.md).
 
 ### Timers, webhooks, and clients
