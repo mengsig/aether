@@ -118,11 +118,11 @@ class SchemaRewind(unittest.TestCase):
 
     def test_a_newer_or_unknown_store_fails_the_lane(self):
         with tempfile.TemporaryDirectory() as directory:
-            store = store_at(directory, 26)
+            store = store_at(directory, 27)
             with self.assertRaisesRegex(fixture.LaneFailure, "newer than"):
-                migration.rewind(store, 25)
-            with self.assertRaisesRegex(fixture.LaneFailure, "no undo"):
                 migration.rewind(store, 26)
+            with self.assertRaisesRegex(fixture.LaneFailure, "no undo"):
+                migration.rewind(store, 27)
 
 
 class FakeSsh(unittest.TestCase):
