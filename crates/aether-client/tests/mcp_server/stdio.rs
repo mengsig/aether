@@ -157,3 +157,59 @@ async fn create_agent_forwards_an_explicit_child_effort() {
     assert!(result.is_error);
     assert_eq!(sink.seen().len(), 1);
 }
+
+/// Send `lines` to a stdio server and return every reply it wrote.
+async fn stdio_replies(lines: &[&str]) -> Vec<Value> {
+    let sink = Arc::new(RecordingSink::default());
+    let input = format!("{}\n", lines.join("\n"));
+    let mut output = Vec::new();
+    aether_client::mcp::stdio::serve(
+        &*sink,
+        tokio::io::BufReader::new(input.as_bytes()),
+        &mut output,
+    )
+    .await
+    .expect("serve");
+    assert!(
+        sink.seen().is_empty(),
+        "protocol errors never reach the daemon"
+    );
+    String::from_utf8(output)
+        .expect("utf8")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("each reply is one JSON line"))
+        .collect()
+}
+
+const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#;
+
+#[tokio::test]
+async fn a_malformed_line_is_answered_with_a_parse_error() {
+    let replies = stdio_replies(&["{not json", INITIALIZE]).await;
+    assert_eq!(replies[0]["error"]["code"], -32700);
+    assert_eq!(replies[0]["id"], Value::Null);
+    assert_eq!(replies[1]["id"], 1, "the server keeps serving afterwards");
+}
+
+#[tokio::test]
+async fn a_batch_is_refused_as_an_invalid_request() {
+    let batch = r#"[{"jsonrpc":"2.0","id":1,"method":"ping"}]"#;
+    let replies = stdio_replies(&[batch]).await;
+    assert_eq!(replies.len(), 1);
+    assert_eq!(replies[0]["error"]["code"], -32600);
+    assert_eq!(replies[0]["id"], Value::Null);
+}
+
+#[tokio::test]
+async fn requests_before_initialize_are_refused_but_ping_and_notifications_are_not() {
+    let early = r#"{"jsonrpc":"2.0","id":7,"method":"tools/list"}"#;
+    let ping = r#"{"jsonrpc":"2.0","id":8,"method":"ping"}"#;
+    let note = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+    let listed = r#"{"jsonrpc":"2.0","id":9,"method":"tools/list"}"#;
+    let replies = stdio_replies(&[early, ping, note, INITIALIZE, listed]).await;
+    assert_eq!(replies.len(), 4, "the notification takes no reply");
+    assert_eq!(replies[0]["error"]["code"], -32002);
+    assert_eq!(replies[0]["id"], 7);
+    assert_eq!(replies[1]["result"], json!({}));
+    assert!(replies[3]["result"]["tools"].is_array(), "{}", replies[3]);
+}
