@@ -1066,7 +1066,7 @@ pub(crate) fn sweep_orphan_refs(managed_root: &Path, source: &Path) -> crate::Re
             continue;
         }
         run(
-            git(source).args(["update-ref", "-d", reference, commit]),
+            git(source).args(["update-ref", "--no-deref", "-d", reference, commit]),
             "remove orphan workspace snapshot reference",
         )?;
         removed.push(reference.to_owned());
