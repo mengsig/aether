@@ -1,0 +1,144 @@
+//! Creating, reading, updating and archiving agents, their workspaces and
+//! their engine tools.
+
+use crate::Daemon;
+use aether_core::event::Actor;
+use aether_core::idempotency::Submission;
+use aether_protocol::{Command, ErrorReply, Reply};
+use aether_runtime::{AgentUpdate, CreateAgentSpec};
+
+use crate::connection::dispatch::blocking;
+use crate::connection::{map_err, store_err};
+
+pub(super) fn owns(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::CreateAgent(_)
+            | Command::GetAgent { .. }
+            | Command::ListAgents { .. }
+            | Command::Archive { .. }
+            | Command::UpdateAgent { .. }
+            | Command::WorkspaceDiff { .. }
+            | Command::WorkspaceIntegrate { .. }
+            | Command::WorkspaceDiscard { .. }
+            | Command::EngineTool { .. }
+            | Command::EngineTools { .. }
+    )
+}
+
+pub(super) async fn dispatch(
+    daemon: &Daemon,
+    command: Command,
+    by: Actor,
+    submission: Option<Submission>,
+) -> Result<Reply, ErrorReply> {
+    let rt = &daemon.runtime;
+    let store = rt.store().as_ref();
+    match command {
+        Command::CreateAgent(req) => create_agent(daemon, req, by, submission).await,
+        Command::GetAgent { id } => store
+            .agent(id)
+            .map_err(store_err)?
+            .map(Reply::Agent)
+            .ok_or_else(|| ErrorReply::not_found(id)),
+        Command::ListAgents { query } => {
+            let store = rt.store().clone();
+            let agents = blocking(move || store.agents(&query.into())).await?;
+            Ok(Reply::Agents(agents.map_err(store_err)?))
+        }
+        Command::Archive {
+            target, archived, ..
+        } => Ok(Reply::Agents(
+            rt.archive_agents_keyed(target, archived, by, submission)
+                .map_err(map_err)?,
+        )),
+        Command::UpdateAgent { id, patch, .. } => {
+            let update = AgentUpdate {
+                name: patch.name,
+                model: patch.model,
+                fallbacks: patch.fallbacks,
+                effort: patch.effort,
+                instructions: patch.instructions,
+                max_turns: patch.max_turns,
+                token_budget: patch.token_budget,
+                cost_budget: patch.cost_budget,
+                tools: patch.tools,
+                approval: patch.approval,
+                priority: patch.priority,
+                concurrency: patch.concurrency,
+                deadline: patch.deadline,
+                long_lived: patch.long_lived,
+                network: patch.network,
+                backend: patch.backend,
+            };
+            Ok(Reply::Agent(
+                rt.update_agent_keyed(id, update, by, submission)
+                    .map_err(map_err)?,
+            ))
+        }
+        Command::WorkspaceDiff { agent } => {
+            let reading = rt.clone();
+            let diff = blocking(move || reading.workspace_diff(agent).map_err(map_err)).await??;
+            Ok(Reply::WorkspaceDiff(Box::new(diff)))
+        }
+        Command::WorkspaceIntegrate { agent } => {
+            let writing = rt.clone();
+            let integration =
+                blocking(move || writing.workspace_integrate(agent, by).map_err(map_err)).await??;
+            Ok(Reply::WorkspaceIntegration(integration))
+        }
+        Command::WorkspaceDiscard { agent, force } => {
+            let writing = rt.clone();
+            let discard =
+                blocking(move || writing.workspace_discard(agent, force, by).map_err(map_err))
+                    .await??;
+            Ok(Reply::WorkspaceDiscarded(discard))
+        }
+        Command::EngineTool {
+            agent,
+            token,
+            name,
+            input,
+        } => {
+            let (content, is_error) = rt
+                .engine_tool(agent, &token, name, input)
+                .await
+                .map_err(map_err)?;
+            Ok(Reply::EngineTool { content, is_error })
+        }
+        Command::EngineTools { agent, token } => Ok(Reply::EngineTools {
+            tools: rt.engine_tools(agent, &token).map_err(map_err)?,
+        }),
+        _ => unreachable!("routed to the wrong command family"),
+    }
+}
+
+async fn create_agent(
+    daemon: &Daemon,
+    req: aether_protocol::CreateAgent,
+    by: Actor,
+    submission: Option<Submission>,
+) -> Result<Reply, ErrorReply> {
+    let rt = &daemon.runtime;
+    if rt.default_model().is_none() && req.model.is_none() {
+        rt.set_default_model(daemon.models.default_model().await);
+    }
+    let spec = CreateAgentSpec {
+        role: req.role,
+        name: req.name,
+        objective: req.objective,
+        model: req.model,
+        fallbacks: req.fallbacks,
+        scope: req.scope,
+        repository_root: req.repository_root,
+        parent: req.parent,
+        config: req.config,
+        approval: req.approval,
+        run: req.run,
+        start: req.start,
+    };
+    let (agent, _) = rt
+        .create_agent_keyed(spec, by, submission)
+        .map_err(map_err)?;
+    Ok(Reply::Agent(agent))
+}
