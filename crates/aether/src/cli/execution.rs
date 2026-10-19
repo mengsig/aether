@@ -56,7 +56,7 @@ pub async fn run(
         }
     };
     let chain = match model {
-        Some(m) => Some(ModelChain::parse(&m).ok_or_else(|| super::model_format_error())?),
+        Some(m) => Some(ModelChain::parse(&m).ok_or_else(super::model_format_error)?),
         // Without --model, the session default the TUI last saved, then the
         // daemon's configured one, validated the same way the
         // TUI validates it.
@@ -118,11 +118,20 @@ pub async fn run(
     let mut out = std::io::stdout();
     let mut streaming = false;
     let mut outcome = None;
+    let mut gate = GateWatch::new();
     loop {
-        let next = if socket.is_remote() {
-            tokio::select! { _ = tokio::signal::ctrl_c() => bail!("remote run monitoring interrupted; the agent remains on the host"), next = sub.next() => next }
-        } else {
-            sub.next().await
+        let next = tokio::select! {
+            _ = gate.tick() => {
+                if let Some(line) = gate.update(client.status().await?.low_disk.as_ref()) {
+                    finish_stream(&mut out, &mut streaming)?;
+                    eprintln!("{line}");
+                }
+                continue;
+            }
+            _ = tokio::signal::ctrl_c(), if socket.is_remote() => {
+                bail!("remote run monitoring interrupted; the agent remains on the host")
+            }
+            next = sub.next() => next,
         };
         let frame = match next {
             Some(frame) => frame,
@@ -245,6 +254,12 @@ pub async fn run(
                         );
                         break;
                     }
+                    EventKind::Custom { name, payload } => {
+                        if let Some(line) = retry_line(name, payload) {
+                            finish_stream(&mut out, &mut streaming)?;
+                            eprintln!("{line}");
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -364,6 +379,10 @@ async fn run_scope(
         ..Default::default()
     })
 }
+
+#[path = "run_notices.rs"]
+mod run_notices;
+use run_notices::{GateWatch, retry_line};
 
 #[path = "run_reconnect.rs"]
 mod run_reconnect;

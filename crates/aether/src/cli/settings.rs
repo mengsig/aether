@@ -32,7 +32,7 @@ pub async fn set(
         .transpose()?;
     let chain = knobs
         .model
-        .map(|m| ModelChain::parse(&m).ok_or_else(|| super::model_format_error()))
+        .map(|m| ModelChain::parse(&m).ok_or_else(super::model_format_error))
         .transpose()?;
     let patch = AgentPatch {
         name: None,
