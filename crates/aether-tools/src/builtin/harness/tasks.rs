@@ -68,7 +68,7 @@ impl Tool for CompleteTask {
                 "properties": {
                     "summary": {"type": "string", "description": "Durable summary of what was done and where."},
                     "artifacts": {"type": "array", "items": {"type": "string"}, "description": "Artifact ids (art_...) to attach."},
-                    "structured": {"type": "object", "description": "Optional machine-readable result; null or omitted sends none."}
+                    "structured": {"type": "object", "description": "Optional machine-readable result."}
                 },
                 "required": ["summary"],
                 "additionalProperties": false
@@ -138,7 +138,7 @@ impl Tool for FailTask {
                 "type": "object",
                 "properties": {
                     "error": {"type": "string"},
-                    "structured": {"type": "object", "description": "Optional machine-readable failure detail; null or omitted sends none."}
+                    "structured": {"type": "object", "description": "Optional machine-readable failure detail."}
                 },
                 "required": ["error"],
                 "additionalProperties": false
