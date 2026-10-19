@@ -153,7 +153,7 @@ pub(crate) async fn run(
 }
 
 /// What a caught unwind carried, for the failure the agent is given.
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
         .map(|s| (*s).to_owned())
