@@ -36,6 +36,7 @@ async fn an_engine_child_cannot_read_a_variable_the_daemon_hides() {
         &["HOME".to_owned()],
         None,
         &[],
+        &aether_core::redact::Redactor::default(),
         String::new(),
         false,
         None,
@@ -72,6 +73,7 @@ async fn an_engine_child_gets_the_agent_temp_dir() {
         &["TMPDIR".to_owned(), "TEMP".to_owned()],
         Some(&dir),
         &[],
+        &aether_core::redact::Redactor::default(),
         String::new(),
         false,
         None,
@@ -148,6 +150,7 @@ async fn a_cancel_is_reported_before_the_term_ladder_runs() {
         &[],
         None,
         &[],
+        &aether_core::redact::Redactor::default(),
         String::new(),
         false,
         None,
@@ -197,6 +200,7 @@ async fn stdout_read_error_preserves_stderr_and_session_loss_for_retry() {
         &[],
         None,
         &[],
+        &aether_core::redact::Redactor::default(),
         String::new(),
         false,
         None,
@@ -231,6 +235,7 @@ async fn process_crash_without_a_result_has_no_closing_accounting() {
         &[],
         None,
         &[],
+        &aether_core::redact::Redactor::default(),
         String::new(),
         false,
         None,
@@ -263,6 +268,7 @@ async fn a_first_write_to_an_engine_that_already_exited_is_reported() {
         &[],
         None,
         &[],
+        &aether_core::redact::Redactor::default(),
         "x".repeat(1 << 20),
         false,
         None,
@@ -298,6 +304,7 @@ async fn a_recorded_engine_is_reaped_by_the_next_start() {
         &[],
         None,
         &[],
+        &aether_core::redact::Redactor::default(),
         String::new(),
         false,
         None,
@@ -320,4 +327,58 @@ async fn a_recorded_engine_is_reaped_by_the_next_start() {
     .await
     .expect("the reaped engine ends");
     assert!(done.expect("an outcome").is_error);
+}
+
+/// A known value is masked whole in native stderr, before the shape rules
+/// could rewrite the key inside it, on a failed run and on a successful one.
+#[tokio::test]
+async fn stderr_masks_the_known_secret_values_of_the_turn() {
+    const TOKEN: &str = "listen-token-shapeless-0123456789";
+    const WRAPPED: &str = "pre-sk-ant-api03-NOTAREALKEYbutkeyshaped0123456789.private-suffix";
+    let redactor = aether_core::redact::Redactor::with_known_secrets([TOKEN, WRAPPED])
+        .expect("known secrets compile");
+    let stderr = format!("printf 'auth {TOKEN} {WRAPPED}\\n' >&2");
+    for succeed in [false, true] {
+        let script = if succeed {
+            format!("{stderr}; echo done")
+        } else {
+            format!("{stderr}; exit 1")
+        };
+        let mut run = run_process(
+            "sh",
+            vec!["-c".into(), script],
+            PathBuf::from("/"),
+            &[],
+            None,
+            &[],
+            &redactor,
+            String::new(),
+            false,
+            None,
+            CancellationToken::new(),
+            |line| match line {
+                "done" => vec![EngineEvent::Done(EngineOutcome::default())],
+                _ => Vec::new(),
+            },
+        )
+        .await
+        .expect("spawn sh");
+        let mut reported = Vec::new();
+        while let Some(event) = run.events.recv().await {
+            match event {
+                EngineEvent::Note(text) => reported.push(text),
+                EngineEvent::Done(outcome) => reported.extend(outcome.error),
+                _ => {}
+            }
+        }
+        let reported = reported.join("\n");
+        assert!(
+            reported.contains("auth [REDACTED:known_secret]"),
+            "{reported}"
+        );
+        assert!(
+            !reported.contains(TOKEN) && !reported.contains("private-suffix"),
+            "succeed={succeed}: {reported}"
+        );
+    }
 }

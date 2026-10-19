@@ -419,6 +419,7 @@ mod tests {
                 caller: cancel.clone(),
             }),
             turn: EngineTurn {
+                redactor: Default::default(),
                 prompt: String::new(),
                 images: Vec::new(),
                 system_prompt: String::new(),

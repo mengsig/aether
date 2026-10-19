@@ -19,6 +19,7 @@ fn fake_cli() -> PathBuf {
 
 fn turn(cwd: PathBuf) -> EngineTurn {
     EngineTurn {
+        redactor: Default::default(),
         prompt: "list the workspace".into(),
         images: Vec::new(),
         system_prompt: "You are inside Aether.".into(),

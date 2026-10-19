@@ -198,6 +198,7 @@ pub(super) async fn compaction_client(
         context: ctx.launch_context(),
         pricing: crate::turn_engine::TurnPricing::of(runtime, &resolved),
         turn: aether_engine::EngineTurn {
+            redactor: runtime.tool_runtime.redactor().clone(),
             prompt: String::new(),
             images: Vec::new(),
             system_prompt: String::new(),

@@ -435,7 +435,11 @@ impl Engine for CodexAppEngine {
         let (input_tx, input_rx) = mpsc::channel::<crate::EngineInput>(16);
         let (decision_tx, decision_rx) = mpsc::channel::<PermissionDecision>(16);
         let (stop_tx, stop_rx) = mpsc::channel::<Duration>(1);
-        let stderr_task = tokio::spawn(crate::output::drain_stderr(stderr));
+        let stderr_task = tokio::spawn(crate::output::drain_stderr_until(
+            stderr,
+            CancellationToken::new(),
+            turn.redactor.clone(),
+        ));
         let version = EngineVersion::parse(&self.version);
         tokio::spawn(async move {
             let _engine_record = engine_record;

@@ -42,6 +42,7 @@ fn probe_turn(runtime: &Runtime, cwd: &std::path::Path) -> EngineTurn {
     debug_assert!(cwd.is_absolute());
     debug_assert!(cwd.is_dir());
     EngineTurn {
+        redactor: runtime.tool_runtime.redactor().clone(),
         prompt: "Reply with OK only. Do not use tools.".into(),
         images: Vec::new(),
         system_prompt: "This is a quota availability probe. Reply with OK only; do not use tools."

@@ -21,6 +21,7 @@ mod usage;
 /// A turn resuming thread `th` with what the previous turn persisted.
 fn resumed(session_usage: Usage) -> EngineTurn {
     EngineTurn {
+        redactor: Default::default(),
         session_usage,
         ..turn(Some("th"), false)
     }
@@ -39,6 +40,7 @@ fn billed(events: &[EngineEvent]) -> Vec<Usage> {
 
 pub(super) fn turn(session: Option<&str>, bypass: bool) -> EngineTurn {
     EngineTurn {
+        redactor: Default::default(),
         images: Vec::new(),
         prompt: "do it".into(),
         system_prompt: "# Aether".into(),

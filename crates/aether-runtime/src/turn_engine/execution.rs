@@ -233,6 +233,7 @@ pub(crate) async fn execute(
     let system_prompt = contract::system_prompt(&snapshot);
     let tool_ctx = Arc::new(tool_context(runtime, ctx));
     let mut turn = EngineTurn {
+        redactor: runtime.tool_runtime.redactor().clone(),
         prompt,
         images,
         system_prompt,

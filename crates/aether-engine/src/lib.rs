@@ -168,6 +168,9 @@ pub struct EngineTurn {
     /// name: exported like `temp_dir` and writable in the engine's sandbox.
     pub build_env: Vec<(String, PathBuf)>,
     pub mcp: Option<McpBridge>,
+    /// Masks the engine's stderr before it is reported: the default shapes
+    /// plus the secret values the daemon knows.
+    pub redactor: aether_core::redact::Redactor,
 }
 
 impl EngineTurn {
@@ -505,6 +508,7 @@ pub(crate) async fn run_process<P>(
     hidden_env: &[String],
     temp_dir: Option<&Path>,
     build_env: &[(String, PathBuf)],
+    redactor: &aether_core::redact::Redactor,
     first_input: String,
     keep_stdin_open: bool,
     cancel_input: Option<String>,
@@ -522,6 +526,7 @@ where
         temp_dir,
         build_env,
         &[],
+        redactor,
         first_input,
         keep_stdin_open,
         cancel_input,
@@ -540,6 +545,7 @@ pub(crate) async fn run_process_with_env<P>(
     temp_dir: Option<&Path>,
     build_env: &[(String, PathBuf)],
     extra_env: &[(std::ffi::OsString, std::ffi::OsString)],
+    redactor: &aether_core::redact::Redactor,
     first_input: String,
     keep_stdin_open: bool,
     cancel_input: Option<String>,
@@ -620,7 +626,12 @@ where
         drop(stdin);
     });
     let stderr_stop = CancellationToken::new();
-    let mut stderr_task = tokio::spawn(output::drain_stderr_until(stderr, stderr_stop.clone()));
+    let mut stderr_task = tokio::spawn(output::drain_stderr_until(
+        stderr,
+        stderr_stop.clone(),
+        redactor.clone(),
+    ));
+    let redactor = redactor.clone();
     tokio::spawn(async move {
         let _engine_record = engine_record;
         let mut lines = output::BoundedLines::new(stdout);
@@ -723,7 +734,7 @@ where
         let stderr_text = stderr.text;
         if !response_done {
             // Masked before the tail is cut, so a key's BEGIN marker is still in view.
-            let masked = aether_core::redact::Redactor::default().redact(&stderr_text);
+            let masked = redactor.redact(&stderr_text);
             let tail: String = masked
                 .lines()
                 .rev()

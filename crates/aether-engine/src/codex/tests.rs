@@ -10,6 +10,7 @@ async fn exec_ownership_only_records_ids_discovered_on_fresh_launches() {
     for session in [None, Some("user-session".into())] {
         let recorder = std::sync::Arc::new(crate::ownership_tests::Recorder::default());
         let t = EngineTurn {
+            redactor: Default::default(),
             session: session.clone(),
             cwd: dir.path().into(),
             session_recorder: Some(recorder.clone()),
@@ -39,6 +40,7 @@ async fn exec_ownership_storage_failure_is_visible_and_cancels_process() {
     );
     let engine = CodexEngine::new(dir.path().join("codex").to_string_lossy(), "0.162.0");
     let t = EngineTurn {
+        redactor: Default::default(),
         cwd: dir.path().into(),
         session_recorder: Some(std::sync::Arc::new(crate::ownership_tests::Recorder {
             fail: true,
@@ -137,6 +139,7 @@ print(json.dumps({'type':'turn.completed','usage':{}}), flush=True)
     );
     let engine = CodexEngine::new(program.to_string_lossy(), "test");
     let turn = EngineTurn {
+        redactor: Default::default(),
         prompt: "hello".into(),
         system_prompt: "Aether replacement sentinel".into(),
         new_session_id: "new".into(),
@@ -173,6 +176,7 @@ async fn skipped_provider_filters_are_visible_before_any_exec_events() {
         for session in [None, Some("thread-1".into())] {
             let engine = CodexEngine::new(program.to_string_lossy(), version);
             let turn = EngineTurn {
+                redactor: Default::default(),
                 cwd: dir.path().into(),
                 session,
                 tool_hidden_env: vec!["PROVIDER_TOKEN".into(), "INVALID.NAME".into()],
@@ -204,6 +208,7 @@ async fn exec_does_not_warn_for_credentials_already_removed_from_its_environment
     let engine = CodexEngine::new(program.to_string_lossy(), "0.162.0");
     for tool_hidden_env in [Vec::new(), vec!["PROVIDER_TOKEN".into()]] {
         let turn = EngineTurn {
+            redactor: Default::default(),
             cwd: dir.path().into(),
             hidden_env: vec!["PROVIDER_TOKEN".into()],
             tool_hidden_env,
@@ -225,6 +230,7 @@ async fn summary_exec_does_not_warn_about_disabled_commands() {
     crate::test_script::write(&program, "#!/bin/sh\nexit 1\n");
     let engine = CodexEngine::new(program.to_string_lossy(), "0.162.0");
     let turn = EngineTurn {
+        redactor: Default::default(),
         cwd: dir.path().into(),
         summary_only: true,
         lean_host_context: false,
@@ -303,6 +309,7 @@ print(json.dumps({'type': 'turn.completed', 'usage': {
         (Some("thread-2"), "hi", 0),
     ] {
         let turn = EngineTurn {
+            redactor: Default::default(),
             prompt: prompt.into(),
             cwd: dir.path().into(),
             session: session.map(str::to_owned),
@@ -339,6 +346,7 @@ print(json.dumps({'type': 'turn.completed', 'usage': {
 fn args_shape() {
     let engine = CodexEngine::new("codex", "0.153.2");
     let turn = EngineTurn {
+        redactor: Default::default(),
         system_prompt: "Aether checkpoint contract".into(),
         session: Some("thread-1".into()),
         model: Some("gpt-5.4".into()),
@@ -379,6 +387,7 @@ fn images_are_passed_as_files_where_the_cli_reads_them() {
         },
     ];
     let fresh = EngineTurn {
+        redactor: Default::default(),
         images: images.clone(),
         ..turn_with_effort(None)
     };
@@ -390,6 +399,7 @@ fn images_are_passed_as_files_where_the_cli_reads_them() {
     assert!(joined.ends_with(" -"), "the prompt still arrives on stdin");
 
     let resumed = EngineTurn {
+        redactor: Default::default(),
         images,
         session: Some("thread-1".into()),
         ..turn_with_effort(None)
@@ -409,6 +419,7 @@ fn images_are_passed_as_files_where_the_cli_reads_them() {
 
 fn turn_with_effort(effort: Option<Effort>) -> EngineTurn {
     EngineTurn {
+        redactor: Default::default(),
         images: Vec::new(),
         prompt: "hi".into(),
         system_prompt: "contract".into(),
@@ -490,6 +501,7 @@ fn web_search_override_matches_network_and_summary_matrix() {
     for network_access in [true, false] {
         for summary_only in [true, false] {
             let turn = EngineTurn {
+                redactor: Default::default(),
                 network_access,
                 summary_only,
                 ..turn_with_effort(None)

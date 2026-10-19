@@ -249,6 +249,7 @@ fn resumed_parser(prior: Usage) -> ParseState {
     assert!(prior.cost_usd.is_finite() && prior.cost_usd >= 0.0);
     assert!(!prior.cost_complete || (prior.total_tokens() == 0 && prior.cost_usd == 0.0));
     ParseState::for_turn(&EngineTurn {
+        redactor: Default::default(),
         prompt: String::new(),
         images: Vec::new(),
         system_prompt: String::new(),

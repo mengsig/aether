@@ -275,6 +275,7 @@ impl Engine for CodexEngine {
             &turn.hidden_env,
             turn.temp_dir.as_deref(),
             &turn.build_env,
+            &turn.redactor,
             turn.prompt.clone(),
             false,
             None,

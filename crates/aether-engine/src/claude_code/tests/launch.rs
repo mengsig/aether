@@ -7,6 +7,7 @@ use serde_json::Value;
 
 fn turn() -> EngineTurn {
     EngineTurn {
+        redactor: Default::default(),
         images: Vec::new(),
         prompt: "hi".into(),
         system_prompt: "contract".into(),

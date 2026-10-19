@@ -41,13 +41,18 @@ pub(crate) struct StderrCapture {
     pub(crate) session_lost: bool,
 }
 
+#[cfg(test)]
 pub(crate) async fn drain_stderr(reader: impl AsyncRead + Unpin) -> StderrCapture {
-    drain_stderr_until(reader, tokio_util::sync::CancellationToken::new()).await
+    let redactor = aether_core::redact::Redactor::default();
+    drain_stderr_until(reader, tokio_util::sync::CancellationToken::new(), redactor).await
 }
 
+/// Capture stderr's head and tail, masked by `redactor`: the turn's, which
+/// also knows the daemon's secret values.
 pub(crate) async fn drain_stderr_until(
     mut reader: impl AsyncRead + Unpin,
     stop: tokio_util::sync::CancellationToken,
+    redactor: aether_core::redact::Redactor,
 ) -> StderrCapture {
     let mut head = Vec::with_capacity(STDERR_HEAD_BYTES);
     let mut tail = VecDeque::with_capacity(STDERR_TAIL_BYTES);
@@ -83,7 +88,6 @@ pub(crate) async fn drain_stderr_until(
     };
     // Each side is masked on its own: a key cut by the gap has no marker
     // the redactor could pair across the separator.
-    let redactor = aether_core::redact::Redactor::default();
     let mut output = if truncated {
         format!(
             "{}\n[stderr truncated]\n{}",
@@ -197,7 +201,11 @@ mod interrupted_stderr_tests {
             .unwrap();
         let stop = tokio_util::sync::CancellationToken::new();
         let stopping = stop.clone();
-        let task = tokio::spawn(drain_stderr_until(reader, stop));
+        let task = tokio::spawn(drain_stderr_until(
+            reader,
+            stop,
+            aether_core::redact::Redactor::default(),
+        ));
         writer.write_all(&vec![b'x'; 2048]).await.unwrap();
         stopping.cancel();
         let captured = task.await.unwrap();
