@@ -57,6 +57,9 @@ show. Reports are never pooled across protocol versions. To run a comparison
 yourself, see the [evaluation tooling](../evals/README.md) and its
 [protocol](../evals/harness_bench_protocol.md).
 
+- [Release bench 1.2.0](release-bench/1.2.0.md): Aether 1.2.0 against 1.1.1
+  on set v2, 660 trials; the gate passes on both tiers, and the verdict is
+  INCONCLUSIVE because v2 is off target.
 - [Release bench A/A check of set v2](release-bench-2026-10-18-aa-v2.md): Aether
   1.1.0 against itself on 110 tasks and six arms, 660 trials; the gate passes on
   both tiers, and the verdict is INCONCLUSIVE because v2 is off target.

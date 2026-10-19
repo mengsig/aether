@@ -35,6 +35,9 @@ Protocol version 24, store schema 25.
   recorded. A skipped occurrence does not count towards `max_deliveries` and
   is never replayed.
 - **`aether run` shows the disk gate and engine retries** while it waits.
+- **The Python client can speak to an older daemon.** `AetherClient` takes
+  `protocol_version` (17 to 24, default 24) for the version its hello asks
+  for, so a caller can reach a 1.1.x daemon, which serves 17 to 23.
 
 ### Security
 
