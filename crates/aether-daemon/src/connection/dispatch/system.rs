@@ -63,11 +63,7 @@ pub(super) async fn dispatch(
         // open under the idle timeout.
         Command::Ping => Ok(Reply::Ok),
         Command::StorageStatus | Command::StorageGc { .. } => storage(daemon, command).await,
-        Command::PreviewRetention => {
-            let reading = rt.clone();
-            let preview = blocking(move || reading.preview_retention().map_err(map_err)).await??;
-            Ok(Reply::RetentionPreview(preview))
-        }
+        Command::PreviewRetention => preview_retention(daemon).await,
         Command::Status => status(daemon).await,
         Command::Shutdown | Command::Subscribe { .. } | Command::Unsubscribe { .. } => {
             Err(ErrorReply::internal("handled by the connection loop"))
@@ -82,29 +78,14 @@ pub(super) async fn dispatch(
         Command::ConfigureGithubWatcher {
             config,
             expected_revision,
-        } => {
-            if !matches!(by, Actor::User { .. }) {
-                return Err(ErrorReply::new(
-                    ErrorCode::Unauthorized,
-                    "only an operator may configure the GitHub watcher",
-                ));
-            }
-            Ok(Reply::GithubWatcher(
-                rt.configure_github_watcher(config, expected_revision)
-                    .map_err(map_err)?,
-            ))
-        }
+        } => configure_github_watcher(daemon, config, expected_revision, by),
         Command::ListModels => providers::list_models(daemon).await,
         Command::AuthStatus => providers::auth_status(daemon).await,
 
         Command::Providers => providers::providers(daemon).await,
-        Command::RefreshProviderUsage { provider } => Ok(Reply::ProviderUsage(
-            daemon
-                .runtime
-                .refresh_provider_usage(provider.as_deref())
-                .await
-                .map_err(map_err)?,
-        )),
+        Command::RefreshProviderUsage { provider } => {
+            refresh_provider_usage(daemon, provider.as_deref()).await
+        }
 
         command @ (Command::GetAttention
         | Command::CompletePath { .. }
@@ -220,4 +201,43 @@ async fn mcp_servers(
         Some(name) => health.into_iter().filter(|h| h.name == name).collect(),
         None => health,
     }))
+}
+
+async fn preview_retention(daemon: &Daemon) -> Result<Reply, ErrorReply> {
+    let reading = daemon.runtime.clone();
+    let preview = blocking(move || reading.preview_retention().map_err(map_err)).await??;
+    Ok(Reply::RetentionPreview(preview))
+}
+
+fn configure_github_watcher(
+    daemon: &Daemon,
+    config: aether_core::github::GithubWatcherConfig,
+    expected_revision: u64,
+    by: Actor,
+) -> Result<Reply, ErrorReply> {
+    if !matches!(by, Actor::User { .. }) {
+        return Err(ErrorReply::new(
+            ErrorCode::Unauthorized,
+            "only an operator may configure the GitHub watcher",
+        ));
+    }
+    Ok(Reply::GithubWatcher(
+        daemon
+            .runtime
+            .configure_github_watcher(config, expected_revision)
+            .map_err(map_err)?,
+    ))
+}
+
+async fn refresh_provider_usage(
+    daemon: &Daemon,
+    provider: Option<&str>,
+) -> Result<Reply, ErrorReply> {
+    Ok(Reply::ProviderUsage(
+        daemon
+            .runtime
+            .refresh_provider_usage(provider)
+            .await
+            .map_err(map_err)?,
+    ))
 }

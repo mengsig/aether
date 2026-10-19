@@ -32,21 +32,7 @@ pub(super) async fn dispatch(daemon: &Daemon, command: Command) -> Result<Reply,
             after,
             limit,
             query,
-        } => {
-            let before = query.before;
-            if before.is_some() && after != 0 {
-                return Err(ErrorReply::invalid(
-                    "before cannot be combined with a nonzero after",
-                ));
-            }
-            let filter = query.into();
-            let limit = limit.clamp(1, 5000);
-            let events = match before {
-                Some(before) => store.events_before(before, limit, &filter),
-                None => store.events(after, limit, &filter),
-            };
-            Ok(Reply::Events(events.map_err(store_err)?))
-        }
+        } => get_events(daemon, after, limit, query),
         Command::GetTranscript { agent, after } => Ok(Reply::Transcript(
             store
                 .transcript(agent, after)
@@ -109,4 +95,26 @@ async fn read_artifact(
         base64: base64::engine::general_purpose::STANDARD.encode(slice),
         truncated,
     })
+}
+
+fn get_events(
+    daemon: &Daemon,
+    after: u64,
+    limit: usize,
+    query: aether_protocol::EventQuery,
+) -> Result<Reply, ErrorReply> {
+    let store = daemon.runtime.store().as_ref();
+    let before = query.before;
+    if before.is_some() && after != 0 {
+        return Err(ErrorReply::invalid(
+            "before cannot be combined with a nonzero after",
+        ));
+    }
+    let filter = query.into();
+    let limit = limit.clamp(1, 5000);
+    let events = match before {
+        Some(before) => store.events_before(before, limit, &filter),
+        None => store.events(after, limit, &filter),
+    };
+    Ok(Reply::Events(events.map_err(store_err)?))
 }

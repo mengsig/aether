@@ -3,6 +3,7 @@ use crate::app::{App, ApprovalStatus, Effect, Reply, Then, decode_artifact, evic
 use crate::ui::views::ViewKind;
 use aether_core::artifact::Artifact;
 use aether_core::id::{AgentId, ArtifactId};
+use aether_core::schedule::Schedule;
 use aether_core::tool::ApprovalRequest;
 use aether_protocol::ProviderInfo;
 
@@ -31,19 +32,11 @@ impl App {
             (Then::Models, Reply::Models(models)) => {
                 self.models = models;
             }
-            (Then::Schedules, Reply::Schedules(jobs)) => {
-                self.schedules.jobs = jobs;
-                self.names_version = crate::app::names_version(&self.tree, &self.schedules.jobs);
-                effects.extend(self.after_schedules_for_view());
-            }
+            (Then::Schedules, Reply::Schedules(jobs)) => self.schedules_arrived(jobs, effects),
             (Then::ScheduleHistory(id), Reply::ScheduleHistory(history)) => {
                 self.schedules.history = Some((id, history));
             }
-            (Then::ScheduleChanged, Reply::Schedule(job)) => {
-                self.flash(format!("schedule {} updated", job.name));
-                self.schedules.confirm_cancel = None;
-                effects.push(self.schedules_request());
-            }
+            (Then::ScheduleChanged, Reply::Schedule(job)) => self.schedule_changed(&job, effects),
             (Then::Providers | Then::Usage, Reply::Providers(providers)) => {
                 self.providers_arrived(providers);
             }
@@ -74,6 +67,18 @@ impl App {
             }
             (then, reply) => self.apply_memory_reply(then, reply, effects),
         }
+    }
+
+    fn schedules_arrived(&mut self, jobs: Vec<Schedule>, effects: &mut Vec<Effect>) {
+        self.schedules.jobs = jobs;
+        self.names_version = crate::app::names_version(&self.tree, &self.schedules.jobs);
+        effects.extend(self.after_schedules_for_view());
+    }
+
+    fn schedule_changed(&mut self, job: &Schedule, effects: &mut Vec<Effect>) {
+        self.flash(format!("schedule {} updated", job.name));
+        self.schedules.confirm_cancel = None;
+        effects.push(self.schedules_request());
     }
 
     fn approvals_arrived(

@@ -33,19 +33,7 @@ pub(super) async fn dispatch(
     let rt = &daemon.runtime;
     let store = rt.store().as_ref();
     match command {
-        Command::CreateTask(req) => {
-            let spec = CreateTaskSpec {
-                objective: req.objective,
-                owner: req.owner,
-                parent_task: req.parent_task,
-                dependencies: req.dependencies,
-                priority: req.priority,
-            };
-            Ok(Reply::Task(
-                rt.create_task_keyed(spec, by, submission)
-                    .map_err(map_err)?,
-            ))
-        }
+        Command::CreateTask(req) => create_task(daemon, req, by, submission),
         Command::GetTask { id } => store
             .task(id)
             .map_err(store_err)?
@@ -63,16 +51,7 @@ pub(super) async fn dispatch(
             note,
             remember,
             ..
-        } => {
-            let remember = remember.map(|r| Remember {
-                scope: r.scope,
-                tool_wide: r.tool_wide,
-                note: r.note,
-            });
-            rt.resolve_approval_keyed(id, decision, by, note, remember, submission)
-                .map_err(map_err)?;
-            Ok(Reply::Ok)
-        }
+        } => resolve_approval(daemon, id, decision, note, remember, by, submission),
         Command::PublishArtifact(req) => publish_artifact(daemon, req, by).await,
         Command::ListArtifacts { query } => Ok(Reply::Artifacts(
             store.artifacts(&query.into()).map_err(store_err)?,
@@ -145,4 +124,46 @@ async fn publish_artifact(
         .await
         .map_err(|error| ErrorReply::new(ErrorCode::Internal, error.to_string()))?;
     Ok(Reply::Artifact(artifact))
+}
+
+fn create_task(
+    daemon: &Daemon,
+    req: aether_protocol::CreateTask,
+    by: Actor,
+    submission: Option<Submission>,
+) -> Result<Reply, ErrorReply> {
+    let spec = CreateTaskSpec {
+        objective: req.objective,
+        owner: req.owner,
+        parent_task: req.parent_task,
+        dependencies: req.dependencies,
+        priority: req.priority,
+    };
+    Ok(Reply::Task(
+        daemon
+            .runtime
+            .create_task_keyed(spec, by, submission)
+            .map_err(map_err)?,
+    ))
+}
+
+fn resolve_approval(
+    daemon: &Daemon,
+    id: aether_core::id::ApprovalId,
+    decision: aether_core::tool::ApprovalDecision,
+    note: Option<String>,
+    remember: Option<aether_protocol::RememberSpec>,
+    by: Actor,
+    submission: Option<Submission>,
+) -> Result<Reply, ErrorReply> {
+    let remember = remember.map(|r| Remember {
+        scope: r.scope,
+        tool_wide: r.tool_wide,
+        note: r.note,
+    });
+    daemon
+        .runtime
+        .resolve_approval_keyed(id, decision, by, note, remember, submission)
+        .map_err(map_err)?;
+    Ok(Reply::Ok)
 }

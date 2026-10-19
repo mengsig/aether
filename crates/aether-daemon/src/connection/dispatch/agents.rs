@@ -52,60 +52,18 @@ pub(super) async fn dispatch(
             rt.archive_agents_keyed(target, archived, by, submission)
                 .map_err(map_err)?,
         )),
-        Command::UpdateAgent { id, patch, .. } => {
-            let update = AgentUpdate {
-                name: patch.name,
-                model: patch.model,
-                fallbacks: patch.fallbacks,
-                effort: patch.effort,
-                instructions: patch.instructions,
-                max_turns: patch.max_turns,
-                token_budget: patch.token_budget,
-                cost_budget: patch.cost_budget,
-                tools: patch.tools,
-                approval: patch.approval,
-                priority: patch.priority,
-                concurrency: patch.concurrency,
-                deadline: patch.deadline,
-                long_lived: patch.long_lived,
-                network: patch.network,
-                backend: patch.backend,
-            };
-            Ok(Reply::Agent(
-                rt.update_agent_keyed(id, update, by, submission)
-                    .map_err(map_err)?,
-            ))
-        }
-        Command::WorkspaceDiff { agent } => {
-            let reading = rt.clone();
-            let diff = blocking(move || reading.workspace_diff(agent).map_err(map_err)).await??;
-            Ok(Reply::WorkspaceDiff(Box::new(diff)))
-        }
-        Command::WorkspaceIntegrate { agent } => {
-            let writing = rt.clone();
-            let integration =
-                blocking(move || writing.workspace_integrate(agent, by).map_err(map_err)).await??;
-            Ok(Reply::WorkspaceIntegration(integration))
-        }
+        Command::UpdateAgent { id, patch, .. } => update_agent(daemon, id, patch, by, submission),
+        Command::WorkspaceDiff { agent } => workspace_diff(daemon, agent).await,
+        Command::WorkspaceIntegrate { agent } => workspace_integrate(daemon, agent, by).await,
         Command::WorkspaceDiscard { agent, force } => {
-            let writing = rt.clone();
-            let discard =
-                blocking(move || writing.workspace_discard(agent, force, by).map_err(map_err))
-                    .await??;
-            Ok(Reply::WorkspaceDiscarded(discard))
+            workspace_discard(daemon, agent, force, by).await
         }
         Command::EngineTool {
             agent,
             token,
             name,
             input,
-        } => {
-            let (content, is_error) = rt
-                .engine_tool(agent, &token, name, input)
-                .await
-                .map_err(map_err)?;
-            Ok(Reply::EngineTool { content, is_error })
-        }
+        } => engine_tool(daemon, agent, &token, name, input).await,
         Command::EngineTools { agent, token } => Ok(Reply::EngineTools {
             tools: rt.engine_tools(agent, &token).map_err(map_err)?,
         }),
@@ -141,4 +99,83 @@ async fn create_agent(
         .create_agent_keyed(spec, by, submission)
         .map_err(map_err)?;
     Ok(Reply::Agent(agent))
+}
+
+fn update_agent(
+    daemon: &Daemon,
+    id: aether_core::id::AgentId,
+    patch: aether_protocol::AgentPatch,
+    by: Actor,
+    submission: Option<Submission>,
+) -> Result<Reply, ErrorReply> {
+    let rt = &daemon.runtime;
+    let update = AgentUpdate {
+        name: patch.name,
+        model: patch.model,
+        fallbacks: patch.fallbacks,
+        effort: patch.effort,
+        instructions: patch.instructions,
+        max_turns: patch.max_turns,
+        token_budget: patch.token_budget,
+        cost_budget: patch.cost_budget,
+        tools: patch.tools,
+        approval: patch.approval,
+        priority: patch.priority,
+        concurrency: patch.concurrency,
+        deadline: patch.deadline,
+        long_lived: patch.long_lived,
+        network: patch.network,
+        backend: patch.backend,
+    };
+    Ok(Reply::Agent(
+        rt.update_agent_keyed(id, update, by, submission)
+            .map_err(map_err)?,
+    ))
+}
+
+async fn workspace_diff(
+    daemon: &Daemon,
+    agent: aether_core::id::AgentId,
+) -> Result<Reply, ErrorReply> {
+    let reading = daemon.runtime.clone();
+    let diff = blocking(move || reading.workspace_diff(agent).map_err(map_err)).await??;
+    Ok(Reply::WorkspaceDiff(Box::new(diff)))
+}
+
+async fn workspace_integrate(
+    daemon: &Daemon,
+    agent: aether_core::id::AgentId,
+    by: Actor,
+) -> Result<Reply, ErrorReply> {
+    let writing = daemon.runtime.clone();
+    let integration =
+        blocking(move || writing.workspace_integrate(agent, by).map_err(map_err)).await??;
+    Ok(Reply::WorkspaceIntegration(integration))
+}
+
+async fn workspace_discard(
+    daemon: &Daemon,
+    agent: aether_core::id::AgentId,
+    force: bool,
+    by: Actor,
+) -> Result<Reply, ErrorReply> {
+    let writing = daemon.runtime.clone();
+    let discard =
+        blocking(move || writing.workspace_discard(agent, force, by).map_err(map_err)).await??;
+    Ok(Reply::WorkspaceDiscarded(discard))
+}
+
+async fn engine_tool(
+    daemon: &Daemon,
+    agent: aether_core::id::AgentId,
+    token: &str,
+    name: String,
+    input: serde_json::Value,
+) -> Result<Reply, ErrorReply> {
+    let (content, is_error) = daemon
+        .runtime
+        .engine_tool(agent, token, name, input)
+        .await
+        .map_err(map_err)?;
+    Ok(Reply::EngineTool { content, is_error })
 }
