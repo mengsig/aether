@@ -2,7 +2,8 @@
 
 An agent created with `leaf: true` cannot delegate children. Aether omits
 delegation, fleet, task-listing, model-listing, and schedule tools from both
-native and API model tool lists, and `swarm_playbook`, which is for the lead. A
+native and API model tool lists, and `swarm_playbook`, which is for the lead,
+and `notify`, which reaches the operator on the parent's behalf. A
 delegated leaf keeps `send_message`, `inspect_state` and `list_peers`, so
 workers can coordinate with each other. `leaf` is set at creation and cannot be
 changed on a live agent. A root agent has no peers, so it is not offered
@@ -27,6 +28,7 @@ native tool discovery. The schemas in `aether-tools/src/builtin/harness.rs`
 | Stop work | `cancel_agent` | Cancels an agent and its live descendants through runtime authority checks. |
 | Return a result | `complete_task`, `fail_task` | Settles the assigned task with a summary or error and optional structured data. |
 | Wait or ask | `wait_for`, `ask_user` | Durable waits for tasks/messages/time, or a question for the person. |
+| Notify the operator | `notify` | Posts to the [notification center](tui.md#notification-center) without waiting; the answer arrives later in the inbox. Not offered to leaves. |
 | Preserve knowledge | `remember`, `request_checkpoint` | Stores reusable knowledge or requests validated context compaction. |
 | Repeat work | `create_schedule`, `list_schedules`, `update_schedule` | Durable interval/cron triggers, delivery history, pause/resume/cancel. |
 
@@ -74,6 +76,17 @@ always rooted at the caller. Repository notes committed under
 repository: the role named by the directory and every role that extends it at
 a dot, so a note in `team/` reaches `team.lead`. Role directories are one
 level deep. They filter relevance; they are not access control.
+
+`notify` posts a notification without ending the turn, unlike `ask_user`. It
+takes a one-line `title`, a `kind` (`question`, `blocker`, `decision`,
+`outcome`, or `info`, the default), a short Markdown `body`, and optionally a
+`key`, a `link`, up to 8 `actions` (`{id, label}`) and `free_text: true` when a
+typed answer is welcome. Posting again under the same `key` updates that
+notification instead of adding one; `resolve: true` with only the `key` resolves
+it. When the operator answers, the agent receives an inbox trigger with source
+`notification` and a payload holding the notification id, its `key` and
+`title`, the chosen `action` and its `label`, and any `text`; a waiting agent
+wakes for it. A post over a limit fails the call with the limit named.
 
 Native file, command and web capabilities remain available through the CLI
 engine. Aether owns coordination; a native subagent is not a tracked Aether

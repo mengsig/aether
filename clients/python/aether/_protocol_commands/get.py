@@ -9,6 +9,7 @@ from ..protocol import (
     CheckpointId,
     EventQuery,
     InvocationId,
+    NotificationId,
     RunId,
     ScheduleId,
     SnapshotId,
@@ -69,6 +70,12 @@ def get_inbox(*, after: int, agent: AgentId) -> dict[str, Any]:
 def get_invocation(*, id: InvocationId) -> dict[str, Any]:
     """The `get_invocation` command."""
     frame: dict[str, Any] = {"cmd": "get_invocation"}
+    frame["id"] = id
+    return frame
+
+def get_notification(*, id: NotificationId) -> dict[str, Any]:
+    """One notification. Needs `features::NOTIFICATIONS`."""
+    frame: dict[str, Any] = {"cmd": "get_notification"}
     frame["id"] = id
     return frame
 

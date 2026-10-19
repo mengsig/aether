@@ -5,6 +5,7 @@ import type {
   AcceptMemoryCommand,
   AddApprovalRuleCommand,
   AliasRepositoryCommand,
+  AnswerNotificationCommand,
   AppendNoteCommand,
   ArchiveCommand,
   AuthStatusCommand,
@@ -32,6 +33,7 @@ import type {
   GetGithubWatcherCommand,
   GetInboxCommand,
   GetInvocationCommand,
+  GetNotificationCommand,
   GetPairingCommand,
   GetPushConfigCommand,
   GetRemoteCommand,
@@ -52,11 +54,13 @@ import type {
   ListDevicesCommand,
   ListInvocationsCommand,
   ListModelsCommand,
+  ListNotificationsCommand,
   ListRepositoryAliasesCommand,
   ListRunsCommand,
   ListSchedulesCommand,
   ListTasksCommand,
   ListWorkspacesCommand,
+  MarkNotificationReadCommand,
   McpServersCommand,
   MemoriesCommand,
   MemoriesInContextCommand,
@@ -64,6 +68,7 @@ import type {
   PauseCommand,
   PinMemoryCommand,
   PingCommand,
+  PostNotificationCommand,
   PreviewRetentionCommand,
   ProvidersCommand,
   PublishArtifactCommand,
@@ -74,6 +79,7 @@ import type {
   ReplayCommand,
   ReplyToQuestionCommand,
   ResolveApprovalCommand,
+  ResolveNotificationCommand,
   ResolveSubmissionCommand,
   RestartCommand,
   RestoreMemoryCommand,
@@ -110,6 +116,7 @@ export type Command =
   | AcceptMemoryCommand
   | AddApprovalRuleCommand
   | AliasRepositoryCommand
+  | AnswerNotificationCommand
   | AppendNoteCommand
   | ArchiveCommand
   | AuthStatusCommand
@@ -137,6 +144,7 @@ export type Command =
   | GetGithubWatcherCommand
   | GetInboxCommand
   | GetInvocationCommand
+  | GetNotificationCommand
   | GetPairingCommand
   | GetPushConfigCommand
   | GetRemoteCommand
@@ -157,11 +165,13 @@ export type Command =
   | ListDevicesCommand
   | ListInvocationsCommand
   | ListModelsCommand
+  | ListNotificationsCommand
   | ListRepositoryAliasesCommand
   | ListRunsCommand
   | ListSchedulesCommand
   | ListTasksCommand
   | ListWorkspacesCommand
+  | MarkNotificationReadCommand
   | McpServersCommand
   | MemoriesCommand
   | MemoriesInContextCommand
@@ -169,6 +179,7 @@ export type Command =
   | PauseCommand
   | PinMemoryCommand
   | PingCommand
+  | PostNotificationCommand
   | PreviewRetentionCommand
   | ProvidersCommand
   | PublishArtifactCommand
@@ -179,6 +190,7 @@ export type Command =
   | ReplayCommand
   | ReplyToQuestionCommand
   | ResolveApprovalCommand
+  | ResolveNotificationCommand
   | ResolveSubmissionCommand
   | RestartCommand
   | RestoreMemoryCommand

@@ -208,6 +208,13 @@ refuses such a create itself.
 older daemon refuses the command as unknown; the Rust client refuses to send
 it to one.
 
+`notifications` means the daemon serves the notification center:
+`post_notification`, `list_notifications`, `get_notification`,
+`mark_notification_read`, `resolve_notification` and `answer_notification`
+(see [notification center](#notification-center)). An older daemon refuses
+them as unknown; the Rust client refuses to send them to one, and
+`Client::serves_notifications` lets a client skip the center instead.
+
 ## Naming a checkout
 
 An agent's memory is scoped by `scope.repository`. Left unset, the daemon
@@ -320,6 +327,70 @@ the digest notes appended since its previous turn started, at most 10 (older
 ones are counted), each cut to one line of 400 characters. A note reaches one
 turn only. `append_note` is an operate command, so an observer device cannot
 send it. Check the `notes` feature first.
+
+## Notification center
+
+The daemon keeps one durable notification center. A notification is a
+record:
+
+| Field | Meaning |
+|---|---|
+| `id` | `ntf_...` |
+| `source` | The poster: an agent id, or a service name such as `archon` |
+| `kind` | `question`, `blocker`, `decision`, `outcome` or `info` |
+| `title`, `body` | One line of at most 200 characters; short Markdown of at most 4096 bytes |
+| `state` | `unread`, `read` or `resolved` |
+| `created_at`, `updated_at` | RFC 3339 times |
+| `key` | Optional; names the notification within its source, at most 200 bytes |
+| `link` | Optional URL or path, at most 512 bytes |
+| `actions` | Up to 8 `{id, label}` choices |
+| `free_text` | Whether a typed answer is accepted |
+| `answer` | Once answered: `action`, `text`, `by` and `at` |
+
+A service posts over the socket; an agent posts with the
+[`notify`](harness-tools.md) tool:
+
+```json
+{"cmd": "post_notification", "source": "archon",
+  "notification": {"kind": "question", "title": "Merge #231 into next?",
+    "body": "CI is green.", "key": "q-17",
+    "actions": [{"id": "merge", "label": "Merge"}, {"id": "hold", "label": "Hold"}],
+    "free_text": true}}
+```
+
+`source` is a service name: lowercase letters, digits, `-`, `_` and `.`, at
+most 64 bytes, never an agent id. Posting again with the same `source` and
+`key` updates that notification instead of adding one: a changed read
+notification becomes unread again, a resolved one stays resolved, and an
+identical repost records nothing. The reply is `Notification` with the record.
+A post over a limit is refused with `invalid_argument` naming it.
+
+`list_notifications {states?, source?, limit?}` returns `Notifications`,
+newest first; `limit` defaults to 200 and is capped at 1000. `get_notification
+{id}` and `mark_notification_read {id}` return `Notification`.
+`resolve_notification` takes either `id`, or `source` and `key`; marking read
+or resolving twice changes nothing. Resolved notifications beyond the newest
+500 are deleted when a new notification is posted.
+
+`answer_notification {id, action?, text?}` records the operator's answer and
+resolves the notification. `action` must be one of its actions' ids, and
+`text` is accepted only when `free_text` is set; a notification is answered
+once, and never after it is resolved. The reply, `NotificationAnswered`,
+carries the record and `delivered_to`: when an agent posted it and still
+exists, the answer reaches that agent's inbox in the same commit as an
+`external_trigger` with source `notification`, waking it if it waits. A
+service reads the answer from the events.
+
+Every change is one `custom` event, named `notification.posted`,
+`notification.updated`, `notification.read`, `notification.answered` or
+`notification.resolved`, whose payload is the whole record after the change.
+A service follows its own notifications with `get_events` or `subscribe` and
+matches the payload's `source` and `key`; the answer is in
+`payload.answer`. An agent's notification events are filed under the agent.
+Clients that predate the center see these as ordinary custom events and can
+skip them by name. Reading is an observe command; posting, marking,
+resolving and answering are operate commands, so an observer device can read
+the center but not change it.
 
 ## Operator memory scopes
 

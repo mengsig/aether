@@ -65,6 +65,7 @@ impl App {
             mcp_servers: Vec::new(),
             mcp_refreshing: false,
             memories: Vec::new(),
+            notifications: Default::default(),
             status: None,
             models: Vec::new(),
             recent_models,

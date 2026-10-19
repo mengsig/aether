@@ -25,6 +25,10 @@ from ._protocol_commands.alias import (
     alias_repository,
 )
 
+from ._protocol_commands.answer import (
+    answer_notification,
+)
+
 from ._protocol_commands.append import (
     append_note,
 )
@@ -89,6 +93,7 @@ from ._protocol_commands.get import (
     get_github_watcher,
     get_inbox,
     get_invocation,
+    get_notification,
     get_pairing,
     get_push_config,
     get_remote,
@@ -124,11 +129,16 @@ from ._protocol_commands.list import (
     list_devices,
     list_invocations,
     list_models,
+    list_notifications,
     list_repository_aliases,
     list_runs,
     list_schedules,
     list_tasks,
     list_workspaces,
+)
+
+from ._protocol_commands.mark import (
+    mark_notification_read,
 )
 
 from ._protocol_commands.mcp import (
@@ -154,6 +164,10 @@ from ._protocol_commands.pin import (
 
 from ._protocol_commands.ping import (
     ping,
+)
+
+from ._protocol_commands.post import (
+    post_notification,
 )
 
 from ._protocol_commands.preview import (
@@ -194,6 +208,7 @@ from ._protocol_commands.reply import (
 
 from ._protocol_commands.resolve import (
     resolve_approval,
+    resolve_notification,
     resolve_submission,
 )
 

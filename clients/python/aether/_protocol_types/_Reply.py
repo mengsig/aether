@@ -36,6 +36,9 @@ from ._ReplyMessageSent import ReplyMessageSent
 from ._ReplyMessagesSent import ReplyMessagesSent
 from ._ReplyModels import ReplyModels
 from ._ReplyNoteAppended import ReplyNoteAppended
+from ._ReplyNotification import ReplyNotification
+from ._ReplyNotificationAnswered import ReplyNotificationAnswered
+from ._ReplyNotifications import ReplyNotifications
 from ._ReplyOk import ReplyOk
 from ._ReplyPairing import ReplyPairing
 from ._ReplyPathCompletions import ReplyPathCompletions
@@ -91,6 +94,9 @@ Reply = (
     ReplyTasks |
     ReplyMessageSent |
     ReplyNoteAppended |
+    ReplyNotification |
+    ReplyNotifications |
+    ReplyNotificationAnswered |
     ReplyMessagesSent |
     ReplyApprovals |
     ReplyApprovalRule |

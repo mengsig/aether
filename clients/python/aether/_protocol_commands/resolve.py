@@ -6,6 +6,7 @@ from ..protocol import (
     Any,
     ApprovalDecision,
     ApprovalId,
+    NotificationId,
     RememberSpec,
 )
 
@@ -20,6 +21,19 @@ def resolve_approval(*, decision: ApprovalDecision, id: ApprovalId, idempotency_
         frame["note"] = note
     if remember is not None:
         frame["remember"] = remember
+    return frame
+
+def resolve_notification(*, id: NotificationId | None = None, key: str | None = None, source: str | None = None) -> dict[str, Any]:
+    """Resolve a notification by `id`, or by the `source` and `key` it was
+    posted under; exactly one of the two. Needs `features::NOTIFICATIONS`.
+    """
+    frame: dict[str, Any] = {"cmd": "resolve_notification"}
+    if id is not None:
+        frame["id"] = id
+    if key is not None:
+        frame["key"] = key
+    if source is not None:
+        frame["source"] = source
     return frame
 
 def resolve_submission(*, command: dict[str, Any], horizon: str | None = None) -> dict[str, Any]:

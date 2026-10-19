@@ -2668,6 +2668,161 @@
           "type": "object"
         },
         {
+          "description": "Post a notification as the service `source`, or update the one its\n`key` already names. Needs `features::NOTIFICATIONS`.",
+          "properties": {
+            "cmd": {
+              "const": "post_notification",
+              "type": "string"
+            },
+            "notification": {
+              "$ref": "#/$defs/NotificationPost"
+            },
+            "source": {
+              "description": "The service's name, such as `archon`: lowercase letters, digits,\n`-`, `_` and `.`, never an agent id.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "source",
+            "notification"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Notifications newest first. Needs `features::NOTIFICATIONS`.",
+          "properties": {
+            "cmd": {
+              "const": "list_notifications",
+              "type": "string"
+            },
+            "limit": {
+              "description": "At most 1000; 200 when unset.",
+              "format": "uint",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "states": {
+              "description": "Only these states; empty means every state.",
+              "items": {
+                "$ref": "#/$defs/NotificationState"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "One notification. Needs `features::NOTIFICATIONS`.",
+          "properties": {
+            "cmd": {
+              "const": "get_notification",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/NotificationId"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Mark a notification seen. Needs `features::NOTIFICATIONS`.",
+          "properties": {
+            "cmd": {
+              "const": "mark_notification_read",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/NotificationId"
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Resolve a notification by `id`, or by the `source` and `key` it was\nposted under; exactly one of the two. Needs `features::NOTIFICATIONS`.",
+          "properties": {
+            "cmd": {
+              "const": "resolve_notification",
+              "type": "string"
+            },
+            "id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NotificationId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Answer a notification with one of its actions, free text where it\ntakes it, or both; this resolves it and reaches a posting agent's\ninbox. Needs `features::NOTIFICATIONS`.",
+          "properties": {
+            "action": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "answer_notification",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/NotificationId"
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Recreate a failed or cancelled agent from its last checkpoint, as a\nnew agent linked to it.",
           "properties": {
             "agent": {
@@ -10086,6 +10241,192 @@
         }
       ]
     },
+    "Notification": {
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/NotificationAction"
+          },
+          "type": "array"
+        },
+        "answer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NotificationAnswer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "body": {
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "free_text": {
+          "type": "boolean"
+        },
+        "id": {
+          "$ref": "#/$defs/NotificationId"
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/NotificationKind"
+        },
+        "link": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "The posting agent's id, or a service name such as `archon`.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/NotificationState"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "kind",
+        "title",
+        "state",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "NotificationAction": {
+      "description": "A choice the operator can make; its `id` is what the poster receives.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "NotificationAnswer": {
+      "description": "The operator's answer: a chosen action, their own words, or both.",
+      "properties": {
+        "action": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "by": {
+          "$ref": "#/$defs/Actor"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "by",
+        "at"
+      ],
+      "type": "object"
+    },
+    "NotificationId": {
+      "description": "A ntf_ prefixed ULID.",
+      "pattern": "^ntf_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "NotificationKind": {
+      "description": "What a notification asks of the operator. Questions and blockers wait on\nthem; the rest inform.",
+      "enum": [
+        "question",
+        "blocker",
+        "decision",
+        "outcome",
+        "info"
+      ],
+      "type": "string"
+    },
+    "NotificationPost": {
+      "description": "What a poster sends. Posting the same `key` again from the same source\nupdates that notification instead of adding another.",
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/NotificationAction"
+          },
+          "type": "array"
+        },
+        "body": {
+          "description": "Short Markdown, at most [`MAX_BODY_BYTES`] bytes.",
+          "type": "string"
+        },
+        "free_text": {
+          "description": "Whether the operator may answer in their own words.",
+          "type": "boolean"
+        },
+        "key": {
+          "description": "The poster's own id for the thing, such as a question id.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/NotificationKind"
+        },
+        "link": {
+          "description": "A URL, or an agent id the operator can jump to.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "One line, at most [`MAX_TITLE_CHARS`] characters.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "title"
+      ],
+      "type": "object"
+    },
+    "NotificationState": {
+      "enum": [
+        "unread",
+        "read",
+        "resolved"
+      ],
+      "type": "string"
+    },
     "OpenLoop": {
       "description": "Something the run left unfinished.",
       "oneOf": [
@@ -11956,6 +12297,77 @@
             },
             "reply": {
               "const": "note_appended",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/Notification"
+            },
+            "reply": {
+              "const": "notification",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Newest first.",
+          "properties": {
+            "data": {
+              "items": {
+                "$ref": "#/$defs/Notification"
+              },
+              "type": "array"
+            },
+            "reply": {
+              "const": "notifications",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The answered notification, and the posting agent whose inbox the\nanswer reached; `None` for a service, which reads the event.",
+          "properties": {
+            "data": {
+              "properties": {
+                "delivered_to": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/AgentId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "notification": {
+                  "$ref": "#/$defs/Notification"
+                }
+              },
+              "required": [
+                "notification"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "notification_answered",
               "type": "string"
             }
           },

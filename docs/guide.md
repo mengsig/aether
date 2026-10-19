@@ -169,6 +169,19 @@ the image on the clipboard. Each shows as a chip above the draft until you
 send. PNG, JPEG, GIF and WebP are accepted, up to 10 images of 3.75 MiB each
 and 10 MiB per message. See [images in the TUI guide](tui.md#images).
 
+The notification center collects what agents and services such as Archon
+need you to see: questions, blockers, decisions, outcomes and plain news. The
+bottom right of the screen counts unread notifications and marks questions
+and blockers; `/notifications` opens the panel, newest first, where you can
+read one, pick one of its answers or type your own, mark it read, resolve it,
+or jump to the chat of the agent that posted it. An answer resolves the
+notification and reaches the agent that posted it as an inbox message;
+a service reads it from the daemon's events. Notifications survive restarts
+and are shared by every TUI on the daemon. Agents post with the
+[`notify`](harness-tools.md) tool, services with
+[`post_notification`](protocol.md#notification-center); see the
+[TUI guide](tui.md#notification-center) for its keys.
+
 Optional [local voice](voice.md) supports dictation and spoken questions;
 recording and speech are off by default.
 

@@ -158,6 +158,7 @@ async fn leaf_api_requests_remove_only_coordination_tools() {
         "provider_usage",
         "refresh_provider_usage",
         "swarm_playbook",
+        "notify",
     ];
     for name in removed {
         assert!(root_tools.iter().any(|tool| tool.name == name), "{name}");

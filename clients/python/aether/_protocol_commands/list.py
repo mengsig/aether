@@ -7,6 +7,7 @@ from ..protocol import (
     AgentQuery,
     Any,
     ArtifactQuery,
+    NotificationState,
     TaskQuery,
 )
 
@@ -50,6 +51,17 @@ def list_invocations(*, agent: AgentId) -> dict[str, Any]:
 def list_models() -> dict[str, Any]:
     """The `list_models` command."""
     frame: dict[str, Any] = {"cmd": "list_models"}
+    return frame
+
+def list_notifications(*, limit: int | None = None, source: str | None = None, states: list[NotificationState] | None = None) -> dict[str, Any]:
+    """Notifications newest first. Needs `features::NOTIFICATIONS`."""
+    frame: dict[str, Any] = {"cmd": "list_notifications"}
+    if limit is not None:
+        frame["limit"] = limit
+    if source is not None:
+        frame["source"] = source
+    if states is not None:
+        frame["states"] = states
     return frame
 
 def list_repository_aliases() -> dict[str, Any]:

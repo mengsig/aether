@@ -7,6 +7,7 @@ import type {
   CheckpointId,
   EventQuery,
   InvocationId,
+  NotificationId,
   RunId,
   ScheduleId,
   SnapshotId,
@@ -105,6 +106,18 @@ export interface GetInvocationCommand {
 
 export function getInvocation(args: Omit<GetInvocationCommand, "cmd">): GetInvocationCommand {
   return { cmd: "get_invocation", ...args };
+}
+
+/**
+ * One notification. Needs `features::NOTIFICATIONS`.
+ */
+export interface GetNotificationCommand {
+  "cmd": "get_notification";
+  "id": NotificationId;
+}
+
+export function getNotification(args: Omit<GetNotificationCommand, "cmd">): GetNotificationCommand {
+  return { cmd: "get_notification", ...args };
 }
 
 /**

@@ -88,6 +88,8 @@ pub struct App {
     /// Loaded memories, refreshed when `/memory` opens and after every
     /// pin/unpin or forget.
     pub memories: Vec<MemoryRecord>,
+    /// The daemon's notifications, for the footer indicator and the center.
+    pub notifications: notifications::NotificationCenter,
     pub status: Option<DaemonStatus>,
     pub models: Vec<ModelInfo>,
     /// Models chosen recently, newest first: what lifts them in the picker.
@@ -257,6 +259,7 @@ pub mod host;
 mod input;
 mod intent;
 mod memories;
+pub mod notifications;
 mod outbox;
 mod preferences;
 mod reducer;

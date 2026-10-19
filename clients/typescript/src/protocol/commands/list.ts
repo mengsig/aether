@@ -5,6 +5,7 @@ import type {
   AgentId,
   AgentQuery,
   ArtifactQuery,
+  NotificationState,
   TaskQuery,
 } from "../../protocol.ts";
 
@@ -74,6 +75,20 @@ export interface ListModelsCommand {
 
 export function listModels(): ListModelsCommand {
   return { cmd: "list_models" };
+}
+
+/**
+ * Notifications newest first. Needs `features::NOTIFICATIONS`.
+ */
+export interface ListNotificationsCommand {
+  "cmd": "list_notifications";
+  "limit"?: number | null;
+  "source"?: string | null;
+  "states"?: Array<NotificationState>;
+}
+
+export function listNotifications(args: Omit<ListNotificationsCommand, "cmd">): ListNotificationsCommand {
+  return { cmd: "list_notifications", ...args };
 }
 
 /**

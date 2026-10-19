@@ -107,6 +107,9 @@ impl App {
                     self.context_tokens.insert(agent, carried);
                 }
             }
+            EventKind::Custom { name, .. } if name.starts_with("notification.") => {
+                self.on_notification_event(&event, &mut effects);
+            }
             EventKind::Custom { name, .. } if name.starts_with("schedule.") => {
                 if self.bottom.showing(ViewKind::Schedules) {
                     if self.schedules.loading {

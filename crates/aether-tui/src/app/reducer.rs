@@ -323,6 +323,7 @@ impl App {
         } else {
             self.options.instance_id = instance;
         }
+        self.notifications.set_served(client.serves_notifications());
         let mut effects = self.on_connected();
         for (command, reply) in client.recovered_commands() {
             if let Some(Ok(keyed)) = command.keyed_request()
@@ -434,6 +435,7 @@ impl App {
                 then: Then::Auth,
             },
         ];
+        effects.extend(self.notifications_request());
         if let Some(agent) = self.selected {
             effects.extend(self.backfill_request(agent));
         }

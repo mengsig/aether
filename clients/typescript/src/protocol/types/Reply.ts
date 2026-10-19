@@ -26,6 +26,7 @@ import type {
   MemoryFeedbackList,
   MemoryRecord,
   ModelInfo,
+  Notification,
   Pairing,
   PathCompletions,
   ProviderInfo,
@@ -156,6 +157,28 @@ export interface ReplyMessageSent {
 export interface ReplyNoteAppended {
   "data": Record<string, unknown>;
   "reply": "note_appended";
+}
+
+export interface ReplyNotification {
+  "data": Notification;
+  "reply": "notification";
+}
+
+/**
+ * Newest first.
+ */
+export interface ReplyNotifications {
+  "data": Array<Notification>;
+  "reply": "notifications";
+}
+
+/**
+ * The answered notification, and the posting agent whose inbox the
+ * answer reached; `None` for a service, which reads the event.
+ */
+export interface ReplyNotificationAnswered {
+  "data": Record<string, unknown>;
+  "reply": "notification_answered";
 }
 
 /**
@@ -425,6 +448,9 @@ export type Reply =
     ReplyTasks |
     ReplyMessageSent |
     ReplyNoteAppended |
+    ReplyNotification |
+    ReplyNotifications |
+    ReplyNotificationAnswered |
     ReplyMessagesSent |
     ReplyApprovals |
     ReplyApprovalRule |

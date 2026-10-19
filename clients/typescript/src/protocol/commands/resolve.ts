@@ -4,6 +4,7 @@
 import type {
   ApprovalDecision,
   ApprovalId,
+  NotificationId,
   RememberSpec,
 } from "../../protocol.ts";
 
@@ -19,6 +20,21 @@ export interface ResolveApprovalCommand {
 
 export function resolveApproval(args: Omit<ResolveApprovalCommand, "cmd">): ResolveApprovalCommand {
   return { cmd: "resolve_approval", ...args };
+}
+
+/**
+ * Resolve a notification by `id`, or by the `source` and `key` it was
+ * posted under; exactly one of the two. Needs `features::NOTIFICATIONS`.
+ */
+export interface ResolveNotificationCommand {
+  "cmd": "resolve_notification";
+  "id"?: NotificationId | null;
+  "key"?: string | null;
+  "source"?: string | null;
+}
+
+export function resolveNotification(args: Omit<ResolveNotificationCommand, "cmd">): ResolveNotificationCommand {
+  return { cmd: "resolve_notification", ...args };
 }
 
 /**
