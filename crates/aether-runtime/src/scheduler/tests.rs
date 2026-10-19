@@ -321,3 +321,27 @@ async fn a_panicking_tick_does_not_end_the_scheduler_loop() {
     }
     runtime.shutdown.cancel();
 }
+
+#[tokio::test]
+async fn a_failed_limit_step_withholds_dispatch_but_other_steps_do_not() {
+    let (runtime, _dir) = quiet_runtime().await;
+    let fail = || Err(crate::RuntimeError::Internal("boom".into()));
+    let mut faults = Faults::default();
+    isolated(&runtime, &mut faults, "expire backoff", fail);
+    assert_eq!(faults.errors.len(), 1);
+    assert!(!faults.withhold_dispatch);
+    guarded(&runtime, &mut faults, "enforce deadlines", fail);
+    assert!(faults.withhold_dispatch);
+
+    let mut faults = Faults::default();
+    runtime
+        .sched
+        .lock()
+        .step_faults
+        .insert("drain cancellations", StepFault::Panic);
+    guarded(&runtime, &mut faults, "drain cancellations", || Ok(()));
+    assert!(
+        faults.withhold_dispatch,
+        "a panicking limit step fails closed"
+    );
+}

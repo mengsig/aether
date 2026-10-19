@@ -105,42 +105,70 @@ fn injected_fault(runtime: &Runtime, step: &'static str) -> Result<()> {
     }
 }
 
-/// Run an independent step; a failure is logged, kept in `failures` and
-/// never skips the steps after it.
+/// What failed during one pass.
+#[derive(Default)]
+struct Faults {
+    errors: Vec<RuntimeError>,
+    /// A step that keeps agents within their limits failed or panicked: no
+    /// turn starts this pass, because it could run past a cancellation,
+    /// deadline, budget or unmet dependency.
+    withhold_dispatch: bool,
+}
+
+/// Run a step whose failure is logged and kept but never skips the steps
+/// after it. Returns whether it completed.
 fn isolated(
     runtime: &Runtime,
-    failures: &mut Vec<RuntimeError>,
+    faults: &mut Faults,
+    step: &'static str,
+    run: impl FnOnce() -> Result<()>,
+) -> bool {
+    match contained(runtime, step, run) {
+        Some(Ok(())) => true,
+        Some(Err(e)) => {
+            tracing::error!(step, error = %e, "scheduler step failed");
+            faults.errors.push(e);
+            false
+        }
+        None => false,
+    }
+}
+
+/// Like `isolated`, for steps that enforce limits: a failure also withholds
+/// this pass's dispatch.
+fn guarded(
+    runtime: &Runtime,
+    faults: &mut Faults,
     step: &'static str,
     run: impl FnOnce() -> Result<()>,
 ) {
-    if let Some(Err(e)) = contained(runtime, step, run) {
-        tracing::error!(step, error = %e, "scheduler step failed");
-        failures.push(e);
+    if !isolated(runtime, faults, step, run) {
+        faults.withhold_dispatch = true;
     }
 }
 
 /// One scheduling pass. Public for tests. Every step runs even when an
 /// earlier one failed; the first failure is returned once the pass is done.
 pub fn tick(runtime: &Arc<Runtime>) -> Result<()> {
-    let mut failures = Vec::new();
-    pass(runtime, &mut failures)?;
-    match failures.into_iter().next() {
+    let mut faults = Faults::default();
+    pass(runtime, &mut faults)?;
+    match faults.errors.into_iter().next() {
         Some(first) => Err(first),
         None => Ok(()),
     }
 }
 
-fn pass(runtime: &Arc<Runtime>, failures: &mut Vec<RuntimeError>) -> Result<()> {
-    isolated(runtime, failures, "drain cancellations", || {
+fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
+    guarded(runtime, faults, "drain cancellations", || {
         crate::cancellation::drain(runtime)
     });
-    isolated(runtime, failures, "expire backoff", || {
+    isolated(runtime, faults, "expire backoff", || {
         expire_backoff(runtime)
     });
-    isolated(runtime, failures, "enforce budgets", || {
+    guarded(runtime, faults, "enforce budgets", || {
         enforce_budgets(runtime)
     });
-    let live = live_after_enforcement(runtime, failures)?;
+    let live = live_after_enforcement(runtime, faults)?;
     let lineage = Lineage::from_store(&live, runtime.store.as_ref())?;
     let mut ready: Vec<Runnable> = Vec::new();
     let at = now();
@@ -224,28 +252,28 @@ fn pass(runtime: &Arc<Runtime>, failures: &mut Vec<RuntimeError>) -> Result<()> 
     if runtime.disk_is_low() {
         return Ok(());
     }
+    if faults.withhold_dispatch {
+        return Ok(());
+    }
     dispatch(runtime, ready, &lineage);
     Ok(())
 }
 
 /// Reuse the deadline snapshot unless enforcement or dependency gates changed it.
-fn live_after_enforcement(
-    runtime: &Arc<Runtime>,
-    failures: &mut Vec<RuntimeError>,
-) -> Result<Vec<Agent>> {
+fn live_after_enforcement(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<Vec<Agent>> {
     let watermark = runtime.store.commits();
     let filter = AgentFilter {
         live_only: true,
         ..Default::default()
     };
     let mut live = runtime.store.agents(&filter)?;
-    isolated(runtime, failures, "enforce deadlines", || {
+    guarded(runtime, faults, "enforce deadlines", || {
         enforce_deadlines(runtime, &live)
     });
-    isolated(runtime, failures, "fire schedules", || {
+    isolated(runtime, faults, "fire schedules", || {
         crate::schedules::tick(runtime, now())
     });
-    isolated(runtime, failures, "gate dependencies", || {
+    guarded(runtime, faults, "gate dependencies", || {
         gate_dependencies(runtime)
     });
     if runtime.store.commits() != watermark {
