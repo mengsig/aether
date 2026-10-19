@@ -247,6 +247,22 @@ fn ascii_environment() -> anyhow::Result<Option<String>> {
     }
 }
 
+/// Whether plain commands print ASCII only: the `--ascii` flag, `AETHER_ASCII`,
+/// the saved preference, or a locale that is not UTF-8.
+pub(super) fn display_ascii(flag: bool) -> anyhow::Result<bool> {
+    let var = |name| std::env::var(name).ok();
+    let locale_ascii = super::table::locale_is_ascii(
+        var("LC_ALL").as_deref(),
+        var("LC_CTYPE").as_deref(),
+        var("LANG").as_deref(),
+    );
+    let prefs = UiPrefs::load(&aether_tui::prefs::dir()).unwrap_or_default();
+    let chosen = prefs
+        .ascii(flag, ascii_environment()?.as_deref())
+        .map_err(anyhow::Error::msg)?;
+    Ok(chosen || locale_ascii)
+}
+
 fn validate_startup_display(endpoint: &aether_client::Endpoint, ascii: bool) -> anyhow::Result<()> {
     let prefs = if endpoint.is_remote() {
         UiPrefs::default()

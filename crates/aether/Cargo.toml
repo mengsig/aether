@@ -43,6 +43,7 @@ serde = { workspace = true }
 toml = { workspace = true }
 rustix = { version = "1.1.4", features = ["fs", "process"] }
 reqwest = { workspace = true }
+unicode-width = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 tempfile = { workspace = true }

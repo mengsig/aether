@@ -360,7 +360,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 RunsCmd::Export { run, out, json } => cli::run_export(socket, run, out, json).await,
                 RunsCmd::Import { file, json } => cli::run_import(socket, file, json).await,
             },
-            Cmd::Agents { all, json } => cli::agents(endpoint, all, json).await,
+            Cmd::Agents { all, json } => cli::agents(endpoint, all, json, ascii).await,
             Cmd::New { name, model, json } => cli::new_agent(endpoint, name, model, json).await,
             Cmd::Tasks { json } => cli::tasks(endpoint, json).await,
             Cmd::Task {

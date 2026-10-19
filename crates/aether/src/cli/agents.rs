@@ -1,4 +1,5 @@
-use super::{AgentQuery, ArchiveTarget, acted, connect, sane, short};
+use super::table::{Glyphs, cell};
+use super::{AgentQuery, ArchiveTarget, acted, connect, sane};
 use anyhow::bail;
 use std::path::PathBuf;
 
@@ -36,6 +37,7 @@ pub async fn agents(
     socket: impl Into<aether_client::Endpoint>,
     all: bool,
     json: bool,
+    ascii: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let client = connect(&socket).await?;
@@ -53,20 +55,28 @@ pub async fn agents(
     }
     // Cache reads are their own column: folded into `in` they let a
     // cache-dominated total read as fresh input nobody had paid full price for.
+    let glyphs = Glyphs::new(super::display_ascii(ascii)?);
+    let head = |text: &str, width, right| cell(text, width, glyphs, right);
     println!(
-        "{:<32} {:<14} {:<28} {:<28} {:>8} {:>8} {:>8} task",
-        "id", "name", "status", "model", "in", "cached", "out"
+        "{} {} {} {} {} {} {} task",
+        head("id", 32, false),
+        head("name", 14, false),
+        head("status", 28, false),
+        head("model", 28, false),
+        head("in", 8, true),
+        head("cached", 8, true),
+        head("out", 8, true),
     );
     for a in rows {
         println!(
-            "{:<32} {:<14} {:<28} {:<28} {:>8} {:>8} {:>8} {}",
-            a.id.to_string(),
-            short(&a.name, 14),
-            agent_status_label(&a),
-            short(&a.chain().to_string(), 28),
-            a.stats.usage.input_tokens,
-            a.stats.usage.cache_read_tokens,
-            a.stats.usage.output_tokens,
+            "{} {} {} {} {} {} {} {}",
+            head(&a.id.to_string(), 32, false),
+            head(&a.name, 14, false),
+            head(&agent_status_label(&a, glyphs), 28, false),
+            head(&a.chain().to_string(), 28, false),
+            head(&a.stats.usage.input_tokens.to_string(), 8, true),
+            head(&a.stats.usage.cache_read_tokens.to_string(), 8, true),
+            head(&a.stats.usage.output_tokens.to_string(), 8, true),
             a.current_task.map(|t| t.to_string()).unwrap_or_default()
         );
     }
@@ -75,19 +85,19 @@ pub async fn agents(
 
 /// A pause is orthogonal to the status: a paused agent mid-turn is still
 /// running, and saying only "paused" would be a lie.
-fn agent_status_label(a: &aether_core::agent::Agent) -> String {
+fn agent_status_label(a: &aether_core::agent::Agent, glyphs: Glyphs) -> String {
     let kind = if matches!(
         &a.status,
         aether_core::agent::AgentStatus::Blocked {
             reason: aether_core::agent::BlockReason::Exhausted { .. }
         }
     ) {
-        format!("{} · exhausted", a.status.kind())
+        format!("{} {} exhausted", a.status.kind(), glyphs.separator())
     } else {
         a.status.kind().to_string()
     };
     if a.paused {
-        format!("{kind} · paused")
+        format!("{kind} {} paused", glyphs.separator())
     } else {
         kind
     }

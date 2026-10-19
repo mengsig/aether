@@ -48,6 +48,8 @@ mod diagnostics;
 pub use diagnostics::doctor;
 
 mod session;
+mod table;
+use session::display_ascii;
 #[cfg(test)]
 use session::filter_known_models;
 pub use session::tui;

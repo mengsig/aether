@@ -45,18 +45,7 @@ impl Runtime {
             )));
         }
         if let Some(name) = &update.name {
-            let trimmed = name.trim();
-            if trimmed.is_empty()
-                || trimmed.chars().count() > 256
-                || name
-                    .chars()
-                    .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
-            {
-                return Err(RuntimeError::Invalid(
-                    "name must contain 1 to 256 characters without line breaks or control characters".into(),
-                ));
-            }
-            agent.name = trimmed.to_owned();
+            agent.name = super::validation::checked_agent_name(name)?;
         }
         // §6.3: moving between engines, or across the engine/API boundary,
         // means the next turn starts from a checkpoint. Codex's native

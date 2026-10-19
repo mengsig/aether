@@ -285,7 +285,10 @@ impl Runtime {
         }
         let at = now();
         let role = Role::new(spec.role.trim().to_owned());
-        let name = spec.name.unwrap_or_else(|| role.as_str().to_owned());
+        let name = match &spec.name {
+            Some(name) => super::validation::checked_agent_name(name)?,
+            None => role.as_str().to_owned(),
+        };
         let mut agent = Agent {
             id: AgentId::new(),
             parent: parent.as_ref().map(|p| p.id),

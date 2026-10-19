@@ -86,3 +86,31 @@ async fn operator_rename_validates_and_preserves_agent_invariants() {
         before
     );
 }
+
+#[tokio::test]
+async fn creation_refuses_the_names_rename_refuses() {
+    let h = harness(Vec::new()).await;
+    let before = h.store.events(0, 10000, &EventFilter::default()).unwrap();
+    for name in [
+        "".to_owned(),
+        "  ".into(),
+        "x".repeat(257),
+        "bad\nname".into(),
+    ] {
+        let refused = h.runtime.create_agent(
+            CreateAgentSpec {
+                start: false,
+                name: Some(name),
+                ..spec("named at creation")
+            },
+            Actor::user(),
+        );
+        let message = refused.expect_err("name is refused").to_string();
+        assert!(message.contains("1 to 256 characters"), "{message}");
+    }
+    assert_eq!(
+        h.store.events(0, 10000, &EventFilter::default()).unwrap(),
+        before,
+        "a refused name leaves no event"
+    );
+}

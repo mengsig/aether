@@ -16,6 +16,26 @@ pub(super) fn check_narrows_parent(policy: &ApprovalPolicy, parent: &Agent) -> R
     )))
 }
 
+/// The longest agent name, in characters.
+const MAX_AGENT_NAME_CHARS: usize = 256;
+
+/// An agent name as stored: trimmed, 1 to [`MAX_AGENT_NAME_CHARS`] characters,
+/// one line. Shared by creation and rename so they cannot disagree.
+pub(super) fn checked_agent_name(name: &str) -> Result<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > MAX_AGENT_NAME_CHARS
+        || name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
+    {
+        return Err(RuntimeError::Invalid(format!(
+            "name must contain 1 to {MAX_AGENT_NAME_CHARS} characters without line breaks or control characters"
+        )));
+    }
+    Ok(trimmed.to_owned())
+}
+
 impl Runtime {
     /// Apply `guard` to every link a turn may land on, primary first. A
     /// fallback is not a lesser model: a turn runs on it with the same budget,
