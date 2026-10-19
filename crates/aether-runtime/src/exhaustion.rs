@@ -250,6 +250,25 @@ fn diagnostic(
     Ok((payload, recipients))
 }
 
+/// A budget stop as a sentence for the task error and the ancestors' inboxes;
+/// the structured payload stays in the `exhaustion.failed` event.
+fn budget_message(reason: &str, cancellation_requested: bool, payload: &Value) -> String {
+    let live = payload["live_descendant_count"].as_u64().unwrap_or(0);
+    assert!(
+        payload.is_object(),
+        "the diagnostic payload must be an object"
+    );
+    let subtree = if cancellation_requested {
+        "its live subtree was cancelled with it"
+    } else {
+        "no new subtree cancellation was requested"
+    };
+    format!(
+        "Stopped by its budget ({reason}); {subtree}, {live} descendant(s) were live at the stop. \
+         Details are in the exhaustion.failed event."
+    )
+}
+
 /// Return an enriched error and deliver it once per responsible ancestor.
 /// The caller holds the terminal-row fence and commits everything atomically;
 /// no process or filesystem is touched here.
@@ -283,7 +302,11 @@ pub(crate) fn prepare(
             Filesystem/worktree existence and native session resumability are not verified. \
             Restart or reassign after resolving the limit; inspect live descendants before resuming."
     );
-    let enriched = format!("exhaustion: {payload}");
+    let enriched = if cause.category.ends_with("_budget") {
+        budget_message(error, cancellation_requested, &payload)
+    } else {
+        format!("exhaustion: {payload}")
+    };
     commit.push_event(
         EventDraft::new(
             by.clone(),

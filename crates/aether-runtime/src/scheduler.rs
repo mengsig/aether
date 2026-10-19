@@ -23,6 +23,8 @@ mod providers;
 mod wake;
 
 pub(crate) use budgets::stop_for_budget;
+#[cfg(test)]
+use budgets::warn_once;
 use budgets::{enforce_budgets, enforce_deadlines};
 use dependencies::gate_dependencies;
 use dispatch::dispatch;

@@ -250,9 +250,48 @@ async fn token_budget_notifies_root_and_keeps_durable_subtree_cancellation() {
         AgentStatus::Cancelled { .. }
     ));
     let error = failures(store.as_ref(), root.id).pop().unwrap();
-    assert!(error.contains("token_budget"));
-    assert!(error.contains(&worker.id.to_string()));
-    assert!(error.contains("durable subtree cancellation requested"));
+    assert!(!error.starts_with("exhaustion:"), "{error}");
+    assert!(
+        error.starts_with("Stopped by its budget (token budget of 5: 6 used);"),
+        "{error}"
+    );
+    assert!(
+        error.contains("its live subtree was cancelled with it"),
+        "{error}"
+    );
+    let AgentStatus::Failed { error: task_error } =
+        store.agent(steward.id).unwrap().unwrap().status
+    else {
+        panic!("the steward must have failed");
+    };
+    assert_eq!(
+        task_error, error,
+        "the task error and the inbox say the same"
+    );
+    let recorded = store
+        .latest_events(
+            20,
+            &EventFilter {
+                types: vec!["custom".into()],
+                ..EventFilter::own_events(steward.id)
+            },
+        )
+        .unwrap();
+    let payload = recorded
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::Custom { name, payload } if name == "exhaustion.failed" => Some(payload),
+            _ => None,
+        })
+        .expect("the structured diagnostic stays in the event");
+    assert_eq!(payload["category"], "token_budget");
+    assert!(payload.to_string().contains(&worker.id.to_string()));
+    assert!(
+        payload["descendant_policy"]
+            .as_str()
+            .unwrap()
+            .contains("durable subtree cancellation requested")
+    );
     crate::scheduler::stop_for_budget(
         &rt,
         steward.id,

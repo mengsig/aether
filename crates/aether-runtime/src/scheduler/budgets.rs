@@ -70,20 +70,25 @@ fn check_budgets(runtime: &Arc<Runtime>) -> Result<()> {
     Ok(())
 }
 
-fn warn_once(
+pub(super) fn warn_once(
     runtime: &Arc<Runtime>,
     agent: &Agent,
     usage: aether_core::model::Usage,
     reason: String,
 ) -> Result<()> {
+    // Re-read under the hold: a stop committed since the caller's read must
+    // not be followed by a warning for the same agent.
+    let hold = runtime.hold();
+    if still_live(runtime, agent.id)?.is_none() {
+        return Ok(());
+    }
     tracing::info!(agent = %agent.id, %reason, "budget warning");
-    runtime.apply(
-        Commit::new().event(
-            EventDraft::new(Actor::Scheduler, EventKind::BudgetWarning { reason, usage })
-                .agent(agent.id)
-                .run(agent.run),
-        ),
-    )?;
+    let commit = Commit::new().event(
+        EventDraft::new(Actor::Scheduler, EventKind::BudgetWarning { reason, usage })
+            .agent(agent.id)
+            .run(agent.run),
+    );
+    runtime.apply_held(hold, commit)?;
     Ok(())
 }
 

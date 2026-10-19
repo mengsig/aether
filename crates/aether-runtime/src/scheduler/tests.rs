@@ -240,3 +240,36 @@ async fn quarantined_usage_refresh_does_not_prevent_exhaustion_recovery() {
     ));
     assert_eq!(runtime.sched.lock().probing["claude-code"], agent.id);
 }
+
+#[tokio::test]
+async fn no_budget_warning_follows_the_stop_of_the_same_agent() {
+    let (runtime, _config_dir) = engine_runtime().await;
+    let agent = engine_agent(&runtime);
+    let usage = aether_core::model::Usage::default();
+    let warnings = |runtime: &Runtime| {
+        runtime
+            .store
+            .events(0, 1000, &aether_store::EventFilter::for_agent(agent.id))
+            .unwrap()
+            .into_iter()
+            .filter(|e| matches!(e.kind, aether_core::event::EventKind::BudgetWarning { .. }))
+            .count()
+    };
+    warn_once(&runtime, &agent, usage, "token budget of 5: 4 used".into()).unwrap();
+    assert_eq!(warnings(&runtime), 1, "a live agent is warned");
+
+    stop_for_budget(
+        &runtime,
+        agent.id,
+        usage,
+        "token budget of 5: 6 used",
+        Actor::Scheduler,
+    )
+    .unwrap();
+    warn_once(&runtime, &agent, usage, "token budget of 5: 6 used".into()).unwrap();
+    assert_eq!(
+        warnings(&runtime),
+        1,
+        "a stopped agent is not warned afterwards"
+    );
+}
