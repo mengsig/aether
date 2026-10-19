@@ -390,7 +390,7 @@ pub(crate) fn error_json(error: &anyhow::Error, socket: &Path) -> serde_json::Va
     };
     serde_json::json!({"error": {
         "code": code,
-        "message": error_message(error),
+        "message": joined_causes(error),
         "socket": socket.to_string_lossy(),
     }})
 }
@@ -400,8 +400,14 @@ pub(crate) fn is_network_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| cause.is::<reqwest::Error>())
 }
 
-/// The error and its causes on one line, each cause once.
+/// The error and its causes on one line, each cause once, safe to print.
 pub(crate) fn error_message(error: &anyhow::Error) -> String {
+    sane(&joined_causes(error))
+}
+
+/// [`error_message`] as the daemon and the causes wrote it, for JSON, which
+/// escapes what a terminal would obey.
+fn joined_causes(error: &anyhow::Error) -> String {
     let mut message = error.to_string();
     for cause in error.chain().skip(1) {
         let cause = cause.to_string();
@@ -411,7 +417,7 @@ pub(crate) fn error_message(error: &anyhow::Error) -> String {
             message.push_str(&cause);
         }
     }
-    sane(&message)
+    message
 }
 
 /// Text from somewhere else, with nothing in it that can move a cursor, set
