@@ -339,9 +339,10 @@ payload includes the label name and the actor who applied it.
 
 Authorization requires a human GitHub account with `admin`, `maintain`, or
 `write` permission (or GitHub's explicit push permission), or one named in
-`operator_users`. Read/triage access, non-collaborators, and bots cannot
-dispatch. A repository's `allowed_users`, when set, is checked first and only
-narrows this further, for operator logins too. Permission lookup failures are
+`operator_users`. Bots never dispatch, and read/triage access or
+non-collaborators cannot unless listed in `operator_users`. A repository's
+`allowed_users`, when set, is checked first and only narrows this further, for
+operator logins too. Permission lookup failures are
 visible retryable errors, not authorization. Watcher replies are instructed to
 include `<!-- aether:github-reply -->`; mentioning bodies with that marker are
 ignored. Explicit human-applied labels still work on marked threads. A durable
