@@ -255,7 +255,7 @@ pub(super) fn then_operation(then: &Then) -> &'static str {
         Then::MemoryCreated { .. } => "admitting the operator memory",
         Then::AgentRenamed(_) => "renaming the agent",
         Then::Models => "loading models",
-        Then::Notifications => "loading notifications",
+        Then::Notifications | Then::ResolvedNotifications => "loading notifications",
         Then::NotificationChanged => "updating the notification",
         Then::NotificationAnswered => "answering the notification",
         Then::Providers => "loading providers",

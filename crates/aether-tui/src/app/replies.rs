@@ -118,8 +118,7 @@ impl App {
             return Routed::Done(self.on_backfill(agent, connection, result));
         }
         if then.is_notification() {
-            self.notification_reply(&then, result);
-            return Routed::Done(Vec::new());
+            return Routed::Done(self.notification_reply(&then, result));
         }
         if let Then::QueuedSent(agent) = then {
             self.queued_sent(agent, result.err());

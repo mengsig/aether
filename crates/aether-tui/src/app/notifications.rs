@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use aether_core::event::Event;
-use aether_core::id::NotificationId;
+use aether_core::id::{AgentId, NotificationId};
 use aether_core::notification::{Notification, NotificationChange, NotificationState};
 use aether_protocol::{Command, Reply};
 
@@ -146,20 +146,17 @@ impl NotificationCenter {
 }
 
 impl App {
-    /// The connect snapshot's list, when the daemon serves notifications.
+    /// The connect snapshot's first list, of what is still open, when the
+    /// daemon serves notifications. Resolved history is asked for after it.
     pub(super) fn notifications_request(&mut self) -> Option<Effect> {
         if !self.notifications.served {
             return None;
         }
         self.notifications.list_requested();
-        Some(Effect::Request {
-            command: Command::ListNotifications {
-                states: Vec::new(),
-                source: None,
-                limit: Some(MAX_KEPT),
-            },
-            then: Then::Notifications,
-        })
+        Some(list(
+            vec![NotificationState::Unread, NotificationState::Read],
+            Then::Notifications,
+        ))
     }
 
     /// A `notification.*` event: adopt the record it carries.
@@ -189,8 +186,12 @@ impl App {
         }
     }
 
-    /// Replies to the list and to every mark, resolve and answer.
-    pub(super) fn notification_reply(&mut self, then: &Then, result: Result<Reply, ClientError>) {
+    /// Replies to the lists and to every mark, resolve and answer.
+    pub(super) fn notification_reply(
+        &mut self,
+        then: &Then,
+        result: Result<Reply, ClientError>,
+    ) -> Vec<Effect> {
         debug_assert!(
             then.is_notification(),
             "only notification replies come here"
@@ -198,16 +199,32 @@ impl App {
         let reply = match result {
             Ok(reply) => reply,
             // The disconnect itself is reported once; the next connection lists again.
-            Err(ClientError::Disconnected) => return,
+            Err(ClientError::Disconnected) => return Vec::new(),
             Err(error) => {
                 self.flash_error(format!("notifications: {error}"));
-                return;
+                return Vec::new();
             }
         };
         self.dirty = true;
         match (then, reply) {
-            (Then::Notifications, Reply::Notifications(listed)) => {
-                self.notifications.listed(listed)
+            // Open ones first, so resolved history can never crowd them out of the cap.
+            (Then::Notifications, Reply::Notifications(open)) => {
+                self.notifications.listed(open);
+                return vec![list(
+                    vec![NotificationState::Resolved],
+                    Then::ResolvedNotifications,
+                )];
+            }
+            (Then::ResolvedNotifications, Reply::Notifications(resolved)) => {
+                debug_assert!(
+                    resolved
+                        .iter()
+                        .all(|n| n.state == NotificationState::Resolved),
+                    "the daemon filtered by state"
+                );
+                for record in resolved {
+                    self.notifications.apply(record);
+                }
             }
             (Then::NotificationChanged, Reply::Notification(record)) => {
                 self.notifications.apply(record);
@@ -218,21 +235,26 @@ impl App {
                     notification,
                     delivered_to,
                 },
-            ) => {
-                let to = delivered_to.map(|agent| self.agent_display_name(agent));
-                self.notifications.apply(notification);
-                self.flash(match to {
-                    Some(name) => {
-                        format!("answered and resolved; {name} has the answer in its inbox")
-                    }
-                    None => "answered and resolved".to_owned(),
-                });
-            }
+            ) => self.answered(notification, delivered_to),
             (then, reply) => {
                 tracing::debug!(?then, ?reply, "unexpected notification reply");
                 self.flash_error("notifications: the daemon sent an unexpected reply");
             }
         }
+        Vec::new()
+    }
+
+    fn answered(&mut self, notification: Notification, delivered_to: Option<AgentId>) {
+        debug_assert!(
+            notification.answer.is_some(),
+            "an answered reply carries the answer"
+        );
+        let to = delivered_to.map(|agent| self.agent_display_name(agent));
+        self.notifications.apply(notification);
+        self.flash(match to {
+            Some(name) => format!("answered and resolved; {name} has the answer in its inbox"),
+            None => "answered and resolved".to_owned(),
+        });
     }
 }
 
@@ -240,8 +262,23 @@ impl Then {
     pub(crate) fn is_notification(&self) -> bool {
         matches!(
             self,
-            Then::Notifications | Then::NotificationChanged | Then::NotificationAnswered
+            Then::Notifications
+                | Then::ResolvedNotifications
+                | Then::NotificationChanged
+                | Then::NotificationAnswered
         )
+    }
+}
+
+/// The newest [`MAX_KEPT`] notifications in `states`.
+fn list(states: Vec<NotificationState>, then: Then) -> Effect {
+    Effect::Request {
+        command: Command::ListNotifications {
+            states,
+            source: None,
+            limit: Some(MAX_KEPT),
+        },
+        then,
     }
 }
 

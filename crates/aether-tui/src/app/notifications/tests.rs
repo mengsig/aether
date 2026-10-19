@@ -138,6 +138,48 @@ fn a_list_drops_what_the_daemon_no_longer_holds() {
 }
 
 #[test]
+fn resolved_history_never_crowds_out_an_older_open_question() {
+    let mut app = served_app();
+    let effects = app.reduce(AppEvent::Connected);
+    let asked = effects.iter().find_map(|effect| match effect {
+        Effect::Request {
+            command: Command::ListNotifications { states, .. },
+            then: Then::Notifications,
+        } => Some(states.clone()),
+        _ => None,
+    });
+    let open = [NotificationState::Unread, NotificationState::Read];
+    assert_eq!(asked.as_deref(), Some(open.as_slice()), "open ones first");
+    let waiting = notification(NotificationKind::Question, "Waiting", 50_000);
+    let next = app.on_reply(
+        Then::Notifications,
+        Ok(Reply::Notifications(vec![waiting.clone()])),
+    );
+    assert!(matches!(
+        next.as_slice(),
+        [Effect::Request { command: Command::ListNotifications { states, .. }, then: Then::ResolvedNotifications }]
+            if states == &[NotificationState::Resolved]
+    ));
+    let history = (0..MAX_KEPT as i64)
+        .map(|age| {
+            let mut n = notification(NotificationKind::Outcome, "done", age);
+            n.resolve(now());
+            n
+        })
+        .collect();
+    app.on_reply(
+        Then::ResolvedNotifications,
+        Ok(Reply::Notifications(history)),
+    );
+    assert_eq!(app.notifications.items().len(), MAX_KEPT);
+    assert!(
+        app.notifications.get(waiting.id).is_some(),
+        "the question survives the cap"
+    );
+    assert_eq!(app.notifications.urgent_unread(), 1);
+}
+
+#[test]
 fn an_urgent_post_alerts_an_unfocused_terminal_and_nothing_else_does() {
     let mut app = served_app();
     app.terminal_focused = false;
