@@ -591,6 +591,7 @@ fn money_reads_back_without_float_noise_or_losing_sub_cent_limits() {
     assert_eq!(format_usd(0.004), "0.004");
     assert_eq!(format_usd(5.0), "5");
     assert_eq!(format_usd(0.000001), "0.000001");
+    assert_eq!(format_usd(0.0000001), "0.0000001");
 }
 
 #[test]

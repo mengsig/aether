@@ -342,6 +342,10 @@ pub fn format_usd(amount: f64) -> String {
     let fixed = format!("{amount:.6}");
     let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
     assert!(!trimmed.is_empty(), "formatting {amount} left nothing");
+    if trimmed == "0" && amount > 0.0 {
+        // Below the fixed precision: the shortest exact form keeps the real threshold.
+        return amount.to_string();
+    }
     trimmed.to_owned()
 }
 
