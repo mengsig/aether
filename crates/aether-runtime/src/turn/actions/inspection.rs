@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
+fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
     let resolved = runtime.models.resolve(&ctx.agent.model)?;
     let agent = runtime
         .store
@@ -75,7 +75,7 @@ pub(super) fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<Too
     })
 }
 
-pub(super) async fn list_models(
+async fn list_models(
     runtime: &Arc<Runtime>,
     ctx: &TurnCtx,
     provider: Option<String>,
@@ -146,4 +146,82 @@ pub(super) async fn list_models(
         structured: Some(data),
         ..Default::default()
     })
+}
+
+async fn read_artifact(
+    runtime: &Arc<Runtime>,
+    ctx: &TurnCtx,
+    id: ArtifactId,
+    offset: u64,
+    limit: usize,
+) -> Result<ToolOutcome> {
+    let runtime = runtime.clone();
+    let caller = ctx.agent.id;
+    tokio::task::spawn_blocking(move || {
+        crate::inspection::artifact(&runtime, caller, id, offset, limit)
+    })
+    .await
+    .map_err(|e| crate::RuntimeError::Internal(format!("artifact read task failed: {e}")))?
+}
+
+async fn refresh_provider_usage(
+    runtime: &Arc<Runtime>,
+    provider: Option<String>,
+) -> Result<ToolOutcome> {
+    let data = runtime.refresh_provider_usage(provider.as_deref()).await?;
+    Ok(usage_outcome(data))
+}
+
+fn provider_usage(runtime: &Arc<Runtime>) -> ToolOutcome {
+    usage_outcome(runtime.provider_usage())
+}
+
+fn usage_outcome(data: serde_json::Value) -> ToolOutcome {
+    ToolOutcome {
+        content: data.to_string(),
+        structured: Some(data),
+        ..Default::default()
+    }
+}
+
+/// Read-only listing and inspection actions.
+pub(super) async fn apply(
+    runtime: &Arc<Runtime>,
+    ctx: &TurnCtx,
+    action: HarnessAction,
+) -> Result<ToolOutcome> {
+    match action {
+        HarnessAction::ListAgents { after, limit } => {
+            crate::inspection::agents(runtime, ctx.agent.id, after, limit)
+        }
+        HarnessAction::ListPeers { after, limit } => {
+            crate::peers::list(runtime, ctx.agent.id, after, limit)
+        }
+        HarnessAction::ListTasks { after, limit } => {
+            crate::inspection::tasks(runtime, ctx.agent.id, after, limit)
+        }
+        HarnessAction::ReadArtifact { id, offset, limit } => {
+            read_artifact(runtime, ctx, id, offset, limit).await
+        }
+        HarnessAction::ReadTask {
+            task,
+            revision,
+            offset,
+            max_chars,
+        } => crate::inspection::task(
+            runtime,
+            ctx.agent.id,
+            task,
+            revision.as_deref(),
+            offset,
+            max_chars,
+        ),
+        HarnessAction::RefreshProviderUsage { provider } => {
+            refresh_provider_usage(runtime, provider).await
+        }
+        HarnessAction::ProviderUsage => Ok(provider_usage(runtime)),
+        HarnessAction::InspectState => inspect_state(runtime, ctx),
+        HarnessAction::ListModels { provider } => list_models(runtime, ctx, provider).await,
+        other => unreachable!("not an inspection action: {other:?}"),
+    }
 }
