@@ -101,7 +101,8 @@ impl Command {
             | Self::ListRuns { .. } | Self::GetRunReport { .. } | Self::Replay { .. }
             | Self::ListModels | Self::AuthStatus | Self::Providers | Self::GetAttention
             | Self::ListWorkspaces { .. } | Self::GetPushConfig
-            | Self::ListRepositoryAliases => Access::Observe,
+            | Self::ListRepositoryAliases | Self::ListNotifications { .. }
+            | Self::GetNotification { .. } => Access::Observe,
 
             Self::CreateAgent(_) | Self::ReplyToQuestion { .. } | Self::SendMessage { .. }
             | Self::AppendNote { .. } | Self::Cancel { .. } | Self::Interrupt { .. }
@@ -115,7 +116,9 @@ impl Command {
             | Self::SyncRepositoryKnowledge { .. } | Self::CompletePath { .. }
             | Self::ValidateWorkspace { .. } | Self::GetGitSummary { .. }
             | Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
-            | Self::WorkspaceDiscard { .. } | Self::RefreshProviderUsage { .. } => Access::Operate,
+            | Self::WorkspaceDiscard { .. } | Self::RefreshProviderUsage { .. }
+            | Self::PostNotification { .. } | Self::MarkNotificationRead { .. }
+            | Self::ResolveNotification { .. } | Self::AnswerNotification { .. } => Access::Operate,
 
             Self::StorageGc { .. } | Self::Shutdown | Self::EngineTool { .. } | Self::EngineTools { .. }
             | Self::ExportRun { .. } | Self::ImportRun { .. }

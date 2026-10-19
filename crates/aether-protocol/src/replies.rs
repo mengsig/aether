@@ -288,6 +288,16 @@ pub enum Reply {
     NoteAppended {
         seq: u64,
     },
+    Notification(aether_core::notification::Notification),
+    /// Newest first.
+    Notifications(Vec<aether_core::notification::Notification>),
+    /// The answered notification, and the posting agent whose inbox the
+    /// answer reached; `None` for a service, which reads the event.
+    NotificationAnswered {
+        notification: aether_core::notification::Notification,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delivered_to: Option<AgentId>,
+    },
     /// One entry per agent a fanned-out message reached, in delivery order.
     MessagesSent {
         deliveries: Vec<MessageDelivery>,

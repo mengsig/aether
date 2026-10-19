@@ -346,6 +346,7 @@ where
                                                     features::PROVIDER_USAGE_REFRESH.into(),
                                                     features::BUILD_CACHE.into(),
                                                     features::NOTES.into(),
+                                                    features::NOTIFICATIONS.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,
