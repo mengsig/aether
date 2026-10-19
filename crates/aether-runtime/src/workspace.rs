@@ -923,7 +923,8 @@ pub(crate) fn create(
     let reference = format!("refs/aether/workspaces/{id}");
     let result = (|| {
         let head = current_head(&source)?;
-        let commit = create_commit(&source, &baseline_tree, SNAPSHOT_MESSAGE, head.as_deref())?;
+        let message = format!("{SNAPSHOT_MESSAGE} {id}");
+        let commit = create_commit(&source, &baseline_tree, &message, head.as_deref())?;
         run(
             git(&source).args(["update-ref", &reference, &commit]),
             "protect workspace snapshot from garbage collection",
@@ -996,7 +997,12 @@ fn roll_back_creation(
 
 /// True when `commit` is a snapshot Aether made for workspace `id` (its author
 /// and a subject naming the id) more than a day ago.
-fn is_stale_aether_snapshot(source: &Path, commit: &str, id: &str) -> crate::Result<bool> {
+fn is_stale_aether_snapshot(
+    source: &Path,
+    commit: &str,
+    id: &str,
+    now: i64,
+) -> crate::Result<bool> {
     let record = git_string(
         git(source).args(["log", "-1", "--format=%ct %ae %ce %s", commit]),
         "read workspace snapshot commit",
@@ -1010,7 +1016,7 @@ fn is_stale_aether_snapshot(source: &Path, commit: &str, id: &str) -> crate::Res
     let Ok(time) = time.parse::<i64>() else {
         return Ok(false);
     };
-    let age = chrono::Utc::now().timestamp() - time;
+    let age = now - time;
     Ok(author == SNAPSHOT_AUTHOR
         && committer == SNAPSHOT_AUTHOR
         && subject == format!("{SNAPSHOT_MESSAGE} {id}")
@@ -1055,7 +1061,7 @@ pub(crate) fn sweep_orphan_refs(managed_root: &Path, source: &Path) -> crate::Re
         }
         let marker = format!("/{id}/");
         if worktrees.lines().any(|line| line.contains(&marker))
-            || !is_stale_aether_snapshot(source, commit, id)?
+            || !is_stale_aether_snapshot(source, commit, id, chrono::Utc::now().timestamp())?
         {
             continue;
         }
@@ -2096,5 +2102,28 @@ mod tests {
         );
         assert!(message.contains("delegate shared"), "{message}");
         assert!(message.contains(source.to_str().unwrap()), "{message}");
+    }
+
+    #[test]
+    fn created_snapshot_commit_matches_the_sweep_contract() {
+        let (_temp, source, managed) = repo();
+        let manifest = create(&managed, &source, AgentId::new()).unwrap();
+        let id = manifest.workspace.parent().unwrap().file_name().unwrap();
+        let id = id.to_string_lossy();
+        let reference = format!("refs/aether/workspaces/{id}");
+        let commit = String::from_utf8(git_ok(&source, &["rev-parse", &reference]))
+            .unwrap()
+            .trim()
+            .to_owned();
+        let now = chrono::Utc::now().timestamp();
+        assert!(!is_stale_aether_snapshot(&source, &commit, &id, now).unwrap());
+        let later = now + 2 * ORPHAN_REF_MIN_AGE_SECS;
+        assert!(is_stale_aether_snapshot(&source, &commit, &id, later).unwrap());
+        assert!(!is_stale_aether_snapshot(&source, &commit, "other", later).unwrap());
+        let subject = git_ok(&source, &["log", "-1", "--format=%s", &commit]);
+        assert_eq!(
+            String::from_utf8(subject).unwrap().trim(),
+            format!("{SNAPSHOT_MESSAGE} {id}")
+        );
     }
 }
