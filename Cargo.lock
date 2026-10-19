@@ -308,6 +308,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-core",
+ "tracing-subscriber",
  "ulid",
 ]
 

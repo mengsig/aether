@@ -162,6 +162,27 @@ impl Runtime {
     }
 }
 
+/// Removals are worth a line each; the files a pass keeps are only debug detail.
+fn log_decision(message: &str, path: &Path, action: &str, reason: &str, bytes: u64) {
+    if action == "kept" {
+        tracing::debug!(path = %path.display(), action, reason, bytes, "{message}");
+    } else {
+        tracing::info!(path = %path.display(), action, reason, bytes, "{message}");
+    }
+}
+
+/// One line per pass, so a pass that keeps everything stays a single entry.
+fn log_summary(pass: &str, report: &FileReport) {
+    let kept = report.entries.iter().filter(|e| e.action == "kept").count();
+    tracing::info!(
+        kept,
+        changed = report.entries.len() - kept,
+        bytes = report.bytes,
+        bytes_removed = report.bytes_removed,
+        "{pass} pass finished"
+    );
+}
+
 fn read_directory(path: &Path) -> io::Result<Option<fs::ReadDir>> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => fs::read_dir(path).map(Some),
@@ -275,7 +296,13 @@ fn prune_backups(
         } else {
             "kept"
         };
-        tracing::info!(path = %path.display(), action, reason, bytes = meta.len(), "backup retention decision");
+        log_decision(
+            "backup retention decision",
+            &path,
+            action,
+            reason,
+            meta.len(),
+        );
         report.entries.push(FileDecision {
             path,
             bytes: meta.len(),
@@ -284,6 +311,7 @@ fn prune_backups(
         });
     }
     debug_assert!(backups <= cap || report.bytes_eligible > 0);
+    log_summary("backup retention", &report);
     Ok(report)
 }
 
@@ -291,7 +319,13 @@ fn prune_backups(
 fn sweep_bridge_copies(dir: &Path, dry_run: bool) -> io::Result<FileReport> {
     let mut report = FileReport::default();
     for file in aether_core::bridge_bin::sweep(dir, dry_run)? {
-        tracing::info!(path = %file.path.display(), action = file.action.as_str(), reason = file.reason, bytes = file.bytes, "bridge copy decision");
+        log_decision(
+            "bridge copy decision",
+            &file.path,
+            file.action.as_str(),
+            file.reason,
+            file.bytes,
+        );
         report.bytes += file.bytes;
         match file.action {
             aether_core::bridge_bin::SweepAction::Kept => {}
@@ -313,6 +347,7 @@ fn sweep_bridge_copies(dir: &Path, dry_run: bool) -> io::Result<FileReport> {
     debug_assert!(
         report.bytes_removed <= report.bytes_eligible && report.bytes_eligible <= report.bytes
     );
+    log_summary("bridge copy", &report);
     Ok(report)
 }
 
@@ -362,6 +397,71 @@ mod tests {
             .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
             .unwrap();
         path
+    }
+    /// Lines logged at INFO and above while `run` executes.
+    fn info_lines(run: impl FnOnce()) -> Vec<String> {
+        use std::sync::{Arc, Mutex};
+        #[derive(Clone, Default)]
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl io::Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        // Concurrent scoped subscribers race on tracing's callsite filtering.
+        static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+        let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            // Callsites first hit by a concurrent test cached "disabled".
+            tracing_core::callsite::rebuild_interest_cache();
+            run();
+        });
+        let output = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
+        output.lines().map(str::to_owned).collect()
+    }
+    #[test]
+    fn a_pass_that_keeps_every_backup_logs_one_info_line() {
+        let dir = tempfile::tempdir().unwrap();
+        for seconds in 0..3 {
+            backup(dir.path(), 86400 + seconds);
+        }
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(86400 + 10);
+        let lines = info_lines(|| {
+            let report = prune_backups(dir.path(), retention(14, 1, 10), now, false).unwrap();
+            assert_eq!(report.bytes_removed, 0);
+        });
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("kept=3"), "{lines:?}");
+    }
+    #[test]
+    fn a_pass_that_removes_backups_logs_each_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = [backup(dir.path(), 0), backup(dir.path(), 1)];
+        backup(dir.path(), 86400 * 5);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(86400 * 5);
+        let lines = info_lines(|| {
+            prune_backups(dir.path(), retention(1, 1, 10), now, false).unwrap();
+        });
+        let removals: Vec<_> = lines
+            .iter()
+            .filter(|line| line.contains("backup retention decision"))
+            .collect();
+        assert_eq!(removals.len(), 2, "{lines:?}");
+        for path in &old {
+            assert!(removals.iter().any(|l| l.contains(path.to_str().unwrap())));
+        }
+        assert!(lines.iter().any(|l| l.contains("pass finished")));
     }
     #[test]
     fn backups_keep_latest_or_recent_and_preview_matches_deletion() {

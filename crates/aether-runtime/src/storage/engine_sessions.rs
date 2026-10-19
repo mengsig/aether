@@ -135,7 +135,13 @@ impl Runtime {
                     ("removed", "owned final session older than retention")
                 }
             };
-            tracing::info!(path = %path.display(), action, reason, bytes, "engine session retention decision");
+            super::log_decision(
+                "engine session retention decision",
+                &path,
+                action,
+                reason,
+                bytes,
+            );
             report.entries.push(FileDecision {
                 path: path.clone(),
                 bytes,
@@ -143,6 +149,7 @@ impl Runtime {
                 reason,
             });
         }
+        super::log_summary("engine session retention", &report);
         let mut value = serde_json::to_value(&report).map_err(invalid)?;
         value["retention_days"] = serde_json::json!(days);
         value["owned_sessions"] = serde_json::json!(ownership.len());

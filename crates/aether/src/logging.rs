@@ -34,6 +34,10 @@ pub fn init(
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_writer(std::io::stderr)
+                    .with_ansi(stderr_ansi(
+                        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+                        std::env::var_os("NO_COLOR").as_deref(),
+                    ))
                     .with_filter(filter()),
             )
             .init();
@@ -41,6 +45,11 @@ pub fn init(
         registry.init();
     }
     Ok(guard)
+}
+
+/// Colour only a terminal, and never when `NO_COLOR` is set and non-empty.
+fn stderr_ansi(is_terminal: bool, no_color: Option<&std::ffi::OsStr>) -> bool {
+    is_terminal && no_color.is_none_or(|value| value.is_empty())
 }
 
 pub fn log_path_hint(file_name: &str) -> String {
@@ -98,6 +107,41 @@ fn managed_appender(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ansi_needs_a_terminal_and_no_no_color() {
+        use std::ffi::OsStr;
+        assert!(stderr_ansi(true, None));
+        assert!(stderr_ansi(true, Some(OsStr::new(""))));
+        assert!(!stderr_ansi(true, Some(OsStr::new("1"))));
+        assert!(!stderr_ansi(false, None));
+    }
+
+    #[test]
+    fn a_non_terminal_stream_carries_no_escape_bytes() {
+        use std::sync::{Arc, Mutex};
+        #[derive(Clone, Default)]
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(stderr_ansi(false, None))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || tracing::warn!("plain"));
+        let output = sink.0.lock().unwrap().clone();
+        assert!(String::from_utf8_lossy(&output).contains("plain"));
+        assert!(!output.contains(&0x1b));
+    }
 
     #[test]
     fn size_retention_uses_its_own_namespace_and_preserves_legacy_logs() {

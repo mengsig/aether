@@ -45,6 +45,8 @@ tempfile = { workspace = true }
 aether-client = { workspace = true }
 aether-tui = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+tracing-core = { workspace = true }
+tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
 rusqlite = { workspace = true }
 tempfile = { workspace = true }
