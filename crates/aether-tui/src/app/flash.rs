@@ -38,6 +38,19 @@ impl App {
         self.flash(text);
     }
 
+    /// Flash `text` and keep it as a transcript row, so a narrow hint row cannot hide it.
+    pub(crate) fn echo(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        if let Some(agent) = self.selected {
+            let at = self.now;
+            self.transcripts
+                .entry(agent)
+                .or_default()
+                .echo(at, text.clone());
+        }
+        self.flash(text);
+    }
+
     pub(super) fn flush_client_errors(&mut self) {
         if self.pending_client_errors.is_empty() {
             return;
@@ -121,6 +134,36 @@ mod tests {
             .join("\n");
         assert!(plain.contains("clipboard copy failed"));
         assert!(plain.contains("did not complete"));
+    }
+
+    #[test]
+    fn pause_and_resume_leave_a_transcript_row_at_80_columns() {
+        let mut app = crate::testing::app_with_transcript(&["hello", "answer"]);
+        let agent = app.selected.expect("agent");
+        for (then, reply, expect) in [
+            (
+                Then::Paused(agent),
+                Reply::Paused {
+                    agents: vec![app.tree.nodes[&agent].agent.clone()],
+                    mid_turn: Vec::new(),
+                },
+                "no turns until resumed",
+            ),
+            (
+                Then::Resumed(agent),
+                Reply::Agents(vec![app.tree.nodes[&agent].agent.clone()]),
+                "resumed ",
+            ),
+        ] {
+            app.reduce(AppEvent::Reply {
+                then,
+                result: Ok(reply),
+            });
+            app.now += chrono::Duration::seconds(7);
+            assert!(app.live_flash().is_none(), "the hint row has long expired");
+            let frame = crate::testing::render_to(&app, 80, 30);
+            assert!(frame.contains(expect), "{expect:?} missing:\n{frame}");
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@
 //! agent a person has just spoken to is never held back by the limit: the
 //! children it is supervising cannot make it deaf.
 
-use crate::{Result, Runtime, wait::RuntimeOracle};
+use crate::{Result, Runtime, RuntimeError, wait::RuntimeOracle};
 use aether_core::{
     agent::{Agent, AgentStatus, BlockReason},
     time::now,
@@ -47,19 +47,130 @@ pub(crate) fn spawn(runtime: Arc<Runtime>) {
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
                 _ = runtime.shutdown.cancelled() => break,
             }
-            if let Err(e) = tick(&runtime) {
+            if let Some(Err(e)) = contained(&runtime, "tick", || tick(&runtime)) {
                 tracing::error!(error = %e, "scheduler tick failed");
             }
         }
     });
 }
 
-/// One scheduling pass. Public for tests.
+/// A fault the tests inject into a named step.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum StepFault {
+    FailOnce,
+    FailAlways,
+    Panic,
+}
+
+/// Run one step so a panic cannot unwind past it: the panic is logged with
+/// the step's name and counted. `None` means the step panicked.
+fn contained<T>(
+    runtime: &Runtime,
+    step: &'static str,
+    run: impl FnOnce() -> Result<T>,
+) -> Option<Result<T>> {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(test)]
+        injected_fault(runtime, step)?;
+        run()
+    }));
+    match outcome {
+        Ok(result) => Some(result),
+        Err(payload) => {
+            let detail = crate::turn::panic_message(payload.as_ref());
+            let total = {
+                let mut sched = runtime.sched.lock();
+                sched.step_panics += 1;
+                sched.step_panics
+            };
+            tracing::error!(step, panic = %detail, total, "scheduler step panicked");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+fn injected_fault(runtime: &Runtime, step: &'static str) -> Result<()> {
+    let fault = runtime.sched.lock().step_faults.get(step).copied();
+    match fault {
+        None => Ok(()),
+        Some(StepFault::Panic) => panic!("injected panic in {step}"),
+        Some(fault) => {
+            if matches!(fault, StepFault::FailOnce) {
+                runtime.sched.lock().step_faults.remove(step);
+            }
+            Err(crate::RuntimeError::Internal(format!(
+                "injected failure in {step}"
+            )))
+        }
+    }
+}
+
+/// What failed during one pass.
+#[derive(Default)]
+struct Faults {
+    errors: Vec<RuntimeError>,
+    /// A step that keeps agents within their limits failed or panicked: no
+    /// turn starts this pass, because it could run past a cancellation,
+    /// deadline, budget or unmet dependency.
+    withhold_dispatch: bool,
+}
+
+/// Run a step whose failure is logged and kept but never skips the steps
+/// after it. Returns whether it completed.
+fn isolated(
+    runtime: &Runtime,
+    faults: &mut Faults,
+    step: &'static str,
+    run: impl FnOnce() -> Result<()>,
+) -> bool {
+    match contained(runtime, step, run) {
+        Some(Ok(())) => true,
+        Some(Err(e)) => {
+            tracing::error!(step, error = %e, "scheduler step failed");
+            faults.errors.push(e);
+            false
+        }
+        None => false,
+    }
+}
+
+/// Like `isolated`, for steps that enforce limits: a failure also withholds
+/// this pass's dispatch.
+fn guarded(
+    runtime: &Runtime,
+    faults: &mut Faults,
+    step: &'static str,
+    run: impl FnOnce() -> Result<()>,
+) {
+    if !isolated(runtime, faults, step, run) {
+        faults.withhold_dispatch = true;
+    }
+}
+
+/// One scheduling pass. Public for tests. Every step runs even when an
+/// earlier one failed; the first failure is returned once the pass is done.
 pub fn tick(runtime: &Arc<Runtime>) -> Result<()> {
-    crate::cancellation::drain(runtime)?;
-    expire_backoff(runtime)?;
-    enforce_budgets(runtime)?;
-    let live = live_after_enforcement(runtime)?;
+    let mut faults = Faults::default();
+    pass(runtime, &mut faults)?;
+    match faults.errors.into_iter().next() {
+        Some(first) => Err(first),
+        None => Ok(()),
+    }
+}
+
+fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
+    guarded(runtime, faults, "drain cancellations", || {
+        crate::cancellation::drain(runtime)
+    });
+    isolated(runtime, faults, "expire backoff", || {
+        expire_backoff(runtime)
+    });
+    guarded(runtime, faults, "enforce budgets", || {
+        enforce_budgets(runtime)
+    });
+    let live = live_after_enforcement(runtime, faults)?;
     let lineage = Lineage::from_store(&live, runtime.store.as_ref())?;
     let mut ready: Vec<Runnable> = Vec::new();
     let at = now();
@@ -143,21 +254,30 @@ pub fn tick(runtime: &Arc<Runtime>) -> Result<()> {
     if runtime.disk_is_low() {
         return Ok(());
     }
+    if faults.withhold_dispatch {
+        return Ok(());
+    }
     dispatch(runtime, ready, &lineage);
     Ok(())
 }
 
 /// Reuse the deadline snapshot unless enforcement or dependency gates changed it.
-fn live_after_enforcement(runtime: &Arc<Runtime>) -> Result<Vec<Agent>> {
+fn live_after_enforcement(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<Vec<Agent>> {
     let watermark = runtime.store.commits();
     let filter = AgentFilter {
         live_only: true,
         ..Default::default()
     };
     let mut live = runtime.store.agents(&filter)?;
-    enforce_deadlines(runtime, &live)?;
-    crate::schedules::tick(runtime, now())?;
-    gate_dependencies(runtime)?;
+    guarded(runtime, faults, "enforce deadlines", || {
+        enforce_deadlines(runtime, &live)
+    });
+    isolated(runtime, faults, "fire schedules", || {
+        crate::schedules::tick(runtime, now())
+    });
+    guarded(runtime, faults, "gate dependencies", || {
+        gate_dependencies(runtime)
+    });
     if runtime.store.commits() != watermark {
         live = runtime.store.agents(&filter)?;
     }

@@ -188,6 +188,11 @@ pub(crate) struct SchedulerState {
     pub errors: HashMap<String, ErrorWindow>,
     /// Where a turn last went after giving up on each provider.
     pub fallbacks: HashMap<String, FallbackRecord>,
+    /// Scheduler steps that panicked and were contained since startup.
+    pub step_panics: u64,
+    /// Test hook: steps that must fail or panic when they run.
+    #[cfg(test)]
+    pub step_faults: HashMap<&'static str, scheduler::StepFault>,
 }
 
 impl SchedulerState {

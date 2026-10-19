@@ -574,7 +574,7 @@ impl App {
                         format!("paused {} agents in the subtree{tail}", many.len())
                     }
                 };
-                self.flash(notice);
+                self.echo(notice);
             }
             (Then::Resumed(root), Reply::Agents(agents)) => {
                 let notice = match agents.as_slice() {
@@ -582,7 +582,7 @@ impl App {
                     [one] => format!("resumed {}", self.agent_name(one.id)),
                     many => format!("resumed {} agents in the subtree", many.len()),
                 };
-                self.flash(notice);
+                self.echo(notice);
             }
             (Then::ApprovalsSet { agent: root, on }, Reply::Agents(agents)) => {
                 // The daemon agreed (or the target was already there): only

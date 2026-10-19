@@ -119,6 +119,73 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn gc_removes_only_provably_orphaned_snapshot_references() {
+    let f = fixture().await;
+    let head = git(&f.source, &["rev-parse", "HEAD"]);
+    let tree = git(&f.source, &["rev-parse", "HEAD^{tree}"]);
+    let snapshot = |date: &str, email: &str, id: &str| {
+        let output = std::process::Command::new("git")
+            .current_dir(&f.source)
+            .env("GIT_COMMITTER_DATE", date)
+            .env("GIT_COMMITTER_EMAIL", email)
+            .env("GIT_AUTHOR_EMAIL", email)
+            .args(["commit-tree", &tree, "-m"])
+            .arg(format!("Aether child workspace snapshot {id}"))
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let aether = "aether@local.invalid";
+    let (long_ago, now) = (
+        "2020-01-01T00:00:00Z",
+        aether_core::time::now().to_rfc3339(),
+    );
+    let new_id = || ulid::Ulid::generate().to_string();
+    let (orphan_id, flight_id, user_id, borrowed_id, plain_id) =
+        (new_id(), new_id(), new_id(), new_id(), new_id());
+    let old = snapshot(long_ago, aether, &orphan_id);
+    let fresh = snapshot(&now, aether, &flight_id);
+    let users_commit = snapshot(long_ago, "someone@example.invalid", &user_id);
+    let name = |id: &str| format!("refs/aether/workspaces/{id}");
+    let (orphan, in_flight, users_ulid, borrowed, plain) = (
+        name(&orphan_id),
+        name(&flight_id),
+        name(&user_id),
+        name(&borrowed_id),
+        name(&plain_id),
+    );
+    let foreign = "refs/aether/workspaces/not-a-ulid";
+    let branch = "refs/heads/aether-workspaces";
+    for (name, commit) in [
+        (orphan.as_str(), &old),
+        (in_flight.as_str(), &fresh),
+        (users_ulid.as_str(), &users_commit),
+        (borrowed.as_str(), &old),
+        (plain.as_str(), &head),
+        (foreign, &old),
+        (branch, &old),
+    ] {
+        git(&f.source, &["update-ref", name, commit]);
+    }
+
+    f.collect(true);
+    assert!(
+        !git(&f.source, &["for-each-ref", &orphan]).is_empty(),
+        "a preview deletes nothing"
+    );
+    f.collect(false);
+
+    assert!(git(&f.source, &["for-each-ref", &orphan]).is_empty());
+    for kept in [&in_flight, &users_ulid, &borrowed, &plain, foreign, branch] {
+        assert!(
+            !git(&f.source, &["for-each-ref", kept]).is_empty(),
+            "{kept}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn dry_run_reports_bytes_then_completed_owner_is_collected() {
     let f = fixture().await;
     f.store(f.owner(AgentStatus::Completed { summary: None }));

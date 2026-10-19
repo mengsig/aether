@@ -275,32 +275,56 @@ impl Runtime {
         let _hold = futures::executor::block_on(self.artifact_lock.lock());
         let live = self.store.live_artifacts()?;
         let at = now();
-        let doomed: Vec<(ArtifactId, u64, Option<AgentId>)> = policy
-            .evictable(&live, at)
-            .into_iter()
-            .map(|a| (a.id, a.size_bytes, a.agent_id))
-            .collect();
-        for (id, size_bytes, agent) in &doomed {
-            self.store.evict_artifact_bytes(*id)?;
-            // On the run's log, so a report of that run still says the
-            // payload is gone rather than losing the record of it.
-            let run = match agent {
-                Some(a) => self.store.agent(*a)?.map(|a| a.run),
-                None => None,
-            };
-            let mut draft = EventDraft::new(
-                Actor::System,
-                EventKind::ArtifactEvicted {
-                    artifact: *id,
-                    size_bytes: *size_bytes,
-                    reason: describe_policy(&policy),
-                },
-            );
-            draft.agent_id = *agent;
-            draft.run = run;
-            self.apply(Commit::new().event(draft))?;
+        let doomed: Vec<Artifact> = policy.evictable(&live, at).into_iter().cloned().collect();
+        let reason = describe_policy(&policy);
+        for artifact in &doomed {
+            self.evict_with_event(artifact, &reason, at)?;
         }
         Ok(doomed.len())
+    }
+}
+
+impl Runtime {
+    /// The record's eviction and its `ArtifactEvicted` event commit together,
+    /// so a failed commit leaves the artifact live for the next sweep. The
+    /// payload unlink follows; a failed unlink stays pending and is retried
+    /// when the store opens.
+    fn evict_with_event(
+        &self,
+        artifact: &Artifact,
+        reason: &str,
+        at: aether_core::time::Timestamp,
+    ) -> crate::Result<()> {
+        assert!(
+            artifact.evicted_at.is_none(),
+            "artifact {} is already evicted",
+            artifact.id
+        );
+        // On the run's log, so a report of that run still says the
+        // payload is gone rather than losing the record of it.
+        let run = match artifact.agent_id {
+            Some(a) => self.store.agent(a)?.map(|a| a.run),
+            None => None,
+        };
+        let mut draft = EventDraft::new(
+            Actor::System,
+            EventKind::ArtifactEvicted {
+                artifact: artifact.id,
+                size_bytes: artifact.size_bytes,
+                reason: reason.to_owned(),
+            },
+        );
+        draft.agent_id = artifact.agent_id;
+        draft.run = run;
+        let mut evicted = artifact.clone();
+        evicted.evicted_at = Some(at);
+        self.apply(
+            Commit::new()
+                .event(draft)
+                .mutate(Mutation::PutArtifact(evicted)),
+        )?;
+        self.store.evict_artifact_bytes(artifact.id)?;
+        Ok(())
     }
 }
 

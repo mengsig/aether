@@ -145,6 +145,22 @@ impl WorkspaceGcReport {
     }
 }
 
+/// Drop snapshot refs left behind by failed creations in the candidate's
+/// source repository. A failure is logged and never blocks the sweep.
+fn sweep_candidate_source(root: &Path, candidate: &workspace::gc::Candidate) {
+    let result = candidate
+        .source()
+        .and_then(|source| workspace::sweep_orphan_refs(root, &source));
+    match result {
+        Ok(removed) => {
+            for reference in removed {
+                tracing::info!(reference, "removed orphan workspace snapshot reference");
+            }
+        }
+        Err(error) => tracing::warn!(%error, "orphan workspace reference sweep skipped"),
+    }
+}
+
 impl Runtime {
     /// Remove old, clean delegated worktrees whose saved state is retained
     /// elsewhere. Each candidate is independent; refusals appear in the report.
@@ -241,6 +257,9 @@ impl Runtime {
                 cursor.pending.pop_front();
             }
             let mut candidate = workspace::gc::Candidate::new(directory);
+            if !dry_run {
+                sweep_candidate_source(&root, &candidate);
+            }
             let outcome = self.gc_workspace_candidate(&root, &mut candidate, sweep);
             // Restoration failures are fatal and visible, including after a
             // refusal. Drop only provides a second cleanup attempt.

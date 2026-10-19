@@ -273,3 +273,108 @@ async fn no_budget_warning_follows_the_stop_of_the_same_agent() {
         "a stopped agent is not warned afterwards"
     );
 }
+
+async fn quiet_runtime() -> (Arc<Runtime>, tempfile::TempDir) {
+    let (runtime, config_dir) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    (runtime, config_dir)
+}
+
+fn started_agent(runtime: &Runtime) -> Agent {
+    runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "worker".into(),
+                start: true,
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("agent")
+        .0
+}
+
+/// A ready agent with nothing to do is parked by the scheduling pass that
+/// follows the maintenance steps.
+fn parked(runtime: &Runtime, agent: &Agent) -> bool {
+    let stored = runtime.store.agent(agent.id).expect("read").expect("agent");
+    matches!(stored.status, AgentStatus::Waiting { .. })
+}
+
+#[tokio::test]
+async fn failing_early_steps_do_not_stop_scheduling() {
+    let (runtime, _dir) = quiet_runtime().await;
+    let agent = started_agent(&runtime);
+    runtime.sched.lock().step_faults.extend([
+        ("drain cancellations", StepFault::FailOnce),
+        ("expire backoff", StepFault::FailAlways),
+        ("enforce budgets", StepFault::FailAlways),
+        ("gate dependencies", StepFault::FailAlways),
+    ]);
+    tick(&runtime).expect_err("the first step failure is still reported");
+    assert!(parked(&runtime, &agent), "later steps were skipped");
+    assert!(
+        !runtime
+            .sched
+            .lock()
+            .step_faults
+            .contains_key("drain cancellations"),
+        "the once-failing step never ran"
+    );
+}
+
+#[tokio::test]
+async fn a_panicking_step_is_counted_and_the_tick_still_schedules() {
+    let (runtime, _dir) = quiet_runtime().await;
+    let agent = started_agent(&runtime);
+    runtime
+        .sched
+        .lock()
+        .step_faults
+        .insert("enforce budgets", StepFault::Panic);
+    tick(&runtime).expect("tick survives a panicking step");
+    tick(&runtime).expect("and the next tick");
+    assert_eq!(runtime.sched.lock().step_panics, 2);
+    assert!(parked(&runtime, &agent));
+}
+
+#[tokio::test]
+async fn a_panicking_tick_does_not_end_the_scheduler_loop() {
+    let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+    runtime
+        .sched
+        .lock()
+        .step_faults
+        .insert("tick", StepFault::Panic);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while runtime.sched.lock().step_panics < 2 {
+        assert!(Instant::now() < deadline, "the loop stopped after a panic");
+        runtime.notify.notify_one();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    runtime.shutdown.cancel();
+}
+
+#[tokio::test]
+async fn a_failed_limit_step_withholds_dispatch_but_other_steps_do_not() {
+    let (runtime, _dir) = quiet_runtime().await;
+    let fail = || Err(crate::RuntimeError::Internal("boom".into()));
+    let mut faults = Faults::default();
+    isolated(&runtime, &mut faults, "expire backoff", fail);
+    assert_eq!(faults.errors.len(), 1);
+    assert!(!faults.withhold_dispatch);
+    guarded(&runtime, &mut faults, "enforce deadlines", fail);
+    assert!(faults.withhold_dispatch);
+
+    let mut faults = Faults::default();
+    runtime
+        .sched
+        .lock()
+        .step_faults
+        .insert("drain cancellations", StepFault::Panic);
+    guarded(&runtime, &mut faults, "drain cancellations", || Ok(()));
+    assert!(
+        faults.withhold_dispatch,
+        "a panicking limit step fails closed"
+    );
+}

@@ -121,6 +121,20 @@ async fn discard_refuses_a_live_child_unless_forced_and_records_it() {
     let events = custom_events(&h, child, "workspace.discarded");
     assert_eq!(events.len(), 1, "{events:?}");
     assert_eq!(events[0]["forced"], true);
+
+    for message in [
+        h.runtime.workspace_diff(child).unwrap_err().to_string(),
+        h.runtime
+            .workspace_discard(child, true, operator())
+            .unwrap_err()
+            .to_string(),
+    ] {
+        assert!(
+            message.contains(&format!("workspace for agent {child} was discarded")),
+            "{message}"
+        );
+        assert!(!message.contains("cannot inspect"), "{message}");
+    }
     h.runtime.shutdown().await;
 }
 

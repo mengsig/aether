@@ -17,7 +17,7 @@ const INDENT: &str = "  ";
 struct Item {
     text: String,
     style: Style,
-    /// The viewed agent outlives every other item as the width shrinks.
+    /// The viewed agent and its paused badge outlive every other item as the width shrinks.
     agent: bool,
 }
 
@@ -138,6 +138,13 @@ fn items(app: &App, theme: &Theme) -> Vec<Item> {
         });
     }
     if let Some(agent) = agent {
+        if agent.paused {
+            items.push(Item {
+                text: "PAUSED".to_owned(),
+                style: theme.paused(),
+                agent: true,
+            });
+        }
         let parent = agent
             .parent
             .and_then(|id| app.tree.nodes.get(&id))
@@ -300,6 +307,21 @@ pub(crate) mod tests {
         );
         assert_eq!(row(&app, &theme, 40), "  implementer ‹ aether");
         assert_eq!(row(&app, &theme, 16), "  implementer ‹…");
+    }
+
+    #[test]
+    fn a_paused_badge_survives_narrow_widths_and_clears_on_resume() {
+        let mut app = app_viewing_child();
+        let theme = dark_theme(false);
+        let child = app.selected.expect("child");
+        app.tree.nodes.get_mut(&child).expect("node").agent.paused = true;
+        for width in [80, 60, 40] {
+            let line = row(&app, &theme, width);
+            assert!(line.contains("PAUSED"), "{width}: {line:?}");
+            assert!(line.contains("implementer"), "{width}: {line:?}");
+        }
+        app.tree.nodes.get_mut(&child).expect("node").agent.paused = false;
+        assert!(!row(&app, &theme, 80).contains("PAUSED"));
     }
 
     #[test]

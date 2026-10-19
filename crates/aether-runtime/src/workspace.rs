@@ -32,6 +32,10 @@ pub(crate) mod review;
 const MANIFEST: &str = "manifest.json";
 const JOURNAL: &str = "integration.json";
 const WORKSPACE: &str = "workspace";
+const SNAPSHOT_MESSAGE: &str = "Aether child workspace snapshot";
+const SNAPSHOT_AUTHOR: &str = "aether@local.invalid";
+/// An in-flight creation, possibly in another managed root, is younger than this.
+const ORPHAN_REF_MIN_AGE_SECS: i64 = 24 * 60 * 60;
 const GIT_TIMEOUT: Duration = Duration::from_secs(60);
 const GIT_STDOUT_LIMIT: usize = 64 * 1024 * 1024;
 const GIT_STDERR_LIMIT: usize = 8192;
@@ -420,8 +424,10 @@ fn source_root_timeout(source: &Path, timeout: Duration) -> crate::Result<PathBu
         .map_err(|error| io_error("cannot resolve Git repository root", Path::new(&top), error))?;
     if top != source {
         return Err(invalid(format!(
-            "workspace source {} must be the Git repository root {}",
+            "workspace source {} must be the Git repository root {}: an isolated child copies the whole repository, \
+             and a child may not be given a wider scope than its parent. Start the agent at {} to delegate isolated, or delegate shared",
             source.display(),
+            top.display(),
             top.display()
         )));
     }
@@ -776,9 +782,9 @@ fn create_commit(
     let mut command = git(source);
     command
         .env("GIT_AUTHOR_NAME", "Aether")
-        .env("GIT_AUTHOR_EMAIL", "aether@local.invalid")
+        .env("GIT_AUTHOR_EMAIL", SNAPSHOT_AUTHOR)
         .env("GIT_COMMITTER_NAME", "Aether")
-        .env("GIT_COMMITTER_EMAIL", "aether@local.invalid")
+        .env("GIT_COMMITTER_EMAIL", SNAPSHOT_AUTHOR)
         .args(["commit-tree", tree]);
     if let Some(parent) = parent {
         command.args(["-p", parent]);
@@ -898,6 +904,9 @@ pub(crate) fn create(
             "managed workspace root resolved inside the source repository",
         ));
     }
+    if let Err(error) = sweep_orphan_refs(&root, &source) {
+        tracing::warn!(%error, source = %source.display(), "orphan workspace reference sweep failed");
+    }
     let baseline_tree = stable_snapshot(&source, &root)?;
     let id = ulid::Ulid::generate().to_string();
     let directory = root.join(&id);
@@ -914,12 +923,8 @@ pub(crate) fn create(
     let reference = format!("refs/aether/workspaces/{id}");
     let result = (|| {
         let head = current_head(&source)?;
-        let commit = create_commit(
-            &source,
-            &baseline_tree,
-            "Aether child workspace snapshot",
-            head.as_deref(),
-        )?;
+        let message = format!("{SNAPSHOT_MESSAGE} {id}");
+        let commit = create_commit(&source, &baseline_tree, &message, head.as_deref())?;
         run(
             git(&source).args(["update-ref", &reference, &commit]),
             "protect workspace snapshot from garbage collection",
@@ -953,20 +958,120 @@ pub(crate) fn create(
         atomic_json(&directory.join(MANIFEST), &manifest)?;
         Ok(manifest)
     })();
-    if result.is_err() {
-        let _ = run(
-            git(&source)
-                .args(["worktree", "remove", "--force", "--"])
-                .arg(&workspace),
-            "remove incomplete child worktree",
-        );
-        let _ = run(
-            git(&source).args(["update-ref", "-d", &reference]),
-            "remove incomplete snapshot reference",
-        );
-        let _ = fs::remove_dir_all(&directory);
+    if let Err(error) = &result {
+        roll_back_creation(&source, &workspace, &reference, &directory, error);
     }
     result
+}
+
+/// Undo a failed creation. Each cleanup failure is logged beside the
+/// creation error, because a leftover reference pins its snapshot.
+fn roll_back_creation(
+    source: &Path,
+    workspace: &Path,
+    reference: &str,
+    directory: &Path,
+    creation_error: &RuntimeError,
+) {
+    let cleanups = [
+        run(
+            git(source)
+                .args(["worktree", "remove", "--force", "--"])
+                .arg(workspace),
+            "remove incomplete child worktree",
+        )
+        .map(drop),
+        run(
+            git(source).args(["update-ref", "-d", reference]),
+            "remove incomplete snapshot reference",
+        )
+        .map(drop),
+        fs::remove_dir_all(directory)
+            .map_err(|error| io_error("cannot remove incomplete workspace", directory, error)),
+    ];
+    for cleanup_error in cleanups.into_iter().filter_map(Result::err) {
+        tracing::warn!(%creation_error, %cleanup_error, reference,
+            "workspace creation rollback step failed");
+    }
+}
+
+/// True when `commit` is a snapshot Aether made for workspace `id` (its author
+/// and a subject naming the id) more than a day ago.
+fn is_stale_aether_snapshot(
+    source: &Path,
+    commit: &str,
+    id: &str,
+    now: i64,
+) -> crate::Result<bool> {
+    let record = git_string(
+        git(source).args(["log", "-1", "--format=%ct %ae %ce %s", commit]),
+        "read workspace snapshot commit",
+    )?;
+    let mut fields = record.splitn(4, ' ');
+    let (Some(time), Some(author), Some(committer), Some(subject)) =
+        (fields.next(), fields.next(), fields.next(), fields.next())
+    else {
+        return Err(invalid(format!("unreadable snapshot commit {commit}")));
+    };
+    let Ok(time) = time.parse::<i64>() else {
+        return Ok(false);
+    };
+    let age = now - time;
+    Ok(author == SNAPSHOT_AUTHOR
+        && committer == SNAPSHOT_AUTHOR
+        && subject == format!("{SNAPSHOT_MESSAGE} {id}")
+        && age > ORPHAN_REF_MIN_AGE_SECS)
+}
+
+/// Delete `refs/aether/workspaces/<id>` refs in `source` that Aether can
+/// prove are orphaned: the id is a ULID, the ref points at a day-old snapshot
+/// commit Aether made, `managed_root` has no directory for the id and no
+/// registered worktree lives under it. Returns the removed refs.
+pub(crate) fn sweep_orphan_refs(managed_root: &Path, source: &Path) -> crate::Result<Vec<String>> {
+    let root = real_directory(managed_root, false)?;
+    let listing = git_string(
+        git(source).args([
+            "for-each-ref",
+            "--format=%(refname) %(objectname) %(symref)",
+            "refs/aether/workspaces/",
+        ]),
+        "list workspace snapshot references",
+    )?;
+    let worktrees = git_string(
+        git(source).args(["worktree", "list", "--porcelain"]),
+        "list worktrees",
+    )?;
+    let mut removed = Vec::new();
+    for line in listing.lines() {
+        let mut fields = line.split(' ');
+        let (Some(reference), Some(commit), None | Some("")) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let Some(id) = reference.strip_prefix("refs/aether/workspaces/") else {
+            continue;
+        };
+        let directory_missing = matches!(
+            fs::symlink_metadata(root.join(id)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound
+        );
+        if id.parse::<ulid::Ulid>().is_err() || !directory_missing {
+            continue;
+        }
+        let marker = format!("/{id}/");
+        if worktrees.lines().any(|line| line.contains(&marker))
+            || !is_stale_aether_snapshot(source, commit, id, chrono::Utc::now().timestamp())?
+        {
+            continue;
+        }
+        run(
+            git(source).args(["update-ref", "--no-deref", "-d", reference, commit]),
+            "remove orphan workspace snapshot reference",
+        )?;
+        removed.push(reference.to_owned());
+    }
+    Ok(removed)
 }
 
 pub(crate) fn load(managed_root: &Path, workspace: &Path) -> crate::Result<WorkspaceManifest> {
@@ -1981,5 +2086,44 @@ mod tests {
         let nested = source.join("generated/workspaces");
         assert!(create(&nested, &source, AgentId::new()).is_err());
         assert!(!source.join("generated").exists());
+    }
+
+    #[test]
+    fn subdirectory_source_error_names_the_remedy() {
+        let (_temp, source, managed) = repo();
+        let subdir = source.join("sub");
+        fs::create_dir(&subdir).unwrap();
+        let message = create(&managed, &subdir, AgentId::new())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            message.contains("must be the Git repository root"),
+            "{message}"
+        );
+        assert!(message.contains("delegate shared"), "{message}");
+        assert!(message.contains(source.to_str().unwrap()), "{message}");
+    }
+
+    #[test]
+    fn created_snapshot_commit_matches_the_sweep_contract() {
+        let (_temp, source, managed) = repo();
+        let manifest = create(&managed, &source, AgentId::new()).unwrap();
+        let id = manifest.workspace.parent().unwrap().file_name().unwrap();
+        let id = id.to_string_lossy();
+        let reference = format!("refs/aether/workspaces/{id}");
+        let commit = String::from_utf8(git_ok(&source, &["rev-parse", &reference]))
+            .unwrap()
+            .trim()
+            .to_owned();
+        let now = chrono::Utc::now().timestamp();
+        assert!(!is_stale_aether_snapshot(&source, &commit, &id, now).unwrap());
+        let later = now + 2 * ORPHAN_REF_MIN_AGE_SECS;
+        assert!(is_stale_aether_snapshot(&source, &commit, &id, later).unwrap());
+        assert!(!is_stale_aether_snapshot(&source, &commit, "other", later).unwrap());
+        let subject = git_ok(&source, &["log", "-1", "--format=%s", &commit]);
+        assert_eq!(
+            String::from_utf8(subject).unwrap().trim(),
+            format!("{SNAPSHOT_MESSAGE} {id}")
+        );
     }
 }
