@@ -138,6 +138,24 @@ class MalformedFramesAreSurvived(unittest.TestCase):
             AetherClient(sock)
         self.assertTrue(daemon.disconnected.wait(timeout=2), "failed handshake kept the socket open")
 
+    def test_the_hello_asks_for_the_requested_protocol_version(self):
+        daemon = StubDaemon()
+        self.addCleanup(daemon.close)
+        sock = socket.create_connection(("127.0.0.1", daemon.port))
+        with patch.object(protocol, "hello", wraps=protocol.hello) as hello:
+            client = AetherClient(sock, protocol_version=protocol.PROTOCOL_VERSION - 1)
+            asked = hello.call_args.kwargs["protocol_version"]
+        self.addCleanup(close_cleanly, daemon, client)
+        self.assertEqual(asked, protocol.PROTOCOL_VERSION - 1)
+
+    def test_an_unserved_protocol_version_is_refused_before_connecting(self):
+        for version in (protocol.MIN_PROTOCOL_VERSION - 1, protocol.PROTOCOL_VERSION + 1):
+            with self.subTest(version=version):
+                sock = Mock()
+                with self.assertRaises(ValueError):
+                    AetherClient(sock, protocol_version=version)
+                sock.makefile.assert_not_called()
+
     def test_connection_diagnostic_and_eof_wake_every_pending_request(self):
         requests = []
 

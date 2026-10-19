@@ -138,7 +138,15 @@ class AetherClient:
     their reply arrives; each subscription buffers event and delta frames
     for its handle or the merged `next_frame` reader."""
 
-    def __init__(self, sock, token=None, client_name=CLIENT_NAME):
+    def __init__(self, sock, token=None, client_name=CLIENT_NAME,
+                 protocol_version=protocol.PROTOCOL_VERSION):
+        """`protocol_version` is the version the hello asks for, so a caller
+        can speak to an older daemon within `MIN_PROTOCOL_VERSION`."""
+        if not protocol.MIN_PROTOCOL_VERSION <= protocol_version <= protocol.PROTOCOL_VERSION:
+            raise ValueError(
+                f"protocol {protocol_version} is outside this client's "
+                f"{protocol.MIN_PROTOCOL_VERSION} to {protocol.PROTOCOL_VERSION}"
+            )
         self.sock = sock
         self.file = sock.makefile("rwb")
         # Held while writing a frame, so two threads never interleave bytes.
@@ -165,7 +173,7 @@ class AetherClient:
         try:
             self.welcome = self.request(
                 protocol.hello(
-                    protocol_version=protocol.PROTOCOL_VERSION,
+                    protocol_version=protocol_version,
                     client_name=client_name,
                     client_version=CLIENT_VERSION,
                     features=["deltas", "artifact_bytes"],

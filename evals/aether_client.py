@@ -7,6 +7,7 @@ an agent's reply, and standing a throwaway daemon up and down.
 """
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -25,16 +26,58 @@ __all__ = [
 ]
 
 
+# Every build words its refusal of an unserved version this way
+# (`served_window` in crates/aether-protocol/src/compat.rs).
+SERVED_WINDOW = re.compile(r"this daemon speaks (\d+) to (\d+)\b")
+
+
+def common_version(error, asked):
+    """The newest version below `asked` that both this client and the daemon
+    behind an `incompatible` refusal serve, or None when there is none."""
+    assert isinstance(error, AetherError), f"not a daemon refusal: {error!r}"
+    assert protocol.MIN_PROTOCOL_VERSION <= asked <= PROTOCOL_VERSION, f"asked an unserved {asked}"
+    match = SERVED_WINDOW.search(error.message) if error.code == "incompatible" else None
+    if match is None:
+        return None
+    oldest, newest = int(match.group(1)), int(match.group(2))
+    version = min(newest, asked)
+    if oldest > newest or version == asked or version < max(oldest, protocol.MIN_PROTOCOL_VERSION):
+        return None
+    return version
+
+
+def _unix_stream(path):
+    stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        stream.connect(path)
+    except Exception:
+        stream.close()
+        raise
+    return stream
+
+
 class AetherClient(_AetherClient):
     """The library client, plus what driving an agent turn by turn needs."""
 
     def __init__(self, socket_path=None, **kwargs):
+        """A daemon of an older release refuses this client's version; the
+        client then reconnects once at the newest version both serve."""
         # Every event this client has consumed, so a check that runs after the
         # fact can still find one.
         self.events_seen = []
-        stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        stream.connect(socket_path or default_socket_path())
-        super().__init__(stream, **kwargs)
+        path = socket_path or default_socket_path()
+        asked = kwargs.pop("protocol_version", PROTOCOL_VERSION)
+        try:
+            super().__init__(_unix_stream(path), protocol_version=asked, **kwargs)
+            return
+        except AetherError as error:
+            version = common_version(error, asked)
+            if version is None:
+                raise
+        # The refused attempt's reader must be gone before this object restarts.
+        self._reader.join(timeout=5)
+        assert not self._reader.is_alive(), "the refused connection's reader is still running"
+        super().__init__(_unix_stream(path), protocol_version=version, **kwargs)
 
     def next_frame(self, timeout=60.0):
         frame = super().next_frame(timeout=timeout)
