@@ -163,7 +163,7 @@ impl AgentTranscript {
                 matches!(
                     cell.model,
                     CellModel::Notice {
-                        kind: NoticeKind::ClientError,
+                        kind: NoticeKind::ClientError | NoticeKind::Echo,
                         ..
                     }
                 )
@@ -209,6 +209,16 @@ impl AgentTranscript {
             at,
             CellModel::Notice {
                 kind: NoticeKind::ClientError,
+                text: text.into(),
+            },
+        );
+    }
+
+    pub(crate) fn echo(&mut self, at: Timestamp, text: String) {
+        self.push(
+            at,
+            CellModel::Notice {
+                kind: NoticeKind::Echo,
                 text: text.into(),
             },
         );

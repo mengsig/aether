@@ -283,6 +283,7 @@ pub fn category(model: &CellModel) -> Category {
             | NoticeKind::ModelChange
             | NoticeKind::Handoff
             | NoticeKind::Cancelled
+            | NoticeKind::Echo
             | NoticeKind::Trigger { .. }
             | NoticeKind::Note(_) => Status,
         },

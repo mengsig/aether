@@ -226,6 +226,8 @@ pub enum NoticeKind {
     ModelChange,
     Handoff,
     Cancelled,
+    /// The outcome of a command the operator typed, kept in the transcript.
+    Echo,
     /// An engine's own report (`engine.interrupted`, kill-switch bypass).
     Engine,
     /// A store write refused during an outage, recorded after recovery.
