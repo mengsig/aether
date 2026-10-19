@@ -206,17 +206,18 @@ pub async fn providers(
         println!("{}", serde_json::to_string(&rows)?);
         return Ok(());
     }
+    let unreachable = unreachable_local_servers(&client, &rows).await?;
     println!(
-        "{:<18} {:<24} {:<7} {:<8} {:<20} {:>6}  health",
+        "{:<18} {:<24} {:<7} {:<11} {:<20} {:>6}  health",
         "provider", "protocol", "family", "status", "auth", "models"
     );
     for p in &rows {
         println!(
-            "{:<18} {:<24} {:<7} {:<8} {:<20} {:>6}  {}",
+            "{:<18} {:<24} {:<7} {:<11} {:<20} {:>6}  {}",
             sane(&p.provider),
             sane(&p.protocol),
             sane(p.family.as_deref().unwrap_or("-")),
-            p.status_label(),
+            probed_status_label(p, &unreachable),
             sane(p.auth_source.as_deref().unwrap_or("-")),
             p.model_count(),
             health_segments(&p.health).join(" · ")
@@ -230,9 +231,34 @@ pub async fn providers(
     Ok(())
 }
 
+/// The keyless local servers among `rows` that nothing answers at, found
+/// with the probe `aether doctor` uses so the two commands agree.
+async fn unreachable_local_servers(
+    client: &aether_client::Client,
+    rows: &[aether_protocol::ProviderInfo],
+) -> anyhow::Result<Vec<crate::doctor::Unreachable>> {
+    let auth = client.auth_status().await?;
+    let servers = crate::doctor::local_servers(&auth, rows);
+    Ok(crate::doctor::unreachable_servers(&servers, crate::doctor::PROBE_TIMEOUT).await)
+}
+
+/// [`aether_protocol::ProviderInfo::status_label`], except that a provider
+/// whose server refused the probe is not `ready`, however configured.
+fn probed_status_label(
+    info: &aether_protocol::ProviderInfo,
+    unreachable: &[crate::doctor::Unreachable],
+) -> &'static str {
+    let label = info.status_label();
+    if label == "ready" && unreachable.iter().any(|u| u.provider == info.provider) {
+        "unreachable"
+    } else {
+        label
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{auth_detail, model_cost_label};
+    use super::{auth_detail, model_cost_label, probed_status_label};
     use aether_core::model::{ModelCost, ModelCostTier};
 
     #[test]
@@ -276,5 +302,33 @@ mod tests {
         assert_eq!(json["detail"], info.detail.as_ref().unwrap().as_str());
         info.configured = true;
         assert!(auth_detail(&info).is_none());
+    }
+
+    #[test]
+    fn a_keyless_provider_nothing_answers_at_is_not_ready() {
+        use crate::doctor::Unreachable;
+        let mut info = aether_protocol::ProviderInfo {
+            provider: "vllm".into(),
+            name: "vLLM".into(),
+            protocol: "openai-chat".into(),
+            family: None,
+            base_url: "http://127.0.0.1:8000/v1".into(),
+            engine: false,
+            models: 0,
+            open_model_list: true,
+            enabled: true,
+            configured: true,
+            auth_source: Some("no auth required".into()),
+            health: aether_core::provider::ProviderHealth::idle("vllm"),
+            headroom: Default::default(),
+        };
+        let down = [Unreachable {
+            provider: "vllm".into(),
+            address: "127.0.0.1:8000".into(),
+        }];
+        assert_eq!(probed_status_label(&info, &[]), "ready");
+        assert_eq!(probed_status_label(&info, &down), "unreachable");
+        info.enabled = false;
+        assert_eq!(probed_status_label(&info, &down), "off");
     }
 }
