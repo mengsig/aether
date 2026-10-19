@@ -201,6 +201,8 @@ mod model_effort;
 mod model_profiles;
 #[path = "kernel/notes.rs"]
 mod notes;
+#[path = "kernel/notifications.rs"]
+mod notifications;
 #[path = "kernel/operator_memory.rs"]
 mod operator_memory;
 #[path = "kernel/operator_rename.rs"]

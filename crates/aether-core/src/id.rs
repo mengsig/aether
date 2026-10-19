@@ -220,6 +220,11 @@ typed_id!(
     DeviceId,
     "dev"
 );
+typed_id!(
+    /// Identifies one entry in the notification center.
+    NotificationId,
+    "ntf"
+);
 
 #[cfg(test)]
 mod tests {
