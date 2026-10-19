@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[derive(Default)]
 struct Disk {
     full: AtomicBool,
+    /// Refuses commits only, so a payload unlink would still succeed.
+    commits_refused: AtomicBool,
     refused: AtomicU64,
 }
 
@@ -23,10 +25,21 @@ impl Disk {
         self.refused.load(Ordering::SeqCst)
     }
 
+    fn refuse_commit(&self) -> StoreResult<()> {
+        if self.commits_refused.load(Ordering::SeqCst) {
+            return self.refusal();
+        }
+        self.refuse()
+    }
+
     fn refuse(&self) -> StoreResult<()> {
         if !self.full.load(Ordering::SeqCst) {
             return Ok(());
         }
+        self.refusal()
+    }
+
+    fn refusal(&self) -> StoreResult<()> {
         self.refused.fetch_add(1, Ordering::SeqCst);
         Err(aether_store::StoreError::Sqlite(
             rusqlite::Error::SqliteFailure(
@@ -93,7 +106,7 @@ impl Store for FullDisk {
     }
 
     fn commit(&self, commit: Commit) -> StoreResult<Vec<Event>> {
-        self.disk.refuse()?;
+        self.disk.refuse_commit()?;
         self.inner.commit(commit)
     }
     fn import(
@@ -767,4 +780,67 @@ async fn a_daemon_starting_below_its_disk_floor_holds_new_turns() {
         .filter(|e| matches!(&e.kind, EventKind::Custom { name, .. } if name == "disk.low"))
         .count();
     assert_eq!(recorded, 1, "the low disk is on the event log, once");
+}
+
+/// A retention sweep whose commit is refused must leave the artifact live
+/// with its bytes, so the next sweep evicts it and records the event once.
+#[tokio::test]
+async fn a_refused_eviction_commit_keeps_the_payload_for_the_next_sweep() {
+    let disk = Arc::new(Disk::default());
+    let mut artifact = Artifact {
+        id: ArtifactId::new(),
+        kind: aether_core::artifact::ArtifactKind::File,
+        name: "old output".into(),
+        summary: "old output".into(),
+        path: None,
+        size_bytes: 7,
+        content_type: None,
+        digest: Some("outage".into()),
+        created_by: Actor::user(),
+        agent_id: None,
+        task_id: None,
+        created_at: aether_core::time::now() - chrono::Duration::days(60),
+        evicted_at: None,
+    };
+    let id = artifact.id;
+    let h = harness_full(
+        vec![],
+        |_| {},
+        |config| {
+            config.retention = RetentionPolicy {
+                max_age_days: Some(30),
+                max_total_bytes: None,
+            };
+        },
+        None,
+        None,
+        Some(over(&disk)),
+        |_| {},
+    )
+    .await;
+    // Seeded after startup, whose own sweep would otherwise evict it.
+    let path = h.store.write_artifact_bytes(id, b"payload").expect("bytes");
+    artifact.path = Some(path);
+    h.store
+        .commit(Commit::new().mutate(Mutation::PutArtifact(artifact)))
+        .expect("record");
+    let evictions = |h: &Harness| {
+        h.store
+            .events(0, 10_000, &EventFilter::default())
+            .expect("events")
+            .iter()
+            .filter(|e| matches!(&e.kind, EventKind::ArtifactEvicted { artifact, .. } if *artifact == id))
+            .count()
+    };
+
+    disk.commits_refused.store(true, Ordering::SeqCst);
+    h.runtime.sweep_artifacts().expect_err("commit is refused");
+    assert_eq!(evictions(&h), 0);
+    assert_eq!(h.store.live_artifacts().expect("live").len(), 1);
+    assert!(h.store.read_artifact_bytes(id).expect("read").is_some());
+
+    disk.commits_refused.store(false, Ordering::SeqCst);
+    assert_eq!(h.runtime.sweep_artifacts().expect("retry"), 1);
+    assert_eq!(evictions(&h), 1);
+    assert!(h.store.read_artifact_bytes(id).expect("read").is_none());
 }
