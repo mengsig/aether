@@ -898,6 +898,9 @@ pub(crate) fn create(
             "managed workspace root resolved inside the source repository",
         ));
     }
+    if let Err(error) = sweep_orphan_refs(&root, &source) {
+        tracing::warn!(%error, source = %source.display(), "orphan workspace reference sweep failed");
+    }
     let baseline_tree = stable_snapshot(&source, &root)?;
     let id = ulid::Ulid::generate().to_string();
     let directory = root.join(&id);
@@ -953,20 +956,83 @@ pub(crate) fn create(
         atomic_json(&directory.join(MANIFEST), &manifest)?;
         Ok(manifest)
     })();
-    if result.is_err() {
-        let _ = run(
-            git(&source)
-                .args(["worktree", "remove", "--force", "--"])
-                .arg(&workspace),
-            "remove incomplete child worktree",
-        );
-        let _ = run(
-            git(&source).args(["update-ref", "-d", &reference]),
-            "remove incomplete snapshot reference",
-        );
-        let _ = fs::remove_dir_all(&directory);
+    if let Err(error) = &result {
+        roll_back_creation(&source, &workspace, &reference, &directory, error);
     }
     result
+}
+
+/// Undo a failed creation. Each cleanup failure is logged beside the
+/// creation error, because a leftover reference pins its snapshot.
+fn roll_back_creation(
+    source: &Path,
+    workspace: &Path,
+    reference: &str,
+    directory: &Path,
+    creation_error: &RuntimeError,
+) {
+    let cleanups = [
+        run(
+            git(source)
+                .args(["worktree", "remove", "--force", "--"])
+                .arg(workspace),
+            "remove incomplete child worktree",
+        )
+        .map(drop),
+        run(
+            git(source).args(["update-ref", "-d", reference]),
+            "remove incomplete snapshot reference",
+        )
+        .map(drop),
+        fs::remove_dir_all(directory)
+            .map_err(|error| io_error("cannot remove incomplete workspace", directory, error)),
+    ];
+    for cleanup_error in cleanups.into_iter().filter_map(Result::err) {
+        tracing::warn!(%creation_error, %cleanup_error, reference,
+            "workspace creation rollback step failed");
+    }
+}
+
+/// Delete `refs/aether/workspaces/<id>` refs in `source` that Aether can
+/// prove are orphaned: the id is a ULID, `managed_root` has no directory for
+/// it, and no registered worktree lives under that id. Returns removed refs.
+pub(crate) fn sweep_orphan_refs(managed_root: &Path, source: &Path) -> crate::Result<Vec<String>> {
+    let root = real_directory(managed_root, false)?;
+    let listing = git_string(
+        git(source).args([
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/aether/workspaces/",
+        ]),
+        "list workspace snapshot references",
+    )?;
+    let worktrees = git_string(
+        git(source).args(["worktree", "list", "--porcelain"]),
+        "list worktrees",
+    )?;
+    let mut removed = Vec::new();
+    for reference in listing.lines() {
+        let Some(id) = reference.strip_prefix("refs/aether/workspaces/") else {
+            continue;
+        };
+        let directory_missing = matches!(
+            fs::symlink_metadata(root.join(id)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound
+        );
+        if id.parse::<ulid::Ulid>().is_err() || !directory_missing {
+            continue;
+        }
+        let marker = format!("/{id}/");
+        if worktrees.lines().any(|line| line.contains(&marker)) {
+            continue;
+        }
+        run(
+            git(source).args(["update-ref", "-d", reference]),
+            "remove orphan workspace snapshot reference",
+        )?;
+        removed.push(reference.to_owned());
+    }
+    Ok(removed)
 }
 
 pub(crate) fn load(managed_root: &Path, workspace: &Path) -> crate::Result<WorkspaceManifest> {

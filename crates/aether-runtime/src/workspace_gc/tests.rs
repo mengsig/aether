@@ -119,6 +119,44 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn gc_removes_only_provably_orphaned_snapshot_references() {
+    let f = fixture().await;
+    let head = git(&f.source, &["rev-parse", "HEAD"]);
+    let orphan = format!("refs/aether/workspaces/{}", ulid::Ulid::generate());
+    let foreign = "refs/aether/workspaces/not-a-ulid";
+    let users = "refs/heads/aether-workspaces";
+    for name in [orphan.as_str(), foreign, users] {
+        git(&f.source, &["update-ref", name, &head]);
+    }
+    let live = format!(
+        "refs/aether/workspaces/{}",
+        f.manifest
+            .workspace
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+    );
+    assert!(!git(&f.source, &["for-each-ref", &live]).is_empty());
+
+    f.collect(true);
+    assert!(
+        !git(&f.source, &["for-each-ref", &orphan]).is_empty(),
+        "a preview deletes nothing"
+    );
+    f.collect(false);
+
+    assert!(git(&f.source, &["for-each-ref", &orphan]).is_empty());
+    for kept in [foreign, users] {
+        assert!(
+            !git(&f.source, &["for-each-ref", kept]).is_empty(),
+            "{kept}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn dry_run_reports_bytes_then_completed_owner_is_collected() {
     let f = fixture().await;
     f.store(f.owner(AgentStatus::Completed { summary: None }));
