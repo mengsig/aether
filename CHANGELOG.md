@@ -20,10 +20,11 @@ Protocol version 24, store schema 25.
   of short coding tasks on the last release, the candidate and the plain
   native CLIs, for Claude Haiku 5.5 and GPT-6 Luna at low effort, in
   parallel under a load gate, a USD budget and a per-trial spend guard. A
-  paired bootstrap and an exact McNemar test gate the candidate: it fails
-  when its pass rate is more than 5 points below the old release's or its
-  cost more than 15% above it. Runs resume, and each trial gets its own daemon, data directory
-  and short TMPDIR. It is a release-time check, never part of CI (see
+  paired bootstrap over tasks gates the candidate: it fails when, at 95%
+  one-sided confidence, its pass rate is more than 5 points below the old
+  release's or its cost more than 15% above it. An exact McNemar test is
+  reported beside it. Runs resume, and each trial gets its own daemon, data
+  directory and short TMPDIR. It is a release-time check, never part of CI (see
   [Release bench](https://github.com/mengsig/aether/blob/main/docs/release-bench.md)).
 - **Notes carry a level.** `append_note` takes `level`: `info` (the
   default), `applied` or `refused`, so a host can show an operator command's
