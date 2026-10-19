@@ -122,7 +122,13 @@ pub async fn run(
     loop {
         let next = tokio::select! {
             _ = gate.tick() => {
-                if let Some(line) = gate.update(client.status().await?.low_disk.as_ref()) {
+                let status = match client.status().await {
+                    Ok(status) => status,
+                    // The ended subscription takes the remote reconnect path.
+                    Err(error) if socket.is_remote() && error.is_connection_failure() => continue,
+                    Err(error) => return Err(error.into()),
+                };
+                if let Some(line) = gate.update(status.low_disk.as_ref()) {
                     finish_stream(&mut out, &mut streaming)?;
                     eprintln!("{line}");
                 }

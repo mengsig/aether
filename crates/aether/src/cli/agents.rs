@@ -1,4 +1,4 @@
-use super::table::{Glyphs, cell};
+use super::table::{Glyphs, cell, number};
 use super::{AgentQuery, ArchiveTarget, acted, connect, sane};
 use anyhow::bail;
 use std::path::PathBuf;
@@ -74,9 +74,9 @@ pub async fn agents(
             head(&a.name, 14, false),
             head(&agent_status_label(&a, glyphs), 28, false),
             head(&a.chain().to_string(), 28, false),
-            head(&a.stats.usage.input_tokens.to_string(), 8, true),
-            head(&a.stats.usage.cache_read_tokens.to_string(), 8, true),
-            head(&a.stats.usage.output_tokens.to_string(), 8, true),
+            number(a.stats.usage.input_tokens, 8),
+            number(a.stats.usage.cache_read_tokens, 8),
+            number(a.stats.usage.output_tokens, 8),
             a.current_task.map(|t| t.to_string()).unwrap_or_default()
         );
     }

@@ -1,7 +1,7 @@
 //! Fixed-width table cells measured in terminal columns, so CJK and emoji
 //! text lines up like Latin text and `--ascii` output stays ASCII.
 
-use unicode_width::{UnicodeWidthChar as _, UnicodeWidthStr as _};
+use unicode_width::UnicodeWidthStr as _;
 
 /// How a table spells what is not text: the cut mark and the separator.
 #[derive(Clone, Copy)]
@@ -63,20 +63,24 @@ pub(super) fn cell(text: &str, width: usize, glyphs: Glyphs, align_right: bool) 
     }
 }
 
+/// A count right-aligned to `width`; never cut, so a large total stays exact.
+pub(super) fn number(value: u64, width: usize) -> String {
+    format!("{value:>width$}")
+}
+
 fn fit(line: &str, width: usize, ellipsis: &str) -> String {
     if line.width() <= width {
         return line.to_owned();
     }
     let room = width - ellipsis.width();
     let mut kept = String::new();
-    let mut used = 0;
     for c in line.chars() {
-        let w = c.width().unwrap_or(0);
-        if used + w > room {
+        kept.push(c);
+        // Measured as a string: emoji presentation sequences are not the sum of their chars.
+        if kept.width() > room {
+            kept.pop();
             break;
         }
-        used += w;
-        kept.push(c);
     }
     kept.push_str(ellipsis);
     kept
@@ -116,6 +120,18 @@ mod tests {
         assert!(shown.is_ascii(), "{shown:?}");
         assert!(shown.ends_with("..."), "{shown:?}");
         assert!(glyphs.separator().is_ascii());
+    }
+
+    #[test]
+    fn emoji_presentation_sequences_never_overflow_the_cell() {
+        let shown = cell(&"#\u{FE0F}".repeat(8), 14, Glyphs::new(false), false);
+        assert_eq!(shown.width(), 14, "{shown:?}");
+    }
+
+    #[test]
+    fn a_large_count_keeps_every_digit() {
+        assert_eq!(number(123_456_789, 8), "123456789");
+        assert_eq!(number(42, 5), "   42");
     }
 
     #[test]
