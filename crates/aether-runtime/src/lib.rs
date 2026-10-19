@@ -400,7 +400,7 @@ impl Runtime {
             models,
             tools,
             resources: Arc::new(resources::ResourceLeases::new()),
-            tool_runtime: ToolRuntime::new(),
+            tool_runtime: ToolRuntime::with_redactor(config.redactor.clone()),
             context: ContextManager::new(),
             bus: EventBus::new(),
             config,

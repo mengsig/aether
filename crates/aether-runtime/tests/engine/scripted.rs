@@ -1,5 +1,9 @@
 //! Scripted native engine shared by runtime integration tests.
 use super::*;
+/// Echoed by `Reply::ToolRun` as a configured listen token and MCP token would be.
+pub(super) const LISTEN_TOKEN: &str = "listen-token-shapeless-0123456789";
+pub(super) const MCP_TOKEN: &str = "mcp-token-shapeless-0123456789";
+
 #[derive(Clone, Copy)]
 pub(super) enum Reply {
     Accept,
@@ -145,7 +149,10 @@ impl Engine for ScriptedEngine {
                 let _ = events
                     .send(EngineEvent::ToolResult {
                         tool_use_id: "call-1".into(),
-                        content: "src/ tests/\nANTHROPIC_API_KEY=sk-ant-api03-NOTAREALKEYbutkeyshaped0123456789".into(),
+                        content: format!(
+                            "src/ tests/\nANTHROPIC_API_KEY=sk-ant-api03-NOTAREALKEYbutkeyshaped0123456789\n\
+                             AETHER_TOKEN={LISTEN_TOKEN}\nNOTES_TOKEN={MCP_TOKEN}"
+                        ),
                         is_error: false,
                     })
                     .await;

@@ -9,9 +9,22 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 /// Replaces recognizable secrets before output is persisted or shown.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Redactor {
     patterns: Vec<(Regex, &'static str)>,
+}
+
+/// Shortest known secret value masked verbatim: a shorter one would also
+/// mask ordinary words that happen to equal it.
+pub const MIN_KNOWN_SECRET_CHARS: usize = 8;
+
+/// Not derived: a known-secret rule's pattern is the secret itself.
+impl std::fmt::Debug for Redactor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Redactor")
+            .field("rules", &self.patterns.len())
+            .finish()
+    }
 }
 
 const RULE_COUNT: usize = 19;
@@ -95,6 +108,41 @@ impl Redactor {
         r
     }
 
+    /// The default rules plus one that masks each known secret value wherever
+    /// it appears verbatim. Values shorter than [`MIN_KNOWN_SECRET_CHARS`]
+    /// after trimming are skipped. Fails only when the values exceed the
+    /// regex size limit; the error never quotes them.
+    pub fn with_known_secrets<'v>(
+        values: impl IntoIterator<Item = &'v str>,
+    ) -> Result<Self, KnownSecretsError> {
+        let mut known: Vec<&str> = values
+            .into_iter()
+            .map(str::trim)
+            .filter(|value| value.chars().count() >= MIN_KNOWN_SECRET_CHARS)
+            .collect();
+        // Longest first, so a value that contains another is masked whole.
+        known.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+        known.dedup();
+        let mut redactor = Self::default();
+        if known.is_empty() {
+            return Ok(redactor);
+        }
+        let alternation = known
+            .iter()
+            .map(|value| regex::escape(value))
+            .collect::<Vec<_>>()
+            .join("|");
+        let rule = Regex::new(&alternation).map_err(|_| KnownSecretsError {
+            values: known.len(),
+        })?;
+        // First, before a shape rule rewrites part of a value and hides the rest from it.
+        redactor
+            .patterns
+            .insert(0, (rule, "[REDACTED:known_secret]"));
+        debug_assert_eq!(redactor.patterns.len(), RULE_COUNT + 1);
+        Ok(redactor)
+    }
+
     pub fn redact<'a>(&self, text: &'a str) -> Cow<'a, str> {
         let mut out = Cow::Borrowed(text);
         for (re, rep) in &self.patterns {
@@ -104,6 +152,13 @@ impl Redactor {
         }
         out
     }
+}
+
+/// The known secret values could not be compiled into one rule.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{values} known secret values exceed the redaction rule size limit")]
+pub struct KnownSecretsError {
+    pub values: usize,
 }
 
 const LOCATOR_SECRET_NAME: &str = r"(?:token|secret|passw(?:or)?d|api[_\-]?key|auth|credential)";
@@ -314,6 +369,38 @@ mod tests {
         let endless = "log\n-----BEGIN PRIVATE KEY-----\nZm9vYmFy\nYmF6cXV4";
         let out = r.redact(endless);
         assert!(!out.contains("Zm9vYmFy") && out.starts_with("log"), "{out}");
+    }
+
+    #[test]
+    fn known_secrets_are_masked_verbatim_and_short_ones_skipped() {
+        let token = "fleet-token-0123456789abcdef";
+        let inner = "sk-ant-api03-INNERKEYbutkeyshaped0123456789";
+        let wrapped = format!("pre{inner}post");
+        let r = Redactor::with_known_secrets([token, " short7 ", wrapped.as_str(), token]).unwrap();
+        let text = format!("env: TOKEN={token} K={wrapped} word short7");
+        let out = r.redact(&text);
+        assert!(!out.contains(token) && !out.contains("post"), "{out}");
+        assert_eq!(out.matches("[REDACTED:known_secret]").count(), 2, "{out}");
+        assert!(
+            out.ends_with("word short7"),
+            "a short value is left alone: {out}"
+        );
+        let dotted = Redactor::with_known_secrets(["a.b.c.d.e.f.g.h"]).unwrap();
+        assert_eq!(dotted.redact("aXbXcXdXeXfXgXh").as_ref(), "aXbXcXdXeXfXgXh");
+    }
+
+    #[test]
+    fn known_secrets_never_appear_in_debug_output() {
+        let token = "fleet-token-0123456789abcdef";
+        let r = Redactor::with_known_secrets([token]).unwrap();
+        assert!(!format!("{r:?}").contains("fleet-token"), "{r:?}");
+        assert_eq!(
+            Redactor::with_known_secrets(["tiny"])
+                .unwrap()
+                .patterns
+                .len(),
+            RULE_COUNT
+        );
     }
 
     #[test]

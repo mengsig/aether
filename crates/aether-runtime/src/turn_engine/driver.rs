@@ -803,6 +803,12 @@ pub(super) async fn drive(
             )?;
         }
     }
+    // The engine masks its stderr by shape only; the values this daemon knows are masked here.
+    if let Some(error) = outcome.error.as_mut()
+        && let std::borrow::Cow::Owned(clean) = runtime.tool_runtime.redactor().redact(error)
+    {
+        *error = clean;
+    }
     if let Some(cause) =
         interruption_cause(runtime, ctx, cancel, park.as_ref(), budget_stop.as_ref()).or_else(
             || {

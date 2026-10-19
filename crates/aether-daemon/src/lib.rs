@@ -13,6 +13,7 @@ mod mcp;
 mod projections;
 pub mod push;
 pub mod remote;
+mod secrets;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -293,6 +294,12 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         &store_path,
         &instance_id,
     )?;
+    let redactor = secrets::known_secrets_redactor(
+        models.config(),
+        models.registry(),
+        tcp.as_ref(),
+        |name| std::env::var(name).ok(),
+    )?;
     let runtime = Runtime::start(
         RuntimeConfig {
             holder: format!("aetherd-{}-{}", instance_id, std::process::id()),
@@ -341,6 +348,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 path: store_path.clone(),
                 floor,
             }),
+            redactor,
             ..Default::default()
         },
         store.clone(),
@@ -647,23 +655,27 @@ fn tool_registry(
     providers: &aether_model::registry::Registry,
     tcp: Option<&TcpListen>,
 ) -> ToolRegistry {
-    let builtins = aether_model::registry::Registry::builtin();
     ToolRegistry::with_builtins_and_search(config.web.search.clone().map(search_provider))
         .hiding(daemon_secret_env(config, tcp))
-        .hiding_from_tools(
-            builtins
-                .providers()
+        .hiding_from_tools(provider_secret_env(providers))
+}
+
+/// Each built-in and configured provider's API key and bearer variables.
+fn provider_secret_env(providers: &aether_model::registry::Registry) -> Vec<String> {
+    let builtins = aether_model::registry::Registry::builtin();
+    builtins
+        .providers()
+        .iter()
+        .chain(providers.providers())
+        .flat_map(|provider| {
+            provider
+                .auth
+                .api_key_env
                 .iter()
-                .chain(providers.providers())
-                .flat_map(|provider| {
-                    provider
-                        .auth
-                        .api_key_env
-                        .iter()
-                        .chain(&provider.auth.bearer_env)
-                        .cloned()
-                }),
-        )
+                .chain(&provider.auth.bearer_env)
+                .cloned()
+        })
+        .collect()
 }
 
 /// Every variable naming a secret this daemon reads: the TCP transport's

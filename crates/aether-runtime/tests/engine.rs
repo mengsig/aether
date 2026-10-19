@@ -53,6 +53,8 @@ mod extended_context;
 mod handoff;
 #[path = "engine/interruptions.rs"]
 mod interruptions;
+#[path = "engine/known_secrets.rs"]
+mod known_secrets;
 #[path = "engine/launch_context.rs"]
 mod launch_context;
 #[path = "engine/memory.rs"]

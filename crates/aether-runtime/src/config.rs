@@ -102,6 +102,9 @@ pub struct RuntimeConfig {
     /// Hold new turns while the store's filesystem runs low. `None` never
     /// measures it.
     pub disk_guard: Option<DiskGuard>,
+    /// Masks tool and engine output before it is recorded. The daemon seeds
+    /// it with the secret values it knows; its `Debug` never prints them.
+    pub redactor: aether_tools::Redactor,
 }
 
 /// Where free space is measured, and how much new turns wait for.
@@ -152,6 +155,7 @@ impl Default for RuntimeConfig {
             storage_paths: None,
             memory_index: None,
             disk_guard: None,
+            redactor: aether_tools::Redactor::default(),
         }
     }
 }
