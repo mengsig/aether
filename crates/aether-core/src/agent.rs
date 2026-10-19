@@ -307,9 +307,9 @@ impl Agent {
             // was already spent smaller, so enforcing on the floor is safe -
             // and it is the only reading that cannot silently stop firing.
             if subtree.cost_usd >= limit * fraction {
-                // Not `:.2`: a budget of a fraction of a cent must read back.
                 return Some(format!(
-                    "cost budget of ${limit}: {} spent",
+                    "cost budget of ${}: {} spent",
+                    format_usd(limit),
                     subtree.cost_line()
                 ));
             }
@@ -325,10 +325,24 @@ impl Agent {
             return None;
         }
         Some(format!(
-            "{COST_FLOOR_NOTE}: cost budget of ${limit} is enforced on {} in the subtree",
+            "{COST_FLOOR_NOTE}: cost budget of ${} is enforced on {} in the subtree",
+            format_usd(limit),
             subtree.cost_line()
         ))
     }
+}
+
+/// Dollars without float noise (`0.1 + 0.2` reads `0.3`). Not `:.2`: a budget
+/// of a fraction of a cent must read back, so six decimals, zeros trimmed.
+pub fn format_usd(amount: f64) -> String {
+    assert!(
+        amount.is_finite(),
+        "a dollar amount must be finite: {amount}"
+    );
+    let fixed = format!("{amount:.6}");
+    let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
+    assert!(!trimmed.is_empty(), "formatting {amount} left nothing");
+    trimmed.to_owned()
 }
 
 /// How [`Agent::cost_floor_note`] opens, so the scheduler can tell that

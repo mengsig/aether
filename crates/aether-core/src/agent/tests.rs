@@ -584,3 +584,24 @@ fn at_least_and_nested_conditions() {
         terminal: BTreeSet::new()
     }));
 }
+
+#[test]
+fn money_reads_back_without_float_noise_or_losing_sub_cent_limits() {
+    assert_eq!(format_usd(0.1 + 0.2), "0.3");
+    assert_eq!(format_usd(0.004), "0.004");
+    assert_eq!(format_usd(5.0), "5");
+    assert_eq!(format_usd(0.000001), "0.000001");
+}
+
+#[test]
+fn a_derived_cost_limit_is_named_without_noise_in_the_reason() {
+    let mut agent = agent_with(None);
+    agent.config.cost_budget = Some(0.1 + 0.2);
+    let spent = Usage {
+        cost_usd: 1.0,
+        cost_complete: true,
+        ..Default::default()
+    };
+    let reason = agent.budget_exceeded(&spent).unwrap();
+    assert!(reason.starts_with("cost budget of $0.3:"), "{reason}");
+}
