@@ -188,3 +188,62 @@ async fn an_answer_wakes_the_posting_agent_with_the_choice_in_its_inbox() {
     );
     h.runtime.shutdown().await;
 }
+
+/// The `notify` tool posts under the agent's id and resolves by its key; a
+/// post over a limit fails the call, not the turn.
+#[tokio::test]
+async fn an_agent_posts_and_resolves_through_the_notify_tool() {
+    let h = harness(vec![
+        ScriptedClient::tool_call(
+            "notify",
+            json!({"title": "Blocked on CI", "kind": "blocker", "key": "ci"}),
+        ),
+        ScriptedClient::tool_call(
+            "notify",
+            json!({"title": "Second", "key": "ci", "link": "x".repeat(600)}),
+        ),
+        ScriptedClient::tool_call("notify", json!({"resolve": true, "key": "ci"})),
+        ScriptedClient::text("done"),
+    ])
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                config: Some(AgentConfig {
+                    approval: ApprovalPolicy::none(),
+                    ..Default::default()
+                }),
+                ..spec("report the blocker")
+            },
+            Actor::user(),
+        )
+        .expect("create");
+    let events = wait_until_events(h.store.as_ref(), agent.id, |events| {
+        let settled = |name: &str| events.iter().filter(|e| e.type_name() == name).count();
+        settled("tool.succeeded") == 2 && settled("tool.failed") == 1
+    })
+    .await;
+    let posted = h
+        .runtime
+        .notifications(&Default::default())
+        .unwrap()
+        .pop()
+        .expect("one notification");
+    assert_eq!(posted.source, agent.id.to_string());
+    assert_eq!(posted.kind, NotificationKind::Blocker);
+    assert_eq!(
+        posted.title, "Blocked on CI",
+        "the refused update changed nothing"
+    );
+    assert_eq!(posted.state, NotificationState::Resolved);
+    let refusal = events
+        .iter()
+        .find_map(|e| match &e.kind {
+            EventKind::ToolFailed { error, .. } => Some(error.clone()),
+            _ => None,
+        })
+        .expect("the oversized post failed");
+    assert!(refusal.contains("512"), "{refusal}");
+    h.runtime.shutdown().await;
+}

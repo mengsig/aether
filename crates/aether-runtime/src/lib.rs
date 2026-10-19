@@ -243,6 +243,7 @@ pub(crate) const LEAF_WITHHELD_TOOLS: &[&str] = &[
     "provider_usage",
     "refresh_provider_usage",
     "swarm_playbook",
+    "notify",
 ];
 
 /// Tools a root agent never sees: without a parent it has no peers.

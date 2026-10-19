@@ -4,6 +4,7 @@ mod delegation;
 mod inspection;
 mod lifecycle;
 mod memory;
+mod notify;
 mod schedules;
 
 use crate::workspace::review::path_text as workspace_path_for_reply;
@@ -41,5 +42,7 @@ pub(crate) async fn apply_action(
         | A::RequestCheckpoint { .. }
         | A::AskUser { .. }) => lifecycle::apply(runtime, ctx, effects, action),
         A::Remember { candidate } => memory::remember(runtime, ctx, candidate),
+        A::Notify { post } => notify::post(runtime, ctx, post),
+        A::ResolveNotification { key } => notify::resolve(runtime, ctx, &key),
     }
 }
