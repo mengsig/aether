@@ -19,6 +19,10 @@ impl App {
             self.flash_error("this feature is local-only; run aether --local on the host instead");
             return Vec::new();
         }
+        if kind == ViewKind::Notifications && !self.notifications.served() {
+            self.flash_error("this daemon has no notification center; update aetherd");
+            return Vec::new();
+        }
         let effects = self.view_requests(kind);
         let view: Box<dyn crate::ui::bottom::BottomView> = match kind {
             ViewKind::Workspace if self.options.is_remote() => {
@@ -62,7 +66,9 @@ impl App {
             }],
             ViewKind::ArtifactPager(id) => self.read_artifact(id),
             ViewKind::VoiceInstall(model) => self.voice_install(model),
+            // Listed on connect and kept current by events.
             ViewKind::Modes
+            | ViewKind::Notifications
             | ViewKind::Doctor
             | ViewKind::Settings
             | ViewKind::Keys

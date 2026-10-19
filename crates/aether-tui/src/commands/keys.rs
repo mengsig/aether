@@ -250,6 +250,13 @@ pub const KEYS: &[KeySpec] = &[
     .bound(&[KeyAction::Workspace]),
     key(
         Session,
+        "Alt+N",
+        "the notification center: answer, mark read, resolve, go to the chat",
+        "notification center",
+    )
+    .bound(&[KeyAction::Notifications]),
+    key(
+        Session,
         "Alt+↑",
         "view the parent agent",
         "view the parent agent",

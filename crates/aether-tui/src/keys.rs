@@ -26,6 +26,7 @@ actions! {
     Agents, "agents", "go to the agents", "ctrl+g";
     Board, "board", "show / hide the board", "ctrl+b";
     Workspace, "workspace", "switch workspace", "ctrl+o";
+    Notifications, "notifications", "notification center", "alt+n";
     Details, "details", "details & reasoning", "ctrl+t";
     History, "history", "search history", "ctrl+r";
     Find, "find", "find in transcript", "ctrl+f";

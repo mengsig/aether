@@ -55,6 +55,8 @@ pub enum SlashCommand {
     Clear,
     /// `/approvals`: remembered decisions, revoke, the auto-approve toggle.
     Rules,
+    /// The notification center: what agents and services need you to see.
+    Notifications,
     Schedules,
     /// Configured MCP servers, their health and their tools.
     Mcp,
@@ -229,6 +231,7 @@ pub fn parse(text: &str) -> InputAction {
         "memory" | "memories" => SlashCommand::Memory,
         "agent" | "agents" => SlashCommand::Agent { name: arg_opt },
         "models" => SlashCommand::Models,
+        "notifications" => SlashCommand::Notifications,
         "schedules" => SlashCommand::Schedules,
         "providers" => SlashCommand::Providers,
         "usage" if arg.is_empty() => SlashCommand::Usage,

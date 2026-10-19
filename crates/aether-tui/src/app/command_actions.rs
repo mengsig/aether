@@ -153,6 +153,7 @@ impl App {
             | SlashCommand::Providers
             | SlashCommand::Rules
             | SlashCommand::Memory
+            | SlashCommand::Notifications
             | SlashCommand::Schedules
             | SlashCommand::Mcp
             | SlashCommand::Outbox

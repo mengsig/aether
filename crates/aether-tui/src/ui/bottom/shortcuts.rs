@@ -372,7 +372,7 @@ mod tests {
     use super::*;
     use crate::ui::theme::tokens::ThemeSpec;
 
-    const HEIGHT: u16 = 60;
+    const HEIGHT: u16 = 64;
     /// Panel widths the review measured: narrow, the 2- and 3-column
     /// thresholds, and the left pane beside a board docked at 200 columns.
     const WIDTHS: [(u16, usize); 7] = [

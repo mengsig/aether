@@ -278,9 +278,61 @@ fn hint_spans(text: &str, separator: &str, room: usize, theme: &Theme) -> Vec<Sp
     spans
 }
 
+/// `[quota chip · ]$run · NN% context left[ · notifications]`: the notification
+/// count keeps the bottom-right corner and is dropped only when nothing else fits.
+fn right_side(
+    app: &App,
+    theme: &Theme,
+    separator: &str,
+    room: usize,
+    reading: bool,
+    overlay: bool,
+) -> Vec<Span<'static>> {
+    let Some((text, style)) = notification_chip(app, theme, room) else {
+        return usage_side(app, theme, separator, room, reading, overlay);
+    };
+    let rest = room.saturating_sub(text.width() + separator.width());
+    let mut spans = usage_side(app, theme, separator, rest, reading, overlay);
+    if !spans.is_empty() {
+        spans.push(Span::styled(separator.to_owned(), theme.secondary()));
+    }
+    spans.push(Span::styled(text, style));
+    spans
+}
+
+/// `◆ 2 waiting · 5 unread` when questions or blockers wait on the operator,
+/// in the attention colour; `5 unread` otherwise; `◆ 5` or `5` when narrow.
+fn notification_chip(app: &App, theme: &Theme, room: usize) -> Option<(String, Style)> {
+    let unread = app.notifications.unread();
+    if unread == 0 {
+        return None;
+    }
+    let urgent = app.notifications.urgent_unread();
+    debug_assert!(urgent <= unread, "urgent notifications are unread ones");
+    let mark = theme.glyphs().needs_you;
+    let dot = theme.glyphs().dot;
+    let (full, short, style) = if urgent > 0 {
+        (
+            format!("{mark} {urgent} waiting {dot} {unread} unread"),
+            format!("{mark} {unread}"),
+            theme.attention().patch(theme.title()),
+        )
+    } else {
+        (
+            format!("{unread} unread"),
+            unread.to_string(),
+            theme.secondary(),
+        )
+    };
+    [full, short]
+        .into_iter()
+        .find(|text| text.width() <= room)
+        .map(|text| (text, style))
+}
+
 /// `[quota chip · ]$run · NN% context left`: context shortens to `NN%`, then cost
 /// outranks it, then `NN%` alone; the chip is cut last: a quota failure is never silent.
-fn right_side(
+fn usage_side(
     app: &App,
     theme: &Theme,
     separator: &str,

@@ -332,6 +332,7 @@ fn provider(name: &str) -> ProviderInfo {
 #[test]
 fn open_view_pushes_one_view_and_requests_its_data() {
     let mut app = viewed_app();
+    app.notifications.set_served(true);
     let agent = agent_id(&app);
     let run = app.tree.nodes[&agent].agent.run;
     let cases = [
@@ -379,6 +380,7 @@ fn open_view_pushes_one_view_and_requests_its_data() {
         ),
         (ViewKind::Doctor, vec![]),
         (ViewKind::Settings, vec![]),
+        (ViewKind::Notifications, vec![]),
         (ViewKind::Voice, vec![]),
     ];
     for (kind, expected) in cases {
@@ -1339,18 +1341,36 @@ fn stocked_app() -> App {
     }];
     app.providers = vec![provider("anthropic")];
     app.artifacts.list = vec![artifact("test.log")];
+    app.notifications.set_served(true);
+    app.notifications
+        .apply(notification("Merge #231 into next?"));
     app
+}
+
+fn notification(title: &str) -> aether_core::notification::Notification {
+    use aether_core::notification::{Notification, NotificationKind, NotificationPost};
+    let post = NotificationPost {
+        kind: NotificationKind::Question,
+        title: title.into(),
+        body: String::new(),
+        key: None,
+        link: None,
+        actions: Vec::new(),
+        free_text: true,
+    };
+    Notification::new("archon".into(), post, now())
 }
 
 #[test]
 fn snapshots_paint_with_theme_tokens_at_80_and_120() {
     let mut app = stocked_app();
-    let cases: [(ViewKind, &str, &str); 12] = [
+    let cases: [(ViewKind, &str, &str); 13] = [
         (ViewKind::Model, "Model and effort", "gemini"),
         (ViewKind::Usage, "Usage", "anthropic"),
         (ViewKind::Approvals, "Approvals", "allow bash"),
         (ViewKind::Memory, "Memory", "Deploys go out"),
         (ViewKind::Schedules, "Schedules", "Read docs"),
+        (ViewKind::Notifications, "Notifications", "Merge #231"),
         (ViewKind::Mcp, "MCP servers", "spawn failed"),
         (ViewKind::Doctor, "Doctor", "daemon"),
         (ViewKind::Report, "Report", "reading the log"),
@@ -1372,6 +1392,7 @@ fn snapshot_pickers_mark_exactly_the_cursor_row() {
         ViewKind::Approvals,
         ViewKind::Memory,
         ViewKind::Schedules,
+        ViewKind::Notifications,
         ViewKind::Artifacts,
         ViewKind::Settings,
         ViewKind::Voice,

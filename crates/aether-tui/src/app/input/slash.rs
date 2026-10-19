@@ -19,6 +19,7 @@ impl App {
             SlashCommand::Usage | SlashCommand::Providers => ViewKind::Usage,
             SlashCommand::Rules => ViewKind::Approvals,
             SlashCommand::Memory => ViewKind::Memory,
+            SlashCommand::Notifications => ViewKind::Notifications,
             SlashCommand::Schedules => ViewKind::Schedules,
             SlashCommand::Mcp => ViewKind::Mcp,
             SlashCommand::Outbox => ViewKind::Outbox,

@@ -57,7 +57,8 @@ From the top:
   On a focused board the Enter, Esc and lifecycle keys come first, so at the
   100-column dock only `82%` fits (nothing with `--ascii`); the inspector's
   Context row always shows it. With a quota alert, the action keys stay visible
-  and the alert shortens to `quota` when its full text does not fit.
+  and the alert shortens to `quota` when its full text does not fit. The
+  [notification](#notification-center) count sits at the far right.
 
 ## Workspaces
 
@@ -263,11 +264,72 @@ auto-approve toggle.
   follows it again. Sending a message to the viewed agent does the same, also
   from an older history window, so its reply is on screen.
 
+## Notification center
+
+Agents and services such as Archon post what they need you to see to the
+daemon's notification center: questions, blockers, decisions, outcomes and
+plain news. The right end of the hint row counts the unread ones. Questions
+and blockers stand out in the attention colour, with how many wait on you:
+
+```
+  connected                                          $0.51 · ◆ 2 waiting · 2 unread
+```
+
+On a narrow screen it shortens to `◆ 2` (or just the count), and it is the
+last thing on the row to go. A new question or blocker also rings the bell
+and raises a desktop notification while the terminal is not focused.
+
+`/notifications` or **Alt+N** opens the panel: unread, then read, then
+resolved, newest first within each, with the poster and its age.
+
+```
+  Notifications  2 unread · 2 waiting on you
+
+  Unread
+› ◆ Need a GitHub token    blocker · assistant · 29s
+  ◆ Merge #231 into next?  question · archon · 1m
+  Resolved
+    Shipped #229           outcome · archon · 59m
+
+  ↑↓ choose · enter open · r read · x resolve · o go to chat · esc back
+```
+
+Enter opens one and marks it read. The detail shows its Markdown body, its
+link, and the answers it offers:
+
+```
+  Question  from archon · 1m · unread
+
+  Merge #231 into next?
+
+  CI is green on next.
+
+› 1. Merge
+  2. Hold
+  3. write an answer  a
+
+  ↑↓ choose · enter answer · x resolve · o go to chat · esc list
+```
+
+- **Enter** or a **digit** answers with that action; **a** (or the last row)
+  lets you type your own answer when the poster accepts one, sent with Enter.
+  An answer resolves the notification. An agent that posted it receives the
+  answer in its inbox, which wakes it; a service reads it from the daemon.
+- **r** marks it read and **x** resolves it without an answer, in the list or
+  the detail.
+- **o** closes the panel and views the agent that posted it, or the agent its
+  link names. A service's notification has no chat to open.
+
+Notifications are kept by the daemon, so they survive restarts and every TUI
+attached to it sees the same center, updated live. A daemon from before the
+center shows no indicator, and Alt+N says the daemon has none. See
+[the protocol](protocol.md#notification-center) for posting from a service.
+
 ## Views
 
 Commands that need more than a line open a view in the bottom pane:
 `/model`, `/memory`, `/approvals`, `/usage`, `/settings`, `/mode`, `/artifacts`,
-`/mcp`, `/schedules`, `/report`, `/doctor`, `/voice setup` and `/login`.
+`/mcp`, `/schedules`, `/notifications`, `/report`, `/doctor`, `/voice setup` and `/login`.
 Schedules show the local date alongside the next fire time when it is not today.
 Lists take ↑/↓ or a digit to choose, Enter to use, and Esc to go back. The run
 report and an opened artifact are read in a full-screen pager.
@@ -499,6 +561,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+G` | go to the agents board, opening it if hidden |
 | `Ctrl+B` | show / hide the agents board |
 | `Ctrl+O` | switch workspace: view its agent, or start one there |
+| `Alt+N` | the notification center: answer, mark read, resolve, go to the chat |
 | `Alt+↑` | view the parent agent |
 | `Ctrl+T` | details: full outputs and reasoning |
 | `Ctrl+R` | search message history |
@@ -611,6 +674,7 @@ listed. A few take an argument directly: `/theme nord`, `/mouse scroll`,
 | `/new [objective]` | start a new root agent |  |
 | `/workspace [path]` | switch workspace: view its agent, or start one there | `Ctrl+O` |
 | `/agent [name]` | open the agents board, or view the named agent | `Ctrl+G` |
+| `/notifications` | what agents and services need you to see; answer, read, resolve | `Alt+N` |
 | `/compact` | fold older context into a checkpoint |  |
 | `/copy` | copy the last reply to the clipboard |  |
 | `/image [path\|--clear]` | attach an image file, or the clipboard image; --clear drops them | `Alt+V` |

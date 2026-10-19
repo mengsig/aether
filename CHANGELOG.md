@@ -6,6 +6,23 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **A notification center.** Agents and services such as Archon post
+  questions, blockers, decisions, outcomes and news to one durable center per
+  daemon. The TUI counts unread notifications at the bottom right, making
+  questions and blockers stand out, and `/notifications` (Alt+N) opens a panel
+  to answer, mark read, resolve or jump to the posting agent's chat. An answer
+  reaches a posting agent's inbox; a service reads it from the
+  `notification.answered` event. Agents post with the new `notify` tool,
+  services with `post_notification`, `list_notifications` and
+  `resolve_notification` behind the `notifications` feature; reposting under
+  the same key updates the one notification. The newest 500 resolved ones
+  are kept. Older clients see the changes as ordinary custom events, and an
+  older daemon is simply skipped (see
+  [the TUI guide](https://github.com/mengsig/aether/blob/main/docs/tui.md#notification-center)
+  and [the protocol](https://github.com/mengsig/aether/blob/main/docs/protocol.md#notification-center)).
+
 ### Fixed
 
 - **GitHub operator logins dispatch without write access.** A login in the

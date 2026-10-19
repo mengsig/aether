@@ -10,16 +10,16 @@ ascii=false
   Ctrl+G         go to the agents         Shift+←      edit last queued
   Ctrl+B         show / hide the board    /            commands (draft start)
   Ctrl+O         switch workspace         @            mention a file or agent
-  Alt+↑          view the parent agent    Ctrl+A/E     line start / end
-  Ctrl+T         details & reasoning      Ctrl+W/U/K   erase word / start / end
-  Ctrl+R         search history           Ctrl+Y       paste last erased
-  Ctrl+F         find in transcript       Ctrl+V       paste clipboard
-  Alt+,/.        less / more effort       Ctrl+←/→     move by word · Alt+B/F
-  PgUp/PgDn      scroll a page
-  Shift+↑/↓      scroll a line            Agents board (Ctrl+G)
-  Ctrl+Home/End  top / follow latest      ↑/↓         move between agents
-                                          ←/→         fold / unfold
-  ↓ 13 more · ↑↓ pgup pgdn scroll · ? or esc to close
+  Alt+N          notification center      Ctrl+A/E     line start / end
+  Alt+↑          view the parent agent    Ctrl+W/U/K   erase word / start / end
+  Ctrl+T         details & reasoning      Ctrl+Y       paste last erased
+  Ctrl+R         search history           Ctrl+V       paste clipboard
+  Ctrl+F         find in transcript       Ctrl+←/→     move by word · Alt+B/F
+  Alt+,/.        less / more effort
+  PgUp/PgDn      scroll a page            Agents board (Ctrl+G)
+  Shift+↑/↓      scroll a line            ↑/↓         move between agents
+  Ctrl+Home/End  top / follow latest      ←/→         fold / unfold
+  ↓ 14 more · ↑↓ pgup pgdn scroll · ? or esc to close
 
 
 
@@ -36,6 +36,7 @@ ascii=true
   Ctrl+G         go to the agents
   Ctrl+B         show / hide the board
   Ctrl+O         switch workspace
+  Alt+N          notification center
   Alt+Up         view the parent agent
   Ctrl+T         details & reasoning
   Ctrl+R         search history
@@ -44,8 +45,7 @@ ascii=true
   PgUp/PgDn      scroll a page
   Shift+Up/Down  scroll a line
   Ctrl+Home/End  top / follow latest
-
-  v 39 more | up/down pgup/pgdn scroll | ? or esc to close
+  v 40 more | up/down pgup/pgdn scroll | ? or esc to close
 
 
 

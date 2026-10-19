@@ -10,6 +10,7 @@ pub mod mcp;
 pub mod memory;
 pub mod model;
 pub mod modes;
+pub mod notifications;
 pub mod outbox;
 pub mod pager;
 pub mod picker;
@@ -57,6 +58,8 @@ pub enum ViewKind {
     /// `/approvals`: rules list, revoke, auto-approve toggle.
     Approvals,
     Memory,
+    /// `/notifications` and Alt+N: the notification center.
+    Notifications,
     Schedules,
     Mcp,
     /// `/outbox`: remote operations whose delivery is unconfirmed.
@@ -89,6 +92,7 @@ pub fn open(kind: ViewKind, app: &App) -> Box<dyn BottomView> {
         ViewKind::Usage => Box::new(usage::UsageView::default()),
         ViewKind::Approvals => Box::new(approvals::ApprovalsView::default()),
         ViewKind::Memory => Box::new(memory::MemoryView::default()),
+        ViewKind::Notifications => Box::new(notifications::NotificationsView::default()),
         ViewKind::Schedules => Box::new(schedules::SchedulesView::default()),
         ViewKind::Mcp => Box::new(mcp::McpView::default()),
         ViewKind::Outbox => Box::new(outbox::OutboxView::default()),

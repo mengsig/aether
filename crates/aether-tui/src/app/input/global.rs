@@ -1,5 +1,5 @@
-//! Stage 3: global chords and the Esc / Ctrl+C ladders (§4.2): Ctrl+G, Ctrl+B, Ctrl+O, Ctrl+T,
-//! Ctrl+R, Ctrl+F, Alt+↑, Alt+,/., Ctrl+D, scrolling, F4/F5. Owner: W6.
+//! Stage 3: global chords and the Esc / Ctrl+C ladders (§4.2): Ctrl+G, Ctrl+B, Ctrl+O, Alt+N,
+//! Ctrl+T, Ctrl+R, Ctrl+F, Alt+↑, Alt+,/., Ctrl+D, scrolling, F4/F5. Owner: W6.
 
 use aether_core::agent::AgentStatusKind;
 use aether_core::id::AgentId;
@@ -37,6 +37,7 @@ impl App {
                 Vec::new()
             }
             _ if self.keys.matches(KeyAction::Workspace, key) => self.toggle_workspace_picker(),
+            _ if self.keys.matches(KeyAction::Notifications, key) => self.toggle_notifications(),
             _ if self.keys.matches(KeyAction::Details, key) => {
                 self.details = !self.details;
                 self.presentation_changed();
@@ -91,6 +92,15 @@ impl App {
             return Vec::new();
         }
         self.open_view(ViewKind::Workspace)
+    }
+
+    fn toggle_notifications(&mut self) -> Vec<Effect> {
+        if self.bottom.showing(ViewKind::Notifications) {
+            self.bottom.view_stack.pop();
+            self.dirty = true;
+            return Vec::new();
+        }
+        self.open_view(ViewKind::Notifications)
     }
 
     /// Esc ladder, first match wins.
