@@ -228,6 +228,7 @@ async fn unknown_field_is_rejected_on_every_advertised_input() {
         ),
         (&RequestCheckpoint, json!({"reason": "long", "bogus": 1})),
         (&AskUser, json!({"question": "q?", "bogus": 1})),
+        (&Notify, json!({"title": "t", "bogus": 1})),
     ];
     for (tool, input) in cases {
         let name = tool.descriptor().spec.name;
@@ -396,5 +397,50 @@ async fn result_tools_bound_text_and_structured_size() {
         act(&CompleteTask, &ctx, json!({"summary": at_limit}))
             .await
             .is_ok()
+    );
+}
+
+/// A post is checked against the notification limits before it reaches the
+/// runtime, and `resolve` takes the key and nothing else.
+#[tokio::test]
+async fn notify_posts_a_checked_notification_or_resolves_by_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_in(dir.path());
+    let post = json!({"title": "Ship 1.3?", "kind": "question", "key": "rel",
+        "actions": [{"id": "ship", "label": "Ship it"}], "free_text": true});
+    let HarnessAction::Notify { post } = act(&Notify, &ctx, post).await.unwrap() else {
+        panic!("a post");
+    };
+    assert_eq!(
+        post.kind,
+        aether_core::notification::NotificationKind::Question
+    );
+    assert_eq!(post.actions[0].label, "Ship it");
+    let plain = act(&Notify, &ctx, json!({"title": "Done"})).await.unwrap();
+    assert!(
+        matches!(&plain, HarnessAction::Notify { post } if post.kind.as_str() == "info"),
+        "{plain:?}"
+    );
+    for (input, named) in [
+        (json!({"title": " "}), "title"),
+        (json!({"title": "t", "kind": "shout"}), "notify.kind"),
+        (json!({"resolve": true}), "key"),
+        (
+            json!({"resolve": true, "key": "rel", "title": "t"}),
+            "only the key",
+        ),
+    ] {
+        let err = act(&Notify, &ctx, input.clone()).await.unwrap_err();
+        let ToolError::InvalidInput(msg) = &err else {
+            panic!("{input}: expected InvalidInput, got {err:?}");
+        };
+        assert!(msg.contains(named), "{input}: {msg}");
+    }
+    let resolved = act(&Notify, &ctx, json!({"resolve": true, "key": "rel"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved,
+        HarnessAction::ResolveNotification { key: "rel".into() }
     );
 }

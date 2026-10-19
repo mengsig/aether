@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 25;
+pub const SCHEMA_VERSION: u32 = 26;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -448,9 +448,25 @@ WHERE run IS NULL
   AND agent_id IN (SELECT id FROM agents);
 "#;
 
+// The notification center. A poster's key names one notification per source,
+// so a repost updates it. Idempotent, so a store whose stamp was rewound
+// replays it.
+const V26: &str = r#"
+CREATE TABLE IF NOT EXISTS notifications (
+    id         TEXT PRIMARY KEY,
+    source     TEXT NOT NULL,
+    key        TEXT,
+    state      TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    body       TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS notifications_key ON notifications(source, key) WHERE key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS notifications_state ON notifications(state);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25,
+    V22, V23, V24, V25, V26,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the

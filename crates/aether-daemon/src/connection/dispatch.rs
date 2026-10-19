@@ -9,6 +9,7 @@ use super::resolution;
 mod agents;
 mod control;
 mod memory;
+mod notifications;
 mod reads;
 mod runs;
 mod schedules;
@@ -129,6 +130,9 @@ pub(super) async fn dispatch_authorized(
     }
     if memory::owns(&command) {
         return memory::dispatch(daemon, command, by, submission).await;
+    }
+    if notifications::owns(&command) {
+        return notifications::dispatch(daemon, command, by).await;
     }
     Err(ErrorReply::internal("no handler for this command"))
 }

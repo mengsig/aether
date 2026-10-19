@@ -203,6 +203,14 @@ pub enum HarnessAction {
     AskUser {
         question: String,
     },
+    /// Post to the notification center, or update what `post.key` names.
+    Notify {
+        post: aether_core::notification::NotificationPost,
+    },
+    /// Resolve the notification this agent posted under `key`.
+    ResolveNotification {
+        key: String,
+    },
 }
 
 /// What a tool call produced: a world-facing outcome or a harness action.

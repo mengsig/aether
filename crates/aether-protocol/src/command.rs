@@ -160,6 +160,53 @@ pub enum Command {
         #[serde(default, skip_serializing_if = "aether_core::note::NoteLevel::is_info")]
         level: aether_core::note::NoteLevel,
     },
+    /// Post a notification as the service `source`, or update the one its
+    /// `key` already names. Needs `features::NOTIFICATIONS`.
+    PostNotification {
+        /// The service's name, such as `archon`: lowercase letters, digits,
+        /// `-`, `_` and `.`, never an agent id.
+        source: String,
+        notification: aether_core::notification::NotificationPost,
+    },
+    /// Notifications newest first. Needs `features::NOTIFICATIONS`.
+    ListNotifications {
+        /// Only these states; empty means every state.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        states: Vec<aether_core::notification::NotificationState>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        /// At most 1000; 200 when unset.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<usize>,
+    },
+    /// One notification. Needs `features::NOTIFICATIONS`.
+    GetNotification {
+        id: aether_core::id::NotificationId,
+    },
+    /// Mark a notification seen. Needs `features::NOTIFICATIONS`.
+    MarkNotificationRead {
+        id: aether_core::id::NotificationId,
+    },
+    /// Resolve a notification by `id`, or by the `source` and `key` it was
+    /// posted under; exactly one of the two. Needs `features::NOTIFICATIONS`.
+    ResolveNotification {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<aether_core::id::NotificationId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// Answer a notification with one of its actions, free text where it
+    /// takes it, or both; this resolves it and reaches a posting agent's
+    /// inbox. Needs `features::NOTIFICATIONS`.
+    AnswerNotification {
+        id: aether_core::id::NotificationId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        action: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
     /// Recreate a failed or cancelled agent from its last checkpoint, as a
     /// new agent linked to it.
     Restart {

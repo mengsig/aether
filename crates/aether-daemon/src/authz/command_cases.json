@@ -745,5 +745,51 @@
       "cmd": "memory_feedback",
       "memory": "mem_00000000000000000000000000"
     }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "post_notification",
+      "source": "archon",
+      "notification": {
+        "kind": "question",
+        "title": "fixture"
+      }
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "list_notifications"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_notification",
+      "id": "ntf_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "mark_notification_read",
+      "id": "ntf_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "resolve_notification",
+      "id": "ntf_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "answer_notification",
+      "id": "ntf_00000000000000000000000000",
+      "action": "fixture"
+    }
   }
 ]

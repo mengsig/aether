@@ -228,7 +228,9 @@ pub(super) fn decides(action: &HarnessAction) -> Decides {
         | HarnessAction::CreateSchedule { .. }
         | HarnessAction::UpdateSchedule { .. }
         | HarnessAction::SendMessage { .. }
-        | HarnessAction::Remember { .. } => Decides::Effect,
+        | HarnessAction::Remember { .. }
+        | HarnessAction::Notify { .. }
+        | HarnessAction::ResolveNotification { .. } => Decides::Effect,
         HarnessAction::CompleteTask { .. } | HarnessAction::FailTask { .. } => Decides::Settles,
         HarnessAction::AskUser { .. } => Decides::Asks,
         HarnessAction::ListSchedules { .. }

@@ -38,6 +38,11 @@ impl Command {
             | Self::WorkspaceDiscard { .. } => Introduced::Feature(features::WORKSPACE_REVIEW),
             Self::AppendNote { level, .. } if !level.is_info() => Introduced::Version(24),
             Self::AppendNote { .. } => Introduced::Feature(features::NOTES),
+            Self::PostNotification { .. } | Self::ListNotifications { .. }
+            | Self::GetNotification { .. } | Self::MarkNotificationRead { .. }
+            | Self::ResolveNotification { .. } | Self::AnswerNotification { .. } => {
+                Introduced::Feature(features::NOTIFICATIONS)
+            }
 
             Self::GetAttention | Self::CompletePath { .. } | Self::ListWorkspaces { .. }
             | Self::ValidateWorkspace { .. } | Self::GetGitSummary { .. } | Self::GetRemote
@@ -133,6 +138,14 @@ mod tests {
             (
                 json!({"cmd": "append_note", "agent": aether_core::id::AgentId::new(), "text": "hi"}),
                 features::NOTES,
+            ),
+            (
+                json!({"cmd": "list_notifications"}),
+                features::NOTIFICATIONS,
+            ),
+            (
+                json!({"cmd": "answer_notification", "id": aether_core::id::NotificationId::new(), "action": "ship"}),
+                features::NOTIFICATIONS,
             ),
         ] {
             let command = command(wire);

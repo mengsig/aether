@@ -209,6 +209,10 @@ pub mod features {
     pub const WORKSPACE_REVIEW: &str = "workspace_review";
     /// The daemon serves `append_note`: a transcript entry that wakes nobody.
     pub const NOTES: &str = "notes";
+    /// The daemon serves the notification center: `post_notification`,
+    /// `list_notifications`, `get_notification`, `mark_notification_read`,
+    /// `resolve_notification` and `answer_notification`.
+    pub const NOTIFICATIONS: &str = "notifications";
 }
 
 mod handshake;

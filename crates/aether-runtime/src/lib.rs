@@ -22,6 +22,7 @@ pub mod memory_context;
 pub mod memory_curation;
 mod memory_feedback;
 pub mod notes;
+pub mod notifications;
 mod peers;
 pub mod recovery;
 mod repository_aliases;
@@ -242,6 +243,7 @@ pub(crate) const LEAF_WITHHELD_TOOLS: &[&str] = &[
     "provider_usage",
     "refresh_provider_usage",
     "swarm_playbook",
+    "notify",
 ];
 
 /// Tools a root agent never sees: without a parent it has no peers.

@@ -10,7 +10,7 @@ use aether_core::event::{Event, EventKind};
 use aether_core::id::ScheduleId;
 use aether_core::id::{
     AgentId, ApprovalId, ApprovalRuleId, ArtifactId, CheckpointId, DeviceId, EventId, InvocationId,
-    MemoryId, SnapshotId, TaskId, ToolCallId,
+    MemoryId, NotificationId, SnapshotId, TaskId, ToolCallId,
 };
 use aether_core::idempotency::{
     IdempotencyKey, RecordedOutcome, RecordedSubmission, SubmissionLedger,
@@ -19,6 +19,7 @@ use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::MemoryRecord;
 use aether_core::model::{Message, Usage};
+use aether_core::notification::Notification;
 use aether_core::repository::RepositoryAlias;
 use aether_core::schedule::{Schedule, ScheduleOccurrence};
 use aether_core::snapshot::{Invocation, InvocationSnapshot, SnapshotMemories};
@@ -29,7 +30,8 @@ use rusqlite::{OptionalExtension, params};
 
 use crate::{
     AgentFilter, ArtifactFilter, Commit, DeviceRow, EventFilter, ImportedEvent, MemoryQuery,
-    Mutation, RepositoryAliasMove, Result, Store, StoreError, TaskFilter, TranscriptEntry,
+    Mutation, NotificationFilter, RepositoryAliasMove, Result, Store, StoreError, TaskFilter,
+    TranscriptEntry,
 };
 
 use super::event_queries::Arguments;
@@ -546,6 +548,18 @@ impl Store for SqliteStore {
             "SELECT body FROM approval_rules WHERE revoked = 0 ORDER BY created_at ASC"
         };
         Self::read_many(&conn, sql, &[])
+    }
+
+    fn notification(&self, id: NotificationId) -> Result<Option<Notification>> {
+        self.read_notification(id)
+    }
+
+    fn notification_by_key(&self, source: &str, key: &str) -> Result<Option<Notification>> {
+        self.read_notification_by_key(source, key)
+    }
+
+    fn notifications(&self, filter: &NotificationFilter) -> Result<Vec<Notification>> {
+        self.read_notifications(filter)
     }
 
     fn device(&self, id: DeviceId) -> Result<Option<DeviceRow>> {

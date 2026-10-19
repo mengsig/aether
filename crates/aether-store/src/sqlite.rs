@@ -26,6 +26,7 @@ mod ledger;
 mod memories;
 mod memory_feedback;
 mod mutations;
+mod notifications;
 mod publication;
 mod push_subscriptions;
 pub use push_subscriptions::PushSubscriptionRow;

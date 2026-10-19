@@ -29,7 +29,7 @@ const V1_1_0_ROOT_TOOLS: [&str; 21] = [
 ];
 
 /// Coordination tools a leaf never sees.
-const LEAF_REMOVED: [&str; 13] = [
+const LEAF_REMOVED: [&str; 14] = [
     "delegate",
     "integrate_workspace",
     "cancel_agent",
@@ -43,6 +43,7 @@ const LEAF_REMOVED: [&str; 13] = [
     "provider_usage",
     "refresh_provider_usage",
     "swarm_playbook",
+    "notify",
 ];
 
 /// v1.1.0's harness tool lists as the engine bridge serialized them; a
@@ -52,6 +53,8 @@ const V1_1_0_LEAF_BYTES: usize = 6_324;
 
 /// Most bytes each surface may grow by over v1.1.0's.
 const ROOT_ADDED_BYTES: usize = 200;
+/// What the notification center's `notify` adds to a surface that is not a leaf.
+const NOTIFY_ADDED_BYTES: usize = 700;
 const DELEGATED_LEAF_ADDED_BYTES: usize = 300;
 const DELEGATED_LEAD_ADDED_BYTES: usize = 470;
 
@@ -132,7 +135,7 @@ async fn non_leaf_engine_tools_expose_the_catalog_and_explicit_delegation_choice
         serde_json::to_vec(&root).unwrap(),
         serde_json::to_vec(&before).unwrap()
     );
-    assert_eq!(root.len(), 22);
+    assert_eq!(root.len(), 23);
     let delegate = root.iter().find(|tool| tool.name == "delegate").unwrap();
     let required = delegate.input_schema["required"].as_array().unwrap();
     assert!(required.contains(&serde_json::json!("model")));
@@ -201,15 +204,15 @@ async fn leaf_engine_tools_remove_only_coordination_tools() {
 }
 
 #[tokio::test]
-async fn a_root_agent_sees_the_v1_1_0_surface_plus_only_the_swarm_playbook() {
+async fn a_root_agent_sees_the_v1_1_0_surface_plus_only_the_playbook_and_notify() {
     let h = harness(Reply::OneTurn).await;
     let root = h.runtime.engine_tool_specs(&tool_surface_agent(&h));
     let mut expected = BTreeSet::from(V1_1_0_ROOT_TOOLS);
-    expected.insert("swarm_playbook");
+    expected.extend(["swarm_playbook", "notify"]);
     assert_eq!(names(&root), expected);
     let added = added_bridge_bytes(&root, V1_1_0_ROOT_BYTES);
     println!("root surface: {added} descriptor bytes beyond v1.1.0");
-    assert!(added <= ROOT_ADDED_BYTES, "{added}");
+    assert!(added <= ROOT_ADDED_BYTES + NOTIFY_ADDED_BYTES, "{added}");
     h.runtime.shutdown().await;
 }
 
@@ -231,7 +234,7 @@ async fn delegated_agents_see_list_peers_and_only_a_lead_sees_the_playbook() {
     leaf_expected.insert("list_peers");
     assert_eq!(names(&leaf), leaf_expected);
     let mut lead_expected = BTreeSet::from(V1_1_0_ROOT_TOOLS);
-    lead_expected.extend(["list_peers", "swarm_playbook"]);
+    lead_expected.extend(["list_peers", "swarm_playbook", "notify"]);
     assert_eq!(names(&lead), lead_expected);
 
     let leaf_added = added_bridge_bytes(&leaf, V1_1_0_LEAF_BYTES);
@@ -240,7 +243,10 @@ async fn delegated_agents_see_list_peers_and_only_a_lead_sees_the_playbook() {
         "delegated surfaces: leaf {leaf_added}, non-leaf {lead_added} descriptor bytes beyond v1.1.0"
     );
     assert!(leaf_added <= DELEGATED_LEAF_ADDED_BYTES, "{leaf_added}");
-    assert!(lead_added <= DELEGATED_LEAD_ADDED_BYTES, "{lead_added}");
+    assert!(
+        lead_added <= DELEGATED_LEAD_ADDED_BYTES + NOTIFY_ADDED_BYTES,
+        "{lead_added}"
+    );
     h.runtime.shutdown().await;
 }
 

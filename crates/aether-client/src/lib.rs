@@ -35,6 +35,7 @@ pub use outbox::{Unreadable, Unresolved};
 pub use resolution::{Settlement, Undecided};
 mod memory_feedback;
 mod negotiation;
+mod notifications;
 mod operations;
 mod records;
 mod ssh;

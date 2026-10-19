@@ -246,6 +246,12 @@ impl SqliteStore {
             }
             Mutation::PutDevice(device) => Self::put_device(tx, &device)?,
             Mutation::TouchDevice { id, at } => Self::touch_device(tx, id, at)?,
+            Mutation::PutNotification(notification) => {
+                super::notifications::put(tx, &notification)?;
+            }
+            Mutation::PruneResolvedNotifications { keep } => {
+                super::notifications::prune_resolved(tx, keep)?;
+            }
         }
         Ok(())
     }

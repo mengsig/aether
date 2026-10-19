@@ -24,7 +24,7 @@ use aether_core::event::{Event, EventDraft};
 use aether_core::id::ScheduleId;
 use aether_core::id::{
     AgentId, ApprovalId, ApprovalRuleId, ArtifactId, CheckpointId, DeviceId, EventId, InvocationId,
-    MemoryFeedbackId, MemoryId, RunId, SnapshotId, TaskId, ToolCallId,
+    MemoryFeedbackId, MemoryId, NotificationId, RunId, SnapshotId, TaskId, ToolCallId,
 };
 use aether_core::idempotency::{
     IdempotencyKey, RecordedOutcome, RecordedSubmission, SubmissionLedger,
@@ -33,6 +33,7 @@ use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::{MemoryKind, MemoryRecord, MemoryRecorder, MemoryScope};
 use aether_core::model::{Message, ModelRef};
+use aether_core::notification::{Notification, NotificationState};
 use aether_core::repository::{RepositoryAlias, RepositoryAliasCounts};
 use aether_core::schedule::{Schedule, ScheduleOccurrence};
 use aether_core::snapshot::{Invocation, InvocationSnapshot, SnapshotMemories};
@@ -198,6 +199,13 @@ pub enum Mutation {
     TouchDevice {
         id: DeviceId,
         at: Timestamp,
+    },
+    /// Insert or replace a notification. A second notification under the
+    /// same source and key fails the commit.
+    PutNotification(Notification),
+    /// Delete resolved notifications beyond the `keep` most recently updated.
+    PruneResolvedNotifications {
+        keep: usize,
     },
 }
 
@@ -468,6 +476,25 @@ impl Default for MemoryQuery {
     }
 }
 
+/// Which notifications to read, newest first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationFilter {
+    /// Empty takes every state.
+    pub states: Vec<NotificationState>,
+    pub source: Option<String>,
+    pub limit: usize,
+}
+
+impl Default for NotificationFilter {
+    fn default() -> Self {
+        Self {
+            states: Vec::new(),
+            source: None,
+            limit: 200,
+        }
+    }
+}
+
 /// What registering a repository alias moved, or a preview of it would.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RepositoryAliasMove {
@@ -667,6 +694,12 @@ pub trait Store: Send + Sync {
     fn approval_rule(&self, id: ApprovalRuleId) -> Result<Option<ApprovalRule>>;
     /// Remembered decisions, oldest first. Revoked ones only when asked for.
     fn approval_rules(&self, include_revoked: bool) -> Result<Vec<ApprovalRule>>;
+
+    fn notification(&self, id: NotificationId) -> Result<Option<Notification>>;
+    /// The notification `source` posted under `key`, if any.
+    fn notification_by_key(&self, source: &str, key: &str) -> Result<Option<Notification>>;
+    /// Newest first, at most `filter.limit`.
+    fn notifications(&self, filter: &NotificationFilter) -> Result<Vec<Notification>>;
 
     fn device(&self, id: DeviceId) -> Result<Option<DeviceRow>>;
     /// Paired devices, oldest first. Revoked ones only when asked for.

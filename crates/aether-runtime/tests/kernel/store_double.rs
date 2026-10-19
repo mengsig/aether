@@ -556,6 +556,25 @@ impl Store for CommitsMidPass {
     fn approval_rules(&self, include_revoked: bool) -> Result<Vec<ApprovalRule>> {
         self.inner.approval_rules(include_revoked)
     }
+    fn notification(
+        &self,
+        id: aether_core::id::NotificationId,
+    ) -> Result<Option<aether_core::notification::Notification>> {
+        self.inner.notification(id)
+    }
+    fn notification_by_key(
+        &self,
+        source: &str,
+        key: &str,
+    ) -> Result<Option<aether_core::notification::Notification>> {
+        self.inner.notification_by_key(source, key)
+    }
+    fn notifications(
+        &self,
+        filter: &aether_store::NotificationFilter,
+    ) -> Result<Vec<aether_core::notification::Notification>> {
+        self.inner.notifications(filter)
+    }
     fn device(&self, id: aether_core::id::DeviceId) -> Result<Option<aether_store::DeviceRow>> {
         self.inner.device(id)
     }

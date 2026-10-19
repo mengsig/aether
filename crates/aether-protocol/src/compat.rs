@@ -421,6 +421,7 @@ mod tests {
             ("accept_memory", &["id"]),
             ("add_approval_rule", &["decision", "match", "scope"]),
             ("alias_repository", &["alias"]),
+            ("answer_notification", &["id"]),
             ("append_note", &["agent", "text"]),
             ("archive", &["target"]),
             ("auth_status", &[]),
@@ -448,6 +449,7 @@ mod tests {
             ("get_github_watcher", &[]),
             ("get_inbox", &["after", "agent"]),
             ("get_invocation", &["id"]),
+            ("get_notification", &["id"]),
             ("get_pairing", &["id"]),
             ("get_push_config", &[]),
             ("get_remote", &[]),
@@ -471,11 +473,13 @@ mod tests {
             ("list_devices", &[]),
             ("list_invocations", &["agent"]),
             ("list_models", &[]),
+            ("list_notifications", &[]),
             ("list_repository_aliases", &[]),
             ("list_runs", &["limit"]),
             ("list_schedules", &[]),
             ("list_tasks", &["query"]),
             ("list_workspaces", &[]),
+            ("mark_notification_read", &["id"]),
             ("mcp_servers", &[]),
             ("memories", &["query"]),
             ("memories_in_context", &[]),
@@ -483,6 +487,7 @@ mod tests {
             ("pause", &["agent"]),
             ("pin_memory", &["id", "pinned"]),
             ("ping", &[]),
+            ("post_notification", &["notification", "source"]),
             ("preview_retention", &[]),
             ("providers", &[]),
             ("refresh_provider_usage", &[]),
@@ -499,6 +504,7 @@ mod tests {
             ("reply_to_question", &["content", "question_seq", "to"]),
             ("reject_memory", &["id", "reason"]),
             ("resolve_approval", &["decision", "id"]),
+            ("resolve_notification", &[]),
             ("resolve_submission", &["command"]),
             ("restart", &["agent"]),
             ("restore_memory", &["id"]),
@@ -1040,5 +1046,43 @@ mod proposal_event_tests {
             serde_json::from_value::<EventKind>(legacy).unwrap(),
             EventKind::MemoryAccepted { reason: None, .. }
         ));
+    }
+
+    /// An older subscriber, such as a protocol-17 client, reads a notification
+    /// change as an ordinary custom event and can skip it by name.
+    #[test]
+    fn notification_events_are_custom_events_every_served_version_decodes() {
+        let post = aether_core::notification::NotificationPost {
+            kind: aether_core::notification::NotificationKind::Question,
+            title: "Ship 1.3?".into(),
+            body: String::new(),
+            key: Some("q-1".into()),
+            link: None,
+            actions: Vec::new(),
+            free_text: true,
+        };
+        let notification =
+            aether_core::notification::Notification::new("archon".into(), post, now());
+        let draft = notification
+            .draft(
+                aether_core::notification::NotificationChange::Posted,
+                Actor::user(),
+                None,
+            )
+            .unwrap();
+        let event = Event::from_draft(draft, EventId::new(), 1, now());
+        let frame = ServerFrame::Event { sub: 1, event };
+        for version in [MIN_PROTOCOL_VERSION, PROTOCOL_VERSION] {
+            let encoded = encode_for(version, &frame).unwrap();
+            assert_eq!(crate::decode::<ServerFrame>(&encoded).unwrap(), frame);
+            let wire: Value = serde_json::from_str(&encoded).unwrap();
+            let BeforeProposals::Custom { name, payload } =
+                serde_json::from_value(wire["event"]["kind"].clone()).unwrap()
+            else {
+                panic!("a notification is a custom event: {encoded}");
+            };
+            assert_eq!(name, "notification.posted");
+            assert_eq!(payload["key"], "q-1");
+        }
     }
 }
