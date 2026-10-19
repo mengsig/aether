@@ -143,7 +143,10 @@ fn main() -> std::process::ExitCode {
                     eprintln!("writing JSON error: {write_error}");
                 }
             }
-            eprintln!("Error: {}", cli::error_message(&error));
+            // The JSON object already says it; a network failure is not repeated on stderr.
+            if !(json && cli::is_network_error(&error)) {
+                eprintln!("Error: {}", cli::error_message(&error));
+            }
             let backtrace = error.backtrace();
             if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
                 eprintln!("\nStack backtrace:\n{backtrace}");

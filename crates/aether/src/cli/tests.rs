@@ -750,3 +750,59 @@ fn terminal_error_message_sanitises_untrusted_causes() {
     let error = anyhow::anyhow!("server\x1b[2J\u{202e}failed").context("request\rfailed");
     assert_eq!(error_message(&error), "requestfailed: server[2Jfailed");
 }
+
+#[test]
+fn a_cause_that_the_message_already_says_is_not_repeated() {
+    let io = io::Error::from(io::ErrorKind::NotFound);
+    let error = anyhow::Error::new(ClientError::Io(io)).context("no daemon at /s");
+    let said = error_message(&error);
+    assert_eq!(said.matches("os error").count(), 0, "{said}");
+    let nested = anyhow::Error::new(io::Error::from_raw_os_error(2)).context("io: x");
+    let said = error_message(&nested.context("outer"));
+    assert_eq!(
+        said.matches("No such file or directory").count(),
+        1,
+        "{said}"
+    );
+}
+
+#[test]
+fn the_no_daemon_hint_names_a_command_that_starts_a_daemon() {
+    let socket = Path::new("/isolated/aetherd.sock");
+    let error = ClientError::Disconnected;
+    let endpoint = aether_client::Endpoint::Socket(socket.into());
+    let reached = failed_connection(
+        socket,
+        error,
+        format!(
+            "no daemon (start one with `{} daemon`)",
+            endpoint.command_hint(true)
+        ),
+    );
+    let said = format!("{reached:#}");
+    assert!(
+        said.contains("aether --socket '/isolated/aetherd.sock' daemon"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_socket_path_over_the_limit_names_the_path_and_the_limit() {
+    let socket = PathBuf::from(format!("/{}/x.sock", "a".repeat(300)));
+    let error = failed_connection(&socket, ClientError::Disconnected, "no daemon".into());
+    let said = error_message(&error);
+    assert!(said.contains("the socket path /aaa"), "{said}");
+    assert!(
+        said.contains(&format!("{}-byte limit", socket_path_limit())),
+        "{said}"
+    );
+    assert!(socket_path_limit() < 300);
+}
+
+#[test]
+fn a_bad_model_is_an_invalid_argument_that_points_to_the_model_list() {
+    let error = model_format_error();
+    assert!(error_message(&error).contains("`aether models`"));
+    let code = error_json(&error, Path::new("/s"));
+    assert_eq!(code["error"]["code"], "invalid_argument");
+}

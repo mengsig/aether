@@ -10,10 +10,7 @@ pub async fn new_agent(
 ) -> anyhow::Result<()> {
     let socket = socket.into();
     let chain = model
-        .map(|model| {
-            super::ModelChain::parse(&model)
-                .ok_or_else(|| anyhow::anyhow!("model must be provider/model[,provider/model...]"))
-        })
+        .map(|model| super::ModelChain::parse(&model).ok_or_else(|| super::model_format_error()))
         .transpose()?;
     let client = super::connect_or_start(&socket).await?;
     let agent = client

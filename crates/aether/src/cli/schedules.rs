@@ -172,10 +172,7 @@ pub(crate) async fn run(
 async fn spawn_spec(client: &Client, template: Template) -> anyhow::Result<SpawnSpec> {
     let chain = template
         .model
-        .map(|m| {
-            ModelChain::parse(&m)
-                .ok_or_else(|| anyhow!("model must be provider/model[,provider/model...]"))
-        })
+        .map(|m| ModelChain::parse(&m).ok_or_else(|| super::model_format_error()))
         .transpose()?;
     let effort = template
         .effort

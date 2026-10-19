@@ -865,6 +865,36 @@ fn an_unreachable_server_is_an_error_and_changes_nothing() {
 }
 
 #[test]
+fn an_unreachable_server_under_json_is_one_network_error_on_stdout() {
+    let fixture = Fixture::installed();
+    let closed = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let base = format!("http://{}", closed.local_addr().expect("address"));
+    drop(closed);
+    let output = fixture.update_from(&base, &["--check", "--json"]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let error = &json(&output)["error"];
+    assert_eq!(error["code"], "network_error", "{output:?}");
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("could not learn the latest release")),
+        "{output:?}"
+    );
+    assert!(stderr(&output).is_empty(), "{output:?}");
+}
+
+#[test]
+fn yes_with_check_is_refused_with_the_update_usage() {
+    let fixture = Fixture::installed();
+    let output = fixture.update(&["--yes", "--check"]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(
+        stderr(&output).contains("Usage: aether update [OPTIONS]"),
+        "{output:?}"
+    );
+}
+
+#[test]
 fn a_download_base_that_is_not_https_or_local_is_refused() {
     let fixture = Fixture::installed();
     for base in ["http://example.com/releases", "ftp://127.0.0.1/releases"] {

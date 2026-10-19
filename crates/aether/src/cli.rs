@@ -216,7 +216,7 @@ async fn connect_unannounced(endpoint: &aether_client::Endpoint) -> anyhow::Resu
                     path,
                     error,
                     format!(
-                        "no daemon at {} (start one with `{}`)",
+                        "no daemon at {} (start one with `{} daemon`)",
                         path.display(),
                         endpoint.command_hint(false)
                     ),
@@ -253,9 +253,55 @@ fn failed_connection(socket: &Path, error: ClientError, otherwise: String) -> an
             socket.display(),
             command_hint(socket, false)
         ),
+        _ if socket_path_too_long(socket) => long_socket_message(socket),
         _ => otherwise,
     };
     anyhow::Error::new(error).context(next)
+}
+
+fn socket_path_too_long(socket: &Path) -> bool {
+    std::os::unix::net::SocketAddr::from_pathname(socket).is_err()
+}
+
+fn long_socket_message(socket: &Path) -> String {
+    let limit = socket_path_limit();
+    format!(
+        "the socket path {} is {} bytes, over the {limit}-byte limit of a Unix socket; use a shorter --socket path",
+        socket.display(),
+        socket.as_os_str().len()
+    )
+}
+
+/// The longest socket path the platform accepts, found by asking it rather
+/// than by naming a number that differs between Linux and macOS.
+fn socket_path_limit() -> usize {
+    let mut limit = 0;
+    while std::os::unix::net::SocketAddr::from_pathname("a".repeat(limit + 1)).is_ok() {
+        limit += 1;
+    }
+    assert!(limit > 0, "a one-byte socket path is always accepted");
+    limit
+}
+
+/// A command-line argument that is wrong, as opposed to a daemon or network
+/// failure: reported with the `invalid_argument` code.
+#[derive(Debug)]
+pub(crate) struct UsageError(pub(crate) String);
+
+impl std::fmt::Display for UsageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for UsageError {}
+
+/// The refusal for a `--model` that is not `provider/model[,provider/model...]`.
+pub(crate) fn model_format_error() -> anyhow::Error {
+    anyhow::Error::new(UsageError(
+        "model must be provider/model[,provider/model...]; `aether models` lists the choices"
+            .into(),
+    ))
 }
 
 pub struct TuiDisplayOptions {
@@ -333,22 +379,32 @@ pub(crate) fn error_json(error: &anyhow::Error, socket: &Path) -> serde_json::Va
             ClientError::Ssh(_) => serde_json::json!("ssh_failure"),
             ClientError::DeliveryUnconfirmed(_) => serde_json::json!("delivery_unconfirmed"),
         }
+    } else if error.downcast_ref::<UsageError>().is_some() {
+        serde_json::json!("invalid_argument")
+    } else if is_network_error(error) {
+        serde_json::json!("network_error")
     } else {
         serde_json::json!("internal")
     };
     serde_json::json!({"error": {
         "code": code,
-        "message": format!("{error:#}"),
+        "message": error_message(error),
         "socket": socket.to_string_lossy(),
     }})
 }
 
+/// A failed HTTP request, such as `aether update` finding no network.
+pub(crate) fn is_network_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<reqwest::Error>())
+}
+
+/// The error and its causes on one line, each cause once.
 pub(crate) fn error_message(error: &anyhow::Error) -> String {
     let mut message = error.to_string();
     for cause in error.chain().skip(1) {
         let cause = cause.to_string();
         // Some wrappers include their cause in Display already.
-        if !message.ends_with(&cause) {
+        if !message.contains(&cause) {
             message.push_str(": ");
             message.push_str(&cause);
         }

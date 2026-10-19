@@ -56,10 +56,7 @@ pub async fn run(
         }
     };
     let chain = match model {
-        Some(m) => Some(
-            ModelChain::parse(&m)
-                .ok_or_else(|| anyhow!("model must be provider/model[,provider/model...]"))?,
-        ),
+        Some(m) => Some(ModelChain::parse(&m).ok_or_else(|| super::model_format_error())?),
         // Without --model, the session default the TUI last saved, then the
         // daemon's configured one, validated the same way the
         // TUI validates it.
