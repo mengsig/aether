@@ -4,6 +4,159 @@ What each release of Aether brings, newest first. Aether follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The section of a
 release is also the text of its GitHub release.
 
+## 1.2.0
+
+A hardening release. Secrets are masked in more places (native engine output,
+MCP listings, any repeat of a known token), the webhook door keeps replay
+protection across restarts, and the daemon survives its own crashes and
+panics more cleanly. Hosts can show a command's result at once with a note
+level, the daemon reads the fleet in linear time, and `make bench-release`
+compares a release candidate with the last release before it ships.
+Protocol version 24, store schema 25.
+
+### New
+
+- **`make bench-release`, a paired release benchmark.** It runs a frozen set
+  of short coding tasks on the last release, the candidate and the plain
+  native CLIs, for Claude Haiku 5.5 and GPT-6 Luna at low effort, in
+  parallel under a load gate, a USD budget and a per-trial spend guard. A
+  paired bootstrap and an exact McNemar test gate the candidate: it fails
+  when its pass rate is more than 5 points below the old release's or its
+  cost more than 15% above it. Runs resume, and each trial gets its own daemon, data directory
+  and short TMPDIR. It is a release-time check, never part of CI (see
+  [Release bench](https://github.com/mengsig/aether/blob/main/docs/release-bench.md)).
+- **Notes carry a level.** `append_note` takes `level`: `info` (the
+  default), `applied` or `refused`, so a host can show an operator command's
+  result at once instead of waiting for a model turn. The TUI labels the row
+  `note`, `applied` or `refused`. The level is display-only: it wakes no
+  agent and reaches the model only through `context: digest`.
+- **`schedule list` counts skipped ticks.** Each line ends with the number of
+  occurrences dropped while the target was paused, among the newest 1000
+  recorded. A skipped occurrence does not count towards `max_deliveries` and
+  is never replayed.
+- **`aether run` shows the disk gate and engine retries** while it waits.
+
+### Security
+
+- **Known secret values are masked verbatim.** The daemon seeds its redactor
+  with the TCP listener's token and the values of every variable it treats as
+  a secret (`[listen]`, `[serve]` and MCP `token_env`, provider API key and
+  bearer variables), so tool output or an engine error that repeats one is
+  masked even when it has no recognisable shape.
+- **Native engine output is redacted.** Native tool results and engine stderr
+  pass through the redactor before they are stored. The redactor also knows
+  JWT, AWS secret key, Slack, GitLab, Stripe, npm and Hugging Face shapes,
+  and private keys cut by stderr truncation.
+- **`mcp list`, `mcp list --json` and `status --json` mask secrets** in an
+  MCP server's URL password and secret-looking arguments.
+- **MCP `token_env` is hidden from tools and engines,** and a stdio MCP
+  server's `env` may not name a hidden variable.
+- **The webhook door is hardened.** `aether serve` refuses a route whose
+  secret is shorter than 32 bytes, answers malformed requests with 401, stale
+  or replayed deliveries with 409 and bodies over 1 MiB with 413, and keeps
+  replay records in an owner-only `webhook-replay.db` that survives restarts
+  (see [Signed webhook door](https://github.com/mengsig/aether/blob/main/docs/configuration.md#signed-webhook-door)).
+- **Special-purpose IPv6 destinations are refused** by the public address
+  boundary, so an embedded IPv4 address cannot bypass it.
+- **Engine tokens are 32 random bytes** compared in constant time.
+- **The installer refuses URL userinfo and cleartext redirects.** wget now
+  walks redirects itself, following only https hops, so release downloads
+  through wget work again.
+- **A socket path that is not a socket is refused** instead of deleted.
+
+### Performance
+
+- **`get_tree` is linear** in the fleet, and the heavy reads (`list_agents`,
+  `list_runs`, `get_run_report`, `replay`, `get_tree`) run off the async
+  workers. A subscription caches each agent's parent and run, so a streamed
+  delta no longer reads the store.
+- **Scope checks walk parents instead of decoding the fleet.**
+  `send_message`, `cancel_agent`, `wait_for` and artifact ownership use a
+  parent walk or a recursive query.
+- **The scheduler reads only budgeted agents** and skips deadline reads when
+  idle.
+- **The TUI stops refetching the tree on lease renewals,** and its status
+  view no longer decodes the whole fleet.
+
+### Fixed
+
+- **Completed runs expire again.** Lease renewals and memory admission events
+  were stored without their run, so a run with a long turn was kept from
+  history retention forever. Both now carry their run, and schema 25
+  backfills the existing ones.
+- **The scheduler survives a panic.** A panic or error in one maintenance
+  step is logged and counted instead of ending the scheduler loop, the other
+  steps still run, and no turn starts while a limit-enforcing step failed.
+- **Artifact eviction commits with its event,** so a refused commit leaves the
+  artifact live for the next sweep.
+- **Orphaned engines are reaped after a daemon crash.** The daemon records
+  each engine process group and kills the recorded groups at its next start
+  while their pid and start time still match. The first stdin write error
+  reaches the turn's outcome.
+- **`aether serve` reconnects** to a restarted daemon and answers 503 while it
+  is down, where every webhook used to fail with 404.
+- **Turn-ending tools end the turn.** A side-effecting tool call that arrives
+  after `complete_task`, `fail_task` or a wait is refused.
+  `complete_task` and `fail_task` bound their payloads, require `structured`
+  to be an object and treat `structured: null` as absent. `inspect_state`
+  reports the cost budget, turn limit and deadline.
+- **A deliberate park no longer marks a run's cost incomplete.**
+- **Shell capture leaves the worktree.** Foreground shell logs go to the
+  agent's temp directory, capped at 256 MiB, so they no longer keep an expired
+  workspace from GC.
+- **Workspaces:** integration writes new files 0644 or 0755 under the umask
+  instead of 0600; a failed creation logs its cleanup errors and orphaned
+  snapshot refs are swept; an isolated delegation from a subdirectory says
+  why it needs the Git root; a discarded workspace is reported by name.
+- **`read_artifact` replies stay under the frame limit,** and frames
+  pipelined with `hello` decode.
+- **Budgets read cleanly.** Budget reasons print without floating-point
+  noise, and an exceeded cost budget warns before the stop with a readable
+  message.
+- **`aether mcp serve` follows JSON-RPC:** -32700 for unparsable input,
+  -32600 for batches and non-objects, -32002 before the handshake.
+- **CLI:** a closed stdout pipe exits quietly; error causes print once and
+  hints name real commands; `send`, `run` and `trigger` refuse empty input
+  and read stdin; agent names are validated at creation and the agents table
+  aligns by display width; `--max-turns 0` clears the limit and a past
+  deadline is refused; `doctor` validates `[model] default`; `logout`
+  validates the provider and `login` explains a missing terminal;
+  `aether providers` shows a keyless local server that nothing answers at as
+  unreachable, as `doctor` does.
+- **Daemon logs:** no ANSI escapes when not on a terminal, retention at DEBUG,
+  and `events --follow` ends with its stream.
+- **TUI:** `TERM=dumb` selects plain mode, and a PAUSED badge and the
+  `/pause` and `/resume` echoes stay visible in narrow layouts.
+
+### Docs
+
+- Which commands start the daemon, every long option's help, the CI table,
+  orphaned delegated children and unlimited delegation depth, skipped schedule
+  ticks, and the release bench.
+
+### Protocol
+
+The protocol is now version 24; this build still serves clients from 17.
+
+- **24:** `level` on `append_note`. A level other than `info` needs a
+  version 24 daemon: the Rust client refuses it to an older one before
+  sending. The level rides in the note event's payload, which an older
+  client decodes without it and shows as a plain note.
+
+### Before updating
+
+- **Store schema 25.** Backfills the run of lease renewals and memory
+  admission events. The migration is one way: Aether saves the old database
+  first (see
+  [migration backups](https://github.com/mengsig/aether/blob/main/docs/migration-backups.md)), and a binary that predates
+  schema 25 refuses to open a migrated database. To go back, stop the daemon
+  and restore that backup with the older binary; changes made since are lost.
+- **Webhook secrets need 32 bytes.** `aether serve` refuses to start with a
+  route whose `secret_env` value is shorter. Keep `webhook-replay.db` beside
+  `aether.db` across restarts.
+- **`aether trigger` requires a JSON payload,** and `complete_task` and
+  `fail_task` refuse a `structured` that is not an object.
+
 ## 1.1.1
 
 Delegated swarms can now coordinate directly: workers find their siblings with
