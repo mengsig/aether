@@ -26,7 +26,7 @@ use tokio::net::UnixListener;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
-pub use instance_lock::write_private_file;
+pub use instance_lock::{socket_lock_is_held, write_private_file};
 pub use listen::{ConnectionPolicy, TcpListen};
 pub use projections::build_tree;
 

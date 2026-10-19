@@ -78,7 +78,8 @@ async fn events_follow_starts_after_tail_snapshot_and_keeps_filters() {
         )
         .await
         .expect("follow should finish when the stub closes");
-        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(output.status.code(), Some(3), "{}", stderr(&output));
+        assert!(stderr(&output).contains("event stream ended: the daemon stopped"));
         let seqs: Vec<_> = stdout(&output)
             .lines()
             .map(|line| serde_json::from_str::<Event>(line).unwrap().seq)

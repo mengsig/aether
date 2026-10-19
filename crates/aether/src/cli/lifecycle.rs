@@ -255,14 +255,17 @@ pub async fn stop(socket: PathBuf, json: bool) -> anyhow::Result<()> {
         .await
         .context("timed out stopping the daemon during its handshake; no signal sent")?;
     match connected {
-        Ok(client) => {
-            client.shutdown().await?;
-            acted(
+        Ok(client) => match client.shutdown().await {
+            Ok(()) => acted(
                 json,
                 "aetherd stopping",
                 serde_json::json!({"stopping": true}),
-            )
-        }
+            ),
+            Err(error) if error.is_connection_failure() && daemon_is_alive(&socket)? => {
+                already_stopping(json)
+            }
+            Err(error) => Err(error.into()),
+        },
         Err(refused) if is_version_skew(&refused) => async {
             tokio::time::timeout(
                 std::time::Duration::from_secs(10),
@@ -275,8 +278,30 @@ pub async fn stop(socket: PathBuf, json: bool) -> anyhow::Result<()> {
         }
         .await
         .with_context(|| format!("could not stop the daemon that refused this build: {refused:#}")),
+        Err(e) if is_connection_failure(&e) && daemon_is_alive(&socket)? => already_stopping(json),
         Err(e) => Err(e),
     }
+}
+
+/// A daemon that stopped listening but still holds its lock is on its way
+/// out, most likely asked to stop by another caller.
+fn daemon_is_alive(socket: &Path) -> anyhow::Result<bool> {
+    aether_daemon::socket_lock_is_held(socket)
+        .with_context(|| format!("checking whether a daemon still holds {}", socket.display()))
+}
+
+fn is_connection_failure(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ClientError>()
+        .is_some_and(ClientError::is_connection_failure)
+}
+
+fn already_stopping(json: bool) -> anyhow::Result<()> {
+    acted(
+        json,
+        "aetherd already stopping",
+        serde_json::json!({"stopping": true, "already": true}),
+    )
 }
 
 pub async fn stop_endpoint(endpoint: aether_client::Endpoint, json: bool) -> anyhow::Result<()> {

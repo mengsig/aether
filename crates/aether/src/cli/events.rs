@@ -117,10 +117,16 @@ impl EventArgs {
     }
 }
 
+/// Exit status of `events --follow` when the daemon ended the stream.
+pub const STREAM_ENDED_EXIT: i32 = 3;
+
+const STREAM_ENDED_MESSAGE: &str = "event stream ended: the daemon stopped";
+
+/// Prints events; returns the process exit status.
 pub async fn events(
     socket: impl Into<aether_client::Endpoint>,
     args: EventArgs,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<i32> {
     let socket = socket.into();
     let cutoff = args.cutoff(aether_core::time::now())?;
     let tail = args.tail_limit(std::io::stdout().is_terminal());
@@ -133,10 +139,11 @@ pub async fn events(
             print_event(&event, args.json)?;
         }
     } else if !args.follow {
-        return print_history(&client, &args, query, cutoff).await;
+        print_history(&client, &args, query, cutoff).await?;
+        return Ok(0);
     }
     if !args.follow {
-        return Ok(());
+        return Ok(0);
     }
     let mut sub = client.subscribe(Some(cursor), query, false).await?;
     while let Some(frame) = sub.next().await {
@@ -148,7 +155,8 @@ pub async fn events(
             _ => {}
         }
     }
-    Ok(())
+    eprintln!("{STREAM_ENDED_MESSAGE}");
+    Ok(STREAM_ENDED_EXIT)
 }
 
 async fn tail_events(

@@ -12,6 +12,28 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
+/// Another live process holds the lock.
+#[derive(Debug)]
+pub struct LockBusy(String);
+
+impl std::fmt::Display for LockBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for LockBusy {}
+
+/// True when a live daemon holds the lock for `socket`. A daemon that is
+/// shutting down keeps it until its process ends.
+pub fn socket_lock_is_held(socket: &Path) -> anyhow::Result<bool> {
+    match InstanceLock::for_socket(socket) {
+        Ok(_released_at_once) => Ok(false),
+        Err(error) if error.is::<LockBusy>() => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
 /// An exclusive lock on the file beside the store or the socket, held while
 /// this value lives. The OS releases it when the process ends, however it
 /// ends, so a daemon killed outright leaves nothing locked.
@@ -86,7 +108,7 @@ impl InstanceLock {
                 _file: file,
                 target,
             }),
-            Err(TryLockError::WouldBlock) => Err(anyhow::Error::msg(busy)),
+            Err(TryLockError::WouldBlock) => Err(anyhow::Error::new(LockBusy(busy))),
             Err(TryLockError::Error(e)) => {
                 Err(anyhow::Error::new(e).context(format!("locking {}", path.display())))
             }
@@ -292,6 +314,17 @@ fn in_resolved_dir(target: &Path, dir: &Path) -> anyhow::Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_held_socket_lock_is_seen_and_a_released_one_is_not() {
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("aether.sock");
+        assert!(!socket_lock_is_held(&socket).unwrap());
+        let held = InstanceLock::for_socket(&socket).unwrap();
+        assert!(socket_lock_is_held(&socket).unwrap());
+        drop(held);
+        assert!(!socket_lock_is_held(&socket).unwrap());
+    }
 
     #[cfg(unix)]
     #[test]

@@ -40,7 +40,9 @@ while free space under the store is below `[scheduler] min_free_disk_mib` (by
 default the smaller of 5 GiB and 2% of the disk; `0` turns this off), and
 start again once it has a tenth more than that. A `disk.low` event marks the
 start and `disk.recovered` the end; `aether status`, `aether doctor` and the
-TUI status bar show it while it lasts. Turns already running carry on.
+TUI status bar show it while it lasts. A daemon that restarts with the disk
+clear, or with the floor turned off, records the `disk.recovered` that the
+earlier daemon never saw. Turns already running carry on.
 
 ## Completed-run history
 

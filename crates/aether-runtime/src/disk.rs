@@ -6,7 +6,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use aether_core::disk::LowDisk;
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::time::now;
-use aether_store::Commit;
+use aether_store::{Commit, EventFilter};
 use parking_lot::Mutex;
 
 use crate::{Runtime, config::DiskGuard};
@@ -110,12 +110,89 @@ impl Runtime {
     }
 }
 
+/// The newest custom events read at startup, in pages, to find the disk's
+/// last recorded state; older ones are not searched.
+const STARTUP_SCAN_PAGES: usize = 20;
+const STARTUP_SCAN_PAGE: usize = 200;
+
+/// The newest `disk.low` or `disk.recovered` event, if one is within reach.
+fn last_disk_event(runtime: &Runtime) -> aether_store::Result<Option<EventKind>> {
+    let filter = EventFilter {
+        types: vec!["custom".into()],
+        ..Default::default()
+    };
+    let mut before = u64::MAX;
+    for _ in 0..STARTUP_SCAN_PAGES {
+        let page = runtime
+            .store
+            .events_before(before, STARTUP_SCAN_PAGE, &filter)?;
+        let Some(oldest) = page.last() else {
+            return Ok(None);
+        };
+        before = oldest.seq;
+        let found = page.into_iter().find(|event| {
+            matches!(&event.kind, EventKind::Custom { name, .. } if name == DISK_LOW || name == DISK_RECOVERED)
+        });
+        if let Some(event) = found {
+            return Ok(Some(event.kind));
+        }
+    }
+    Ok(None)
+}
+
+/// The low the log last announced without a recovery after it: the daemon
+/// that announced it may have stopped before the disk recovered.
+fn unrecovered_low(runtime: &Runtime) -> Option<LowDisk> {
+    let last = match last_disk_event(runtime) {
+        Ok(last) => last,
+        Err(error) => {
+            tracing::warn!(%error, "could not read the disk's last recorded state");
+            return None;
+        }
+    };
+    let Some(EventKind::Custom { name, payload }) = last else {
+        return None;
+    };
+    if name != DISK_LOW {
+        return None;
+    }
+    serde_json::from_value(payload)
+        .map_err(|error| tracing::warn!(%error, "ignoring an unreadable disk.low event"))
+        .ok()
+}
+
+/// A low from before the restart is held until the first check clears it,
+/// which then records the recovery.
+fn resume_low(runtime: &Runtime) {
+    if let Some(low) = unrecovered_low(runtime) {
+        runtime.disk.lock().low = Some(low);
+    }
+}
+
+/// A disk with no floor is never low: close a low left open by a daemon
+/// that had one.
+fn close_unrecovered_low(runtime: &Runtime) {
+    let Some(low) = unrecovered_low(runtime) else {
+        return;
+    };
+    tracing::info!(path = %low.path, "no disk floor is set; recording the earlier low as over");
+    let mut state = runtime.disk.lock();
+    state.unrecorded(
+        DISK_RECOVERED,
+        serde_json::json!({"path": low.path, "low_since": low.since}),
+    );
+    drop(state);
+    record(&runtime.disk, |commit| runtime.apply(commit).map(drop));
+}
+
 /// Measure once now, so a daemon starting on a full disk starts no turn,
 /// then every [`INTERVAL`].
 pub(crate) fn spawn(runtime: Arc<Runtime>) {
     let Some(guard) = runtime.config.disk_guard.clone() else {
+        close_unrecovered_low(&runtime);
         return;
     };
+    resume_low(&runtime);
     if check(&runtime, &guard) {
         let evicting = runtime.clone();
         tokio::task::spawn_blocking(move || evicting.evict_build_cache());

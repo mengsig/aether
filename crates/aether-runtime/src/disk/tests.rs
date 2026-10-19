@@ -158,3 +158,73 @@ async fn new_turns_wait_out_a_low_disk_and_start_once_it_has_room() {
     assert_eq!(disk_events, [DISK_LOW, DISK_RECOVERED]);
     runtime.shutdown().await;
 }
+
+async fn runtime_in(dir: &Path) -> Arc<Runtime> {
+    Runtime::start_with_engines(
+        RuntimeConfig {
+            workspace_root: Some(dir.to_path_buf()),
+            ..Default::default()
+        },
+        Arc::new(aether_store::SqliteStore::open_in_memory().expect("store")),
+        Arc::new(aether_model::Models::load(Some(dir.to_path_buf())).expect("models")),
+        Arc::new(aether_tools::ToolRegistry::with_builtins()),
+        None,
+        Default::default(),
+    )
+    .await
+    .expect("runtime")
+}
+
+fn disk_events(runtime: &Runtime) -> Vec<String> {
+    runtime
+        .store
+        .events(0, 1000, &EventFilter::default())
+        .expect("events")
+        .into_iter()
+        .filter_map(|event| match event.kind {
+            EventKind::Custom { name, .. } if name.starts_with("disk.") => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_restart_with_room_records_the_recovery_of_a_low_it_never_saw_end() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let runtime = runtime_in(dir.path()).await;
+    observe(&runtime, dir.path(), FLOOR, FLOOR / 2);
+    *runtime.disk.lock() = DiskState::default();
+
+    resume_low(&runtime);
+    assert!(runtime.disk_is_low(), "turns wait until the first check");
+    observe(&runtime, dir.path(), FLOOR, FLOOR * 2);
+    assert!(!runtime.disk_is_low());
+    assert_eq!(disk_events(&runtime), [DISK_LOW, DISK_RECOVERED]);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_restart_that_is_still_low_does_not_announce_the_low_twice() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let runtime = runtime_in(dir.path()).await;
+    observe(&runtime, dir.path(), FLOOR, FLOOR / 2);
+    *runtime.disk.lock() = DiskState::default();
+
+    resume_low(&runtime);
+    observe(&runtime, dir.path(), FLOOR, FLOOR / 2);
+    assert_eq!(disk_events(&runtime), [DISK_LOW]);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn lifting_the_floor_entirely_still_records_the_recovery() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let runtime = runtime_in(dir.path()).await;
+    observe(&runtime, dir.path(), FLOOR, FLOOR / 2);
+    *runtime.disk.lock() = DiskState::default();
+
+    close_unrecovered_low(&runtime);
+    close_unrecovered_low(&runtime);
+    assert_eq!(disk_events(&runtime), [DISK_LOW, DISK_RECOVERED]);
+    runtime.shutdown().await;
+}

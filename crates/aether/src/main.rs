@@ -367,7 +367,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 json,
             } => cli::task_create(endpoint, objective.join(" "), owner, depends_on, json).await,
             Cmd::Replay { agent, json } => cli::replay(endpoint, agent, json).await,
-            Cmd::Events(args) => cli::events(endpoint, args).await,
+            Cmd::Events(args) => return cli::events(endpoint, args).await,
             Cmd::Send {
                 agent,
                 text,
