@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory as _, Parser, Subcommand};
 use std::path::PathBuf;
 
 mod remote;
@@ -6,12 +6,32 @@ mod subcommands;
 pub(crate) use remote::*;
 pub(crate) use subcommands::*;
 
+/// The display flags only the terminal UI reads.
+const TUI_ONLY_FLAGS: [&str; 5] = ["theme", "reduced_motion", "plain", "ascii", "view_mode"];
+/// Commands that never draw the UI, so their help leaves those flags out.
+const HEADLESS_COMMANDS: [&str; 2] = ["daemon", "serve"];
+
+/// The command line with the UI-only flags hidden from the help of the
+/// daemon commands. They stay accepted, since the flags are global.
+pub(crate) fn command() -> clap::Command {
+    let mut command = Args::command();
+    command.build();
+    for name in HEADLESS_COMMANDS {
+        command = command.mut_subcommand(name, |headless| {
+            TUI_ONLY_FLAGS
+                .iter()
+                .fold(headless, |c, flag| c.mut_arg(*flag, |arg| arg.hide(true)))
+        });
+    }
+    command
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "aether",
     version,
     about = "Provider-agnostic, event-driven agent harness",
-    after_help = "For commands with --json, command errors print one object on stdout: {\"error\":{\"code\":\"...\",\"message\":\"...\",\"socket\":\"...\"}}. A human error also goes to stderr; exit codes are unchanged. Argument parsing errors retain Clap's usage output."
+    after_help = "Daemon start: `tui`, `run`, `new`, `models`, `providers`, `auth`, `github-watcher` and `remote setup` start the daemon when none is running; the other commands that talk to it, such as `status`, `agents`, `tasks`, `send` and `schedule`, fail with \"no daemon\" instead. `doctor`, `schema`, `diagnose` and `bridge` start none.\n\nFor commands with --json, command errors print one object on stdout: {\"error\":{\"code\":\"...\",\"message\":\"...\",\"socket\":\"...\"}}. A human error also goes to stderr; exit codes are unchanged. Argument parsing errors retain Clap's usage output."
 )]
 pub(crate) struct Args {
     /// Unix socket of the daemon (default: $XDG_RUNTIME_DIR/aether/aetherd.sock).
@@ -68,6 +88,7 @@ pub(crate) enum Cmd {
         /// saved preference and then `[approval] default` decide.
         #[arg(long, overrides_with = "no_yolo")]
         yolo: bool,
+        /// Gate approvals for this run: the opposite of `--yolo`.
         #[arg(long = "no-yolo", overrides_with = "yolo")]
         no_yolo: bool,
         /// A JSON file of slash commands the host program behind the agents
@@ -117,6 +138,7 @@ pub(crate) enum Cmd {
     Storage {
         #[command(subcommand)]
         command: Option<StorageCmd>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -135,7 +157,7 @@ pub(crate) enum Cmd {
         #[command(subcommand)]
         command: Option<OutboxCmd>,
     },
-    /// Show daemon status.
+    /// Show daemon status (fails if no daemon is running).
     Status {
         /// Print the whole status as JSON.
         #[arg(long)]
@@ -144,10 +166,12 @@ pub(crate) enum Cmd {
     /// Stop the daemon. Agents resume when it starts again; a turn with uncertain
     /// tool effects waits for `aether resume AGENT_ID`.
     Stop {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Create an agent with an objective and stream its work to stdout.
+    /// Create an agent with an objective and stream its work to stdout (starts
+    /// the daemon if needed).
     #[command(
         after_help = "Exit codes: 0 = completed or waiting for operator input; 1 = failed run or command error; 2 = invalid command-line arguments; 3 = cancelled run. Usage and --json output are printed before the run's exit status is returned. Delegated runs also show subtree usage, including descendants."
     )]
@@ -213,11 +237,13 @@ pub(crate) enum Cmd {
     /// Remove stored credentials for a provider.
     Logout {
         provider: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Show credential status per provider.
+    /// Show credential status per provider (starts the daemon if needed).
     Auth {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -225,6 +251,7 @@ pub(crate) enum Cmd {
     /// engines and MCP servers. Exit code 0 all well, 1 something to watch,
     /// 2 something broken.
     Doctor {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -264,16 +291,20 @@ pub(crate) enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// List models and whether their provider is configured.
+    /// List models and whether their provider is configured (starts the daemon
+    /// if needed).
     #[command(
         after_help = "Budgets: API providers accept token and turn limits, and dollar limits when a model price is configured (cost is estimated from list prices). Claude Code accepts token, turn and dollar limits (list-price estimates or provider-reported cost). Codex accepts token and turn limits; dollar limits are refused because it reports no enforceable dollar cost. Subscription API-equivalent estimates do not enforce dollar budgets."
     )]
     Models {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// List providers, their auth and their live health.
+    /// List providers, their auth and their live health (starts the daemon if
+    /// needed).
     Providers {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -282,10 +313,12 @@ pub(crate) enum Cmd {
         #[command(subcommand)]
         command: RunsCmd,
     },
-    /// List agents.
+    /// List agents (fails if no daemon is running).
     Agents {
+        /// Include finished and cleared agents, not just live ones.
         #[arg(long)]
         all: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -300,11 +333,13 @@ pub(crate) enum Cmd {
         /// Bring the target back into the view instead.
         #[arg(long)]
         undo: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// List tasks.
+    /// List tasks (fails if no daemon is running).
     Tasks {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -322,17 +357,21 @@ pub(crate) enum Cmd {
         /// Task this one waits for; repeat for several.
         #[arg(long = "depends-on")]
         depends_on: Vec<cli::TaskRef>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Create a taskless agent eligible to own a task. Uses daemon defaults
-    /// for workspace, approval policy and model unless overridden here.
+    /// for workspace, approval policy and model unless overridden here. Starts
+    /// the daemon if needed.
     New {
+        /// Name to refer to the agent by, in place of its id.
         #[arg(long)]
         name: Option<String>,
         /// Model as provider/model[,provider/model...] (default: daemon default).
         #[arg(long)]
         model: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -348,6 +387,7 @@ pub(crate) enum Cmd {
     Events(crate::cli::EventArgs),
     /// Send a message to an agent.
     Send {
+        /// The agent to message: an id, a unique id prefix, a live agent's name or @last.
         agent: cli::AgentRef,
         /// The message; `-` or nothing reads it from stdin.
         text: Vec<String>,
@@ -357,6 +397,7 @@ pub(crate) enum Cmd {
         /// Deliver to every live agent beneath it as well, each its own item.
         #[arg(long)]
         subtree: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -413,6 +454,7 @@ pub(crate) enum Cmd {
     /// Cancel an agent and its children.
     Cancel {
         agent: cli::AgentRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -420,10 +462,12 @@ pub(crate) enum Cmd {
     /// the next message.
     Interrupt {
         agent: cli::AgentRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Select repositories and configure the opt-in GitHub watcher.
+    /// Select repositories and configure the opt-in GitHub watcher. Every
+    /// subcommand, `status` included, starts the daemon if needed.
     GithubWatcher {
         #[command(subcommand)]
         command: GithubWatcherCmd,
@@ -441,6 +485,7 @@ pub(crate) enum Cmd {
         /// JSON payload; quote plain text as a JSON string.
         #[arg(long, default_value = "null")]
         payload: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -448,6 +493,7 @@ pub(crate) enum Cmd {
     /// its transcript tail, as a new agent linked to it.
     Restart {
         agent: cli::AgentRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -455,6 +501,7 @@ pub(crate) enum Cmd {
     /// reachable by message again.
     Wake {
         agent: cli::AgentRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -464,6 +511,7 @@ pub(crate) enum Cmd {
         /// Pause every live agent beneath it as well.
         #[arg(long)]
         subtree: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -473,6 +521,7 @@ pub(crate) enum Cmd {
         /// Lift the pause on every live agent beneath it as well.
         #[arg(long)]
         subtree: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -481,12 +530,14 @@ pub(crate) enum Cmd {
         agent: cli::AgentRef,
         #[command(flatten)]
         knobs: cli::SetKnobs,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Compact an agent's context promptly; a reply runs only if other work is pending.
     Compact {
         agent: cli::AgentRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },

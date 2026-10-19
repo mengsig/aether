@@ -41,6 +41,7 @@ pub(crate) enum RemoteCmd {
     },
     /// Show the listener, its public origins, paired devices and any open pairing.
     Status {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -56,18 +57,22 @@ pub(crate) enum RemoteCmd {
         /// Send push notifications to devices that subscribed.
         #[arg(long, overrides_with = "no_push")]
         push: bool,
+        /// Send no push notifications: the opposite of `--push`.
         #[arg(long = "no-push", overrides_with = "push")]
         no_push: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Close the remote listener and every device connection.
     Disable {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Pair a device: prints a code and a QR, then asks you to confirm it.
     Pair {
+        /// What the device may do once paired.
         #[arg(long, value_enum, default_value = "operator")]
         role: DeviceRoleArg,
     },
@@ -76,6 +81,7 @@ pub(crate) enum RemoteCmd {
         /// Include revoked devices.
         #[arg(long)]
         all: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -84,8 +90,10 @@ pub(crate) enum RemoteCmd {
     Revoke {
         /// A device id or an unambiguous name.
         device: String,
+        /// Why it is revoked.
         #[arg(long)]
         reason: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -94,6 +102,7 @@ pub(crate) enum RemoteCmd {
         /// A device id or an unambiguous name.
         device: String,
         name: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -110,17 +119,20 @@ pub(crate) enum RemoteCmd {
         /// Unix socket path on the host.
         #[arg(long = "remote-socket")]
         remote_socket: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// List the remembered SSH remotes.
     List {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Forget an SSH remote.
     Remove {
         name: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },

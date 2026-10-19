@@ -11,7 +11,7 @@ mod logging;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use clap::{CommandFactory, FromArgMatches};
+use clap::FromArgMatches;
 
 mod args;
 use args::*;
@@ -99,7 +99,7 @@ fn install_broken_pipe_hook() {
 
 fn main() -> std::process::ExitCode {
     install_broken_pipe_hook();
-    let matches = Args::command().get_matches();
+    let matches = args::command().get_matches();
     let mut command_matches = &matches;
     let mut json = false;
     loop {

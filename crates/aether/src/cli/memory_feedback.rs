@@ -11,20 +11,24 @@ pub enum MemoryFeedbackCmd {
     Record {
         #[command(flatten)]
         feedback: MemoryFeedbackArgs,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Withdraw one feedback record, keeping its history.
     Retract {
         feedback: MemoryFeedbackId,
+        /// Why it is withdrawn.
         #[arg(long)]
         reason: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// List the newest 100 feedback records, including retractions.
     List {
         memory: MemoryId,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -33,14 +37,19 @@ pub enum MemoryFeedbackCmd {
 #[derive(Debug, Args)]
 pub struct MemoryFeedbackArgs {
     memory: MemoryId,
+    /// The task that had the memory in context.
     #[arg(long)]
     task: super::TaskRef,
+    /// The model call the evidence concerns.
     #[arg(long)]
     invocation: Option<InvocationId>,
+    /// helped, hurt or neutral.
     #[arg(long, value_parser = parse_verdict)]
     verdict: MemoryVerdict,
+    /// Where it comes from: operator, review or outcome.
     #[arg(long, value_parser = parse_evidence)]
     evidence: MemoryEvidence,
+    /// What happened, in a sentence.
     #[arg(long)]
     reason: String,
 }

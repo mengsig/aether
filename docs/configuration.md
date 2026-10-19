@@ -381,7 +381,10 @@ background jobs it runs on the host.
 
 `temp_root` must be an absolute path. `~` and environment variables are not
 expanded. When unset, the root is `t` in the data directory, beside
-`aether.db`. Aether never picks `/tmp` as the root.
+`aether.db`. Aether never falls back to the system temporary directory, but a
+data directory inside `/tmp` puts the root there too, and `aether doctor` warns
+only if that filesystem is in memory or the path is long. Set `temp_root` or
+move the data directory.
 
 The daemon resolves the root to its real path once at startup, following any
 symlinks in it, and uses only that path from then on: it is what agents get as

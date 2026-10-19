@@ -695,7 +695,7 @@ mod id_references {
     #[test]
     fn every_id_argument_goes_through_the_resolver() {
         let mut all = Vec::new();
-        arguments(&Args::command(), "", &mut all);
+        arguments(&crate::args::command(), "", &mut all);
         let id_arguments: Vec<_> = all
             .iter()
             .filter(|(path, arg)| arg.get_action().takes_values() && takes_an_id(path))
@@ -744,5 +744,68 @@ mod id_references {
             scope,
             Some(cli::MemoryScopeRef::Agent(agent)) if agent.to_string() == "@viewed"
         ));
+    }
+}
+
+mod help_text {
+    use super::*;
+
+    /// Options with no help line of their own, as the path a person would type.
+    /// Nothing may be added: a new option says what it does.
+    const WITHOUT_HELP: &[&str] = &[];
+
+    fn missing_help(command: &clap::Command, prefix: &str, out: &mut Vec<String>) {
+        let path = format!("{prefix} {}", command.get_name());
+        for arg in command.get_arguments() {
+            let globals_are_listed_once = arg.is_global_set() && !prefix.is_empty();
+            let id = arg.get_id().as_str();
+            let is_option = arg.get_long().is_some();
+            if !is_option || arg.is_hide_set() || globals_are_listed_once {
+                continue;
+            }
+            if arg.get_help().is_none() && arg.get_long_help().is_none() {
+                out.push(format!("{} {id}", path.trim()));
+            }
+        }
+        for sub in command.get_subcommands().filter(|s| !s.is_hide_set()) {
+            missing_help(sub, &path, out);
+        }
+    }
+
+    #[test]
+    fn headless_commands_do_not_list_the_ui_flags() {
+        let mut command = crate::args::command();
+        for name in ["daemon", "serve"] {
+            let help = command
+                .find_subcommand_mut(name)
+                .expect("subcommand")
+                .render_help()
+                .to_string();
+            for flag in [
+                "--theme",
+                "--reduced-motion",
+                "--plain",
+                "--ascii",
+                "--view-mode",
+            ] {
+                assert!(!help.contains(flag), "{name} --help lists {flag}:\n{help}");
+            }
+        }
+        let tui = command
+            .find_subcommand_mut("tui")
+            .expect("tui")
+            .render_help();
+        assert!(tui.to_string().contains("--theme"), "tui keeps the flags");
+        let parsed = Args::try_parse_from(["aether", "daemon", "--theme", "mono"]);
+        assert!(parsed.is_ok(), "hidden flags are still accepted");
+    }
+
+    #[test]
+    fn every_visible_option_has_a_help_line() {
+        let mut missing = Vec::new();
+        let command = crate::args::command();
+        missing_help(&command, "", &mut missing);
+        missing.retain(|path| !WITHOUT_HELP.contains(&path.as_str()));
+        assert!(missing.is_empty(), "these have no help text: {missing:#?}");
     }
 }

@@ -466,6 +466,7 @@ pub struct SetKnobs {
     /// Reasoning effort: low, medium, high, xhigh, max.
     #[arg(long)]
     pub effort: Option<String>,
+    /// Replace the agent's standing instructions.
     #[arg(long)]
     pub instructions: Option<String>,
     /// Most turns the agent may take; 0 clears the limit.

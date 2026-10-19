@@ -258,6 +258,13 @@ aether runs report RUN_ID --md
 aether runs export RUN_ID --out run.aether
 ```
 
+Whether a command starts the daemon depends on the command. `aether`, `tui`,
+`run`, `new`, `models`, `providers`, `auth`, `github-watcher` (even `status`) and
+`remote setup` start one when none is running. The other commands that talk to
+the daemon, such as `status`, `agents`, `tasks`, `send` and `schedule`, fail with
+"no daemon" instead. `doctor`, `schema`, `diagnose`, `bridge` and `voice` start
+none. `aether --help` says the same.
+
 Wherever a command takes an ID, a unique prefix of it works as well, with or
 without its `agt_`/`run_`/`tsk_`/`apr_`/`sch_` part. An agent or a schedule
 can also be named by its name when no other live one has it, and `@last` names

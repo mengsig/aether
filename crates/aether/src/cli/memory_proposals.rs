@@ -13,14 +13,19 @@ pub struct MemoryAddArgs {
     /// File under the repository derived from this checkout.
     #[arg(long)]
     root: Option<std::path::PathBuf>,
+    /// fact, decision, lesson, constraint or preference.
     #[arg(long, default_value = "fact", value_parser = parse_kind)]
     kind: MemoryKind,
+    /// Score from 0 to 1 that ranks it in recall.
     #[arg(long)]
     importance: Option<f32>,
+    /// Score from 0 to 1 for how sure the memory is.
     #[arg(long)]
     confidence: Option<f32>,
+    /// Tag to file it under; repeat for several.
     #[arg(long)]
     tag: Vec<String>,
+    /// Memory this one replaces.
     #[arg(long)]
     supersedes: Option<aether_core::id::MemoryId>,
     /// Keep out of recall until an operator accepts it.

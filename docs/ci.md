@@ -7,11 +7,16 @@ your machine, so a check that fails in CI fails locally with the same command.
 
 | Job | Runner | When | Command |
 | --- | --- | --- | --- |
-| `lint` | `ubuntu-latest` | every pull request, every push to `main` | `scripts/ci.sh lint` |
-| `test` | `ubuntu-latest` | every pull request, every push to `main` | `scripts/ci.sh test` |
-| `binary` | `ubuntu-latest` | every pull request, every push to `main` | `scripts/ci.sh binary` |
+| `lint` | `ubuntu-latest` | every pull request to `main` or `next`, every push to `main` or `next`, manual dispatch | `scripts/ci.sh lint` |
+| `test` | `ubuntu-latest` | every pull request to `main`, every push to `main` or `next`, manual dispatch | `scripts/ci.sh test` |
+| `binary` | `ubuntu-latest` | every pull request to `main`, every push to `main` or `next`, manual dispatch | `scripts/ci.sh binary` |
 | `macos` | `macos-latest` | `ci:macos` label or manual dispatch, from `.github/workflows/ci-macos.yml` | `scripts/ci.sh` |
 | `upgrade` | `ubuntu-latest` | nightly, release tags, pull requests that touch the protocol, client, bridge or store, manual dispatch, from `.github/workflows/upgrade.yml` | `scripts/upgrade_compat.py` ([Upgrade lane](#upgrade-lane)) |
+
+A pull request whose base is `next` runs only `lint`; `test` and `binary` run
+when `next` is pushed and on pull requests to `main`. A push that changes only
+documentation starts nothing; a pull request that changes only documentation
+starts the jobs, which run just the link check in `lint` and stop.
 
 The three stages together are the whole script, split so they run side by side:
 

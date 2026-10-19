@@ -13,22 +13,27 @@ pub(crate) enum MemoryCmd {
     Add {
         #[command(flatten)]
         memory: cli::MemoryAddArgs,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Accept a proposed memory and apply its deferred replacement.
     Accept {
         id: String,
+        /// Why it is accepted.
         #[arg(long)]
         reason: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Reject a proposed memory with an explanation.
     Reject {
         id: String,
+        /// Why it is rejected.
         #[arg(long)]
         reason: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -55,28 +60,34 @@ pub(crate) enum MemoryCmd {
         /// Show pending proposals instead of admitted memories; --all includes rejected ones.
         #[arg(long)]
         proposed: bool,
+        /// Most memories to show.
         #[arg(long, default_value_t = 40)]
         limit: usize,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Show one memory in full, with its provenance and supersession chain.
     Show {
         id: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Stop retrieving a memory. The record stays in history.
     Forget {
         id: String,
+        /// Why it is forgotten.
         #[arg(long)]
         reason: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Put a forgotten memory back. Undoes `memory forget`.
     Restore {
         id: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -86,6 +97,7 @@ pub(crate) enum MemoryCmd {
         /// Undo the pin.
         #[arg(long)]
         unpin: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -95,6 +107,7 @@ pub(crate) enum MemoryCmd {
         /// daemon's workspace root or a live agent's, or inside one.
         #[arg(long)]
         root: Option<PathBuf>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -116,11 +129,13 @@ pub(crate) enum MemoryCmd {
         /// Report what would move; move nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// List repository aliases and the id each resolves to.
     Aliases {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -136,6 +151,7 @@ pub(crate) enum MemoryCmd {
         /// The one model call with this invocation id.
         #[arg(long)]
         invocation: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -156,6 +172,7 @@ pub(crate) struct RememberArgs {
     /// Remember this answer for later calls like it.
     #[arg(long)]
     pub(crate) remember: bool,
+    /// Print the result as JSON.
     #[arg(long)]
     pub(crate) json: bool,
     /// Cover every call of the tool, not just this command or path.
@@ -222,8 +239,10 @@ impl From<ScopeArgs> for cli::RuleScopeArgs {
 pub(crate) enum RunsCmd {
     /// List runs, newest first.
     List {
+        /// Most runs to show.
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -246,6 +265,7 @@ pub(crate) enum RunsCmd {
     /// one file, to inspect it in another daemon.
     Export {
         run: cli::RunRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
         /// The file to write. The daemon opens it, so it must be reachable
@@ -257,6 +277,7 @@ pub(crate) enum RunsCmd {
     /// where it came from.
     Import {
         file: PathBuf,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -266,15 +287,19 @@ pub(crate) enum RunsCmd {
 pub(crate) enum ArtifactsCmd {
     /// List artifacts, newest first.
     List {
+        /// Only this agent's artifacts.
         #[arg(long)]
         agent: Option<cli::AgentRef>,
+        /// Only this task's artifacts.
         #[arg(long)]
         task: Option<cli::TaskRef>,
         /// Skip artifacts whose bytes retention has dropped.
         #[arg(long)]
         with_bytes: bool,
+        /// Most artifacts to show.
         #[arg(long, default_value_t = 50)]
         limit: usize,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -294,6 +319,7 @@ pub(crate) enum ArtifactsCmd {
 pub(crate) enum McpCmd {
     /// Configured servers, their health and their tools.
     List {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -301,6 +327,7 @@ pub(crate) enum McpCmd {
     Refresh {
         /// Only this server.
         server: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -332,17 +359,20 @@ pub(crate) enum McpCmd {
 pub(crate) enum VoiceCmd {
     /// Inspect the running TUI's reply eligibility and lifecycle; never toggles audio.
     Status {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Start recording a global voice reply, or finish and send the one in
     /// progress - the same toggle either way.
     Reply {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Discard the global voice reply in progress, if any.
     Cancel {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -354,6 +384,7 @@ pub(crate) enum VoiceCmd {
 pub(crate) enum GithubWatcherCmd {
     /// Show configuration, delivery counts and polling errors.
     Status {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -412,6 +443,7 @@ pub(crate) enum GithubWatcherCmd {
         /// needs write access. Omitted keeps an existing repository's list.
         #[arg(long, value_delimiter = ',', value_name = "LOGIN,...")]
         allowed_users: Option<Vec<String>>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -429,6 +461,7 @@ pub(crate) enum GithubWatcherCmd {
         /// Remove the allowlist.
         #[arg(long)]
         clear: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -447,35 +480,43 @@ pub(crate) enum GithubWatcherCmd {
         /// Give no GitHub login operator authority.
         #[arg(long)]
         clear: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Remove a repository from the watch list.
     Remove {
         repository: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Start polling globally, or enable one repository.
     Enable {
         repository: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Stop polling globally, or disable one repository.
     Disable {
         repository: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Change matching expressions or the polling interval.
     Configure {
+        /// Regular expression that makes a comment trigger the watcher.
         #[arg(long)]
         mention_regex: Option<String>,
+        /// Regular expression that makes a label trigger the watcher.
         #[arg(long)]
         label_regex: Option<String>,
+        /// Seconds between polls of GitHub.
         #[arg(long)]
         poll_interval_secs: Option<u64>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -557,39 +598,48 @@ pub(crate) enum ScheduleCmd {
         /// Stop after this many deliveries or runs. Agent budgets also apply.
         #[arg(long)]
         max_deliveries: Option<std::num::NonZeroU64>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     List {
+        /// Only schedules that deliver to this agent.
         #[arg(long)]
         target: Option<cli::AgentRef>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     Inspect {
         id: cli::ScheduleRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     Pause {
         id: cli::ScheduleRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     Resume {
         id: cli::ScheduleRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     Cancel {
         id: cli::ScheduleRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     History {
         id: cli::ScheduleRef,
+        /// Most deliveries to show.
         #[arg(long, default_value_t = 100)]
         limit: usize,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -602,6 +652,7 @@ pub(crate) enum RulesCmd {
         /// Include revoked rules.
         #[arg(long)]
         all: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -611,8 +662,10 @@ pub(crate) enum RulesCmd {
         matcher: MatchArgs,
         #[command(flatten)]
         scope: ScopeArgs,
+        /// A note kept with the rule.
         #[arg(long)]
         note: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -622,16 +675,20 @@ pub(crate) enum RulesCmd {
         matcher: MatchArgs,
         #[command(flatten)]
         scope: ScopeArgs,
+        /// A note kept with the rule.
         #[arg(long)]
         note: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Stop a rule from deciding anything from here on.
     Revoke {
         id: String,
+        /// Why it is revoked.
         #[arg(long)]
         reason: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -657,6 +714,7 @@ pub(crate) struct MatchArgs {
 pub(crate) enum OutboxCmd {
     /// List the operations that may or may not have run on the host.
     List {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -664,6 +722,7 @@ pub(crate) enum OutboxCmd {
     Delivered {
         /// The operation's idempotency key, as `outbox list` prints it.
         key: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -671,6 +730,7 @@ pub(crate) enum OutboxCmd {
     /// run a second time if the host no longer holds its receipt.
     Resend {
         key: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -678,6 +738,7 @@ pub(crate) enum OutboxCmd {
     /// Sends nothing; it may already have run.
     Discard {
         key: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -687,6 +748,7 @@ pub(crate) enum OutboxCmd {
 pub(crate) enum RetentionCmd {
     /// Preview eligible runs, protected reasons, payload bytes, and pending cleanup.
     Preview {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -696,12 +758,14 @@ pub(crate) enum RetentionCmd {
 pub(crate) enum StorageCmd {
     /// Remove eligible workspaces and migration backups.
     Gc {
+        /// Report what would be removed; remove nothing.
         #[arg(long)]
         dry_run: bool,
         /// Also delete ignored build output (`target/`, `node_modules/`, ...)
         /// from finished workspaces that are kept for another reason.
         #[arg(long)]
         prune_build_output: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -715,6 +779,7 @@ pub(crate) enum WorkspaceCmd {
         /// Also print the patch, capped for transport.
         #[arg(long)]
         patch: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -722,6 +787,7 @@ pub(crate) enum WorkspaceCmd {
     /// Exits 1 with the conflicting paths when the source changed them too.
     Integrate {
         agent: cli::AgentRef,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -732,6 +798,7 @@ pub(crate) enum WorkspaceCmd {
         /// is not stopped.
         #[arg(long)]
         force: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
