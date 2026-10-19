@@ -3,12 +3,16 @@ use aether_core::agent::{AgentConfig, NetworkPolicy, Role};
 use aether_core::model::{Effort, ModelChain};
 use aether_core::schedule::{
     BusyPolicy, CreateScheduleSpec, MissedRunPolicy, Recurrence, Schedule, ScheduleAction,
-    ScheduleMode, ScheduleOutcome, ScheduleStatus, ScheduleTarget, SpawnSpec,
+    ScheduleMode, ScheduleOccurrence, ScheduleOutcome, ScheduleStatus, ScheduleTarget, SpawnSpec,
 };
 use anyhow::{anyhow, bail};
 
 use super::{acted, connect, here, parse_backend, sane, short};
 use crate::ScheduleCmd;
+
+/// Newest history entries `schedule list` reads per schedule; the daemon
+/// serves at most 1000.
+const SKIP_SCAN: usize = 1000;
 
 /// What a spawn schedule's runs get, from `schedule create --objective`.
 struct Template {
@@ -113,8 +117,10 @@ pub(crate) async fn run(
             let jobs = client.schedules(target).await?;
             let text = if jobs.is_empty() {
                 "No schedules.".into()
+            } else if json {
+                String::new()
             } else {
-                jobs.iter().map(summary).collect::<Vec<_>>().join("\n")
+                list_lines(&client, &jobs).await?
             };
             acted(json, &text, serde_json::json!(jobs))
         }
@@ -204,6 +210,35 @@ async fn spawn_spec(client: &Client, template: Template) -> anyhow::Result<Spawn
         config: (config != AgentConfig::default()).then_some(config),
         approval: None,
     })
+}
+
+/// One line per schedule, each ending with how many of its occurrences were
+/// skipped, so a paused or busy target does not lose triggers unseen.
+async fn list_lines(client: &Client, jobs: &[Schedule]) -> anyhow::Result<String> {
+    let mut lines = Vec::with_capacity(jobs.len());
+    for job in jobs {
+        let history = client.schedule_history(job.id, SKIP_SCAN).await?;
+        lines.push(format!("{}{}", summary(job), skipped_note(&history)));
+    }
+    Ok(lines.join("\n"))
+}
+
+/// ` · N skipped` for the occurrences among the newest `SKIP_SCAN` recorded
+/// that were skipped, `N+` when the scan may have missed older ones.
+fn skipped_note(history: &[ScheduleOccurrence]) -> String {
+    assert!(
+        history.len() <= SKIP_SCAN,
+        "the daemon returned more history than asked for"
+    );
+    let skipped = history
+        .iter()
+        .filter(|entry| matches!(entry.outcome, ScheduleOutcome::Skipped { .. }))
+        .count();
+    match (skipped, history.len() == SKIP_SCAN) {
+        (0, _) => String::new(),
+        (n, true) => format!(" · {n}+ skipped"),
+        (n, false) => format!(" · {n} skipped"),
+    }
 }
 
 fn describe(job: &Schedule) -> String {
@@ -409,6 +444,34 @@ mod tests {
              missed runs: skip overdue windows\n\
              payload: null"
         );
+    }
+
+    fn occurrence(outcome: ScheduleOutcome) -> ScheduleOccurrence {
+        let job = job(DELIVER);
+        ScheduleOccurrence {
+            schedule: job.id,
+            due: job.created_at,
+            recorded_at: job.created_at,
+            outcome,
+        }
+    }
+
+    #[test]
+    fn list_counts_the_skipped_occurrences() {
+        let skipped = || {
+            occurrence(ScheduleOutcome::Skipped {
+                reason: "target is paused".into(),
+            })
+        };
+        let failed = occurrence(ScheduleOutcome::Failed { error: "x".into() });
+        assert_eq!(skipped_note(&[]), "");
+        assert_eq!(skipped_note(std::slice::from_ref(&failed)), "");
+        assert_eq!(
+            skipped_note(&[skipped(), failed, skipped()]),
+            " · 2 skipped"
+        );
+        let full = vec![skipped(); SKIP_SCAN];
+        assert_eq!(skipped_note(&full), format!(" · {SKIP_SCAN}+ skipped"));
     }
 
     #[test]

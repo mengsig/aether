@@ -473,6 +473,9 @@ pub(crate) enum Cmd {
         command: GithubWatcherCmd,
     },
     /// Manage durable recurring triggers.
+    #[command(
+        after_help = "A tick that finds its target paused, or busy under the default policy, is recorded as skipped in `schedule history`. It is dropped: it does not count towards --max-deliveries, and nothing is replayed after `aether resume`. `schedule list` shows how many occurrences were skipped."
+    )]
     Schedule {
         #[command(subcommand)]
         command: ScheduleCmd,

@@ -231,6 +231,14 @@ or `wait_for` for a one-shot durable wake. The agent-facing scheduling tool
 does not yet expose every CLI scheduling mode. CLI schedule dates show whole
 seconds in UTC; JSON preserves timestamp precision.
 
+A tick that finds a delivery schedule's target paused is recorded as skipped
+("target is paused") and dropped. It does not count towards `--max-deliveries`,
+and nothing is replayed after `aether resume`; the same holds for a tick that
+finds the target busy under the default policy (`--queue-one` holds one trigger
+instead). `aether schedule list` ends each line with how many of the schedule's
+recorded occurrences were skipped (`N+` when more than the newest 1000 exist),
+and `aether schedule history` lists them with their reasons.
+
 `aether serve` bridges signed incoming webhooks and outgoing event
 subscriptions. Use the `[serve]` section of the configuration template.
 Python, TypeScript, Rust, and MCP clients can drive the same daemon protocol;

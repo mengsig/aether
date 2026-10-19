@@ -596,6 +596,8 @@ pub(crate) enum ScheduleCmd {
         #[arg(long, required_unless_present = "objective")]
         payload: Option<String>,
         /// Stop after this many deliveries or runs. Agent budgets also apply.
+        /// Skipped occurrences, such as ticks for a paused target, are dropped,
+        /// not counted and never replayed.
         #[arg(long)]
         max_deliveries: Option<std::num::NonZeroU64>,
         /// Print the result as JSON.

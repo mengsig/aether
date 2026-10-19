@@ -358,6 +358,26 @@ async fn cli_with_socket(
                     auth_source: None,
                     is_default: true,
                 }])),
+                Command::ListSchedules { .. } => Ok(Reply::Schedules(vec![
+                    serde_json::from_value(json!({
+                        "id": "sch_01J00000000000000000000005",
+                        "name": "nightly",
+                        "owner": {"actor": "user"},
+                        "target": AGENT,
+                        "run": "run_01J00000000000000000000002",
+                        "recurrence": {"kind": "interval", "seconds": 3600},
+                        "missed": "coalesce",
+                        "busy": "skip",
+                        "payload": null,
+                        "status": {"state": "active", "next_due": "2026-09-11T10:00:00Z"},
+                        "max_deliveries": 4,
+                        "deliveries": 0,
+                        "last_inbox_seq": null,
+                        "created_at": AT,
+                        "updated_at": AT,
+                    }))
+                    .unwrap(),
+                ])),
                 Command::ScheduleHistory { id, .. } => Ok(Reply::ScheduleHistory(vec![
                     aether_core::schedule::ScheduleOccurrence {
                         schedule: *id,
@@ -1514,6 +1534,34 @@ fn watcher_help_documents_automatic_default_and_preserved_dispatch() {
         &["github-watcher", "add", "--help"],
         &["automatic", "unchanged"],
     );
+}
+
+#[tokio::test]
+async fn schedule_list_shows_how_many_occurrences_were_skipped() {
+    let output = cli(&["schedule", "list"], Stub::default()).await;
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(text.contains("0 / 4 delivered"), "{text}");
+    assert!(text.trim_end().ends_with(" · 1 skipped"), "{text}");
+}
+
+#[test]
+fn schedule_help_says_triggers_for_a_paused_target_are_dropped() {
+    let root = tempfile::tempdir().unwrap();
+    let out = isolated_command(root.path(), &["schedule", "--help"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let text = stdout(&out)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for phrase in [
+        "does not count towards --max-deliveries",
+        "nothing is replayed",
+    ] {
+        assert!(text.contains(phrase), "missing {phrase}: {text}");
+    }
 }
 
 #[test]
