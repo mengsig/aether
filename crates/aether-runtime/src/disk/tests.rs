@@ -228,3 +228,28 @@ async fn lifting_the_floor_entirely_still_records_the_recovery() {
     assert_eq!(disk_events(&runtime), [DISK_LOW, DISK_RECOVERED]);
     runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_low_is_found_beneath_many_unrelated_custom_events() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let runtime = runtime_in(dir.path()).await;
+    observe(&runtime, dir.path(), FLOOR, FLOOR / 2);
+    for _ in 0..3 {
+        let mut commit = Commit::new();
+        for _ in 0..STARTUP_SCAN_PAGE {
+            commit = commit.event(EventDraft::new(
+                Actor::System,
+                EventKind::Custom {
+                    name: "other.note".into(),
+                    payload: serde_json::json!({}),
+                },
+            ));
+        }
+        runtime.apply(commit).expect("apply");
+    }
+    *runtime.disk.lock() = DiskState::default();
+
+    resume_low(&runtime);
+    assert!(runtime.disk_is_low());
+    runtime.shutdown().await;
+}

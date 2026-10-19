@@ -110,19 +110,18 @@ impl Runtime {
     }
 }
 
-/// The newest custom events read at startup, in pages, to find the disk's
-/// last recorded state; older ones are not searched.
-const STARTUP_SCAN_PAGES: usize = 20;
+/// Custom events read per query while finding the disk's last recorded state.
 const STARTUP_SCAN_PAGE: usize = 200;
 
-/// The newest `disk.low` or `disk.recovered` event, if one is within reach.
+/// The newest `disk.low` or `disk.recovered` event, searching back through
+/// every custom event once at startup.
 fn last_disk_event(runtime: &Runtime) -> aether_store::Result<Option<EventKind>> {
     let filter = EventFilter {
         types: vec!["custom".into()],
         ..Default::default()
     };
     let mut before = u64::MAX;
-    for _ in 0..STARTUP_SCAN_PAGES {
+    loop {
         let page = runtime
             .store
             .events_before(before, STARTUP_SCAN_PAGE, &filter)?;
@@ -137,7 +136,6 @@ fn last_disk_event(runtime: &Runtime) -> aether_store::Result<Option<EventKind>>
             return Ok(Some(event.kind));
         }
     }
-    Ok(None)
 }
 
 /// The low the log last announced without a recovery after it: the daemon
