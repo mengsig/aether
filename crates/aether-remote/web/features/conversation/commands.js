@@ -29,6 +29,7 @@ export const commands = [
   {name:'doctor', description:'Connection and provider diagnostics', route:'controls'},
   {name:'voice', description:'Use your phone keyboard’s microphone', route:'local'},
   {name:'image', description:'Attach an image (terminal only for now)', route:'local'},
+  {name:'notifications', description:'Answer agent and service notifications (terminal only for now)', route:'local'},
   {name:'login', description:'Manage provider sign-in', route:'controls'},
   {name:'logout', description:'Manage provider credentials', route:'controls'},
   {name:'clear', description:'Hide retained messages in this view', route:'local'},
