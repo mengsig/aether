@@ -30,6 +30,19 @@ native tool discovery. The schemas in `aether-tools/src/builtin/harness.rs`
 | Preserve knowledge | `remember`, `request_checkpoint` | Stores reusable knowledge or requests validated context compaction. |
 | Repeat work | `create_schedule`, `list_schedules`, `update_schedule` | Durable interval/cron triggers, delivery history, pause/resume/cancel. |
 
+`complete_task` and `fail_task` do not look at the caller's own children. A
+parent that settles its task while a child it delegated with `wait=false` is
+still running leaves that child running: it is not cancelled and the reply
+gives no warning. The child ends when its own task settles, when its turn,
+token, cost or deadline limit stops it, or when someone cancels it, for example
+with `aether cancel` on the parent, which still cancels its live descendants
+after the parent has ended. Wait for or cancel every child before settling.
+
+Delegation has no depth limit: a child may delegate again, as long as its
+parent is not a leaf, to any number of generations. Only the `leaf` flag, a
+`concurrency` cap on the descendants running at once, the daemon's global
+concurrency limit and each agent's budgets bound a chain.
+
 `complete_task` and `fail_task` bound their payloads and refuse an oversized
 or malformed one with a tool error that names the field; the task stays open
 and the agent may retry. `summary` and `error` are at most 256 KiB (262144

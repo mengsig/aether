@@ -177,6 +177,13 @@ looks like a boundary and is not one.
   messages stay held until `/model` is retried after reconnecting. A later
   queued choice can still appear in the picker as the latest choice even
   though no retry is in flight; the disconnect notice gives the retry step.
+- A parent can settle its task while a child it delegated with `wait=false`
+  is still running. The child is orphaned and keeps running until its own task
+  settles or a limit or a cancel stops it; `complete_task` does not warn. Wait
+  for or cancel children first. See [harness tools](harness-tools.md).
+- Delegation depth is unlimited: only `leaf` agents are refused, so a chain of
+  children each delegating the next has no ceiling beyond the concurrency caps
+  and budgets. A configurable maximum depth is not implemented.
 - The agent scheduling tool cannot create schedules that spawn a fresh agent;
   the CLI can (roadmap).
 - `aether workspace diff` attributes commits in a shared workspace by the
