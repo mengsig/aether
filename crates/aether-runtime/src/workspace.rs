@@ -994,20 +994,18 @@ fn roll_back_creation(
     }
 }
 
-/// True when `reference` points at a snapshot commit Aether made (its author,
-/// subject and a single parent at most) more than a day ago.
-fn is_stale_aether_snapshot(source: &Path, reference: &str) -> crate::Result<bool> {
+/// True when `commit` is a snapshot Aether made for workspace `id` (its author
+/// and a subject naming the id) more than a day ago.
+fn is_stale_aether_snapshot(source: &Path, commit: &str, id: &str) -> crate::Result<bool> {
     let record = git_string(
-        git(source).args(["log", "-1", "--format=%ct %ae %ce %s", reference]),
+        git(source).args(["log", "-1", "--format=%ct %ae %ce %s", commit]),
         "read workspace snapshot commit",
     )?;
     let mut fields = record.splitn(4, ' ');
     let (Some(time), Some(author), Some(committer), Some(subject)) =
         (fields.next(), fields.next(), fields.next(), fields.next())
     else {
-        return Err(invalid(format!(
-            "unreadable snapshot commit for {reference}"
-        )));
+        return Err(invalid(format!("unreadable snapshot commit {commit}")));
     };
     let Ok(time) = time.parse::<i64>() else {
         return Ok(false);
@@ -1015,7 +1013,7 @@ fn is_stale_aether_snapshot(source: &Path, reference: &str) -> crate::Result<boo
     let age = chrono::Utc::now().timestamp() - time;
     Ok(author == SNAPSHOT_AUTHOR
         && committer == SNAPSHOT_AUTHOR
-        && subject == SNAPSHOT_MESSAGE
+        && subject == format!("{SNAPSHOT_MESSAGE} {id}")
         && age > ORPHAN_REF_MIN_AGE_SECS)
 }
 
@@ -1028,7 +1026,7 @@ pub(crate) fn sweep_orphan_refs(managed_root: &Path, source: &Path) -> crate::Re
     let listing = git_string(
         git(source).args([
             "for-each-ref",
-            "--format=%(refname)",
+            "--format=%(refname) %(objectname) %(symref)",
             "refs/aether/workspaces/",
         ]),
         "list workspace snapshot references",
@@ -1038,7 +1036,13 @@ pub(crate) fn sweep_orphan_refs(managed_root: &Path, source: &Path) -> crate::Re
         "list worktrees",
     )?;
     let mut removed = Vec::new();
-    for reference in listing.lines() {
+    for line in listing.lines() {
+        let mut fields = line.split(' ');
+        let (Some(reference), Some(commit), None | Some("")) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
         let Some(id) = reference.strip_prefix("refs/aether/workspaces/") else {
             continue;
         };
@@ -1051,12 +1055,12 @@ pub(crate) fn sweep_orphan_refs(managed_root: &Path, source: &Path) -> crate::Re
         }
         let marker = format!("/{id}/");
         if worktrees.lines().any(|line| line.contains(&marker))
-            || !is_stale_aether_snapshot(source, reference)?
+            || !is_stale_aether_snapshot(source, commit, id)?
         {
             continue;
         }
         run(
-            git(source).args(["update-ref", "-d", reference]),
+            git(source).args(["update-ref", "-d", reference, commit]),
             "remove orphan workspace snapshot reference",
         )?;
         removed.push(reference.to_owned());
