@@ -168,7 +168,11 @@ pub async fn tui(
     };
     // A pipe or a screen reader gets lines whether or not --plain was typed:
     // the full-screen UI is meaningless without a terminal.
-    let plain = plain || !std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let plain = wants_plain(
+        plain,
+        std::io::IsTerminal::is_terminal(&std::io::stdout()),
+        std::env::var("TERM").ok().as_deref(),
+    );
     let options = TuiOptions {
         view_modes,
         view_mode: Some(view_mode),
@@ -237,6 +241,11 @@ pub async fn tui(
     aether_tui::run(client, options).await
 }
 
+/// A dumb terminal cannot honour the alternate screen, mouse or keyboard modes.
+fn wants_plain(requested: bool, stdout_is_terminal: bool, term: Option<&str>) -> bool {
+    requested || !stdout_is_terminal || term.is_some_and(|t| t.eq_ignore_ascii_case("dumb"))
+}
+
 fn ascii_environment() -> anyhow::Result<Option<String>> {
     match std::env::var("AETHER_ASCII") {
         Ok(value) => Ok(Some(value)),
@@ -266,4 +275,27 @@ fn validate_startup_display(endpoint: &aether_client::Endpoint, ascii: bool) -> 
         .ascii(ascii, ascii_environment()?.as_deref())
         .map_err(anyhow::Error::msg)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod plain_choice_tests {
+    use super::wants_plain;
+
+    #[test]
+    fn a_dumb_terminal_gets_plain_mode() {
+        assert!(wants_plain(false, true, Some("dumb")));
+        assert!(wants_plain(false, true, Some("DUMB")));
+    }
+
+    #[test]
+    fn a_capable_terminal_keeps_the_full_screen_ui() {
+        assert!(!wants_plain(false, true, Some("xterm-256color")));
+        assert!(!wants_plain(false, true, None));
+    }
+
+    #[test]
+    fn a_pipe_or_the_flag_still_forces_plain_mode() {
+        assert!(wants_plain(false, false, Some("xterm")));
+        assert!(wants_plain(true, true, Some("xterm")));
+    }
 }
