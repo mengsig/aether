@@ -125,7 +125,13 @@ pub async fn run(
                 let status = match client.status().await {
                     Ok(status) => status,
                     // The ended subscription takes the remote reconnect path.
-                    Err(error) if socket.is_remote() && error.is_connection_failure() => continue,
+                    Err(error)
+                        if socket.is_remote()
+                            && (error.is_connection_failure()
+                                || matches!(error, aether_client::ClientError::Ssh(_))) =>
+                    {
+                        continue;
+                    }
                     Err(error) => return Err(error.into()),
                 };
                 if let Some(line) = gate.update(status.low_disk.as_ref()) {
