@@ -122,23 +122,47 @@ impl Fixture {
 async fn gc_removes_only_provably_orphaned_snapshot_references() {
     let f = fixture().await;
     let head = git(&f.source, &["rev-parse", "HEAD"]);
-    let orphan = format!("refs/aether/workspaces/{}", ulid::Ulid::generate());
-    let foreign = "refs/aether/workspaces/not-a-ulid";
-    let users = "refs/heads/aether-workspaces";
-    for name in [orphan.as_str(), foreign, users] {
-        git(&f.source, &["update-ref", name, &head]);
-    }
-    let live = format!(
-        "refs/aether/workspaces/{}",
-        f.manifest
-            .workspace
-            .parent()
-            .unwrap()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
+    let tree = git(&f.source, &["rev-parse", "HEAD^{tree}"]);
+    let snapshot = |date: &str, email: &str| {
+        let output = std::process::Command::new("git")
+            .current_dir(&f.source)
+            .env("GIT_COMMITTER_DATE", date)
+            .env("GIT_COMMITTER_EMAIL", email)
+            .env("GIT_AUTHOR_EMAIL", email)
+            .args([
+                "commit-tree",
+                &tree,
+                "-m",
+                "Aether child workspace snapshot",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    let old = snapshot("2020-01-01T00:00:00Z", "aether@local.invalid");
+    let fresh = snapshot(
+        &aether_core::time::now().to_rfc3339(),
+        "aether@local.invalid",
     );
-    assert!(!git(&f.source, &["for-each-ref", &live]).is_empty());
+    let users_commit = snapshot("2020-01-01T00:00:00Z", "someone@example.invalid");
+    let id = || ulid::Ulid::generate();
+    let orphan = format!("refs/aether/workspaces/{}", id());
+    let in_flight = format!("refs/aether/workspaces/{}", id());
+    let users_ulid = format!("refs/aether/workspaces/{}", id());
+    let plain = format!("refs/aether/workspaces/{}", id());
+    let foreign = "refs/aether/workspaces/not-a-ulid";
+    let branch = "refs/heads/aether-workspaces";
+    for (name, commit) in [
+        (orphan.as_str(), &old),
+        (in_flight.as_str(), &fresh),
+        (users_ulid.as_str(), &users_commit),
+        (plain.as_str(), &head),
+        (foreign, &old),
+        (branch, &old),
+    ] {
+        git(&f.source, &["update-ref", name, commit]);
+    }
 
     f.collect(true);
     assert!(
@@ -148,7 +172,7 @@ async fn gc_removes_only_provably_orphaned_snapshot_references() {
     f.collect(false);
 
     assert!(git(&f.source, &["for-each-ref", &orphan]).is_empty());
-    for kept in [foreign, users] {
+    for kept in [&in_flight, &users_ulid, &plain, foreign, branch] {
         assert!(
             !git(&f.source, &["for-each-ref", kept]).is_empty(),
             "{kept}"

@@ -32,6 +32,10 @@ pub(crate) mod review;
 const MANIFEST: &str = "manifest.json";
 const JOURNAL: &str = "integration.json";
 const WORKSPACE: &str = "workspace";
+const SNAPSHOT_MESSAGE: &str = "Aether child workspace snapshot";
+const SNAPSHOT_AUTHOR: &str = "aether@local.invalid";
+/// An in-flight creation, possibly in another managed root, is younger than this.
+const ORPHAN_REF_MIN_AGE_SECS: i64 = 24 * 60 * 60;
 const GIT_TIMEOUT: Duration = Duration::from_secs(60);
 const GIT_STDOUT_LIMIT: usize = 64 * 1024 * 1024;
 const GIT_STDERR_LIMIT: usize = 8192;
@@ -778,9 +782,9 @@ fn create_commit(
     let mut command = git(source);
     command
         .env("GIT_AUTHOR_NAME", "Aether")
-        .env("GIT_AUTHOR_EMAIL", "aether@local.invalid")
+        .env("GIT_AUTHOR_EMAIL", SNAPSHOT_AUTHOR)
         .env("GIT_COMMITTER_NAME", "Aether")
-        .env("GIT_COMMITTER_EMAIL", "aether@local.invalid")
+        .env("GIT_COMMITTER_EMAIL", SNAPSHOT_AUTHOR)
         .args(["commit-tree", tree]);
     if let Some(parent) = parent {
         command.args(["-p", parent]);
@@ -919,12 +923,7 @@ pub(crate) fn create(
     let reference = format!("refs/aether/workspaces/{id}");
     let result = (|| {
         let head = current_head(&source)?;
-        let commit = create_commit(
-            &source,
-            &baseline_tree,
-            "Aether child workspace snapshot",
-            head.as_deref(),
-        )?;
+        let commit = create_commit(&source, &baseline_tree, SNAPSHOT_MESSAGE, head.as_deref())?;
         run(
             git(&source).args(["update-ref", &reference, &commit]),
             "protect workspace snapshot from garbage collection",
@@ -995,9 +994,35 @@ fn roll_back_creation(
     }
 }
 
+/// True when `reference` points at a snapshot commit Aether made (its author,
+/// subject and a single parent at most) more than a day ago.
+fn is_stale_aether_snapshot(source: &Path, reference: &str) -> crate::Result<bool> {
+    let record = git_string(
+        git(source).args(["log", "-1", "--format=%ct %ae %ce %s", reference]),
+        "read workspace snapshot commit",
+    )?;
+    let mut fields = record.splitn(4, ' ');
+    let (Some(time), Some(author), Some(committer), Some(subject)) =
+        (fields.next(), fields.next(), fields.next(), fields.next())
+    else {
+        return Err(invalid(format!(
+            "unreadable snapshot commit for {reference}"
+        )));
+    };
+    let Ok(time) = time.parse::<i64>() else {
+        return Ok(false);
+    };
+    let age = chrono::Utc::now().timestamp() - time;
+    Ok(author == SNAPSHOT_AUTHOR
+        && committer == SNAPSHOT_AUTHOR
+        && subject == SNAPSHOT_MESSAGE
+        && age > ORPHAN_REF_MIN_AGE_SECS)
+}
+
 /// Delete `refs/aether/workspaces/<id>` refs in `source` that Aether can
-/// prove are orphaned: the id is a ULID, `managed_root` has no directory for
-/// it, and no registered worktree lives under that id. Returns removed refs.
+/// prove are orphaned: the id is a ULID, the ref points at a day-old snapshot
+/// commit Aether made, `managed_root` has no directory for the id and no
+/// registered worktree lives under it. Returns the removed refs.
 pub(crate) fn sweep_orphan_refs(managed_root: &Path, source: &Path) -> crate::Result<Vec<String>> {
     let root = real_directory(managed_root, false)?;
     let listing = git_string(
@@ -1025,7 +1050,9 @@ pub(crate) fn sweep_orphan_refs(managed_root: &Path, source: &Path) -> crate::Re
             continue;
         }
         let marker = format!("/{id}/");
-        if worktrees.lines().any(|line| line.contains(&marker)) {
+        if worktrees.lines().any(|line| line.contains(&marker))
+            || !is_stale_aether_snapshot(source, reference)?
+        {
             continue;
         }
         run(
