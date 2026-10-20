@@ -27,6 +27,7 @@ actions! {
     Board, "board", "show / hide the board", "ctrl+b";
     Workspace, "workspace", "switch workspace", "ctrl+o";
     Files, "files", "files in this message", "alt+o";
+    ViewerExternal, "viewer_external", "open file externally", "alt+e";
     ViewerClose, "viewer_close", "close file viewer", "alt+w";
     ViewerFull, "viewer_full", "full screen file viewer", "alt+z";
     ViewerLess, "viewer_less", "narrow file viewer", "alt+-";

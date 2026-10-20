@@ -562,6 +562,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+B` | show / hide the agents board |
 | `Ctrl+O` | switch workspace: view its agent, or start one there |
 | `Alt+O` | files in the focused or latest message |
+| `Alt+E` | open the viewed file externally |
 | `Alt+W` | close the file viewer |
 | `Alt+Z` | toggle full screen file viewer |
 | `Alt+-` | narrow the file viewer |
@@ -857,7 +858,7 @@ trigger repeated unbounded scans while output streams.
 The viewer starts at half width. **Alt+- / Alt+=** resize it, **Alt+Z** toggles
 full screen, and **Esc** (with the viewer focused) or **Alt+W** closes it. Narrow terminals show it full width.
 **Tab** switches focus and leaves full screen when returning to chat; arrows and PageUp/PageDown scroll while focused, and
-**o** opens the selected file through `xdg-open` (Linux) or `open` (macOS).
+**Alt+E** opens the selected file through `xdg-open` (Linux) or `open` (macOS).
 Approvals retain priority. Closing the viewer does not stop the agent.
 
 PNG, JPEG, GIF (first frame) and WebP decode off the UI thread, as do text and
@@ -875,6 +876,6 @@ controls are stripped. Only one decode runs at a time; rapid resize requests
 coalesce. A canonical path outside the workspace requires a second Enter
 before reading. Native protocol encodings are cached until the preview
 changes. Markdown uses existing styles; language-specific syntax highlighting
-is deferred. PDF, HTML and SVG offer **o** to open externally; in-pane PDF and
+is deferred. PDF, HTML and SVG offer **Alt+E** to open externally; in-pane PDF and
 HTML rendering are planned follow-ups. HTML scripts are never executed by the
 TUI.

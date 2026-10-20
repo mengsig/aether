@@ -180,7 +180,7 @@ fn resizing_keeps_the_original_workspace_and_open_external_uses_argv() {
     assert_eq!(request.workspace, dir.path());
     assert_eq!(app.viewer.share, 55);
     load(&mut app, effects);
-    let effects = key(&mut app, KeyCode::Char('o'), KeyModifiers::NONE);
+    let effects = key(&mut app, KeyCode::Char('e'), KeyModifiers::ALT);
     assert!(
         matches!(&effects[..],[Effect::OpenFile(path)] if *path == dir.path().join("notes.md").canonicalize().unwrap())
     );
@@ -390,13 +390,37 @@ fn external_open_waits_for_canonical_outside_confirmation() {
         label: "outside".into(),
     });
     load(&mut app, effects);
-    assert!(key(&mut app, KeyCode::Char('o'), KeyModifiers::NONE).is_empty());
+    assert!(key(&mut app, KeyCode::Char('e'), KeyModifiers::ALT).is_empty());
     let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     load(&mut app, effects);
     assert!(matches!(
-        &key(&mut app, KeyCode::Char('o'), KeyModifiers::NONE)[..],
+        &key(&mut app, KeyCode::Char('e'), KeyModifiers::ALT)[..],
         [Effect::OpenFile(_)]
     ));
+}
+
+#[test]
+fn split_viewer_keeps_every_letter_in_new_and_existing_drafts() {
+    let (_dir, mut app) = setup();
+    key(&mut app, KeyCode::Char('o'), KeyModifiers::ALT);
+    let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    load(&mut app, effects);
+    assert!(app.viewer.focused && !app.viewer.fullscreen);
+    for initial in ["", "existing "] {
+        app.input.set_text(initial);
+        for character in "orange outlook".chars() {
+            let effects = key(&mut app, KeyCode::Char(character), KeyModifiers::NONE);
+            assert!(
+                !effects
+                    .iter()
+                    .any(|effect| matches!(effect, Effect::OpenFile(_)))
+            );
+        }
+        assert_eq!(app.input.text, format!("{initial}orange outlook"));
+        let effects = key(&mut app, KeyCode::Char('e'), KeyModifiers::ALT);
+        assert!(matches!(&effects[..], [Effect::OpenFile(_)]));
+        assert_eq!(app.input.text, format!("{initial}orange outlook"));
+    }
 }
 
 #[test]

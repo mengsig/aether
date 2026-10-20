@@ -108,6 +108,7 @@ pub(super) fn cases() -> Vec<KeyCase> {
         case("Ctrl+O", Global, KeyCode::Char('o'), ctrl, Busy),
         case("Ctrl+O", Global, KeyCode::Char('o'), ctrl, Idle),
         case("Alt+O", Global, KeyCode::Char('o'), alt, Idle),
+        case("Alt+E", Global, KeyCode::Char('e'), alt, Viewer),
         case("Alt+W", Global, KeyCode::Char('w'), alt, Viewer),
         case("Alt+Z", Global, KeyCode::Char('z'), alt, Viewer),
         case("Alt+-", Global, KeyCode::Char('-'), alt, Viewer),

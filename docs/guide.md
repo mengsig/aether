@@ -386,12 +386,14 @@ for the files in the last clicked message (otherwise the latest message).
 Relative paths resolve in the viewed agent's workspace. Enter opens the
 selected file in a side pane; **Esc** (with the viewer focused) or **Alt+W** closes it. **Alt+- / Alt+=**
 resize it and **Alt+Z** toggles full screen. **Tab** moves focus between the
-viewer and the composer; ordinary typing still works in the composer.
+viewer and the composer. In split mode, ordinary typing still works in the
+composer; the focused viewer owns arrows and PageUp/PageDown. In full screen,
+Tab reveals the chat before editing resumes.
 
 Images (PNG, JPEG, first GIF frame and WebP) use the terminal's detected
 Kitty, Sixel or iTerm2 support, with coloured Unicode half blocks otherwise.
 Markdown uses the transcript renderer; UTF-8 text and code use a fixed code
-colour. Press **o** while the viewer has focus to open any selected file
+colour. Press **Alt+E** while the viewer is visible to open any selected file
 externally. PDF, HTML and SVG currently offer this external action only.
 Files outside the workspace show their resolved path and require **Enter**
 a second time before previewing or opening externally. Remote agent files are not downloaded.

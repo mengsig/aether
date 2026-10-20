@@ -257,6 +257,13 @@ pub const KEYS: &[KeySpec] = &[
     .bound(&[KeyAction::Files]),
     key(
         Session,
+        "Alt+E",
+        "open the viewed file externally",
+        "open file externally",
+    )
+    .bound(&[KeyAction::ViewerExternal]),
+    key(
+        Session,
         "Alt+W",
         "close the file viewer",
         "close file viewer",

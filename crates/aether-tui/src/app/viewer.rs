@@ -129,6 +129,14 @@ impl App {
         if !crate::viewer::visible(self) {
             return None;
         }
+        if self.keys.matches(KeyAction::ViewerExternal, key) {
+            return Some(
+                self.viewer
+                    .external_path()
+                    .map(|p| vec![Effect::OpenFile(p.clone())])
+                    .unwrap_or_default(),
+            );
+        }
         if self.keys.matches(KeyAction::ViewerClose, key)
             || (self.viewer.focused && key.code == KeyCode::Esc && key.modifiers.is_empty())
         {
@@ -158,6 +166,10 @@ impl App {
             }
             return Some(Vec::new());
         }
+        self.viewer_content_key(key)
+    }
+
+    fn viewer_content_key(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
         if !self.viewer.focused {
             return None;
         }
@@ -207,11 +219,6 @@ impl App {
                 }
                 self.reload_preview()
             }
-            KeyCode::Char('o') => self
-                .viewer
-                .external_path()
-                .map(|p| vec![Effect::OpenFile(p.clone())])
-                .unwrap_or_default(),
             _ => return None,
         };
         Some(effects)

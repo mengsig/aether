@@ -11,7 +11,7 @@ release is also the text of its GitHub release.
 - **Local files beside the chat.** Click a file reference or use Alt+O to
   preview PNG, JPEG, GIF, WebP, Markdown and text in a resizable side pane.
   Native terminal graphics fall back to Unicode half blocks. Esc closes the
-  pane while the agent continues; `o` opens any file externally. Files outside
+  pane while the agent continues; `Alt+E` opens any file externally. Files outside
   the workspace require confirmation; remote files are never fetched.
 
 - **A notification center.** Agents and services such as Archon post

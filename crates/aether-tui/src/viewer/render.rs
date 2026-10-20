@@ -82,7 +82,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             } else if matches!(viewer.preview, Some(Ok(Preview::Outside(_)))) {
                 "Enter allow this file · Esc close"
             } else {
-                "Esc close · o external · Alt+Z full · Alt+-/= resize"
+                "Esc close · Alt+E external · Alt+Z full · Alt+-/= resize"
             }),
             footer,
         );
@@ -123,7 +123,7 @@ fn content(viewer: &Viewer, theme: &Theme) -> Vec<Line<'static>> {
         Some(Ok(Preview::Unsupported(path))) => vec![
             Line::from(clean(&path.display().to_string())),
             Line::from(
-                "Use o to open externally. PDF/HTML/SVG pane rendering is not available yet.",
+                "Use Alt+E to open externally. PDF/HTML/SVG pane rendering is not available yet.",
             ),
         ],
         Some(Ok(Preview::Image { rows, .. })) => rows.clone(),

@@ -154,6 +154,9 @@ fn staged(stage: Stage) -> App {
         Stage::Viewer => {
             app.viewer.open = true;
             app.board.open = false;
+            app.viewer.preview = Some(Ok(aether_tui::viewer::Preview::Unsupported(
+                std::path::PathBuf::from("preview.txt"),
+            )));
         }
         Stage::Busy | Stage::Approval => {}
         Stage::ChildApproval => {
