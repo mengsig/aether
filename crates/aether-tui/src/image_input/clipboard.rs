@@ -16,6 +16,7 @@ const NO_IMAGE: &str = "the clipboard holds no image (PNG, JPEG, GIF or WebP)";
 const NO_CONTENT: &str = "the clipboard holds no text or supported image";
 const MAX_TEXT_BYTES: usize = 16 * 1024 * 1024;
 const MACOS_IMAGE_TYPES: [&str; 4] = ["PNGf", "JPEG", "GIFf", "WebP"];
+const URI_LIST: &str = "text/uri-list";
 
 /// The program that reads this session's clipboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,9 +137,8 @@ async fn paste_bytes(
     debug_assert!(tool != ClipboardTool::Osascript || !pbpaste.is_empty());
     let offered = run_helper(program, list_args(tool), 64 * 1024).await?;
     let listing = String::from_utf8_lossy(&offered);
-    if let Some(kind) = offered_text_type(tool, &listing) {
-        return read_text(tool, program, pbpaste, kind).await;
-    }
+    // Browsers and chat apps offer text beside a copied image: the image wins,
+    // and the terminal's own paste (Ctrl+Shift+V) still gives the text.
     if let Some(kind) = offered_type(tool, &listing) {
         match image_bytes(tool, program, kind).await {
             Ok(bytes) => {
@@ -146,14 +146,50 @@ async fn paste_bytes(
                     .map(ClipboardContent::Image)
                     .map_err(|e| HelperError::Broken(e.to_string()));
             }
-            Err(HelperError::Refused) if tool == ClipboardTool::Osascript => {}
+            Err(HelperError::Refused) => {}
             Err(error) => return Err(error),
         }
+    }
+    if let Some(kind) = offered_text_type(tool, &listing) {
+        return read_text(tool, program, pbpaste, kind).await;
+    }
+    if tool != ClipboardTool::Osascript && offers(&listing, URI_LIST) {
+        return copied_files(tool, program).await;
     }
     if tool == ClipboardTool::WlPaste {
         return Err(HelperError::Refused);
     }
     read_text(tool, program, pbpaste, "").await
+}
+
+fn offers(listing: &str, media_type: &str) -> bool {
+    listing.lines().any(|line| line.trim() == media_type)
+}
+
+/// Files copied in a file manager, one `file://` URL a line. One image file
+/// becomes that image once `paste_with` reads the path; anything else is text.
+async fn copied_files(tool: ClipboardTool, program: &str) -> Result<ClipboardContent, HelperError> {
+    debug_assert!(
+        tool != ClipboardTool::Osascript,
+        "macOS offers no text/uri-list"
+    );
+    let args: &[&str] = match tool {
+        ClipboardTool::WlPaste => &["--no-newline", "--type", URI_LIST],
+        ClipboardTool::Xclip => &["-selection", "clipboard", "-o", "-t", URI_LIST],
+        ClipboardTool::Osascript => return Err(HelperError::Refused),
+    };
+    let listed = utf8_output(program, args).await?;
+    // RFC 2483: CRLF-separated URLs, `#` lines are comments.
+    let urls: Vec<&str> = listed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    if urls.is_empty() {
+        return Err(HelperError::Refused);
+    }
+    debug_assert!(urls.iter().all(|url| !url.contains('\n')));
+    Ok(ClipboardContent::Text(urls.join("\n")))
 }
 
 async fn read_text(
@@ -185,6 +221,11 @@ fn offered_text_type(tool: ClipboardTool, listing: &str) -> Option<&str> {
 }
 
 async fn text_content(program: &str, args: &[&str]) -> Result<ClipboardContent, HelperError> {
+    utf8_output(program, args).await.map(ClipboardContent::Text)
+}
+
+/// What `program` prints, as non-empty UTF-8 text of at most 16 MiB.
+async fn utf8_output(program: &str, args: &[&str]) -> Result<String, HelperError> {
     let bytes = run_helper(program, args, MAX_TEXT_BYTES + 1).await?;
     if bytes.len() > MAX_TEXT_BYTES {
         return Err(HelperError::Broken("clipboard text exceeds 16 MiB".into()));
@@ -196,7 +237,7 @@ async fn text_content(program: &str, args: &[&str]) -> Result<ClipboardContent, 
     }
     debug_assert!(text.len() <= MAX_TEXT_BYTES);
     debug_assert!(!text.is_empty());
-    Ok(ClipboardContent::Text(text))
+    Ok(text)
 }
 
 fn list_args(tool: ClipboardTool) -> &'static [&'static str] {
@@ -273,7 +314,7 @@ fn offered_image_type(listing: &str) -> Option<&'static str> {
     IMAGE_MEDIA_TYPES
         .iter()
         .map(|(media_type, _)| *media_type)
-        .find(|media_type| listing.lines().any(|line| line.trim() == *media_type))
+        .find(|media_type| offers(listing, media_type))
 }
 
 /// The bytes `osascript` printed as `«data PNGf89504E47…»`.
@@ -297,8 +338,11 @@ fn hex_payload(printed: &str, class: &str) -> Option<Vec<u8>> {
 async fn run_helper(program: &str, args: &[&str], limit: usize) -> Result<Vec<u8>, HelperError> {
     debug_assert!(!program.is_empty());
     debug_assert!(limit > 0);
+    // The PTY paste test puts a fake `wl-paste` first on PATH and says so.
     #[cfg(test)]
-    if matches!(program, "wl-paste" | "xclip" | "osascript" | "pbpaste") {
+    if matches!(program, "wl-paste" | "xclip" | "osascript" | "pbpaste")
+        && std::env::var_os("AETHER_TEST_FAKE_CLIPBOARD").is_none()
+    {
         return Err(HelperError::Broken(
             "real clipboard helpers are disabled in tests".into(),
         ));

@@ -13,7 +13,7 @@ ascii=false
   Alt+O          files in this message    Ctrl+A/E     line start / end
   Alt+E          open file externally     Ctrl+W/U/K   erase word / start / end
   Alt+W          close file viewer        Ctrl+Y       paste last erased
-  Alt+Z          full screen file viewer  Ctrl+V       paste clipboard
+  Alt+Z          full screen file viewer  Ctrl+V       paste image, else text
   Alt+-          narrow file viewer       Ctrl+←/→     move by word · Alt+B/F
   Alt+=          widen file viewer
   Alt+N          notification center      Agents board (Ctrl+G)

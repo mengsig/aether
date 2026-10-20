@@ -8,10 +8,10 @@ use aether_core::model::{ContentBlock, MessageRole};
 use aether_protocol::{PROTOCOL_VERSION, Reply, ServerFrame, Welcome};
 
 #[test]
-#[ignore = "child entry point: requires the suspend/fg PTY controller"]
-fn suspend_loop_child() {
+#[ignore = "child entry point: requires a PTY controller (suspend/fg, paste)"]
+fn fixture_loop_child() {
     let output =
-        std::fs::File::create(std::env::var_os("AETHER_SUSPEND_RECEIPT").expect("fixture receipt"))
+        std::fs::File::create(std::env::var_os("AETHER_LOOP_RECEIPT").expect("fixture receipt"))
             .expect("receipt file");
     let mut observer = process_tests::Observer::new(output);
     let runtime = tokio::runtime::Builder::new_multi_thread()
