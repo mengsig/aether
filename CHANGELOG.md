@@ -6,6 +6,13 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.1
+
+A small patch release: a notification center for agents and services, and two
+fixes to the GitHub watcher. Protocol version 24, unchanged; the new commands
+and replies are additive. Store schema 26 (was 25): a `notifications` table,
+created idempotently on first start.
+
 ### Added
 
 - **A notification center.** Agents and services such as Archon post
