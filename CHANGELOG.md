@@ -61,6 +61,11 @@ commands and replies are additive. Store schema 26 (was 25): a
   `ignored` count in `status` is unchanged (see
   [GitHub watcher](https://github.com/mengsig/aether/blob/main/docs/github-watcher.md#ignored-requests)).
 
+### Dependencies
+
+- zstd 0.14 (store migration backups), aws-lc-rs 1.18.2, schemars 1.2.3,
+  serde_json 1.0.154, sha2 0.11.1 and tokio 1.53.3.
+
 ## 1.2.0
 
 A hardening release. Secrets are masked in more places (native engine output,
