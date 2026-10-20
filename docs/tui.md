@@ -850,6 +850,9 @@ to open it; dragging continues to select text. The viewed agent's own
 workspace resolves relative paths, including a child's separate workspace.
 OSC 8 links are parsed when present in the original message; terminal control
 sequences are stripped before painting.
+Reference discovery examines the first 256 KiB of each message, with a shared
+256 KiB lookahead budget and at most 256 references, so malformed links cannot
+trigger repeated unbounded scans while output streams.
 
 The viewer starts at half width. **Alt+- / Alt+=** resize it, **Alt+Z** toggles
 full screen, and **Esc** (with the viewer focused) or **Alt+W** closes it. Narrow terminals show it full width.

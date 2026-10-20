@@ -7,6 +7,8 @@ use anyhow::{Context, Result, ensure};
 
 const MAX_REFERENCES: usize = 256;
 const MAX_REFERENCE_BYTES: usize = 16 * 1024;
+const MAX_PARSE_BYTES: usize = 256 * 1024;
+const MAX_LOOKAHEAD_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Reference {
@@ -16,14 +18,20 @@ pub struct Reference {
 
 /// Extract local links without probing the filesystem, in transcript order.
 pub fn parse(text: &str) -> Vec<Reference> {
+    let mut budget = MAX_LOOKAHEAD_BYTES;
+    parse_with_budget(text, &mut budget)
+}
+
+fn parse_with_budget(text: &str, budget: &mut usize) -> Vec<Reference> {
+    let text = prefix(text, MAX_PARSE_BYTES);
     let mut references = Vec::new();
     let mut seen = HashSet::new();
     let mut offset = 0;
-    while offset < text.len() && references.len() < MAX_REFERENCES {
+    while offset < text.len() && references.len() < MAX_REFERENCES && *budget > 0 {
         debug_assert!(text.is_char_boundary(offset));
         let rest = &text[offset..];
-        let (consumed, reference) = osc_link(rest)
-            .or_else(|| markdown_link(rest))
+        let (consumed, reference) = osc_link(rest, budget)
+            .or_else(|| markdown_link(rest, budget))
             .unwrap_or_else(|| bare_reference(rest));
         debug_assert!(consumed > 0 && consumed <= rest.len());
         offset += consumed;
@@ -55,9 +63,9 @@ fn reference(target: &str, label: &str) -> Option<Reference> {
     })
 }
 
-fn markdown_link(text: &str) -> Option<(usize, Option<Reference>)> {
+fn markdown_link(text: &str, budget: &mut usize) -> Option<(usize, Option<Reference>)> {
     let text = text.strip_prefix('[')?;
-    let label_end = bounded(text).find(['[', ']', '\n'])?;
+    let (label_end, _) = scan(text, budget).find(|(_, c)| matches!(*c, '[' | ']' | '\n'))?;
     if !text[label_end..].starts_with("](") {
         return None;
     }
@@ -65,7 +73,7 @@ fn markdown_link(text: &str) -> Option<(usize, Option<Reference>)> {
     let tail = &text[target_start..];
     let mut depth = 1_usize;
     let mut escaped = false;
-    for (offset, character) in tail.char_indices().take(MAX_REFERENCE_BYTES) {
+    for (offset, character) in scan(tail, budget) {
         if escaped {
             escaped = false;
             continue;
@@ -105,23 +113,33 @@ fn markdown_target(text: &str) -> &str {
     text
 }
 
-fn bounded(text: &str) -> &str {
-    let mut end = text.len().min(MAX_REFERENCE_BYTES);
+fn prefix(text: &str, limit: usize) -> &str {
+    let mut end = text.len().min(limit);
     while !text.is_char_boundary(end) {
         end -= 1;
     }
-    debug_assert!(end <= MAX_REFERENCE_BYTES);
+    debug_assert!(end <= limit);
     debug_assert!(text.is_char_boundary(end));
     &text[..end]
 }
 
-fn osc_link(text: &str) -> Option<(usize, Option<Reference>)> {
+fn scan<'a>(text: &'a str, budget: &'a mut usize) -> impl Iterator<Item = (usize, char)> + 'a {
+    let text = prefix(text, (*budget).min(MAX_REFERENCE_BYTES));
+    text.char_indices().inspect(|(_, character)| {
+        debug_assert!(*budget >= character.len_utf8());
+        *budget -= character.len_utf8();
+    })
+}
+
+fn osc_link(text: &str, budget: &mut usize) -> Option<(usize, Option<Reference>)> {
     let header = text.strip_prefix("\x1b]8;")?;
-    let (header_end, terminator_length) = osc_terminator(header)?;
+    let (header_end, terminator_length) = osc_terminator(header, budget)?;
     let target = header[..header_end].split_once(';')?.1;
     let label_start = 4 + header_end + terminator_length;
     let label_tail = &text[label_start..];
-    let label_end = bounded(label_tail).find("\x1b]8;;")?;
+    let (label_end, _) = scan(label_tail, budget).find(|(index, character)| {
+        *character == '\x1b' && label_tail[*index..].starts_with("\x1b]8;;")
+    })?;
     let closing = &label_tail[label_end + 5..];
     let closing_length = if closing.starts_with('\x07') {
         1
@@ -136,8 +154,8 @@ fn osc_link(text: &str) -> Option<(usize, Option<Reference>)> {
     Some((consumed, reference(target, &label_tail[..label_end])))
 }
 
-fn osc_terminator(text: &str) -> Option<(usize, usize)> {
-    bounded(text).char_indices().find_map(|(index, character)| {
+fn osc_terminator(text: &str, budget: &mut usize) -> Option<(usize, usize)> {
+    scan(text, budget).find_map(|(index, character)| {
         if character == '\x07' {
             Some((index, 1))
         } else if text[index..].starts_with("\x1b\\") {
@@ -360,6 +378,31 @@ mod tests {
         let long = format!("{}.rs", "a".repeat(MAX_REFERENCE_BYTES));
         assert!(parse(&long).is_empty());
         assert!(parse("[bad](file:///tmp/%FF.rs)").is_empty());
+    }
+
+    #[test]
+    fn malformed_link_lookahead_has_one_shared_budget() {
+        for fragment in ["[a](", "\x1b]8;"] {
+            let text = fragment.repeat(MAX_PARSE_BYTES / fragment.len());
+            let mut budget = MAX_LOOKAHEAD_BYTES;
+            assert!(parse_with_budget(&text, &mut budget).is_empty());
+            assert_eq!(budget, 0, "unterminated links must exhaust shared credit");
+        }
+        let text = "[a](".repeat(1024);
+        let mut budget = 64;
+        assert!(parse_with_budget(&text, &mut budget).is_empty());
+        assert_eq!(budget, 0);
+    }
+
+    #[test]
+    fn parse_input_limit_is_utf8_safe_and_keeps_ordinary_link_capacity() {
+        let text = (0..MAX_REFERENCES)
+            .map(|index| format!("[file {index}](file-{index}.txt) "))
+            .collect::<String>();
+        assert_eq!(parse(&text).len(), MAX_REFERENCES);
+        let text = format!("{}é hidden.txt", " ".repeat(MAX_PARSE_BYTES - 1));
+        assert!(parse(&text).is_empty());
+        assert_eq!(prefix(&text, MAX_PARSE_BYTES).len(), MAX_PARSE_BYTES - 1);
     }
 
     #[test]
