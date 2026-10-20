@@ -59,6 +59,9 @@ impl App {
             return;
         }
         self.viewer.picker = refs;
+        self.viewer.request = self.viewer.request.wrapping_add(1);
+        self.viewer.pending = None;
+        self.viewer.preview = None;
         self.viewer.cursor = 0;
         self.viewer.scroll = 0;
         self.viewer.open = true;
@@ -119,7 +122,7 @@ impl App {
     }
 
     pub(crate) fn viewer_key(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
-        if self.bottom_covered() {
+        if self.bottom_covered() || self.board.focused() {
             return None;
         }
         if self.keys.matches(KeyAction::Files, key) {

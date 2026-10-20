@@ -425,6 +425,67 @@ fn split_viewer_keeps_every_letter_in_new_and_existing_drafts() {
 }
 
 #[test]
+fn picker_discards_previous_preview_and_survives_layout_changes() {
+    let (_dir, mut app) = setup();
+    key(&mut app, KeyCode::Char('o'), KeyModifiers::ALT);
+    let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    load(&mut app, effects);
+    let previous = app.viewer.request;
+    assert!(app.viewer.path().is_some());
+    key(&mut app, KeyCode::Char('o'), KeyModifiers::ALT);
+    assert!(app.viewer.pending.is_none());
+    assert!(app.viewer.preview.is_none());
+    assert!(app.viewer.path().is_none());
+    app.reduce(AppEvent::PreviewReady {
+        id: previous,
+        result: Err("late old file".into()),
+    });
+    assert!(app.viewer.preview.is_none());
+    for event in [
+        AppEvent::Key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT)),
+        AppEvent::Key(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::ALT)),
+        AppEvent::Key(KeyEvent::new(KeyCode::Char('='), KeyModifiers::ALT)),
+        AppEvent::Resize(140, 40),
+    ] {
+        let effects = app.reduce(event);
+        assert!(
+            !effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::PreviewFile(_)))
+        );
+        assert_eq!(app.viewer.picker.len(), 1);
+        assert!(app.viewer.pending.is_none());
+    }
+    assert!(key(&mut app, KeyCode::Char('e'), KeyModifiers::ALT).is_empty());
+    let screen = render_with(&app, &mut ViewCache::default(), 140, 40);
+    assert!(screen.contains("Files · Tab"));
+    let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(matches!(&effects[..], [Effect::PreviewFile(_)]));
+    assert!(app.viewer.picker.is_empty());
+}
+
+#[test]
+fn focused_board_owns_its_space_and_escape_before_the_viewer() {
+    let (_dir, mut app) = setup();
+    for fullscreen in [false, true] {
+        app.viewer.open = true;
+        app.viewer.focused = true;
+        app.viewer.fullscreen = fullscreen;
+        key(&mut app, KeyCode::Char('g'), KeyModifiers::CONTROL);
+        assert!(app.board.focused());
+        let mut cache = ViewCache::default();
+        render_with(&app, &mut cache, 160, 40);
+        assert!(cache.viewer_area.is_empty());
+        assert!(!cache.regions.board.is_empty());
+        key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        assert!(!app.board.focused());
+        assert!(app.viewer.open);
+        render_with(&app, &mut cache, 160, 40);
+        assert!(!cache.viewer_area.is_empty());
+    }
+}
+
+#[test]
 fn fullscreen_keys_cannot_send_hidden_draft_and_tab_reveals_chat() {
     let (_dir, mut app) = setup();
     key(&mut app, KeyCode::Char('o'), KeyModifiers::ALT);

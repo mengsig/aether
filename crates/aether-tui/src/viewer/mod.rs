@@ -84,6 +84,7 @@ impl Viewer {
 
 pub(crate) fn visible(app: &crate::App) -> bool {
     app.viewer.open
+        && !app.board.focused()
         && app.shown_approval().is_none()
         && !app.approval_too_short()
         && !app.bottom.top_view().is_some_and(|view| view.fullscreen())
