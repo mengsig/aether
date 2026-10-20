@@ -49,9 +49,15 @@ async fn image_only_paste_ignores_offered_plain_text() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn smart_paste_keeps_images_without_plain_text_and_preserves_text_bytes() {
+async fn smart_paste_prefers_an_offered_image_and_preserves_text_bytes() {
     let png = b"\x89PNG\r\n\x1a\npixels";
-    for listing in ["image/png\n", "text/html\nimage/png\n"] {
+    // Screenshot tools, then browsers and chat apps that put text beside the image.
+    for listing in [
+        "image/png\n",
+        "text/html\nimage/png\n",
+        "text/plain\nimage/png\n",
+        "text/html\ntext/_moz_htmlinfo\nUTF8_STRING\ntext/plain;charset=utf-8\nimage/png\n",
+    ] {
         let (_dir, program) = fake_wayland(listing, png);
         let content = paste_with(ClipboardTool::WlPaste, &program, &program).await;
         let ClipboardContent::Image(image) = content.expect("image paste") else {
@@ -64,7 +70,7 @@ async fn smart_paste_keeps_images_without_plain_text_and_preserves_text_bytes() 
     let text = "  leading\r\nλ and trailing\n\n";
     for listing in [
         "text/plain;charset=utf-8\ntext/plain\n",
-        "text/plain\nimage/png\n",
+        "text/html\ntext/plain\n",
         "text/plain;charset=iso-8859-1\n",
         "UTF8_STRING\n",
         "TEXT\n",
@@ -109,7 +115,7 @@ async fn smart_paste_reports_empty_missing_broken_and_invalid_contents() {
 async fn smart_paste_uses_xclip_targets_and_its_default_text_output() {
     let (_dir, program) = fake_helper(
         r#"case "$*" in
-        '-selection clipboard -t TARGETS -o') printf 'TARGETS\nimage/png\nUTF8_STRING\n' ;;
+        '-selection clipboard -t TARGETS -o') printf 'TARGETS\ntext/html\nUTF8_STRING\n' ;;
         '-selection clipboard -o') printf '  text\n\n' ;;
         *) exit 64 ;;
         esac"#,
@@ -118,7 +124,7 @@ async fn smart_paste_uses_xclip_targets_and_its_default_text_output() {
     assert!(matches!(content, Ok(ClipboardContent::Text(text)) if text == "  text\n\n"));
     let (_dir, program) = fake_helper(
         r#"case "$*" in
-        '-selection clipboard -t TARGETS -o') printf 'image/png\ntext/html\n' ;;
+        '-selection clipboard -t TARGETS -o') printf 'UTF8_STRING\nimage/png\ntext/html\n' ;;
         '-selection clipboard -o -t image/png') printf '\211PNG\r\n\032\npixels' ;;
         *) exit 64 ;;
         esac"#,
@@ -144,12 +150,95 @@ async fn smart_paste_probes_macos_before_using_png_or_pbpaste() {
     let (_dir, program) = fake_helper(
         r#"case "$*" in
         '-e clipboard info') printf '{«class utf8», 7}, {«class PNGf», 14}' ;;
+        '-e get the clipboard as «class PNGf»') printf '«data PNGf89504E470D0A1A0A706978656C73»' ;;
+        '') printf ' text\n\n' ;;
+        *) exit 64 ;;
+        esac"#,
+    );
+    let content = paste_with(ClipboardTool::Osascript, &program, &program).await;
+    assert!(matches!(content, Ok(ClipboardContent::Image(image)) if image.size_bytes() == 14));
+    let (_dir, program) = fake_helper(
+        r#"case "$*" in
+        '-e clipboard info') printf '{«class utf8», 7}' ;;
         '') printf ' text\n\n' ;;
         *) exit 64 ;;
         esac"#,
     );
     let content = paste_with(ClipboardTool::Osascript, &program, &program).await;
     assert!(matches!(content, Ok(ClipboardContent::Text(text)) if text == " text\n\n"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_image_the_helper_refuses_falls_back_to_the_offered_text() {
+    let (_dir, program) = fake_helper(
+        r#"case "$*" in
+        --list-types) printf 'image/png\ntext/plain\n' ;;
+        '--type image/png') exit 1 ;;
+        '--no-newline --type text/plain') printf 'words' ;;
+        *) exit 64 ;;
+        esac"#,
+    );
+    let content = paste_with(ClipboardTool::WlPaste, &program, &program).await;
+    assert!(matches!(content, Ok(ClipboardContent::Text(text)) if text == "words"));
+}
+
+/// A file copied in a file manager, as `wl-paste` and `xclip` serve it.
+#[cfg(unix)]
+fn fake_file_manager(tool: ClipboardTool, uri_list: &str) -> (tempfile::TempDir, String) {
+    let script = match tool {
+        ClipboardTool::WlPaste => {
+            r#"case "$*" in
+            --list-types) printf 'x-special/gnome-copied-files\ntext/uri-list\n' ;;
+            '--no-newline --type text/uri-list') cat "${0%/*}/uris" ;;
+            *) exit 64 ;;
+            esac"#
+        }
+        _ => {
+            r#"case "$*" in
+            '-selection clipboard -t TARGETS -o') printf 'TARGETS\ntext/uri-list\n' ;;
+            '-selection clipboard -o -t text/uri-list') cat "${0%/*}/uris" ;;
+            *) exit 64 ;;
+            esac"#
+        }
+    };
+    let (dir, program) = fake_helper(script);
+    std::fs::write(dir.path().join("uris"), uri_list).expect("copied files");
+    assert!(dir.path().join("uris").is_file());
+    (dir, program)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn one_copied_image_file_is_attached_and_other_file_lists_are_text() {
+    let dir = tempfile::tempdir().expect("copied files");
+    let image = dir.path().join("shot one.png");
+    std::fs::write(&image, b"\x89PNG\r\n\x1a\npixels").expect("image");
+    let url = format!("file://{}", image.display()).replace(' ', "%20");
+    for tool in [ClipboardTool::WlPaste, ClipboardTool::Xclip] {
+        let (_helper, program) = fake_file_manager(tool, &format!("# copy\r\n{url}\r\n"));
+        let content = paste_with(tool, &program, &program).await;
+        let Ok(ClipboardContent::ImagePath { text, image }) = content else {
+            panic!("{tool:?}: one image file was copied: {content:?}");
+        };
+        assert_eq!(text, url);
+        assert_eq!(
+            image.expect("readable image").name.as_deref(),
+            Some("shot one.png")
+        );
+
+        let two = format!("{url}\r\nfile:///etc/hostname\r\n");
+        let (_helper, program) = fake_file_manager(tool, &two);
+        let content = paste_with(tool, &program, &program).await;
+        let expected = format!("{url}\nfile:///etc/hostname");
+        assert!(matches!(content, Ok(ClipboardContent::Text(text)) if text == expected));
+
+        let (_helper, program) = fake_file_manager(tool, "# nothing\r\n");
+        let error = paste_with(tool, &program, &program)
+            .await
+            .expect_err("no URLs");
+        assert_eq!(error, NO_CONTENT);
+    }
 }
 
 #[test]

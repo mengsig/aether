@@ -32,6 +32,7 @@ mod runner;
 pub mod testing;
 pub mod ui;
 pub mod viewed;
+pub mod viewer;
 pub mod voice;
 pub mod workspace;
 

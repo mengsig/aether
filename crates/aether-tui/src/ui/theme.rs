@@ -7,6 +7,7 @@
 pub mod choice;
 mod colors;
 pub mod files;
+pub(crate) mod image;
 pub mod overrides;
 pub mod probe;
 pub mod scheme;

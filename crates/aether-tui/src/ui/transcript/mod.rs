@@ -73,6 +73,11 @@ pub struct ViewCache {
     /// W2: the streaming reply's last rendering.
     pub stream: StreamCache,
     pub find_hit: FindHitCache,
+    pub file_hits: Vec<crate::viewer::Hit>,
+    pub file_references: crate::viewer::cache::ReferenceCache,
+    pub viewer_area: Rect,
+    pub graphics_placement: Option<(u64, Rect, crate::viewer::probe::Protocol)>,
+    pub pending_file_hit: Option<(Option<AgentId>, crate::viewer::Hit)>,
 }
 
 /// The current find hit's rows: mapping it walks its whole cell, too slow per frame.
@@ -151,6 +156,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, cache: &mut ViewCache, t
         let gap = rows.gap(pos.item, layout);
         let lines = rows.lines(pos.item, layout);
         let cell = rows.cell(pos.item);
+        let references = cell
+            .map(|c| cache.file_references.get(agent, transcript.epoch, c))
+            .unwrap_or_default();
         let current_hit = cell
             .and_then(|cell| {
                 let find = app.bottom.find.as_ref()?;
@@ -181,6 +189,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, cache: &mut ViewCache, t
                     }
                 }
                 let at = Rect::new(area.x, area.y + y as u16, area.width, 1);
+                if let Some(cell) = cell {
+                    let matches = file_row_matches(&lines, row - gap, &references, &line, theme);
+                    crate::viewer::mark_references(
+                        &mut line,
+                        at,
+                        &matches,
+                        cell.id,
+                        &mut cache.file_hits,
+                        theme,
+                    );
+                }
                 paint_line(frame, at, &line);
             }
             y += 1;
@@ -192,11 +211,55 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App, cache: &mut ViewCache, t
     }
     if let Some((pinned, point)) = pinned_prompt(&rows, top, layout) {
         cache.mouse.pinned = Some(point);
+        cache.file_hits.retain(|hit| hit.area.y != area.y);
         // Header row, then an untinted blank so the next cell reads apart from it.
         let at = Rect::new(area.x, area.y, area.width, PINNED_ROWS.min(area.height));
         frame.render_widget(ratatui::widgets::Clear, at);
         paint_line(frame, Rect { height: 1, ..at }, &pinned);
     }
+}
+
+fn file_row_matches(
+    lines: &ItemLines<'_>,
+    row: usize,
+    refs: &[crate::viewer::references::Reference],
+    line: &Line<'_>,
+    theme: &Theme,
+) -> Vec<(crate::viewer::references::Reference, Vec<(usize, usize)>)> {
+    refs.iter()
+        .filter_map(|reference| {
+            let mut ranges = row_hits(lines, row, &reference.target);
+            let ambiguous = refs
+                .iter()
+                .any(|other| other.label == reference.label && other.target != reference.target);
+            if reference.label != reference.target && !ambiguous {
+                ranges.extend(
+                    row_hits(lines, row, &reference.label)
+                        .into_iter()
+                        .filter(|range| styled_link(line, *range, theme.link())),
+                );
+            }
+            (!ranges.is_empty()).then(|| (reference.clone(), ranges))
+        })
+        .collect()
+}
+
+fn styled_link(line: &Line<'_>, (start, end): (usize, usize), style: Style) -> bool {
+    let mut offset = 0;
+    let mut covered = 0;
+    for span in &line.spans {
+        let span_end = offset + span.content.len();
+        if span_end > start && offset < end {
+            if span.style.fg != style.fg || !span.style.add_modifier.contains(style.add_modifier) {
+                return false;
+            }
+            covered += span_end.min(end) - offset.max(start);
+        }
+        offset = span_end;
+    }
+    debug_assert!(start <= end);
+    debug_assert!(covered <= end - start);
+    covered > 0 && covered == end - start
 }
 
 /// A row with its line style across the full width. ratatui skips the style
@@ -560,7 +623,7 @@ fn highlight_matches(
 }
 
 /// Patch `style` over the byte ranges `hits` of `line`.
-fn highlight_line(line: &mut Line<'static>, hits: &[(usize, usize)], style: Style) {
+pub(crate) fn highlight_line(line: &mut Line<'static>, hits: &[(usize, usize)], style: Style) {
     if hits.is_empty() {
         return;
     }

@@ -370,6 +370,11 @@ impl Theme {
         self.hue(Hue::Link).add_modifier(Modifier::UNDERLINED)
     }
 
+    /// File targets retain error, search and code colours from their content.
+    pub fn file_reference(&self) -> Style {
+        Style::default().add_modifier(Modifier::UNDERLINED)
+    }
+
     pub fn heading(&self) -> Style {
         self.hue(Hue::Heading).add_modifier(Modifier::BOLD)
     }

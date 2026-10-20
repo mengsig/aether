@@ -199,21 +199,28 @@ are three ways to attach one, and each adds a chip above the draft,
   text.
 - **`/image <path>`** attaches a file by name; `~` and paths relative to the
   workspace resolve as they do elsewhere.
-- **Ctrl+V** pastes from the clipboard, preferring plain text when offered
-  alongside an image. Screenshots and browser “copy image” clipboards without
-  plain text attach the image. Text uses the same long-text placeholders and
-  image-path detection as the terminal's paste. **Alt+V** and `/image` with
-  no path attach only the clipboard image. Clipboard reads run in the
-  background through `wl-paste` on Wayland, `xclip` on X11, or `osascript` and
-  `pbpaste` on macOS. If the helper is missing or the clipboard is empty, the
-  status row says so in one line and the draft is untouched. Over SSH the
-  clipboard is on the other machine: copy the file across and use `/image <path>`.
+- **Ctrl+V** pastes from the clipboard. An image on the clipboard is
+  attached, even when the app that copied it (a browser, a chat app) offers
+  text beside it. A file copied in a file manager (`text/uri-list`) attaches
+  when it is one PNG, JPEG, GIF or WebP file. Otherwise the clipboard's text is
+  pasted, with the same long-text placeholders and image-path detection as the
+  terminal's paste. While the board, a view or find holds the keys, Ctrl+V
+  says so and leaves the clipboard alone.
+  **Alt+V** and `/image` with no path attach only the clipboard image.
+  Clipboard reads run in the background through `wl-paste` on Wayland,
+  `xclip` on X11, or `osascript` and `pbpaste` on macOS. If the helper is
+  missing or the clipboard is empty, the status row says so in one line and
+  the draft is untouched. Over SSH the clipboard is on the other machine: copy
+  the file across and use `/image <path>`.
 
-The terminal's own paste (usually **Ctrl+Shift+V**) normally delivers text.
-If it sends a truly empty bracketed paste while the composer has focus,
-Aether tries to attach the clipboard image. Some terminals send
-nothing for an image; use **Ctrl+V** in that case. Existing custom key bindings
-take precedence over the new Ctrl+V default; `/keys` shows the active binding.
+**Ctrl+Shift+V**, the terminal's own paste, pastes text: use it when the
+clipboard holds both and you want the text. If the terminal sends a truly
+empty bracketed paste while the composer has focus, Aether tries to attach the
+clipboard image; some terminals send nothing for an image, so use **Ctrl+V**
+there. Ctrl+V is read the same in terminals using the kitty keyboard protocol
+(Ghostty, kitty, foot) and in legacy ones. Existing custom key
+bindings take precedence over the Ctrl+V default; `/keys` shows the active
+binding.
 Whitespace-only pastes keep their whitespace; plain-mode input stays text.
 
 Chips stay through slash commands and leave with the next message. Backspace
@@ -561,6 +568,12 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+G` | go to the agents board, opening it if hidden |
 | `Ctrl+B` | show / hide the agents board |
 | `Ctrl+O` | switch workspace: view its agent, or start one there |
+| `Alt+O` | files in the focused or latest message |
+| `Alt+E` | open the viewed file externally |
+| `Alt+W` | close the file viewer |
+| `Alt+Z` | toggle full screen file viewer |
+| `Alt+-` | narrow the file viewer |
+| `Alt+=` | widen the file viewer |
 | `Alt+N` | the notification center: answer, mark read, resolve, go to the chat |
 | `Alt+↑` | view the parent agent |
 | `Ctrl+T` | details: full outputs and reasoning |
@@ -588,7 +601,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+A / Ctrl+E` | start / end of the line |
 | `Ctrl+W / Ctrl+U / Ctrl+K` | delete word back / to line start / to line end |
 | `Ctrl+Y` | paste what was last deleted |
-| `Ctrl+V / Alt+V` | paste clipboard text or image / force an image |
+| `Ctrl+V / Alt+V` | paste the clipboard image, else its text (Ctrl+Shift+V: text) / only an image |
 | `Alt+B / Alt+F / Ctrl+← / Ctrl+→` | move a word back / forward |
 
 **In the board (Ctrl+G)**
@@ -835,3 +848,44 @@ it cannot erase or replay earlier output. Suppressed cells and streamed prefixes
 advance output cursors. Questions and approvals remain answerable, and output is
 sanitized as usual. Rendering caches the visible index and updates changed cells
 from a bounded journal, so unchanged frames do not rescan hidden history.
+
+## Local file viewer
+
+**Alt+O** lists local file references in the last clicked message, or the
+latest message when none is focused. Bare paths, Markdown links and local
+`file://` links are supported. Click a highlighted reference without dragging
+to open it; dragging continues to select text. The viewed agent's own
+workspace resolves relative paths, including a child's separate workspace.
+OSC 8 links are parsed when present in the original message; terminal control
+sequences are stripped before painting.
+Reference discovery examines the first 256 KiB of each message, with a shared
+256 KiB lookahead budget and at most 256 references, so malformed links cannot
+trigger repeated unbounded scans while output streams.
+
+The viewer starts at half width. **Alt+- / Alt+=** resize it, **Alt+Z** toggles
+full screen, and **Esc** (with the viewer focused) or **Alt+W** closes it. Narrow terminals show it full width.
+**Tab** switches focus and leaves full screen when returning to chat; arrows and PageUp/PageDown scroll while focused, and
+**Alt+E** opens the selected file through `xdg-open` (Linux) or `open` (macOS).
+Approvals retain priority. Closing the viewer does not stop the agent.
+Full screen blocks composer edits and pastes; **Tab** returns to chat.
+Completed dictation is retained for later insertion. **Ctrl+C** closes a
+full-screen viewer before it can clear the draft.
+
+PNG, JPEG, GIF (first frame) and WebP decode off the UI thread, as do text and
+Markdown layout. A startup terminal query, bounded to 200 ms, chooses Kitty,
+Sixel or iTerm2; no terminal-name guessing is used. Missing pixel cell metrics
+or an unsupported terminal falls back to coloured Unicode half blocks.
+Through tmux and SSH, unsupported or unanswered probes also fall back; no
+passthrough configuration is changed. An SSH-connected remote agent shows a
+notice rather than reading a same-named local path. There are no URL fetches.
+
+Image inputs are limited to 20 MiB, 8 million pixels and a 64 MiB decoder
+allocation budget; rendering is capped separately. UTF-8 text inputs are
+limited to 1 MiB, with a preview of up to 64 KiB / 4,000 lines. Terminal
+controls are stripped. Only one decode runs at a time; rapid resize requests
+coalesce. A canonical path outside the workspace requires a second Enter
+before reading. Native protocol encodings are cached until the preview
+changes. Markdown uses existing styles; language-specific syntax highlighting
+is deferred. PDF, HTML and SVG offer **Alt+E** to open externally; in-pane PDF and
+HTML rendering are planned follow-ups. HTML scripts are never executed by the
+TUI.

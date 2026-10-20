@@ -199,6 +199,7 @@ pub struct App {
     /// Scroll intents for `ui::transcript` to resolve at draw time.
     pub scroll_log: transcript::ScrollLog,
     pub board: board::BoardState,
+    pub viewer: crate::viewer::Viewer,
     pub bottom: crate::ui::bottom::BottomPane,
     /// Every colour the UI paints comes from here.
     pub theme: Theme,
@@ -235,6 +236,7 @@ mod input_state;
 pub use input_state::{EFFORTS, InputState, PastedText};
 mod helpers;
 mod images;
+mod viewer;
 pub(crate) use helpers::sibling_names;
 pub use helpers::{
     InboxEntry, cli_missing, install_command, name_of_id, split_inbox_text, status_glyph,

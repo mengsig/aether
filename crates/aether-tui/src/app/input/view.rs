@@ -136,6 +136,10 @@ impl App {
             self.flash("paste ignored: the board has focus (esc leaves it)");
             return Vec::new();
         }
+        if crate::viewer::hides_composer(self) {
+            self.flash("paste ignored: the file viewer is full screen (Tab returns to chat)");
+            return Vec::new();
+        }
         let Some(mut view) = self.bottom.view_stack.pop() else {
             if self.bottom.find.is_some() {
                 self.find_paste(text);

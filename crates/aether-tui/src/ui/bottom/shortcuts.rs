@@ -372,7 +372,6 @@ mod tests {
     use super::*;
     use crate::ui::theme::tokens::ThemeSpec;
 
-    const HEIGHT: u16 = 64;
     /// Panel widths the review measured: narrow, the 2- and 3-column
     /// thresholds, and the left pane beside a board docked at 200 columns.
     const WIDTHS: [(u16, usize); 7] = [
@@ -384,6 +383,11 @@ mod tests {
         (143, 3),
         (200, 3),
     ];
+
+    fn full_height(theme: &Theme, width: u16) -> u16 {
+        let rows = lines(width, theme, &KeyBindings::default());
+        u16::try_from(rows.len() + 3).unwrap()
+    }
 
     fn draw(theme: &Theme, width: u16, height: u16) -> (Buffer, Vec<String>) {
         draw_scrolled(theme, width, height, 0)
@@ -436,7 +440,7 @@ mod tests {
 
     fn assert_whole_and_grouped(theme: &Theme, width: u16, columns: usize) {
         let ascii = theme.ascii();
-        let (buffer, rows) = draw(theme, width, HEIGHT);
+        let (buffer, rows) = draw(theme, width, full_height(theme, width));
         let ellipsis = theme.glyphs().ellipsis;
         assert!(
             rows.iter().all(|r| !r.contains(ellipsis)),
@@ -492,7 +496,7 @@ mod tests {
             ..Default::default()
         });
         for (width, _) in WIDTHS {
-            let (_, rows) = draw(&theme, width, HEIGHT);
+            let (_, rows) = draw(&theme, width, full_height(&theme, width));
             for row in &rows {
                 assert!(row.is_ascii(), "{row:?}");
             }
@@ -641,7 +645,7 @@ mod tests {
     #[test]
     fn a_tall_screen_has_no_more_row() {
         let theme = Theme::resolve(ThemeSpec::default());
-        let (_, rows) = draw(&theme, 80, HEIGHT);
+        let (_, rows) = draw(&theme, 80, full_height(&theme, 80));
         let cue = |r: &String| r.contains(" more ·") || r.contains("pgdn scroll");
         assert!(!rows.iter().any(cue), "{rows:#?}");
         assert!(rows.iter().any(|r| r.contains("? or esc to close")));

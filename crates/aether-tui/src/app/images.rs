@@ -56,6 +56,18 @@ impl App {
         Vec::new()
     }
 
+    /// Ctrl+V: the clipboard image, else its text. Alt+V: only an image.
+    pub(crate) fn paste_key(&mut self, image_only: bool) -> Vec<Effect> {
+        if !self.paste_reaches_composer() {
+            self.flash_hidden_composer("paste ignored");
+            return Vec::new();
+        }
+        if image_only {
+            return self.paste_clipboard_image();
+        }
+        self.paste_clipboard()
+    }
+
     pub(crate) fn paste_clipboard(&mut self) -> Vec<Effect> {
         self.input.image_reads += 1;
         vec![Effect::PasteClipboard]
@@ -72,7 +84,13 @@ impl App {
         self.input.image_reads = self.input.image_reads.saturating_sub(1);
         debug_assert!(self.input.images.len() <= MAX_IMAGES_PER_MESSAGE);
         match content {
-            Ok(ClipboardContent::Image(image)) => self.attach_image(image),
+            Ok(_) if crate::viewer::hides_composer(self) => {
+                self.flash("paste ignored: the file viewer is full screen (Tab returns to chat)");
+            }
+            Ok(ClipboardContent::Image(image)) if self.paste_reaches_composer() => {
+                self.attach_image(image);
+            }
+            Ok(ClipboardContent::Image(_)) => self.flash_hidden_composer("image not attached"),
             Ok(ClipboardContent::Text(text)) => return self.dispatch_paste(&text),
             Ok(ClipboardContent::ImagePath { text, image }) => {
                 return self.image_path_pasted(&text, image);
@@ -113,6 +131,20 @@ impl App {
             && self.bottom.view_stack.is_empty()
             && self.bottom.find.is_none()
             && !self.search_focused()
+            && !crate::viewer::hides_composer(self)
+    }
+
+    /// Nothing lands in a draft the person cannot see; say what hides it.
+    fn flash_hidden_composer(&mut self, outcome: &str) {
+        debug_assert!(!outcome.is_empty());
+        let reason = if self.shown_approval().is_some() {
+            "answer the approval first"
+        } else if self.board.focused() {
+            "the board has focus (esc leaves it)"
+        } else {
+            "esc closes what covers the draft first"
+        };
+        self.flash(format!("{outcome}: {reason}"));
     }
 
     /// `Effect::AttachImage` finished.
@@ -120,6 +152,9 @@ impl App {
         debug_assert!(self.input.image_reads > 0, "an image nothing asked for");
         self.input.image_reads = self.input.image_reads.saturating_sub(1);
         match image {
+            Ok(_) if crate::viewer::hides_composer(self) => {
+                self.flash("image not attached: return to chat before pasting");
+            }
             Ok(image) => self.attach_image(image),
             Err(reason) => self.flash_error(format!("no image attached: {reason}")),
         }

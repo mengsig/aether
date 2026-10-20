@@ -59,6 +59,28 @@ fn recording_is_visible_while_composing() {
 }
 
 #[test]
+fn fullscreen_viewer_retains_voice_until_chat_is_visible() {
+    let mut app = app();
+    app.input.set_text("kept ");
+    let id = record(&mut app);
+    app.viewer.open = true;
+    app.viewer.fullscreen = true;
+    app.reduce(AppEvent::Voice(Reply::Recorded {
+        id,
+        result: Ok("dictated".into()),
+    }));
+    assert_eq!(app.input.text, "kept ");
+    assert!(app.voice.recovered.is_some());
+    assert!(app.voice_action(Action::Insert).is_empty());
+    assert_eq!(app.input.text, "kept ");
+    assert!(app.voice.recovered.is_some());
+    app.viewer.fullscreen = false;
+    app.voice_action(Action::Insert);
+    assert_eq!(app.input.text, "kept dictated");
+    assert!(app.voice.recovered.is_none());
+}
+
+#[test]
 fn typed_stop_retains_recoverable_draft_and_explicit_insert_never_overwrites() {
     let mut app = app();
     let id = record(&mut app);

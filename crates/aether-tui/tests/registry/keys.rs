@@ -117,7 +117,7 @@ fn assert_does_something(case: &KeyCase) {
 /// Everything a key press may change. None of it moved and no effect: the key did nothing.
 fn snapshot(app: &App) -> String {
     format!(
-        "{:?}|{}|{:?}|{}|{}|{:?}|{:?}|{}|{:?}|{}|{}|{:?}|{:?}|{}|{}|{}|{:?}",
+        "{:?}|{}|{:?}|{}|{}|{:?}|{:?}|{}|{:?}|{}|{}|{:?}|{:?}|{}|{}|{}|{:?}|{:?}",
         app.input.text,
         app.input.cursor,
         app.selected,
@@ -135,6 +135,7 @@ fn snapshot(app: &App) -> String {
         app.live_flash().unwrap_or(""),
         app.bottom.approval.cursor,
         app.bottom.approval.deferred,
+        app.viewer,
     )
 }
 
@@ -150,6 +151,13 @@ fn staged(stage: Stage) -> App {
         app.dispatch_key(KeyEvent::new(code, mods));
     };
     match stage {
+        Stage::Viewer => {
+            app.viewer.open = true;
+            app.board.open = false;
+            app.viewer.preview = Some(Ok(aether_tui::viewer::Preview::Unsupported(
+                std::path::PathBuf::from("preview.txt"),
+            )));
+        }
         Stage::Busy | Stage::Approval => {}
         Stage::ChildApproval => {
             let child = add_child(&mut app, viewed);

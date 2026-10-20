@@ -62,6 +62,10 @@ impl App {
 
     pub(super) fn reduce_inner(&mut self, event: AppEvent) -> Vec<Effect> {
         match event {
+            AppEvent::PreviewReady { id, result } => {
+                self.preview_ready(id, result);
+                Vec::new()
+            }
             AppEvent::ViewModesLoaded(catalog) => {
                 self.modes_loaded(catalog);
                 Vec::new()
@@ -87,7 +91,11 @@ impl App {
                     self.board.focus = BoardFocus::BottomPane;
                 }
                 self.dirty = true;
-                Vec::new()
+                if self.viewer.open {
+                    self.reload_preview()
+                } else {
+                    Vec::new()
+                }
             }
             AppEvent::Focus(focused) => {
                 self.terminal_focused = focused;

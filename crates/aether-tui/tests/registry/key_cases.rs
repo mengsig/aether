@@ -24,6 +24,7 @@ pub(super) enum Stage {
     Queued,
     /// A word cut with Ctrl+W, so the kill ring has something to paste.
     Killed,
+    Viewer,
     VoiceCapture,
     VoiceRecovery,
 }
@@ -106,6 +107,12 @@ pub(super) fn cases() -> Vec<KeyCase> {
         case("Ctrl+B", Global, KeyCode::Char('b'), ctrl, Busy),
         case("Ctrl+O", Global, KeyCode::Char('o'), ctrl, Busy),
         case("Ctrl+O", Global, KeyCode::Char('o'), ctrl, Idle),
+        case("Alt+O", Global, KeyCode::Char('o'), alt, Idle),
+        case("Alt+E", Global, KeyCode::Char('e'), alt, Viewer),
+        case("Alt+W", Global, KeyCode::Char('w'), alt, Viewer),
+        case("Alt+Z", Global, KeyCode::Char('z'), alt, Viewer),
+        case("Alt+-", Global, KeyCode::Char('-'), alt, Viewer),
+        case("Alt+=", Global, KeyCode::Char('='), alt, Viewer),
         case("Alt+N", Global, KeyCode::Char('n'), alt, Idle),
         case("Alt+↑", Global, KeyCode::Up, alt, Child),
         case("Ctrl+T", Global, KeyCode::Char('t'), ctrl, Busy),

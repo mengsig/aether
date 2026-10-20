@@ -26,6 +26,12 @@ actions! {
     Agents, "agents", "go to the agents", "ctrl+g";
     Board, "board", "show / hide the board", "ctrl+b";
     Workspace, "workspace", "switch workspace", "ctrl+o";
+    Files, "files", "files in this message", "alt+o";
+    ViewerExternal, "viewer_external", "open file externally", "alt+e";
+    ViewerClose, "viewer_close", "close file viewer", "alt+w";
+    ViewerFull, "viewer_full", "full screen file viewer", "alt+z";
+    ViewerLess, "viewer_less", "narrow file viewer", "alt+-";
+    ViewerMore, "viewer_more", "widen file viewer", "alt+=";
     Notifications, "notifications", "notification center", "alt+n";
     Details, "details", "details & reasoning", "ctrl+t";
     History, "history", "search history", "ctrl+r";
@@ -52,7 +58,7 @@ actions! {
     EraseStart, "erase_start", "Erase to line start", "ctrl+u";
     EraseEnd, "erase_end", "Erase to line end", "ctrl+k";
     Yank, "yank", "paste last erased", "ctrl+y";
-    PasteImage, "paste_image", "paste clipboard", "ctrl+v / alt+v";
+    PasteImage, "paste_image", "paste image, else text", "ctrl+v / alt+v";
     WordLeft, "word_left", "Move a word left", "alt+b / ctrl+left";
     WordRight, "word_right", "Move a word right", "alt+f / ctrl+right";
 }

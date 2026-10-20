@@ -221,7 +221,8 @@ impl App {
         }
         match result {
             Ok(text) => {
-                let current = self.selected == Some(capture.agent)
+                let current = !crate::viewer::hides_composer(self)
+                    && self.selected == Some(capture.agent)
                     && self.voice.selection == capture.selection
                     && self.input.revision == capture.revision
                     && self.input.text == capture.draft

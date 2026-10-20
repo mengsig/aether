@@ -57,7 +57,7 @@ async fn ctrl_v_text_uses_the_same_normalisation_and_placeholders_as_a_paste() {
                 .contains("a paste or image")
         );
         let (_dir, program) =
-            fake_wayland("image/png\ntext/plain;charset=utf-8\n", text.as_bytes());
+            fake_wayland("text/html\ntext/plain;charset=utf-8\n", text.as_bytes());
         let content = paste_with(ClipboardTool::WlPaste, &program, &program).await;
         assert!(app.reduce(AppEvent::ClipboardRead(content)).is_empty());
         assert_eq!(app.input.text, reference.input.text);
@@ -175,6 +175,10 @@ fn clipboard_reads_do_not_start_when_a_view_find_or_board_owns_input() {
             app.reduce(ctrl_key(KeyCode::Char(owner)));
         }
         assert!(app.reduce(ctrl_key(KeyCode::Char('v'))).is_empty());
+        let flash = app
+            .live_flash()
+            .expect("a paste key says why it did nothing");
+        assert!(flash.starts_with("paste ignored: "), "{flash}");
         assert!(
             app.reduce(crate::runner::paste_event(String::new()))
                 .is_empty()
@@ -211,4 +215,69 @@ async fn ctrl_v_text_keeps_image_path_detection_and_its_error_fallback() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn ctrl_v_attaches_the_image_a_browser_offers_beside_text() {
+    let mut app = app_with_transcript(&[]);
+    app.input.set_text("what is this");
+    request_clipboard(&mut app);
+    let (_dir, program) = fake_wayland("text/html\ntext/plain\nimage/png\n", PNG);
+    let content = paste_with(ClipboardTool::WlPaste, &program, &program).await;
+    assert!(app.reduce(AppEvent::ClipboardRead(content)).is_empty());
+    assert_eq!(app.input.images.len(), 1);
+    assert_eq!(app.input.images[0].media_type, "image/png");
+    assert_eq!(app.input.text, "what is this");
+    assert_eq!(app.input.image_reads, 0);
+}
+
+#[test]
+fn ctrl_v_on_the_focused_board_says_so_and_alt_v_too() {
+    for paste in [
+        ctrl_key(KeyCode::Char('v')),
+        AppEvent::Key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::ALT,
+        )),
+    ] {
+        let mut app = app_with_transcript(&[]);
+        app.reduce(ctrl_key(KeyCode::Char('g')));
+        assert!(app.board.focused());
+        assert!(app.reduce(paste).is_empty());
+        assert_eq!(
+            app.live_flash(),
+            Some("paste ignored: the board has focus (esc leaves it)")
+        );
+        assert_eq!(app.input.image_reads, 0);
+    }
+}
+
+#[test]
+fn alt_v_reads_only_the_clipboard_image() {
+    let mut app = app_with_transcript(&[]);
+    let alt_v = AppEvent::Key(crossterm::event::KeyEvent::new(
+        KeyCode::Char('v'),
+        KeyModifiers::ALT,
+    ));
+    assert_eq!(
+        app.reduce(alt_v),
+        vec![Effect::AttachImage(ImageSource::Clipboard)]
+    );
+    assert_eq!(app.input.image_reads, 1);
+}
+
+#[test]
+fn a_clipboard_image_that_arrives_behind_a_view_is_not_attached() {
+    let mut app = app_with_transcript(&[]);
+    request_clipboard(&mut app);
+    app.run_slash(SlashCommand::Settings);
+    let image = aether_client::images::image_attachment(PNG, None).expect("png");
+    assert!(
+        app.reduce(AppEvent::ClipboardRead(Ok(ClipboardContent::Image(image))))
+            .is_empty()
+    );
+    assert!(app.input.images.is_empty());
+    assert_eq!(app.input.image_reads, 0);
+    let flash = app.live_flash().expect("why nothing was attached");
+    assert!(flash.starts_with("image not attached: "), "{flash}");
 }

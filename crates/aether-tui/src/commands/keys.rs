@@ -196,8 +196,8 @@ pub const KEYS: &[KeySpec] = &[
     key(
         Compose,
         "Ctrl+V / Alt+V",
-        "paste clipboard text or image / force an image",
-        "paste clipboard",
+        "paste the clipboard image, else its text (Ctrl+Shift+V: text) / only an image",
+        "paste image, else text",
     )
     .bound(&[KeyAction::PasteImage])
     .shown_as("Ctrl+V"),
@@ -248,6 +248,37 @@ pub const KEYS: &[KeySpec] = &[
         "switch workspace",
     )
     .bound(&[KeyAction::Workspace]),
+    key(
+        Session,
+        "Alt+O",
+        "files in the focused or latest message",
+        "files in message",
+    )
+    .bound(&[KeyAction::Files]),
+    key(
+        Session,
+        "Alt+E",
+        "open the viewed file externally",
+        "open file externally",
+    )
+    .bound(&[KeyAction::ViewerExternal]),
+    key(
+        Session,
+        "Alt+W",
+        "close the file viewer",
+        "close file viewer",
+    )
+    .bound(&[KeyAction::ViewerClose]),
+    key(
+        Session,
+        "Alt+Z",
+        "toggle full screen file viewer",
+        "full screen viewer",
+    )
+    .bound(&[KeyAction::ViewerFull]),
+    key(Session, "Alt+-", "narrow the file viewer", "narrow viewer")
+        .bound(&[KeyAction::ViewerLess]),
+    key(Session, "Alt+=", "widen the file viewer", "widen viewer").bound(&[KeyAction::ViewerMore]),
     key(
         Session,
         "Alt+N",

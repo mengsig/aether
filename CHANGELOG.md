@@ -15,6 +15,12 @@ created idempotently on first start.
 
 ### Added
 
+- **Local files beside the chat.** Click a file reference or use Alt+O to
+  preview PNG, JPEG, GIF, WebP, Markdown and text in a resizable side pane.
+  Native terminal graphics fall back to Unicode half blocks. Esc closes the
+  pane while the agent continues; `Alt+E` opens any file externally. Files outside
+  the workspace require confirmation; remote files are never fetched.
+
 - **A notification center.** Agents and services such as Archon post
   questions, blockers, decisions, outcomes and news to one durable center per
   daemon. The TUI counts unread notifications at the bottom right, making
@@ -32,6 +38,15 @@ created idempotently on first start.
 
 ### Fixed
 
+- **Ctrl+V pastes the clipboard image, as in other agent harnesses.** It used
+  to prefer any text offered beside an image, so an image copied from a
+  browser, a chat app or another app that also offers text pasted that text.
+  Ctrl+V now attaches the image whenever the clipboard holds one, attaches a
+  single image file copied in a file manager (`text/uri-list`), and pastes the
+  text otherwise; Ctrl+Shift+V, the terminal's own paste, stays text. With the
+  board, a view or find holding the keys, Ctrl+V and Alt+V now say why
+  nothing was pasted instead of doing nothing (see
+  [images in the TUI guide](https://github.com/mengsig/aether/blob/main/docs/tui.md#images)).
 - **GitHub operator logins dispatch without write access.** A login in the
   watcher's `operator_users` may dispatch on any watched repository whose
   `allowed_users`, if set, admits it, without the collaborator-permission
