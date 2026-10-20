@@ -213,6 +213,50 @@ fn wrapped_unicode_file_references_have_hit_regions_on_both_rows() {
 }
 
 #[test]
+fn file_reference_underlines_preserve_error_and_search_styles() {
+    use ratatui::{layout::Rect, text::Line};
+
+    let theme = crate::ui::theme::Theme::resolve(Default::default());
+    let target = "missing-notes.txt";
+    let matches = vec![(
+        references::Reference {
+            target: target.into(),
+            label: target.into(),
+        },
+        vec![(5, 5 + target.len())],
+    )];
+    for style in [theme.failure(), theme.find_hit(true), theme.find_hit(false)] {
+        let mut line = Line::from(ratatui::text::Span::styled(
+            format!("cat: {target}: No such file"),
+            style,
+        ));
+        let mut hits = Vec::new();
+        mark_references(
+            &mut line,
+            Rect::new(0, 0, 80, 1),
+            &matches,
+            crate::app::transcript::CellId(1),
+            &mut hits,
+            &theme,
+        );
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].area, Rect::new(5, 0, target.len() as u16, 1));
+        assert!(line.spans.iter().all(|span| {
+            span.style.fg == style.fg
+                && span.style.bg == style.bg
+                && span.style.add_modifier.contains(style.add_modifier)
+        }));
+        assert_eq!(line.spans[1].content, target);
+        assert!(
+            line.spans[1]
+                .style
+                .add_modifier
+                .contains(theme.file_reference().add_modifier)
+        );
+    }
+}
+
+#[test]
 fn ordinary_label_words_do_not_open_files_and_nested_names_choose_longer_path() {
     let (_dir, mut app) = setup();
     let agent = app.selected.unwrap();

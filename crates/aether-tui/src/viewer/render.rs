@@ -157,6 +157,6 @@ pub fn mark_references(
                 cell,
             });
         }
-        crate::ui::transcript::highlight_line(line, ranges, theme.link());
+        crate::ui::transcript::highlight_line(line, ranges, theme.file_reference());
     }
 }
