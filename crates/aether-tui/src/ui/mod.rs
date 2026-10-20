@@ -25,13 +25,27 @@ use crate::ui::transcript::ViewCache;
 pub fn render(frame: &mut Frame, app: &App, cache: &mut ViewCache) {
     cache.update_presentation(app);
     cache.regions = selection::FrameRegions::default();
+    cache.file_hits.clear();
     selection::validate(app, cache);
     render_panes(frame, app, cache);
     selection::highlight(frame.buffer_mut(), app, cache);
 }
 
 fn render_panes(frame: &mut Frame, app: &App, cache: &mut ViewCache) {
-    let area = frame.area();
+    let (area, viewer_area) = if !crate::viewer::visible(app) {
+        (frame.area(), Rect::default())
+    } else {
+        crate::viewer::split(frame.area(), &app.viewer)
+    };
+    cache.viewer_area = viewer_area;
+    render_main(frame, area, app, cache);
+    crate::viewer::render(frame, viewer_area, app);
+}
+
+fn render_main(frame: &mut Frame, area: Rect, app: &App, cache: &mut ViewCache) {
+    if area.is_empty() {
+        return;
+    }
     let theme = &app.theme;
     let top_view = app.bottom.top_view();
     if let Some(view) = top_view.filter(|view| view.fullscreen()) {

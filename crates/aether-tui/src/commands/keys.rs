@@ -250,6 +250,30 @@ pub const KEYS: &[KeySpec] = &[
     .bound(&[KeyAction::Workspace]),
     key(
         Session,
+        "Alt+O",
+        "files in the focused or latest message",
+        "files in message",
+    )
+    .bound(&[KeyAction::Files]),
+    key(
+        Session,
+        "Alt+W",
+        "close the file viewer",
+        "close file viewer",
+    )
+    .bound(&[KeyAction::ViewerClose]),
+    key(
+        Session,
+        "Alt+Z",
+        "toggle full screen file viewer",
+        "full screen viewer",
+    )
+    .bound(&[KeyAction::ViewerFull]),
+    key(Session, "Alt+-", "narrow the file viewer", "narrow viewer")
+        .bound(&[KeyAction::ViewerLess]),
+    key(Session, "Alt+=", "widen the file viewer", "widen viewer").bound(&[KeyAction::ViewerMore]),
+    key(
+        Session,
         "Alt+N",
         "the notification center: answer, mark read, resolve, go to the chat",
         "notification center",

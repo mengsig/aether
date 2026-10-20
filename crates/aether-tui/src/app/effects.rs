@@ -146,6 +146,8 @@ pub enum Then {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, PartialEq)]
 pub enum Effect {
+    PreviewFile(crate::viewer::ReadRequest),
+    OpenFile(std::path::PathBuf),
     ReloadViewModes(std::path::PathBuf),
     Voice(crate::voice::Effect),
     Request {
@@ -189,6 +191,10 @@ pub enum Effect {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum AppEvent {
+    PreviewReady {
+        id: u64,
+        result: Result<crate::viewer::Preview, String>,
+    },
     ViewModesLoaded(crate::view_modes::Catalog),
     Voice(crate::voice::Reply),
     Key(KeyEvent),

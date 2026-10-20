@@ -378,3 +378,20 @@ mutations. Approval prompts are not a general filesystem sandbox.
 
 The release does not claim completion of every historical roadmap item or
 reliability target. See [known limits](known-limitations.md).
+
+### View local files beside the conversation
+
+Click a file path or a Markdown file link in a message, or press **Alt+O**
+for the files in the last clicked message (otherwise the latest message).
+Relative paths resolve in the viewed agent's workspace. Enter opens the
+selected file in a side pane; **Esc** or **Alt+W** closes it. **Alt+- / Alt+=**
+resize it and **Alt+Z** toggles full screen. **Tab** moves focus between the
+viewer and the composer; ordinary typing still works in the composer.
+
+Images (PNG, JPEG, first GIF frame and WebP) use the terminal's detected
+Kitty, Sixel or iTerm2 support, with coloured Unicode half blocks otherwise.
+Markdown uses the transcript renderer; UTF-8 text and code use a fixed code
+colour. Press **o** while the viewer has focus to open any selected file
+externally. PDF, HTML and SVG currently offer this external action only.
+Files outside the workspace show their resolved path and require **Enter**
+a second time. Remote agent files are not downloaded.

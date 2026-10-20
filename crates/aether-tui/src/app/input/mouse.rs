@@ -16,6 +16,12 @@ impl App {
         if self.mouse == MouseMode::Off || mouse.modifiers.contains(KeyModifiers::SHIFT) {
             return Vec::new();
         }
+        if self.viewer.open && cache.viewer_area.contains((mouse.column, mouse.row).into()) {
+            self.viewer_mouse(mouse);
+            cache.pending_file_hit = None;
+            cache.mouse.clear_selection();
+            return Vec::new();
+        }
         selection::validate(self, cache);
         match mouse.kind {
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -35,6 +41,19 @@ impl App {
                 return effects;
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                cache.pending_file_hit = if !self.bottom_covered()
+                    && cache.regions.hit(mouse.column, mouse.row) == Some(Pane::Transcript)
+                {
+                    cache
+                        .file_hits
+                        .iter()
+                        .filter(|h| h.area.contains((mouse.column, mouse.row).into()))
+                        .max_by_key(|h| h.reference.target.len())
+                        .cloned()
+                        .map(|h| (self.selected, h))
+                } else {
+                    None
+                };
                 cache.mouse.clear_selection();
                 self.dirty = true;
                 let Some(pane) = cache.regions.hit(mouse.column, mouse.row) else {
@@ -70,6 +89,9 @@ impl App {
                 else {
                     return Vec::new();
                 };
+                if pane == Pane::Transcript {
+                    self.viewer.source_cell = Some((self.selected, point.cell));
+                }
                 let excerpt = if pane == Pane::Transcript {
                     selection::pinned_excerpt(self, cache, point, mouse.row)
                 } else {
@@ -98,6 +120,7 @@ impl App {
                 });
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                cache.pending_file_hit = None;
                 self.extend_mouse(mouse, cache);
             }
             MouseEventKind::Up(MouseButton::Left) => {
@@ -110,6 +133,7 @@ impl App {
                 }
                 self.dirty = true;
                 if moved {
+                    cache.pending_file_hit = None;
                     cache.mouse.pending_board_click = None;
                     return match selection::extract(self, cache) {
                         Ok(text) if !text.is_empty() => vec![Effect::Copy(text)],
@@ -121,6 +145,17 @@ impl App {
                     };
                 }
                 cache.mouse.selection = None;
+                if let Some((agent, hit)) = cache.pending_file_hit.take()
+                    && agent == self.selected
+                    && hit.area.contains((mouse.column, mouse.row).into())
+                    && cache.file_hits.iter().any(|h| {
+                        h.cell == hit.cell
+                            && h.reference.target == hit.reference.target
+                            && h.area == hit.area
+                    })
+                {
+                    return self.open_reference(hit.reference);
+                }
                 if let Some(agent) = cache.mouse.pending_board_click.take() {
                     // Like Ctrl+G: an open view or popup keeps the keys and the selection.
                     if self.bottom_covered() {
@@ -135,6 +170,7 @@ impl App {
             MouseEventKind::Down(_) => {
                 self.dirty |= cache.mouse.selection.take().is_some();
                 cache.mouse.pending_board_click = None;
+                cache.pending_file_hit = None;
             }
             _ => {}
         }

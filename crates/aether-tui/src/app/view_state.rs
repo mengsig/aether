@@ -125,6 +125,7 @@ impl App {
             details: false,
             scroll_log: Default::default(),
             board: Default::default(),
+            viewer: Default::default(),
             bottom: Default::default(),
             theme,
             theme_choice,

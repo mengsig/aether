@@ -26,6 +26,11 @@ actions! {
     Agents, "agents", "go to the agents", "ctrl+g";
     Board, "board", "show / hide the board", "ctrl+b";
     Workspace, "workspace", "switch workspace", "ctrl+o";
+    Files, "files", "files in this message", "alt+o";
+    ViewerClose, "viewer_close", "close file viewer", "alt+w";
+    ViewerFull, "viewer_full", "full screen file viewer", "alt+z";
+    ViewerLess, "viewer_less", "narrow file viewer", "alt+-";
+    ViewerMore, "viewer_more", "widen file viewer", "alt+=";
     Notifications, "notifications", "notification center", "alt+n";
     Details, "details", "details & reasoning", "ctrl+t";
     History, "history", "search history", "ctrl+r";

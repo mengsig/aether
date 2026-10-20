@@ -8,6 +8,12 @@ release is also the text of its GitHub release.
 
 ### Added
 
+- **Local files beside the chat.** Click a file reference or use Alt+O to
+  preview PNG, JPEG, GIF, WebP, Markdown and text in a resizable side pane.
+  Native terminal graphics fall back to Unicode half blocks. Esc closes the
+  pane while the agent continues; `o` opens any file externally. Files outside
+  the workspace require confirmation; remote files are never fetched.
+
 - **A notification center.** Agents and services such as Archon post
   questions, blockers, decisions, outcomes and news to one durable center per
   daemon. The TUI counts unread notifications at the bottom right, making

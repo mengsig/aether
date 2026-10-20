@@ -50,6 +50,9 @@ impl App {
         if let Some(effects) = answered {
             return effects;
         }
+        if let Some(effects) = self.viewer_key(key) {
+            return effects;
+        }
         let stages: [fn(&mut App, KeyEvent) -> Dispatch; 4] = [
             App::board_key,
             App::view_key,

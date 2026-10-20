@@ -33,6 +33,9 @@ use crate::viewed::Publisher;
 use crate::voice::control::{self, ControlRequest, Listener};
 
 mod frames;
+mod viewer;
+#[cfg(test)]
+mod viewer_tests;
 use frames::Frames;
 
 /// Back off while offline, but leave time within §9.8's second for handshake and replay.
@@ -299,6 +302,24 @@ async fn run_inner(
     let mut app = App::new(options);
     // Probe before reading keys; dispatch also filters OSC replies that arrive late.
     app.set_palette(probe_palette(PROBE_DEADLINE));
+    match crate::viewer::probe::detect_with_metrics() {
+        Ok(capabilities) => {
+            app.viewer.protocol = capabilities.protocol;
+            app.viewer.cell_pixels = capabilities.cell_pixels.unwrap_or((0, 0));
+        }
+        Err(error) => app.flash_error(format!(
+            "Graphics probe failed; using half blocks: {error:#}"
+        )),
+    }
+    if let Ok(pixels) = crossterm::terminal::window_size()
+        && pixels.columns > 0
+        && pixels.rows > 0
+    {
+        let measured = (pixels.width / pixels.columns, pixels.height / pixels.rows);
+        if measured.0 > 0 && measured.1 > 0 {
+            app.viewer.cell_pixels = measured;
+        }
+    }
     let size = terminal.size()?;
     app.start_at(size.width, size.height);
     app.bottom.approval.note_key(app.now);
@@ -316,6 +337,7 @@ async fn run_inner(
         .map(|socket| Publisher::new(crate::viewed::viewed_dir(socket)));
     let mut link = Link::new(client);
     let (tx, mut rx) = mpsc::unbounded_channel::<LoopEvent>();
+    let viewer_reader = viewer::Reader::new(tx.clone());
     let mut term_events = EventStream::new();
     let mut frames = Frames::new(Instant::now());
     let mut reconnecting = false;
@@ -335,6 +357,7 @@ async fn run_inner(
             let mut regular = Vec::new();
             for effect in std::mem::take(&mut pending) {
                 match effect {
+                    Effect::PreviewFile(request) => viewer_reader.read(request),
                     Effect::Voice(effect) => voice.dispatch(effect, tx.clone()),
                     effect => regular.push(effect),
                 }
@@ -468,6 +491,7 @@ async fn run_inner(
                         Err(e) => Some(format!("could not find its own executable: {e}")),
                     };
                     terminal = setup_terminal(app.mouse != MouseMode::Off, &state)?;
+                    cache.graphics_placement = None;
                     // Fresh buffers force a redraw; avoid querying the cursor with active input.
                     terminal.backend_mut().clear()?;
                     app.dirty = true;
@@ -539,7 +563,28 @@ fn draw(
     cache: &mut ViewCache,
 ) -> std::io::Result<()> {
     queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
-    let drawn = terminal.draw(|f| ui::render(f, app, cache)).map(drop);
+    let placement = viewer::placement(app);
+    let changed = cache.graphics_placement != placement;
+    if changed && let Some((_, _, protocol)) = cache.graphics_placement {
+        use std::io::Write;
+        terminal
+            .backend_mut()
+            .write_all(crate::viewer::graphics::cleanup(protocol))?;
+        terminal.clear()?;
+    }
+    let drawn = terminal
+        .draw(|f| ui::render(f, app, cache))
+        .map(drop)
+        .and_then(|()| {
+            if changed {
+                viewer::paint(terminal.backend_mut(), app)
+            } else {
+                Ok(())
+            }
+        });
+    if drawn.is_ok() {
+        cache.graphics_placement = placement;
+    }
     // End even after a failed draw: the terminal would hold the screen until its own timeout.
     let ended = execute!(terminal.backend_mut(), EndSynchronizedUpdate);
     drawn.and(ended)
@@ -700,6 +745,13 @@ pub(crate) fn execute_effects(
 ) {
     for effect in effects {
         match effect {
+            Effect::PreviewFile(_) => {
+                let _ = tx.send(LoopEvent::App(AppEvent::EffectFailed {
+                    action: "file preview".into(),
+                    error: "requires the interactive TUI".into(),
+                }));
+            }
+            Effect::OpenFile(path) => viewer::spawn_external(tx.clone(), path),
             #[cfg(unix)]
             Effect::Suspend => {
                 let _ = tx.send(LoopEvent::Suspend);
