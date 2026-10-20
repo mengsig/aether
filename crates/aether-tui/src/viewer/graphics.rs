@@ -5,8 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
 use base64::Engine;
-use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgba, RgbaImage};
-use ratatui::style::{Color, Style};
+use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, RgbaImage};
 use ratatui::text::{Line, Span};
 
 use super::probe::Protocol;
@@ -180,13 +179,13 @@ pub fn render_half_blocks(image: &DecodedImage, width: u16, height: u16) -> Vec<
     for y in (0..pixels.height()).step_by(2) {
         let spans: Vec<_> = (0..pixels.width())
             .map(|x| {
-                let top = composite(*pixels.get_pixel(x, y));
+                let top = pixels.get_pixel(x, y).0;
                 let bottom = if y + 1 < pixels.height() {
-                    composite(*pixels.get_pixel(x, y + 1))
+                    Some(pixels.get_pixel(x, y + 1).0)
                 } else {
-                    Color::Black
+                    None
                 };
-                Span::styled("▀", Style::default().fg(top).bg(bottom))
+                Span::styled("▀", crate::ui::theme::image::half_block(top, bottom))
             })
             .collect();
         lines.push(Line::from(spans));
@@ -194,13 +193,6 @@ pub fn render_half_blocks(image: &DecodedImage, width: u16, height: u16) -> Vec<
     assert!(lines.len() <= usize::from(height));
     assert!(lines.iter().all(|line| line.width() <= usize::from(width)));
     lines
-}
-
-fn composite(pixel: Rgba<u8>) -> Color {
-    let alpha = u32::from(pixel[3]);
-    let [red, green, blue] = [pixel[0], pixel[1], pixel[2]]
-        .map(|channel| ((u32::from(channel) * alpha + 127) / 255) as u8);
-    Color::Rgb(red, green, blue)
 }
 
 fn fit(image: &DecodedImage, max_width: u32, max_height: u32) -> RgbaImage {
@@ -402,6 +394,8 @@ mod tests {
 
     use super::*;
     use image::ImageEncoder;
+    use image::Rgba;
+    use ratatui::style::{Color, Style};
 
     fn fixture(width: u32, height: u32, color: [u8; 4]) -> DecodedImage {
         DecodedImage {
