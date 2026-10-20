@@ -852,8 +852,8 @@ OSC 8 links are parsed when present in the original message; terminal control
 sequences are stripped before painting.
 
 The viewer starts at half width. **Alt+- / Alt+=** resize it, **Alt+Z** toggles
-full screen, and **Esc / Alt+W** closes it. Narrow terminals show it full width.
-**Tab** switches focus; arrows and PageUp/PageDown scroll while focused, and
+full screen, and **Esc** (with the viewer focused) or **Alt+W** closes it. Narrow terminals show it full width.
+**Tab** switches focus and leaves full screen when returning to chat; arrows and PageUp/PageDown scroll while focused, and
 **o** opens the selected file through `xdg-open` (Linux) or `open` (macOS).
 Approvals retain priority. Closing the viewer does not stop the agent.
 

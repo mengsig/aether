@@ -77,7 +77,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             ..inner
         };
         frame.render_widget(
-            Paragraph::new("Esc close · o external · Alt+Z full · Alt+-/= resize"),
+            Paragraph::new(if !viewer.focused {
+                "Alt+W close · Tab focus viewer · Alt+Z full"
+            } else if matches!(viewer.preview, Some(Ok(Preview::Outside(_)))) {
+                "Enter allow this file · Esc close"
+            } else {
+                "Esc close · o external · Alt+Z full · Alt+-/= resize"
+            }),
             footer,
         );
     }

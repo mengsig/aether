@@ -9,7 +9,7 @@ use std::{
 };
 
 /// Open a resolved path without following a symlink introduced after resolution.
-pub(super) fn open_canonical(path: &Path) -> Result<File> {
+pub(crate) fn open_canonical(path: &Path) -> Result<File> {
     ensure!(path.is_absolute(), "preview needs a resolved absolute path");
     let mut parts = path.components().peekable();
     ensure!(

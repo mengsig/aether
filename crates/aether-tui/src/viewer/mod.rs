@@ -1,6 +1,6 @@
 //! Local previews; reading and decoding happen in runner effects.
 pub mod cache;
-mod files;
+pub(crate) mod files;
 pub mod graphics;
 mod load;
 pub mod probe;
@@ -53,6 +53,24 @@ impl Default for Viewer {
 }
 
 impl Viewer {
+    pub fn external_path(&self) -> Option<&PathBuf> {
+        match self.preview.as_ref()?.as_ref().ok()? {
+            Preview::Outside(_) => None,
+            _ => self.path(),
+        }
+    }
+
+    pub fn content_rows(&self) -> usize {
+        if !self.picker.is_empty() {
+            return self.picker.len();
+        }
+        match &self.preview {
+            Some(Ok(Preview::Text { rows, .. } | Preview::Image { rows, .. })) => rows.len(),
+            Some(Ok(Preview::Outside(_) | Preview::Unsupported(_))) => 2,
+            _ => 1,
+        }
+    }
+
     pub fn path(&self) -> Option<&PathBuf> {
         match self.preview.as_ref()?.as_ref().ok()? {
             Preview::Text { path, .. }

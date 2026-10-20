@@ -292,3 +292,101 @@ fn outside_confirmation_is_bound_to_the_displayed_canonical_target() {
         matches!(&app.viewer.preview,Some(Ok(Preview::Outside(path))) if path.ends_with("second.txt"))
     );
 }
+
+#[test]
+fn accepted_async_preview_requests_redraw_but_stale_reply_does_not() {
+    let (_dir, mut app) = setup();
+    let effects = app.open_reference(references::Reference {
+        target: "notes.md".into(),
+        label: "notes".into(),
+    });
+    let id = app.viewer.request;
+    app.dirty = false;
+    load(&mut app, effects);
+    assert!(app.dirty);
+    app.dirty = false;
+    app.reduce(AppEvent::PreviewReady {
+        id: id.wrapping_sub(1),
+        result: Err("stale".into()),
+    });
+    assert!(!app.dirty);
+    assert!(matches!(app.viewer.preview, Some(Ok(Preview::Text { .. }))));
+}
+
+#[test]
+fn trailing_newline_does_not_claim_truncation_but_real_limits_do() {
+    let (dir, mut app) = setup();
+    for (contents, truncated) in [
+        ("A complete file.\n".to_owned(), false),
+        ("x".repeat(70 * 1024), true),
+        ("x\n".repeat(4001), true),
+    ] {
+        std::fs::write(dir.path().join("notes.md"), contents).unwrap();
+        let effects = app.open_reference(references::Reference {
+            target: "notes.md".into(),
+            label: "notes".into(),
+        });
+        load(&mut app, effects);
+        let Some(Ok(Preview::Text { rows, .. })) = &app.viewer.preview else {
+            panic!("text preview")
+        };
+        let text = crate::ui::cells::text::plain(rows).join("\n");
+        assert_eq!(text.contains("Preview truncated"), truncated);
+        assert!(!rows.is_empty());
+    }
+}
+
+#[test]
+fn external_open_waits_for_canonical_outside_confirmation() {
+    let (_dir, mut app) = setup();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(outside.path(), "outside").unwrap();
+    let effects = app.open_reference(references::Reference {
+        target: outside.path().display().to_string(),
+        label: "outside".into(),
+    });
+    load(&mut app, effects);
+    assert!(key(&mut app, KeyCode::Char('o'), KeyModifiers::NONE).is_empty());
+    let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    load(&mut app, effects);
+    assert!(matches!(
+        &key(&mut app, KeyCode::Char('o'), KeyModifiers::NONE)[..],
+        [Effect::OpenFile(_)]
+    ));
+}
+
+#[test]
+fn fullscreen_keys_cannot_send_hidden_draft_and_tab_reveals_chat() {
+    let (_dir, mut app) = setup();
+    key(&mut app, KeyCode::Char('o'), KeyModifiers::ALT);
+    let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    load(&mut app, effects);
+    app.input.set_text("existing draft");
+    key(&mut app, KeyCode::Char('z'), KeyModifiers::ALT);
+    assert!(app.viewer.fullscreen && app.viewer.focused);
+    assert!(key(&mut app, KeyCode::Enter, KeyModifiers::NONE).is_empty());
+    key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+    key(&mut app, KeyCode::Char('X'), KeyModifiers::SHIFT);
+    assert!(key(&mut app, KeyCode::Char('m'), KeyModifiers::CONTROL).is_empty());
+    assert_eq!(app.input.text, "existing draft");
+    key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+    assert!(!app.viewer.fullscreen && !app.viewer.focused);
+}
+
+#[test]
+fn viewer_scroll_is_bounded_and_chat_escape_keeps_the_pane() {
+    let (_dir, mut app) = setup();
+    key(&mut app, KeyCode::Char('o'), KeyModifiers::ALT);
+    key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    assert_eq!(app.viewer.scroll, 0);
+    assert_eq!(app.viewer.cursor, 0);
+    let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    load(&mut app, effects);
+    for _ in 0..10 {
+        key(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
+    }
+    assert_eq!(app.viewer.scroll, 0);
+    key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+    key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(app.viewer.open);
+}

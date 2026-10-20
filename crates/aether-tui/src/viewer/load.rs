@@ -84,11 +84,9 @@ fn text(path: PathBuf, markdown: bool, request: &ReadRequest) -> anyhow::Result<
     while !clean.is_char_boundary(end) {
         end -= 1;
     }
-    let limited = clean[..end]
-        .lines()
-        .take(4000)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let mut lines = clean[..end].lines();
+    let limited = lines.by_ref().take(4000).collect::<Vec<_>>().join("\n");
+    let truncated = end < clean.len() || lines.next().is_some();
     let mut rows = if markdown {
         crate::ui::markdown::render(
             &limited,
@@ -105,7 +103,7 @@ fn text(path: PathBuf, markdown: bool, request: &ReadRequest) -> anyhow::Result<
             Vec::new(),
         )
     };
-    if limited.len() < clean.len() {
+    if truncated {
         rows.push(Line::from("[Preview truncated; o opens the complete file]"));
     }
     Ok(Preview::Text { path, rows })

@@ -64,7 +64,7 @@ pub(super) fn spawn_external(tx: mpsc::UnboundedSender<LoopEvent>, path: PathBuf
 
 async fn open_external(path: PathBuf) -> anyhow::Result<()> {
     anyhow::ensure!(path.is_absolute(), "external opener needs an absolute path");
-    anyhow::ensure!(path.is_file(), "external opener needs a regular file");
+    let _file = crate::viewer::files::open_canonical(&path)?;
     let program = if cfg!(target_os = "macos") {
         "open"
     } else {

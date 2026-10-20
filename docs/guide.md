@@ -384,7 +384,7 @@ reliability target. See [known limits](known-limitations.md).
 Click a file path or a Markdown file link in a message, or press **Alt+O**
 for the files in the last clicked message (otherwise the latest message).
 Relative paths resolve in the viewed agent's workspace. Enter opens the
-selected file in a side pane; **Esc** or **Alt+W** closes it. **Alt+- / Alt+=**
+selected file in a side pane; **Esc** (with the viewer focused) or **Alt+W** closes it. **Alt+- / Alt+=**
 resize it and **Alt+Z** toggles full screen. **Tab** moves focus between the
 viewer and the composer; ordinary typing still works in the composer.
 
@@ -394,4 +394,4 @@ Markdown uses the transcript renderer; UTF-8 text and code use a fixed code
 colour. Press **o** while the viewer has focus to open any selected file
 externally. PDF, HTML and SVG currently offer this external action only.
 Files outside the workspace show their resolved path and require **Enter**
-a second time. Remote agent files are not downloaded.
+a second time before previewing or opening externally. Remote agent files are not downloaded.

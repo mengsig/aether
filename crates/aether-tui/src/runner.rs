@@ -141,6 +141,7 @@ impl Link {
 struct TerminalState {
     keyboard: KeyboardMode,
     active: AtomicBool,
+    kitty: AtomicBool,
 }
 
 impl TerminalState {
@@ -155,7 +156,7 @@ impl TerminalState {
             return Ok(());
         }
         let raw = disable_raw_mode();
-        let screen = write_restore(&mut stdout());
+        let screen = write_restore(&mut stdout(), self.kitty.load(Ordering::Relaxed));
         let keyboard = self.keyboard.disable(&mut stdout());
         raw.and(screen).and(keyboard)
     }
@@ -176,10 +177,15 @@ fn suspend_terminal(
 }
 
 /// End a frame cut off mid-draw before leaving the alternate screen.
-fn write_restore(out: &mut impl std::io::Write) -> std::io::Result<()> {
+fn write_restore(out: &mut impl std::io::Write, kitty: bool) -> std::io::Result<()> {
+    execute!(out, EndSynchronizedUpdate)?;
+    if kitty {
+        out.write_all(crate::viewer::graphics::cleanup(
+            crate::viewer::probe::Protocol::Kitty,
+        ))?;
+    }
     execute!(
         out,
-        EndSynchronizedUpdate,
         DisableMouseCapture,
         DisableBracketedPaste,
         DisableFocusChange,
@@ -311,6 +317,10 @@ async fn run_inner(
             "Graphics probe failed; using half blocks: {error:#}"
         )),
     }
+    state.kitty.store(
+        app.viewer.protocol == crate::viewer::probe::Protocol::Kitty,
+        Ordering::Relaxed,
+    );
     if let Ok(pixels) = crossterm::terminal::window_size()
         && pixels.columns > 0
         && pixels.rows > 0
@@ -1164,7 +1174,7 @@ mod tests {
     #[test]
     fn restoring_the_terminal_ends_a_synchronized_update_first() {
         let mut out = Vec::new();
-        super::write_restore(&mut out).expect("in-memory write");
+        super::write_restore(&mut out, true).expect("in-memory write");
         let out = String::from_utf8(out).expect("escape sequences are ASCII");
         assert!(
             out.starts_with("\x1b[?2026l"),
@@ -1174,6 +1184,11 @@ mod tests {
             out.contains("\x1b[?1049l"),
             "and leaves the alternate screen"
         );
+        let cleanup = String::from_utf8(
+            crate::viewer::graphics::cleanup(crate::viewer::probe::Protocol::Kitty).to_vec(),
+        )
+        .unwrap();
+        assert!(out.find(&cleanup).unwrap() < out.find("\x1b[?1049l").unwrap());
     }
 }
 

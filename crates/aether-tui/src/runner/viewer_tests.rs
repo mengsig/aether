@@ -139,3 +139,11 @@ fn viewer_pty() {
     );
     assert!(String::from_utf8_lossy(&result.stdout).contains("viewer PTY passed"));
 }
+
+#[test]
+fn unsupported_terminal_restore_does_not_emit_kitty_commands() {
+    let mut out = Vec::new();
+    write_restore(&mut out, false).unwrap();
+    assert!(out.starts_with(b"\x1b[?2026l"));
+    assert!(!out.windows(3).any(|bytes| bytes == b"\x1b_G"));
+}
