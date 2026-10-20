@@ -8,19 +8,19 @@ release is also the text of its GitHub release.
 
 ## 1.2.1
 
-A small patch release: a notification center for agents and services, and two
-fixes to the GitHub watcher. Protocol version 24, unchanged; the new commands
-and replies are additive. Store schema 26 (was 25): a `notifications` table,
-created idempotently on first start.
+A small patch release: a notification center for agents and services, a TUI
+side pane that previews local files, Ctrl+V pasting the clipboard image, and
+two fixes to the GitHub watcher. Protocol version 24, unchanged; the new
+commands and replies are additive. Store schema 26 (was 25): a
+`notifications` table, created idempotently on first start.
 
 ### Added
 
 - **Local files beside the chat.** Click a file reference or use Alt+O to
   preview PNG, JPEG, GIF, WebP, Markdown and text in a resizable side pane.
   Native terminal graphics fall back to Unicode half blocks. Esc closes the
-  pane while the agent continues; `Alt+E` opens any file externally. Files outside
-  the workspace require confirmation; remote files are never fetched.
-
+  pane while the agent continues; `Alt+E` opens any file externally. Files
+  outside the workspace require confirmation; remote files are never fetched.
 - **A notification center.** Agents and services such as Archon post
   questions, blockers, decisions, outcomes and news to one durable center per
   daemon. The TUI counts unread notifications at the bottom right, making
