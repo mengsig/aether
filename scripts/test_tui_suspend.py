@@ -29,7 +29,7 @@ def check(executable):
         env = {k: v for k, v in os.environ.items()
                if not k.startswith("AETHER_") and k not in display_vars}
         env.update(AETHER_CONFIG_DIR=str(root / "config"), AETHER_DATA_DIR=str(root / "data"),
-                   AETHER_SOCKET=str(root / "unused.sock"), AETHER_SUSPEND_RECEIPT=str(receipt),
+                   AETHER_SOCKET=str(root / "unused.sock"), AETHER_LOOP_RECEIPT=str(receipt),
                    TERM="xterm-256color", PS1="SUSPEND_SHELL> ", PROMPT_COMMAND="")
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
@@ -85,7 +85,7 @@ def check(executable):
             wait_for(lambda: b"SUSPEND_SHELL> " in output, "shell ready")
             cooked = termios.tcgetattr(slave)
             command = shlex.join([str(Path(executable).resolve()), "--exact",
-                                  "runner::suspend_tests::suspend_loop_child",
+                                  "runner::suspend_tests::fixture_loop_child",
                                   "--ignored", "--nocapture"])
             os.write(master, command.encode() + b"\n")
             wait_for(lambda: os.tcgetpgrp(master) != shell.pid, "runner owns the foreground")

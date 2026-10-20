@@ -146,7 +146,8 @@ chat to another available agent.
 | --- | --- |
 | Send; while the agent runs, steer it | Enter |
 | Queue for after this turn / newline | Tab / Shift+Enter, Alt+Enter or Ctrl+J |
-| Attach an image: a file / the clipboard | paste its path or `/image PATH` / Alt+V |
+| Paste: the clipboard image, else its text / text only | Ctrl+V / Ctrl+Shift+V |
+| Attach an image: a file / the clipboard | paste its path or `/image PATH` / Ctrl+V or Alt+V |
 | Go to the agents / show or hide them | Ctrl+G / Ctrl+B |
 | View the parent agent | Alt+↑ |
 | Interrupt the current turn | Esc |
@@ -163,9 +164,11 @@ drag to select & copy within one pane. Shift+drag uses terminal selection;
 `/mouse off` disables capture. See the [TUI guide](tui.md) for every key and
 command.
 
-A message can carry screenshots and other images next to its text: paste or
-drop the file's path into the composer, type `/image PATH`, or press Alt+V for
-the image on the clipboard. Each shows as a chip above the draft until you
+A message can carry screenshots and other images next to its text: copy the
+image and press Ctrl+V, paste or drop the file's path into the composer, or
+type `/image PATH`. Ctrl+V attaches the clipboard image when there is one and
+pastes its text otherwise; Ctrl+Shift+V, the terminal's paste, always pastes
+text, and Alt+V attaches only an image. Each shows as a chip above the draft until you
 send. PNG, JPEG, GIF and WebP are accepted, up to 10 images of 3.75 MiB each
 and 10 MiB per message. See [images in the TUI guide](tui.md#images).
 

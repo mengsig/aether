@@ -52,7 +52,7 @@ actions! {
     EraseStart, "erase_start", "Erase to line start", "ctrl+u";
     EraseEnd, "erase_end", "Erase to line end", "ctrl+k";
     Yank, "yank", "paste last erased", "ctrl+y";
-    PasteImage, "paste_image", "paste clipboard", "ctrl+v / alt+v";
+    PasteImage, "paste_image", "paste image, else text", "ctrl+v / alt+v";
     WordLeft, "word_left", "Move a word left", "alt+b / ctrl+left";
     WordRight, "word_right", "Move a word right", "alt+f / ctrl+right";
 }

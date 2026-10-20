@@ -156,7 +156,17 @@ looks like a boundary and is not one.
   types is not shipped.
 - Pasting an image from the clipboard needs `wl-paste` (Wayland), `xclip`
   (X11) or `osascript` (macOS) and a local session; over SSH, attach a file
-  by path instead.
+  by path instead. On Wayland only `wl-paste` is used, even when `DISPLAY` is
+  set too: `xclip` sees the Wayland clipboard only while an X11 window has
+  focus.
+- Ctrl+V and Alt+V go unread in a terminal set to report every modified key
+  in xterm's `modifyOtherKeys` form (`CSI 27;5;118~`), such as xterm with
+  `modifyOtherKeys: 2` in its resources: the key reader drops that form.
+  Terminals that speak the kitty keyboard protocol (Ghostty, kitty, foot) or
+  send Ctrl+V as a control byte are unaffected. There, `/image` attaches the
+  clipboard image and the terminal's own paste still pastes text.
+- Ctrl+V attaches a file copied in a file manager only when it is one image
+  file; several files, or a copy on macOS Finder, paste as text.
 - The phone web app cannot attach images yet. It speaks protocol 18, so it
   shows an image sent from elsewhere as its `[image: name, size]` line.
 - A host older than protocol 19 (Aether 1.0.2 or before) takes no images: the

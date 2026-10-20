@@ -14,6 +14,11 @@ impl App {
     pub(super) fn composer_key(&mut self, key: KeyEvent) -> Dispatch {
         debug_assert!(self.input.cursor <= self.input.text.len());
         debug_assert!(self.input.text.is_char_boundary(self.input.cursor));
+        // Checked before the guard below, so a hidden composer explains a paste key.
+        if self.keys.matches(KeyAction::PasteImage, key) {
+            let image_only = key.modifiers == KeyModifiers::ALT && key.code == KeyCode::Char('v');
+            return Dispatch::Handled(self.paste_key(image_only));
+        }
         // An open view or search has the keys; what it ignored is not typing.
         if self.board.focused() || !self.bottom.view_stack.is_empty() || self.search_focused() {
             return Dispatch::Handled(Vec::new());
@@ -30,12 +35,6 @@ impl App {
         if self.keys.matches(KeyAction::Unqueue, key) {
             self.composer_unqueue();
             return Dispatch::Handled(Vec::new());
-        }
-        if self.keys.matches(KeyAction::PasteImage, key) {
-            if key.modifiers == KeyModifiers::ALT && key.code == KeyCode::Char('v') {
-                return Dispatch::Handled(self.paste_clipboard_image());
-            }
-            return Dispatch::Handled(self.paste_clipboard());
         }
         if self.keys.matches(KeyAction::Shortcuts, key)
             && (self.input.text.is_empty() || self.bottom.shortcuts)

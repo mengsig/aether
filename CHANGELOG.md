@@ -25,6 +25,15 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Ctrl+V pastes the clipboard image, as in other agent harnesses.** It used
+  to prefer any text offered beside an image, so an image copied from a
+  browser, a chat app or another app that also offers text pasted that text.
+  Ctrl+V now attaches the image whenever the clipboard holds one, attaches a
+  single image file copied in a file manager (`text/uri-list`), and pastes the
+  text otherwise; Ctrl+Shift+V, the terminal's own paste, stays text. With the
+  board, a view or find holding the keys, Ctrl+V and Alt+V now say why
+  nothing was pasted instead of doing nothing (see
+  [images in the TUI guide](https://github.com/mengsig/aether/blob/main/docs/tui.md#images)).
 - **GitHub operator logins dispatch without write access.** A login in the
   watcher's `operator_users` may dispatch on any watched repository whose
   `allowed_users`, if set, admits it, without the collaborator-permission

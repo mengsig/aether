@@ -199,21 +199,28 @@ are three ways to attach one, and each adds a chip above the draft,
   text.
 - **`/image <path>`** attaches a file by name; `~` and paths relative to the
   workspace resolve as they do elsewhere.
-- **Ctrl+V** pastes from the clipboard, preferring plain text when offered
-  alongside an image. Screenshots and browser “copy image” clipboards without
-  plain text attach the image. Text uses the same long-text placeholders and
-  image-path detection as the terminal's paste. **Alt+V** and `/image` with
-  no path attach only the clipboard image. Clipboard reads run in the
-  background through `wl-paste` on Wayland, `xclip` on X11, or `osascript` and
-  `pbpaste` on macOS. If the helper is missing or the clipboard is empty, the
-  status row says so in one line and the draft is untouched. Over SSH the
-  clipboard is on the other machine: copy the file across and use `/image <path>`.
+- **Ctrl+V** pastes from the clipboard. An image on the clipboard is
+  attached, even when the app that copied it (a browser, a chat app) offers
+  text beside it. A file copied in a file manager (`text/uri-list`) attaches
+  when it is one PNG, JPEG, GIF or WebP file. Otherwise the clipboard's text is
+  pasted, with the same long-text placeholders and image-path detection as the
+  terminal's paste. While the board, a view or find holds the keys, Ctrl+V
+  says so and leaves the clipboard alone.
+  **Alt+V** and `/image` with no path attach only the clipboard image.
+  Clipboard reads run in the background through `wl-paste` on Wayland,
+  `xclip` on X11, or `osascript` and `pbpaste` on macOS. If the helper is
+  missing or the clipboard is empty, the status row says so in one line and
+  the draft is untouched. Over SSH the clipboard is on the other machine: copy
+  the file across and use `/image <path>`.
 
-The terminal's own paste (usually **Ctrl+Shift+V**) normally delivers text.
-If it sends a truly empty bracketed paste while the composer has focus,
-Aether tries to attach the clipboard image. Some terminals send
-nothing for an image; use **Ctrl+V** in that case. Existing custom key bindings
-take precedence over the new Ctrl+V default; `/keys` shows the active binding.
+**Ctrl+Shift+V**, the terminal's own paste, pastes text: use it when the
+clipboard holds both and you want the text. If the terminal sends a truly
+empty bracketed paste while the composer has focus, Aether tries to attach the
+clipboard image; some terminals send nothing for an image, so use **Ctrl+V**
+there. Ctrl+V is read the same in terminals using the kitty keyboard protocol
+(Ghostty, kitty, foot) and in legacy ones. Existing custom key
+bindings take precedence over the Ctrl+V default; `/keys` shows the active
+binding.
 Whitespace-only pastes keep their whitespace; plain-mode input stays text.
 
 Chips stay through slash commands and leave with the next message. Backspace
@@ -588,7 +595,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+A / Ctrl+E` | start / end of the line |
 | `Ctrl+W / Ctrl+U / Ctrl+K` | delete word back / to line start / to line end |
 | `Ctrl+Y` | paste what was last deleted |
-| `Ctrl+V / Alt+V` | paste clipboard text or image / force an image |
+| `Ctrl+V / Alt+V` | paste the clipboard image, else its text (Ctrl+Shift+V: text) / only an image |
 | `Alt+B / Alt+F / Ctrl+← / Ctrl+→` | move a word back / forward |
 
 **In the board (Ctrl+G)**
