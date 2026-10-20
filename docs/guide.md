@@ -388,7 +388,7 @@ selected file in a side pane; **Esc** (with the viewer focused) or **Alt+W** clo
 resize it and **Alt+Z** toggles full screen. **Tab** moves focus between the
 viewer and the composer. In split mode, ordinary typing still works in the
 composer; the focused viewer owns arrows and PageUp/PageDown. In full screen,
-Tab reveals the chat before editing resumes.
+Tab reveals the chat before editing or pasting resumes.
 
 Images (PNG, JPEG, first GIF frame and WebP) use the terminal's detected
 Kitty, Sixel or iTerm2 support, with coloured Unicode half blocks otherwise.

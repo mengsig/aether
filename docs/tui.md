@@ -860,6 +860,9 @@ full screen, and **Esc** (with the viewer focused) or **Alt+W** closes it. Narro
 **Tab** switches focus and leaves full screen when returning to chat; arrows and PageUp/PageDown scroll while focused, and
 **Alt+E** opens the selected file through `xdg-open` (Linux) or `open` (macOS).
 Approvals retain priority. Closing the viewer does not stop the agent.
+Full screen blocks composer edits and pastes; **Tab** returns to chat.
+Completed dictation is retained for later insertion. **Ctrl+C** closes a
+full-screen viewer before it can clear the draft.
 
 PNG, JPEG, GIF (first frame) and WebP decode off the UI thread, as do text and
 Markdown layout. A startup terminal query, bounded to 200 ms, chooses Kitty,

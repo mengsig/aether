@@ -89,5 +89,9 @@ pub(crate) fn visible(app: &crate::App) -> bool {
         && !app.bottom.top_view().is_some_and(|view| view.fullscreen())
 }
 
+pub(crate) fn hides_composer(app: &crate::App) -> bool {
+    visible(app) && app.viewer.fullscreen
+}
+
 #[cfg(test)]
 mod tests;

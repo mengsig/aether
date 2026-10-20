@@ -376,6 +376,7 @@ fn trailing_newline_does_not_claim_truncation_but_real_limits_do() {
         };
         let text = crate::ui::cells::text::plain(rows).join("\n");
         assert_eq!(text.contains("Preview truncated"), truncated);
+        assert_eq!(text.contains("Alt+E opens"), truncated);
         assert!(!rows.is_empty());
     }
 }
@@ -439,6 +440,99 @@ fn fullscreen_keys_cannot_send_hidden_draft_and_tab_reveals_chat() {
     assert_eq!(app.input.text, "existing draft");
     key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     assert!(!app.viewer.fullscreen && !app.viewer.focused);
+    key(&mut app, KeyCode::Char('z'), KeyModifiers::ALT);
+    key(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+    assert!(!app.viewer.open);
+    assert_eq!(app.input.text, "existing draft");
+}
+
+#[test]
+fn fullscreen_blocks_paste_and_edit_shortcuts_but_split_accepts_paste() {
+    let (_dir, mut app) = setup();
+    app.viewer.open = true;
+    app.viewer.fullscreen = true;
+    app.input.set_text("kept");
+    let cursor = app.input.cursor;
+    assert!(app.reduce(AppEvent::Paste(" hidden".into())).is_empty());
+    assert!(
+        app.live_flash()
+            .unwrap()
+            .contains("file viewer is full screen")
+    );
+    for (character, modifiers) in [
+        ('w', KeyModifiers::CONTROL),
+        ('u', KeyModifiers::CONTROL),
+        ('k', KeyModifiers::CONTROL),
+        ('y', KeyModifiers::CONTROL),
+        ('v', KeyModifiers::CONTROL),
+        ('v', KeyModifiers::ALT),
+    ] {
+        assert!(key(&mut app, KeyCode::Char(character), modifiers).is_empty());
+        assert_eq!(app.input.text, "kept");
+        assert_eq!(app.input.cursor, cursor);
+        assert_eq!(app.input.image_reads, 0);
+    }
+    app.input.image_reads = 1;
+    app.reduce(AppEvent::ClipboardRead(Ok(
+        crate::image_input::ClipboardContent::Text(" hidden clipboard".into()),
+    )));
+    assert_eq!(app.input.image_reads, 0);
+    assert_eq!(app.input.text, "kept");
+    app.viewer.fullscreen = false;
+    app.reduce(AppEvent::Paste(" visible".into()));
+    assert_eq!(app.input.text, "kept visible");
+}
+
+#[test]
+fn late_image_results_do_not_attach_to_a_hidden_draft() {
+    let (_dir, mut app) = setup();
+    app.viewer.open = true;
+    app.viewer.fullscreen = true;
+    let image = aether_core::attachment::ImageAttachment {
+        media_type: "image/png".into(),
+        data: "iVBORw0KGgo=".into(),
+        name: Some("paste.png".into()),
+    };
+    for event in [
+        AppEvent::ClipboardRead(Ok(crate::image_input::ClipboardContent::Image(
+            image.clone(),
+        ))),
+        AppEvent::ImageRead(Ok(image.clone())),
+    ] {
+        app.input.image_reads = 1;
+        app.reduce(event);
+        assert_eq!(app.input.image_reads, 0);
+        assert!(app.input.images.is_empty());
+        assert!(app.input.text.is_empty());
+    }
+    assert!(app.reduce(AppEvent::TerminalImagePaste).is_empty());
+    assert_eq!(app.input.image_reads, 0);
+    app.input.image_reads = 1;
+    app.reduce(AppEvent::ImageRead(Err("read failed".into())));
+    assert!(app.live_flash().unwrap().contains("read failed"));
+    app.viewer.fullscreen = false;
+    app.input.image_reads = 1;
+    app.reduce(AppEvent::ClipboardRead(Ok(
+        crate::image_input::ClipboardContent::Image(image),
+    )));
+    assert_eq!(app.input.images.len(), 1);
+    assert_eq!(app.input.image_reads, 0);
+}
+
+#[test]
+fn binary_preview_error_names_the_external_open_shortcut() {
+    let (dir, mut app) = setup();
+    std::fs::write(dir.path().join("notes.md"), b"binary\0bytes").unwrap();
+    let effects = app.open_reference(references::Reference {
+        target: "notes.md".into(),
+        label: "notes".into(),
+    });
+    load(&mut app, effects);
+    let Some(Ok(Preview::Failed { error, .. })) = &app.viewer.preview else {
+        panic!("binary preview error")
+    };
+    assert!(error.contains("Alt+E"));
+    assert!(!error.contains("use o"));
 }
 
 #[test]

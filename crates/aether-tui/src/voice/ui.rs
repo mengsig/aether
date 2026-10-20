@@ -343,6 +343,10 @@ impl App {
     }
 
     fn insert_voice_draft(&mut self) -> Vec<Effect> {
+        if crate::viewer::hides_composer(self) {
+            self.flash("voice draft retained: return to chat before inserting");
+            return Vec::new();
+        }
         let Some((agent, _)) = &self.voice.recovered else {
             self.flash("no recovered voice draft");
             return Vec::new();

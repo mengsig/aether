@@ -139,6 +139,9 @@ impl App {
         }
         if self.keys.matches(KeyAction::ViewerClose, key)
             || (self.viewer.focused && key.code == KeyCode::Esc && key.modifiers.is_empty())
+            || (self.viewer.fullscreen
+                && key.code == KeyCode::Char('c')
+                && key.modifiers == KeyModifiers::CONTROL)
         {
             self.viewer.open = false;
             self.viewer.pending = None;

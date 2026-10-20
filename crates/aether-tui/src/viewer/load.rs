@@ -76,7 +76,7 @@ fn text(path: PathBuf, markdown: bool, request: &ReadRequest) -> anyhow::Result<
         .context("read preview")?;
     ensure!(bytes.len() as u64 <= LIMIT, "text preview exceeds 1 MiB");
     if bytes.contains(&0) {
-        bail!("binary file: use o to open externally");
+        bail!("binary file: use Alt+E to open externally");
     }
     let text = String::from_utf8(bytes).context("text preview needs UTF-8")?;
     let clean = crate::ui::cells::text::clean(&text);
@@ -104,7 +104,9 @@ fn text(path: PathBuf, markdown: bool, request: &ReadRequest) -> anyhow::Result<
         )
     };
     if truncated {
-        rows.push(Line::from("[Preview truncated; o opens the complete file]"));
+        rows.push(Line::from(
+            "[Preview truncated; Alt+E opens the complete file]",
+        ));
     }
     Ok(Preview::Text { path, rows })
 }
