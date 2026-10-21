@@ -146,7 +146,8 @@ chat to another available agent.
 | --- | --- |
 | Send; while the agent runs, steer it | Enter |
 | Queue for after this turn / newline | Tab / Shift+Enter, Alt+Enter or Ctrl+J |
-| Attach an image: a file / the clipboard | paste its path or `/image PATH` / Alt+V |
+| Paste: the clipboard image, else its text / text only | Ctrl+V / Ctrl+Shift+V |
+| Attach an image: a file / the clipboard | paste its path or `/image PATH` / Ctrl+V or Alt+V |
 | Go to the agents / show or hide them | Ctrl+G / Ctrl+B |
 | View the parent agent | Alt+↑ |
 | Interrupt the current turn | Esc |
@@ -163,9 +164,11 @@ drag to select & copy within one pane. Shift+drag uses terminal selection;
 `/mouse off` disables capture. See the [TUI guide](tui.md) for every key and
 command.
 
-A message can carry screenshots and other images next to its text: paste or
-drop the file's path into the composer, type `/image PATH`, or press Alt+V for
-the image on the clipboard. Each shows as a chip above the draft until you
+A message can carry screenshots and other images next to its text: copy the
+image and press Ctrl+V, paste or drop the file's path into the composer, or
+type `/image PATH`. Ctrl+V attaches the clipboard image when there is one and
+pastes its text otherwise; Ctrl+Shift+V, the terminal's paste, always pastes
+text, and Alt+V attaches only an image. Each shows as a chip above the draft until you
 send. PNG, JPEG, GIF and WebP are accepted, up to 10 images of 3.75 MiB each
 and 10 MiB per message. See [images in the TUI guide](tui.md#images).
 
@@ -355,6 +358,26 @@ external side effects only; local file writes do not prompt. Before sending
 work to an agent, use `aether set AGENT_ID --approval
 idempotent_mutation,mutation,external` to also require approval for local
 mutations. Approval prompts are not a general filesystem sandbox.
+
+Shell commands count as external when they may reach the network. Aether reads
+the command text, not what it does: it cuts the command at `;`, `&&`, `|`,
+newlines, `$(...)`, backticks and `sh -c '...'` quoting, and asks when a piece
+runs a network client (`curl`, `wget`, `ssh`, `scp`, `nc`, `gh`, ...), a remote
+`git` subcommand (`push`, `fetch`, `pull`, `clone`, ...), a package install or
+publish (`npm install`, `pip install`, `cargo install`, `apt-get install`,
+...), `rsync` to a `host:` path, or `/dev/tcp`; `sudo`, `env`, `xargs`, `python
+-m` and similar wrappers are looked through, line continuations are joined, and
+redirections such as `2>/dev/null` are skipped (after a redirection or an
+assignment placed before the command, any later word may be the command). `grep
+curl file` stays local; a command of over 64 KiB, or a piece of it of over 512
+words, is gated unread. A raised command still needs any approval its tool
+already needed, so `--approval mutation` keeps asking too. Network use the text
+does not show is not caught: deliberate obfuscation (`cur?`, `$'\x63url'`), a
+script or `python -c` that opens a socket, a command held in a variable, or a
+build that downloads dependencies (`cargo build`). Native web tools
+(`WebFetch`, `WebSearch`) are not gated. Codex agents with approvals on run
+commands with sandbox network off, loopback included; reaching a host takes an
+escalation, which `--no-yolo` puts to you.
 
 - Native shell/file operations do not all pass through Aether's tool guards
   or resource leases. Isolated Git worktrees avoid ordinary shared-directory

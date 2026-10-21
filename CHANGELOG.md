@@ -8,11 +8,11 @@ release is also the text of its GitHub release.
 
 ### Added
 
-- **Local files beside the chat.** Click a file reference or use Alt+O to
-  preview PNG, JPEG, GIF, WebP, Markdown and text in a resizable side pane.
-  Native terminal graphics fall back to Unicode half blocks. Esc closes the
-  pane while the agent continues; `Alt+E` opens any file externally. Files outside
-  the workspace require confirmation; remote files are never fetched.
+- **Update offer on launch.** `aether` checks the latest release beside
+  startup (bounded, cached for 6 hours, silent offline) and asks `Update and
+  restart now? [Y/n]`; a yes runs `aether update`, stops the daemon and starts
+  the new build. `s` skips a version. Off with `[update] check = false` or
+  `AETHER_MANAGED_BY`.
 
 - **PDF and HTML in the file viewer.** PDF pages render through `pdftoppm` or
   `mutool` with a page counter. PgUp/PgDn turn pages, and Alt+T shows the page
@@ -21,6 +21,22 @@ release is also the text of its GitHub release.
   are never followed; scripts and styles dropped). Alt+T takes a screenshot
   with headless Chromium, offline and sandboxed with no access to local
   files. Alt+E opens the file in a browser.
+
+## 1.2.1
+
+A small patch release: a notification center for agents and services, a TUI
+side pane that previews local files, Ctrl+V pasting the clipboard image, and
+two fixes to the GitHub watcher. Protocol version 24, unchanged; the new
+commands and replies are additive. Store schema 26 (was 25): a
+`notifications` table, created idempotently on first start.
+
+### Added
+
+- **Local files beside the chat.** Click a file reference or use Alt+O to
+  preview PNG, JPEG, GIF, WebP, Markdown and text in a resizable side pane.
+  Native terminal graphics fall back to Unicode half blocks. Esc closes the
+  pane while the agent continues; `Alt+E` opens any file externally. Files
+  outside the workspace require confirmation; remote files are never fetched.
 
 - **A notification center.** Agents and services such as Archon post
   questions, blockers, decisions, outcomes and news to one durable center per
@@ -39,6 +55,15 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Ctrl+V pastes the clipboard image, as in other agent harnesses.** It used
+  to prefer any text offered beside an image, so an image copied from a
+  browser, a chat app or another app that also offers text pasted that text.
+  Ctrl+V now attaches the image whenever the clipboard holds one, attaches a
+  single image file copied in a file manager (`text/uri-list`), and pastes the
+  text otherwise; Ctrl+Shift+V, the terminal's own paste, stays text. With the
+  board, a view or find holding the keys, Ctrl+V and Alt+V now say why
+  nothing was pasted instead of doing nothing (see
+  [images in the TUI guide](https://github.com/mengsig/aether/blob/main/docs/tui.md#images)).
 - **GitHub operator logins dispatch without write access.** A login in the
   watcher's `operator_users` may dispatch on any watched repository whose
   `allowed_users`, if set, admits it, without the collaborator-permission
@@ -52,6 +77,11 @@ release is also the text of its GitHub release.
   else a `github.watcher.ignored` event. It never starts a turn. The
   `ignored` count in `status` is unchanged (see
   [GitHub watcher](https://github.com/mengsig/aether/blob/main/docs/github-watcher.md#ignored-requests)).
+
+### Dependencies
+
+- zstd 0.14 (store migration backups), aws-lc-rs 1.18.2, schemars 1.2.3,
+  serde_json 1.0.154, sha2 0.11.1 and tokio 1.53.3.
 
 ## 1.2.0
 

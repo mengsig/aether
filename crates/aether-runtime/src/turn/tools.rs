@@ -1,4 +1,5 @@
 use super::*;
+use aether_core::shell_network::gated_class;
 
 /// What to tell a model that named a tool it cannot use. A tool the registry
 /// has but this agent's exposure or scope withholds says which, so a denied
@@ -295,11 +296,16 @@ pub(super) async fn run_tool_calls(
         };
         let descriptor = tool.descriptor();
         aether_tools::ToolRuntime::prepare(&mut call, tool.as_ref(), tool_ctx);
+        let class = gated_class(descriptor.side_effect, &call.input);
         commit.push_event(ctx.draft(EventKind::ToolRequested {
             call: call.clone(),
-            side_effect: descriptor.side_effect,
+            side_effect: class,
         }));
-        let gated = requires_approval(&descriptor, &ctx.agent.config.approval);
+        let gated = ctx
+            .agent
+            .config
+            .approval
+            .requires_raised(descriptor.side_effect, class);
         if gated {
             let argument = tool.rule_argument(&call.input);
             let approval = ApprovalRequest {
@@ -311,7 +317,7 @@ pub(super) async fn run_tool_calls(
                 description: describe_call(&call),
                 argument: argument.clone(),
                 resources: call.resources.clone(),
-                side_effect: descriptor.side_effect,
+                side_effect: class,
                 requested_at: now(),
                 status: ApprovalStatus::Pending,
             };
@@ -352,7 +358,7 @@ pub(super) async fn run_tool_calls(
                         tool: name.clone(),
                         description: approval.description.clone(),
                         argument: approval.argument.clone(),
-                        side_effect: descriptor.side_effect,
+                        side_effect: class,
                     }));
                     commit.push_mutation(Mutation::PutApproval(approval.clone()));
                     effects.pending_approvals.push(approval.id);

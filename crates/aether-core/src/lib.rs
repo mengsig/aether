@@ -36,6 +36,7 @@ pub mod report;
 pub mod repository;
 pub mod retention;
 pub mod schedule;
+pub mod shell_network;
 pub mod snapshot;
 pub mod task;
 pub mod text;

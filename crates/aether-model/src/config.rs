@@ -18,6 +18,7 @@ mod retention;
 mod scheduler;
 mod storage;
 mod templates;
+mod update;
 
 pub use agents::AgentsSection;
 pub use build_cache::{BuildCacheSection, BuildCacheVar};
@@ -25,6 +26,7 @@ pub use providers::ProvidersSection;
 pub use remote::RemoteSection;
 pub use retention::RetentionSection;
 pub use storage::StorageSection;
+pub use update::UpdateSection;
 
 pub use scheduler::{
     DEFAULT_MAX_CONCURRENT_TURNS, MAX_ENGINE_PARK_GRACE_SECS, MAX_WAIT_TIMEOUT_MINUTES,
@@ -103,6 +105,7 @@ pub struct AetherConfig {
     pub listen: ListenSection,
     pub remote: RemoteSection,
     pub serve: ServeSection,
+    pub update: UpdateSection,
 }
 
 /// Default scope for new roots; explicit scopes and existing agents are unchanged.
@@ -594,18 +597,36 @@ pub struct ModelsSection {
     /// `"provider/model" = "fast" | "balanced" | "strong" | "frontier"`
     /// (`strongest` is read as `strong`); beats the catalog's own tier.
     pub tiers: BTreeMap<String, crate::tier::ModelTier>,
+    /// Context size at which Aether compacts automatically, keyed by
+    /// `provider` or `provider/model` (the model wins). Claude defaults to
+    /// 256000 and Codex to 272000; a value above the window is clamped to it.
+    pub compaction_tokens: BTreeMap<String, u32>,
 }
 
 impl ModelsSection {
     fn validate(&self) -> Result<(), String> {
-        match self
+        if let Some(key) = self
             .tiers
             .keys()
             .find(|key| aether_core::model::ModelRef::parse(key).is_none())
         {
-            Some(key) => Err(format!("models.tiers key `{key}` must be provider/model")),
-            None => Ok(()),
+            return Err(format!("models.tiers key `{key}` must be provider/model"));
         }
+        for (key, tokens) in &self.compaction_tokens {
+            if key.is_empty()
+                || (key.contains('/') && aether_core::model::ModelRef::parse(key).is_none())
+            {
+                return Err(format!(
+                    "models.compaction_tokens key `{key}` must be provider or provider/model"
+                ));
+            }
+            if *tokens == 0 {
+                return Err(format!(
+                    "models.compaction_tokens `{key}` must be above zero"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 

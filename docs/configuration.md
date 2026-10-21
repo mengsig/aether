@@ -386,6 +386,14 @@ data directory inside `/tmp` puts the root there too, and `aether doctor` warns
 only if that filesystem is in memory or the path is long. Set `temp_root` or
 move the data directory.
 
+The doctor warning about a long path, such as a sandbox home directory, is
+cleared by a short path in the `[agents]` table of `config.toml`:
+
+```toml
+[agents]
+temp_root = "/var/tmp/ae"
+```
+
 The daemon resolves the root to its real path once at startup, following any
 symlinks in it, and uses only that path from then on: it is what agents get as
 `TMPDIR` and what `aether doctor` and `aether storage` report. The daemon

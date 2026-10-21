@@ -35,6 +35,9 @@ impl Observer {
                 then: Then::Backfill { .. },
                 ..
             }) => Some(json!({"kind": "backfill"})),
+            LoopEvent::App(AppEvent::ClipboardRead(_) | AppEvent::ImageRead(_)) => {
+                Some(json!({"kind": "pasted"}))
+            }
             LoopEvent::Reconnected(_) => Some(json!({"kind": "reconnected"})),
             LoopEvent::App(AppEvent::Subscribed { id, last_seq }) => {
                 Some(json!({"kind": "subscribed", "id": id, "high_water": last_seq}))
@@ -61,9 +64,11 @@ impl Observer {
         record["connected"] = json!(app.connected);
         if matches!(
             record["kind"].as_str(),
-            Some("input" | "resumed" | "backfill")
+            Some("input" | "resumed" | "backfill" | "pasted")
         ) {
             record["draft"] = json!(app.input.text);
+            record["images"] = json!(app.input.images.len());
+            record["flash"] = json!(app.live_flash());
             record["selected"] = json!(app.selected);
             record["size"] = json!(app.size);
             record["transcript"] = json!(

@@ -40,7 +40,7 @@ async fn model_catalogue_carries_aliases_and_marks_an_aliased_default() {
         })
         .expect("builtin opus");
     assert_eq!(opus.aliases, ["opus", "opus-5-5", "opus-5.5"]);
-    assert_eq!(opus.capabilities.context_window, 200_000);
+    assert_eq!(opus.capabilities.context_window, 1_000_000);
     assert!(opus.is_default);
     assert_eq!(opus.tier.as_deref(), Some("strong"));
     let default = models

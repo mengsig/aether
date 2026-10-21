@@ -611,6 +611,18 @@ fn approval_takes_none_or_a_list_of_classes() {
 }
 
 #[test]
+fn no_model_refusal_says_which_command_to_run() {
+    let refused = anyhow::Error::new(ClientError::Protocol(aether_protocol::ErrorReply::new(
+        aether_protocol::ErrorCode::NoModel,
+        "no model configured",
+    )));
+    let message = error_message(&refused);
+    assert!(message.contains("aether login claude-code"), "{message}");
+    assert!(message.contains("aether login codex"), "{message}");
+    assert!(message.contains("--model"), "{message}");
+}
+
+#[test]
 fn error_message_keeps_each_distinct_cause_once() {
     let refused = anyhow::Error::new(ClientError::Protocol(aether_protocol::ErrorReply::new(
         aether_protocol::ErrorCode::NotFound,

@@ -432,11 +432,11 @@ pub(super) async fn drive(
                             Verdict { allow: false, message: Some(TURN_IS_OVER.to_owned()) }
                         }
                         None => {
-                            let class = side_effect.unwrap_or_else(|| side_effect_of(&tool));
+                            let declared = side_effect.unwrap_or_else(|| side_effect_of(&tool));
                             permission_verdict(
                                 runtime,
                                 ctx,
-                                GateSubject::from_prompt(runtime, ctx, &tool, &tool_input, class, tool_input["tool_use_id"].as_str())?,
+                                GateSubject::from_prompt(runtime, ctx, &tool, &tool_input, declared, tool_input["tool_use_id"].as_str())?,
                                 cancel,
                                 true,
                             )

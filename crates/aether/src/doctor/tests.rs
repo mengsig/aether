@@ -554,13 +554,14 @@ fn a_default_model_no_ready_provider_serves_is_a_failure() {
 
 #[test]
 fn an_engine_that_is_present_but_not_signed_in_is_called_out() {
-    assert_eq!(check_engines(&[], "aether").level, Level::Warn);
+    assert_eq!(check_engines(&[], None, "aether").level, Level::Warn);
     assert_eq!(
         check_engines(
             &[(
                 "claude-code".into(),
                 EngineStatus::Unavailable("not installed".into())
             )],
+            None,
             "aether"
         )
         .level,
@@ -577,6 +578,7 @@ fn an_engine_that_is_present_but_not_signed_in_is_called_out() {
                 EngineStatus::Unavailable("codex is not installed or not on PATH".into()),
             ),
         ],
+        None,
         "aether",
     );
     assert_eq!(both.level, Level::Warn);
@@ -590,6 +592,7 @@ fn an_engine_that_is_present_but_not_signed_in_is_called_out() {
             "claude-code".into(),
             EngineStatus::Ready("claude-code/2.1.0".into()),
         )],
+        None,
         "aether",
     );
     assert_eq!(all.level, Level::Ok);
@@ -609,7 +612,7 @@ fn a_too_old_engine_names_the_upgrade_remedy() {
             "claude 2.0.0 is older than the 2.1.219 Aether requires; upgrade claude to >= 2.1.219"
                 .into(),
         ),
-    )], "aether");
+    )], None, "aether");
     assert_eq!(report.level, Level::Warn);
     assert!(report.detail.contains("upgrade claude to >= 2.1.219"));
 }
@@ -628,6 +631,7 @@ fn a_version_limitation_reads_distinctly_from_not_usable() {
                 limitation: "network-denied turns require claude >= 2.1.219 (found 2.0.5)".into(),
             },
         )],
+        None,
         "aether",
     );
     assert_eq!(check.level, Level::Warn);
@@ -657,6 +661,7 @@ fn a_version_limitation_reads_distinctly_from_not_usable() {
                 EngineStatus::Unavailable("codex is not installed or not on PATH".into()),
             ),
         ],
+        None,
         "aether",
     );
     assert_eq!(alongside_missing.level, Level::Warn);
@@ -682,6 +687,7 @@ fn a_missing_sandbox_dependency_is_a_limitation_with_a_dependency_fix() {
                 limitation: "offline sandbox dependencies on PATH; missing: socat".into(),
             },
         )],
+        None,
         "aether",
     );
     assert_eq!(check.level, Level::Warn);
@@ -887,7 +893,7 @@ fn every_daemon_command_in_doctor_fixes_preserves_the_selected_socket() {
             Some(&model("anthropic/claude-sonnet-5-5")),
             &command,
         ),
-        check_engines(&unavailable, &command),
+        check_engines(&unavailable, None, &command),
         check_mcp(1, &[], &command),
         check_mcp(1, &failed, &command),
         check_mcp(
@@ -1240,4 +1246,40 @@ fn an_unresolvable_default_model_fails_naming_the_key() {
     )
     .expect("write");
     assert_eq!(check_config(&p).level, Level::Ok);
+}
+
+#[test]
+fn an_engine_the_daemon_cannot_see_is_named() {
+    let found = [
+        (
+            "claude-code".to_owned(),
+            EngineStatus::Ready("claude-code/2.1.304".into()),
+        ),
+        (
+            "codex".to_owned(),
+            EngineStatus::Ready("codex-app/0.163.0".into()),
+        ),
+    ];
+    let daemon = ["codex-app/0.155.1".to_owned()];
+    let check = check_engines(&found, Some(&daemon), "aether");
+    assert_eq!(check.level, Level::Warn);
+    assert!(
+        check
+            .detail
+            .contains("the daemon cannot use claude-code/2.1.304 (it has: codex-app/0.155.1)"),
+        "{}",
+        check.detail
+    );
+    assert!(check.fix.as_deref().unwrap().contains("PATH"));
+    assert!(!check.detail.contains("cannot use codex-app"));
+
+    let agreeing = [
+        "claude-code/2.1.304".to_owned(),
+        "codex-app/0.155.1".to_owned(),
+    ];
+    assert_eq!(
+        check_engines(&found, Some(&agreeing), "aether").level,
+        Level::Ok
+    );
+    assert_eq!(check_engines(&found, None, "aether").level, Level::Ok);
 }

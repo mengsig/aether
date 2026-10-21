@@ -25,8 +25,8 @@ anstyle-query 1.1.5: MIT OR Apache-2.0 (https://github.com/rust-cli/anstyle.git)
 anyhow 1.0.104: MIT OR Apache-2.0 (https://github.com/dtolnay/anyhow)
 async-trait 0.1.92: MIT OR Apache-2.0 (https://github.com/dtolnay/async-trait)
 atomic-waker 1.1.2: Apache-2.0 OR MIT (https://github.com/smol-rs/atomic-waker)
-aws-lc-rs 1.18.1: ISC AND (Apache-2.0 OR ISC) (https://github.com/aws/aws-lc-rs)
-aws-lc-sys 0.45.0: ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) (https://github.com/aws/aws-lc-rs)
+aws-lc-rs 1.18.2: ISC AND (Apache-2.0 OR ISC) (https://github.com/aws/aws-lc-rs)
+aws-lc-sys 0.46.0: ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) (https://github.com/aws/aws-lc-rs)
 base64 0.23.1: MIT OR Apache-2.0 (https://github.com/marshallpierce/rust-base64)
 bitflags 2.13.1: MIT OR Apache-2.0 (https://github.com/bitflags/bitflags)
 block-buffer 0.12.1: MIT OR Apache-2.0 (https://github.com/RustCrypto/utils)
@@ -104,6 +104,7 @@ futures-macro 0.3.34: MIT OR Apache-2.0 (https://github.com/rust-lang/futures-rs
 futures-sink 0.3.34: MIT OR Apache-2.0 (https://github.com/rust-lang/futures-rs)
 futures-task 0.3.34: MIT OR Apache-2.0 (https://github.com/rust-lang/futures-rs)
 futures-util 0.3.34: MIT OR Apache-2.0 (https://github.com/rust-lang/futures-rs)
+getrandom 0.3.4: MIT OR Apache-2.0 (https://github.com/rust-random/getrandom)
 getrandom 0.4.3: MIT OR Apache-2.0 (https://github.com/rust-random/getrandom)
 gif 0.14.2: MIT OR Apache-2.0 (https://github.com/image-rs/image-gif)
 globset 0.4.20: Unlicense OR MIT (https://github.com/BurntSushi/ripgrep/tree/master/crates/globset)
@@ -220,8 +221,8 @@ rustls-webpki 0.103.15: ISC (https://github.com/rustls/webpki)
 rustversion 1.0.23: MIT OR Apache-2.0 (https://github.com/dtolnay/rustversion)
 ryu 1.0.23: Apache-2.0 OR BSL-1.0 (https://github.com/dtolnay/ryu)
 same-file 1.0.6: Unlicense/MIT (https://github.com/BurntSushi/same-file)
-schemars 1.2.2: MIT (https://github.com/GREsau/schemars)
-schemars_derive 1.2.2: MIT (https://github.com/GREsau/schemars)
+schemars 1.2.3: MIT (https://github.com/GREsau/schemars)
+schemars_derive 1.2.3: MIT (https://github.com/GREsau/schemars)
 scopeguard 1.2.0: MIT OR Apache-2.0 (https://github.com/bluss/scopeguard)
 security-framework 3.7.0: MIT OR Apache-2.0 (https://github.com/kornelski/rust-security-framework)
 security-framework-sys 2.17.0: MIT OR Apache-2.0 (https://github.com/kornelski/rust-security-framework)
@@ -229,10 +230,10 @@ serde 1.0.229: MIT OR Apache-2.0 (https://github.com/serde-rs/serde)
 serde_core 1.0.229: MIT OR Apache-2.0 (https://github.com/serde-rs/serde)
 serde_derive 1.0.229: MIT OR Apache-2.0 (https://github.com/serde-rs/serde)
 serde_derive_internals 0.30.0: MIT OR Apache-2.0 (https://github.com/serde-rs/serde)
-serde_json 1.0.151: MIT OR Apache-2.0 (https://github.com/serde-rs/json)
+serde_json 1.0.154: MIT OR Apache-2.0 (https://github.com/serde-rs/json)
 serde_spanned 1.1.2: MIT OR Apache-2.0 (https://github.com/toml-rs/toml)
 sha1 0.11.0: MIT OR Apache-2.0 (https://github.com/RustCrypto/hashes)
-sha2 0.11.0: MIT OR Apache-2.0 (https://github.com/RustCrypto/hashes)
+sha2 0.11.1: MIT OR Apache-2.0 (https://github.com/RustCrypto/hashes)
 sharded-slab 0.1.7: MIT (https://github.com/hawkw/sharded-slab)
 signal-hook 0.3.18: Apache-2.0/MIT (https://github.com/vorner/signal-hook)
 signal-hook-mio 0.2.5: MIT OR Apache-2.0 (https://github.com/vorner/signal-hook)
@@ -266,7 +267,7 @@ thread_local 1.1.10: MIT OR Apache-2.0 (https://github.com/Amanieu/thread_local-
 time 0.3.55: MIT OR Apache-2.0 (https://github.com/time-rs/time)
 time-core 0.1.9: MIT OR Apache-2.0 (https://github.com/time-rs/time)
 tinystr 0.8.4: Unicode-3.0 (https://github.com/unicode-org/icu4x)
-tokio 1.53.2: MIT (https://github.com/tokio-rs/tokio)
+tokio 1.53.3: MIT (https://github.com/tokio-rs/tokio)
 tokio-macros 2.7.2: MIT (https://github.com/tokio-rs/tokio)
 tokio-rustls 0.26.5: MIT OR Apache-2.0 (https://github.com/rustls/tokio-rustls)
 tokio-tungstenite 0.30.0: MIT (https://github.com/snapview/tokio-tungstenite)
@@ -314,9 +315,9 @@ zerotrie 0.2.5: Unicode-3.0 (https://github.com/unicode-org/icu4x)
 zerovec 0.11.8: Unicode-3.0 (https://github.com/unicode-org/icu4x)
 zerovec-derive 0.11.6: Unicode-3.0 (https://github.com/unicode-org/icu4x)
 zmij 1.0.23: MIT (https://github.com/dtolnay/zmij)
-zstd 0.13.3: MIT (https://github.com/gyscos/zstd-rs)
-zstd-safe 7.3.0: BSD-3-Clause (https://github.com/gyscos/zstd-rs)
-zstd-sys 2.1.1+zstd.1.5.7: BSD-3-Clause (https://github.com/gyscos/zstd-rs)
+zstd 0.14.3: BSD-3-Clause (https://github.com/gyscos/zstd-rs)
+zstd-safe 8.2.0: BSD-3-Clause (https://github.com/gyscos/zstd-rs)
+zstd-sys 2.1.2+zstd.1.5.7: BSD-3-Clause (https://github.com/gyscos/zstd-rs)
 zune-core 0.5.3: MIT OR Apache-2.0 OR Zlib (https://github.com/etemesi254/zune-image)
 zune-jpeg 0.5.15: MIT OR Apache-2.0 OR Zlib (https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg)
 
@@ -570,7 +571,7 @@ serde 1.0.229 (LICENSE-MIT)
 serde_core 1.0.229 (LICENSE-MIT)
 serde_derive 1.0.229 (LICENSE-MIT)
 serde_derive_internals 0.30.0 (LICENSE-MIT)
-serde_json 1.0.151 (LICENSE-MIT)
+serde_json 1.0.154 (LICENSE-MIT)
 syn 2.0.119 (LICENSE-MIT)
 syn 3.0.5 (LICENSE-MIT)
 thiserror 2.0.21 (LICENSE-MIT)
@@ -711,7 +712,7 @@ serde 1.0.229 (LICENSE-APACHE)
 serde_core 1.0.229 (LICENSE-APACHE)
 serde_derive 1.0.229 (LICENSE-APACHE)
 serde_derive_internals 0.30.0 (LICENSE-APACHE)
-serde_json 1.0.151 (LICENSE-APACHE)
+serde_json 1.0.154 (LICENSE-APACHE)
 simdutf8 0.1.5 (LICENSE-Apache)
 syn 2.0.119 (LICENSE-APACHE)
 syn 3.0.5 (LICENSE-APACHE)
@@ -1232,7 +1233,7 @@ scopeguard 1.2.0 (LICENSE-APACHE)
 security-framework 3.7.0 (LICENSE-APACHE)
 security-framework-sys 2.17.0 (LICENSE-APACHE)
 sha1 0.11.0 (LICENSE-APACHE)
-sha2 0.11.0 (LICENSE-APACHE)
+sha2 0.11.1 (LICENSE-APACHE)
 signal-hook 0.3.18 (LICENSE-APACHE)
 signal-hook-mio 0.2.5 (LICENSE-APACHE)
 signal-hook-registry 1.4.8 (LICENSE-APACHE)
@@ -1510,7 +1511,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-aws-lc-rs 1.18.1 (LICENSE)
+aws-lc-rs 1.18.2 (LICENSE)
 ------------------------------------------------------------------------------
 
 SPDX-License-Identifier: ISC AND (Apache-2.0 OR ISC)
@@ -1717,7 +1718,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ------------------------------------------------------------------------------
-aws-lc-sys 0.45.0 (LICENSE)
+aws-lc-sys 0.46.0 (LICENSE)
 ------------------------------------------------------------------------------
 
 AWS Libcrypto (AWS-LC)
@@ -5269,6 +5270,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
+getrandom 0.3.4 (LICENSE-APACHE)
 getrandom 0.4.3 (LICENSE-APACHE)
 ------------------------------------------------------------------------------
 
@@ -5473,6 +5475,37 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+------------------------------------------------------------------------------
+getrandom 0.3.4 (LICENSE-MIT)
+------------------------------------------------------------------------------
+
+Copyright (c) 2018-2025 The rust-random Project Developers
+Copyright (c) 2014 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 getrandom 0.4.3 (LICENSE-MIT)
@@ -10324,8 +10357,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-schemars 1.2.2 (LICENSE)
-schemars_derive 1.2.2 (LICENSE)
+schemars 1.2.3 (LICENSE)
+schemars_derive 1.2.3 (LICENSE)
 ------------------------------------------------------------------------------
 
 MIT License
@@ -10408,7 +10441,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 sha1 0.11.0 (LICENSE-MIT)
-sha2 0.11.0 (LICENSE-MIT)
+sha2 0.11.1 (LICENSE-MIT)
 ------------------------------------------------------------------------------
 
 Copyright (c) 2016-2026 The RustCrypto Project Developers
@@ -10875,7 +10908,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-tokio 1.53.2 (LICENSE)
+tokio 1.53.3 (LICENSE)
 tokio-util 0.7.20 (LICENSE)
 ------------------------------------------------------------------------------
 
@@ -11866,21 +11899,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-zstd 0.13.3 (LICENSE)
-------------------------------------------------------------------------------
-
-The MIT License (MIT)
-Copyright (c) 2016 Alexandre Bury
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-------------------------------------------------------------------------------
-zstd-safe 7.3.0 (LICENSE)
-zstd-sys 2.1.1+zstd.1.5.7 (LICENSE)
+zstd 0.14.3 (LICENSE)
+zstd-safe 8.2.0 (LICENSE)
+zstd-sys 2.1.2+zstd.1.5.7 (LICENSE)
 ------------------------------------------------------------------------------
 
 BSD 3-Clause License
@@ -11913,7 +11934,7 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------
-zstd-sys 2.1.1+zstd.1.5.7 (LICENSE.BSD-3-Clause)
+zstd-sys 2.1.2+zstd.1.5.7 (LICENSE.BSD-3-Clause)
 ------------------------------------------------------------------------------
 
 The auto-generated bindings are under the 3-clause BSD license:

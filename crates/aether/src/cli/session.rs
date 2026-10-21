@@ -89,6 +89,14 @@ pub async fn tui(
         host_commands,
     } = display;
     let _guard = crate::logging::init("aether.log", false)?;
+    // A pipe or a screen reader gets lines whether or not --plain was typed:
+    // the full-screen UI is meaningless without a terminal.
+    let plain = wants_plain(
+        plain,
+        std::io::IsTerminal::is_terminal(&std::io::stdout()),
+        std::env::var("TERM").ok().as_deref(),
+    );
+    let update_check = launch_update_check(&socket, plain);
     let theme_flag = theme
         .as_deref()
         .map(|t| {
@@ -98,6 +106,9 @@ pub async fn tui(
         .transpose()?;
     validate_startup_display(&socket, ascii)?;
     let client = connect_or_start(&socket).await?;
+    if let Some(check) = update_check {
+        super::update::offer(check, socket.clone(), explicit_socket).await?;
+    }
     let instance_id = client.welcome().map(|w| w.instance_id.clone());
     let definitions_dir = aether_tui::prefs::dir();
     let prefs_dir = aether_tui::prefs::session_dir(
@@ -166,13 +177,6 @@ pub async fn tui(
         Some(agent) => Some(agent.resolve(&client, &socket).await?),
         None => None,
     };
-    // A pipe or a screen reader gets lines whether or not --plain was typed:
-    // the full-screen UI is meaningless without a terminal.
-    let plain = wants_plain(
-        plain,
-        std::io::IsTerminal::is_terminal(&std::io::stdout()),
-        std::env::var("TERM").ok().as_deref(),
-    );
     let options = TuiOptions {
         view_modes,
         view_mode: Some(view_mode),
@@ -239,6 +243,22 @@ pub async fn tui(
         return aether_tui::run_plain(client, options).await;
     }
     aether_tui::run(client, options).await
+}
+
+/// The launch update check, for a person at a terminal on a local daemon:
+/// a remote daemon is not updated by this binary, and a prompt needs a person.
+fn launch_update_check(
+    socket: &aether_client::Endpoint,
+    plain: bool,
+) -> Option<super::update::LaunchCheck> {
+    let interactive = !plain && std::io::IsTerminal::is_terminal(&std::io::stdin());
+    if socket.is_remote() || !interactive {
+        return None;
+    }
+    super::update::LaunchCheck::start(
+        &aether_tui::prefs::dir(),
+        &aether_protocol::paths::data_dir(),
+    )
 }
 
 /// A dumb terminal cannot honour the alternate screen, mouse or keyboard modes.

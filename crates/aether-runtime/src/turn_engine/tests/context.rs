@@ -9,7 +9,7 @@ use aether_tools::HarnessAction;
 #[tokio::test]
 async fn a_1m_model_added_in_providers_toml_measures_context_against_1m() {
     for (model, window, reported_window) in [
-        ("claude-opus-5-5", 200_000_u64, 1_000_000_u64),
+        ("claude-opus-5-5", 1_000_000_u64, 200_000_u64),
         ("claude-opus-5-5[1m]", 1_000_000, 200_000),
     ] {
         let config_dir = tempfile::tempdir().expect("config dir");
@@ -27,7 +27,8 @@ async fn a_1m_model_added_in_providers_toml_measures_context_against_1m() {
         let resolved = runtime.models.resolve(&ctx.agent.model).expect(model);
         let mut state = StreamState::new(TurnPricing::default(), resolved);
         let mut parser = ParseState::default();
-        for tokens in [window * 3 / 4 - 1, window * 3 / 4] {
+        let threshold = 256_000;
+        for tokens in [threshold - 1, threshold] {
             for line in context_receipt(tokens, reported_window) {
                 for event in parse_line(&line.to_string(), &mut parser) {
                     handle_event(&runtime, &mut ctx, &snapshot, event, &mut state)
@@ -52,7 +53,7 @@ async fn a_1m_model_added_in_providers_toml_measures_context_against_1m() {
             );
             assert_eq!(
                 context["at_compaction_threshold"],
-                tokens == window * 3 / 4,
+                tokens == threshold,
                 "{model}"
             );
         }

@@ -2,6 +2,13 @@ use std::path::{Path, PathBuf};
 
 use super::{Check, Paths};
 
+const HINT_ABSOLUTE: &str =
+    "add to config.toml an absolute path, e.g. [agents] temp_root = \"/var/tmp/ae\"";
+const HINT_PRIVATE: &str =
+    "add to config.toml a private directory you own, e.g. [agents] temp_root = \"/var/tmp/ae\"";
+const HINT_SHORT: &str =
+    "add to config.toml a short, disk-backed path, e.g. [agents] temp_root = \"/var/tmp/ae\"";
+
 /// The root agents' temp dirs go under. A configured root the daemon would
 /// refuse fails, since it stops startup; a default one warns, since the daemon
 /// then leaves agents its own temp dir. A long or in-memory root warns.
@@ -21,7 +28,7 @@ pub fn check_agent_temp(
                 "{} has no parent to hold agent temp dirs; agents use the daemon's temp dir",
                 store.display()
             ),
-            "set agents.temp_root in config.toml to an absolute path",
+            HINT_ABSOLUTE,
         );
     };
     let root = match (
@@ -40,17 +47,13 @@ pub fn check_agent_temp(
             return Check::warn(
                 "agent temp",
                 format!("{error}; agents use the daemon's temp dir instead"),
-                "set agents.temp_root in config.toml to a private directory you own",
+                HINT_PRIVATE,
             );
         }
     };
     let warnings = aether_core::agent_temp::warnings(&root);
     if !warnings.is_empty() {
-        return Check::warn(
-            "agent temp",
-            warnings.join("; "),
-            "set agents.temp_root in config.toml to a short, disk-backed path",
-        );
+        return Check::warn("agent temp", warnings.join("; "), HINT_SHORT);
     }
     Check::ok(
         "agent temp",

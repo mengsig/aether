@@ -146,11 +146,25 @@ An upgrade adds `release_notes`: `published`, then either `url`, the release
 page, or `summary`, `before_updating` (`version` and `text` per release, oldest
 first) and `one_way_migration`.
 
-The network is used only while this command runs: one request for the latest
+The network is used while this command runs: one request for the latest
 release's `VERSION`, then that release's `CHANGELOG.md` for an upgrade, its
-checksum and its archive. Nothing
-checks for updates in the background and nothing is reported anywhere. Every
-request has a deadline.
+checksum and its archive. Every request has a deadline.
+
+### The check on launch
+
+When you start `aether` in a terminal against a local daemon, it also looks at
+the latest release's `VERSION` beside startup (2 s at most; startup never waits for it,
+so the first launch after the cache expires is offered on the next one) and remembers the answer for 6 hours in
+`update-check.json` in the data directory. Offline, or on any error, it says
+nothing. If a newer release exists and `aether update` can replace this binary,
+it asks `Aether X.Y.Z is available. Update and restart now? [Y/n]`: `y` or
+Enter stops the daemon, runs `aether update` and starts the new build with the
+same arguments; `n` carries on; `s` skips that version, and the next release is
+offered again. Nothing is installed without a yes, and a closed stdin is a no.
+
+Turn it off with `[update]` `check = false` in `config.toml`. It is also off
+when `AETHER_MANAGED_BY` is set (a tool such as Archon that manages this Aether
+and owns its updates), and for `--plain`, pipes and remote daemons.
 
 ### Binaries it will not replace
 

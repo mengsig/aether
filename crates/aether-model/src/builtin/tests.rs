@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn claude_cli_uses_standard_windows_without_changing_api_capabilities() {
+fn claude_cli_and_api_models_share_the_full_window() {
     let all = providers();
     let cli = all
         .iter()
@@ -19,7 +19,7 @@ fn claude_cli_uses_standard_windows_without_changing_api_capabilities() {
     ] {
         assert_eq!(
             cli.model(cli_id).unwrap().capabilities.context_window,
-            200_000
+            1_000_000
         );
         assert_eq!(
             api.model(api_id).unwrap().capabilities.context_window,
@@ -28,10 +28,10 @@ fn claude_cli_uses_standard_windows_without_changing_api_capabilities() {
     }
 }
 
-/// A product decision, not an oversight: Claude's 1M context window is never
-/// offered built in. It exists only once `providers.toml` adds it explicitly.
+/// The `[1m]` ids and `-1m` aliases stay out of the catalogue: every built-in
+/// model already has the full window, and an open list would accept any id.
 #[test]
-fn the_1m_context_window_is_never_built_in_for_claude_code() {
+fn no_1m_variant_ids_are_built_in_for_claude_code() {
     let all = providers();
     let cli = all
         .iter()
@@ -46,10 +46,10 @@ fn the_1m_context_window_is_never_built_in_for_claude_code() {
             model.id,
             model.aliases
         );
-        assert_eq!(model.capabilities.context_window, 200_000, "{}", model.id);
+        assert_eq!(model.capabilities.context_window, 1_000_000, "{}", model.id);
     }
     let default_window = cli.default_capabilities.as_ref().unwrap().context_window;
-    assert_eq!(default_window, 200_000);
+    assert_eq!(default_window, 1_000_000);
     assert!(
         !cli.flags.open_model_list,
         "an open list would accept any `[1m]` id without an explicit edit"

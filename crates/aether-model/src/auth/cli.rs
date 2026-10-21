@@ -27,6 +27,15 @@ pub struct CliAuth {
     pub logged_in_markers: Vec<String>,
     /// Shown in login pickers, e.g. "Claude subscription (Claude Code)".
     pub label: String,
+    /// The CLI's OAuth credential file, `~` meaning the home directory. Its
+    /// status reports a login that has expired as still logged in, so an
+    /// access token past its expiry with no refresh token is not ready.
+    #[serde(default)]
+    pub credential_file: Option<String>,
+    /// Environment variable naming a directory that replaces the one holding
+    /// `credential_file` (`CLAUDE_CONFIG_DIR`), as it does for the CLI.
+    #[serde(default)]
+    pub credential_dir_env: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,10 +120,14 @@ impl CliAuth {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        let logged_in =
+        let mut logged_in =
             out.status.success() && self.logged_in_markers.iter().any(|m| text.contains(m));
+        let expired = logged_in && self.login_expired();
+        logged_in &= !expired;
         let reason = if !out.status.success() {
             format!("status returned non-zero exit ({})", out.status)
+        } else if expired {
+            format!("login expired, run `{} login`", self.program)
         } else if logged_in {
             "logged in".into()
         } else {
@@ -125,6 +138,32 @@ impl CliAuth {
             logged_in,
             detail: format!("{}: {reason}", self.program),
         }
+    }
+
+    fn login_expired(&self) -> bool {
+        let override_dir = self
+            .credential_dir_env
+            .as_deref()
+            .and_then(std::env::var_os)
+            .filter(|dir| !dir.is_empty());
+        self.login_expired_in(override_dir)
+    }
+
+    fn login_expired_in(&self, override_dir: Option<std::ffi::OsString>) -> bool {
+        let Some(file) = self.credential_file.as_deref() else {
+            return false;
+        };
+        let path = match (override_dir, std::path::Path::new(file).file_name()) {
+            (Some(dir), Some(name)) => std::path::Path::new(&dir).join(name),
+            _ => match expand_home(file) {
+                Some(path) => path,
+                None => return false,
+            },
+        };
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        oauth_expired(&text, aether_core::time::now())
     }
 
     /// Run the CLI's own login flow attached to the current terminal.
@@ -173,6 +212,29 @@ impl CliAuth {
     }
 }
 
+fn expand_home(path: &str) -> Option<std::path::PathBuf> {
+    match path.strip_prefix("~/") {
+        Some(rest) => Some(std::path::PathBuf::from(std::env::var_os("HOME")?).join(rest)),
+        None => Some(path.into()),
+    }
+}
+
+/// True when the credential file holds an access token past its expiry and no
+/// refresh token to renew it. Unreadable or unfamiliar content is not expiry.
+fn oauth_expired(text: &str, now: aether_core::time::Timestamp) -> bool {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(text) else {
+        return false;
+    };
+    let oauth = &json["claudeAiOauth"];
+    let Some(expires_ms) = oauth["expiresAt"].as_i64() else {
+        return false;
+    };
+    let has_refresh = oauth["refreshToken"]
+        .as_str()
+        .is_some_and(|t| !t.is_empty());
+    !has_refresh && expires_ms <= now.timestamp_millis()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,7 +247,58 @@ mod tests {
             logout: vec![],
             logged_in_markers: vec!["\"loggedIn\": true".into(), "Logged in".into()],
             label: "fake".into(),
+            credential_file: None,
+            credential_dir_env: None,
         }
+    }
+
+    #[tokio::test]
+    async fn expired_login_without_refresh_token_is_not_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("credentials.json");
+        std::fs::write(
+            &file,
+            r#"{"claudeAiOauth":{"accessToken":"x","expiresAt":1000}}"#,
+        )
+        .unwrap();
+        let auth = CliAuth {
+            credential_file: Some(file.to_string_lossy().into_owned()),
+            ..fake("printf '{\"loggedIn\": true}'")
+        };
+        let status = auth.status_uncached().await;
+        assert!(!status.logged_in, "{status:?}");
+        assert_eq!(status.detail, "sh: login expired, run `sh login`");
+    }
+
+    #[tokio::test]
+    async fn config_dir_override_selects_the_credential_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.json"),
+            r#"{"claudeAiOauth":{"expiresAt":1000}}"#,
+        )
+        .unwrap();
+        let auth = CliAuth {
+            credential_file: Some("/nonexistent/credentials.json".into()),
+            ..fake("true")
+        };
+        assert!(auth.login_expired_in(Some(dir.path().into())));
+        assert!(!auth.login_expired_in(None));
+    }
+
+    #[test]
+    fn oauth_expiry_needs_a_past_expiry_and_no_refresh_token() {
+        let now = aether_core::time::now();
+        let past = now.timestamp_millis() - 1000;
+        let future = now.timestamp_millis() + 60_000;
+        let doc = |at: i64, refresh: &str| {
+            format!(r#"{{"claudeAiOauth":{{"expiresAt":{at},"refreshToken":"{refresh}"}}}}"#)
+        };
+        assert!(oauth_expired(&doc(past, ""), now));
+        assert!(!oauth_expired(&doc(past, "r"), now));
+        assert!(!oauth_expired(&doc(future, ""), now));
+        assert!(!oauth_expired("not json", now));
+        assert!(!oauth_expired("{}", now));
     }
 
     #[tokio::test]

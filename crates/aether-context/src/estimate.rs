@@ -44,6 +44,7 @@ impl TokenEstimator {
                 }
                 ContentBlock::Image { data, .. } => (data.len() / 100) as u32 + 100,
                 ContentBlock::ImageRef(_) => STORED_IMAGE_TOKENS,
+                ContentBlock::Compaction { content } => self.text(content),
             };
         }
         total
@@ -51,6 +52,20 @@ impl TokenEstimator {
 
     pub fn messages(&self, messages: &[Message]) -> u32 {
         messages.iter().map(|m| self.message(m)).sum()
+    }
+
+    /// The Anthropic API drops everything before its newest compaction block,
+    /// so only the messages from that block on count against the window.
+    pub fn messages_after_compaction(&self, messages: &[Message]) -> u32 {
+        let live_from = messages
+            .iter()
+            .rposition(|m| {
+                m.content
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::Compaction { .. }))
+            })
+            .unwrap_or(0);
+        self.messages(&messages[live_from..])
     }
 
     pub fn tools(&self, tools: &[ToolSpec]) -> u32 {
@@ -69,6 +84,24 @@ impl TokenEstimator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_server_compaction_count_ignores_history_before_the_summary() {
+        let e = TokenEstimator;
+        let old = Message::user_text("word ".repeat(2_000));
+        let summary = Message {
+            role: aether_core::model::MessageRole::Assistant,
+            content: vec![ContentBlock::Compaction {
+                content: "short".into(),
+            }],
+        };
+        let history = [old, summary];
+        assert!(e.messages_after_compaction(&history) < e.messages(&history) / 10);
+        assert_eq!(
+            e.messages_after_compaction(&history[..1]),
+            e.messages(&history[..1])
+        );
+    }
 
     #[test]
     fn estimates_scale_with_length() {

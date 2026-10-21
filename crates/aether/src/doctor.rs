@@ -545,7 +545,60 @@ pub enum EngineStatus {
 /// `found` is one entry per engine: its status when detection ran, naming
 /// the program, what was detected, the requirement and the remedy
 /// rather than a bare "missing" - see [`EngineStatus`].
-pub fn check_engines(found: &[(String, EngineStatus)], command: &str) -> Check {
+///
+/// `daemon` is the engine labels the running daemon reports, `None` without
+/// one. The daemon has its own `PATH`, so an engine found here that it lacks
+/// is one its agents cannot run.
+pub fn check_engines(
+    found: &[(String, EngineStatus)],
+    daemon: Option<&[String]>,
+    command: &str,
+) -> Check {
+    let mut check = check_local_engines(found, command);
+    let Some(daemon) = daemon else {
+        return check;
+    };
+    let gaps = engines_missing_from_daemon(found, daemon);
+    if gaps.is_empty() {
+        return check;
+    }
+    assert!(
+        check.level != Level::Fail,
+        "a local engine check never fails"
+    );
+    let listed = if daemon.is_empty() {
+        "none".to_owned()
+    } else {
+        daemon.join(", ")
+    };
+    check.level = Level::Warn;
+    check.detail = format!(
+        "{} · the daemon cannot use {} (it has: {listed})",
+        check.detail,
+        gaps.join(", ")
+    );
+    check.fix = Some("restart the daemon from a shell whose PATH reaches the CLI".into());
+    check
+}
+
+/// Usable engines here whose adapter name the daemon's list lacks, as the
+/// labels doctor found them under. The version may differ; the name may not.
+fn engines_missing_from_daemon(found: &[(String, EngineStatus)], daemon: &[String]) -> Vec<String> {
+    let name = |label: &str| label.split('/').next().unwrap_or(label).to_owned();
+    let daemon_names: Vec<String> = daemon.iter().map(|l| name(l)).collect();
+    found
+        .iter()
+        .filter_map(|(_, status)| match status {
+            EngineStatus::Ready(label) => Some(label.as_str()),
+            EngineStatus::Limited { adapter, .. } => Some(adapter.as_str()),
+            EngineStatus::Unavailable(_) => None,
+        })
+        .filter(|label| !daemon_names.contains(&name(label)))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn check_local_engines(found: &[(String, EngineStatus)], command: &str) -> Check {
     if found.is_empty() {
         return Check::warn(
             "engines",

@@ -116,6 +116,9 @@ pub struct Compactor {
     /// Max characters of any single tool result shown to the compactor.
     tool_result_chars: usize,
     effort: aether_core::model::Effort,
+    /// A stalled request is abandoned after this long, so a compaction ends
+    /// instead of hanging the agent.
+    attempt_timeout: std::time::Duration,
 }
 
 impl std::fmt::Debug for Compactor {
@@ -133,7 +136,13 @@ impl Compactor {
             fallback: None,
             tool_result_chars: 1_500,
             effort: aether_core::model::Effort::Medium,
+            attempt_timeout: ATTEMPT_TIMEOUT,
         }
+    }
+
+    pub fn with_attempt_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.attempt_timeout = timeout;
+        self
     }
 
     pub fn with_effort(mut self, effort: aether_core::model::Effort) -> Self {
@@ -208,7 +217,7 @@ impl Compactor {
                 request.max_output_tokens = Some(6_000);
                 request.effort = Some(self.effort);
                 let mut usage = None;
-                let outcome = async {
+                let attempt_request = async {
                     let stream = client.stream(request, cancel.child_token()).await?;
                     collect(stream, |event| {
                         if let StreamEvent::Usage { usage: reported } = event {
@@ -216,8 +225,18 @@ impl Compactor {
                         }
                     })
                     .await
-                }
-                .await;
+                };
+                let outcome = tokio::time::timeout(self.attempt_timeout, attempt_request)
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(aether_core::model::ModelError::new(
+                            aether_core::model::ModelErrorClass::Timeout,
+                            format!(
+                                "{model} produced no checkpoint within {}s",
+                                self.attempt_timeout.as_secs()
+                            ),
+                        ))
+                    });
                 let attempt = CompactionAttempt {
                     model: model.clone(),
                     usage,
@@ -430,6 +449,11 @@ impl Compactor {
                     ));
                 }
                 ContentBlock::Image { .. } => out.push_str("[image]\n"),
+                ContentBlock::Compaction { content } => {
+                    out.push_str("(earlier summary) ");
+                    out.push_str(content.trim());
+                    out.push('\n');
+                }
                 ContentBlock::ImageRef(image) => {
                     out.push_str(&image.label());
                     out.push('\n');
@@ -439,6 +463,9 @@ impl Compactor {
         out
     }
 }
+
+/// Long enough for a large fold on a slow model, short enough to notice a hang.
+const ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 const SYSTEM: &str = "\
 You are Aether's compaction service. You fold an agent's older conversation into a structured checkpoint that replaces it in the agent's context. The agent will rely on your checkpoint instead of the original messages, so nothing that still matters may be lost.

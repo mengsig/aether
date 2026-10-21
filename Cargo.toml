@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "1.2.0"
+version = "1.2.1"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/mengsig/aether"
@@ -79,7 +79,7 @@ ulid = { version = "3.0.0", features = ["serde"] }
 unicode-width = "0.2.2"
 unicode-segmentation = "1.13.3"
 url = "2.5.8"
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

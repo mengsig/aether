@@ -606,3 +606,16 @@ fn a_derived_cost_limit_is_named_without_noise_in_the_reason() {
     let reason = agent.budget_exceeded(&spent).unwrap();
     assert!(reason.starts_with("cost budget of $0.3:"), "{reason}");
 }
+
+#[test]
+fn a_raised_class_keeps_the_gate_of_either_class() {
+    use crate::tool::SideEffectClass::{External, Mutation, ReadOnly};
+    let mutation_only = ApprovalPolicy {
+        require_for: [Mutation].into(),
+    };
+    assert!(mutation_only.requires_raised(Mutation, External));
+    assert!(!mutation_only.requires(External));
+    assert!(ApprovalPolicy::default().requires_raised(Mutation, External));
+    assert!(!ApprovalPolicy::default().requires_raised(Mutation, Mutation));
+    assert!(!ApprovalPolicy::none().requires_raised(ReadOnly, External));
+}

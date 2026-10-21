@@ -144,6 +144,22 @@ pub async fn models(socket: impl Into<aether_client::Endpoint>, json: bool) -> a
     Ok(())
 }
 
+/// What a run or session on `model` costs, for the line that names it. An
+/// engine's own `default` carries no price, so it says so instead of "?".
+pub(super) fn model_price_phrase(
+    rows: &[aether_protocol::ModelInfo],
+    model: &aether_core::model::ModelRef,
+) -> String {
+    let row = rows.iter().find(|row| {
+        row.model.provider == model.provider
+            && (row.model.model == model.model || row.aliases.contains(&model.model))
+    });
+    match row.and_then(|row| row.capabilities.cost) {
+        Some(cost) => format!("{} per Mtok in/out", model_cost_label(Some(cost))),
+        None => "no list price known".into(),
+    }
+}
+
 fn model_cost_label(cost: Option<aether_core::model::ModelCost>) -> String {
     let Some(cost) = cost else {
         return "?".into();
@@ -330,5 +346,46 @@ mod tests {
         assert_eq!(probed_status_label(&info, &down), "unreachable");
         info.enabled = false;
         assert_eq!(probed_status_label(&info, &down), "off");
+    }
+}
+
+#[cfg(test)]
+mod price_tests {
+    use super::*;
+    use aether_core::model::ModelRef;
+
+    fn row(model: &str, cost: Option<aether_core::model::ModelCost>) -> aether_protocol::ModelInfo {
+        let capabilities = aether_core::model::CapabilityProfile {
+            cost,
+            ..Default::default()
+        };
+        aether_protocol::ModelInfo {
+            tier: None,
+            model: ModelRef::new("claude-code", model),
+            aliases: vec!["opus".into()],
+            name: model.into(),
+            provider_name: "Claude Code".into(),
+            capabilities,
+            configured: true,
+            auth_source: None,
+            is_default: false,
+        }
+    }
+
+    #[test]
+    fn price_phrase_names_the_rate_or_says_unpriced() {
+        let priced = aether_core::model::ModelCost {
+            input_per_mtok: 5.0,
+            output_per_mtok: 25.0,
+            ..Default::default()
+        };
+        let rows = vec![row("claude-opus-5-5", Some(priced)), row("default", None)];
+        let opus = model_price_phrase(&rows, &ModelRef::new("claude-code", "opus"));
+        assert!(opus.contains("$5/$25"), "{opus}");
+        let default = model_price_phrase(&rows, &ModelRef::new("claude-code", "default"));
+        assert!(default.contains("no list price"), "{default}");
+        let missing = model_price_phrase(&rows, &ModelRef::new("openai", "gpt-unpriced"));
+        assert!(missing.contains("no list price"), "{missing}");
+        assert!(!missing.contains("subscription"), "{missing}");
     }
 }

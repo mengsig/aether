@@ -206,7 +206,9 @@ fn push_user(out: &mut Vec<Value>, msg: &Message) {
             ContentBlock::ImageRef(image) => {
                 parts.push(json!({"type": "text", "text": image.label()}));
             }
-            ContentBlock::Thinking { .. } | ContentBlock::ToolUse { .. } => {}
+            ContentBlock::Thinking { .. }
+            | ContentBlock::ToolUse { .. }
+            | ContentBlock::Compaction { .. } => {}
         }
     }
     if parts.is_empty() {
@@ -240,7 +242,8 @@ fn push_assistant(out: &mut Vec<Value>, msg: &Message) {
             ContentBlock::Thinking { .. }
             | ContentBlock::ToolResult { .. }
             | ContentBlock::Image { .. }
-            | ContentBlock::ImageRef(_) => {}
+            | ContentBlock::ImageRef(_)
+            | ContentBlock::Compaction { .. } => {}
         }
     }
     if text.is_empty() && tool_calls.is_empty() {

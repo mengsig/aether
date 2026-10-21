@@ -39,6 +39,9 @@ impl Peer {
 
     #[cfg(target_os = "linux")]
     pub async fn terminate(self) -> anyhow::Result<()> {
+        // `register` is unsafe (forbidden here); an owned pidfd moved in stays the
+        // same open fd for the AsyncFd's life, which is the contract it asks for.
+        #[allow(deprecated)]
         let pidfd = tokio::io::unix::AsyncFd::new(self.pidfd)
             .context("watching the pinned daemon for exit before signalling")?;
         rustix::process::pidfd_send_signal(pidfd.get_ref(), rustix::process::Signal::TERM)

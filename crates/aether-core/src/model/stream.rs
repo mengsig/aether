@@ -46,6 +46,10 @@ pub enum BlockStart {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         input: Option<Value>,
     },
+    Compaction {
+        #[serde(default)]
+        content: String,
+    },
 }
 
 /// Normalized streaming event emitted by every adapter.
@@ -77,6 +81,10 @@ pub enum StreamEvent {
     ToolInputDelta {
         index: usize,
         partial_json: String,
+    },
+    CompactionDelta {
+        index: usize,
+        content: String,
     },
     BlockStop {
         index: usize,
@@ -154,6 +162,7 @@ enum PendingBlock {
         json: String,
         input: Option<Value>,
     },
+    Compaction(String),
 }
 
 /// Folds [`StreamEvent`]s into a [`ModelResponse`]. Shared by all adapters so
@@ -196,6 +205,7 @@ impl StreamAccumulator {
                         signature: signature.clone(),
                         redacted: *redacted,
                     },
+                    BlockStart::Compaction { content } => PendingBlock::Compaction(content.clone()),
                     BlockStart::ToolUse { id, name, input } => PendingBlock::ToolUse {
                         id: id.clone(),
                         name: name.clone(),
@@ -207,6 +217,10 @@ impl StreamAccumulator {
             }
             StreamEvent::TextDelta { index, text } => match self.block_mut(*index)? {
                 PendingBlock::Text(buf) => buf.push_str(text),
+                _ => return Err(AccumulateError::KindMismatch(*index)),
+            },
+            StreamEvent::CompactionDelta { index, content } => match self.block_mut(*index)? {
+                PendingBlock::Compaction(buf) => buf.push_str(content),
                 _ => return Err(AccumulateError::KindMismatch(*index)),
             },
             StreamEvent::ThinkingDelta { index, text } => match self.block_mut(*index)? {
@@ -271,6 +285,7 @@ impl StreamAccumulator {
                     signature,
                     redacted,
                 },
+                PendingBlock::Compaction(content) => ContentBlock::Compaction { content },
                 PendingBlock::ToolUse {
                     id,
                     name,

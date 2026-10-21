@@ -101,7 +101,11 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
         ),
         doctor::check_logs(&crate::logging::log_file("aetherd.log")),
         providers,
-        doctor::check_engines(&engines_found().await, &command),
+        doctor::check_engines(
+            &engines_found().await,
+            status.as_ref().map(|s| s.engines.as_slice()),
+            &command,
+        ),
         doctor::check_mcp(configured_mcp, &mcp_health, &command),
         doctor::check_remote(remote.as_ref(), &command),
     ])

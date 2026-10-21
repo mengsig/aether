@@ -86,7 +86,17 @@ fn items(app: &App, theme: &Theme) -> Vec<Item> {
             Some(effort) => format!("{} {effort}", agent.model.model),
             None => agent.model.model.clone(),
         }),
-        None => app.options.default_model.as_ref().map(|m| m.model.clone()),
+        None => app.options.default_model.as_ref().map(|m| {
+            // Before the first turn, the rate a send will be billed at.
+            match app.model_info(m).map(|info| info.capabilities.cost) {
+                Some(Some(cost)) => format!(
+                    "{} · ${}/${} per Mtok",
+                    m.model, cost.input_per_mtok, cost.output_per_mtok
+                ),
+                Some(None) => format!("{} · no list price", m.model),
+                None => m.model.clone(),
+            }
+        }),
     };
     if let Some(text) = chip {
         items.push(Item {
@@ -367,5 +377,34 @@ pub(crate) mod tests {
             row(&app, &dark_theme(false), 80),
             "  opus-5.5 · /work/aether"
         );
+    }
+
+    #[test]
+    fn the_session_default_shows_its_price_once_the_catalogue_is_known() {
+        let mut app = App::new(TuiOptions {
+            default_model: Some(ModelRef::new("anthropic", "claude-opus-5-5")),
+            ..TuiOptions::default()
+        });
+        app.selected = None;
+        app.models = vec![aether_protocol::ModelInfo {
+            tier: None,
+            aliases: Vec::new(),
+            model: ModelRef::new("anthropic", "claude-opus-5-5"),
+            name: "Opus".into(),
+            provider_name: "Anthropic".into(),
+            capabilities: aether_core::model::CapabilityProfile {
+                cost: Some(aether_core::model::ModelCost {
+                    input_per_mtok: 5.0,
+                    output_per_mtok: 25.0,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            configured: true,
+            auth_source: None,
+            is_default: true,
+        }];
+        let text = row(&app, &dark_theme(false), 80);
+        assert!(text.contains("$5/$25 per Mtok"), "{text}");
     }
 }

@@ -41,6 +41,37 @@ pub(super) fn split_width(s: &str, width: usize) -> Vec<String> {
     pieces
 }
 
+/// Greedy word wrap of plain `s` into rows of at most `width` columns, splitting
+/// words longer than a row. Always returns at least one row.
+pub(super) fn wrap_text(s: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    for word in s.split_whitespace() {
+        let word_width = display_width(word);
+        let row_width = display_width(&row);
+        if !row.is_empty() && row_width + 1 + word_width <= width {
+            row.push(' ');
+            row.push_str(word);
+            continue;
+        }
+        if !row.is_empty() {
+            rows.push(std::mem::take(&mut row));
+        }
+        if word_width <= width {
+            row.push_str(word);
+            continue;
+        }
+        let mut pieces = split_width(word, width);
+        row = pieces.pop().unwrap_or_default();
+        rows.extend(pieces);
+    }
+    rows.push(row);
+    rows
+}
+
 /// A word or a gap between words, possibly spanning several styles.
 #[derive(Debug)]
 struct Token {

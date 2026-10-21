@@ -323,9 +323,10 @@ fn native_network_tracks_scope_on_fresh_and_resumed_turns() {
                 "ordinary turns preserve the native web-search setting"
             );
             if !bypass {
+                // Approvals gate the network: hosts are reached by an approved escalation.
                 assert_eq!(
                     turn_params(&t, "thread", false)["sandboxPolicy"]["networkAccess"],
-                    true
+                    false
                 );
             }
             t.network_access = false;
@@ -397,7 +398,7 @@ fn loopback_sandbox_matches_network_and_summary_matrix() {
                             json!({
                                 "type": "workspaceWrite",
                                 "writableRoots": ["/shared"],
-                                "networkAccess": true,
+                                "networkAccess": false,
                             }),
                             "{label}"
                         );
@@ -643,16 +644,18 @@ fn network_notes_describe_only_the_current_turn() {
     let text = |text: &str| json!({"type": "text", "text": text});
     let offline = text(super::super::LOOPBACK_INSTRUCTIONS);
     let restored = text(super::super::NETWORK_RESTORED_INSTRUCTIONS);
+    let gated = text(super::super::GATED_NETWORK_INSTRUCTIONS);
     for network_access in [true, false] {
         for summary_only in [true, false] {
-            for session in [None, Some("th1")] {
+            for bypass in [true, false] {
                 for note_in_effect in [true, false] {
-                    let mut t = turn(session, false);
+                    let session = note_in_effect.then_some("th1");
+                    let mut t = turn(session, bypass);
                     t.network_access = network_access;
                     t.summary_only = summary_only;
                     t.system_prompt = "# Aether".into();
                     let label = format!(
-                        "network={network_access} summary={summary_only} session={session:?} note_in_effect={note_in_effect}"
+                        "network={network_access} summary={summary_only} bypass={bypass} session={session:?} note_in_effect={note_in_effect}"
                     );
                     // Developer instructions persist across thread/resume, so no note goes there.
                     let (_, params) = thread_params(&t);
@@ -665,6 +668,8 @@ fn network_notes_describe_only_the_current_turn() {
                     let expected = if cfg!(target_os = "linux") && !network_access && !summary_only
                     {
                         json!([offline, prompt])
+                    } else if network_access && !bypass && !summary_only {
+                        json!([gated, prompt])
                     } else if note_in_effect && network_access && !summary_only {
                         json!([restored, prompt])
                     } else {
@@ -682,7 +687,8 @@ fn network_notes_describe_only_the_current_turn() {
 #[test]
 fn loopback_note_in_effect_follows_the_latest_network_note() {
     use super::super::{
-        LOOPBACK_INSTRUCTIONS, NETWORK_RESTORED_INSTRUCTIONS, loopback_note_in_effect,
+        GATED_NETWORK_INSTRUCTIONS, LOOPBACK_INSTRUCTIONS, NETWORK_RESTORED_INSTRUCTIONS,
+        loopback_note_in_effect,
     };
     let thread = |turns: &[&[&str]]| {
         let turns: Vec<Value> = turns
@@ -714,6 +720,14 @@ fn loopback_note_in_effect_follows_the_latest_network_note() {
         (
             vec![&[restored, "fetch"][..], &[offline, "probe"][..]],
             true,
+        ),
+        (vec![&[GATED_NETWORK_INSTRUCTIONS, "probe"][..]], true),
+        (
+            vec![
+                &[GATED_NETWORK_INSTRUCTIONS, "probe"][..],
+                &[restored, "fetch"][..],
+            ],
+            false,
         ),
         // Only our own input items count, not a prompt that quotes a note.
         (vec![&[quoted.as_str()][..]], false),
@@ -911,7 +925,12 @@ fn params_follow_the_approval_policy_and_session() {
     assert_eq!(params["model"], "gpt-5.3-codex-spark");
     let tp = turn_params(&t, "th1", false);
     assert_eq!(tp["threadId"], "th1");
-    assert_eq!(tp["input"][0]["text"], "do it");
+    // A gated network turn says first how it reaches hosts.
+    assert_eq!(
+        tp["input"][0]["text"],
+        super::super::GATED_NETWORK_INSTRUCTIONS
+    );
+    assert_eq!(tp["input"][1]["text"], "do it");
     assert_eq!(tp["effort"], "low");
     assert_eq!(tp["sandboxPolicy"]["type"], "workspaceWrite");
     assert_eq!(tp["sandboxPolicy"]["writableRoots"][0], "/shared");
@@ -988,7 +1007,7 @@ fn only_online_bypass_turns_move_from_never_to_on_request() {
                 let loopback = cfg!(target_os = "linux") && !network;
                 assert_eq!(
                     tp["sandboxPolicy"]["networkAccess"],
-                    network || loopback,
+                    (network && bypass) || loopback,
                     "{label}"
                 );
             }

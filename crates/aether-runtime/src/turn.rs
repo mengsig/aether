@@ -32,7 +32,7 @@ use aether_model::collect_partial;
 use aether_store::{
     AgentFilter, Commit, EventFilter, Mutation, StoreError, TaskFilter, TranscriptEntry,
 };
-use aether_tools::{HarnessAction, Tool, ToolContext, ToolError, ToolExecution, requires_approval};
+use aether_tools::{HarnessAction, Tool, ToolContext, ToolError, ToolExecution};
 use tokio_util::sync::CancellationToken;
 
 use crate::approval::{self, Gate};

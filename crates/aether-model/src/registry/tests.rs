@@ -349,7 +349,7 @@ fn builtin_resolves_aliases_and_open_lists() {
     let future = reg
         .resolve(&ModelRef::new("anthropic", "claude-9"))
         .expect("open list");
-    assert_eq!(future.model.capabilities.context_window, 200_000);
+    assert_eq!(future.model.capabilities.context_window, 1_000_000);
     let mut strict = Registry::empty();
     let mut def = reg.provider("anthropic").expect("anthropic").clone();
     def.flags.open_model_list = false;

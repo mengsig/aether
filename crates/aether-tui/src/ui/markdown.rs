@@ -442,7 +442,8 @@ impl<'a> Renderer<'a> {
         self.blank();
     }
 
-    /// Columns padded to their widest cell, a bold header, a rule under it.
+    /// Columns padded to their widest cell, long cells wrapped within their
+    /// column, a bold header, a rule under it.
     fn flush_table(&mut self) {
         let Some(table) = self.table.take() else {
             return;
@@ -469,33 +470,41 @@ impl<'a> Renderer<'a> {
             0
         };
         let content_width = inner.saturating_sub(gap * (columns - 1));
+        let floor = usize::from(content_width >= columns);
         while widths.iter().sum::<usize>() > content_width {
             let Some(widest) = widths.iter_mut().max() else {
                 break;
             };
-            if *widest == 0 {
+            if *widest <= floor {
                 break;
             }
             *widest -= 1;
         }
         for (r, row) in table.rows.iter().enumerate() {
             let header = r < table.header_rows;
-            let prefix = self.prefix(false);
-            let mut spans = Vec::new();
-            for (i, width) in widths.iter().enumerate() {
-                let cell = row.get(i).map(String::as_str).unwrap_or("");
-                let text = fit(cell, *width);
-                let style = if header {
-                    self.base.patch(self.theme.strong())
-                } else {
-                    self.base
-                };
-                spans.push(Span::styled(text, style));
-                if i + 1 < columns {
-                    spans.push(Span::raw(" ".repeat(gap)));
+            let style = if header {
+                self.base.patch(self.theme.strong())
+            } else {
+                self.base
+            };
+            let cells: Vec<Vec<String>> = widths
+                .iter()
+                .enumerate()
+                .map(|(i, width)| wrap_text(row.get(i).map_or("", String::as_str), *width))
+                .collect();
+            let height = cells.iter().map(Vec::len).max().unwrap_or(1);
+            for line in 0..height {
+                let prefix = self.prefix(false);
+                let mut spans = Vec::new();
+                for (i, width) in widths.iter().enumerate() {
+                    let text = cells[i].get(line).map_or("", String::as_str);
+                    spans.push(Span::styled(fit(text, *width), style));
+                    if i + 1 < columns {
+                        spans.push(Span::raw(" ".repeat(gap)));
+                    }
                 }
+                self.emit(prefix, spans, None);
             }
-            self.emit(prefix, spans, None);
             if header && r + 1 == table.header_rows {
                 let prefix = self.prefix(false);
                 let total = (widths.iter().sum::<usize>() + gap * (columns - 1)).min(inner);
@@ -521,7 +530,7 @@ pub use stream::{MarkdownStream, StreamLines};
 
 mod wrapping;
 use crate::ui::text_width::display_width;
-use wrapping::{fit, split_width, wrap_runs};
+use wrapping::{fit, split_width, wrap_runs, wrap_text};
 
 #[cfg(test)]
 mod tests;

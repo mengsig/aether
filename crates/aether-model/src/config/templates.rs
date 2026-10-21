@@ -36,6 +36,13 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # models ship with one; set it here to rank others or to disagree.
 # "openrouter/openai/gpt-5" = "strong"
 
+[models.compaction_tokens]
+# Context size at which an agent compacts on its own, by "provider" or
+# "provider/model" (the model wins). Defaults: 256000 for Claude, 272000 for
+# Codex, else three quarters of the window; never above the model's window.
+# "claude-code" = 256000
+# "codex/gpt-6.1-sol" = 200000
+
 [approval]
 # What a new agent gets when it inherits nothing: "yolo" (the shipped
 # default) auto-approves every tool call, "ask" gates external side effects -
@@ -119,6 +126,11 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 
 # [retention]
 # completed_run_days = 7  # positive days; 0 is invalid
+
+# On launch `aether` looks for a newer release (cached for a day, silent offline)
+# and asks before updating. Set false to stop looking.
+# [update]
+# check = false
 
 # Each agent's processes get their own private TMPDIR, TMP and TEMP under
 # this root, one 0700 directory per agent. Unset means `t` beside the store.
