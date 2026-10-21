@@ -247,6 +247,8 @@ mod restart_wake;
 mod scheduled_state;
 #[path = "kernel/scheduling_support.rs"]
 mod scheduling_support;
+#[path = "kernel/server_compaction.rs"]
+mod server_compaction;
 #[path = "kernel/shell_leases.rs"]
 mod shell_leases;
 #[path = "kernel/shutdown_recovery.rs"]

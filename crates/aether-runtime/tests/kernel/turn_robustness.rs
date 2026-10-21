@@ -129,6 +129,7 @@ async fn cross_provider_compactor_exhaustion_reaches_root_and_keeps_task_outcome
         }
         let mut child_spec = spec("keep work");
         child_spec.parent = parent;
+        child_spec.model = Some(ModelRef::new("openai", "sol"));
         let (child, task) = h
             .runtime
             .create_agent(child_spec, Actor::agent(parent.unwrap()))

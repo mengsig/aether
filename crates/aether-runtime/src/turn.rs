@@ -55,6 +55,7 @@ mod compaction;
 pub(crate) use compaction::{compact, compaction_pending, compaction_pending_for_turn};
 mod engine_compaction;
 mod failure;
+mod server_compaction;
 use failure::*;
 mod context;
 pub(crate) use context::{agent_temp_dir, retrieve_memories, tool_context};

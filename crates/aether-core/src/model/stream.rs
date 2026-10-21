@@ -49,6 +49,8 @@ pub enum BlockStart {
     Compaction {
         #[serde(default)]
         content: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
 }
 
@@ -162,7 +164,10 @@ enum PendingBlock {
         json: String,
         input: Option<Value>,
     },
-    Compaction(String),
+    Compaction {
+        content: String,
+        signature: Option<String>,
+    },
 }
 
 /// Folds [`StreamEvent`]s into a [`ModelResponse`]. Shared by all adapters so
@@ -205,7 +210,10 @@ impl StreamAccumulator {
                         signature: signature.clone(),
                         redacted: *redacted,
                     },
-                    BlockStart::Compaction { content } => PendingBlock::Compaction(content.clone()),
+                    BlockStart::Compaction { content, signature } => PendingBlock::Compaction {
+                        content: content.clone(),
+                        signature: signature.clone(),
+                    },
                     BlockStart::ToolUse { id, name, input } => PendingBlock::ToolUse {
                         id: id.clone(),
                         name: name.clone(),
@@ -220,7 +228,7 @@ impl StreamAccumulator {
                 _ => return Err(AccumulateError::KindMismatch(*index)),
             },
             StreamEvent::CompactionDelta { index, content } => match self.block_mut(*index)? {
-                PendingBlock::Compaction(buf) => buf.push_str(content),
+                PendingBlock::Compaction { content: buf, .. } => buf.push_str(content),
                 _ => return Err(AccumulateError::KindMismatch(*index)),
             },
             StreamEvent::ThinkingDelta { index, text } => match self.block_mut(*index)? {
@@ -285,7 +293,9 @@ impl StreamAccumulator {
                     signature,
                     redacted,
                 },
-                PendingBlock::Compaction(content) => ContentBlock::Compaction { content },
+                PendingBlock::Compaction { content, signature } => {
+                    ContentBlock::Compaction { content, signature }
+                }
                 PendingBlock::ToolUse {
                     id,
                     name,

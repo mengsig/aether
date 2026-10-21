@@ -12,6 +12,7 @@ use crate::sse::SseEvent;
 #[derive(Debug, Default)]
 pub struct AnthropicMapper {
     usage: Usage,
+    iterations: Option<Usage>,
     open_blocks: HashSet<usize>,
     /// A `message_delta` carried a stop reason: the model said it finished.
     stopped: bool,
@@ -25,35 +26,50 @@ impl AnthropicMapper {
     }
 
     fn absorb_usage(&mut self, usage: &Value) {
-        let get = |k: &str| usage.get(k).and_then(Value::as_u64);
-        if let Some(v) = get("input_tokens") {
-            self.usage.input_tokens = v;
+        update_usage(&mut self.usage, usage);
+        if let Some(iterations) = usage.get("iterations").and_then(Value::as_array) {
+            let mut total = Usage::default();
+            for iteration in iterations {
+                let mut current = Usage::default();
+                update_usage(&mut current, iteration);
+                total += current;
+            }
+            debug_assert!(total.cache_write_1h_tokens <= total.cache_write_tokens);
+            self.iterations = Some(total);
         }
-        if let Some(v) = get("output_tokens") {
-            self.usage.output_tokens = v;
-        }
-        if let Some(v) = get("cache_read_input_tokens") {
-            self.usage.cache_read_tokens = v;
-        }
-        if let Some(v) = get("cache_creation_input_tokens") {
-            self.usage.cache_write_tokens = v;
-        }
-        if let Some(v) = usage
-            .get("cache_creation")
-            .and_then(|split| split.get("ephemeral_1h_input_tokens"))
-            .and_then(Value::as_u64)
-        {
-            self.usage.cache_write_1h_tokens = v;
-        }
-        // An untrusted split beyond its total cannot be priced; bill the total at the 1-hour rate.
-        if self.usage.cache_write_1h_tokens > self.usage.cache_write_tokens {
-            tracing::warn!(
-                one_hour = self.usage.cache_write_1h_tokens,
-                cache_write_tokens = self.usage.cache_write_tokens,
-                "Anthropic reported more 1-hour cache writes than cache writes"
-            );
-            self.usage.cache_write_1h_tokens = self.usage.cache_write_tokens;
-        }
+        debug_assert!(self.usage.cache_write_1h_tokens <= self.usage.cache_write_tokens);
+    }
+}
+
+fn update_usage(out: &mut Usage, usage: &Value) {
+    let get = |k: &str| usage.get(k).and_then(Value::as_u64);
+    if let Some(v) = get("input_tokens") {
+        out.input_tokens = v;
+    }
+    if let Some(v) = get("output_tokens") {
+        out.output_tokens = v;
+    }
+    if let Some(v) = get("cache_read_input_tokens") {
+        out.cache_read_tokens = v;
+    }
+    if let Some(v) = get("cache_creation_input_tokens") {
+        out.cache_write_tokens = v;
+    }
+    if let Some(v) = usage
+        .get("cache_creation")
+        .and_then(|split| split.get("ephemeral_1h_input_tokens"))
+        .and_then(Value::as_u64)
+    {
+        out.cache_write_1h_tokens = v;
+    }
+    // An untrusted split beyond its total cannot be priced; bill the total at the 1-hour rate.
+    if out.cache_write_1h_tokens > out.cache_write_tokens {
+        tracing::warn!(
+            one_hour = out.cache_write_1h_tokens,
+            cache_write_tokens = out.cache_write_tokens,
+            "Anthropic reported more 1-hour cache writes than cache writes"
+        );
+        out.cache_write_1h_tokens = out.cache_write_tokens;
     }
 }
 
@@ -90,7 +106,9 @@ impl EventMapper for AnthropicMapper {
                 });
                 if let Some(usage) = message.get("usage") {
                     self.absorb_usage(usage);
-                    out.push(StreamEvent::Usage { usage: self.usage });
+                    out.push(StreamEvent::Usage {
+                        usage: self.iterations.unwrap_or(self.usage),
+                    });
                 }
             }
             "content_block_start" => {
@@ -115,6 +133,10 @@ impl EventMapper for AnthropicMapper {
                     },
                     "compaction" => BlockStart::Compaction {
                         content: str_of(block, "content"),
+                        signature: block
+                            .get("signature")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
                     },
                     "tool_use" => BlockStart::ToolUse {
                         id: str_of(block, "id"),
@@ -176,7 +198,9 @@ impl EventMapper for AnthropicMapper {
             "message_delta" => {
                 if let Some(usage) = data.get("usage") {
                     self.absorb_usage(usage);
-                    out.push(StreamEvent::Usage { usage: self.usage });
+                    out.push(StreamEvent::Usage {
+                        usage: self.iterations.unwrap_or(self.usage),
+                    });
                 }
                 let delta = &data["delta"];
                 if let Some(reason) = delta.get("stop_reason").and_then(Value::as_str) {
@@ -299,6 +323,50 @@ mod tests {
             data: data.to_string(),
             id: None,
         }
+    }
+
+    #[tokio::test]
+    async fn signed_compaction_arrives_whole_and_iterations_supply_billable_usage() {
+        let usage = json!({"input_tokens": 0, "output_tokens": 0, "iterations": [
+            {"type": "compaction", "input_tokens": 100, "output_tokens": 25, "cache_read_input_tokens": 40, "cache_creation_input_tokens": 10, "cache_creation": {"ephemeral_1h_input_tokens": 3}}
+        ]});
+        let events = vec![
+            sse(
+                "message_start",
+                json!({"message": {"id": "summary", "usage": usage}}),
+            ),
+            sse(
+                "content_block_start",
+                json!({"index": 0, "content_block": {"type": "compaction", "content": "Keep this exact text", "signature": "opaque-signature"}}),
+            ),
+            sse("content_block_stop", json!({"index": 0})),
+            sse(
+                "message_delta",
+                json!({"delta": {"stop_reason": "compaction"}, "usage": usage}),
+            ),
+            sse("message_stop", json!({})),
+        ];
+        let response = collect(mapped_stream(events, AnthropicMapper::new()), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(
+            response.content,
+            vec![aether_core::model::ContentBlock::Compaction {
+                content: "Keep this exact text".into(),
+                signature: Some("opaque-signature".into())
+            }]
+        );
+        assert_eq!(
+            response.stop_reason,
+            Some(StopReason::Other {
+                value: "compaction".into()
+            })
+        );
+        assert_eq!(response.usage.input_tokens, 100);
+        assert_eq!(response.usage.output_tokens, 25);
+        assert_eq!(response.usage.cache_read_tokens, 40);
+        assert_eq!(response.usage.cache_write_tokens, 10);
+        assert_eq!(response.usage.cache_write_1h_tokens, 3);
     }
 
     fn fixture() -> Vec<SseEvent> {
@@ -438,7 +506,8 @@ mod tests {
             resp.content,
             vec![
                 aether_core::model::ContentBlock::Compaction {
-                    content: "Summary so far".into()
+                    content: "Summary so far".into(),
+                    signature: None,
                 },
                 aether_core::model::ContentBlock::text("Hi"),
             ]

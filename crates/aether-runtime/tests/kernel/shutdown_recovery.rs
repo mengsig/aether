@@ -466,7 +466,13 @@ async fn a_daemon_stop_mid_compaction_leaves_the_request_for_the_next_start() {
     let h = harness(vec![ScriptedClient::text(&checkpoint)]).await;
     let (agent, _) = h
         .runtime
-        .create_agent(idle_spec(), Actor::user())
+        .create_agent(
+            CreateAgentSpec {
+                model: Some(ModelRef::new("openai", "sol")),
+                ..idle_spec()
+            },
+            Actor::user(),
+        )
         .expect("create");
     h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
         .await;

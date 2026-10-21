@@ -46,13 +46,34 @@ pub fn sanitize(messages: Vec<Message>) -> Vec<Message> {
     if !open_calls.is_empty() {
         out.push(interrupted_results(&open_calls));
     }
-    if out
-        .first()
-        .is_some_and(|m| m.role == MessageRole::Assistant)
-    {
+    if out.first().is_some_and(|m| {
+        m.role == MessageRole::Assistant
+            && !m
+                .content
+                .first()
+                .is_some_and(ContentBlock::is_signed_compaction)
+    }) {
         out.insert(0, Message::user_text("(session resumed)"));
     }
     out
+}
+
+/// Signed summaries replace the history they summarize, including older summaries.
+pub fn retain_signed_compaction(messages: &mut Vec<Message>) -> bool {
+    let Some((message, block)) = messages.iter().enumerate().rev().find_map(|(i, message)| {
+        message
+            .content
+            .iter()
+            .rposition(ContentBlock::is_signed_compaction)
+            .map(|b| (i, b))
+    }) else {
+        return false;
+    };
+    debug_assert!(message < messages.len());
+    debug_assert!(messages[message].content[block].is_signed_compaction());
+    messages.drain(..message);
+    messages[0].content.drain(..block);
+    true
 }
 
 fn interrupted_results(ids: &BTreeSet<String>) -> Message {

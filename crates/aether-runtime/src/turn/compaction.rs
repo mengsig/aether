@@ -330,6 +330,11 @@ pub(crate) async fn compact(
     {
         return Ok(None);
     }
+    if super::server_compaction::try_server_compaction(runtime, ctx, request_seq, &trigger, cancel)
+        .await?
+    {
+        return Ok(None);
+    }
     const KEEP_TAIL: usize = 6;
     // An episode that ended folds whole: a closed task's turns have no further
     // use beyond its result, and a raw tail across a handoff would hand the

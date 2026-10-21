@@ -449,7 +449,7 @@ impl Compactor {
                     ));
                 }
                 ContentBlock::Image { .. } => out.push_str("[image]\n"),
-                ContentBlock::Compaction { content } => {
+                ContentBlock::Compaction { content, .. } => {
                     out.push_str("(earlier summary) ");
                     out.push_str(content.trim());
                     out.push('\n');

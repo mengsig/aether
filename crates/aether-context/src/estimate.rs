@@ -44,7 +44,7 @@ impl TokenEstimator {
                 }
                 ContentBlock::Image { data, .. } => (data.len() / 100) as u32 + 100,
                 ContentBlock::ImageRef(_) => STORED_IMAGE_TOKENS,
-                ContentBlock::Compaction { content } => self.text(content),
+                ContentBlock::Compaction { content, .. } => self.text(content),
             };
         }
         total
@@ -93,6 +93,7 @@ mod tests {
             role: aether_core::model::MessageRole::Assistant,
             content: vec![ContentBlock::Compaction {
                 content: "short".into(),
+                signature: None,
             }],
         };
         let history = [old, summary];

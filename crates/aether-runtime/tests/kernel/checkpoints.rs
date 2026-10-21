@@ -1,6 +1,14 @@
 //! checkpoints scenarios and fixtures.
 use super::*;
 
+fn use_aether_compactor(config: &mut RuntimeConfig) {
+    config.default_model = Some(ModelRef::new("openai", "gpt-6.1-sol"));
+}
+
+async fn harness(responses: Vec<aether_model::testing::ScriptedResponse>) -> Harness {
+    super::harness_configured(responses, |_| {}, use_aether_compactor).await
+}
+
 #[tokio::test]
 async fn pressure_compaction_preserves_completed_tool_results() {
     use aether_core::model::Message;
@@ -381,7 +389,7 @@ async fn an_aliased_compactor_is_sent_its_canonical_id() {
             ScriptedClient::text("ready"),
         ],
         |_| {},
-        |_| {},
+        use_aether_compactor,
         None,
         Some("[model]\ncompactor = \"openai-responses/luna\"\n"),
         None,
@@ -465,9 +473,9 @@ async fn manual_compaction_never_requests_a_reply_without_pending_work() {
         let h = harness_full(
             vec![response, ScriptedClient::text("unrequested reply")],
             |_| {},
-            |_| {},
+            use_aether_compactor,
             None,
-            Some("[model]\ncompactor = \"anthropic/claude-sonnet-5-5\"\n"),
+            Some("[model]\ncompactor = \"openai/gpt-6.1-sol\"\n"),
             None,
             |_| {},
         )
@@ -582,7 +590,7 @@ async fn a_retired_compactor_fails_with_its_successor() {
     let h = harness_full(
         vec![ScriptedClient::text(&checkpoint)],
         |_| {},
-        |_| {},
+        use_aether_compactor,
         None,
         Some("[model]\ncompactor = \"anthropic/claude-haiku-4-5\"\n"),
         None,

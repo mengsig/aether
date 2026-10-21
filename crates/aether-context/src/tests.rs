@@ -68,6 +68,39 @@ fn caps() -> CapabilityProfile {
     }
 }
 
+#[test]
+fn signed_compaction_restores_aethers_threshold_and_keeps_the_summary() {
+    let a = agent();
+    let mut c = caps();
+    c.compaction_tokens = Some(10);
+    c.extensions.insert(
+        aether_core::model::SERVER_COMPACTION_KEY.into(),
+        serde_json::json!(true),
+    );
+    let mut summary = entry(MessageRole::Assistant, "", 2);
+    summary.message.content = vec![ContentBlock::Compaction {
+        content: "remember saffron".into(),
+        signature: Some("opaque".into()),
+    }];
+    let transcript = [
+        entry(MessageRole::User, &"old ".repeat(500_000), 1),
+        summary,
+        entry(MessageRole::User, "continue", 3),
+    ];
+    let out = ContextManager::new().assemble(inputs(&a, None, &transcript, &[], &c));
+    assert!(out.needs_compaction);
+    assert_eq!(out.dropped_messages, 0);
+    assert!(out.request.messages[0].content[0].is_signed_compaction());
+    assert_eq!(out.request.messages.len(), 2);
+    assert!(out.snapshot.token_estimate < 1000);
+    let unsigned = [entry(MessageRole::User, &"live ".repeat(200), 1)];
+    let out = ContextManager::new().assemble(inputs(&a, None, &unsigned, &[], &c));
+    assert!(
+        !out.needs_compaction,
+        "unsigned history still uses the provider threshold"
+    );
+}
+
 fn inputs<'a>(
     agent: &'a Agent,
     task: Option<&'a Task>,

@@ -16,6 +16,7 @@ const DEFAULT_MAX_TOKENS: u32 = 16_000;
 const DEFAULT_THINKING_BUDGET: u32 = 8_192;
 /// Beta for server-side compaction (`compact_20260112`).
 pub const COMPACTION_BETA: &str = "compact-2026-01-12";
+pub const SUMMARIZE_BETA: &str = "compact-2026-09-04";
 /// The API refuses a compaction trigger below this many input tokens.
 const MIN_COMPACTION_TRIGGER: u32 = 50_000;
 
@@ -133,6 +134,9 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile) -> Result<BuiltReq
             "anthropic.fallbacks" => {
                 obj.insert("fallbacks".into(), value.clone());
             }
+            "anthropic.compaction" => {
+                obj.insert("compaction".into(), value.clone());
+            }
             "anthropic.thinking_display" => {
                 if let Some(thinking) = obj.get_mut("thinking") {
                     thinking["display"] = value.clone();
@@ -150,7 +154,55 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile) -> Result<BuiltReq
         }
     }
 
+    configure_compaction(obj, &mut betas, req)?;
+
     Ok(BuiltRequest { body, betas })
+}
+
+fn configure_compaction(
+    body: &mut serde_json::Map<String, Value>,
+    betas: &mut Vec<String>,
+    req: &ModelRequest,
+) -> Result<(), ModelError> {
+    let signed = req
+        .messages
+        .iter()
+        .any(|m| m.content.iter().any(ContentBlock::is_signed_compaction));
+    let summarize = body.get("compaction");
+    if let Some(param) = summarize {
+        if param["type"] != "summarize"
+            || param
+                .get("instructions")
+                .is_some_and(|v| v.as_str().is_none_or(|s| s.chars().count() > 16_384))
+        {
+            return Err(ModelError::new(
+                ModelErrorClass::InvalidRequest,
+                "invalid Anthropic summarize compaction parameters",
+            ));
+        }
+        body.remove("stop_sequences");
+        if matches!(
+            body.get("tool_choice")
+                .and_then(|choice| choice["type"].as_str()),
+            Some("any" | "tool")
+        ) {
+            body.remove("tool_choice");
+        }
+        if let Some(config) = body.get_mut("output_config").and_then(Value::as_object_mut) {
+            config.remove("format");
+        }
+        if let Some(budget) = body.get_mut("task_budget").and_then(Value::as_object_mut) {
+            budget.remove("remaining");
+        }
+    }
+    if signed || body.contains_key("compaction") {
+        body.remove("context_management");
+        betas.retain(|beta| beta != COMPACTION_BETA);
+        betas.push(SUMMARIZE_BETA.to_owned());
+        debug_assert!(!body.contains_key("context_management"));
+        debug_assert!(!betas.iter().any(|beta| beta == COMPACTION_BETA));
+    }
+    Ok(())
 }
 
 /// Choose the thinking parameter from the request and the profile. Never
@@ -223,9 +275,26 @@ fn compaction_edit(tokens: u32) -> Value {
 }
 
 fn build_messages(messages: &[Message]) -> Result<Vec<Value>, ModelError> {
+    let start = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, message)| {
+            message
+                .content
+                .iter()
+                .rposition(ContentBlock::is_signed_compaction)
+                .map(|block| (i, block))
+        })
+        .unwrap_or((0, 0));
     let mut out: Vec<Value> = Vec::with_capacity(messages.len());
-    for (i, msg) in messages.iter().enumerate() {
-        let blocks: Vec<Value> = msg.content.iter().filter_map(block_to_json).collect();
+    for (i, msg) in messages.iter().enumerate().skip(start.0) {
+        let blocks: Vec<Value> = msg
+            .content
+            .iter()
+            .skip(if i == start.0 { start.1 } else { 0 })
+            .filter_map(block_to_json)
+            .collect();
         if blocks.is_empty() {
             match msg.role {
                 // An assistant turn made only of unsigned thinking has nothing to replay.
@@ -290,8 +359,12 @@ fn block_to_json(block: &ContentBlock) -> Option<Value> {
         ContentBlock::Image { media_type, data } => Some(image_json(media_type, data)),
         // The runtime inlines stored images before a request; one that
         // reaches here has no bytes, so the model is told what was there.
-        ContentBlock::Compaction { content } => {
-            Some(json!({"type": "compaction", "content": content}))
+        ContentBlock::Compaction { content, signature } => {
+            let mut block = json!({"type": "compaction", "content": content});
+            if let Some(signature) = signature {
+                block["signature"] = json!(signature);
+            }
+            Some(block)
         }
         ContentBlock::ImageRef(image) => Some(json!({"type": "text", "text": image.label()})),
     }
@@ -346,12 +419,120 @@ mod tests {
     }
 
     #[test]
+    fn summarize_request_uses_the_new_beta_and_removes_incompatible_parameters() {
+        let mut req = ModelRequest::new(
+            ModelRef::new("anthropic", "claude-opus-5-5"),
+            vec![Message::user_text("hi")],
+        );
+        req.extensions.insert(
+            "anthropic.compaction".into(),
+            json!({"type": "summarize", "instructions": "Keep decisions"}),
+        );
+        req.stop_sequences = vec!["STOP".into()];
+        req.system = vec![SystemBlock {
+            text: "policy".into(),
+            cache: true,
+        }];
+        req.tools = vec![ToolSpec {
+            name: "read".into(),
+            description: "read".into(),
+            input_schema: json!({"type": "object"}),
+            strict: false,
+        }];
+        req.extensions.insert("anthropic.extra_body".into(), json!({"tool_choice": {"type": "any"}, "output_config": {"format": {"type": "json_schema"}}, "task_budget": {"remaining": 5}}));
+        let mut profile = adaptive_profile();
+        profile.compaction_tokens = Some(100_000);
+        profile.extensions.insert(
+            aether_core::model::SERVER_COMPACTION_KEY.into(),
+            json!(true),
+        );
+        let built = build(&req, &profile).unwrap();
+        assert_eq!(built.betas, [SUMMARIZE_BETA]);
+        assert_eq!(
+            built.body["compaction"],
+            req.extensions["anthropic.compaction"]
+        );
+        for field in ["context_management", "stop_sequences", "tool_choice"] {
+            assert!(built.body.get(field).is_none(), "{field}");
+        }
+        assert!(built.body["output_config"].get("format").is_none());
+        assert!(built.body["task_budget"].get("remaining").is_none());
+        assert_eq!(built.body["system"][0]["text"], "policy");
+        assert_eq!(built.body["tools"][0]["name"], "read");
+    }
+
+    #[test]
+    fn newest_signed_compaction_is_first_and_replayed_verbatim() {
+        let summary = |content: &str| ContentBlock::Compaction {
+            content: content.into(),
+            signature: Some(format!("sig-{content}")),
+        };
+        let req = ModelRequest::new(
+            ModelRef::new("anthropic", "claude-opus-5-5"),
+            vec![
+                Message::user_text("old history"),
+                Message::assistant_blocks(vec![summary("old")]),
+                Message::user_text("more history"),
+                Message::assistant_blocks(vec![
+                    ContentBlock::text("also summarized"),
+                    summary("new"),
+                    ContentBlock::text("retained"),
+                ]),
+                Message::user_text("continue"),
+            ],
+        );
+        let mut profile = adaptive_profile();
+        profile.compaction_tokens = Some(100_000);
+        profile.extensions.insert(
+            aether_core::model::SERVER_COMPACTION_KEY.into(),
+            json!(true),
+        );
+        let built = build(&req, &profile).unwrap();
+        assert_eq!(built.betas, [SUMMARIZE_BETA]);
+        assert!(built.body.get("context_management").is_none());
+        assert_eq!(
+            built.body["messages"],
+            json!([
+                {"role": "assistant", "content": [{"type": "compaction", "content": "new", "signature": "sig-new"}, {"type": "text", "text": "retained"}]},
+                {"role": "user", "content": [{"type": "text", "text": "continue"}]},
+            ])
+        );
+    }
+
+    #[test]
+    fn legacy_unsigned_summary_deserializes_and_replays_without_a_signature() {
+        let block: ContentBlock =
+            serde_json::from_value(json!({"type": "compaction", "content": "legacy"})).unwrap();
+        assert_eq!(
+            block,
+            ContentBlock::Compaction {
+                content: "legacy".into(),
+                signature: None
+            }
+        );
+        assert_eq!(
+            block_to_json(&block),
+            Some(json!({"type": "compaction", "content": "legacy"}))
+        );
+        let start: aether_core::model::BlockStart =
+            serde_json::from_value(json!({"type": "compaction", "content": "legacy"})).unwrap();
+        assert!(matches!(
+            start,
+            aether_core::model::BlockStart::Compaction {
+                signature: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn server_compaction_is_requested_and_its_block_is_replayed() {
         let history = vec![
             Message::user_text("hi"),
             Message::assistant_blocks(vec![
                 ContentBlock::Compaction {
                     content: "summary".into(),
+                    signature: None,
                 },
                 ContentBlock::text("ok"),
             ]),

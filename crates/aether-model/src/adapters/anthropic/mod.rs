@@ -114,7 +114,12 @@ impl ModelClient for AnthropicClient {
         // Retries cover the phase before any content flows; once the status
         // is 2xx the stream is handed over and never restarted.
         let retry_cancel = cancel.clone();
-        let response = http::retry(&self.config.retry, &cancel, |_| {
+        let retry = if built.body.get("compaction").is_some() {
+            http::RetryPolicy::none()
+        } else {
+            self.config.retry
+        };
+        let response = http::retry(&retry, &cancel, |_| {
             let req = self
                 .http
                 .post(&url)

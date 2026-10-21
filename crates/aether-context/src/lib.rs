@@ -132,7 +132,7 @@ impl ContextManager {
     }
 
     pub fn assemble(&self, inputs: ContextInputs<'_>) -> Assembled {
-        let budget =
+        let mut budget =
             ContextBudget::for_profile(inputs.capabilities, inputs.agent.config.max_output_tokens);
         let est = &self.estimator;
 
@@ -198,6 +198,11 @@ impl ContextManager {
         if let Some(m) = &new_user_message {
             messages.push(m.clone());
         }
+        let signed = inputs.capabilities.compacts_on_server()
+            && transcript::retain_signed_compaction(&mut messages);
+        if signed {
+            budget.server_compaction = false;
+        }
         let mut messages = transcript::sanitize(messages);
         let synthesized_task_message = new_user_message.is_none()
             && messages.is_empty()
@@ -213,12 +218,12 @@ impl ContextManager {
         let fixed: u32 = layers.iter().map(|l| l.tokens).sum::<u32>() + tool_tokens;
         let tail_budget = budget.tail_budget(fixed);
         let mut dropped = 0usize;
-        let count = |messages: &[Message]| match budget.server_compaction {
+        let count = |messages: &[Message]| match inputs.capabilities.compacts_on_server() {
             true => est.messages_after_compaction(messages),
             false => est.messages(messages),
         };
         let mut tail_tokens = count(&messages);
-        while tail_tokens > tail_budget && messages.len() > 1 {
+        while tail_tokens > tail_budget && messages.len() > 1 && !signed {
             // Drop whole exchanges: the oldest message plus any leading
             // assistant turns, so the tail always starts at a user turn and
             // sanitizing cannot re-grow it.

@@ -108,14 +108,26 @@ pub enum ContentBlock {
     /// state carries this reference; the bytes are read back only to build
     /// a model request.
     ImageRef(AttachmentRef),
-    /// A server-side compaction summary (Anthropic `compact-2026-01-12`). It
-    /// must be replayed verbatim: the API drops everything before it.
+    /// A server-side compaction summary, replayed verbatim. Signed summaries
+    /// must lead the request, with the summarized history removed.
     Compaction {
         content: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
     },
 }
 
 impl ContentBlock {
+    pub fn is_signed_compaction(&self) -> bool {
+        matches!(
+            self,
+            Self::Compaction {
+                signature: Some(_),
+                ..
+            }
+        )
+    }
+
     pub fn text(text: impl Into<String>) -> Self {
         Self::Text { text: text.into() }
     }
