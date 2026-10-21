@@ -125,7 +125,7 @@ pub(super) fn finish(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result<()>
                 invocation,
                 next: AgentStatusKind::Waiting,
             }));
-            match owed_by.clone() {
+            match owed_by {
                 Some(by) => runtime.ready_for_compaction(&hold, &mut commit, &mut agent, by)?,
                 None => commit.push_mutation(Mutation::UpsertAgent(agent)),
             }
@@ -175,10 +175,8 @@ pub(super) fn finish(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result<()>
                 invocation,
                 next: AgentStatusKind::Waiting,
             }));
-            match owed_by.clone() {
-                Some(by) => runtime.ready_for_compaction(&hold, &mut commit, &mut agent, by)?,
-                None => commit.push_mutation(Mutation::UpsertAgent(agent)),
-            }
+            // An operator stop stands: an owed fold waits for the next turn.
+            commit.push_mutation(Mutation::UpsertAgent(agent));
         }
         Next::Suspended(cause) => {
             // §5 fence: only a turn whose row is still Running suspends it. A
