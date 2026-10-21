@@ -17,6 +17,10 @@ use rustix::io::Errno;
 
 use crate::id::AgentId;
 
+#[path = "agent_temp_gc.rs"]
+mod gc;
+pub use gc::collect_leaf;
+
 /// The variables an agent's processes find their temp directory in.
 pub const ENV_VARS: [&str; 3] = ["TMPDIR", "TMP", "TEMP"];
 
@@ -185,6 +189,22 @@ fn is_staged_marker(name: &str) -> bool {
 /// still holds. Everything is checked again on every call. The root must be
 /// the real path `prepare_root` returned.
 pub fn ensure_leaf(leaf: &Path, instance_id: &str) -> io::Result<()> {
+    ensure_claimed_leaf(leaf, instance_id, None)
+}
+
+/// Record the full agent id only when Aether creates the leaf, never adopting
+/// an existing unmarked directory as evidence for later deletion.
+pub fn ensure_agent_leaf(leaf: &Path, agent: AgentId, instance_id: &str) -> io::Result<()> {
+    if leaf.file_name() != Some(OsStr::new(&leaf_name(agent))) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "agent temp leaf does not match agent",
+        ));
+    }
+    ensure_claimed_leaf(leaf, instance_id, Some(agent))
+}
+
+fn ensure_claimed_leaf(leaf: &Path, instance_id: &str, agent: Option<AgentId>) -> io::Result<()> {
     let (Some(root), Some(name)) = (leaf.parent(), leaf.file_name()) else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -204,10 +224,26 @@ pub fn ensure_leaf(leaf: &Path, instance_id: &str) -> io::Result<()> {
         opened => opened?,
     };
     claim_root(&dir, root, instance_id)?;
-    create_leaf(&dir, leaf, name)?;
+    let created = create_leaf(&dir, leaf, name)?;
     let stat = rustix::fs::statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW)
         .map_err(|e| context(e, "cannot inspect", leaf))?;
-    check_leaf(leaf, &stat, uid)
+    check_leaf(leaf, &stat, uid)?;
+    if let Some(agent) = agent {
+        let opened = rustix::fs::openat(&dir, name, DIR_FLAGS, Mode::empty())?;
+        let expected = agent.to_string();
+        let claim = if created {
+            publish_marker(&opened, leaf, &expected)?
+        } else {
+            match read_marker(&opened, leaf) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                read => read?,
+            }
+        };
+        if claim != expected {
+            return Err(refused("agent temp leaf belongs to another agent".into()));
+        }
+    }
+    Ok(())
 }
 
 /// What to tell an operator about `root` before agents use it: a path too
@@ -390,16 +426,17 @@ fn open_dir(root: &Path) -> io::Result<OwnedFd> {
 
 /// Make `name` a 0700 directory in the root `dir`. One that already exists
 /// is left as it is for the caller to inspect.
-fn create_leaf(dir: &OwnedFd, leaf: &Path, name: &OsStr) -> io::Result<()> {
+fn create_leaf(dir: &OwnedFd, leaf: &Path, name: &OsStr) -> io::Result<bool> {
     match rustix::fs::mkdirat(dir, name, Mode::RWXU) {
         Ok(()) => {}
-        Err(Errno::EXIST) => return Ok(()),
+        Err(Errno::EXIST) => return Ok(false),
         Err(errno) => return Err(context(errno, "cannot create agent temp dir", leaf)),
     }
     let created = rustix::fs::openat(dir, name, DIR_FLAGS, Mode::empty())
         .map_err(|e| context(e, "cannot open", leaf))?;
     // The umask may have narrowed the mode below what the owner needs.
-    rustix::fs::fchmod(&created, Mode::RWXU).map_err(|e| context(e, "cannot chmod", leaf))
+    rustix::fs::fchmod(&created, Mode::RWXU).map_err(|e| context(e, "cannot chmod", leaf))?;
+    Ok(true)
 }
 
 /// A root is shared by every agent; anyone else able to write in it could

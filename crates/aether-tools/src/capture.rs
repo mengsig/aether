@@ -47,7 +47,7 @@ impl Capture {
         // finished workspace look dirty to GC. Without one, fall back to the cwd.
         let parent = match &ctx.temp_dir {
             Some(dir) => {
-                aether_core::agent_temp::ensure_leaf(dir, &ctx.instance_id)
+                aether_core::agent_temp::ensure_agent_leaf(dir, ctx.agent_id, &ctx.instance_id)
                     .map_err(|e| ToolError::Internal(format!("agent temp dir: {e}")))?;
                 dir
             }

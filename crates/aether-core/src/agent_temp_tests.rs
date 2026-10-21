@@ -466,3 +466,88 @@ fn inspecting_a_root_reports_what_preparing_it_would_refuse() {
         "{inspected:?} {prepared:?}"
     );
 }
+
+#[test]
+fn gc_requires_the_exact_agent_claim_and_never_enters_links() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = prepare_root(&temp.path().join("t"), "gc-test").unwrap();
+    let agent = AgentId::new();
+    let leaf = leaf_path(&root, agent);
+    ensure_agent_leaf(&leaf, agent, "gc-test").unwrap();
+    assert_eq!(
+        fs::read_to_string(leaf.join(MARKER)).unwrap(),
+        agent.to_string()
+    );
+    let outside = temp.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("artifact"), b"keep").unwrap();
+    std::os::unix::fs::symlink(&outside, leaf.join("link")).unwrap();
+    assert_eq!(
+        collect_leaf(&root, agent, "other-instance", false).unwrap(),
+        "foreign instance"
+    );
+    assert_eq!(
+        collect_leaf(&root, agent, "gc-test", true).unwrap(),
+        "would_remove"
+    );
+    assert!(leaf.is_dir());
+    assert_eq!(
+        collect_leaf(&root, agent, "gc-test", false).unwrap(),
+        "removed"
+    );
+    assert!(!leaf.exists());
+    assert_eq!(fs::read(outside.join("artifact")).unwrap(), b"keep");
+}
+
+#[test]
+fn gc_preserves_unmarked_mismatched_and_symlinked_leaves() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = prepare_root(&temp.path().join("t"), "gc-test").unwrap();
+    let agent = AgentId::new();
+    let leaf = leaf_path(&root, agent);
+    ensure_leaf(&leaf, "gc-test").unwrap();
+    ensure_agent_leaf(&leaf, agent, "gc-test").unwrap();
+    assert_eq!(
+        collect_leaf(&root, agent, "gc-test", false).unwrap(),
+        "ownership unproven"
+    );
+    fs::write(leaf.join(MARKER), AgentId::new().to_string()).unwrap();
+    assert_eq!(
+        collect_leaf(&root, agent, "gc-test", false).unwrap(),
+        "different agent owner"
+    );
+    let linked = AgentId::new();
+    std::os::unix::fs::symlink(&leaf, leaf_path(&root, linked)).unwrap();
+    assert_eq!(
+        collect_leaf(&root, linked, "gc-test", false).unwrap(),
+        "not a real directory"
+    );
+    assert!(leaf.is_dir());
+    assert!(ensure_agent_leaf(&leaf, linked, "gc-test").is_err());
+}
+
+#[test]
+fn gc_refuses_a_replaced_root_and_preflights_depth_before_deleting() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = prepare_root(&temp.path().join("t"), "gc-test").unwrap();
+    let agent = AgentId::new();
+    let leaf = leaf_path(&root, agent);
+    ensure_agent_leaf(&leaf, agent, "gc-test").unwrap();
+    fs::write(leaf.join("keep-until-validated"), b"scratch").unwrap();
+    let mut deep = leaf.clone();
+    for _ in 0..64 {
+        deep = deep.join("d");
+    }
+    fs::create_dir_all(deep).unwrap();
+    for dry_run in [true, false] {
+        let error = collect_leaf(&root, agent, "gc-test", dry_run).unwrap_err();
+        assert!(error.to_string().contains("depth"));
+        assert!(leaf.join("keep-until-validated").is_file());
+        assert!(leaf.join(MARKER).is_file());
+    }
+    let saved = temp.path().join("saved");
+    fs::rename(&root, &saved).unwrap();
+    std::os::unix::fs::symlink(&saved, &root).unwrap();
+    assert!(collect_leaf(&root, agent, "gc-test", false).is_err());
+    assert!(saved.join(leaf_name(agent)).join(MARKER).is_file());
+}
