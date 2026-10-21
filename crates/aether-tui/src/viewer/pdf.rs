@@ -137,7 +137,10 @@ fn render_page(tools: &Tools, document: &Path, page: u32, side: u32) -> Result<V
     let command = render_command(tools, document, &output, page, side)?;
     run(command, dir, RENDER_TIMEOUT)?;
     let png = read_bounded(&output, MAX_PNG_BYTES + 1).context("read rendered page")?;
-    ensure!(png.len() as u64 <= MAX_PNG_BYTES, "rendered page exceeds 20 MiB");
+    ensure!(
+        png.len() as u64 <= MAX_PNG_BYTES,
+        "rendered page exceeds 20 MiB"
+    );
     std::fs::remove_file(&output).context("remove rendered page")?;
     Ok(png)
 }

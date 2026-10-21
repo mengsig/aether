@@ -22,7 +22,8 @@ pub(crate) fn pdf(pages: &[&str]) -> Vec<u8> {
              /Resources << /Font << /F1 3 0 R >> >> /Contents {} 0 R >>",
             5 + 2 * i
         ));
-        let stream = format!("0.1 0.3 0.9 rg 40 40 220 150 re f BT /F1 18 Tf 40 240 Td ({text}) Tj ET");
+        let stream =
+            format!("0.1 0.3 0.9 rg 40 40 220 150 re f BT /F1 18 Tf 40 240 Td ({text}) Tj ET");
         objects.push(format!(
             "<< /Length {} >>\nstream\n{stream}\nendstream",
             stream.len()
@@ -35,7 +36,9 @@ pub(crate) fn pdf(pages: &[&str]) -> Vec<u8> {
         out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", i + 1).as_bytes());
     }
     let xref = out.len();
-    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
     for offset in offsets {
         out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
     }

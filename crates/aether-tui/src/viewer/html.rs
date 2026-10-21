@@ -9,10 +9,7 @@ use super::{
 use crate::ui::{cells::text::clean, theme::Theme};
 use anyhow::{Context, Result, ensure};
 use html2text::render::RichAnnotation;
-use ratatui::{
-    style::Style,
-    text::{Line, Span},
-};
+use ratatui::text::{Line, Span};
 use std::{
     collections::HashMap,
     ffi::OsString,
@@ -30,9 +27,8 @@ const MAX_LINKS: usize = 200;
 const MAX_NESTING: usize = 512;
 /// Elements that never nest, or whose end tag is usually left implied.
 const FLAT_ELEMENTS: &[&[u8]] = &[
-    b"area", b"base", b"br", b"col", b"embed", b"hr", b"img", b"input", b"link", b"meta",
-    b"param", b"source", b"track", b"wbr", b"p", b"li", b"dt", b"dd", b"tr", b"td", b"th",
-    b"option",
+    b"area", b"base", b"br", b"col", b"embed", b"hr", b"img", b"input", b"link", b"meta", b"param",
+    b"source", b"track", b"wbr", b"p", b"li", b"dt", b"dd", b"tr", b"td", b"th", b"option",
 ];
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Inherited by the sandboxed frame: no scripts, frames, fetches or files; inline styles only.
@@ -49,7 +45,10 @@ pub(super) fn preview(
     file.take(MAX_HTML_BYTES + 1)
         .read_to_end(&mut html)
         .context("read HTML")?;
-    ensure!(html.len() as u64 == source.len, "HTML changed while it was read");
+    ensure!(
+        html.len() as u64 == source.len,
+        "HTML changed while it was read"
+    );
     let width = usize::from(request.width.max(10));
     if request.view != View::Rendered {
         let rows = text_lines(&html, width, &request.theme)?;
@@ -108,9 +107,11 @@ pub(super) fn text_lines(html: &[u8], width: usize, theme: &Theme) -> Result<Vec
         let Some(spans) = rows.get_mut(row) else {
             break;
         };
-        spans.push(Span::styled(clean(text), style(tags, theme)));
+        spans.push(piece(text, tags, theme));
         let Some(url) = link(tags) else { continue };
-        let continues = flat.get(index + 1).is_some_and(|next| link(next.2) == Some(url));
+        let continues = flat
+            .get(index + 1)
+            .is_some_and(|next| link(next.2) == Some(url));
         if !continues {
             let number = *numbers.entry(url).or_insert_with(|| {
                 links.push(url);
@@ -121,7 +122,9 @@ pub(super) fn text_lines(html: &[u8], width: usize, theme: &Theme) -> Result<Vec
     }
     let mut lines: Vec<Line<'static>> = rows.into_iter().map(|row| line(row, theme)).collect();
     if tagged.len() > MAX_ROWS {
-        lines.push(Line::from("[Preview truncated; Alt+E opens it in a browser]"));
+        lines.push(Line::from(
+            "[Preview truncated; Alt+E opens it in a browser]",
+        ));
     }
     append_links(&mut lines, &links, theme);
     debug_assert_eq!(links.len(), numbers.len());
@@ -141,9 +144,13 @@ pub(super) fn nesting(html: &[u8]) -> usize {
         }
         let closing = rest.first() == Some(&b'/');
         let after = &rest[usize::from(closing)..];
-        let name = &after[..after.iter().take_while(|b| b.is_ascii_alphanumeric()).count()];
+        let name = &after[..after
+            .iter()
+            .take_while(|b| b.is_ascii_alphanumeric())
+            .count()];
         let is = |element: &[u8]| name.eq_ignore_ascii_case(element);
-        if !name.first().is_some_and(u8::is_ascii_alphabetic) || FLAT_ELEMENTS.iter().any(|e| is(e)) {
+        if !name.first().is_some_and(u8::is_ascii_alphabetic) || FLAT_ELEMENTS.iter().any(|e| is(e))
+        {
             continue;
         }
         if is(b"script") || is(b"style") {
@@ -165,7 +172,9 @@ pub(super) fn nesting(html: &[u8]) -> usize {
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn find_ignore_case(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -181,26 +190,39 @@ fn link(tags: &[RichAnnotation]) -> Option<&str> {
     })
 }
 
-fn style(tags: &[RichAnnotation], theme: &Theme) -> Style {
-    tags.iter().fold(Style::new(), |style, tag| {
-        style.patch(match tag {
-            RichAnnotation::Link(_) => theme.link(),
-            RichAnnotation::Strong => theme.strong(),
-            RichAnnotation::Emphasis => theme.emphasis(),
-            RichAnnotation::Strikeout => theme.strike(),
-            RichAnnotation::Code | RichAnnotation::Preformat(_) => theme.code(),
-            RichAnnotation::Image(_) => theme.aside(),
-            _ => Style::new(),
+/// The combined style of a piece's annotations; unannotated text keeps its row style.
+fn piece(text: &str, tags: &[RichAnnotation], theme: &Theme) -> Span<'static> {
+    let style = tags
+        .iter()
+        .filter_map(|tag| match tag {
+            RichAnnotation::Link(_) => Some(theme.link()),
+            RichAnnotation::Strong => Some(theme.strong()),
+            RichAnnotation::Emphasis => Some(theme.emphasis()),
+            RichAnnotation::Strikeout => Some(theme.strike()),
+            RichAnnotation::Code | RichAnnotation::Preformat(_) => Some(theme.code()),
+            RichAnnotation::Image(_) => Some(theme.aside()),
+            _ => None,
         })
-    })
+        .reduce(|style, next| style.patch(next));
+    match style {
+        Some(style) => Span::styled(clean(text), style),
+        None => Span::raw(clean(text)),
+    }
 }
 
 /// html2text marks headings with a `#` prefix; give those rows the heading style.
 fn line(spans: Vec<Span<'static>>, theme: &Theme) -> Line<'static> {
-    let first = spans.first().map(|span| span.content.as_ref()).unwrap_or("");
+    let first = spans
+        .first()
+        .map(|span| span.content.as_ref())
+        .unwrap_or("");
     let marks = first.len() - first.trim_start_matches('#').len();
     let heading = (1..=6).contains(&marks) && first[marks..].starts_with(' ');
-    let base = if heading { theme.heading() } else { theme.text() };
+    let base = if heading {
+        theme.heading()
+    } else {
+        theme.text()
+    };
     Line::from(spans).style(base)
 }
 
@@ -217,7 +239,10 @@ fn append_links(lines: &mut Vec<Line<'static>>, links: &[&str], theme: &Theme) {
         ]));
     }
     if links.len() > MAX_LINKS {
-        lines.push(Line::from(format!("… {} more links", links.len() - MAX_LINKS)));
+        lines.push(Line::from(format!(
+            "… {} more links",
+            links.len() - MAX_LINKS
+        )));
     }
 }
 
@@ -245,7 +270,10 @@ pub(super) fn screenshot(chromium: &Path, html: &[u8], window: (u32, u32)) -> Re
     }
     run(command, dir.path(), SCREENSHOT_TIMEOUT)?;
     let png = read_bounded(&shot, MAX_PNG_BYTES + 1).context("Chromium wrote no screenshot")?;
-    ensure!(png.len() as u64 <= MAX_PNG_BYTES, "screenshot exceeds 20 MiB");
+    ensure!(
+        png.len() as u64 <= MAX_PNG_BYTES,
+        "screenshot exceeds 20 MiB"
+    );
     Ok(png)
 }
 
@@ -294,7 +322,10 @@ pub(super) fn chromium_args(
     shot: &Path,
     (width, height): (u32, u32),
 ) -> Vec<OsString> {
-    assert!(page.is_absolute() && shot.is_absolute(), "paths must be absolute");
+    assert!(
+        page.is_absolute() && shot.is_absolute(),
+        "paths must be absolute"
+    );
     let url = file_url(page);
     let mut profile = OsString::from("--user-data-dir=");
     profile.push(dir.join("profile"));

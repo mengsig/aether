@@ -115,6 +115,8 @@ hashlink 0.12.1: MIT OR Apache-2.0 (https://github.com/djc/hashlink)
 heck 0.5.0: MIT OR Apache-2.0 (https://github.com/withoutboats/heck)
 hex 0.4.3: MIT OR Apache-2.0 (https://github.com/KokaKiwi/rust-hex)
 hmac 0.13.0: MIT OR Apache-2.0 (https://github.com/RustCrypto/MACs)
+html2text 0.17.4: MIT (https://github.com/jugglerchris/rust-html2text/)
+html5ever 0.40.1: MIT OR Apache-2.0 (https://github.com/servo/html5ever)
 http 1.5.0: MIT OR Apache-2.0 (https://github.com/hyperium/http)
 http-body 1.1.0: MIT (https://github.com/hyperium/http-body)
 http-body-util 0.1.5: MIT (https://github.com/hyperium/http-body)
@@ -162,6 +164,7 @@ litrs 1.0.0: MIT OR Apache-2.0 (https://github.com/LukasKalbertodt/litrs)
 lock_api 0.4.14: MIT OR Apache-2.0 (https://github.com/Amanieu/parking_lot)
 log 0.4.34: MIT OR Apache-2.0 (https://github.com/rust-lang/log)
 lru 0.18.4: MIT (https://github.com/jeromefroe/lru-rs.git)
+markup5ever 0.40.0: MIT OR Apache-2.0 (https://github.com/servo/html5ever)
 matchers 0.2.0: MIT (https://github.com/hawkw/matchers)
 memchr 2.8.3: Unlicense OR MIT (https://github.com/BurntSushi/memchr)
 memoffset 0.9.1: MIT (https://github.com/Gilnaa/memoffset)
@@ -171,6 +174,7 @@ miniz_oxide 0.9.1: MIT OR Zlib OR Apache-2.0 (https://github.com/Frommi/miniz_ox
 mio 1.2.3: MIT (https://github.com/tokio-rs/mio)
 moxcms 0.8.1: BSD-3-Clause OR Apache-2.0 (https://github.com/awxkee/moxcms.git)
 multiversion_no_op 1.0.0: Apache-2.0 OR MIT (https://github.com/hsivonen/multiversion_no_op)
+new_debug_unreachable 1.0.6: MIT (https://github.com/mbrubeck/rust-debug-unreachable)
 nix 0.31.3: MIT (https://github.com/nix-rust/nix)
 nu-ansi-term 0.50.3: MIT (https://github.com/nushell/nu-ansi-term)
 num-conv 0.2.2: MIT OR Apache-2.0 (https://github.com/jhpratt/num-conv)
@@ -184,11 +188,14 @@ parking_lot 0.12.5: MIT OR Apache-2.0 (https://github.com/Amanieu/parking_lot)
 parking_lot_core 0.9.12: MIT OR Apache-2.0 (https://github.com/Amanieu/parking_lot)
 percent-encoding 2.3.2: MIT OR Apache-2.0 (https://github.com/servo/rust-url/)
 phf 0.12.1: MIT (https://github.com/rust-phf/rust-phf)
+phf 0.14.0: MIT (https://github.com/rust-phf/rust-phf)
 phf_shared 0.12.1: MIT (https://github.com/rust-phf/rust-phf)
+phf_shared 0.14.0: MIT (https://github.com/rust-phf/rust-phf)
 pin-project-lite 0.2.17: Apache-2.0 OR MIT (https://github.com/taiki-e/pin-project-lite)
 png 0.18.1: MIT OR Apache-2.0 (https://github.com/image-rs/image-png)
 potential_utf 0.1.6: Unicode-3.0 (https://github.com/unicode-org/icu4x)
 powerfmt 0.2.0: MIT OR Apache-2.0 (https://github.com/jhpratt/powerfmt)
+precomputed-hash 0.1.1: MIT (https://github.com/emilio/precomputed-hash)
 proc-macro2 1.0.107: MIT OR Apache-2.0 (https://github.com/dtolnay/proc-macro2)
 pty-process 0.5.3: MIT (https://git.tozt.net/pty-process)
 pulldown-cmark 0.13.4: MIT (https://github.com/raphlinus/pulldown-cmark)
@@ -248,6 +255,7 @@ smawk 0.3.3: MIT (https://github.com/mgeisler/smawk)
 socket2 0.6.5: MIT OR Apache-2.0 (https://github.com/rust-lang/socket2)
 stable_deref_trait 1.2.1: MIT OR Apache-2.0 (https://github.com/storyyeller/stable_deref_trait)
 static_assertions 1.1.0: MIT OR Apache-2.0 (https://github.com/nvzqz/static-assertions-rs)
+string_cache 0.11.0: MIT OR Apache-2.0 (https://github.com/servo/string-cache)
 strsim 0.11.1: MIT (https://github.com/rapidfuzz/strsim-rs)
 strum 0.27.2: MIT (https://github.com/Peternator7/strum)
 strum 0.28.0: MIT (https://github.com/Peternator7/strum)
@@ -260,6 +268,7 @@ syn 3.0.5: MIT OR Apache-2.0 (https://github.com/dtolnay/syn)
 sync_wrapper 1.0.2: Apache-2.0 (https://github.com/Actyx/sync_wrapper)
 synstructure 0.13.2: MIT (https://github.com/mystor/synstructure)
 tempfile 3.27.0: MIT OR Apache-2.0 (https://github.com/Stebalien/tempfile)
+tendril 0.5.1: MIT OR Apache-2.0 (https://github.com/servo/html5ever)
 textwrap 0.16.4: MIT (https://github.com/mgeisler/textwrap)
 thiserror 2.0.21: MIT OR Apache-2.0 (https://github.com/dtolnay/thiserror)
 thiserror-impl 2.0.21: MIT OR Apache-2.0 (https://github.com/dtolnay/thiserror)
@@ -303,6 +312,7 @@ utf8_iter 1.0.4: Apache-2.0 OR MIT (https://github.com/hsivonen/utf8_iter)
 utf8parse 0.2.2: Apache-2.0 OR MIT (https://github.com/alacritty/vte)
 walkdir 2.5.0: Unlicense/MIT (https://github.com/BurntSushi/walkdir)
 want 0.3.2: MIT (https://github.com/seanmonstar/want)
+web_atoms 0.3.0: MIT OR Apache-2.0 (https://github.com/servo/html5ever)
 weezl 0.1.12: MIT OR Apache-2.0 (https://github.com/image-rs/weezl)
 winnow 1.0.4: MIT (https://github.com/winnow-rs/winnow)
 writeable 0.6.4: Unicode-3.0 (https://github.com/unicode-org/icu4x)
@@ -1200,6 +1210,7 @@ hashbrown 0.17.1 (LICENSE-APACHE)
 hashlink 0.12.1 (LICENSE-APACHE)
 heck 0.5.0 (LICENSE-APACHE)
 hmac 0.13.0 (LICENSE-APACHE)
+html5ever 0.40.1 (LICENSE-APACHE)
 httparse 1.10.1 (LICENSE-APACHE)
 httpdate 1.0.3 (LICENSE-APACHE)
 hybrid-array 0.4.14 (LICENSE-APACHE)
@@ -1212,6 +1223,7 @@ lazy_static 1.5.0 (LICENSE-APACHE)
 linux-raw-sys 0.12.1 (LICENSE-APACHE)
 lock_api 0.4.14 (LICENSE-APACHE)
 log 0.4.34 (LICENSE-APACHE)
+markup5ever 0.40.0 (LICENSE-APACHE)
 mime 0.3.17 (LICENSE-APACHE)
 multiversion_no_op 1.0.0 (LICENSE-APACHE)
 num-traits 0.2.19 (LICENSE-APACHE)
@@ -1242,8 +1254,10 @@ smallvec 1.16.0 (LICENSE-APACHE)
 socket2 0.6.5 (LICENSE-APACHE)
 stable_deref_trait 1.2.1 (LICENSE-APACHE)
 static_assertions 1.1.0 (LICENSE-APACHE)
+string_cache 0.11.0 (LICENSE-APACHE)
 symlink 0.1.0 (LICENSE-APACHE)
 tempfile 3.27.0 (LICENSE-APACHE)
+tendril 0.5.1 (LICENSE-APACHE)
 thread_local 1.1.10 (LICENSE-APACHE)
 tungstenite 0.30.0 (LICENSE-APACHE)
 unicase 2.9.0 (LICENSE-APACHE)
@@ -1252,6 +1266,7 @@ unicode-truncate 2.0.1 (LICENSE-APACHE)
 unicode-width 0.2.2 (LICENSE-APACHE)
 url 2.5.8 (LICENSE-APACHE)
 utf8_iter 1.0.4 (LICENSE-APACHE)
+web_atoms 0.3.0 (LICENSE-APACHE)
 weezl 0.1.12 (LICENSE-APACHE)
 zeroize 1.9.0 (LICENSE-APACHE)
 zune-core 0.5.3 (LICENSE-APACHE)
@@ -3149,6 +3164,7 @@ SOFTWARE.
 ------------------------------------------------------------------------------
 core-foundation 0.10.1 (LICENSE-MIT)
 core-foundation-sys 0.8.7 (LICENSE-MIT)
+string_cache 0.11.0 (LICENSE-MIT)
 ------------------------------------------------------------------------------
 
 Copyright (c) 2012-2013 Mozilla Foundation
@@ -5712,6 +5728,64 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
+html2text 0.17.4 (LICENSE)
+------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2016 Chris Emerson
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------------
+html5ever 0.40.1 (LICENSE-MIT)
+markup5ever 0.40.0 (LICENSE-MIT)
+web_atoms 0.3.0 (LICENSE-MIT)
+------------------------------------------------------------------------------
+
+Copyright (c) 2014 The html5ever Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------------
 http 1.5.0 (LICENSE-APACHE)
 ------------------------------------------------------------------------------
 
@@ -8108,6 +8182,36 @@ See the Licenses for the specific language governing permissions and
 limitations under the Licenses.
 
 ------------------------------------------------------------------------------
+new_debug_unreachable 1.0.6 (LICENSE-MIT)
+------------------------------------------------------------------------------
+
+Copyright (c) 2015 Jonathan Reem
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------------
 nix 0.31.3 (LICENSE)
 ------------------------------------------------------------------------------
 
@@ -8824,7 +8928,9 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
 ------------------------------------------------------------------------------
 phf 0.12.1 (LICENSE)
+phf 0.14.0 (LICENSE)
 phf_shared 0.12.1 (LICENSE)
+phf_shared 0.14.0 (LICENSE)
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -9089,6 +9195,32 @@ powerfmt 0.2.0 (LICENSE-MIT)
 ------------------------------------------------------------------------------
 
 Copyright (c) 2023 Jacob Pratt et al.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------------
+precomputed-hash 0.1.1 (LICENSE)
+------------------------------------------------------------------------------
+
+MIT License
+
+Copyright (c) 2017 Emilio Cobos Álvarez
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -10831,6 +10963,36 @@ tempfile 3.27.0 (LICENSE-MIT)
 ------------------------------------------------------------------------------
 
 Copyright (c) 2015 Steven Allen
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------------
+tendril 0.5.1 (LICENSE-MIT)
+------------------------------------------------------------------------------
+
+Copyright (c) 2015 Keegan McAllister
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated

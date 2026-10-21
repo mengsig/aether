@@ -16,10 +16,10 @@ ascii=false
   Alt+Z          full screen file viewer  Ctrl+V       paste image, else text
   Alt+-          narrow file viewer       Ctrl+←/→     move by word · Alt+B/F
   Alt+=          widen file viewer
-  Alt+N          notification center      Agents board (Ctrl+G)
-  Alt+↑          view the parent agent    ↑/↓         move between agents
-  Ctrl+T         details & reasoning      ←/→         fold / unfold
-  ↓ 16 more · ↑↓ pgup pgdn scroll · ? or esc to close
+  Alt+T          PDF/HTML text or image   Agents board (Ctrl+G)
+  Alt+N          notification center      ↑/↓         move between agents
+  Alt+↑          view the parent agent    ←/→         fold / unfold
+  ↓ 17 more · ↑↓ pgup pgdn scroll · ? or esc to close
 
 
 
@@ -42,10 +42,10 @@ ascii=true
   Alt+Z          full screen file viewer
   Alt+-          narrow file viewer
   Alt+=          widen file viewer
+  Alt+T          PDF/HTML text or image
   Alt+N          notification center
   Alt+Up         view the parent agent
-  Ctrl+T         details & reasoning
-  v 46 more | up/down pgup/pgdn scroll | ? or esc to close
+  v 47 more | up/down pgup/pgdn scroll | ? or esc to close
 
 
 

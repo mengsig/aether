@@ -31,8 +31,16 @@ fn fake_poppler(dir: &Path, renderer: bool) -> Tools {
         .save(&png)
         .unwrap();
     Tools {
-        pdfinfo: Some(script(dir, "pdfinfo", "printf 'Title: x\\nPages:          3\\n'")),
-        pdftotext: Some(script(dir, "pdftotext", "printf 'Text of page %s\\n' \"$2\"")),
+        pdfinfo: Some(script(
+            dir,
+            "pdfinfo",
+            "printf 'Title: x\\nPages:          3\\n'",
+        )),
+        pdftotext: Some(script(
+            dir,
+            "pdftotext",
+            "printf 'Text of page %s\\n' \"$2\"",
+        )),
         pdftoppm: renderer.then(|| {
             let body = format!(
                 "echo \"$@\" >> '{calls}'\nfor last; do :; done\ncp '{}' \"$last.png\"",
@@ -81,7 +89,13 @@ fn pane(app: &crate::App) -> String {
     let start = usize::from(app.size.0 - app.size.0 * app.viewer.share / 100);
     screen
         .lines()
-        .map(|row| row.chars().skip(start).collect::<String>().trim_end().to_owned())
+        .map(|row| {
+            row.chars()
+                .skip(start)
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -130,7 +144,10 @@ fn file_types_choose_their_viewer_by_extension() {
 
 #[test]
 fn page_counts_parse_from_poppler_and_mupdf_and_reject_nonsense() {
-    assert_eq!(pdf::parse_page_count("Title: x\nPages:          12\n").unwrap(), 12);
+    assert_eq!(
+        pdf::parse_page_count("Title: x\nPages:          12\n").unwrap(),
+        12
+    );
     assert_eq!(pdf::parse_page_count("PDF-1.4\nPages: 3\n").unwrap(), 3);
     assert!(pdf::parse_page_count("Pages: 0").is_err());
     assert!(pdf::parse_page_count("Pages: many").is_err());
@@ -157,8 +174,17 @@ fn render_commands_are_argv_for_poppler_or_mupdf() {
     assert_eq!(
         args(&poppler),
         [
-            "/bin/pdftoppm", "-png", "-singlefile", "-f", "4", "-l", "4", "-scale-to", "900",
-            "/work/document.pdf", "/work/page"
+            "/bin/pdftoppm",
+            "-png",
+            "-singlefile",
+            "-f",
+            "4",
+            "-l",
+            "4",
+            "-scale-to",
+            "900",
+            "/work/document.pdf",
+            "/work/page"
         ]
     );
     let mupdf = Tools {
@@ -168,8 +194,19 @@ fn render_commands_are_argv_for_poppler_or_mupdf() {
     assert_eq!(
         args(&mupdf),
         [
-            "/bin/mutool", "draw", "-q", "-F", "png", "-w", "900", "-h", "900", "-o",
-            "/work/page.png", "/work/document.pdf", "4"
+            "/bin/mutool",
+            "draw",
+            "-q",
+            "-F",
+            "png",
+            "-w",
+            "900",
+            "-h",
+            "900",
+            "-o",
+            "/work/page.png",
+            "/work/document.pdf",
+            "4"
         ]
     );
     assert!(pdf::render_command(&Tools::default(), document, output, 1, 900).is_err());
@@ -182,9 +219,21 @@ fn pages_turn_and_clamp_and_rendered_pages_are_cached() {
     let tools_dir = tempfile::tempdir().unwrap();
     let mut documents = Documents::new(fake_poppler(tools_dir.path(), true));
     open(&mut app, &mut documents, "report.pdf");
-    assert_eq!(app.viewer.pages(), Some(Pages { current: 1, total: 3 }));
-    assert!(matches!(&app.viewer.preview, Some(Ok(Preview::Image { rows, .. })) if !rows.is_empty()));
-    assert!(pane(&app).contains("report.pdf · page 1/3"), "{}", pane(&app));
+    assert_eq!(
+        app.viewer.pages(),
+        Some(Pages {
+            current: 1,
+            total: 3
+        })
+    );
+    assert!(
+        matches!(&app.viewer.preview, Some(Ok(Preview::Image { rows, .. })) if !rows.is_empty())
+    );
+    assert!(
+        pane(&app).contains("report.pdf · page 1/3"),
+        "{}",
+        pane(&app)
+    );
     assert!(key(&mut app, KeyCode::PageUp, KeyModifiers::NONE).is_empty());
     for expected in [2, 3] {
         let effects = key(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
@@ -196,13 +245,29 @@ fn pages_turn_and_clamp_and_rendered_pages_are_cached() {
     let effects = key(&mut app, KeyCode::PageUp, KeyModifiers::NONE);
     load(&mut app, &mut documents, effects);
     let calls = std::fs::read_to_string(tools_dir.path().join("calls.log")).unwrap();
-    assert_eq!(calls.lines().count(), 3, "page 2 came from the cache: {calls}");
+    assert_eq!(
+        calls.lines().count(),
+        3,
+        "page 2 came from the cache: {calls}"
+    );
     assert!(calls.lines().all(|l| l.starts_with("-png -singlefile -f ")));
-    assert!(!calls.contains(&dir.path().display().to_string()), "tools read a private copy");
+    assert!(
+        !calls.contains(&dir.path().display().to_string()),
+        "tools read a private copy"
+    );
     let mut request = app.viewer.pending.clone().unwrap();
     request.page = 99;
     let shown = read(&request, &mut documents).unwrap();
-    assert!(matches!(shown, Preview::Image { pages: Some(Pages { current: 3, total: 3 }), .. }));
+    assert!(matches!(
+        shown,
+        Preview::Image {
+            pages: Some(Pages {
+                current: 3,
+                total: 3
+            }),
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -220,7 +285,10 @@ fn alt_t_switches_a_pdf_page_to_text_and_back() {
     assert_eq!(app.viewer.pages().unwrap().current, 2);
     let effects = key(&mut app, KeyCode::Char('t'), KeyModifiers::ALT);
     load(&mut app, &mut documents, effects);
-    assert!(matches!(&app.viewer.preview, Some(Ok(Preview::Image { .. }))));
+    assert!(matches!(
+        &app.viewer.preview,
+        Some(Ok(Preview::Image { .. }))
+    ));
 }
 
 #[test]
@@ -262,9 +330,19 @@ fn html_text_styles_links_headings_and_strips_terminal_controls() {
         .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
         .collect();
     assert_eq!(lines[0].style, theme.heading());
-    assert!(text.iter().all(|row| !row.contains('\x1b') && !row.contains('\x07')));
-    assert_eq!(text.iter().filter(|row| row.contains("[1]")).count(), 3, "{text:?}");
-    assert!(text.iter().any(|row| row == "[1] https://example.com/a"), "{text:?}");
+    assert!(
+        text.iter()
+            .all(|row| !row.contains('\x1b') && !row.contains('\x07'))
+    );
+    assert_eq!(
+        text.iter().filter(|row| row.contains("[1]")).count(),
+        3,
+        "{text:?}"
+    );
+    assert!(
+        text.iter().any(|row| row == "[1] https://example.com/a"),
+        "{text:?}"
+    );
     assert!(!text.iter().any(|row| row.contains("[2]")));
 }
 
@@ -276,7 +354,10 @@ fn chromium_runs_offline_on_a_sandboxed_copy() {
         Path::new("/tmp/shot dir/shot.png"),
         (800, 600),
     );
-    let args: Vec<String> = args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     for flag in [
         "--headless",
         "--proxy-server=127.0.0.1:9",
@@ -308,7 +389,11 @@ fn chromium_screenshot_cannot_read_local_files_or_reach_the_network() {
     image::RgbaImage::from_pixel(64, 64, image::Rgba([255, 0, 0, 255]))
         .save(root.join("secret.png"))
         .unwrap();
-    std::fs::write(root.join("secret.html"), "<body style=background:#f00>x</body>").unwrap();
+    std::fs::write(
+        root.join("secret.html"),
+        "<body style=background:#f00>x</body>",
+    )
+    .unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -326,9 +411,17 @@ fn chromium_screenshot_cannot_read_local_files_or_reach_the_network() {
     std::fs::write(root.join("page.html"), &page).unwrap();
     let png = html::screenshot(&chromium, page.as_bytes(), (800, 600)).unwrap();
     let shot = image::load_from_memory(&png).unwrap().into_rgb8();
-    let red = shot.pixels().filter(|p| p[0] > 200 && p[1] < 80 && p[2] < 80).count();
-    let dark = shot.pixels().filter(|p| p.0.iter().map(|&c| u32::from(c)).sum::<u32>() < 150);
-    assert_eq!(red, 0, "a local file, script or refresh reached the screenshot");
+    let red = shot
+        .pixels()
+        .filter(|p| p[0] > 200 && p[1] < 80 && p[2] < 80)
+        .count();
+    let dark = shot
+        .pixels()
+        .filter(|p| p.0.iter().map(|&c| u32::from(c)).sum::<u32>() < 150);
+    assert_eq!(
+        red, 0,
+        "a local file, script or refresh reached the screenshot"
+    );
     assert!(dark.count() > 50, "the page itself must render");
     assert!(listener.accept().is_err(), "the page reached the network");
     let (_workspace, mut app) = setup(&[]);
@@ -340,7 +433,10 @@ fn chromium_screenshot_cannot_read_local_files_or_reach_the_network() {
     open(&mut app, &mut documents, "page.html");
     let effects = key(&mut app, KeyCode::Char('t'), KeyModifiers::ALT);
     load(&mut app, &mut documents, effects);
-    assert!(matches!(&app.viewer.preview, Some(Ok(Preview::Image { .. }))));
+    assert!(matches!(
+        &app.viewer.preview,
+        Some(Ok(Preview::Image { .. }))
+    ));
 }
 
 #[test]
@@ -358,7 +454,13 @@ fn installed_poppler_renders_pages_and_extracts_their_text() {
         ..tools
     });
     open(&mut app, &mut documents, "report.pdf");
-    assert_eq!(app.viewer.pages(), Some(Pages { current: 1, total: 2 }));
+    assert_eq!(
+        app.viewer.pages(),
+        Some(Pages {
+            current: 1,
+            total: 2
+        })
+    );
     let Some(Ok(Preview::Image { rows, .. })) = &app.viewer.preview else {
         panic!("{:?}", app.viewer.preview)
     };
@@ -373,9 +475,18 @@ fn installed_poppler_renders_pages_and_extracts_their_text() {
 #[test]
 fn nesting_bound_ignores_flat_tags_scripts_and_comments() {
     assert_eq!(html::nesting(b"<div><p>a<p>b<br><img src=x></div>"), 1);
-    assert_eq!(html::nesting(b"<ul><li>a<li><table><tr><td>1</table></ul>"), 2);
-    assert_eq!(html::nesting(b"<script>if (a<b && c<d) x()</SCRIPT><div></div>"), 1);
-    assert_eq!(html::nesting(b"<!-- <div><div> --><section><div>x</div></section>"), 2);
+    assert_eq!(
+        html::nesting(b"<ul><li>a<li><table><tr><td>1</table></ul>"),
+        2
+    );
+    assert_eq!(
+        html::nesting(b"<script>if (a<b && c<d) x()</SCRIPT><div></div>"),
+        1
+    );
+    assert_eq!(
+        html::nesting(b"<!-- <div><div> --><section><div>x</div></section>"),
+        2
+    );
     assert_eq!(html::nesting(b"a < b <3 </div></div><span>"), 1);
     assert_eq!(html::nesting(b"<div"), 1);
     assert_eq!(html::nesting(b"<!-- unterminated <div>"), 0);

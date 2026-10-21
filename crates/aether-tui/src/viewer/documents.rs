@@ -72,7 +72,10 @@ impl Documents {
         render: impl FnOnce() -> Result<Vec<u8>>,
     ) -> Result<Arc<[u8]>> {
         if let Some(index) = self.renders.iter().position(|(k, _)| *k == key) {
-            let entry = self.renders.remove(index).context("cached render vanished")?;
+            let entry = self
+                .renders
+                .remove(index)
+                .context("cached render vanished")?;
             let png = entry.1.clone();
             self.renders.push_back(entry);
             return Ok(png);
@@ -128,7 +131,9 @@ mod tests {
         }
         assert_eq!(calls, MAX_RENDERS + 1);
         assert_eq!(documents.cached_renders(), MAX_RENDERS);
-        documents.render(key(2), || panic!("page 2 is cached")).unwrap();
+        documents
+            .render(key(2), || panic!("page 2 is cached"))
+            .unwrap();
         let rendered = documents.render(key(1), || Ok(vec![2; 4])).unwrap();
         assert_eq!(&rendered[..], &[2; 4]);
         assert!(documents.render(key(9), || Ok(Vec::new())).is_err());
