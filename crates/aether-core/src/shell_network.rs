@@ -4,14 +4,18 @@
 //! A heuristic over the command text, not a parser or a sandbox. The command
 //! is cut at every shell separator (`;`, `&`, `|`, newline, parentheses,
 //! braces, backticks) with quotes dropped, so `sh -c '...'`, `$(...)`,
-//! pipelines and `&&` chains are read as their pieces. A piece is networked when:
+//! pipelines and `&&` chains are read as their pieces. Redirections such as
+//! `2>/dev/null` or `>out` are dropped before the command word is chosen. A
+//! piece is networked when:
 //!
 //! - its command word is a network client (`curl`, `ssh`, `gh`, ...);
 //! - its command word is `git` or a package manager and a later word is one of
-//!   its network subcommands (`git push`, `npm install`, ...);
+//!   its network subcommands (`git push`, `npm install`, ...), or one that
+//!   installs by default is run bare (`yarn`, `bundle`);
 //! - it is `rsync` with a `host:path` or `rsync://` argument;
 //! - its command word is a wrapper that runs another command (`sudo`, `env`,
-//!   `xargs`, `sh`, ...) and any later word would qualify on its own; or
+//!   `xargs`, `sh`, ...) and any later word would qualify on its own;
+//! - it is `python -m <module>` and the module would qualify (`python -m pip install`); or
 //! - it names `/dev/tcp/` or `/dev/udp/`.
 //!
 //! Misreads lean towards gating: a quoted separator can make an argument look
@@ -100,6 +104,13 @@ const PACKAGE_MANAGERS: &[(&str, &[&str])] = &[
     ("yum", &["install", "update", "upgrade"]),
 ];
 
+/// Package managers that install the project's dependencies when run with no subcommand.
+const BARE_INSTALLERS: &[&str] = &["bundle", "yarn"];
+
+/// Stands in for a redirection operator (`>`, `2>&1`, `<<`, ...) once the
+/// command is flattened; never typed in a real command.
+const REDIRECT: char = '\u{1}';
+
 /// The class to gate a call under: a mutating call whose `command` (or the
 /// `chars` typed into a shell) may reach the network is external. Never lowers it.
 pub fn gated_class(declared: SideEffectClass, input: &Value) -> SideEffectClass {
@@ -124,18 +135,61 @@ pub fn touches_network(command: &str) -> bool {
     if command.contains("/dev/tcp/") || command.contains("/dev/udp/") {
         return true;
     }
-    let flattened: String = command
-        .chars()
-        .filter(|c| !matches!(c, '\'' | '"' | '\\'))
-        .map(|c| match c {
-            ';' | '&' | '|' | '(' | ')' | '{' | '}' | '`' | '\n' => '\n',
-            other => other,
-        })
-        .collect();
-    flattened.lines().any(|piece| {
+    flatten(command).lines().any(|piece| {
         let words: Vec<&str> = piece.split_whitespace().collect();
-        piece_touches_network(&words)
+        piece_touches_network(&without_redirections(&words))
     })
+}
+
+/// `command` with quotes (and any literal [`REDIRECT`]) dropped, one piece per line, and each redirection
+/// operator a word of its own [`REDIRECT`].
+fn flatten(command: &str) -> String {
+    let mut flattened = String::with_capacity(command.len() + 8);
+    let mut chars = command
+        .chars()
+        .filter(|c| !matches!(*c, '\'' | '"' | '\\' | REDIRECT))
+        .peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '<' | '>' => {
+                // `>>`, `<<<`, `>&2`, `>|` and `<>` are one operator.
+                while chars
+                    .next_if(|n| matches!(n, '<' | '>' | '&' | '|'))
+                    .is_some()
+                {}
+                flattened.extend([' ', REDIRECT, ' ']);
+            }
+            '&' if chars.next_if_eq(&'>').is_some() => {
+                chars.next_if_eq(&'>');
+                flattened.extend([' ', REDIRECT, ' ']);
+            }
+            ';' | '&' | '|' | '(' | ')' | '{' | '}' | '`' | '\n' => flattened.push('\n'),
+            other => flattened.push(other),
+        }
+    }
+    flattened
+}
+
+/// `words` without redirections: each operator, its target and a leading
+/// file descriptor (`2` in `2>/dev/null`) go, so they never pose as the command.
+fn without_redirections<'a>(words: &[&'a str]) -> Vec<&'a str> {
+    let redirect = REDIRECT.to_string();
+    let is_operator = |word: &&str| *word == redirect;
+    let mut kept = Vec::with_capacity(words.len());
+    let mut i = 0;
+    while i < words.len() {
+        let fd_before_operator = words[i].bytes().all(|b| b.is_ascii_digit())
+            && words.get(i + 1).is_some_and(is_operator);
+        if fd_before_operator {
+            i += 1;
+        } else if is_operator(&words[i]) {
+            i += 2;
+        } else {
+            kept.push(words[i]);
+            i += 1;
+        }
+    }
+    kept
 }
 
 /// One separator-free piece: its command word, with its later words.
@@ -158,6 +212,15 @@ fn runs_network_program(words: &[&str]) -> bool {
     };
     let program = program_name(first);
     if NETWORK_CLIENTS.contains(&program) {
+        return true;
+    }
+    if program.starts_with("python") {
+        return match args.iter().position(|a| *a == "-m") {
+            Some(flag) => runs_network_program(&args[flag + 1..]),
+            None => false,
+        };
+    }
+    if BARE_INSTALLERS.contains(&program) && args.iter().all(|a| a.starts_with('-')) {
         return true;
     }
     if program == "git" {
@@ -188,9 +251,13 @@ fn is_prefix_word(word: &str) -> bool {
     }
 }
 
-/// `/usr/bin/curl` and `curl` name the same program.
+/// `/usr/bin/curl` and `curl` name the same program, as do `pip3.12` and `pip3`.
 fn program_name(word: &str) -> &str {
-    word.rsplit('/').next().unwrap_or(word)
+    let name = word.rsplit('/').next().unwrap_or(word);
+    match name.split_once('.') {
+        Some((base, version)) if version.bytes().all(|b| b.is_ascii_digit() || b == b'.') => base,
+        _ => name,
+    }
 }
 
 #[cfg(test)]
@@ -289,6 +356,47 @@ mod tests {
         ] {
             networked(command);
         }
+    }
+
+    #[test]
+    fn redirections_do_not_hide_the_command() {
+        for command in [
+            "2>/dev/null curl -sI https://example.com",
+            ">headers curl -sI https://example.com",
+            "curl>headers https://example.com",
+            "2>&1 curl https://example.com",
+            "&>log wget https://example.com",
+            "< urls xargs -n1 curl",
+            ">>log 2>&1 git push",
+            "cat <(curl -s https://example.com)",
+        ] {
+            networked(command);
+        }
+        for command in [
+            "echo hi > curl",
+            "cat < ssh.md",
+            "ls 2>/dev/null >wget.log",
+            "grep curl file 2>&1 | head",
+        ] {
+            local(command);
+        }
+    }
+
+    #[test]
+    fn default_and_versioned_installers_are_networked() {
+        for command in [
+            "yarn",
+            "yarn --frozen-lockfile",
+            "bundle",
+            "pip3.12 install requests",
+            "/usr/bin/python3 -m pip install requests",
+            "python -m pip download x",
+        ] {
+            networked(command);
+        }
+        local("yarn test");
+        local("python3 -m pytest");
+        local("python script.py");
     }
 
     #[test]

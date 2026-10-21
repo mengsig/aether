@@ -187,6 +187,13 @@ impl ApprovalPolicy {
         self.require_for.contains(&class)
     }
 
+    /// A call declared `declared` but gated as the higher `effective` keeps the
+    /// gate of either, so raising a class never drops an approval.
+    pub fn requires_raised(&self, declared: SideEffectClass, effective: SideEffectClass) -> bool {
+        assert!(effective >= declared, "a gate class may only be raised");
+        self.requires(declared) || self.requires(effective)
+    }
+
     pub fn none() -> Self {
         Self {
             require_for: BTreeSet::new(),

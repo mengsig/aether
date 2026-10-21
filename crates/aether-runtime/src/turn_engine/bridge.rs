@@ -67,13 +67,14 @@ pub(super) async fn handle_request(
                 // other: an MCP server's mutation needs the same answer a
                 // built-in one would, matched against the same resources and
                 // argument a remembered rule would see on the API path.
-                let class = gated_class(tool.descriptor().side_effect, &req.input);
+                let declared = tool.descriptor().side_effect;
                 let gate = GateSubject {
                     native_call: None,
                     provider_call_id: None,
                     tool: &req.name,
                     input: &req.input,
-                    class,
+                    declared,
+                    class: gated_class(declared, &req.input),
                     argument: tool.rule_argument(&req.input),
                     resources: tool.resources(&req.input, tool_ctx),
                     resources_known: tool.resources_known(&req.input),
@@ -192,7 +193,6 @@ async fn decide_permission(
         .unwrap_or("tool")
         .to_owned();
     let tool_input = input.get("input").cloned().unwrap_or(json!({}));
-    let class = gated_class(side_effect_of(&tool_name), &tool_input);
     let verdict = permission_verdict(
         runtime,
         ctx,
@@ -201,7 +201,7 @@ async fn decide_permission(
             ctx,
             &tool_name,
             &tool_input,
-            class,
+            side_effect_of(&tool_name),
             input["tool_use_id"].as_str(),
         )?,
         cancel,
@@ -236,6 +236,8 @@ pub(super) struct GateSubject<'a> {
     provider_call_id: Option<&'a str>,
     pub(super) tool: &'a str,
     pub(super) input: &'a Value,
+    /// The tool's own class; `class` is it raised by what the input does.
+    pub(super) declared: SideEffectClass,
     pub(super) class: SideEffectClass,
     pub(super) argument: Option<String>,
     pub(super) resources: Vec<ResourceKey>,
@@ -251,7 +253,7 @@ impl<'a> GateSubject<'a> {
         ctx: &TurnCtx,
         tool: &'a str,
         input: &'a Value,
-        class: SideEffectClass,
+        declared: SideEffectClass,
         provider_call_id: Option<&'a str>,
     ) -> Result<Self> {
         // Derived through the very functions the built-in tools use, so a
@@ -267,7 +269,8 @@ impl<'a> GateSubject<'a> {
             provider_call_id,
             tool,
             input,
-            class,
+            declared,
+            class: gated_class(declared, input),
             argument: permission_argument(input),
             resources_known: resources.is_some(),
             resources: resources.unwrap_or_default(),
@@ -317,6 +320,7 @@ pub(super) async fn permission_verdict(
         provider_call_id,
         tool: tool_name,
         input: tool_input,
+        declared,
         class,
         argument,
         resources,
@@ -346,7 +350,7 @@ pub(super) async fn permission_verdict(
         }
         Ok(refuse(msg))
     };
-    if !ctx.agent.config.approval.requires(class) {
+    if !ctx.agent.config.approval.requires_raised(declared, class) {
         return Ok(allow());
     }
     let approval = ApprovalRequest {

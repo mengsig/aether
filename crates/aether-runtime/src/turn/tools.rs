@@ -301,7 +301,11 @@ pub(super) async fn run_tool_calls(
             call: call.clone(),
             side_effect: class,
         }));
-        let gated = ctx.agent.config.approval.requires(class);
+        let gated = ctx
+            .agent
+            .config
+            .approval
+            .requires_raised(descriptor.side_effect, class);
         if gated {
             let argument = tool.rule_argument(&call.input);
             let approval = ApprovalRequest {

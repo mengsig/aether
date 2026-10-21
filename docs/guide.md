@@ -365,8 +365,10 @@ newlines, `$(...)`, backticks and `sh -c '...'` quoting, and asks when a piece
 runs a network client (`curl`, `wget`, `ssh`, `scp`, `nc`, `gh`, ...), a remote
 `git` subcommand (`push`, `fetch`, `pull`, `clone`, ...), a package install or
 publish (`npm install`, `pip install`, `cargo install`, `apt-get install`, ...),
-`rsync` to a `host:` path, or `/dev/tcp`; `sudo`, `env`, `xargs` and similar
-wrappers are looked through. `grep curl file` stays local. Network use the text
+`rsync` to a `host:` path, or `/dev/tcp`; `sudo`, `env`, `xargs`, `python -m`
+and similar wrappers are looked through, and redirections such as `2>/dev/null`
+are skipped. `grep curl file` stays local. A raised command still needs any
+approval its tool already needed, so `--approval mutation` keeps asking too. Network use the text
 does not show is not caught: a script or `python -c` that opens a socket, a
 command held in a variable, or a build that downloads dependencies
 (`cargo build`). Native web tools (`WebFetch`, `WebSearch`) are not gated.
