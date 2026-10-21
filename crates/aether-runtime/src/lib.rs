@@ -32,6 +32,7 @@ pub mod scheduler;
 pub mod schedules;
 pub mod storage;
 pub mod submission;
+pub mod supervision;
 mod tool_interruption;
 pub mod transfer;
 pub mod turn;

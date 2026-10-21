@@ -9,10 +9,11 @@ remain useful after line numbers change.
 
 ## Stored rows, event history and artifacts
 
-- `aether-store/sqlite/notifications::put_notification`: inconsistent insert
-  counts return corruption errors with `aether doctor`.
-- `sqlite/repository_aliases::{preview,register}`: impossible stored collision
-  results return corruption errors; the alias operation fails, not the daemon.
+- `aether-store/sqlite/notifications::put`: an empty title returns a
+  corruption error with `aether doctor`.
+- `sqlite/repository_aliases::{preview_alias,register_alias}`: invalid alias
+  input returns corruption errors; self-referential stored aliases also fail
+  validation rather than asserting.
 - `sqlite/push_subscriptions::{put,remove,remove_if}`: row-count assertions are
   errors naming the operation and `aether doctor`.
 - `sqlite/{memories,memory_feedback,mutations}`: stored ranking, source and
@@ -50,7 +51,7 @@ directories and checkpoint artifact identities. Interrupted recovery has a
 per-agent unwind/error boundary and keeps existing pending cancellation and
 lease/resource inspection behavior. Original corrupt history is preserved.
 Missing references produce an inspection reason and the commands `aether doctor`
-and `aether wake AGENT` after repair.
+and `aether resume AGENT` after repair.
 
 ## Configuration, engines, providers and MCP
 
@@ -122,3 +123,23 @@ configuration, can still refuse startup with diagnostics. A panic boundary canno
 recover process abort, SIGKILL, kernel failure or allocation abort. Assertions on
 true internal invariants remain useful bug detectors; task supervision isolates
 unwinds rather than treating partially completed work as successful.
+
+## Background-task supervision
+
+The GitHub watcher and scheduler restart after an unwind/unexpected exit with
+1–60 second exponential backoff. Shutdown interrupts backoff; a running worker
+gets five seconds to observe cancellation before its owned future is dropped.
+No replacement worker overlaps the failed future. Tasks whose queue/stream state
+cannot be reconstructed safely (MCP discovery/health recorder, push follower and
+delivery, transport control/listener, retention and disk guard) are isolated and
+publish a disabled notice instead. Periodic maintenance's existing blocking jobs
+continue retrying failures at their normal interval. Lease heartbeats publish the
+affected agent ID on failure. Agent turns already contain their own unwind
+boundary and release their running slot through a drop guard.
+
+Budget/deadline failures with a known subtree and task dependency failures with a
+known owner withhold that scope only; their checks retry rather than caching an
+unverified result. Failure to enumerate the scope still withholds the pass.
+Corrupt descendants cannot disappear from cancellation completion: the final
+check follows stored subtree IDs and strictly reads every member before clearing
+the durable intent. Per-agent scheduler wake failures are isolated as well.

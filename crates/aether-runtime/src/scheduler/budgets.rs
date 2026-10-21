@@ -9,7 +9,10 @@ use aether_store::{AgentFilter, Commit, EventFilter};
 use std::sync::Arc;
 /// The roll-up reads only stored state, so nothing but a commit can change its
 /// verdict. Skip an unchanged fleet to avoid repeating subtree reads.
-pub(super) fn enforce_budgets(runtime: &Arc<Runtime>) -> Result<()> {
+pub(super) fn enforce_budgets(
+    runtime: &Arc<Runtime>,
+    blocked: &mut std::collections::HashSet<AgentId>,
+) -> Result<()> {
     // Read before the pass: a commit landing while it runs was never looked
     // at, and recording a later count would mark it checked and skip it. The
     // cost of sampling early is at most one repeat pass, and the pass's own
@@ -19,53 +22,71 @@ pub(super) fn enforce_budgets(runtime: &Arc<Runtime>) -> Result<()> {
     if runtime.sched.lock().budgets_checked_after == Some(watermark) {
         return Ok(());
     }
-    check_budgets(runtime)?;
-    runtime.sched.lock().budgets_checked_after = Some(watermark);
+    check_budgets(runtime, blocked)?;
+    if blocked.is_empty() {
+        runtime.sched.lock().budgets_checked_after = Some(watermark);
+    }
     Ok(())
 }
 
 /// VISION §3.10: a budget stops the agent cleanly as Failed with the reason,
 /// and warns the person before that. A budget covers the agent and its
 /// descendants: a supervisor's limit is meaningless if delegating escapes it.
-fn check_budgets(runtime: &Arc<Runtime>) -> Result<()> {
+fn check_budgets(
+    runtime: &Arc<Runtime>,
+    blocked: &mut std::collections::HashSet<AgentId>,
+) -> Result<()> {
     let budgeted = runtime.store.agents(&AgentFilter {
         live_only: true,
         budgeted_only: true,
         ..Default::default()
     })?;
     for agent in budgeted {
-        debug_assert!(agent.is_live());
-        debug_assert!(agent.config.token_budget.is_some() || agent.config.cost_budget.is_some());
-        // Terminal descendants still count: their spend already happened.
-        let mut usage = aether_core::model::Usage::default();
-        for id in runtime.store.subtree_ids(agent.id)? {
-            if let Some(member) = runtime.store.agent(id)? {
-                usage += member.stats.usage;
+        let key = format!("budget.{}", agent.id);
+        match check_budget(runtime, &agent) {
+            Ok(()) => runtime.clear_problem(&key),
+            Err(error) => {
+                blocked.insert(agent.id);
+                blocked.extend(runtime.store.subtree_ids(agent.id)?);
+                runtime.report_problem(key, format!("Budget for agent {} cannot be checked: {error}; its subtree is withheld. Run `aether doctor` and `aether diagnose`.", agent.id));
             }
         }
-        let Some(mut agent) = still_live(runtime, agent.id)? else {
-            continue;
+    }
+    Ok(())
+}
+
+fn check_budget(runtime: &Arc<Runtime>, agent: &Agent) -> Result<()> {
+    debug_assert!(agent.is_live());
+    debug_assert!(agent.config.token_budget.is_some() || agent.config.cost_budget.is_some());
+    // Terminal descendants still count: their spend already happened.
+    let mut usage = aether_core::model::Usage::default();
+    for id in runtime.store.subtree_ids(agent.id)? {
+        if let Some(member) = runtime.store.agent(id)? {
+            usage += member.stats.usage;
+        }
+    }
+    let Some(mut agent) = still_live(runtime, agent.id)? else {
+        return Ok(());
+    };
+    // Said before the stop is considered: an operator whose cost budget is
+    // enforced on a floor should hear that whether or not the floor is
+    // near the limit. Re-read after it, because `stop_over_budget` needs
+    // a row read after this pass's last commit.
+    if let Some(reason) = agent.cost_floor_note(&usage)
+        && !already_warned(runtime, agent.id, Notice::CostFloor)?
+    {
+        warn_once(runtime, &agent, usage, reason)?;
+        let Some(fresh) = still_live(runtime, agent.id)? else {
+            return Ok(());
         };
-        // Said before the stop is considered: an operator whose cost budget is
-        // enforced on a floor should hear that whether or not the floor is
-        // near the limit. Re-read after it, because `stop_over_budget` needs
-        // a row read after this pass's last commit.
-        if let Some(reason) = agent.cost_floor_note(&usage)
-            && !already_warned(runtime, agent.id, Notice::CostFloor)?
-        {
-            warn_once(runtime, &agent, usage, reason)?;
-            let Some(fresh) = still_live(runtime, agent.id)? else {
-                continue;
-            };
-            agent = fresh;
-        }
-        if let Some(reason) = agent.budget_exceeded(&usage) {
-            stop_over_budget(runtime, &agent, usage, reason, Actor::Scheduler)?;
-        } else if let Some(reason) = agent.budget_warning(&usage)
-            && !already_warned(runtime, agent.id, Notice::SoftLimit)?
-        {
-            warn_once(runtime, &agent, usage, reason)?;
-        }
+        agent = fresh;
+    }
+    if let Some(reason) = agent.budget_exceeded(&usage) {
+        stop_over_budget(runtime, &agent, usage, reason, Actor::Scheduler)?;
+    } else if let Some(reason) = agent.budget_warning(&usage)
+        && !already_warned(runtime, agent.id, Notice::SoftLimit)?
+    {
+        warn_once(runtime, &agent, usage, reason)?;
     }
     Ok(())
 }
@@ -103,33 +124,54 @@ fn still_live(runtime: &Runtime, id: AgentId) -> Result<Option<Agent>> {
 
 /// VISION §3.1: `deadline` is a hard stop like a budget. The coarse tick is
 /// the clock, so an agent stops within a second of its instant.
-pub(super) fn enforce_deadlines(runtime: &Arc<Runtime>, live: &[Agent]) -> Result<()> {
+pub(super) fn enforce_deadlines(
+    runtime: &Arc<Runtime>,
+    live: &[Agent],
+    blocked: &mut std::collections::HashSet<AgentId>,
+) -> Result<()> {
     let at = now();
     for agent in live {
-        debug_assert!(agent.is_live());
-        if agent.deadline_passed(at).is_none() {
-            continue;
+        let key = format!("deadline.{}", agent.id);
+        match check_deadline(runtime, agent, at) {
+            Ok(()) => runtime.clear_problem(&key),
+            Err(error) => {
+                blocked.insert(agent.id);
+                blocked.extend(runtime.store.subtree_ids(agent.id)?);
+                runtime.report_problem(key, format!("Deadline for agent {} could not be enforced: {error}; its subtree is withheld. Run `aether doctor` and `aether diagnose`.", agent.id));
+            }
         }
-        debug_assert!(agent.config.deadline.is_some());
-        let Some(agent) = still_live(runtime, agent.id)? else {
-            continue;
-        };
-        let Some(reason) = agent.deadline_passed(at) else {
-            continue;
-        };
-        tracing::warn!(agent = %agent.id, %reason, "deadline passed; stopping the agent");
-        let mut commit = Commit::new().event(
-            EventDraft::new(
-                Actor::Scheduler,
-                EventKind::DeadlinePassed {
-                    reason: reason.clone(),
-                },
-            )
-            .agent(agent.id)
-            .run(agent.run),
-        );
-        stop_and_cancel_subtree(runtime, &agent, &mut commit, reason)?;
     }
+    Ok(())
+}
+
+fn check_deadline(
+    runtime: &Arc<Runtime>,
+    agent: &Agent,
+    at: aether_core::time::Timestamp,
+) -> Result<()> {
+    debug_assert!(agent.is_live());
+    if agent.deadline_passed(at).is_none() {
+        return Ok(());
+    }
+    debug_assert!(agent.config.deadline.is_some());
+    let Some(agent) = still_live(runtime, agent.id)? else {
+        return Ok(());
+    };
+    let Some(reason) = agent.deadline_passed(at) else {
+        return Ok(());
+    };
+    tracing::warn!(agent = %agent.id, %reason, "deadline passed; stopping the agent");
+    let mut commit = Commit::new().event(
+        EventDraft::new(
+            Actor::Scheduler,
+            EventKind::DeadlinePassed {
+                reason: reason.clone(),
+            },
+        )
+        .agent(agent.id)
+        .run(agent.run),
+    );
+    stop_and_cancel_subtree(runtime, &agent, &mut commit, reason)?;
     Ok(())
 }
 

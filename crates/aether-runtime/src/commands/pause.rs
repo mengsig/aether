@@ -186,6 +186,7 @@ impl Runtime {
         self.commit_receipt(hold, commit, submission.as_ref(), &vec![agent.clone()])?;
         if clearing_inspection {
             self.resources.release_quarantine(root);
+            self.clear_problem(&format!("recovery.{root}"));
         }
         if let Some(provider) = probing {
             crate::scheduler::clear_bench(self, &provider)?;

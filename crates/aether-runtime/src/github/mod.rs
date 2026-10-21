@@ -234,7 +234,11 @@ impl Runtime {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
                 result = self.github_poll(&source, now()) => {
-                    if let Err(error) = result { tracing::error!(%error, "GitHub watcher failed; retrying in 5 seconds"); }
+                    if let Err(error) = result {
+                        self.report_problem("github.poll".into(), format!("GitHub watcher poll failed: {error}; retrying in five seconds. Run `aether doctor` and `aether diagnose`."));
+                    } else {
+                        self.clear_problem("github.poll");
+                    }
                 }
             }
             tokio::select! {

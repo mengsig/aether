@@ -65,13 +65,17 @@ fn recover_with_boot_id(runtime: &Arc<Runtime>, current_boot: Option<&str>) -> R
             ));
         }
     }
+    let cancelling = crate::cancellation::pending_agents(runtime)?;
     for record in runtime
         .store
         .quarantines()?
         .into_iter()
-        .filter(|q| q.table == "leases")
+        .filter(|q| q.table == "leases" || q.table == "agents")
     {
         if let Ok(id) = record.id.parse::<AgentId>() {
+            if cancelling.contains(&id) {
+                continue;
+            }
             validation::quarantine_failed_recovery(
                 runtime,
                 id,
@@ -474,7 +478,7 @@ fn classify_or_inspect(
         ) => {
             let detail = format!(
                 "Could not recover agent {} because its stored turn history is unreadable: \
-                 {error}. Run `aether doctor` before attempting `aether wake {}`.",
+                 {error}. Run `aether doctor` before attempting `aether resume {}`.",
                 agent.id, agent.id
             );
             tracing::error!(agent = %agent.id, %error, "recovery requires inspection; run `aether doctor`");

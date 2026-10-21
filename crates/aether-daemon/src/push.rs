@@ -61,7 +61,7 @@ impl Push {
         config: NotifierConfig,
         subscriptions: Arc<SqliteStore>,
         transport: Arc<dyn Transport>,
-        runtime: &Runtime,
+        runtime: &Arc<Runtime>,
         tasks: &mut JoinSet<()>,
         shutdown: &CancellationToken,
     ) -> anyhow::Result<Self> {
@@ -75,16 +75,24 @@ impl Push {
         // Subscribed before the cursor is read, so no event falls between.
         let events = runtime.subscribe();
         let seen = store.last_seq()?;
-        tasks.spawn(follow(
-            notifier.clone(),
-            events,
-            store,
-            seen,
-            shutdown.clone(),
-        ));
+        crate::background::isolate(
+            tasks,
+            runtime,
+            "push event follower",
+            shutdown,
+            false,
+            follow(notifier.clone(), events, store, seen, shutdown.clone()),
+        );
         let delivering = notifier.clone();
         let stop = shutdown.clone();
-        tasks.spawn(async move { delivering.run(stop).await });
+        crate::background::isolate(
+            tasks,
+            runtime,
+            "push delivery",
+            shutdown,
+            false,
+            async move { delivering.run(stop).await },
+        );
         Ok(Self { notifier })
     }
 

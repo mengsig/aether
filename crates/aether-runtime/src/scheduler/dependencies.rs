@@ -19,7 +19,10 @@ use std::sync::Arc;
 /// its owner is not scheduled for it before then. The scheduler owns the
 /// gate, so it holds however the task was created and whoever finished the
 /// dependency.
-pub(super) fn gate_dependencies(runtime: &Arc<Runtime>) -> Result<()> {
+pub(super) fn gate_dependencies(
+    runtime: &Arc<Runtime>,
+    blocked: &mut std::collections::HashSet<aether_core::id::AgentId>,
+) -> Result<()> {
     let queued = runtime.store.tasks(&TaskFilter {
         statuses: vec![TaskStatusKind::Queued],
         ..Default::default()
@@ -28,20 +31,31 @@ pub(super) fn gate_dependencies(runtime: &Arc<Runtime>) -> Result<()> {
         .into_iter()
         .filter(|t| t.owner.is_some() && !t.dependencies.is_empty())
     {
-        // The scan is only a candidate list: cancellation and pause may land
-        // before this task's gate decision, so read its rows under the hold.
-        let hold = runtime.hold();
-        let Some(task) = runtime.store.task(task.id)? else {
-            continue;
-        };
-        if task.status != TaskStatus::Queued || task.owner.is_none() || task.dependencies.is_empty()
-        {
-            continue;
+        let key = format!("dependency.{}", task.id);
+        match gate_task(runtime, &task) {
+            Ok(()) => runtime.clear_problem(&key),
+            Err(error) => {
+                blocked.extend(task.owner);
+                runtime.report_problem(key, format!("Dependencies for task {} cannot be checked: {error}; its owner is withheld. Run `aether doctor` and `aether diagnose`.", task.id));
+            }
         }
-        match unmet_dependency(runtime, &task)? {
-            Some(dependency) => block_owner(runtime, hold, &task, dependency)?,
-            None => assign_and_wake(runtime, hold, task)?,
-        }
+    }
+    Ok(())
+}
+
+fn gate_task(runtime: &Arc<Runtime>, task: &aether_core::task::Task) -> Result<()> {
+    // The scan is only a candidate list: cancellation and pause may land
+    // before this task's gate decision, so read its rows under the hold.
+    let hold = runtime.hold();
+    let Some(task) = runtime.store.task(task.id)? else {
+        return Ok(());
+    };
+    if task.status != TaskStatus::Queued || task.owner.is_none() || task.dependencies.is_empty() {
+        return Ok(());
+    }
+    match unmet_dependency(runtime, &task)? {
+        Some(dependency) => block_owner(runtime, hold, &task, dependency)?,
+        None => assign_and_wake(runtime, hold, task)?,
     }
     Ok(())
 }

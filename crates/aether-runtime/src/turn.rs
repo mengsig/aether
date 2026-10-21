@@ -140,12 +140,19 @@ pub(crate) async fn run(
         }
         Ok(Err(e)) => {
             tracing::error!(agent = %agent_id, error = %e, "turn failed internally");
-            (Ending::Fail(format!("internal error: {e}")), None)
+            (
+                Ending::Fail(format!(
+                    "Agent {agent_id} turn failed: {e}; run `aether doctor` and `aether diagnose` before retrying with `aether wake {agent_id}`"
+                )),
+                None,
+            )
         }
         Err(panic) => {
             let detail = panic_message(panic.as_ref());
             tracing::error!(agent = %agent_id, panic = %detail, "turn panicked");
-            let error = format!("internal error: the turn panicked: {detail}");
+            let error = format!(
+                "Agent {agent_id} turn panicked: {detail}; run `aether doctor` and `aether diagnose` before retrying with `aether wake {agent_id}`"
+            );
             (Ending::Fail(error), None)
         }
     };

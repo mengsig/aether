@@ -193,28 +193,49 @@ pub(crate) fn spawn(runtime: Arc<Runtime>) {
     resume_low(&runtime);
     if check(&runtime, &guard) {
         let evicting = runtime.clone();
-        tokio::task::spawn_blocking(move || evicting.evict_build_cache());
+        let reporting = runtime.clone();
+        tokio::spawn(async move {
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || evicting.evict_build_cache()).await
+            {
+                reporting.report_problem("disk.startup".into(), format!("Startup cache eviction failed: {error}; maintenance will retry. Run `aether doctor` and `aether diagnose`."));
+            }
+        });
     }
+    let supervising = runtime.clone();
     tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                biased;
-                _ = runtime.shutdown.cancelled() => return,
-                _ = tokio::time::sleep(INTERVAL) => {}
-            }
-            let (checking, guard) = (runtime.clone(), guard.clone());
-            // statvfs can hang on a stuck mount, and recording is a SQLite
-            // write; neither belongs on an async worker.
-            let checked = tokio::task::spawn_blocking(move || {
-                if check(&checking, &guard) {
-                    checking.evict_build_cache();
-                }
-            });
-            if let Err(error) = checked.await {
-                tracing::error!(%error, "disk check failed");
-            }
-        }
+        crate::supervision::isolate(
+            "disk guard",
+            supervising.shutdown.clone(),
+            false,
+            |detail| supervising.report_problem("background.disk".into(), detail),
+            run(runtime, guard),
+        )
+        .await;
     });
+}
+
+async fn run(runtime: Arc<Runtime>, guard: DiskGuard) {
+    loop {
+        tokio::select! {
+            biased;
+            _ = runtime.shutdown.cancelled() => return,
+            _ = tokio::time::sleep(INTERVAL) => {}
+        }
+        let (checking, guard) = (runtime.clone(), guard.clone());
+        // statvfs can hang on a stuck mount, and recording is a SQLite
+        // write; neither belongs on an async worker.
+        let checked = tokio::task::spawn_blocking(move || {
+            if check(&checking, &guard) {
+                checking.evict_build_cache();
+            }
+        });
+        if let Err(error) = checked.await {
+            runtime.report_problem("disk.check".into(), format!("Disk check failed: {error}; it will retry in 30 seconds. Run `aether doctor` and `aether diagnose`."));
+        } else {
+            runtime.clear_problem("disk.check");
+        }
+    }
 }
 
 /// Measure and observe once. True when the disk has just turned low, so the

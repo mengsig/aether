@@ -3,6 +3,7 @@
 
 mod agent_temp;
 mod authz;
+mod background;
 mod bridge;
 mod connection;
 #[cfg(test)]
@@ -363,11 +364,11 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     let result = async {
         aether_tools::exec::sweep_orphan_containers(&instance_id).await;
 
-        mcp::spawn_recorder(&runtime, mcp_rx);
+        mcp::spawn_recorder(&runtime, mcp_rx, &mut connections, &shutdown);
         if !mcp.is_empty() {
             // Discovery talks to other processes; do not hold up the socket for it.
             let discovering = mcp.clone();
-            tokio::spawn(async move { discovering.discover_all().await });
+            background::isolate(&mut connections, &runtime, "MCP discovery", &shutdown, true, async move { discovering.discover_all().await });
         }
 
         let listener = bind_private_socket(socket, &mut socket_published)?;
@@ -397,7 +398,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         // Supervised with the connections: it opens the listener the stored
         // settings ask for, and closes it when the daemon stops.
         let remote_control = remote::attach(&daemon, remote_config, shutdown.clone()).await?;
-        connections.spawn(remote_control.run(shutdown.clone()));
+        background::isolate(&mut connections, &runtime, "remote listener control", &shutdown, false, remote_control.run(shutdown.clone()));
 
         // A failure to open the second transport is a failure to start: a daemon
         // the operator asked to reach over the network must not come up without
@@ -405,10 +406,10 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         if let Some(listen) = tcp {
             let (tcp, local) = listen::bind_tcp(&listen).await?;
             tracing::info!(address = %local, "aetherd listening on tcp");
-            connections.spawn(serve_tcp(daemon.clone(), tcp, listen, shutdown.clone()));
+            background::isolate(&mut connections, &runtime, "TCP listener", &shutdown, false, serve_tcp(daemon.clone(), tcp, listen, shutdown.clone()));
         }
 
-        let mut github_watcher = tokio::spawn(runtime.clone().run_github_watcher(shutdown.clone()));
+        background::github(&mut connections, &runtime, &shutdown);
         loop {
             tokio::select! {
                 accepted = listener.accept() => match accepted {
@@ -436,14 +437,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                         tracing::error!(%error, "connection task failed");
                     }
                 }
-                result = &mut github_watcher => {
-                    break match result {
-                        Ok(()) if shutdown.is_cancelled() => Ok(()),
-                        Ok(()) => Err(anyhow::anyhow!("GitHub watcher stopped unexpectedly")),
-                        Err(error) => Err(anyhow::Error::new(error).context("GitHub watcher task failed")),
-                    };
-                }
-                _ = shutdown.cancelled() => break github_watcher.await.map_err(anyhow::Error::new),
+                _ = shutdown.cancelled() => break Ok(()),
             }
         }
     }.await;

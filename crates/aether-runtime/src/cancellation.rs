@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
-use aether_store::{AgentFilter, Commit, Mutation, StoreError};
+use aether_store::{Commit, Mutation, StoreError};
 use serde_json::json;
 
 use crate::{CancelRequest, CommitHold, Result, Runtime, RuntimeError};
@@ -16,7 +16,10 @@ type Pending = BTreeMap<AgentId, CancelRequest>;
 fn load(runtime: &Runtime) -> Result<Pending> {
     match runtime.store.meta(JOURNAL)? {
         Some(body) => serde_json::from_str(&body).map_err(|error| {
-            StoreError::Corrupt(format!("invalid cancellation journal: {error}")).into()
+            StoreError::Corrupt(format!(
+                "invalid cancellation journal: {error}; run `aether doctor` and `aether diagnose`"
+            ))
+            .into()
         }),
         None => Ok(Pending::new()),
     }
@@ -146,19 +149,19 @@ pub(crate) fn process(runtime: &Runtime, id: AgentId) -> Result<()> {
     // Creation checks the journal under this hold too, so the empty-tree
     // observation and clearing the intent form one admission boundary.
     let hold = runtime.hold();
-    let agents = runtime.store.agents(&AgentFilter::default())?;
-    let subtree: HashSet<_> = aether_core::agent::subtree_of(&agents, id)
-        .into_iter()
-        .collect();
-    if agents
-        .iter()
-        .any(|agent| subtree.contains(&agent.id) && !agent.status.is_terminal())
-    {
-        return Ok(());
+    for member in runtime.store.subtree_ids(id)? {
+        let agent = runtime.store.agent(member)?.ok_or_else(|| {
+            StoreError::Corrupt(format!(
+                "Cancellation member {member} is missing; run `aether doctor`"
+            ))
+        })?;
+        if !agent.status.is_terminal() {
+            return Ok(());
+        }
     }
-    let agent = agents
-        .iter()
-        .find(|agent| agent.id == id)
+    let agent = runtime
+        .store
+        .agent(id)?
         .ok_or_else(|| RuntimeError::NotFound(id.to_string()))?;
     let mut pending = load(runtime)?;
     if pending.remove(&id).is_some() {

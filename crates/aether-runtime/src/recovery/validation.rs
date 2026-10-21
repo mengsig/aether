@@ -24,7 +24,7 @@ pub(super) fn validate_live(runtime: &Arc<Runtime>) -> Result<()> {
             continue;
         };
         let detail = format!(
-            "Agent {} needs attention: {error}. Run `aether doctor`, then `aether wake {}` after restoring the missing state.",
+            "Agent {} needs attention: {error}. Run `aether doctor`, then `aether resume {}` after restoring the missing state.",
             agent.id, agent.id
         );
         if let Err(error) = block_invalid_reference(runtime, &mut agent, detail) {
@@ -101,6 +101,15 @@ fn references(runtime: &Runtime, agent: &Agent) -> Result<()> {
                 checkpoint.id
             )));
         }
+        if artifact
+            .is_some_and(|artifact| artifact.digest.is_some() && artifact.evicted_at.is_none())
+            && !runtime.store.artifact_bytes_exist(id)?
+        {
+            return Err(crate::RuntimeError::Invalid(format!(
+                "checkpoint {} refers to artifact {id} whose stored payload is missing",
+                checkpoint.id
+            )));
+        }
     }
     Ok(())
 }
@@ -111,7 +120,7 @@ pub(super) fn quarantine_failed_recovery(
     error: &crate::RuntimeError,
 ) -> Result<()> {
     let detail = format!(
-        "Agent {id} recovery is quarantined: {error}. Run `aether doctor` and `aether diagnose`; inspect surviving tool processes before `aether wake {id}`."
+        "Agent {id} recovery is quarantined: {error}. Run `aether doctor` and `aether diagnose`; inspect surviving tool processes before `aether resume {id}`."
     );
     runtime.report_problem(format!("recovery.{id}"), detail.clone());
     let agent = runtime.store.agent(id);

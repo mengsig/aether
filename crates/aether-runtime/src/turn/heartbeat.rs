@@ -53,48 +53,61 @@ pub(super) fn spawn_heartbeat(runtime: Arc<Runtime>, mut lease: Lease, agent: &A
     let task = tokio::spawn({
         let (stopped, refused) = (stopped.clone(), refused.clone());
         async move {
-            loop {
-                let pause = match *refused.lock() {
-                    Some(_) => RENEWAL_RETRY.min(ttl / 2),
-                    None => ttl / 2,
-                };
-                tokio::time::sleep(pause).await;
-                lease.renew(now(), ttl);
-                let draft = EventDraft::new(
-                    Actor::Scheduler,
-                    EventKind::LeaseRenewed {
-                        expires_at: lease.expires_at,
-                    },
-                )
-                .agent(lease.agent_id)
-                .run(run);
-                let mut commit = Commit::new()
-                    .event(draft)
-                    .mutate(Mutation::SetLease(lease.clone()));
-                let mut refused = refused.lock();
-                // Carried by the renewal that lands, so it is recorded once.
-                if let Some(outage) = refused.as_ref() {
-                    commit.push_event(outage.draft(lease.agent_id, parent, run));
-                }
-                let hold = runtime.hold();
-                if stopped.load(Ordering::SeqCst) {
-                    return;
-                }
-                match runtime.apply_held(hold, commit) {
-                    Ok(_) => {
-                        if refused.take().is_some() {
-                            tracing::warn!(agent = %lease.agent_id, "lease renewal landed again");
-                        }
+            let reporting = runtime.clone();
+            let id = lease.agent_id;
+            let name = format!("lease heartbeat for {id}");
+            let renewing = async move {
+                loop {
+                    let pause = match *refused.lock() {
+                        Some(_) => RENEWAL_RETRY.min(ttl / 2),
+                        None => ttl / 2,
+                    };
+                    tokio::time::sleep(pause).await;
+                    lease.renew(now(), ttl);
+                    let draft = EventDraft::new(
+                        Actor::Scheduler,
+                        EventKind::LeaseRenewed {
+                            expires_at: lease.expires_at,
+                        },
+                    )
+                    .agent(lease.agent_id)
+                    .run(run);
+                    let mut commit = Commit::new()
+                        .event(draft)
+                        .mutate(Mutation::SetLease(lease.clone()));
+                    let mut refused = refused.lock();
+                    // Carried by the renewal that lands, so it is recorded once.
+                    if let Some(outage) = refused.as_ref() {
+                        commit.push_event(outage.draft(lease.agent_id, parent, run));
                     }
-                    Err(e) => match refused.as_mut() {
-                        Some(outage) => outage.refused_again(),
-                        None => {
-                            tracing::error!(agent = %lease.agent_id, error = %e, "lease renewal failed");
-                            *refused = Some(StoreOutage::began(&e, "lease renewal"));
+                    let hold = runtime.hold();
+                    if stopped.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    match runtime.apply_held(hold, commit) {
+                        Ok(_) => {
+                            if refused.take().is_some() {
+                                tracing::warn!(agent = %lease.agent_id, "lease renewal landed again");
+                            }
                         }
-                    },
+                        Err(e) => match refused.as_mut() {
+                            Some(outage) => outage.refused_again(),
+                            None => {
+                                tracing::error!(agent = %lease.agent_id, error = %e, "lease renewal failed");
+                                *refused = Some(StoreOutage::began(&e, "lease renewal"));
+                            }
+                        },
+                    }
                 }
-            }
+            };
+            crate::supervision::isolate(
+                &name,
+                reporting.shutdown.clone(),
+                true,
+                |detail| reporting.report_problem(format!("heartbeat.{id}"), detail),
+                renewing,
+            )
+            .await;
         }
     });
     Heartbeat {

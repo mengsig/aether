@@ -1,5 +1,5 @@
 use super::*;
-use aether_store::SqliteStore;
+use aether_store::{SqliteStore, Store};
 
 async fn start(store: Arc<SqliteStore>, config: &std::path::Path) -> Arc<Runtime> {
     Runtime::start_with_engines(
@@ -276,4 +276,95 @@ async fn unreadable_global_cancellation_journal_keeps_diagnostics_available() {
         Some("{")
     );
     restarted.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancellation_keeps_a_corrupt_descendant_in_its_durable_fence() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.db");
+    let store = Arc::new(SqliteStore::open(&path).unwrap());
+    let runtime = start(store.clone(), dir.path()).await;
+    runtime.shutdown().await;
+    let root = interrupted(&runtime);
+    let mut child = interrupted(&runtime);
+    child.parent = Some(root.id);
+    runtime
+        .apply(Commit::new().mutate(Mutation::UpsertAgent(child.clone())))
+        .unwrap();
+    crate::cancellation::request(
+        &runtime,
+        root.id,
+        Some("stop subtree".into()),
+        Actor::user(),
+    )
+    .unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute(
+        "UPDATE agents SET body='{' WHERE id=?1",
+        [child.id.to_string()],
+    )
+    .unwrap();
+    assert!(crate::cancellation::drain(&runtime).is_err());
+    let pending = crate::cancellation::pending_agents(&runtime).unwrap();
+    assert!(pending.contains(&root.id) && pending.contains(&child.id));
+    assert!(
+        store
+            .meta("runtime.pending_cancellations")
+            .unwrap()
+            .unwrap()
+            .contains(&root.id.to_string())
+    );
+}
+
+#[tokio::test]
+async fn unreadable_budget_descendant_withholds_only_its_subtree() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.db");
+    let store = Arc::new(SqliteStore::open(&path).unwrap());
+    let runtime = start(store.clone(), dir.path()).await;
+    runtime.shutdown().await;
+    let mut root = interrupted(&runtime);
+    root.config.token_budget = Some(100);
+    let mut child = interrupted(&runtime);
+    child.parent = Some(root.id);
+    let mut good = interrupted(&runtime);
+    good.status = AgentStatus::Ready;
+    runtime
+        .apply(
+            Commit::new()
+                .mutate(Mutation::UpsertAgent(root.clone()))
+                .mutate(Mutation::UpsertAgent(child.clone()))
+                .mutate(Mutation::UpsertAgent(good.clone())),
+        )
+        .unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute(
+        "UPDATE agents SET body='{' WHERE id=?1",
+        [child.id.to_string()],
+    )
+    .unwrap();
+    crate::scheduler::tick(&runtime).unwrap();
+    assert!(
+        runtime
+            .problems()
+            .unwrap()
+            .iter()
+            .any(|p| p.contains("Budget for agent") && p.contains(&root.id.to_string()))
+    );
+    assert!(matches!(
+        store.agent(good.id).unwrap().unwrap().status,
+        AgentStatus::Waiting { .. }
+    ));
+    assert_eq!(
+        store.agent(root.id).unwrap().unwrap().status,
+        AgentStatus::Running
+    );
+    crate::scheduler::tick(&runtime).unwrap();
+    assert!(
+        runtime
+            .problems()
+            .unwrap()
+            .iter()
+            .any(|p| p.contains("Budget for agent"))
+    );
 }

@@ -72,7 +72,7 @@ impl SqliteStore {
             .optional()?;
         raw.map(|raw| {
             let ledger: SubmissionLedger = serde_json::from_str(&raw).map_err(|e| {
-                StoreError::Corrupt(format!("meta.{LEDGER_KEY} does not parse: {e}"))
+                StoreError::Corrupt(format!("meta.{LEDGER_KEY} does not parse: {e}; run `aether doctor` and `aether diagnose`"))
             })?;
             validate_ledger(&ledger)?;
             Ok(ledger)
@@ -81,8 +81,11 @@ impl SqliteStore {
     }
 
     pub(super) fn ledger_in(tx: &Connection) -> Result<SubmissionLedger> {
-        let ledger = Self::read_ledger(tx)?
-            .ok_or_else(|| StoreError::Corrupt(format!("missing meta.{LEDGER_KEY}")))?;
+        let ledger = Self::read_ledger(tx)?.ok_or_else(|| {
+            StoreError::Corrupt(format!(
+                "missing meta.{LEDGER_KEY}; run `aether doctor` and `aether diagnose`"
+            ))
+        })?;
         Ok(ledger)
     }
 

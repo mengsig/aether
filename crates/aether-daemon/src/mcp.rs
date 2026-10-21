@@ -105,18 +105,33 @@ fn resolve_token(
 pub(crate) fn spawn_recorder(
     runtime: &Arc<Runtime>,
     mut changes: tokio::sync::mpsc::UnboundedReceiver<McpServerHealth>,
+    tasks: &mut tokio::task::JoinSet<()>,
+    shutdown: &tokio_util::sync::CancellationToken,
 ) {
-    let runtime = Arc::downgrade(runtime);
-    tokio::spawn(async move {
-        while let Some(health) = changes.recv().await {
-            let Some(runtime) = runtime.upgrade() else {
-                break;
-            };
-            if let Err(e) = runtime.record_mcp_state(&health) {
-                tracing::error!(server = %health.name, error = %e, "could not record mcp state");
+    let weak = Arc::downgrade(runtime);
+    let stop = shutdown.clone();
+    crate::background::isolate(
+        tasks,
+        runtime,
+        "MCP health recorder",
+        shutdown,
+        false,
+        async move {
+            while let Some(health) = tokio::select! {
+                _ = stop.cancelled() => None,
+                health = changes.recv() => health,
+            } {
+                let Some(runtime) = weak.upgrade() else {
+                    break;
+                };
+                if let Err(e) = runtime.record_mcp_state(&health) {
+                    runtime.report_problem(format!("mcp.{}", health.name), format!("MCP server {} health could not be recorded: {e}; run `aether doctor` and `aether diagnose`. Later health changes will be retried.", health.name));
+                } else {
+                    runtime.clear_problem(&format!("mcp.{}", health.name));
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 #[cfg(test)]
