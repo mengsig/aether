@@ -256,6 +256,11 @@ impl Runtime {
             if let Some(cursor) = cursor.as_mut() {
                 cursor.pending.pop_front();
             }
+            if matches!(fs::symlink_metadata(&directory), Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound)
+            {
+                continue;
+            }
             let mut candidate = workspace::gc::Candidate::new(directory);
             if !dry_run {
                 sweep_candidate_source(&root, &candidate);

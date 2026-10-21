@@ -60,9 +60,31 @@ pub fn parse_trigger_payload(payload: &str) -> anyhow::Result<serde_json::Value>
     })
 }
 
+/// Message text above this many bytes draws a warning; it is still sent.
+pub const LARGE_MESSAGE_BYTES: usize = 256 * 1024;
+
+/// The warning for a message too large to paste into a conversation, if any.
+pub fn large_message_warning(text: &str) -> Option<String> {
+    if text.len() <= LARGE_MESSAGE_BYTES {
+        return None;
+    }
+    Some(format!(
+        "warning: this message is {} KiB and goes into the model's context; for bulk data, publish a file as an artifact and send its name instead",
+        text.len() / 1024
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_messages_warn_but_ordinary_ones_do_not() {
+        assert!(large_message_warning(&"x".repeat(LARGE_MESSAGE_BYTES)).is_none());
+        assert!(large_message_warning(&"x".repeat(LARGE_MESSAGE_BYTES + 1)).is_some());
+        let warning = large_message_warning(&"x".repeat(10 * 1024 * 1024)).unwrap();
+        assert!(warning.contains("10240 KiB") && warning.contains("artifact"));
+    }
 
     fn words(list: &[&str]) -> Vec<String> {
         list.iter().map(|w| w.to_string()).collect()

@@ -311,6 +311,10 @@ the text is optional. The same limits apply as in the TUI, and a file that is
 not a PNG, JPEG, GIF or WebP, or is too large, is refused before anything is
 sent.
 
+`aether send` warns on stderr when the text is over 256 KiB, because all of
+it goes into the agent's context; the message is still sent. For bulk data,
+publish a file as an artifact and send its name instead.
+
 For a parsed command with `--json`, command errors print one JSON object on
 stdout and a human `Error: …` on stderr, with the existing exit code:
 

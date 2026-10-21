@@ -6,6 +6,14 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- **Resource hygiene (#240).** Workspace GC no longer keeps reporting a
+  discarded workspace whose directory is gone, and `aether send` warns on
+  stderr above 256 KiB and recommends an artifact; the message is still sent.
+  Storage GC also removes marked scratch directories of permanently final
+  agents while retaining live, resumable, and unproven owners.
+
 ### Added
 
 - **Update offer on launch.** `aether` checks the latest release beside
