@@ -1409,24 +1409,31 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             let done = CompactionState::Done {
                 before: before_tokens.map(u64::from),
                 after: after_tokens.map(u64::from),
+                by: None,
+                duration_ms: None,
             };
-            match t.private.compaction.take() {
-                Some(cell) => t.update(cell, |m| *m = CellModel::Compaction(done)),
-                None => {
-                    t.push(at, CellModel::Compaction(done));
-                }
-            }
+            settle_compaction(t, at, done);
+        }
+        EventKind::CompactionNative {
+            provider,
+            before_tokens,
+            after_tokens,
+            duration_ms,
+            ..
+        } => {
+            let done = CompactionState::Done {
+                before: *before_tokens,
+                after: *after_tokens,
+                by: Some(provider.clone()),
+                duration_ms: *duration_ms,
+            };
+            settle_compaction(t, at, done);
         }
         EventKind::CompactionFailed { error, .. } => {
             let failed = CompactionState::Failed {
                 error: first_line(error).to_owned(),
             };
-            match t.private.compaction.take() {
-                Some(cell) => t.update(cell, |m| *m = CellModel::Compaction(failed)),
-                None => {
-                    t.push(at, CellModel::Compaction(failed));
-                }
-            }
+            settle_compaction(t, at, failed);
         }
         EventKind::ContextHandoff { .. } => notice(
             t,
@@ -1728,6 +1735,17 @@ fn utf8_prefix(text: &str, limit: usize) -> &str {
 
 fn notice(t: &mut AgentTranscript, at: Timestamp, kind: NoticeKind, text: NoticeText) {
     t.push(at, CellModel::Notice { kind, text });
+}
+
+/// Finish the compaction cell a request opened, or add one when none is open.
+fn settle_compaction(t: &mut AgentTranscript, at: Timestamp, state: CompactionState) {
+    debug_assert!(state != CompactionState::Active, "only an outcome settles");
+    match t.private.compaction.take() {
+        Some(cell) => t.update(cell, |m| *m = CellModel::Compaction(state)),
+        None => {
+            t.push(at, CellModel::Compaction(state));
+        }
+    }
 }
 
 /// `✗ message`, `└ cause`: the first line is the message, the rest its cause.

@@ -676,6 +676,32 @@ pub(super) fn handle_event(
         EngineEvent::ContextUsage { tokens } => {
             note_context_usage(runtime, ctx, state, tokens);
         }
+        EngineEvent::Compacted {
+            automatic,
+            before_tokens,
+            after_tokens,
+            duration_ms,
+        } => {
+            if let Some(tokens) = after_tokens {
+                note_context_usage(runtime, ctx, state, tokens);
+            }
+            runtime.apply(Commit::new().event(ctx.draft(EventKind::CompactionNative {
+                provider: snapshot.model.provider.clone(),
+                automatic,
+                before_tokens,
+                after_tokens,
+                duration_ms,
+            })))?;
+        }
+        EngineEvent::CompactionFailed { error } => {
+            runtime.apply(Commit::new().event(ctx.draft(EventKind::CompactionFailed {
+                error: format!(
+                    "{} could not compact its context: {error}",
+                    snapshot.model.provider
+                ),
+                models: vec![snapshot.model.clone()],
+            })))?;
+        }
         EngineEvent::Note(text) => {
             tracing::debug!(agent = %ctx.agent.id, "{}", clamp(&text, MAX_ENGINE_ERROR))
         }

@@ -341,3 +341,30 @@ fn compaction_counts_preserve_old_logs_and_omit_unknown_values() {
     let decoded: EventKind = serde_json::from_value(counted.clone()).unwrap();
     assert_eq!(serde_json::to_value(decoded).unwrap(), counted);
 }
+
+#[test]
+fn native_compaction_round_trips_and_omits_unknown_counts() {
+    let minimal = serde_json::json!({"type": "compaction.native", "provider": "claude-code"});
+    let decoded: EventKind = serde_json::from_value(minimal).unwrap();
+    assert_eq!(
+        decoded,
+        EventKind::CompactionNative {
+            provider: "claude-code".into(),
+            automatic: false,
+            before_tokens: None,
+            after_tokens: None,
+            duration_ms: None,
+        }
+    );
+    assert_eq!(decoded.type_name(), "compaction.native");
+    let full = serde_json::json!({
+        "type": "compaction.native",
+        "provider": "anthropic",
+        "automatic": true,
+        "before_tokens": 180_000,
+        "after_tokens": 9_000,
+        "duration_ms": 41_000,
+    });
+    let decoded: EventKind = serde_json::from_value(full.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), full);
+}

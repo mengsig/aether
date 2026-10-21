@@ -62,34 +62,70 @@ pub fn layout(cell: &CellModel, width: u16, detail: bool, theme: &Theme) -> Layo
             theme,
             detail,
         ),
-        CellModel::Compaction(state) => match state {
-            CompactionState::Active => {
-                let row = vec![
-                    bullet(theme, Tone::Active),
-                    span(" ", theme.text()),
-                    span("Compacting context", theme.text()),
-                ];
-                Layout::unmapped(vec![Line::from(truncate(row, width, theme))])
-            }
-            CompactionState::Done { before, after } => {
-                let text = match (before, after) {
-                    (Some(before), Some(after)) => format!(
-                        "Compacted context {} {} {} {} tokens",
-                        theme.glyphs().dot,
-                        format::tokens(*before),
-                        arrow(theme),
-                        format::tokens(*after)
-                    ),
-                    // An unknown side says nothing rather than guess.
-                    _ => "Compacted context".to_owned(),
-                };
-                sentence(Tone::Neutral, &text, width, theme)
-            }
-            CompactionState::Failed { error: e } => {
-                error("Compaction failed", Some(e), None, width, theme, detail)
-            }
-        },
+        CellModel::Compaction(state) => compaction(state, width, theme, detail),
         _ => Layout::default(),
+    }
+}
+
+const COMPACTION_FAILED_HINT: &str =
+    "Nothing was lost: the agent keeps its full context and carries on. Run /compact to try again.";
+
+fn compaction(state: &CompactionState, width: usize, theme: &Theme, detail: bool) -> Layout {
+    match state {
+        CompactionState::Active => {
+            let text = format!(
+                "Compacting context {} summarizing older turns, usually within a minute or two",
+                theme.glyphs().dot
+            );
+            let row = vec![
+                bullet(theme, Tone::Active),
+                span(" ", theme.text()),
+                span(text, theme.text()),
+            ];
+            Layout::unmapped(vec![Line::from(truncate(row, width, theme))])
+        }
+        CompactionState::Done {
+            before,
+            after,
+            by,
+            duration_ms,
+        } => {
+            let dot = theme.glyphs().dot;
+            let mut text = "Compacted context".to_owned();
+            // An unknown side says nothing rather than guess.
+            if let (Some(before), Some(after)) = (before, after) {
+                text.push_str(&format!(
+                    " {dot} {} {} {} tokens",
+                    format::tokens(*before),
+                    arrow(theme),
+                    format::tokens(*after)
+                ));
+            }
+            if let Some(by) = by {
+                text.push_str(&format!(" {dot} by {}", folder_name(by)));
+            }
+            if let Some(ms) = duration_ms {
+                text.push_str(&format!(" in {}", format::took(*ms)));
+            }
+            sentence(Tone::Neutral, &text, width, theme)
+        }
+        CompactionState::Failed { error: e } => error(
+            "Compaction failed",
+            Some(e),
+            Some(COMPACTION_FAILED_HINT),
+            width,
+            theme,
+            detail,
+        ),
+    }
+}
+
+/// The engine or provider that folded a context, as people know it.
+fn folder_name(provider: &str) -> &str {
+    match provider {
+        "claude-code" => "Claude Code",
+        "anthropic" => "the Anthropic API",
+        other => other,
     }
 }
 

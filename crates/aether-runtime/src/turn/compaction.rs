@@ -27,6 +27,7 @@ fn pending_request(runtime: &Runtime, agent: AgentId) -> Result<Option<PendingCo
             types: vec![
                 "compaction.requested".into(),
                 "compaction.completed".into(),
+                "compaction.native".into(),
                 "compaction.failed".into(),
             ],
             ..EventFilter::own_events(agent)
@@ -105,7 +106,7 @@ pub(crate) fn compaction_pending_for_turn(
 /// A model change can land while a compactor awaits its provider. Re-issue
 /// the newer request after this one's result so the completion event does not
 /// make the latest handoff disappear from `compaction_pending`.
-fn preserve_newer_request(
+pub(super) fn preserve_newer_request(
     runtime: &Runtime,
     ctx: &TurnCtx,
     finished_seq: u64,
@@ -212,6 +213,8 @@ pub(super) async fn compaction_client(
             cwd: tool_ctx.cwd.clone(),
             extra_dirs: Vec::new(),
             summary_only: true,
+            compact_session: false,
+            auto_compact_tokens: None,
             lean_host_context: false,
             network_access: false,
             bypass_permissions: false,
@@ -320,6 +323,13 @@ pub(crate) async fn compact(
         trigger,
         request_seq,
     } = request;
+    // Asked for by someone: an engine that folds its own session does it in place.
+    if matches!(trigger, CompactionTrigger::Explicit { .. })
+        && super::engine_compaction::try_engine_compaction(runtime, ctx, request_seq, cancel)
+            .await?
+    {
+        return Ok(None);
+    }
     const KEEP_TAIL: usize = 6;
     // An episode that ended folds whole: a closed task's turns have no further
     // use beyond its result, and a raw tail across a handoff would hand the

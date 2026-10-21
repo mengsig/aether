@@ -25,6 +25,8 @@ fn turn() -> EngineTurn {
         temp_dir: None,
         build_env: Vec::new(),
         summary_only: false,
+        compact_session: false,
+        auto_compact_tokens: None,
         lean_host_context: false,
         network_access: true,
         bypass_permissions: false,
@@ -414,6 +416,68 @@ fn checkpoint_turn_disables_tools_mcp_and_hooks() {
             .to_string()
         )
     );
+}
+
+#[test]
+fn a_compact_turn_keeps_slash_commands_but_no_tools_mcp_or_hooks() {
+    let mut t = turn();
+    t.compact_session = true;
+    t.session = Some("s".into());
+    t.mcp = None;
+    t.system_prompt.clear();
+    t.network_access = false;
+    t.lean_host_context = true;
+    let args = ClaudeCodeEngine::new("claude", "test").args(&t);
+    assert!(args.windows(2).any(|pair| pair == ["--tools", ""]));
+    assert!(args.windows(2).any(|pair| pair == ["--resume", "s"]));
+    assert_eq!(occurrences(&args, "--strict-mcp-config"), 1);
+    assert_eq!(occurrences(&args, "--disable-slash-commands"), 0);
+    assert!(!args.contains(&"--mcp-config".into()));
+    let settings = &args[args.iter().position(|a| a == "--settings").unwrap() + 1];
+    assert_eq!(
+        settings,
+        &json!({"disableAllHooks": true, "env": {}}).to_string()
+    );
+}
+
+#[tokio::test]
+async fn a_compact_turn_sends_the_compact_command_and_refuses_without_a_session() {
+    let dir = fake_claude("cat > \"$(dirname \"$0\")/stdin\"");
+    let engine = ClaudeCodeEngine::new(dir.path().join("claude").to_string_lossy(), "2.1.265");
+    let mut t = turn();
+    t.compact_session = true;
+    t.mcp = None;
+    t.cwd = dir.path().into();
+    let refused = engine.run(t.clone(), CancellationToken::new()).await;
+    assert!(matches!(refused, Err(EngineError::Unsupported(_))));
+    t.session = Some("s".into());
+    let mut run = engine.run(t, CancellationToken::new()).await.unwrap();
+    drop(run.input.take());
+    drop(run.stop.take());
+    while run.events.recv().await.is_some() {}
+    let sent = std::fs::read_to_string(dir.path().join("stdin")).unwrap();
+    assert!(sent.contains(r#""text":"/compact""#), "{sent}");
+    assert!(
+        !sent.contains("hi"),
+        "the turn's prompt is replaced: {sent}"
+    );
+}
+
+#[test]
+fn the_auto_compact_window_puts_claude_code_s_threshold_on_aether_s() {
+    let window = |tokens| {
+        let mut t = turn();
+        t.auto_compact_tokens = tokens;
+        let args = ClaudeCodeEngine::new("claude", "test").args(&t);
+        let settings: Value =
+            serde_json::from_str(&args[args.iter().position(|a| a == "--settings").unwrap() + 1])
+                .unwrap();
+        settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"].clone()
+    };
+    assert_eq!(window(None), Value::Null);
+    assert_eq!(window(Some(256_000)), "269000");
+    assert_eq!(window(Some(10_000)), "100000", "Claude Code's floor");
+    assert_eq!(window(Some(2_000_000)), "1000000", "Claude Code's ceiling");
 }
 
 const LEAN_FLAGS: [&str; 2] = ["--disable-slash-commands", "--strict-mcp-config"];

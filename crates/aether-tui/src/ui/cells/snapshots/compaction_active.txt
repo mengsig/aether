@@ -1,16 +1,16 @@
 ── unicode 80 compact
-• Compacting context
+• Compacting context · summarizing older turns, usually within a minute or two
 ── unicode 80 detail
-• Compacting context
+• Compacting context · summarizing older turns, usually within a minute or two
 ── unicode 120 compact
-• Compacting context
+• Compacting context · summarizing older turns, usually within a minute or two
 ── unicode 120 detail
-• Compacting context
+• Compacting context · summarizing older turns, usually within a minute or two
 ── ascii 80 compact
-* Compacting context
+* Compacting context | summarizing older turns, usually within a minute or two
 ── ascii 80 detail
-* Compacting context
+* Compacting context | summarizing older turns, usually within a minute or two
 ── ascii 120 compact
-* Compacting context
+* Compacting context | summarizing older turns, usually within a minute or two
 ── ascii 120 detail
-* Compacting context
+* Compacting context | summarizing older turns, usually within a minute or two

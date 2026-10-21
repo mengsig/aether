@@ -272,6 +272,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cwd: std::env::current_dir()?,
         extra_dirs: Vec::new(),
         summary_only: false,
+        compact_session: false,
+        auto_compact_tokens: None,
         lean_host_context: false,
         network_access: true,
         bypass_permissions: false,

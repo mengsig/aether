@@ -1220,7 +1220,9 @@ fn compaction_reports_the_tokens_its_record_carries() {
         feed.models(root).last().cloned(),
         Some(&CellModel::Compaction(CompactionState::Done {
             before: Some(182_000),
-            after: Some(31_000)
+            after: Some(31_000),
+            by: None,
+            duration_ms: None,
         }))
     );
     // An older log's record has no counts, and none are guessed.
@@ -1229,8 +1231,47 @@ fn compaction_reports_the_tokens_its_record_carries() {
         feed.models(root).last().cloned(),
         Some(&CellModel::Compaction(CompactionState::Done {
             before: None,
-            after: None
+            after: None,
+            by: None,
+            duration_ms: None,
         }))
+    );
+}
+
+#[test]
+fn a_native_compaction_settles_the_request_and_names_who_folded() {
+    let mut feed = Feed::new();
+    let (root, _) = feed.spawn(None, "aether", "assistant");
+    feed.on(
+        root,
+        EventKind::CompactionRequested {
+            trigger: aether_core::event::CompactionTrigger::LongWait,
+        },
+    );
+    feed.on(
+        root,
+        EventKind::CompactionNative {
+            provider: "claude-code".into(),
+            automatic: false,
+            before_tokens: Some(182_000),
+            after_tokens: Some(9_000),
+            duration_ms: Some(41_000),
+        },
+    );
+    let compactions: Vec<_> = feed
+        .models(root)
+        .into_iter()
+        .filter(|m| matches!(m, CellModel::Compaction(_)))
+        .collect();
+    assert_eq!(compactions.len(), 1, "the request's cell is reused");
+    assert_eq!(
+        compactions[0],
+        &CellModel::Compaction(CompactionState::Done {
+            before: Some(182_000),
+            after: Some(9_000),
+            by: Some("claude-code".into()),
+            duration_ms: Some(41_000),
+        })
     );
 }
 

@@ -129,16 +129,15 @@ impl ClaudeCodeEngine {
                 format!("{NATIVE_COORDINATION_TOOLS},WebSearch,WebFetch")
             },
         ];
+        if turn.summary_only || turn.compact_session {
+            args.extend(["--tools".into(), "".into(), "--strict-mcp-config".into()]);
+        }
+        // `/compact` is itself a slash command.
         if turn.summary_only {
-            args.extend([
-                "--tools".into(),
-                "".into(),
-                "--strict-mcp-config".into(),
-                "--disable-slash-commands".into(),
-            ]);
+            args.push("--disable-slash-commands".into());
         }
         // Summary turns already pass both flags, offline turns the MCP one.
-        if turn.lean_host_context && !turn.summary_only {
+        if turn.lean_host_context && !turn.summary_only && !turn.compact_session {
             args.push("--disable-slash-commands".into());
             if turn.network_access {
                 args.push("--strict-mcp-config".into());
@@ -148,11 +147,15 @@ impl ClaudeCodeEngine {
         if let Some(ttl) = self.prompt_cache_ttl {
             settings["env"]["CLAUDE_CODE_PROMPT_CACHE_TTL"] = json!(ttl.as_str());
         }
+        if let Some(window) = turn.auto_compact_tokens.map(auto_compact_window) {
+            settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = json!(window.to_string());
+        }
         // Hooks can perform their own I/O outside the requested sandbox.
-        if turn.summary_only || !turn.network_access {
+        let toolless = turn.summary_only || turn.compact_session;
+        if toolless || !turn.network_access {
             settings["disableAllHooks"] = json!(true);
         }
-        if !turn.summary_only && !turn.network_access {
+        if !toolless && !turn.network_access {
             // Inherited exclusions and MCP servers can escape the sandbox.
             args.extend([
                 "--setting-sources".into(),
@@ -175,7 +178,7 @@ impl ClaudeCodeEngine {
                 settings["sandbox"]["filesystem"] = json!({"allowWrite": writable});
             }
             settings["permissions"] = json!({"deny": ["WebFetch(domain:*)", "WebSearch"]});
-        } else if !turn.summary_only && !turn.build_env.is_empty() {
+        } else if !toolless && !turn.build_env.is_empty() {
             // An operator-enabled sandbox must still let builds reach the cache outside the workspace.
             let writable: Vec<_> = turn
                 .build_env
@@ -247,6 +250,17 @@ impl ClaudeCodeEngine {
     }
 }
 
+/// Claude Code compacts this many tokens below `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
+/// (its summary buffer) and accepts a window from 100K to 1M.
+const AUTO_COMPACT_BUFFER: u32 = 13_000;
+const AUTO_COMPACT_WINDOW: std::ops::RangeInclusive<u32> = 100_000..=1_000_000;
+
+/// The window that makes Claude Code compact at `threshold` tokens, within its bounds.
+fn auto_compact_window(threshold: u32) -> u32 {
+    let window = threshold.saturating_add(AUTO_COMPACT_BUFFER);
+    window.clamp(*AUTO_COMPACT_WINDOW.start(), *AUTO_COMPACT_WINDOW.end())
+}
+
 /// A user message in Claude Code's stream-json input format: its text, then
 /// one image block per image. Without images it is the line it always was.
 pub fn user_message_line(text: &str, images: &[EngineImage]) -> String {
@@ -297,6 +311,10 @@ impl Engine for ClaudeCodeEngine {
         self.validate_offline_support(|program| executable_on_path(program, path.as_deref()))
     }
 
+    fn compacts_natively(&self) -> bool {
+        true
+    }
+
     async fn run(
         &self,
         turn: EngineTurn,
@@ -318,11 +336,19 @@ impl Engine for ClaudeCodeEngine {
 impl ClaudeCodeEngine {
     async fn launch(
         &self,
-        turn: EngineTurn,
+        mut turn: EngineTurn,
         context: Option<EngineLaunchContext>,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
-        if !turn.summary_only {
+        if turn.compact_session {
+            if turn.session.is_none() || turn.mcp.is_some() || turn.summary_only {
+                return Err(EngineError::Unsupported(
+                    "Compacting needs an existing Claude Code session and no tools".into(),
+                ));
+            }
+            turn.prompt = "/compact".into();
+            turn.images.clear();
+        } else if !turn.summary_only {
             self.validate_network_policy(turn.network_access)?;
         }
         let args = self.args(&turn);

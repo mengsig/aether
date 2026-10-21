@@ -160,7 +160,12 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
                 running: false,
             }],
             Some("api_retry") => state.note_retry(&v),
-            Some("status") => state.note_status(&v),
+            Some("status") => {
+                let mut events = state.note_status(&v);
+                events.extend(compaction_failure(&v));
+                events
+            }
+            Some("compact_boundary") => vec![compacted(&v)],
             Some("init") => {
                 vec![EngineEvent::Session {
                     id: v
@@ -333,6 +338,41 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
         }
         _ => Vec::new(),
     }
+}
+
+/// `compact_boundary`: the session now continues from Claude Code's summary.
+fn compacted(v: &Value) -> EngineEvent {
+    debug_assert_eq!(
+        v.get("subtype").and_then(Value::as_str),
+        Some("compact_boundary")
+    );
+    let metadata = v.get("compact_metadata");
+    let count = |key: &str| metadata.and_then(|m| m.get(key)).and_then(Value::as_u64);
+    EngineEvent::Compacted {
+        automatic: metadata
+            .and_then(|m| m.get("trigger"))
+            .and_then(Value::as_str)
+            == Some("auto"),
+        before_tokens: count("pre_tokens"),
+        after_tokens: count("post_tokens"),
+        duration_ms: count("duration_ms"),
+    }
+}
+
+/// A `status` line that reports a failed compaction, with Claude Code's reason.
+fn compaction_failure(v: &Value) -> Option<EngineEvent> {
+    debug_assert_eq!(v.get("subtype").and_then(Value::as_str), Some("status"));
+    if v.get("compact_result").and_then(Value::as_str) != Some("failed") {
+        return None;
+    }
+    let error = v
+        .get("compact_error")
+        .and_then(Value::as_str)
+        .filter(|e| !e.trim().is_empty())
+        .unwrap_or("Claude Code could not compact the conversation");
+    Some(EngineEvent::CompactionFailed {
+        error: error.chars().take(500).collect(),
+    })
 }
 
 /// Whether a pre-echo result closed a queued task notice without running the model, e.g. an

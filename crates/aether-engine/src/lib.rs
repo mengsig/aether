@@ -150,6 +150,12 @@ pub struct EngineTurn {
     pub extra_dirs: Vec<PathBuf>,
     /// Isolated checkpoint generation: restrict tools and enforce read-only execution.
     pub summary_only: bool,
+    /// Run the engine's own compaction on the resumed `session` instead of
+    /// `prompt`: no tools, no bridge, no hooks. Only for [`Engine::compacts_natively`].
+    pub compact_session: bool,
+    /// Context size where the engine should compact on its own; `None`
+    /// keeps the engine's default.
+    pub auto_compact_tokens: Option<u32>,
     /// Leave out the engine's own skills and non-Aether MCP servers
     /// (`HostContext::Lean`). Engines without such a switch ignore it.
     pub lean_host_context: bool,
@@ -290,6 +296,16 @@ pub enum EngineEvent {
     /// The oldest message handed over could not be delivered; the runtime
     /// keeps it for the next turn.
     InputRejected { reason: String },
+    /// The engine folded its own context: on request (`/compact`) or on its
+    /// own near its threshold. Counts are the engine's, when it gave them.
+    Compacted {
+        automatic: bool,
+        before_tokens: Option<u64>,
+        after_tokens: Option<u64>,
+        duration_ms: Option<u64>,
+    },
+    /// The engine's own compaction failed; its context is unchanged.
+    CompactionFailed { error: String },
     /// Something worth logging that is not a turn event.
     Note(String),
     /// The engine departed from the protocol billing depends on - a counter
@@ -405,6 +421,11 @@ pub trait Engine: Send + Sync {
     ) -> Result<EngineRun, EngineError> {
         self.run(turn, cancel).await
     }
+    /// Whether the engine can fold a session's context itself on request
+    /// ([`EngineTurn::compact_session`]), reporting [`EngineEvent::Compacted`].
+    fn compacts_natively(&self) -> bool {
+        false
+    }
     /// Whether the engine asks before acting, so an approval policy can be
     /// honoured. False means its agents must run without one.
     fn gates_permissions(&self) -> bool {
@@ -446,6 +467,18 @@ pub(crate) fn export_build_env(
 /// Codex `-c` overrides that hand its commands the agent's temp dir and build
 /// cache even when the operator's `shell_environment_policy` would not
 /// inherit them.
+/// Codex's own automatic compaction threshold, when Aether sets one.
+pub(crate) fn codex_compaction_args(turn: &EngineTurn) -> Vec<String> {
+    turn.auto_compact_tokens
+        .map(|tokens| {
+            vec![
+                "-c".into(),
+                format!("model_auto_compact_token_limit={tokens}"),
+            ]
+        })
+        .unwrap_or_default()
+}
+
 pub(crate) fn codex_env_args(turn: &EngineTurn) -> Vec<String> {
     let temp = turn.temp_dir.iter().flat_map(|dir| {
         aether_core::agent_temp::ENV_VARS

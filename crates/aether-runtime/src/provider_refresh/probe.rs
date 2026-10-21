@@ -57,6 +57,8 @@ fn probe_turn(runtime: &Runtime, cwd: &std::path::Path) -> EngineTurn {
         cwd: cwd.to_path_buf(),
         extra_dirs: Vec::new(),
         summary_only: true,
+        compact_session: false,
+        auto_compact_tokens: None,
         lean_host_context: true,
         network_access: true,
         bypass_permissions: false,

@@ -169,6 +169,7 @@ impl CodexAppEngine {
             args.push("-c".into());
             args.push(format!("mcp_servers.aether.args={}", json!(mcp.args)));
         }
+        args.extend(crate::codex_compaction_args(turn));
         args.extend(crate::codex_env_args(turn));
         args
     }

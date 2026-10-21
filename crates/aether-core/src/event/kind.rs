@@ -285,6 +285,24 @@ pub enum EventKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         after_tokens: Option<u32>,
     },
+    /// The engine or provider serving the agent folded the context itself
+    /// (Claude Code's `/compact`, Anthropic's server-side summary). No
+    /// checkpoint exists: the summary lives in the engine session or the transcript.
+    #[serde(rename = "compaction.native")]
+    CompactionNative {
+        /// Provider id of the model that folded it, e.g. `claude-code`.
+        provider: String,
+        /// The engine compacted on its own, not because anyone asked.
+        #[serde(default)]
+        automatic: bool,
+        /// Context tokens before and after, as the folder reported them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+    },
     /// `models` names what was asked to fold, in the order it was tried: a
     /// transcript that reached a provider that then failed leaves no other
     /// durable trace of the egress.

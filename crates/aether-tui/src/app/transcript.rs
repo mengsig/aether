@@ -245,9 +245,12 @@ pub enum NoticeKind {
 pub enum CompactionState {
     Active,
     /// Context tokens either side, when the invocations around it reported them.
+    /// `by` names the engine or provider that folded it natively, with its time.
     Done {
         before: Option<u64>,
         after: Option<u64>,
+        by: Option<String>,
+        duration_ms: Option<u64>,
     },
     Failed {
         error: String,

@@ -37,6 +37,77 @@ fn resumed_result_keeps_invocation_tokens_and_emits_baseline_before_done() {
     assert!((outcome.cost_usd.unwrap() - 0.0117076).abs() < 1e-12);
 }
 
+/// Lines a real `/compact` on a resumed session printed (claude 2.1.306), trimmed.
+#[test]
+fn a_requested_compaction_reports_its_counts_and_bills_the_session_delta() {
+    let mut state = ParseState::default().with_session_cost(
+        Some("s".into()),
+        Usage {
+            input_tokens: 2,
+            output_tokens: 549,
+            cache_read_tokens: 649,
+            cache_write_tokens: 4964,
+            cost_usd: 0.00127399,
+            ..Usage::default()
+        },
+    );
+    let lines = [
+        json!({"type": "system", "subtype": "status", "status": "compacting", "session_id": "s"}),
+        json!({"type": "system", "subtype": "status", "status": null,
+            "compact_result": "success", "session_id": "s"}),
+        json!({"type": "system", "subtype": "compact_boundary", "session_id": "s",
+            "compact_metadata": {"trigger": "manual", "pre_tokens": 6164,
+                "post_tokens": 932, "duration_ms": 6214}}),
+        json!({"type": "result", "subtype": "success", "is_error": false, "num_turns": 0,
+            "session_id": "s", "total_cost_usd": 0.00221193, "local_command": "compact",
+            "usage": {"input_tokens": 0, "output_tokens": 0,
+                "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+            "modelUsage": {"claude-haiku-5-5": {"inputTokens": 2000, "outputTokens": 1690,
+                "cacheReadInputTokens": 5888, "cacheCreationInputTokens": 5886,
+                "costUSD": 0.00221193}}}),
+    ];
+    let events: Vec<_> = lines
+        .iter()
+        .flat_map(|line| parse_line(&line.to_string(), &mut state))
+        .collect();
+    assert!(events.contains(&EngineEvent::Compacted {
+        automatic: false,
+        before_tokens: Some(6164),
+        after_tokens: Some(932),
+        duration_ms: Some(6214),
+    }));
+    let Some(EngineEvent::Done(outcome)) = events.last() else {
+        panic!("the result must close the run: {events:?}")
+    };
+    assert!(!outcome.is_error);
+    let cost = outcome.cost_usd.expect("the session delta prices the fold");
+    assert!((cost - 0.00093794).abs() < 1e-9, "{cost}");
+}
+
+#[test]
+fn an_automatic_compaction_and_a_failed_one_are_told_apart() {
+    let mut state = ParseState::default();
+    let auto = json!({"type": "system", "subtype": "compact_boundary",
+        "compact_metadata": {"trigger": "auto", "pre_tokens": 270000}});
+    assert_eq!(
+        parse_line(&auto.to_string(), &mut state),
+        vec![EngineEvent::Compacted {
+            automatic: true,
+            before_tokens: Some(270_000),
+            after_tokens: None,
+            duration_ms: None,
+        }]
+    );
+    let failed = json!({"type": "system", "subtype": "status", "status": null,
+        "compact_result": "failed", "compact_error": "Not enough messages to compact."});
+    assert_eq!(
+        parse_line(&failed.to_string(), &mut state),
+        vec![EngineEvent::CompactionFailed {
+            error: "Not enough messages to compact.".into()
+        }]
+    );
+}
+
 #[test]
 fn background_tasks_are_reported() {
     let mut st = ParseState::default();

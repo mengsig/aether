@@ -422,6 +422,8 @@ fn fixtures() -> Vec<(&'static str, CellModel)> {
             CellModel::Compaction(CompactionState::Done {
                 before: Some(182_000),
                 after: Some(31_000),
+                by: None,
+                duration_ms: None,
             }),
         ),
         (
@@ -744,17 +746,45 @@ fn a_compaction_with_an_unknown_side_names_no_count() {
     let cell = CellModel::Compaction(CompactionState::Done {
         before: Some(971),
         after: None,
+        by: None,
+        duration_ms: None,
     });
     assert_eq!(cell.plain_lines(80), ["• Compacted context"]);
     let known = CellModel::Compaction(CompactionState::Done {
         before: Some(182_000),
         after: Some(31_000),
+        by: None,
+        duration_ms: None,
     });
     let row = known.plain_lines(80).join("\n");
     assert!(
         row.contains("182") && row.contains("31") && row.ends_with("tokens"),
         "{row}"
     );
+}
+
+#[test]
+fn a_native_compaction_names_the_engine_and_its_time() {
+    let cell = CellModel::Compaction(CompactionState::Done {
+        before: Some(182_000),
+        after: Some(9_000),
+        by: Some("claude-code".into()),
+        duration_ms: Some(41_000),
+    });
+    let row = cell.plain_lines(100).join("\n");
+    assert!(row.contains("by Claude Code in 41s"), "{row}");
+    assert!(row.contains("182") && row.contains('9'), "{row}");
+}
+
+#[test]
+fn a_failed_compaction_says_nothing_was_lost_and_what_to_do() {
+    let cell = CellModel::Compaction(CompactionState::Failed {
+        error: "Checkpoint engine timed out".into(),
+    });
+    let text = cell.plain_lines(100).join(" ");
+    assert!(text.contains("Compaction failed"), "{text}");
+    assert!(text.contains("keeps its full context"), "{text}");
+    assert!(text.contains("/compact"), "{text}");
 }
 
 #[test]

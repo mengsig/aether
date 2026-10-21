@@ -146,6 +146,8 @@ print(json.dumps({'type':'turn.completed','usage':{}}), flush=True)
         session_recorder: None,
         cwd: dir.path().into(),
         summary_only: true,
+        compact_session: false,
+        auto_compact_tokens: None,
         lean_host_context: false,
         network_access: false,
         ..turn_with_effort(None)
@@ -233,6 +235,8 @@ async fn summary_exec_does_not_warn_about_disabled_commands() {
         redactor: Default::default(),
         cwd: dir.path().into(),
         summary_only: true,
+        compact_session: false,
+        auto_compact_tokens: None,
         lean_host_context: false,
         tool_hidden_env: vec!["PROVIDER_TOKEN".into()],
         ..turn_with_effort(None)
@@ -417,6 +421,28 @@ fn images_are_passed_as_files_where_the_cli_reads_them() {
     assert!(plain.starts_with("exec --json -c features.multi_agent=false"));
 }
 
+#[test]
+fn both_codex_launchers_carry_aether_s_compaction_threshold() {
+    let mut turn = turn_with_effort(None);
+    let exec = CodexEngine::new("codex", "test");
+    let app = crate::codex_app::CodexAppEngine::new("codex", "test");
+    for args in [exec.args(&turn), app.args(&turn)] {
+        assert!(
+            !args
+                .iter()
+                .any(|a| a.contains("model_auto_compact_token_limit"))
+        );
+    }
+    turn.auto_compact_tokens = Some(272_000);
+    for args in [exec.args(&turn), app.args(&turn)] {
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-c", "model_auto_compact_token_limit=272000"]),
+            "{args:?}"
+        );
+    }
+}
+
 fn turn_with_effort(effort: Option<Effort>) -> EngineTurn {
     EngineTurn {
         redactor: Default::default(),
@@ -437,6 +463,8 @@ fn turn_with_effort(effort: Option<Effort>) -> EngineTurn {
         temp_dir: None,
         build_env: Vec::new(),
         summary_only: false,
+        compact_session: false,
+        auto_compact_tokens: None,
         lean_host_context: false,
         network_access: true,
         bypass_permissions: false,
@@ -504,6 +532,8 @@ fn web_search_override_matches_network_and_summary_matrix() {
                 redactor: Default::default(),
                 network_access,
                 summary_only,
+                compact_session: false,
+                auto_compact_tokens: None,
                 ..turn_with_effort(None)
             };
             let args = engine.args(&turn);

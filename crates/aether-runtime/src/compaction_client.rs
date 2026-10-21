@@ -19,16 +19,24 @@ pub(crate) struct CompactionClient {
     pub pricing: TurnPricing,
 }
 
+/// What one engine launch spent, priced and marked where its receipt fell short.
 #[derive(Default)]
-struct Accounting {
-    pricing: TurnPricing,
-    usage: Option<Usage>,
+pub(crate) struct Accounting {
+    pub(crate) pricing: TurnPricing,
+    pub(crate) usage: Option<Usage>,
     closing_received: bool,
-    unsubmitted: bool,
+    pub(crate) unsubmitted: bool,
 }
 
 impl Accounting {
-    fn reported(&mut self, mut reported: Usage) {
+    pub(crate) fn priced(pricing: TurnPricing) -> Self {
+        Self {
+            pricing,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn reported(&mut self, mut reported: Usage) {
         debug_assert!(reported.cost_usd.is_finite() && reported.cost_usd >= 0.0);
         debug_assert!(!self.unsubmitted, "unsubmitted work cannot report usage");
         let gap =
@@ -41,7 +49,7 @@ impl Accounting {
         *self.usage.get_or_insert_default() += reported;
     }
 
-    fn close(&mut self, outcome: &EngineOutcome) {
+    pub(crate) fn close(&mut self, outcome: &EngineOutcome) {
         debug_assert!(
             outcome
                 .cost_usd
@@ -84,7 +92,7 @@ impl Accounting {
         });
     }
 
-    fn finish(&mut self, cancelled: bool) {
+    pub(crate) fn finish(&mut self, cancelled: bool) {
         debug_assert!(
             self.usage
                 .is_none_or(|usage| usage.cost_usd.is_finite() && usage.cost_usd >= 0.0)
@@ -214,7 +222,10 @@ async fn collect_checkpoint(
     })
 }
 
-async fn refuse_checkpoint_input(run: &EngineRun, request_id: String) -> Result<(), ModelError> {
+pub(crate) async fn refuse_checkpoint_input(
+    run: &EngineRun,
+    request_id: String,
+) -> Result<(), ModelError> {
     let Some(decisions) = &run.decisions else {
         return Err(failure("Checkpoint engine requested unavailable input"));
     };
@@ -433,6 +444,8 @@ mod tests {
                 cwd: "/unused-fixture".into(),
                 extra_dirs: vec![],
                 summary_only: true,
+                compact_session: false,
+                auto_compact_tokens: None,
                 lean_host_context: false,
                 network_access: true,
                 bypass_permissions: false,

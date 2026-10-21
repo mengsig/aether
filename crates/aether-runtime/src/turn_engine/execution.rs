@@ -256,6 +256,13 @@ pub(crate) async fn execute(
         tool_hidden_env: runtime.tools.hidden_env().to_vec(),
         // No approval requirements at all means the engine may run freely.
         summary_only: false,
+        compact_session: false,
+        // The threshold the context bar counts down to is where the engine folds.
+        auto_compact_tokens: resolved
+            .model
+            .capabilities
+            .compaction_tokens
+            .filter(|tokens| *tokens < resolved.model.capabilities.context_window),
         lean_host_context: ctx.agent.config.host_context.is_lean(),
         network_access: ctx.agent.scope.network == aether_core::agent::NetworkPolicy::Allowed,
         bypass_permissions: ctx.agent.config.approval.require_for.is_empty(),

@@ -53,6 +53,7 @@ mod execution;
 use execution::*;
 mod compaction;
 pub(crate) use compaction::{compact, compaction_pending, compaction_pending_for_turn};
+mod engine_compaction;
 mod failure;
 use failure::*;
 mod context;

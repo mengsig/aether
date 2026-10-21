@@ -66,6 +66,15 @@ pub(super) fn summarize(kind: &EventKind) -> String {
             ..
         } => format!("Compaction completed: {before} -> {after} tokens"),
         EventKind::CompactionCompleted { .. } => "Compaction completed".into(),
+        EventKind::CompactionNative {
+            provider,
+            before_tokens: Some(before),
+            after_tokens: Some(after),
+            ..
+        } => format!("Compaction completed by {provider}: {before} -> {after} tokens"),
+        EventKind::CompactionNative { provider, .. } => {
+            format!("Compaction completed by {provider}")
+        }
         EventKind::CompactionFailed { error, .. } => format!("Compaction failed: {error}"),
         EventKind::AgentMessage { role, content, .. } => {
             format!("{role:?}: {}", short(&message_summary(content), 100))

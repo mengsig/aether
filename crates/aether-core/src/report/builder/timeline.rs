@@ -33,6 +33,17 @@ pub(super) fn milestone_of(event: &Event) -> Option<Milestone> {
         EventKind::CompactionCompleted {
             from_seq, to_seq, ..
         } => format!("turns {from_seq}..{to_seq} compacted"),
+        EventKind::CompactionNative {
+            provider,
+            before_tokens,
+            after_tokens,
+            ..
+        } => match (before_tokens, after_tokens) {
+            (Some(before), Some(after)) => {
+                format!("{provider} compacted its context: {before} -> {after} tokens")
+            }
+            _ => format!("{provider} compacted its context"),
+        },
         // The lossier sibling of a compaction: what a handoff could not
         // carry across the engine/API boundary belongs beside it, not only
         // in the log and the TUI.

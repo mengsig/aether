@@ -35,6 +35,8 @@ mod bridge_build;
 mod budgets;
 #[path = "engine/build_cache.rs"]
 mod build_cache;
+#[path = "engine/compact_on_request.rs"]
+mod compact_on_request;
 #[path = "engine/compaction.rs"]
 mod compaction;
 #[path = "engine/completion_recovery.rs"]
