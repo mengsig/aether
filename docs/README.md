@@ -57,6 +57,10 @@ show. Reports are never pooled across protocol versions. To run a comparison
 yourself, see the [evaluation tooling](../evals/README.md) and its
 [protocol](../evals/harness_bench_protocol.md).
 
+- [Release bench 1.2.2](release-bench/1.2.2.md): Aether 1.2.2 against 1.2.1
+  on set v2, 440 trials; the gate passes on both tiers, Haiku +0.0 and Luna
+  +4.5 points: no decrease. The verdict is INCONCLUSIVE because v2 is off
+  target.
 - [Release bench 1.2.1](release-bench/1.2.1.md): Aether 1.2.1 against 1.2.0
   on set v2 in three runs; the gate passes on both tiers each time, and
   Haiku, 6.4 points lower in the first run, is -1.1 points pooled over 361
