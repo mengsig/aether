@@ -93,7 +93,7 @@ fn items(app: &App, theme: &Theme) -> Vec<Item> {
                     "{} · ${}/${} per Mtok",
                     m.model, cost.input_per_mtok, cost.output_per_mtok
                 ),
-                Some(None) => format!("{} · billed by the engine", m.model),
+                Some(None) => format!("{} · no list price", m.model),
                 None => m.model.clone(),
             }
         }),

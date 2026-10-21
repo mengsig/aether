@@ -156,7 +156,7 @@ pub(super) fn model_price_phrase(
     });
     match row.and_then(|row| row.capabilities.cost) {
         Some(cost) => format!("{} per Mtok in/out", model_cost_label(Some(cost))),
-        None => "unpriced here: the engine's subscription bills it".into(),
+        None => "no list price known".into(),
     }
 }
 
@@ -383,6 +383,9 @@ mod price_tests {
         let opus = model_price_phrase(&rows, &ModelRef::new("claude-code", "opus"));
         assert!(opus.contains("$5/$25"), "{opus}");
         let default = model_price_phrase(&rows, &ModelRef::new("claude-code", "default"));
-        assert!(default.contains("unpriced"), "{default}");
+        assert!(default.contains("no list price"), "{default}");
+        let missing = model_price_phrase(&rows, &ModelRef::new("openai", "gpt-unpriced"));
+        assert!(missing.contains("no list price"), "{missing}");
+        assert!(!missing.contains("subscription"), "{missing}");
     }
 }
