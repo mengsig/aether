@@ -30,6 +30,11 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
             subtree_spend += member.stats.usage;
         }
     }
+    let threshold = resolved
+        .model
+        .capabilities
+        .compaction_tokens
+        .unwrap_or(window / 4 * 3);
     let used_percent = agent
         .stats
         .context_tokens
@@ -41,7 +46,7 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
         "model": agent.model,
         "effort": agent.config.effort,
         "task": ctx.task,
-        "context": {"tokens": agent.stats.context_tokens, "window": window, "used_percent": used_percent, "at_compaction_threshold": used_percent.map(|percent| percent >= 75.0)},
+        "context": {"tokens": agent.stats.context_tokens, "window": window, "used_percent": used_percent, "at_compaction_threshold": agent.stats.context_tokens.map(|used| used >= u64::from(threshold))},
         "remaining_token_budget": agent.remaining_budget(),
         "cost_budget": agent.config.cost_budget,
         "subtree_cost_spent_usd": subtree_spend.cost_usd,
