@@ -319,6 +319,7 @@ impl crate::Runtime {
         let turns = self.engine_turns.lock();
         let in_flight = self.in_flight_agents(&sched, &turns)?;
         let agents = self.store.agents(&AgentFilter::default())?;
+        self.require_gc_ownership()?;
         let mut owners = std::collections::HashMap::<_, Vec<_>>::new();
         for agent in &agents {
             owners.entry(leaf_name(agent.id)).or_default().push(agent);

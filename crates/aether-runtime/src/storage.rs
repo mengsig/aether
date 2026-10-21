@@ -145,6 +145,21 @@ impl Runtime {
 }
 
 impl Runtime {
+    pub(crate) fn require_gc_ownership(&self) -> Result<()> {
+        if let Some(record) = self
+            .store
+            .quarantines()?
+            .into_iter()
+            .find(|record| matches!(record.table.as_str(), "agents" | "leases" | "tasks"))
+        {
+            return Err(invalid(format!(
+                "garbage collection withheld because {} record {} is quarantined; run `aether doctor` and `aether diagnose`, repair the record, then retry `aether storage gc`",
+                record.table, record.id
+            )));
+        }
+        Ok(())
+    }
+
     /// Agents with a turn, retake, lease or resource in flight, read under
     /// the scheduler and engine-turn locks the caller holds.
     fn in_flight_agents(
@@ -153,6 +168,7 @@ impl Runtime {
         engine_turns: &std::collections::HashMap<AgentId, crate::turn_engine::EngineTurnHandle>,
     ) -> Result<HashSet<AgentId>> {
         let leases = self.store.leases()?;
+        self.require_gc_ownership()?;
         let resources = self.resources.holdings();
         Ok(sched
             .running

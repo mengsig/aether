@@ -42,6 +42,11 @@ sequence, identity and owner must match the decoded envelope. Recovery parks
 only the affected agent where its ownership can be reconstructed. An unreadable
 global cancellation journal withholds dispatch while diagnostics remain served.
 
+Workspace, build-cache, scratch and engine-session collection refuses deletion
+when ownership reads discover quarantined agent, lease or task rows. A partial
+list cannot prove that a directory is unused; repair the reported records and
+retry `aether storage gc`. Other agents can continue serving during this refusal.
+
 ## Checkpoints, workspaces and recovery
 
 There were no production panic macros in checkpoint deserialization, recovery

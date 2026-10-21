@@ -501,6 +501,7 @@ impl Runtime {
             .iter()
             .map(|lease| lease.agent_id)
             .collect();
+        self.require_gc_ownership()?;
         // A path lease is explicit use, even when its holder has a broad scope
         // or its agent row has already disappeared.
         if resources

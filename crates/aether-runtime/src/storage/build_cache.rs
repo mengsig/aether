@@ -128,6 +128,7 @@ impl Runtime {
         let engine_turns = self.engine_turns.lock();
         let in_flight = self.in_flight_agents(&sched, &engine_turns)?;
         let claims = self.build_cache_claims(root, &in_flight)?;
+        self.require_gc_ownership()?;
         let chosen = match report.max_bytes {
             Some(max_bytes) => plan(&mut report, &claims, max_bytes),
             None => Vec::new(),
