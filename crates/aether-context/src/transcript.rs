@@ -61,7 +61,7 @@ fn interrupted_results(ids: &BTreeSet<String>) -> Message {
             .map(|id| ContentBlock::ToolResult {
                 tool_use_id: id.clone(),
                 content: vec![ToolResultBlock::Text {
-                    text: "Interrupted before this tool ran. Call it again if still needed.".into(),
+                    text: "Interrupted before this tool ran (the daemon restarted). Call it again if still needed; for a wait or sleep, issue one blocking call rather than polling.".into(),
                 }],
                 is_error: true,
             })

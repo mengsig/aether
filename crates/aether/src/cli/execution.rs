@@ -285,8 +285,7 @@ pub async fn run(
         }
     }
     finish_stream(&mut out, &mut streaming)?;
-    let outcome =
-        outcome.ok_or_else(|| anyhow!("run subscription ended before an outcome arrived"))?;
+    let outcome = outcome.ok_or_else(|| anyhow!(subscription_ended_message(&command, agent.id)))?;
     sub.unsubscribe().await?;
     tracing::debug!(agent = %agent.id, "run finished; fetching final usage");
     let final_agent = client.get_agent(agent.id).await?;
@@ -423,4 +422,23 @@ async fn recovered_run_outcome(
         }
         _ => None,
     })
+}
+
+fn subscription_ended_message(command: &str, agent: impl std::fmt::Display) -> String {
+    format!(
+        "run subscription ended before an outcome arrived; agent {agent} is still recorded and resumes when the daemon is back. Check `{command} agents` and continue with `{command} send {agent} \"...\"`"
+    )
+}
+
+#[cfg(test)]
+mod recovery_hint_tests {
+    use super::subscription_ended_message;
+
+    #[test]
+    fn hint_names_agent_and_commands() {
+        let msg = subscription_ended_message("aether", "agt_1");
+        assert!(msg.contains("agt_1"));
+        assert!(msg.contains("aether agents"));
+        assert!(msg.contains("aether send agt_1"));
+    }
 }
