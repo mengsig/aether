@@ -378,3 +378,34 @@ async fn a_failed_limit_step_withholds_dispatch_but_other_steps_do_not() {
         "a panicking limit step fails closed"
     );
 }
+
+#[tokio::test]
+async fn operator_priority_does_not_bypass_unreadable_ancestry() {
+    let (runtime, _config) = engine_runtime().await;
+    let mut agent = engine_agent(&runtime);
+    agent.parent = Some(aether_core::id::AgentId::new());
+    let lineage = Lineage::from_store(&[agent.clone()], &runtime);
+    assert!(lineage.has_unreadable_ancestor(agent.id));
+    let ready = [Runnable {
+        agent,
+        addressed: true,
+    }];
+    assert!(
+        pick(
+            &runtime,
+            &ready,
+            &runtime.sched.lock(),
+            &lineage,
+            &HashMap::new(),
+            &HashSet::from(["claude-code".into()])
+        )
+        .is_none()
+    );
+    assert!(
+        runtime
+            .problems()
+            .unwrap()
+            .iter()
+            .any(|problem| problem.contains("Ancestor"))
+    );
+}

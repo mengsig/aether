@@ -234,6 +234,7 @@ pub(super) fn pick(
         .iter()
         .enumerate()
         .filter(|(_, r)| !sched.running.contains_key(&r.agent.id))
+        .filter(|(_, r)| !lineage.has_unreadable_ancestor(r.agent.id))
         // 0. A turn just handed back because no link would carry it: give the
         //    condition a moment to clear instead of re-dispatching this tick.
         .filter(|(_, r)| {
