@@ -6,6 +6,14 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **Update offer on launch.** `aether` checks the latest release beside
+  startup (bounded, cached for 6 hours, silent offline) and asks `Update and
+  restart now? [Y/n]`; a yes runs `aether update`, stops the daemon and starts
+  the new build. `s` skips a version. Off with `[update] check = false` or
+  `AETHER_MANAGED_BY`.
+
 ## 1.2.1
 
 A small patch release: a notification center for agents and services, a TUI

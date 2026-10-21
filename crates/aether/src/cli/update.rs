@@ -1,12 +1,13 @@
 //! `aether update`: replace this binary with a released one.
 //!
 //! It downloads the assets `install.sh` downloads and checks the same
-//! SHA-256. Requests are made only because the person ran the command: there
-//! is no background check and nothing is reported anywhere.
+//! SHA-256. Requests are made because the person ran the command, or by the
+//! check `aether` makes on launch (`launch`), which only ever asks first.
 
 mod daemon;
 mod fetch;
 mod install;
+mod launch;
 mod notes;
 mod release;
 
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, bail, ensure};
 use daemon::Daemon;
 use install::{Installation, Refusal};
+pub use launch::{LaunchCheck, offer};
 use notes::Notes;
 pub use release::Version;
 use release::{Archive, ReleaseSource};
@@ -87,6 +89,17 @@ pub async fn update(
     explicit_socket: bool,
     options: UpdateOptions,
 ) -> anyhow::Result<i32> {
+    run_update(socket, explicit_socket, options)
+        .await
+        .map(|(code, _)| code)
+}
+
+/// Run an update and return its exit code and whether the binary was replaced.
+async fn run_update(
+    socket: PathBuf,
+    explicit_socket: bool,
+    options: UpdateOptions,
+) -> anyhow::Result<(i32, bool)> {
     let running = Version::parse(env!("CARGO_PKG_VERSION"))
         .context("this build's own version is not a release version")?;
     let pinned = options.version;
@@ -98,7 +111,7 @@ pub async fn update(
     let client = fetch::client(&source)?;
     if options.check {
         let latest = latest_version(&client, &source).await?;
-        return report_check(running, latest, options.json);
+        return Ok((report_check(running, latest, options.json)?, false));
     }
     // Refused before any request: a binary that is not ours to replace needs no download.
     let installation = Installation::of_running_binary()?;
@@ -110,7 +123,7 @@ pub async fn update(
     if !plan.replaces_the_binary() {
         let outcome = outcome(plan, running, wanted);
         super::acted(options.json, &announcement(plan, running, wanted), outcome)?;
-        return Ok(0);
+        return Ok((0, false));
     }
     let aether = command_hint(&socket, explicit_socket);
     // Asked while this is still the build the daemon accepts, so it can still be stopped.
@@ -138,7 +151,7 @@ pub async fn update(
         new: wanted,
     };
     installed.print(options.json)?;
-    Ok(0)
+    Ok((0, true))
 }
 
 /// Say what is about to happen and, before an upgrade, what its release

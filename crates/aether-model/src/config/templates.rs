@@ -127,6 +127,11 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # [retention]
 # completed_run_days = 7  # positive days; 0 is invalid
 
+# On launch `aether` looks for a newer release (cached for a day, silent offline)
+# and asks before updating. Set false to stop looking.
+# [update]
+# check = false
+
 # Each agent's processes get their own private TMPDIR, TMP and TEMP under
 # this root, one 0700 directory per agent. Unset means `t` beside the store.
 # Use an absolute path on disk, not tmpfs, short enough (root plus 13 bytes,

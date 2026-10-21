@@ -18,6 +18,7 @@ mod retention;
 mod scheduler;
 mod storage;
 mod templates;
+mod update;
 
 pub use agents::AgentsSection;
 pub use build_cache::{BuildCacheSection, BuildCacheVar};
@@ -25,6 +26,7 @@ pub use providers::ProvidersSection;
 pub use remote::RemoteSection;
 pub use retention::RetentionSection;
 pub use storage::StorageSection;
+pub use update::UpdateSection;
 
 pub use scheduler::{
     DEFAULT_MAX_CONCURRENT_TURNS, MAX_ENGINE_PARK_GRACE_SECS, MAX_WAIT_TIMEOUT_MINUTES,
@@ -103,6 +105,7 @@ pub struct AetherConfig {
     pub listen: ListenSection,
     pub remote: RemoteSection,
     pub serve: ServeSection,
+    pub update: UpdateSection,
 }
 
 /// Default scope for new roots; explicit scopes and existing agents are unchanged.
