@@ -455,10 +455,20 @@ impl Runtime {
         }
         // Preserve startup artifact cleanup. Periodic retention runs on a
         // separate blocking worker, never inside the scheduler tick loop.
-        match runtime.sweep_artifacts() {
+        let cleanup =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.sweep_artifacts()))
+                .unwrap_or_else(|panic| {
+                    Err(RuntimeError::Invalid(format!(
+                        "startup artifact cleanup panicked: {}",
+                        turn::panic_message(panic.as_ref())
+                    )))
+                });
+        match cleanup {
             Ok(0) => {}
             Ok(n) => tracing::info!(evicted = n, "retention dropped artifact bytes"),
-            Err(e) => tracing::error!(error = %e, "artifact retention sweep failed"),
+            Err(error) => runtime.report_problem("retention.artifacts".into(), format!(
+                "Startup artifact cleanup failed: {error}; periodic maintenance will retry. Run `aether doctor` and `aether diagnose`."
+            )),
         }
         disk::spawn(runtime.clone());
         scheduler::spawn(runtime.clone());
