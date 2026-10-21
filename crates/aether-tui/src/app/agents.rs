@@ -349,6 +349,14 @@ impl App {
     }
 
     pub(super) fn submit_input(&mut self) -> Vec<Effect> {
+        if self.input.images.len() > aether_core::attachment::MAX_IMAGES_PER_MESSAGE {
+            self.flash_error(format!(
+                "not sent: a message takes at most {} images ({} attached); remove some with /image clear",
+                aether_core::attachment::MAX_IMAGES_PER_MESSAGE,
+                self.input.images.len()
+            ));
+            return Vec::new();
+        }
         let text = self.input.take();
         self.dirty = true;
         let text = match self.parse_input(&text) {

@@ -91,10 +91,10 @@ impl App {
                 self.input.swap_draft(parked);
                 return;
             }
-            let recovered = !parked.is_empty();
+            let merged = !parked.is_empty();
             self.input.absorb_draft(parked);
-            if recovered {
-                self.flash("an earlier draft for this agent is in history (Ctrl+R)");
+            if merged {
+                self.flash("an earlier draft for this agent was added below what you typed");
             }
             return;
         };

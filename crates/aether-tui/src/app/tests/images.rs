@@ -458,15 +458,21 @@ fn text_typed_while_a_new_root_is_awaited_goes_to_that_root() {
 }
 
 #[test]
-fn adopting_an_unowned_draft_keeps_the_agents_parked_one_in_history() {
+fn adopting_an_unowned_draft_merges_the_agents_parked_one() {
     let (mut app, first) = app_viewing(AgentStatus::Ready);
     app.input.set_text("parked");
+    for n in 0..MAX_IMAGES_PER_MESSAGE {
+        app.input.images.push(png(&format!("parked{n}.png")));
+    }
     app.clear_selection();
     app.input.set_text("typed meanwhile");
+    app.input.images.push(png("typed.png"));
     app.select(first);
-    assert_eq!(app.input.text, "typed meanwhile");
-    assert!(app.input.history().contains(&"parked".to_owned()));
+    assert_eq!(app.input.text, "typed meanwhile\nparked");
+    assert_eq!(app.input.images.len(), MAX_IMAGES_PER_MESSAGE + 1);
+    assert!(app.submit_input().is_empty(), "too many images do not send");
+    assert_eq!(app.input.text, "typed meanwhile\nparked");
     app.select(AgentId::new());
     app.select(first);
-    assert_eq!(app.input.text, "typed meanwhile");
+    assert_eq!(app.input.text, "typed meanwhile\nparked");
 }

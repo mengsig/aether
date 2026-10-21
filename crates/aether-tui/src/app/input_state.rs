@@ -53,16 +53,26 @@ pub const EFFORTS: &[(Effort, &str)] = &[
 ];
 
 impl InputState {
-    /// Fold a parked draft into the current one: its images join the chips
-    /// (up to the message limit) and its text goes to history for Ctrl+R.
+    /// Fold a parked draft into the current one: its text (pastes included)
+    /// follows on a new line and its images join the chips.
     pub(crate) fn absorb_draft(&mut self, parked: Draft) {
-        let room =
-            aether_core::attachment::MAX_IMAGES_PER_MESSAGE.saturating_sub(self.images.len());
-        self.images.extend(parked.images.into_iter().take(room));
-        if !parked.text.trim().is_empty() && self.history.last() != Some(&parked.text) {
-            self.history.push(parked.text);
+        self.revision += 1;
+        self.history_pos = None;
+        self.images.extend(parked.images);
+        if parked.text.is_empty() {
+            return;
         }
-        assert!(self.images.len() <= aether_core::attachment::MAX_IMAGES_PER_MESSAGE);
+        if !self.text.is_empty() {
+            self.text.push('\n');
+        }
+        let offset = self.text.len();
+        self.text.push_str(&parked.text);
+        for mut paste in parked.pastes {
+            paste.range = paste.range.start + offset..paste.range.end + offset;
+            self.pastes.push(paste);
+        }
+        assert!(self.pastes.iter().all(|p| p.range.end <= self.text.len()));
+        assert!(self.cursor <= self.text.len());
     }
 
     /// Swap the composer's draft for `other`, returning the draft that was in it.
