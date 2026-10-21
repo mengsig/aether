@@ -67,6 +67,20 @@ fn the_slash_popup_lists_host_commands_after_the_built_ins_marked_with_the_host(
 }
 
 #[test]
+fn a_welcome_puts_host_commands_first_in_the_slash_popup() {
+    let (mut app, _) = app_with_host();
+    app.options.host_commands = HostCommands::parse(
+        r#"{"version":1,"host":"archon","welcome":{"title":"Archon"},"commands":[{"name":"answer"},{"name":"questions"}]}"#,
+    )
+    .unwrap();
+    app.open_popup(PopupKind::Slash);
+    let items = slash_items(&app);
+    assert!(matches!(&items[0], PopupItem::HostCommand { name, .. } if name == "answer"));
+    assert!(matches!(&items[1], PopupItem::HostCommand { name, .. } if name == "questions"));
+    assert!(matches!(&items[2], PopupItem::Command { .. }));
+}
+
+#[test]
 fn the_slash_popup_filters_host_commands_like_built_ins() {
     let (mut app, _) = app_with_host();
     type_text(&mut app, "/quest");

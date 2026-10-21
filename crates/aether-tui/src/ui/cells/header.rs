@@ -29,6 +29,7 @@ pub fn display_lines_with_keys(
         cwd,
         needs_sign_in,
         sign_in_details,
+        welcome,
     } = cell
     else {
         unreachable!("header::display_lines called for {cell:?}");
@@ -37,11 +38,18 @@ pub fn display_lines_with_keys(
     let marker = glyphs.ellipsis.chars().next().unwrap_or('~');
     let dot = glyphs.dot;
 
-    let mut rows = vec![
-        vec![
+    let brand = match welcome {
+        Some(welcome) => vec![
+            (welcome.title.clone(), theme.title()),
+            (format!(" {dot} aether {version}"), theme.secondary()),
+        ],
+        None => vec![
             ("aether".to_owned(), theme.title()),
             (format!(" v{version}"), theme.secondary()),
         ],
+    };
+    let mut rows = vec![
+        brand,
         vec![(
             format::short_path_with_marker(Path::new(cwd), marker),
             theme.secondary(),
@@ -55,6 +63,9 @@ pub fn display_lines_with_keys(
         for detail in sign_in_details {
             rows.push(vec![(detail.clone(), theme.secondary())]);
         }
+    }
+    for line in welcome.iter().flat_map(|w| &w.lines) {
+        rows.push(vec![(line.clone(), theme.text())]);
     }
     rows.push(vec![(
         format!(
@@ -118,6 +129,7 @@ mod tests {
             cwd: "/work/aether".into(),
             needs_sign_in,
             sign_in_details: Vec::new(),
+            welcome: None,
         }
     }
 
@@ -148,6 +160,33 @@ mod tests {
             );
             assert_eq!(plain_lines(&header(false), width), expected);
         }
+    }
+
+    fn greeted() -> CellModel {
+        let mut cell = header(false);
+        let CellModel::Header { welcome, .. } = &mut cell else {
+            unreachable!()
+        };
+        *welcome = Some(crate::commands::Welcome {
+            title: "Archon".into(),
+            lines: vec!["2 repositories".into(), "Try: fix the flaky test".into()],
+        });
+        cell
+    }
+
+    #[test]
+    fn a_welcome_replaces_the_brand_and_sits_above_the_hint() {
+        let theme = dark_theme(false);
+        assert_eq!(
+            text(&display_lines(&greeted(), 80, &theme)),
+            [
+                "  Archon · aether 0.9.0",
+                "  /work/aether",
+                "  2 repositories",
+                "  Try: fix the flaky test",
+                "  Ask anything · / commands · ctrl+g agents · ? shortcuts",
+            ]
+        );
     }
 
     #[test]

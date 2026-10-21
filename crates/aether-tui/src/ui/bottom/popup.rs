@@ -126,49 +126,57 @@ fn ranked<T>(candidates: impl IntoIterator<Item = (T, Option<Match>)>) -> Vec<T>
     matched.into_iter().map(|(_, item)| item).collect()
 }
 
+/// Slash candidates: the host's commands lead when it sent a welcome,
+/// otherwise they follow the built-ins; view modes come last.
+fn slash_candidates(app: &App, query: &str) -> Vec<(PopupItem, Option<Match>)> {
+    let builtins = COMMANDS.iter().map(|spec| {
+        let item = PopupItem::Command {
+            name: spec.name,
+            usage: spec.usage,
+            about: spec.about,
+        };
+        // A typed alias (`/cd`) leads with its command, not a fuzzy rival.
+        let alias = spec
+            .hidden_aliases
+            .iter()
+            .any(|a| a.eq_ignore_ascii_case(query))
+            .then_some(Match::Exact);
+        (item, alias.or_else(|| fuzzy_match(spec.name, query)))
+    });
+    let modes = app.view_modes.modes.values().map(|mode| {
+        let selected = if mode.name == app.view_mode {
+            format!("selected {} ", app.theme.glyphs().dot)
+        } else {
+            String::new()
+        };
+        let description = mode
+            .definition
+            .description
+            .as_deref()
+            .unwrap_or("view mode");
+        let item = PopupItem::Mode {
+            name: mode.name.clone(),
+            about: format!("{selected}{description}"),
+        };
+        (item, fuzzy_match(&mode.name, query))
+    });
+    let mut candidates = Vec::new();
+    if app.options.host_commands.welcome.is_some() {
+        candidates.extend(host_items(app, query));
+        candidates.extend(builtins);
+    } else {
+        candidates.extend(builtins);
+        candidates.extend(host_items(app, query));
+    }
+    candidates.extend(modes);
+    candidates
+}
+
 /// Ranked, filtered items for the popup's current query.
 pub fn items(popup: &Popup, app: &App) -> Vec<PopupItem> {
     let query = popup.query.as_str();
     match popup.kind {
-        PopupKind::Slash => ranked(
-            COMMANDS
-                .iter()
-                .map(|spec| {
-                    let item = PopupItem::Command {
-                        name: spec.name,
-                        usage: spec.usage,
-                        about: spec.about,
-                    };
-                    // A typed alias (`/cd`) leads with its command, not a fuzzy rival.
-                    let alias = spec
-                        .hidden_aliases
-                        .iter()
-                        .any(|a| a.eq_ignore_ascii_case(query))
-                        .then_some(Match::Exact);
-                    (item, alias.or_else(|| fuzzy_match(spec.name, query)))
-                })
-                .chain(host_items(app, query))
-                .chain(app.view_modes.modes.values().map(|mode| {
-                    (
-                        PopupItem::Mode {
-                            name: mode.name.clone(),
-                            about: format!(
-                                "{}{}",
-                                if mode.name == app.view_mode {
-                                    format!("selected {} ", app.theme.glyphs().dot)
-                                } else {
-                                    String::new()
-                                },
-                                mode.definition
-                                    .description
-                                    .as_deref()
-                                    .unwrap_or("view mode")
-                            ),
-                        },
-                        fuzzy_match(&mode.name, query),
-                    )
-                })),
-        ),
+        PopupKind::Slash => ranked(slash_candidates(app, query)),
         PopupKind::Mention(MentionTab::Files) => ranked(popup.files.iter().map(|path| {
             // A path-only hit ranks no better than a substring, so file names lead.
             let name = path.rsplit('/').next().unwrap_or(path);

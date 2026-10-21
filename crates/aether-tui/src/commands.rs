@@ -322,7 +322,7 @@ mod host;
 mod keys;
 mod registry;
 
-pub use host::{HostCommand, HostCommands};
+pub use host::{HostCommand, HostCommands, Welcome};
 pub use keys::{KEYS, KeyGroup, KeyScope, KeySpec, MAX_LABEL_WIDTH};
 pub use registry::{
     COMMANDS, CommandSpec, help_commands, help_commands_ascii, palette_matches, spec_for,

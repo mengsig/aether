@@ -11,6 +11,8 @@ const VERSION: u32 = 1;
 const MAX_COMMANDS: usize = 64;
 const MAX_NAME: usize = 32;
 const MAX_TEXT: usize = 200;
+const MAX_WELCOME_TITLE: usize = 40;
+const MAX_WELCOME_LINES: usize = 8;
 /// Shown after each host command's about text when the file names no host.
 const DEFAULT_HOST: &str = "host";
 
@@ -23,6 +25,14 @@ pub struct HostCommand {
     pub about: String,
 }
 
+/// The host's greeting for the header: its name for the session and a few
+/// plain lines, already cleaned and bounded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Welcome {
+    pub title: String,
+    pub lines: Vec<String>,
+}
+
 /// What a host-commands file yielded. `warning` is one line for the operator
 /// naming every refused entry, or why the whole file was ignored.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -30,6 +40,7 @@ pub struct HostCommands {
     /// Marks the commands in the popup and help (`· archon`).
     pub host: String,
     pub commands: Vec<HostCommand>,
+    pub welcome: Option<Welcome>,
     pub warning: Option<String>,
 }
 
@@ -39,6 +50,15 @@ struct File {
     #[serde(default)]
     host: Option<String>,
     commands: Vec<Entry>,
+    #[serde(default)]
+    welcome: Option<RawWelcome>,
+}
+
+#[derive(Deserialize)]
+struct RawWelcome {
+    title: String,
+    #[serde(default)]
+    lines: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -103,6 +123,7 @@ impl HostCommands {
         let failed = |reason: String| HostCommands {
             host: DEFAULT_HOST.into(),
             commands: Vec::new(),
+            welcome: None,
             warning: Some(format!(
                 "host commands from {} ignored: {reason}",
                 path.display()
@@ -160,14 +181,58 @@ impl HostCommands {
                 Err(reason) => refused.push(format!("/{} refused: {reason}", sane(&name))),
             }
         }
+        let welcome = file
+            .welcome
+            .and_then(|raw| clean_welcome(raw, &mut refused));
         debug_assert!(commands.iter().all(|c| super::spec_for(&c.name).is_none()));
         debug_assert!(commands.len() <= MAX_COMMANDS);
         Ok(HostCommands {
             host,
             commands,
+            welcome,
             warning: (!refused.is_empty()).then(|| refused.join("; ")),
         })
     }
+}
+
+/// Strip control characters and clamp to the limits, naming each cut in
+/// `refused`. A title left empty drops the whole block.
+fn clean_welcome(raw: RawWelcome, refused: &mut Vec<String>) -> Option<Welcome> {
+    let title = clamp(&raw.title, MAX_WELCOME_TITLE);
+    if title.is_empty() {
+        refused.push("welcome ignored: it has no title".into());
+        return None;
+    }
+    if title.chars().count() < raw.title.chars().count() {
+        refused.push(format!(
+            "welcome title cut to {MAX_WELCOME_TITLE} characters"
+        ));
+    }
+    if raw.lines.len() > MAX_WELCOME_LINES {
+        refused.push(format!("welcome keeps only {MAX_WELCOME_LINES} lines"));
+    }
+    let mut cut = false;
+    let lines: Vec<String> = raw
+        .lines
+        .iter()
+        .take(MAX_WELCOME_LINES)
+        .map(|line| {
+            let kept = clamp(line, MAX_TEXT);
+            cut |= kept.chars().count() < line.chars().count();
+            kept
+        })
+        .collect();
+    if cut {
+        refused.push(format!("welcome lines cut to {MAX_TEXT} characters"));
+    }
+    debug_assert!(lines.len() <= MAX_WELCOME_LINES);
+    debug_assert!(!title.chars().any(char::is_control));
+    Some(Welcome { title, lines })
+}
+
+/// `text` without control characters, at most `max` characters.
+fn clamp(text: &str, max: usize) -> String {
+    text.chars().filter(|c| !c.is_control()).take(max).collect()
 }
 
 fn check_entry(entry: &Entry, accepted: &[HostCommand]) -> Result<(), &'static str> {

@@ -139,3 +139,58 @@ fn help_rows_show_usage_with_args() {
         ]
     );
 }
+
+#[test]
+fn a_file_without_welcome_has_none() {
+    assert_eq!(HostCommands::parse(ARCHON).unwrap().welcome, None);
+}
+
+#[test]
+fn a_welcome_is_kept_and_unknown_fields_are_ignored() {
+    let text = r#"{"version":1,"later":true,"welcome":{"title":"Archon","lines":["a","b"],"x":1},"commands":[]}"#;
+    let loaded = HostCommands::parse(text).unwrap();
+    let welcome = loaded.welcome.unwrap();
+    assert_eq!(welcome.title, "Archon");
+    assert_eq!(welcome.lines, ["a", "b"]);
+    assert_eq!(loaded.warning, None);
+}
+
+#[test]
+fn a_welcome_is_stripped_clamped_and_reported() {
+    let long = "x".repeat(300);
+    let mut lines = vec![long];
+    lines.extend((0..10).map(|i| format!("l\u{1b}[31m{i}")));
+    let title = format!("T\u{7}{}", "t".repeat(60));
+    let text = serde_json::json!({
+        "version": 1,
+        "welcome": {"title": title, "lines": lines},
+        "commands": [],
+    })
+    .to_string();
+    let loaded = HostCommands::parse(&text).unwrap();
+    let welcome = loaded.welcome.unwrap();
+    assert_eq!(welcome.title.chars().count(), 40);
+    assert!(welcome.title.starts_with("Tt"));
+    assert_eq!(welcome.lines.len(), 8);
+    assert_eq!(welcome.lines[0].chars().count(), 200);
+    assert!(
+        !welcome
+            .lines
+            .iter()
+            .any(|l| l.chars().any(char::is_control))
+    );
+    let warning = loaded.warning.unwrap();
+    assert!(warning.contains("title cut") && warning.contains("keeps only 8"));
+    assert!(warning.contains("lines cut"));
+}
+
+#[test]
+fn a_welcome_without_a_usable_title_is_dropped_with_a_warning() {
+    let loaded = HostCommands::parse(
+        r#"{"version":1,"welcome":{"title":"\u0007","lines":["a"]},"commands":[{"name":"x"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(loaded.welcome, None);
+    assert_eq!(names(&loaded), ["x"]);
+    assert!(loaded.warning.unwrap().contains("welcome ignored"));
+}

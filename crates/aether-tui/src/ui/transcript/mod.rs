@@ -305,6 +305,7 @@ fn session_header(app: &App) -> CellModel {
                     .map(|detail| format!("{}: {detail}", a.provider))
             })
             .collect(),
+        welcome: app.options.host_commands.welcome.clone(),
     }
 }
 

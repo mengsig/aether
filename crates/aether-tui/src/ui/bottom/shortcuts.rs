@@ -224,7 +224,16 @@ fn lines_with_modes(
                 theme.text(),
             )
         }));
-        lines.splice(lines.len() - FOOT_ROWS..lines.len() - FOOT_ROWS, rows);
+        // With a welcome the host's commands head the help; else they trail it.
+        let at = if host.welcome.is_some() {
+            // Under the title: its own blank row moves to the end.
+            rows.remove(0);
+            rows.push(Line::default());
+            HEAD_ROWS
+        } else {
+            lines.len() - FOOT_ROWS
+        };
+        lines.splice(at..at, rows);
     }
     if let Some(catalog) = catalog {
         let mut modes = vec![Line::default(), Line::styled("  View modes", theme.title())];
@@ -640,6 +649,23 @@ mod tests {
         let heading = heading.expect("host heading");
         assert_eq!(rows[heading + 1], "  /answer <n> <text>  answer question n");
         assert_eq!(rows.len(), text(&HostCommands::default()).len() + 3);
+    }
+
+    #[test]
+    fn help_puts_a_greeting_hosts_commands_first() {
+        let theme = Theme::resolve(ThemeSpec::default());
+        let host = HostCommands::parse(
+            r#"{"version":1,"host":"archon","welcome":{"title":"Archon"},"commands":[{"name":"repos","about":"list repositories"}]}"#,
+        )
+        .unwrap();
+        let rows: Vec<String> = lines_with_modes(80, &theme, &KeyBindings::default(), None, &host)
+            .iter()
+            .map(|line| line.to_string())
+            .collect();
+        assert_eq!(rows[1], "  Keyboard shortcuts");
+        assert_eq!(rows[3], "  Host commands (archon)");
+        assert_eq!(rows[4], "  /repos  list repositories");
+        assert_eq!(rows[5], "");
     }
 
     #[test]

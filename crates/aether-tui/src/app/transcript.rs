@@ -263,6 +263,8 @@ pub enum CellModel {
         cwd: String,
         needs_sign_in: bool,
         sign_in_details: Vec<String>,
+        /// The host's greeting; `None` keeps the plain aether header.
+        welcome: Option<crate::commands::Welcome>,
     },
     User {
         from: UserFrom,
