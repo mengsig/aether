@@ -109,11 +109,17 @@ pub async fn run(
     let mut sub = client
         .subscribe(Some(last_seq), query.clone(), true)
         .await?;
+    // The price is a courtesy: a daemon that cannot list models must not stop the run.
+    let price = match client.list_models().await {
+        Ok(catalogue) => super::providers::model_price_phrase(&catalogue, &agent.model),
+        Err(_) => "price unavailable".into(),
+    };
     eprintln!(
-        "agent {} ({}) on {}",
+        "agent {} ({}) on {} ({})",
         agent.id,
         sane(&agent.name),
-        sane(&agent.chain().to_string())
+        sane(&agent.chain().to_string()),
+        price
     );
     let mut out = std::io::stdout();
     let mut streaming = false;

@@ -19,7 +19,9 @@ use crate::auth::{
 };
 use crate::client::ModelClient;
 use crate::config::{AetherConfig, ConfigError, ModelSection, config_dir, load_config};
-use crate::registry::{Protocol, Registry, RegistryError, load_providers_file};
+use crate::registry::{
+    ModelDef, Protocol, ProviderDef, Registry, RegistryError, load_providers_file,
+};
 use crate::tier::ModelTier;
 
 pub use crate::auth::LoginMethod;
@@ -226,8 +228,9 @@ impl Models {
         }
     }
 
-    /// The configured default, or the first model of the first provider
-    /// with working credentials.
+    /// The configured default, or the first usable provider's own default:
+    /// an engine's `default` model (the CLI picks, never the priciest catalog
+    /// entry), else the provider's first model.
     pub async fn default_model(&self) -> Option<ModelRef> {
         if let Some(text) = &self.config.model.default {
             let parsed = ModelRef::parse(text);
@@ -239,7 +242,7 @@ impl Models {
             }
         }
         for provider in self.registry.providers().iter().filter(|p| p.enabled) {
-            let Some(first) = provider.models.first() else {
+            let Some(first) = provider_default(provider) else {
                 continue;
             };
             if matches!(self.resolver.resolve(provider).await, Ok(Some(_))) {
@@ -481,6 +484,17 @@ pub fn retired_model_settings(registry: &Registry, section: &ModelSection) -> Ve
     .collect()
 }
 
+/// The model a provider is used on when nothing names one. An engine CLI
+/// chooses for itself through its `default` entry; the catalogue order puts
+/// the priciest model first, so it must never decide.
+fn provider_default(provider: &ProviderDef) -> Option<&ModelDef> {
+    let engine_choice = provider
+        .models
+        .iter()
+        .find(|m| provider.protocol.is_engine() && m.id == "default");
+    engine_choice.or(provider.models.first())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -618,6 +632,23 @@ mod tests {
             .err()
             .expect("expected an error");
         assert_eq!(unknown.class, ModelErrorClass::NotFound);
+    }
+
+    #[test]
+    fn engine_providers_default_to_their_own_choice_not_the_priciest_model() {
+        let registry = Registry::builtin();
+        for id in ["claude-code", "codex"] {
+            let provider = registry.provider(id).expect("builtin engine");
+            assert_eq!(
+                provider_default(provider).map(|m| m.id.as_str()),
+                Some("default")
+            );
+        }
+        let anthropic = registry.provider("anthropic").expect("builtin");
+        assert_eq!(
+            provider_default(anthropic).map(|m| m.id.as_str()),
+            anthropic.models.first().map(|m| m.id.as_str())
+        );
     }
 
     #[tokio::test]

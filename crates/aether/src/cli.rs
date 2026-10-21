@@ -417,7 +417,20 @@ fn joined_causes(error: &anyhow::Error) -> String {
             message.push_str(&cause);
         }
     }
+    if names_no_model(error) {
+        message.push_str(NO_MODEL_HINT);
+    }
     message
+}
+
+const NO_MODEL_HINT: &str =
+    "; run `aether login claude-code` or `aether login codex`, or pass --model";
+
+fn names_no_model(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(cause.downcast_ref::<ClientError>(),
+            Some(ClientError::Protocol(reply)) if reply.code == aether_protocol::ErrorCode::NoModel)
+    })
 }
 
 /// Text from somewhere else, with nothing in it that can move a cursor, set
