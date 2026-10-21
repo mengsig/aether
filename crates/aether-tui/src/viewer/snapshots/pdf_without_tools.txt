@@ -1,0 +1,36 @@
+┌ report.pdf · Tab: chat ──────────────────────────────────┐
+│No PDF tools found: install poppler-utils (pdftoppm,      │
+│pdfinfo, pdftotext) or MuPDF (mutool) to preview here.    │
+│Alt+E opens this file externally.                         │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│PgUp/PgDn page · Alt+T text/image · Alt+E open · Esc close│
+└──────────────────────────────────────────────────────────┘

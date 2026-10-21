@@ -1,0 +1,36 @@
+┌ report.pdf · page 1/3 · Tab: chat ───────────────────────┐
+│No pdftoppm or mutool: showing the page text.             │
+│Text of page 1                                            │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│PgUp/PgDn page · Alt+T text/image · Alt+E open · Esc close│
+└──────────────────────────────────────────────────────────┘

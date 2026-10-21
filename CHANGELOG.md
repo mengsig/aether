@@ -14,6 +14,14 @@ release is also the text of its GitHub release.
   pane while the agent continues; `Alt+E` opens any file externally. Files outside
   the workspace require confirmation; remote files are never fetched.
 
+- **PDF and HTML in the file viewer.** PDF pages render through `pdftoppm` or
+  `mutool` with a page counter. PgUp/PgDn turn pages, and Alt+T shows the page
+  text from `pdftotext`, which is also the fallback without a renderer. HTML
+  shows as readable text (headings, lists, tables, code, numbered links that
+  are never followed; scripts and styles dropped). Alt+T takes a screenshot
+  with headless Chromium, offline and sandboxed with no access to local
+  files. Alt+E opens the file in a browser.
+
 - **A notification center.** Agents and services such as Archon post
   questions, blockers, decisions, outcomes and news to one durable center per
   daemon. The TUI counts unread notifications at the bottom right, making

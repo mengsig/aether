@@ -25,7 +25,8 @@ async fn fixture() -> anyhow::Result<()> {
         &mut app,
         agent,
         aether_core::model::MessageRole::Assistant,
-        "Here is [the preview](sample.png), and [notes](notes.md).",
+        "Here is [the preview](sample.png), and [notes](notes.md).\n\
+         Also report.pdf and page.html for review.",
     );
     app.options.cwd = Some(workspace);
     app.board.open = false;
@@ -56,6 +57,7 @@ async fn fixture_loop(app: &mut App) -> anyhow::Result<()> {
     let size = terminal.size()?;
     app.size = (size.width, size.height);
     let mut events = EventStream::new();
+    let mut documents = Some(crate::viewer::Documents::detect());
     let until = tokio::time::sleep(Duration::from_secs(25));
     tokio::pin!(until);
     loop {
@@ -68,8 +70,13 @@ async fn fixture_loop(app: &mut App) -> anyhow::Result<()> {
                 for effect in effects {
                     if let Effect::PreviewFile(request) = effect {
                         let id = request.id;
-                        let result = tokio::task::spawn_blocking(move || crate::viewer::read(&request)).await?
-                            .map_err(|e| format!("{e:#}"));
+                        let mut owned = documents.take();
+                        let (result, owned) = tokio::task::spawn_blocking(move || {
+                            let result = owned.as_mut().map(|d| crate::viewer::read(&request, d));
+                            (result, owned)
+                        }).await?;
+                        documents = owned;
+                        let result = result.context("fixture documents")?.map_err(|e| format!("{e:#}"));
                         app.reduce(AppEvent::PreviewReady { id,result });
                     }
                 }
@@ -107,6 +114,18 @@ fn fixture_event(app: &mut App, cache: &mut ViewCache, event: Event) -> Vec<Effe
             }
             Vec::new()
         }
+        // F9 reports clickable references so the PTY driver can click them.
+        Event::Key(key) if key.code == KeyCode::F(9) => {
+            let hits: String = cache
+                .file_hits
+                .iter()
+                .map(|hit| format!("{}@{},{};", hit.reference.target, hit.area.x, hit.area.y))
+                .collect();
+            let mut out = stdout();
+            let reported = write!(out, "HITS[{hits}]END").and_then(|()| out.flush());
+            assert!(reported.is_ok(), "fixture output closed");
+            Vec::new()
+        }
         Event::Mouse(mouse) => app.dispatch_mouse(mouse, cache),
         event => map_terminal_event(event)
             .map(|e| dispatch_app_event(app, cache, e))
@@ -124,12 +143,18 @@ fn viewer_pty() {
     .save(dir.path().join("sample.png"))
     .unwrap();
     std::fs::write(dir.path().join("notes.md"), "# Notes\nA local preview.").unwrap();
+    let pdf = crate::viewer::fixtures::pdf(&["First page", "Second page"]);
+    std::fs::write(dir.path().join("report.pdf"), pdf).unwrap();
+    std::fs::write(dir.path().join("page.html"), crate::viewer::fixtures::HTML).unwrap();
+    let tools = crate::viewer::tools::Tools::detect();
+    let poppler = tools.pdftoppm.is_some() && tools.pdfinfo.is_some();
     let script =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/viewer_pty.py");
     let result = std::process::Command::new("python3")
         .arg(script)
         .arg(std::env::current_exe().unwrap())
         .arg(dir.path())
+        .env("VIEWER_HAS_POPPLER", if poppler { "1" } else { "0" })
         .output()
         .unwrap();
     assert!(

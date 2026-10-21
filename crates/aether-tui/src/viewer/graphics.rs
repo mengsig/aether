@@ -54,7 +54,7 @@ pub(super) fn load_canonical(path: &Path) -> Result<DecodedImage> {
     decode(&bytes).with_context(|| format!("decode image {}", path.display()))
 }
 
-fn decode(bytes: &[u8]) -> Result<DecodedImage> {
+pub(super) fn decode(bytes: &[u8]) -> Result<DecodedImage> {
     ensure!(!bytes.is_empty(), "image is empty");
     ensure!(bytes.len() as u64 <= MAX_FILE_BYTES, "image exceeds 20 MiB");
     let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;

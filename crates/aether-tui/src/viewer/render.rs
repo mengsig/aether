@@ -53,9 +53,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         .path()
         .map(|p| clean(&p.file_name().unwrap_or(p.as_os_str()).to_string_lossy()))
         .unwrap_or_else(|| "Files".into());
+    let page = viewer
+        .pages()
+        .map(|p| format!(" · page {}/{}", p.current, p.total))
+        .unwrap_or_default();
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" {path} · Tab: {focus} "))
+        .title(format!(" {path}{page} · Tab: {focus} "))
         .style(app.theme.text());
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -76,16 +80,26 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             height: 1,
             ..inner
         };
-        frame.render_widget(
-            Paragraph::new(if !viewer.focused {
-                "Alt+W close · Tab focus viewer · Alt+Z full"
-            } else if matches!(viewer.preview, Some(Ok(Preview::Outside(_)))) {
-                "Enter allow this file · Esc close"
-            } else {
-                "Esc close · Alt+E external · Alt+Z full · Alt+-/= resize"
-            }),
-            footer,
-        );
+        frame.render_widget(Paragraph::new(hints(viewer)), footer);
+    }
+}
+
+fn hints(viewer: &Viewer) -> &'static str {
+    if !viewer.focused {
+        return "Alt+W close · Tab focus viewer · Alt+Z full";
+    }
+    if matches!(viewer.preview, Some(Ok(Preview::Outside(_)))) {
+        return "Enter allow this file · Esc close";
+    }
+    let kind = viewer
+        .path()
+        .and_then(|p| p.extension())
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match kind.as_deref() {
+        Some("pdf") => "PgUp/PgDn page · Alt+T text/image · Alt+E open · Esc close",
+        Some("html" | "htm") => "Alt+T screenshot/text · Alt+E browser · Esc close",
+        _ => "Esc close · Alt+E external · Alt+Z full · Alt+-/= resize",
     }
 }
 
@@ -122,9 +136,7 @@ fn content(viewer: &Viewer, theme: &Theme) -> Vec<Line<'static>> {
         ],
         Some(Ok(Preview::Unsupported(path))) => vec![
             Line::from(clean(&path.display().to_string())),
-            Line::from(
-                "Use Alt+E to open externally. PDF/HTML/SVG pane rendering is not available yet.",
-            ),
+            Line::from("SVG is not rendered in the pane; Alt+E opens it externally."),
         ],
         Some(Ok(Preview::Image { rows, .. })) => rows.clone(),
         Some(Ok(Preview::Text { rows, .. })) => rows.clone(),
