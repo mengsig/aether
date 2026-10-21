@@ -77,6 +77,9 @@ impl App {
         &mut self,
         content: Result<ClipboardContent, String>,
     ) -> Vec<Effect> {
+        if self.drop_stale_read() {
+            return Vec::new();
+        }
         debug_assert!(
             self.input.image_reads > 0,
             "a clipboard read nothing asked for"
@@ -147,8 +150,22 @@ impl App {
         self.flash(format!("{outcome}: {reason}"));
     }
 
+    /// A read finishing after the operator moved to another agent belongs to
+    /// the old draft: drop it rather than attach it to the wrong agent.
+    fn drop_stale_read(&mut self) -> bool {
+        if self.input.stale_reads == 0 {
+            return false;
+        }
+        self.input.stale_reads -= 1;
+        self.flash("paste dropped: you switched agents while it was read; paste again");
+        true
+    }
+
     /// `Effect::AttachImage` finished.
     pub(crate) fn image_read(&mut self, image: Result<ImageAttachment, String>) {
+        if self.drop_stale_read() {
+            return;
+        }
         debug_assert!(self.input.image_reads > 0, "an image nothing asked for");
         self.input.image_reads = self.input.image_reads.saturating_sub(1);
         match image {

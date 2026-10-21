@@ -405,3 +405,30 @@ fn composer_draft_and_chips_stay_with_their_agent() {
     assert_eq!(app.input.text, "for the second");
     assert!(app.input.images.is_empty());
 }
+
+#[test]
+fn reads_finishing_after_an_agent_switch_do_not_attach_to_the_new_agent() {
+    let (mut app, first) = app_viewing(AgentStatus::Ready);
+    let second = AgentId::new();
+    app.paste_clipboard_image();
+    app.select(second);
+    app.image_read(Ok(png("late.png")));
+    assert!(app.input.images.is_empty());
+    assert_eq!(app.input.image_reads, 0);
+    app.select(first);
+    assert!(app.input.images.is_empty());
+}
+
+#[test]
+fn a_draft_survives_the_selection_passing_through_nothing() {
+    let (mut app, first) = app_viewing(AgentStatus::Ready);
+    let second = AgentId::new();
+    app.input.set_text("first draft");
+    app.select(second);
+    app.input.set_text("second draft");
+    app.selected = None;
+    app.select(first);
+    assert_eq!(app.input.text, "first draft");
+    app.select(second);
+    assert_eq!(app.input.text, "second draft");
+}

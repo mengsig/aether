@@ -22,6 +22,8 @@ pub struct InputState {
     pub(crate) images: Vec<aether_core::attachment::ImageAttachment>,
     /// Images asked for and not yet read; a message waits for them.
     pub(crate) image_reads: usize,
+    /// Reads asked for by an agent no longer on screen; their results are dropped.
+    pub(crate) stale_reads: usize,
     pub(super) history: Vec<String>,
     pub(super) history_pos: Option<usize>,
 }

@@ -46,8 +46,8 @@ impl App {
     fn show(&mut self, agent: AgentId) -> Vec<Effect> {
         if self.selected != Some(agent) {
             self.voice.selection += 1;
-            self.swap_drafts(agent);
         }
+        self.swap_drafts(agent);
         self.selected = Some(agent);
         self.dirty = true;
         let mut effects: Vec<Effect> = self.backfill_request(agent).into_iter().collect();
@@ -60,15 +60,23 @@ impl App {
         effects
     }
 
-    /// Park the composer's draft under the agent leaving the screen and bring back `agent`'s.
+    /// Park the composer's draft under its owner and bring back `agent`'s.
+    /// A draft typed before any agent was selected goes to the first one.
     fn swap_drafts(&mut self, agent: AgentId) {
-        // With nothing on screen the draft belongs to no agent yet: it stays.
-        let Some(leaving) = self.selected else { return };
+        if self.draft_owner == Some(agent) {
+            return;
+        }
+        let Some(leaving) = self.draft_owner else {
+            self.draft_owner = Some(agent);
+            return;
+        };
+        self.input.stale_reads += std::mem::take(&mut self.input.image_reads);
         let incoming = self.drafts.remove(&agent).unwrap_or_default();
         let outgoing = self.input.swap_draft(incoming);
         if !outgoing.is_empty() {
             self.drafts.insert(leaving, outgoing);
         }
+        self.draft_owner = Some(agent);
         debug_assert!(!self.drafts.contains_key(&agent));
     }
 
