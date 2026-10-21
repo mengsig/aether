@@ -53,6 +53,18 @@ pub const EFFORTS: &[(Effort, &str)] = &[
 ];
 
 impl InputState {
+    /// Fold a parked draft into the current one: its images join the chips
+    /// (up to the message limit) and its text goes to history for Ctrl+R.
+    pub(crate) fn absorb_draft(&mut self, parked: Draft) {
+        let room =
+            aether_core::attachment::MAX_IMAGES_PER_MESSAGE.saturating_sub(self.images.len());
+        self.images.extend(parked.images.into_iter().take(room));
+        if !parked.text.trim().is_empty() && self.history.last() != Some(&parked.text) {
+            self.history.push(parked.text);
+        }
+        assert!(self.images.len() <= aether_core::attachment::MAX_IMAGES_PER_MESSAGE);
+    }
+
     /// Swap the composer's draft for `other`, returning the draft that was in it.
     pub(crate) fn swap_draft(&mut self, other: Draft) -> Draft {
         assert!(

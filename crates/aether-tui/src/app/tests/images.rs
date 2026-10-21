@@ -456,3 +456,17 @@ fn text_typed_while_a_new_root_is_awaited_goes_to_that_root() {
     app.select(first);
     assert_eq!(app.input.text, "first draft");
 }
+
+#[test]
+fn adopting_an_unowned_draft_keeps_the_agents_parked_one_in_history() {
+    let (mut app, first) = app_viewing(AgentStatus::Ready);
+    app.input.set_text("parked");
+    app.clear_selection();
+    app.input.set_text("typed meanwhile");
+    app.select(first);
+    assert_eq!(app.input.text, "typed meanwhile");
+    assert!(app.input.history().contains(&"parked".to_owned()));
+    app.select(AgentId::new());
+    app.select(first);
+    assert_eq!(app.input.text, "typed meanwhile");
+}

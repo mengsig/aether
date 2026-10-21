@@ -84,11 +84,17 @@ impl App {
         self.close_popup();
         let Some(leaving) = self.draft_owner else {
             self.draft_owner = Some(agent);
-            if self.input.text.is_empty()
-                && self.input.images.is_empty()
-                && let Some(parked) = self.drafts.remove(&agent)
-            {
+            let Some(parked) = self.drafts.remove(&agent) else {
+                return;
+            };
+            if self.input.text.is_empty() && self.input.images.is_empty() {
                 self.input.swap_draft(parked);
+                return;
+            }
+            let recovered = !parked.is_empty();
+            self.input.absorb_draft(parked);
+            if recovered {
+                self.flash("an earlier draft for this agent is in history (Ctrl+R)");
             }
             return;
         };
