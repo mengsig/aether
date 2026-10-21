@@ -53,7 +53,9 @@ pub async fn compact(
     while let Some(frame) = sub.next().await {
         match frame {
             SubscriptionFrame::Event(event) if is_outcome(&event, id) => {
-                return report(&event, started.elapsed(), json, &follow_up);
+                if !still_owed(&client, id, event.seq).await? {
+                    return report(&event, started.elapsed(), json, &follow_up);
+                }
             }
             SubscriptionFrame::Lagged { capacity } => anyhow::bail!(
                 "the event stream fell {capacity} frames behind; run `{follow_up}` to see the outcome"
@@ -86,6 +88,36 @@ fn is_outcome(event: &Event, id: AgentId) -> bool {
                 | EventKind::CompactionNative { .. }
                 | EventKind::CompactionFailed { .. }
         )
+}
+
+/// A compaction is still owed after an outcome when a request follows it: this
+/// command's own, or one re-issued because the engine folded mid-turn.
+async fn still_owed(
+    client: &aether_client::Client,
+    id: AgentId,
+    outcome_seq: u64,
+) -> anyhow::Result<bool> {
+    const PAGE: usize = 64;
+    let query = EventQuery {
+        agent: Some(id),
+        types: vec!["compaction.requested".into()],
+        ..Default::default()
+    };
+    let mut after = outcome_seq;
+    loop {
+        let page = client.events(after, PAGE, query.clone()).await?;
+        debug_assert!(page.iter().all(|event| event.seq > after));
+        if page.iter().any(|event| event.agent_id == Some(id)) {
+            return Ok(true);
+        }
+        match page.last() {
+            Some(last) if page.len() == PAGE => {
+                debug_assert!(last.seq > after, "paging must move forward");
+                after = last.seq;
+            }
+            _ => return Ok(false),
+        }
+    }
 }
 
 /// Print the outcome and return the exit status: 0 folded, 1 failed.
