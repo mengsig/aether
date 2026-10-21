@@ -5,9 +5,11 @@
 //! is cut at every shell separator (`;`, `&`, `|`, newline, parentheses,
 //! braces, backticks) with quotes dropped and line continuations joined, so
 //! `sh -c '...'`, `$(...)`, pipelines and `&&` chains are read as their pieces,
-//! and `{curl,-s,URL}` as its words. Redirections after the command word are
-//! dropped (`curl>out`, `ls 2>/dev/null`); one before it (`2>/dev/null curl`)
-//! may have had a quoted target, so any later word may then be the command. A
+//! and `{curl,-s,URL}` as its words. It is read a second time with quotes kept
+//! as the shell reads them, so a quoted value or target stays one word, and
+//! either reading counts. Redirections after the command word are dropped
+//! (`curl>out`, `ls 2>/dev/null`); after a redirection or assignment before it
+//! (`2>/dev/null curl`, `FOO=1 curl`), any later word may be the command. A
 //! piece is networked when:
 //!
 //! - its command word is a network client (`curl`, `ssh`, `gh`, ...);
@@ -113,6 +115,10 @@ const BARE_INSTALLERS: &[&str] = &["bundle", "yarn"];
 /// command is flattened; never typed in a real command.
 const REDIRECT: char = '\u{1}';
 
+/// Stands in for quoted whitespace or an operator inside a word once the
+/// command is flattened with quotes kept; never typed in a real command.
+const IN_WORD: char = '\u{2}';
+
 /// The class to gate a call under: a mutating call whose `command` (or the
 /// `chars` typed into a shell) may reach the network is external. Never lowers it.
 pub fn gated_class(declared: SideEffectClass, input: &Value) -> SideEffectClass {
@@ -137,15 +143,20 @@ pub fn touches_network(command: &str) -> bool {
     if command.contains("/dev/tcp/") || command.contains("/dev/udp/") {
         return true;
     }
-    flatten(command).lines().any(|piece| {
-        let words: Vec<&str> = piece.split_whitespace().collect();
-        piece_touches_network(&words)
+    // Quotes dropped sees commands quoted for `sh -c` or `"$(...)"`; quotes kept
+    // keeps a quoted word whole, so it never poses as the command. Either counts.
+    [false, true].into_iter().any(|keep_quotes| {
+        flatten(command, keep_quotes).lines().any(|piece| {
+            let words: Vec<&str> = piece.split_whitespace().collect();
+            piece_touches_network(&words)
+        })
     })
 }
 
-/// `command` with continuations joined, quotes (and any literal [`REDIRECT`])
-/// dropped, one piece per line and each redirection operator a [`REDIRECT`] word.
-fn flatten(command: &str) -> String {
+/// `command` with continuations joined, one piece per line and each
+/// redirection operator a [`REDIRECT`] word. Quotes are dropped, or with
+/// `keep_quotes` read as the shell does: quoted and escaped text stays in its word.
+fn flatten(command: &str, keep_quotes: bool) -> String {
     // `$'...'` and `$"..."` are quoting; a backslash-newline joins two lines.
     let joined = command
         .replace("\\\n", "")
@@ -154,9 +165,24 @@ fn flatten(command: &str) -> String {
     let mut flattened = String::with_capacity(joined.len() + 8);
     let mut chars = joined
         .chars()
-        .filter(|c| !matches!(*c, '\'' | '"' | '\\' | REDIRECT))
+        .filter(|c| !matches!(*c, REDIRECT | IN_WORD))
         .peekable();
+    let mut quote: Option<char> = None;
     while let Some(c) = chars.next() {
+        if keep_quotes {
+            match (quote, c) {
+                (None, '\'' | '"') => quote = Some(c),
+                (Some(open), _) if c == open => quote = None,
+                (None | Some('"'), '\\') => flattened.extend(chars.next().map(in_word)),
+                (Some(_), _) => flattened.push(in_word(c)),
+                (None, _) => {}
+            }
+            if quote.is_some() || matches!(c, '\'' | '"' | '\\') {
+                continue;
+            }
+        } else if matches!(c, '\'' | '"' | '\\') {
+            continue;
+        }
         match c {
             ',' => flattened.push(' '),
             '<' | '>' => {
@@ -176,6 +202,12 @@ fn flatten(command: &str) -> String {
         }
     }
     flattened
+}
+
+/// `c` as quoted text: whitespace and shell operators become [`IN_WORD`].
+fn in_word(c: char) -> char {
+    let special = c.is_whitespace() || ";&|(){}`<>,".contains(c);
+    if special { IN_WORD } else { c }
 }
 
 fn is_redirect(word: &str) -> bool {
@@ -211,8 +243,10 @@ fn piece_touches_network(words: &[&str]) -> bool {
     let leading_redirect = is_redirect(words[start])
         || words.get(start + 1).is_some_and(|w| is_redirect(w))
             && words[start].bytes().all(|b| b.is_ascii_digit());
-    if leading_redirect {
-        // The target's quoted bounds are lost, so any later word may be the command.
+    let after_assignment = words[..start].iter().any(|w| w.contains('='));
+    if leading_redirect || after_assignment {
+        // A dropped quote may have hidden where the target or value ends, so
+        // any later word may be the command.
         let rest: Vec<&str> = words[start..]
             .iter()
             .copied()
@@ -401,6 +435,12 @@ mod tests {
             "git pu\\\nsh origin main",
             "$'curl' https://example.com",
             "{curl,-sI,https://example.com}",
+            "GIT_SSH_COMMAND=\"ssh -i /tmp/key\" git fetch origin",
+            "FOO=\"a b\" curl -sI https://example.com",
+            "FOO=\"x;y\" curl https://example.com",
+            "FOO='a > b' wget https://example.com",
+            "> a\\;b curl https://example.com",
+            "echo \"$(FOO=\"a b\" curl -s https://example.com)\"",
         ] {
             networked(command);
         }
@@ -411,6 +451,8 @@ mod tests {
             "grep curl file 2>&1 | head",
             "echo $HOME $? $(pwd)",
             "cut -d, -f1 curl.csv",
+            "RUST_LOG=debug cargo test",
+            "echo 'a; b' \"c | d\"",
         ] {
             local(command);
         }

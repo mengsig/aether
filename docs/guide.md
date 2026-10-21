@@ -367,8 +367,8 @@ runs a network client (`curl`, `wget`, `ssh`, `scp`, `nc`, `gh`, ...), a remote
 publish (`npm install`, `pip install`, `cargo install`, `apt-get install`,
 ...), `rsync` to a `host:` path, or `/dev/tcp`; `sudo`, `env`, `xargs`, `python
 -m` and similar wrappers are looked through, line continuations are joined, and
-redirections such as `2>/dev/null` are skipped (after one placed before the
-command, any later word may be the command). `grep curl file` stays local. A
+redirections such as `2>/dev/null` are skipped (after a redirection or an
+assignment placed before the command, any later word may be the command). `grep curl file` stays local. A
 raised command still needs any approval its tool already needed, so `--approval
 mutation` keeps asking too. Network use the text does not show is not caught:
 deliberate obfuscation (`cur?`, `$'\x63url'`), a script or `python -c` that
