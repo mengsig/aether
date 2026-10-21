@@ -51,7 +51,7 @@ struct File {
     host: Option<String>,
     commands: Vec<Entry>,
     #[serde(default)]
-    welcome: Option<RawWelcome>,
+    welcome: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -181,9 +181,7 @@ impl HostCommands {
                 Err(reason) => refused.push(format!("/{} refused: {reason}", sane(&name))),
             }
         }
-        let welcome = file
-            .welcome
-            .and_then(|raw| clean_welcome(raw, &mut refused));
+        let welcome = file.welcome.and_then(|raw| read_welcome(raw, &mut refused));
         debug_assert!(commands.iter().all(|c| super::spec_for(&c.name).is_none()));
         debug_assert!(commands.len() <= MAX_COMMANDS);
         Ok(HostCommands {
@@ -192,6 +190,17 @@ impl HostCommands {
             welcome,
             warning: (!refused.is_empty()).then(|| refused.join("; ")),
         })
+    }
+}
+
+/// The welcome block from its loose JSON; a wrong shape drops only the block.
+fn read_welcome(value: serde_json::Value, refused: &mut Vec<String>) -> Option<Welcome> {
+    match serde_json::from_value::<RawWelcome>(value) {
+        Ok(raw) => clean_welcome(raw, refused),
+        Err(error) => {
+            refused.push(format!("welcome ignored: {error}"));
+            None
+        }
     }
 }
 

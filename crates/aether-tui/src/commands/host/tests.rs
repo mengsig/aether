@@ -194,3 +194,19 @@ fn a_welcome_without_a_usable_title_is_dropped_with_a_warning() {
     assert_eq!(names(&loaded), ["x"]);
     assert!(loaded.warning.unwrap().contains("welcome ignored"));
 }
+
+#[test]
+fn a_malformed_welcome_never_costs_the_commands() {
+    for welcome in [
+        r#"{"lines":["hi"]}"#,
+        r#"{"title":5}"#,
+        r#""text""#,
+        r#"{"title":"A","lines":"x"}"#,
+    ] {
+        let text = format!(r#"{{"version":1,"welcome":{welcome},"commands":[{{"name":"x"}}]}}"#);
+        let loaded = HostCommands::parse(&text).unwrap();
+        assert_eq!(loaded.welcome, None, "{welcome}");
+        assert_eq!(names(&loaded), ["x"]);
+        assert!(loaded.warning.unwrap().contains("welcome ignored"));
+    }
+}
