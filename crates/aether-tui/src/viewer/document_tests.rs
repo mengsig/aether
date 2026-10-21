@@ -415,11 +415,29 @@ fn chromium_runs_offline_on_a_sandboxed_copy() {
     assert!(!page.contains("<script>"));
 }
 
+/// A skipped isolation test fails in CI when CI must run it, and is loud anywhere else.
+fn skip_isolation_test(reason: &str, required_in_ci: bool) {
+    assert!(
+        !(required_in_ci && std::env::var_os("CI").is_some()),
+        "CI must run this test: {reason}"
+    );
+    // Written past libtest's capture, which would hide an eprintln! of a passing test.
+    writeln!(
+        std::io::stderr(),
+        "\n*** SKIPPED the Chromium isolation test: {reason} ***\n"
+    )
+    .unwrap();
+}
+
 /// Every local-file and network route the page tries must stay blank in the screenshot.
 #[test]
 fn chromium_screenshot_cannot_read_local_files_or_reach_the_network() {
     let Some(chromium) = Tools::detect().chromium else {
-        eprintln!("skipped: headless Chromium is not installed");
+        // The Linux runner image ships Chromium; macOS keeps Chrome off PATH.
+        skip_isolation_test(
+            "headless Chromium is not installed",
+            cfg!(target_os = "linux"),
+        );
         return;
     };
     let dir = tempfile::tempdir().unwrap();
@@ -449,16 +467,7 @@ fn chromium_screenshot_cannot_read_local_files_or_reach_the_network() {
     std::fs::write(root.join("page.html"), &page).unwrap();
     let png = match html::screenshot(&chromium, page.as_bytes(), (800, 600)) {
         Err(error) if error.to_string() == html::SANDBOX_UNAVAILABLE => {
-            assert!(
-                std::env::var_os("CI").is_none(),
-                "CI must run this test: {error}"
-            );
-            // Written past libtest's capture, which would hide an eprintln! of a passing test.
-            writeln!(
-                std::io::stderr(),
-                "\n*** SKIPPED the Chromium isolation test: {error} ***\n"
-            )
-            .unwrap();
+            skip_isolation_test(&error.to_string(), true);
             return;
         }
         result => result.unwrap(),
