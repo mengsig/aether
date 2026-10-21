@@ -364,16 +364,19 @@ the command text, not what it does: it cuts the command at `;`, `&&`, `|`,
 newlines, `$(...)`, backticks and `sh -c '...'` quoting, and asks when a piece
 runs a network client (`curl`, `wget`, `ssh`, `scp`, `nc`, `gh`, ...), a remote
 `git` subcommand (`push`, `fetch`, `pull`, `clone`, ...), a package install or
-publish (`npm install`, `pip install`, `cargo install`, `apt-get install`, ...),
-`rsync` to a `host:` path, or `/dev/tcp`; `sudo`, `env`, `xargs`, `python -m`
-and similar wrappers are looked through, and redirections such as `2>/dev/null`
-are skipped. `grep curl file` stays local. A raised command still needs any
-approval its tool already needed, so `--approval mutation` keeps asking too. Network use the text
-does not show is not caught: a script or `python -c` that opens a socket, a
-command held in a variable, or a build that downloads dependencies
-(`cargo build`). Native web tools (`WebFetch`, `WebSearch`) are not gated.
-Codex agents with approvals on run commands with sandbox network off, loopback
-included; reaching a host takes an escalation, which `--no-yolo` puts to you.
+publish (`npm install`, `pip install`, `cargo install`, `apt-get install`,
+...), `rsync` to a `host:` path, or `/dev/tcp`; `sudo`, `env`, `xargs`, `python
+-m` and similar wrappers are looked through, line continuations are joined, and
+redirections such as `2>/dev/null` are skipped (after one placed before the
+command, any later word may be the command). `grep curl file` stays local. A
+raised command still needs any approval its tool already needed, so `--approval
+mutation` keeps asking too. Network use the text does not show is not caught:
+deliberate obfuscation (`cur?`, `$'\x63url'`), a script or `python -c` that
+opens a socket, a command held in a variable, or a build that downloads
+dependencies (`cargo build`). Native web tools (`WebFetch`, `WebSearch`) are
+not gated. Codex agents with approvals on run commands with sandbox network
+off, loopback included; reaching a host takes an escalation, which `--no-yolo`
+puts to you.
 
 - Native shell/file operations do not all pass through Aether's tool guards
   or resource leases. Isolated Git worktrees avoid ordinary shared-directory

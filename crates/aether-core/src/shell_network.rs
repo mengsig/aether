@@ -3,9 +3,11 @@
 //!
 //! A heuristic over the command text, not a parser or a sandbox. The command
 //! is cut at every shell separator (`;`, `&`, `|`, newline, parentheses,
-//! braces, backticks) with quotes dropped, so `sh -c '...'`, `$(...)`,
-//! pipelines and `&&` chains are read as their pieces. Redirections such as
-//! `2>/dev/null` or `>out` are dropped before the command word is chosen. A
+//! braces, backticks) with quotes dropped and line continuations joined, so
+//! `sh -c '...'`, `$(...)`, pipelines and `&&` chains are read as their pieces,
+//! and `{curl,-s,URL}` as its words. Redirections after the command word are
+//! dropped (`curl>out`, `ls 2>/dev/null`); one before it (`2>/dev/null curl`)
+//! may have had a quoted target, so any later word may then be the command. A
 //! piece is networked when:
 //!
 //! - its command word is a network client (`curl`, `ssh`, `gh`, ...);
@@ -19,7 +21,7 @@
 //! - it names `/dev/tcp/` or `/dev/udp/`.
 //!
 //! Misreads lean towards gating: a quoted separator can make an argument look
-//! like a command. Not seen: network use inside scripts, interpreters
+//! like a command. Not seen: deliberate obfuscation (`cur?`, `$'\x63url'`), network use inside scripts, interpreters
 //! (`python -c`), variables holding a command, or builds that fetch
 //! dependencies (`cargo build`).
 
@@ -137,20 +139,26 @@ pub fn touches_network(command: &str) -> bool {
     }
     flatten(command).lines().any(|piece| {
         let words: Vec<&str> = piece.split_whitespace().collect();
-        piece_touches_network(&without_redirections(&words))
+        piece_touches_network(&words)
     })
 }
 
-/// `command` with quotes (and any literal [`REDIRECT`]) dropped, one piece per line, and each redirection
-/// operator a word of its own [`REDIRECT`].
+/// `command` with continuations joined, quotes (and any literal [`REDIRECT`])
+/// dropped, one piece per line and each redirection operator a [`REDIRECT`] word.
 fn flatten(command: &str) -> String {
-    let mut flattened = String::with_capacity(command.len() + 8);
-    let mut chars = command
+    // `$'...'` and `$"..."` are quoting; a backslash-newline joins two lines.
+    let joined = command
+        .replace("\\\n", "")
+        .replace("$'", "'")
+        .replace("$\"", "\"");
+    let mut flattened = String::with_capacity(joined.len() + 8);
+    let mut chars = joined
         .chars()
         .filter(|c| !matches!(*c, '\'' | '"' | '\\' | REDIRECT))
         .peekable();
     while let Some(c) = chars.next() {
         match c {
+            ',' => flattened.push(' '),
             '<' | '>' => {
                 // `>>`, `<<<`, `>&2`, `>|` and `<>` are one operator.
                 while chars
@@ -170,11 +178,14 @@ fn flatten(command: &str) -> String {
     flattened
 }
 
+fn is_redirect(word: &str) -> bool {
+    word.len() == REDIRECT.len_utf8() && word.starts_with(REDIRECT)
+}
+
 /// `words` without redirections: each operator, its target and a leading
 /// file descriptor (`2` in `2>/dev/null`) go, so they never pose as the command.
 fn without_redirections<'a>(words: &[&'a str]) -> Vec<&'a str> {
-    let redirect = REDIRECT.to_string();
-    let is_operator = |word: &&str| *word == redirect;
+    let is_operator = |word: &&str| is_redirect(word);
     let mut kept = Vec::with_capacity(words.len());
     let mut i = 0;
     while i < words.len() {
@@ -197,12 +208,26 @@ fn piece_touches_network(words: &[&str]) -> bool {
     let Some(start) = words.iter().position(|w| !is_prefix_word(w)) else {
         return false;
     };
-    let program = program_name(words[start]);
-    let rest = &words[start + 1..];
+    let leading_redirect = is_redirect(words[start])
+        || words.get(start + 1).is_some_and(|w| is_redirect(w))
+            && words[start].bytes().all(|b| b.is_ascii_digit());
+    if leading_redirect {
+        // The target's quoted bounds are lost, so any later word may be the command.
+        let rest: Vec<&str> = words[start..]
+            .iter()
+            .copied()
+            .filter(|w| !is_redirect(w))
+            .collect();
+        return (0..rest.len()).any(|i| runs_network_program(&rest[i..]));
+    }
+    let words = without_redirections(&words[start..]);
+    assert!(!words.is_empty(), "the command word is no redirection");
+    let program = program_name(words[0]);
+    let rest = &words[1..];
     if WRAPPERS.contains(&program) {
         return (0..rest.len()).any(|i| runs_network_program(&rest[i..]));
     }
-    runs_network_program(&words[start..])
+    runs_network_program(&words)
 }
 
 /// Whether `words`, read as a command and its arguments, reaches the network.
@@ -369,6 +394,13 @@ mod tests {
             "< urls xargs -n1 curl",
             ">>log 2>&1 git push",
             "cat <(curl -s https://example.com)",
+            ">\"a b\" curl https://example.com",
+            "2>\"x y\" sh -c 'curl https://example.com'",
+            "> a\\ b wget https://example.com",
+            "cu\\\nrl https://example.com",
+            "git pu\\\nsh origin main",
+            "$'curl' https://example.com",
+            "{curl,-sI,https://example.com}",
         ] {
             networked(command);
         }
@@ -377,6 +409,8 @@ mod tests {
             "cat < ssh.md",
             "ls 2>/dev/null >wget.log",
             "grep curl file 2>&1 | head",
+            "echo $HOME $? $(pwd)",
+            "cut -d, -f1 curl.csv",
         ] {
             local(command);
         }
