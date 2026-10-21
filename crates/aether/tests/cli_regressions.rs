@@ -1470,6 +1470,8 @@ async fn new_refuses_a_name_a_live_agent_already_holds() {
     let said = stderr(&out) + &stdout(&out);
     assert!(said.contains("already named `assistant`"), "{said}");
     assert!(said.contains("invalid_argument"), "{said}");
+    let padded = cli(&["new", "--name", " assistant "], Stub::default()).await;
+    assert_eq!(padded.status.code(), Some(1), "{}", stderr(&padded));
 }
 
 #[tokio::test]

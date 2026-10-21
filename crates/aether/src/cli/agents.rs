@@ -37,7 +37,7 @@ pub async fn new_agent(
 }
 
 /// A name resolves only while unique among live agents, so a second live
-/// agent with it would make every later reference ambiguous.
+/// agent with it (the daemon trims names before storing) would make every later reference ambiguous.
 async fn refuse_live_name(client: &aether_client::Client, name: &str) -> anyhow::Result<()> {
     let live = client
         .list_agents(AgentQuery {
@@ -45,7 +45,7 @@ async fn refuse_live_name(client: &aether_client::Client, name: &str) -> anyhow:
             ..Default::default()
         })
         .await?;
-    let Some(taken) = live.iter().find(|agent| agent.name == name) else {
+    let Some(taken) = live.iter().find(|agent| agent.name == name.trim()) else {
         return Ok(());
     };
     debug_assert!(taken.is_live());
