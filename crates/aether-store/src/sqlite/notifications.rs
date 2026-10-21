@@ -12,10 +12,11 @@ use crate::{NotificationFilter, Result, StoreError};
 pub(crate) const MAX_NOTIFICATIONS_READ: usize = 1000;
 
 pub(super) fn put(tx: &Transaction<'_>, notification: &Notification) -> Result<()> {
-    assert!(
-        !notification.title.trim().is_empty(),
-        "a notification is checked before it is stored"
-    );
+    if notification.title.trim().is_empty() {
+        return Err(StoreError::Corrupt(format!(
+            "Notification {} has an empty title; run `aether doctor`", notification.id
+        )));
+    }
     tx.execute(
         "INSERT INTO notifications(id, source, key, state, updated_at, body)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)

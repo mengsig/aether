@@ -540,7 +540,18 @@ pub struct ImportedArtifact {
 
 /// The storage contract. Synchronous by design: SQLite work is short and the
 /// daemon wraps calls in blocking tasks where it matters.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RecordQuarantine {
+    pub table: String,
+    pub id: String,
+    pub reason: String,
+}
+
 pub trait Store: Send + Sync {
+    fn quarantines(&self) -> Result<Vec<RecordQuarantine>> {
+        Ok(Vec::new())
+    }
+
     /// Explicit ownership evidence, including sessions whose agent history has expired.
     fn engine_session_ownerships(&self) -> Result<Vec<EngineSessionOwnership>>;
 

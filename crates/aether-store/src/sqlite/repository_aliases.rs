@@ -40,10 +40,12 @@ impl SqliteStore {
     }
 
     pub(super) fn preview_alias(&self, alias: &RepositoryAlias) -> Result<RepositoryAliasMove> {
-        assert!(
-            alias.is_valid(),
-            "a repository alias is validated before the store"
-        );
+        if !alias.is_valid() {
+            return Err(StoreError::Corrupt(format!(
+                "Invalid repository alias `{}` -> `{}`; run `aether doctor`",
+                alias.alias, alias.canonical
+            )));
+        }
         let conn = self.read_conn();
         let existing = registered(&conn, alias)?;
         let records = filed_under(&conn, &alias.alias)?;
@@ -63,10 +65,12 @@ impl SqliteStore {
         alias: &RepositoryAlias,
         by: Actor,
     ) -> Result<RepositoryAliasMove> {
-        assert!(
-            alias.is_valid(),
-            "a repository alias is validated before the store"
-        );
+        if !alias.is_valid() {
+            return Err(StoreError::Corrupt(format!(
+                "Invalid repository alias `{}` -> `{}`; run `aether doctor`",
+                alias.alias, alias.canonical
+            )));
+        }
         let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
         let existing = registered(&tx, alias)?;

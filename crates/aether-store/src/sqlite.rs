@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
+mod quarantine;
 mod blobs;
 mod checkpoint;
 mod devices;

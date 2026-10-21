@@ -38,6 +38,10 @@ use super::event_queries::Arguments;
 use super::{SqliteStore, schedule_time};
 
 impl Store for SqliteStore {
+    fn quarantines(&self) -> Result<Vec<crate::RecordQuarantine>> {
+        self.list_quarantines()
+    }
+
     fn engine_session_ownerships(&self) -> Result<Vec<crate::EngineSessionOwnership>> {
         Self::read_many(
             &self.read_conn(),
@@ -312,9 +316,8 @@ impl Store for SqliteStore {
     fn agents(&self, filter: &AgentFilter) -> Result<Vec<Agent>> {
         let mut args: Arguments = Vec::new();
         let sql = agent_list_sql(filter, &mut args);
-        let conn = self.read_conn();
         let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
-        let mut agents: Vec<Agent> = Self::read_many(&conn, &sql, &refs)?;
+        let mut agents: Vec<Agent> = self.record_list("agents", &sql, &refs, |agent: &Agent| agent.id.to_string())?;
         // `archived` lives in the JSON body, not a column: it is a view
         // filter on a bounded set, so it is cheaper to drop here than to
         // migrate the table for it.
@@ -385,9 +388,8 @@ impl Store for SqliteStore {
     fn tasks(&self, filter: &TaskFilter) -> Result<Vec<Task>> {
         let mut args: Arguments = Vec::new();
         let sql = task_list_sql(filter, &mut args);
-        let conn = self.read_conn();
         let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
-        Self::read_many(&conn, &sql, &refs)
+        self.record_list("tasks", &sql, &refs, |task: &Task| task.id.to_string())
     }
 
     fn inbox(&self, agent: AgentId, after: u64) -> Result<Vec<InboxItem>> {
@@ -420,12 +422,7 @@ impl Store for SqliteStore {
     }
 
     fn leases(&self) -> Result<Vec<Lease>> {
-        let conn = self.read_conn();
-        Self::read_many(
-            &conn,
-            "SELECT body FROM leases ORDER BY expires_at ASC",
-            &[],
-        )
+        self.record_list("leases", "SELECT agent_id, body FROM leases ORDER BY expires_at ASC", &[], |lease: &Lease| lease.agent_id.to_string())
     }
 
     fn snapshot(&self, id: SnapshotId) -> Result<Option<InvocationSnapshot>> {
@@ -799,7 +796,7 @@ impl Store for SqliteStore {
 /// `agents_created` or `agents_run_created` in order; other filters sort matches.
 pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> String {
     debug_assert!(args.is_empty(), "placeholders are numbered from 1");
-    let mut sql = String::from("SELECT body FROM agents WHERE 1 = 1");
+    let mut sql = String::from("SELECT id, body FROM agents WHERE 1 = 1");
     if let Some(p) = filter.parent {
         args.push(Box::new(p.to_string()));
         sql.push_str(&format!(" AND parent = ?{}", args.len()));
@@ -847,7 +844,7 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
 /// `tasks_created` or `tasks_run_created` in order; other filters sort matches.
 pub(super) fn task_list_sql(filter: &TaskFilter, args: &mut Arguments) -> String {
     debug_assert!(args.is_empty(), "placeholders are numbered from 1");
-    let mut sql = String::from("SELECT body FROM tasks WHERE 1 = 1");
+    let mut sql = String::from("SELECT id, body FROM tasks WHERE 1 = 1");
     if let Some(o) = filter.owner {
         args.push(Box::new(o.to_string()));
         sql.push_str(&format!(" AND owner = ?{}", args.len()));
