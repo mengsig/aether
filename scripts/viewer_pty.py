@@ -106,12 +106,13 @@ def click_documents(master, output, receive, see):
         os.write(master, f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m".encode())
 
     click(b"report.pdf")
-    if os.environ.get("VIEWER_HAS_POPPLER") == "1":
+    expected = os.environ["VIEWER_PDF_SHOWS"]
+    if expected == "pages":
         see("report.pdf · page 1/2")
         os.write(master, b"\x1b[6~")  # PageDown turns the page.
         see("report.pdf · page 2/2")
     else:
-        see("No PDF tools found")
+        see(expected)
     click(b"page.html")
     see("Quarterly report")
     see("Links (not followed)")

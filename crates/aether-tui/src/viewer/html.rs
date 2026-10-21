@@ -23,13 +23,6 @@ const MAX_HTML_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_PNG_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_ROWS: usize = 4000;
 const MAX_LINKS: usize = 200;
-/// The parser's scope checks grow with nesting, so very deep trees would stall the worker.
-const MAX_NESTING: usize = 512;
-/// Elements that never nest, or whose end tag is usually left implied.
-const FLAT_ELEMENTS: &[&[u8]] = &[
-    b"area", b"base", b"br", b"col", b"embed", b"hr", b"img", b"input", b"link", b"meta", b"param",
-    b"source", b"track", b"wbr", b"p", b"li", b"dt", b"dd", b"tr", b"td", b"th", b"option",
-];
 const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Inherited by the sandboxed frame: no scripts, frames, fetches or files; inline styles only.
 const POLICY: &str = "default-src 'none'; img-src data:; style-src 'unsafe-inline' data:; \
@@ -84,13 +77,13 @@ pub(super) fn preview(
 /// Headings, paragraphs, lists, tables and code as styled rows; links are numbered, not followed.
 pub(super) fn text_lines(html: &[u8], width: usize, theme: &Theme) -> Result<Vec<Line<'static>>> {
     assert!(width > 0, "HTML needs a positive width");
-    ensure!(
-        nesting(html) <= MAX_NESTING,
-        "HTML nests deeper than {MAX_NESTING} elements; Alt+E opens it in a browser"
-    );
-    let tagged = html2text::config::rich()
-        .allow_width_overflow()
-        .lines_from_read(html, width)
+    let dom = super::html_dom::parse(html, super::html_dom::PARSE_TIMEOUT)?;
+    let config = html2text::config::rich().allow_width_overflow();
+    let tree = config
+        .dom_to_render_tree(&dom)
+        .context("lay out HTML as text")?;
+    let tagged = config
+        .render_to_lines(tree, width)
         .context("render HTML as text")?;
     let flat: Vec<(usize, &str, &[RichAnnotation])> = tagged
         .iter()
@@ -130,57 +123,6 @@ pub(super) fn text_lines(html: &[u8], width: usize, theme: &Theme) -> Result<Vec
     debug_assert_eq!(links.len(), numbers.len());
     debug_assert!(lines.len() <= MAX_ROWS + MAX_LINKS + 4);
     Ok(lines)
-}
-
-/// An upper bound on element depth from a linear scan; script and style bodies are skipped.
-pub(super) fn nesting(html: &[u8]) -> usize {
-    let (mut depth, mut deepest, mut at) = (0usize, 0usize, 0usize);
-    while let Some(offset) = html[at..].iter().position(|&b| b == b'<') {
-        at += offset + 1;
-        let rest = &html[at..];
-        if rest.starts_with(b"!--") {
-            at += find(rest, b"-->").map_or(rest.len(), |end| end + 3);
-            continue;
-        }
-        let closing = rest.first() == Some(&b'/');
-        let after = &rest[usize::from(closing)..];
-        let name = &after[..after
-            .iter()
-            .take_while(|b| b.is_ascii_alphanumeric())
-            .count()];
-        let is = |element: &[u8]| name.eq_ignore_ascii_case(element);
-        if !name.first().is_some_and(u8::is_ascii_alphabetic) || FLAT_ELEMENTS.iter().any(|e| is(e))
-        {
-            continue;
-        }
-        if is(b"script") || is(b"style") {
-            if !closing {
-                let end = [b"</".as_slice(), name].concat();
-                at += find_ignore_case(rest, &end).unwrap_or(rest.len());
-            }
-            continue;
-        }
-        if closing {
-            depth = depth.saturating_sub(1);
-            continue;
-        }
-        depth += 1;
-        deepest = deepest.max(depth);
-    }
-    debug_assert!(at <= html.len());
-    deepest
-}
-
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
-}
-
-fn find_ignore_case(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window.eq_ignore_ascii_case(needle))
 }
 
 fn link(tags: &[RichAnnotation]) -> Option<&str> {
@@ -344,6 +286,8 @@ pub(super) fn chromium_args(
         "--proxy-bypass-list=<-loopback>",
         "--host-resolver-rules=MAP * ~NOTFOUND",
         "--hide-scrollbars",
+        // A sandboxed frame in its own process may not have painted when the shot is taken.
+        "--disable-features=IsolateSandboxedIframes",
     ];
     let mut args: Vec<OsString> = fixed.iter().map(OsString::from).collect();
     args.push(profile);

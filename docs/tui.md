@@ -896,7 +896,9 @@ The worker uses `pdftoppm` (poppler-utils), or `mutool` (MuPDF) when poppler is
 missing, and counts pages with `pdfinfo` or `mutool info`. The header shows
 `page n/total`. **PgUp/PgDn** turn pages (arrows scroll), and **Alt+T**
 switches between the page image and its `pdftotext` text. Without a renderer the
-pane shows the text, and without PDF tools it names the packages to install.
+pane shows the page text. With `pdftotext` but neither `pdfinfo` nor `mutool`
+it shows the whole document's text, unpaged. Without PDF tools it names the
+packages to install.
 **Alt+E** still opens the file externally.
 
 Pages render only when shown, off the UI thread, one request at a time. Each
@@ -919,8 +921,9 @@ Headings, paragraphs, lists, tables, emphasis and code blocks keep their
 shape. `<script>`, `<style>` and `<head>` content is dropped, and terminal
 controls are stripped. Links are styled and numbered, and listed with their
 targets at the end. They are never fetched or followed. Text stops after
-4,000 rows. Elements nested deeper than 512 levels are refused, because the
-parser slows sharply with depth; **Alt+E** still opens such a file.
+4,000 rows. Mis-nested markup can make an HTML parser build far more than
+the file holds, so parsing stops after 3 s or 200,000 nodes, and a tree
+deeper than 512 elements is refused; **Alt+E** still opens such a file.
 
 **Alt+T** takes a screenshot with headless Chromium (`chromium`,
 `chromium-browser`, `google-chrome` or `google-chrome-stable` on `PATH`) and

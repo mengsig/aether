@@ -23,6 +23,8 @@ const MIN_SIDE: u32 = 200;
 const MAX_SIDE: u32 = 2048;
 const INFO_TIMEOUT: Duration = Duration::from_secs(10);
 const RENDER_TIMEOUT: Duration = Duration::from_secs(20);
+const NO_COUNTER: &str = "pdftoppm needs pdfinfo (poppler-utils) to count pages, or install \
+     MuPDF (mutool). Alt+E opens this file externally.";
 const NO_TOOLS: &str = "No PDF tools found: install poppler-utils (pdftoppm, pdfinfo, pdftotext) \
      or MuPDF (mutool) to preview here. Alt+E opens this file externally.";
 
@@ -31,7 +33,7 @@ const NO_TOOLS: &str = "No PDF tools found: install poppler-utils (pdftoppm, pdf
 pub(crate) struct PdfCopy {
     source: Source,
     dir: tempfile::TempDir,
-    pages: u32,
+    pages: Option<u32>,
 }
 
 impl PdfCopy {
@@ -48,11 +50,17 @@ pub(super) fn preview(
     let tools = documents.tools.clone();
     let renders = tools.pdftoppm.is_some() || tools.mutool.is_some();
     let counts = tools.pdfinfo.is_some() || tools.mutool.is_some();
-    if !counts || !(renders || tools.pdftotext.is_some()) {
+    if !renders && tools.pdftotext.is_none() {
         bail!(NO_TOOLS);
+    }
+    if !counts && tools.pdftotext.is_none() {
+        bail!(NO_COUNTER);
     }
     let (source, file) = Source::open(path.clone(), MAX_PDF_BYTES, "PDF")?;
     let (document, total) = open_copy(documents, source.clone(), file)?;
+    let Some(total) = total else {
+        return unpaged_text(path, &document, request, &tools);
+    };
     let pages = Pages {
         current: request.page.clamp(1, total),
         total,
@@ -75,8 +83,13 @@ pub(super) fn preview(
     picture(path, &image, request, Some(pages))
 }
 
-/// Reuse the private copy of an unchanged document; otherwise copy and count pages.
-fn open_copy(documents: &mut Documents, source: Source, file: File) -> Result<(PathBuf, u32)> {
+/// Reuse the private copy of an unchanged document; otherwise copy it and count its
+/// pages, which needs pdfinfo or mutool.
+fn open_copy(
+    documents: &mut Documents,
+    source: Source,
+    file: File,
+) -> Result<(PathBuf, Option<u32>)> {
     if let Some(copy) = documents.pdf.as_ref().filter(|c| c.source == source) {
         return Ok((copy.document(), copy.pages));
     }
@@ -96,7 +109,7 @@ fn open_copy(documents: &mut Documents, source: Source, file: File) -> Result<(P
     Ok(opened)
 }
 
-fn count_pages(tools: &Tools, document: &Path, dir: &Path) -> Result<u32> {
+fn count_pages(tools: &Tools, document: &Path, dir: &Path) -> Result<Option<u32>> {
     let mut command;
     if let Some(pdfinfo) = &tools.pdfinfo {
         command = Command::new(pdfinfo);
@@ -105,10 +118,10 @@ fn count_pages(tools: &Tools, document: &Path, dir: &Path) -> Result<u32> {
         command = Command::new(mutool);
         command.arg("info").arg(document);
     } else {
-        bail!(NO_TOOLS);
+        return Ok(None);
     }
     let info = run(command, dir, INFO_TIMEOUT)?;
-    parse_page_count(&String::from_utf8_lossy(&info))
+    parse_page_count(&String::from_utf8_lossy(&info)).map(Some)
 }
 
 pub(super) fn parse_page_count(info: &str) -> Result<u32> {
@@ -207,5 +220,37 @@ fn text_page(
         path,
         rows,
         pages: Some(pages),
+    })
+}
+
+/// pdftotext without a page counter: the document's text in one unpaged view.
+fn unpaged_text(
+    path: PathBuf,
+    document: &Path,
+    request: &ReadRequest,
+    tools: &Tools,
+) -> Result<Preview> {
+    let pdftotext = tools.pdftotext.as_ref().context("no pdftotext")?;
+    let mut command = Command::new(pdftotext);
+    command
+        .args(["-layout", "-enc", "UTF-8"])
+        .arg(document)
+        .arg("-");
+    let dir = document.parent().context("PDF copy has no directory")?;
+    let text = run(command, dir, INFO_TIMEOUT)?;
+    let text = String::from_utf8_lossy(&text);
+    let mut rows = vec![Line::styled(
+        "No pdfinfo or mutool: showing the document text.",
+        request.theme.aside(),
+    )];
+    if text.trim().is_empty() {
+        rows.push(Line::from("This PDF has no extractable text."));
+    } else {
+        rows.extend(text_rows(&text, false, request));
+    }
+    Ok(Preview::Text {
+        path,
+        rows,
+        pages: None,
     })
 }

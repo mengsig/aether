@@ -4,6 +4,7 @@ mod documents;
 pub(crate) mod files;
 pub mod graphics;
 mod html;
+mod html_dom;
 mod load;
 mod pdf;
 pub mod probe;

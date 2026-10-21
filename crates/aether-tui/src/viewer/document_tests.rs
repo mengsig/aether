@@ -143,6 +143,42 @@ fn file_types_choose_their_viewer_by_extension() {
 }
 
 #[test]
+fn each_partial_pdf_toolset_shows_what_it_can() {
+    let pdf = fixtures::pdf(&["One", "Two"]);
+    let (_dir, mut app) = setup(&[("report.pdf", &pdf)]);
+    let bin = tempfile::tempdir().unwrap();
+    let text = script(bin.path(), "pdftotext", "printf 'Whole document text\\n'");
+    let render = script(bin.path(), "pdftoppm", "exit 1");
+    let info = script(bin.path(), "pdfinfo", "printf 'Pages: 2\\n'");
+    let mut documents = Documents::new(Tools {
+        pdftotext: Some(text),
+        ..Tools::default()
+    });
+    open(&mut app, &mut documents, "report.pdf");
+    let shown = pane(&app);
+    assert!(shown.contains("Whole document text"), "{shown}");
+    assert!(shown.contains("showing the document text"), "{shown}");
+    assert_eq!(app.viewer.pages(), None);
+    let failures = [
+        (Some(render), None, "pdftoppm needs pdfinfo"),
+        (None, Some(info), "No PDF tools found"),
+    ];
+    for (pdftoppm, pdfinfo, reason) in failures {
+        let mut documents = Documents::new(Tools {
+            pdftoppm,
+            pdfinfo,
+            ..Tools::default()
+        });
+        open(&mut app, &mut documents, "report.pdf");
+        assert!(
+            matches!(&app.viewer.preview, Some(Ok(Preview::Failed { error, .. })) if error.contains(reason)),
+            "{reason}: {:?}",
+            app.viewer.preview
+        );
+    }
+}
+
+#[test]
 fn page_counts_parse_from_poppler_and_mupdf_and_reject_nonsense() {
     assert_eq!(
         pdf::parse_page_count("Title: x\nPages:          12\n").unwrap(),
@@ -366,6 +402,7 @@ fn chromium_runs_offline_on_a_sandboxed_copy() {
         "--user-data-dir=/tmp/shot dir/profile",
         "--window-size=800,600",
         "--screenshot=/tmp/shot dir/shot.png",
+        "--disable-features=IsolateSandboxedIframes",
     ] {
         assert!(args.iter().any(|a| a == flag), "missing {flag}: {args:?}");
     }
@@ -473,34 +510,53 @@ fn installed_poppler_renders_pages_and_extracts_their_text() {
 }
 
 #[test]
-fn nesting_bound_ignores_flat_tags_scripts_and_comments() {
-    assert_eq!(html::nesting(b"<div><p>a<p>b<br><img src=x></div>"), 1);
-    assert_eq!(
-        html::nesting(b"<ul><li>a<li><table><tr><td>1</table></ul>"),
-        2
-    );
-    assert_eq!(
-        html::nesting(b"<script>if (a<b && c<d) x()</SCRIPT><div></div>"),
-        1
-    );
-    assert_eq!(
-        html::nesting(b"<!-- <div><div> --><section><div>x</div></section>"),
-        2
-    );
-    assert_eq!(html::nesting(b"a < b <3 </div></div><span>"), 1);
-    assert_eq!(html::nesting(b"<div"), 1);
-    assert_eq!(html::nesting(b"<!-- unterminated <div>"), 0);
+fn ordinary_html_parses_and_its_depth_is_measured() {
+    let fine = "<div>".repeat(500) + "fine" + &"</div>".repeat(500);
+    let dom = html_dom::parse(fine.as_bytes(), html_dom::PARSE_TIMEOUT).unwrap();
+    // document > html > body > 500 divs > text
+    assert_eq!(html_dom::depth(&dom.document), 503);
+    let dom = html_dom::parse(fixtures::HTML.as_bytes(), html_dom::PARSE_TIMEOUT).unwrap();
+    assert!((4..20).contains(&html_dom::depth(&dom.document)));
 }
 
+#[test]
+fn hostile_html_fails_fast_with_a_visible_reason() {
+    let quick = std::time::Duration::from_millis(500);
+    let unmatched = "<div></bogus>".repeat(100_000) + "hello";
+    let deep = "<div>".repeat(600) + "deep";
+    let mut formatting = String::from("<div>");
+    for id in 0..13 {
+        for name in [
+            "b", "i", "u", "em", "strong", "s", "small", "big", "code", "font", "tt",
+        ] {
+            formatting.push_str(&format!("<{name} id={id}>"));
+        }
+    }
+    formatting.push_str("</div>");
+    formatting.push_str(&"<p>x".repeat(20_000));
+    let cases = [
+        (unmatched.as_str(), "Alt+E opens it in a browser"),
+        (deep.as_str(), "deeper than 512"),
+        (formatting.as_str(), "more than 200000 elements"),
+    ];
+    for (html, reason) in cases {
+        let started = std::time::Instant::now();
+        let Err(error) = html_dom::parse(html.as_bytes(), quick) else {
+            panic!("{reason}: parsed")
+        };
+        assert!(format!("{error:#}").contains(reason), "{error:#}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    }
+}
 #[test]
 fn deeply_nested_or_oversized_html_fails_visibly_and_quickly() {
     let nested = "<div>".repeat(100_000) + "deep" + &"</div>".repeat(100_000);
     let (_dir, mut app) = setup(&[("deep.html", nested.as_bytes())]);
     let started = std::time::Instant::now();
     open(&mut app, &mut Documents::new(Tools::default()), "deep.html");
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(started.elapsed() < html_dom::PARSE_TIMEOUT + std::time::Duration::from_secs(2));
     assert!(
-        matches!(&app.viewer.preview, Some(Ok(Preview::Failed { error, .. })) if error.contains("deeper than 512")),
+        matches!(&app.viewer.preview, Some(Ok(Preview::Failed { error, .. })) if error.contains("Alt+E opens it in a browser")),
         "{:?}",
         app.viewer.preview
     );

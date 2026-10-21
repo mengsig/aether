@@ -136,6 +136,34 @@ fn fixture_event(app: &mut App, cache: &mut ViewCache, event: Event) -> Vec<Effe
 #[test]
 #[cfg(unix)]
 fn viewer_pty() {
+    let tools = crate::viewer::tools::Tools::detect();
+    run_pty(None, pdf_expectation(&tools));
+}
+
+/// Without any PDF tool on PATH the clicked PDF names what to install.
+#[test]
+#[cfg(unix)]
+fn viewer_pty_without_pdf_tools() {
+    let empty = tempfile::tempdir().unwrap();
+    run_pty(Some(empty.path()), "No PDF tools found");
+}
+
+/// poppler without pdftoppm still pages through the text.
+#[test]
+#[cfg(unix)]
+fn viewer_pty_with_text_tools_only() {
+    let tools = crate::viewer::tools::Tools::detect();
+    let (Some(pdfinfo), Some(pdftotext)) = (tools.pdfinfo, tools.pdftotext) else {
+        return;
+    };
+    let bin = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(pdfinfo, bin.path().join("pdfinfo")).unwrap();
+    std::os::unix::fs::symlink(pdftotext, bin.path().join("pdftotext")).unwrap();
+    run_pty(Some(bin.path()), "pages");
+}
+
+/// Drive the fixture in a PTY; `path` replaces PATH for the TUI and its tools.
+fn run_pty(path: Option<&std::path::Path>, pdf_shows: &str) {
     let dir = tempfile::tempdir().unwrap();
     image::RgbaImage::from_fn(8, 8, |x, y| {
         image::Rgba([(x * 31) as u8, (y * 31) as u8, 180, 255])
@@ -146,17 +174,19 @@ fn viewer_pty() {
     let pdf = crate::viewer::fixtures::pdf(&["First page", "Second page"]);
     std::fs::write(dir.path().join("report.pdf"), pdf).unwrap();
     std::fs::write(dir.path().join("page.html"), crate::viewer::fixtures::HTML).unwrap();
-    let tools = crate::viewer::tools::Tools::detect();
-    let poppler = tools.pdftoppm.is_some() && tools.pdfinfo.is_some();
     let script =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/viewer_pty.py");
-    let result = std::process::Command::new("python3")
+    let python = which("python3").expect("python3 on PATH");
+    let mut command = std::process::Command::new(python);
+    command
         .arg(script)
         .arg(std::env::current_exe().unwrap())
         .arg(dir.path())
-        .env("VIEWER_HAS_POPPLER", if poppler { "1" } else { "0" })
-        .output()
-        .unwrap();
+        .env("VIEWER_PDF_SHOWS", pdf_shows);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    let result = command.output().unwrap();
     assert!(
         result.status.success(),
         "{}",
@@ -165,10 +195,30 @@ fn viewer_pty() {
     assert!(String::from_utf8_lossy(&result.stdout).contains("viewer PTY passed"));
 }
 
+fn which(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
 #[test]
 fn unsupported_terminal_restore_does_not_emit_kitty_commands() {
     let mut out = Vec::new();
     write_restore(&mut out, false).unwrap();
     assert!(out.starts_with(b"\x1b[?2026l"));
     assert!(!out.windows(3).any(|bytes| bytes == b"\x1b_G"));
+}
+
+/// What the pane shows for a clicked PDF with the tools on this machine.
+fn pdf_expectation(tools: &crate::viewer::tools::Tools) -> &'static str {
+    let renders = tools.pdftoppm.is_some() || tools.mutool.is_some();
+    let counts = tools.pdfinfo.is_some() || tools.mutool.is_some();
+    let text = tools.pdftotext.is_some();
+    match (renders || text, counts, text) {
+        (false, _, _) => "No PDF tools found",
+        (true, true, _) => "pages",
+        (true, false, true) => "showing the document text",
+        (true, false, false) => "pdftoppm needs pdfinfo",
+    }
 }
