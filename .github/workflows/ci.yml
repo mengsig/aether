@@ -114,6 +114,11 @@ jobs:
           npx playwright install --with-deps chromium
         env:
           PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/crates/aether-remote/web/node_modules/.browsers
+      # The runner image ships Chromium, whose sandbox needs unprivileged user namespaces,
+      # which Ubuntu 24.04's AppArmor forbids; the viewer's isolation test must run for real.
+      - if: steps.scope.outputs.code == 'true' && matrix.stage == 'test'
+        name: allow unprivileged user namespaces for Chromium's sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - if: steps.scope.outputs.code == 'true'
         name: scripts/ci.sh ${{ matrix.stage }}
         run: |

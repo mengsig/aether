@@ -27,6 +27,10 @@ const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Inherited by the sandboxed frame: no scripts, frames, fetches or files; inline styles only.
 const POLICY: &str = "default-src 'none'; img-src data:; style-src 'unsafe-inline' data:; \
      font-src data:";
+/// What Chromium prints when it aborts because its sandbox cannot start.
+const NO_SANDBOX: &str = "No usable sandbox";
+pub(super) const SANDBOX_UNAVAILABLE: &str = "Chromium's sandbox could not start (on Ubuntu 23.10+ \
+     AppArmor blocks unprivileged user namespaces). Alt+E opens it in a browser.";
 
 pub(super) fn preview(
     path: PathBuf,
@@ -210,13 +214,22 @@ pub(super) fn screenshot(chromium: &Path, html: &[u8], window: (u32, u32)) -> Re
     for name in ["HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"] {
         command.env(name, dir.path());
     }
-    run(command, dir.path(), SCREENSHOT_TIMEOUT)?;
+    run(command, dir.path(), SCREENSHOT_TIMEOUT).map_err(explain_failure)?;
     let png = read_bounded(&shot, MAX_PNG_BYTES + 1).context("Chromium wrote no screenshot")?;
     ensure!(
         png.len() as u64 <= MAX_PNG_BYTES,
         "screenshot exceeds 20 MiB"
     );
     Ok(png)
+}
+
+/// A sandbox that cannot start reads as that, not as Chromium's crash dump.
+fn explain_failure(error: anyhow::Error) -> anyhow::Error {
+    if format!("{error:#}").contains(NO_SANDBOX) {
+        anyhow::anyhow!(SANDBOX_UNAVAILABLE)
+    } else {
+        error
+    }
 }
 
 /// The page as `srcdoc` of a sandboxed frame: scripts and meta refresh stay off, the

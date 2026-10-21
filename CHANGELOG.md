@@ -99,6 +99,10 @@ fields are additive. Store schema 26, unchanged.
   (#230). The viewer says plainly when a file is missing, each agent keeps its
   own composer draft, and merged images over the byte limit are refused with
   the draft kept (#242).
+- **HTML screenshots say when Chromium's sandbox cannot start.** Where AppArmor
+  blocks unprivileged user namespaces (Ubuntu 23.10+), the viewer says so in
+  one line instead of showing Chromium's crash dump; the sandbox stays on. CI
+  allows those namespaces so the isolation test really runs there.
 
 ## 1.2.1
 
