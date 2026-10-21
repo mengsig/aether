@@ -408,6 +408,12 @@ fn event_envelope_must_match_its_indexed_identity() {
         ("seq", serde_json::json!(event.seq + 100)),
         ("id", serde_json::json!(aether_core::id::EventId::new())),
         ("agent_id", serde_json::json!(AgentId::new())),
+        (
+            "kind",
+            serde_json::to_value(EventKind::AgentStarted { turn: 1 }).unwrap(),
+        ),
+        ("parent_agent_id", serde_json::json!(AgentId::new())),
+        ("run", serde_json::json!(aether_core::id::RunId::new())),
     ] {
         let mut body = original.clone();
         body[key] = value;

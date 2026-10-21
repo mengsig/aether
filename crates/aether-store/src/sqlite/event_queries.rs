@@ -22,7 +22,7 @@ impl SqliteStore {
             family_page_sql(filter, after, before, limit, ascending, &mut args)
         } else {
             page_sql(
-                "seq, id, agent_id, body",
+                "seq, id, agent_id, body, type, parent_agent_id, run",
                 &predicate,
                 after,
                 before,
@@ -84,13 +84,19 @@ fn read_events(
         let owner: Option<String> = row.get(2)?;
         let body: String = row.get(3)?;
         let event: Event = serde_json::from_str(&body)?;
+        let kind: String = row.get(4)?;
+        let parent: Option<String> = row.get(5)?;
+        let run: Option<String> = row.get(6)?;
         if seq < 0
             || event.seq != seq as u64
             || event.id.to_string() != id
             || event.agent_id.map(|id| id.to_string()) != owner
+            || event.kind.type_name() != kind
+            || event.parent_agent_id.map(|id| id.to_string()) != parent
+            || event.run.map(|id| id.to_string()) != run
         {
             return Err(StoreError::Corrupt(format!(
-                "Event {seq} has a mismatched sequence, identity or owner; run `aether doctor` and `aether diagnose`"
+                "Event {seq} has a mismatched sequence, identity, type or ownership; run `aether doctor` and `aether diagnose`"
             )));
         }
         events.push(event);
@@ -121,7 +127,7 @@ pub(super) fn family_page_sql(
     );
     let order = if ascending { "ASC" } else { "DESC" };
     format!(
-        "SELECT seq, id, agent_id, body FROM events WHERE seq IN (SELECT seq FROM ({own}) UNION SELECT seq FROM ({child})) ORDER BY seq {order} LIMIT ?{}",
+        "SELECT seq, id, agent_id, body, type, parent_agent_id, run FROM events WHERE seq IN (SELECT seq FROM ({own}) UNION SELECT seq FROM ({child})) ORDER BY seq {order} LIMIT ?{}",
         args.len()
     )
 }
