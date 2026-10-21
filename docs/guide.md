@@ -368,7 +368,8 @@ publish (`npm install`, `pip install`, `cargo install`, `apt-get install`,
 ...), `rsync` to a `host:` path, or `/dev/tcp`; `sudo`, `env`, `xargs`, `python
 -m` and similar wrappers are looked through, line continuations are joined, and
 redirections such as `2>/dev/null` are skipped (after a redirection or an
-assignment placed before the command, any later word may be the command). `grep curl file` stays local. A
+assignment placed before the command, any later word may be the command). `grep
+curl file` stays local; a command piece of over 512 words is gated unread. A
 raised command still needs any approval its tool already needed, so `--approval
 mutation` keeps asking too. Network use the text does not show is not caught:
 deliberate obfuscation (`cur?`, `$'\x63url'`), a script or `python -c` that

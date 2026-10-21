@@ -23,9 +23,10 @@
 //! - it names `/dev/tcp/` or `/dev/udp/`.
 //!
 //! Misreads lean towards gating: a quoted separator can make an argument look
-//! like a command. Not seen: deliberate obfuscation (`cur?`, `$'\x63url'`), network use inside scripts, interpreters
-//! (`python -c`), variables holding a command, or builds that fetch
-//! dependencies (`cargo build`).
+//! like a command, and a piece of over 512 words is gated unread. Not seen:
+//! deliberate obfuscation (`cur?`, `$'\x63url'`), network use inside scripts,
+//! interpreters (`python -c`), variables holding a command, or builds that
+//! fetch dependencies (`cargo build`).
 
 use serde_json::Value;
 
@@ -142,6 +143,10 @@ const PACKAGE_MANAGERS: &[(&str, &[&str])] = &[
 
 /// Package managers that install the project's dependencies when run with no subcommand.
 const BARE_INSTALLERS: &[&str] = &["bundle", "yarn"];
+
+/// Longer pieces are gated unread: it bounds the suffix scans (quadratic in
+/// words) and the `python -m` recursion on model-written text.
+const MAX_PIECE_WORDS: usize = 512;
 
 /// Stands in for a redirection operator (`>`, `2>&1`, `<<`, ...) once the
 /// command is flattened; never typed in a real command.
@@ -269,6 +274,9 @@ fn without_redirections<'a>(words: &[&'a str]) -> Vec<&'a str> {
 
 /// One separator-free piece: its command word, with its later words.
 fn piece_touches_network(words: &[&str]) -> bool {
+    if words.len() > MAX_PIECE_WORDS {
+        return true;
+    }
     let Some(start) = words.iter().position(|w| !is_prefix_word(w)) else {
         return false;
     };
@@ -534,6 +542,13 @@ mod tests {
         local("yarn --cwd frontend test");
         local("npm run build");
         local("python script.py");
+    }
+
+    #[test]
+    fn oversized_pieces_are_gated_without_deep_recursion() {
+        networked(&"python -m ".repeat(20_000));
+        networked(&format!("sudo {}", "a ".repeat(100_000)));
+        local(&"echo a; ".repeat(20_000));
     }
 
     #[test]
