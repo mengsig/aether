@@ -191,11 +191,16 @@ fn configure_compaction(
         if let Some(config) = body.get_mut("output_config").and_then(Value::as_object_mut) {
             config.remove("format");
         }
-        if let Some(budget) = body.get_mut("task_budget").and_then(Value::as_object_mut) {
-            budget.remove("remaining");
-        }
     }
     if signed || body.contains_key("compaction") {
+        // The API rejects a remaining task budget alongside summarize compaction.
+        if let Some(budget) = body
+            .get_mut("output_config")
+            .and_then(|config| config.get_mut("task_budget"))
+            .and_then(Value::as_object_mut)
+        {
+            budget.remove("remaining");
+        }
         body.remove("context_management");
         betas.retain(|beta| beta != COMPACTION_BETA);
         betas.push(SUMMARIZE_BETA.to_owned());
@@ -439,7 +444,7 @@ mod tests {
             input_schema: json!({"type": "object"}),
             strict: false,
         }];
-        req.extensions.insert("anthropic.extra_body".into(), json!({"tool_choice": {"type": "any"}, "output_config": {"format": {"type": "json_schema"}}, "task_budget": {"remaining": 5}}));
+        req.extensions.insert("anthropic.extra_body".into(), json!({"tool_choice": {"type": "any"}, "output_config": {"format": {"type": "json_schema"}, "task_budget": {"total": 9, "remaining": 5}}}));
         let mut profile = adaptive_profile();
         profile.compaction_tokens = Some(100_000);
         profile.extensions.insert(
@@ -456,7 +461,9 @@ mod tests {
             assert!(built.body.get(field).is_none(), "{field}");
         }
         assert!(built.body["output_config"].get("format").is_none());
-        assert!(built.body["task_budget"].get("remaining").is_none());
+        let budget = &built.body["output_config"]["task_budget"];
+        assert!(budget.get("remaining").is_none());
+        assert_eq!(budget["total"], 9);
         assert_eq!(built.body["system"][0]["text"], "policy");
         assert_eq!(built.body["tools"][0]["name"], "read");
     }
@@ -467,7 +474,7 @@ mod tests {
             content: content.into(),
             signature: Some(format!("sig-{content}")),
         };
-        let req = ModelRequest::new(
+        let mut req = ModelRequest::new(
             ModelRef::new("anthropic", "claude-opus-5-5"),
             vec![
                 Message::user_text("old history"),
@@ -487,9 +494,18 @@ mod tests {
             aether_core::model::SERVER_COMPACTION_KEY.into(),
             json!(true),
         );
+        req.extensions.insert(
+            "anthropic.extra_body".into(),
+            json!({"output_config": {"task_budget": {"total": 9, "remaining": 5}}}),
+        );
         let built = build(&req, &profile).unwrap();
         assert_eq!(built.betas, [SUMMARIZE_BETA]);
         assert!(built.body.get("context_management").is_none());
+        assert_eq!(
+            built.body["output_config"]["task_budget"],
+            json!({"total": 9}),
+            "a signed replay sends no remaining budget either"
+        );
         assert_eq!(
             built.body["messages"],
             json!([
