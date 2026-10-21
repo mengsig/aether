@@ -23,7 +23,8 @@
 //! - it names `/dev/tcp/` or `/dev/udp/`.
 //!
 //! Misreads lean towards gating: a quoted separator can make an argument look
-//! like a command, and a piece of over 512 words is gated unread. Not seen:
+//! like a command, and a piece of over 512 words or a command of over 64 KiB
+//! is gated unread. Not seen:
 //! deliberate obfuscation (`cur?`, `$'\x63url'`), network use inside scripts,
 //! interpreters (`python -c`), variables holding a command, or builds that
 //! fetch dependencies (`cargo build`).
@@ -70,9 +71,9 @@ const NETWORK_CLIENTS: &[&str] = &[
 
 /// Programs that run the command given in their arguments.
 const WRAPPERS: &[&str] = &[
-    "bash", "builtin", "command", "dash", "doas", "env", "eval", "exec", "find", "fish", "ionice",
-    "ksh", "nice", "nohup", "parallel", "sh", "stdbuf", "sudo", "time", "timeout", "watch",
-    "xargs", "zsh",
+    "bash", "builtin", "command", "corepack", "dash", "doas", "env", "eval", "exec", "find",
+    "fish", "ionice", "ksh", "nice", "nohup", "parallel", "sh", "stdbuf", "sudo", "time",
+    "timeout", "watch", "xargs", "zsh",
 ];
 
 /// Shell keywords that may precede a command word.
@@ -144,9 +145,12 @@ const PACKAGE_MANAGERS: &[(&str, &[&str])] = &[
 /// Package managers that install the project's dependencies when run with no subcommand.
 const BARE_INSTALLERS: &[&str] = &["bundle", "yarn"];
 
-/// Longer pieces are gated unread: it bounds the suffix scans (quadratic in
-/// words) and the `python -m` recursion on model-written text.
+/// Longer pieces are gated unread: it bounds the suffix scans, quadratic in a
+/// piece's words, on model-written text.
 const MAX_PIECE_WORDS: usize = 512;
+
+/// Longer commands are gated unread, so the work per command stays bounded.
+const MAX_COMMAND_BYTES: usize = 64 * 1024;
 
 /// Stands in for a redirection operator (`>`, `2>&1`, `<<`, ...) once the
 /// command is flattened; never typed in a real command.
@@ -177,6 +181,9 @@ pub fn gated_class(declared: SideEffectClass, input: &Value) -> SideEffectClass 
 
 /// Whether any piece of `command` may reach the network (see the module docs).
 pub fn touches_network(command: &str) -> bool {
+    if command.len() > MAX_COMMAND_BYTES {
+        return true;
+    }
     if command.contains("/dev/tcp/") || command.contains("/dev/udp/") {
         return true;
     }
@@ -306,15 +313,26 @@ fn piece_touches_network(words: &[&str]) -> bool {
 
 /// Whether `words`, read as a command and its arguments, reaches the network.
 fn runs_network_program(words: &[&str]) -> bool {
-    let Some((first, args)) = words.split_first() else {
+    let Some((first, mut args)) = words.split_first() else {
         return false;
     };
-    let program = program_name(first);
+    let mut program = program_name(first);
+    // `python [options] -m MODULE args` (or `-mMODULE`) is read as `MODULE args`.
+    while program.starts_with("python") {
+        let Some(flag) = args.iter().position(|a| a.starts_with("-m")) else {
+            return false;
+        };
+        let module = &args[flag]["-m".len()..];
+        let rest = &args[flag + 1..];
+        assert!(rest.len() < args.len(), "each step consumes the flag");
+        (program, args) = match (module, rest.split_first()) {
+            ("", Some((name, after))) => (program_name(name), after),
+            ("", None) => return false,
+            (module, _) => (module, rest),
+        };
+    }
     if NETWORK_CLIENTS.contains(&program) {
         return true;
-    }
-    if program.starts_with("python") {
-        return python_module_touches_network(args);
     }
     if BARE_INSTALLERS.contains(&program) && !names_a_subcommand(args) {
         return true;
@@ -332,20 +350,6 @@ fn runs_network_program(words: &[&str]) -> bool {
         Some((_, subcommands)) => args.iter().any(|a| subcommands.contains(a)),
         None => false,
     }
-}
-
-/// `python [options] -m MODULE args` (or `-mMODULE`), read as `MODULE args`.
-fn python_module_touches_network(args: &[&str]) -> bool {
-    let Some(flag) = args.iter().position(|a| a.starts_with("-m")) else {
-        return false;
-    };
-    let module = &args[flag]["-m".len()..];
-    if module.is_empty() {
-        return runs_network_program(&args[flag + 1..]);
-    }
-    let mut words = vec![module];
-    words.extend_from_slice(&args[flag + 1..]);
-    runs_network_program(&words)
 }
 
 /// Whether some argument is a subcommand: not a flag, nor the value of a
@@ -533,6 +537,8 @@ mod tests {
             "npm x cowsay",
             "bunx cowsay hi",
             "go mod download",
+            "corepack pnpm install",
+            "corepack yarn install",
         ] {
             networked(command);
         }
@@ -548,7 +554,19 @@ mod tests {
     fn oversized_pieces_are_gated_without_deep_recursion() {
         networked(&"python -m ".repeat(20_000));
         networked(&format!("sudo {}", "a ".repeat(100_000)));
-        local(&"echo a; ".repeat(20_000));
+        local(&"echo a; ".repeat(5_000));
+        networked(&"echo a; ".repeat(20_000));
+        let many_pieces = format!("sudo {}x;", "python -m ".repeat(250)).repeat(1200);
+        let started = std::time::Instant::now();
+        networked(&many_pieces);
+        assert!(started.elapsed().as_secs() < 2, "{:?}", started.elapsed());
+        // Just under both caps: every suffix of every piece is read.
+        let piece = format!("sudo {}x;", "python -m git ".repeat(170));
+        let near_cap = piece.repeat(MAX_COMMAND_BYTES / piece.len());
+        assert!(near_cap.len() <= MAX_COMMAND_BYTES);
+        let started = std::time::Instant::now();
+        local(&near_cap);
+        assert!(started.elapsed().as_secs() < 2, "{:?}", started.elapsed());
     }
 
     #[test]
