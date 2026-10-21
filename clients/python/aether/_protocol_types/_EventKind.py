@@ -32,6 +32,7 @@ from ._EventKindBudgetWarning import EventKindBudgetWarning
 from ._EventKindCheckpointCreated import EventKindCheckpointCreated
 from ._EventKindCompactionCompleted import EventKindCompactionCompleted
 from ._EventKindCompactionFailed import EventKindCompactionFailed
+from ._EventKindCompactionNative import EventKindCompactionNative
 from ._EventKindCompactionRequested import EventKindCompactionRequested
 from ._EventKindContextHandoff import EventKindContextHandoff
 from ._EventKindCustom import EventKindCustom
@@ -127,6 +128,7 @@ EventKind = (
     EventKindCompactionRequested |
     EventKindCheckpointCreated |
     EventKindCompactionCompleted |
+    EventKindCompactionNative |
     EventKindCompactionFailed |
     EventKindContextHandoff |
     EventKindMemoryCandidate |

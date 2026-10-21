@@ -4,7 +4,6 @@
 import type {
   AttachmentId,
   ToolResultBlock,
-  compact,
 } from "../../protocol.ts";
 
 /**
@@ -57,11 +56,12 @@ export interface ContentBlockImageRef {
 }
 
 /**
- * A server-side compaction summary (Anthropic `compact-2026-01-12`). It
- * must be replayed verbatim: the API drops everything before it.
+ * A server-side compaction summary, replayed verbatim. Signed summaries
+ * must lead the request, with the summarized history removed.
  */
 export interface ContentBlockCompaction {
   "content": string;
+  "signature"?: string | null;
   "type": "compaction";
 }
 

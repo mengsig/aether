@@ -31,6 +31,7 @@ import type {
   EventKindCheckpointCreated,
   EventKindCompactionCompleted,
   EventKindCompactionFailed,
+  EventKindCompactionNative,
   EventKindCompactionRequested,
   EventKindContextHandoff,
   EventKindCustom,
@@ -127,6 +128,7 @@ export type EventKind =
     EventKindCompactionRequested |
     EventKindCheckpointCreated |
     EventKindCompactionCompleted |
+    EventKindCompactionNative |
     EventKindCompactionFailed |
     EventKindContextHandoff |
     EventKindMemoryCandidate |

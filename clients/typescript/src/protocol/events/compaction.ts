@@ -5,6 +5,7 @@ import type {
   CheckpointId,
   CompactionTrigger,
   ModelRef,
+  compact,
   trigger,
 } from "../../protocol.ts";
 
@@ -22,6 +23,20 @@ export interface EventKindCompactionCompleted {
   "to_seq": number;
   "type": "compaction.completed";
   "version": number;
+}
+
+/**
+ * The engine or provider serving the agent folded the context itself
+ * (Claude Code's `/compact`, Anthropic's server-side summary). No
+ * checkpoint exists: the summary lives in the engine session or the transcript.
+ */
+export interface EventKindCompactionNative {
+  "after_tokens"?: number | null;
+  "automatic"?: boolean;
+  "before_tokens"?: number | null;
+  "duration_ms"?: number | null;
+  "provider": string;
+  "type": "compaction.native";
 }
 
 /**

@@ -4675,10 +4675,16 @@
           "type": "object"
         },
         {
-          "description": "A server-side compaction summary (Anthropic `compact-2026-01-12`). It\nmust be replayed verbatim: the API drops everything before it.",
+          "description": "A server-side compaction summary, replayed verbatim. Signed summaries\nmust lead the request, with the summarized history removed.",
           "properties": {
             "content": {
               "type": "string"
+            },
+            "signature": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "const": "compaction",
@@ -6832,6 +6838,54 @@
             "version",
             "from_seq",
             "to_seq"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The engine or provider serving the agent folded the context itself\n(Claude Code's `/compact`, Anthropic's server-side summary). No\ncheckpoint exists: the summary lives in the engine session or the transcript.",
+          "properties": {
+            "after_tokens": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "automatic": {
+              "default": false,
+              "description": "The engine compacted on its own, not because anyone asked.",
+              "type": "boolean"
+            },
+            "before_tokens": {
+              "description": "Context tokens before and after, as the folder reported them.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "duration_ms": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "provider": {
+              "description": "Provider id of the model that folded it, e.g. `claude-code`.",
+              "type": "string"
+            },
+            "type": {
+              "const": "compaction.native",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "provider"
           ],
           "type": "object"
         },

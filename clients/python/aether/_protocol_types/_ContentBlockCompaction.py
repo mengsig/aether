@@ -8,8 +8,9 @@ from .. import protocol as _protocol
 
 class ContentBlockCompaction(TypedDict, total=False):
     """
-    A server-side compaction summary (Anthropic `compact-2026-01-12`). It
-    must be replayed verbatim: the API drops everything before it.
+    A server-side compaction summary, replayed verbatim. Signed summaries
+    must lead the request, with the summarized history removed.
     """
     content: str
+    signature: str | None  # optional
     type: Literal["compaction"]
