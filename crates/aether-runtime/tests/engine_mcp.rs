@@ -430,6 +430,63 @@ async fn a_bridge_call_passes_the_same_gate_an_api_call_would() {
     }
 }
 
+/// `--no-yolo` gates external effects only. A native shell command that may
+/// reach the network is one, so it is put to a person; a local one is not.
+#[tokio::test]
+async fn a_native_shell_prompt_is_gated_when_its_command_reaches_the_network() {
+    let mut h = harness().await;
+    let _agent = start_agent(&h);
+    let bridge = h.ready.recv().await.expect("the turn started");
+    let prompt = |command: &str| json!({"tool_name": "Bash", "input": {"command": command}, "tool_use_id": "tu-1"});
+
+    let (reply, is_error) = h
+        .runtime
+        .engine_tool(
+            bridge.agent,
+            &bridge.token,
+            "permission".into(),
+            prompt("mkdir out && grep curl notes.md"),
+        )
+        .await
+        .expect("answered");
+    assert!(!is_error, "{reply}");
+    assert!(
+        reply.contains("\"allow\""),
+        "a local command ran ungated: {reply}"
+    );
+    assert!(h.store.pending_approvals().expect("pending").is_empty());
+
+    let calling = {
+        let runtime = h.runtime.clone();
+        let bridge = bridge.clone();
+        let input = prompt("mkdir out && sh -c 'curl -sI https://example.com'");
+        tokio::spawn(async move {
+            runtime
+                .engine_tool(bridge.agent, &bridge.token, "permission".into(), input)
+                .await
+        })
+    };
+    let pending = wait_for_approval(h.store.as_ref()).await;
+    assert_eq!(pending.tool, "Bash");
+    assert_eq!(pending.side_effect, SideEffectClass::External);
+    h.runtime
+        .resolve_approval(
+            pending.id,
+            ApprovalDecision::Denied,
+            Actor::user(),
+            Some("no network".into()),
+            None,
+        )
+        .expect("deny");
+    let (reply, _) = calling.await.expect("join").expect("answered");
+    assert!(reply.contains("\"deny\""), "{reply}");
+    assert!(reply.contains("no network"), "{reply}");
+
+    if let Some(finish) = h.finish.take() {
+        let _ = finish.send(());
+    }
+}
+
 #[tokio::test]
 async fn a_bridged_call_reaches_the_server_as_the_engines_own_agent() {
     // A native engine reaches MCP tools through the bridge, and the server is

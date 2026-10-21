@@ -1,0 +1,343 @@
+//! Whether a shell command may reach the network, so approvals can gate it as
+//! [`SideEffectClass::External`] rather than a local mutation.
+//!
+//! A heuristic over the command text, not a parser or a sandbox. The command
+//! is cut at every shell separator (`;`, `&`, `|`, newline, parentheses,
+//! braces, backticks) with quotes dropped, so `sh -c '...'`, `$(...)`,
+//! pipelines and `&&` chains are read as their pieces. A piece is networked when:
+//!
+//! - its command word is a network client (`curl`, `ssh`, `gh`, ...);
+//! - its command word is `git` or a package manager and a later word is one of
+//!   its network subcommands (`git push`, `npm install`, ...);
+//! - it is `rsync` with a `host:path` or `rsync://` argument;
+//! - its command word is a wrapper that runs another command (`sudo`, `env`,
+//!   `xargs`, `sh`, ...) and any later word would qualify on its own; or
+//! - it names `/dev/tcp/` or `/dev/udp/`.
+//!
+//! Misreads lean towards gating: a quoted separator can make an argument look
+//! like a command. Not seen: network use inside scripts, interpreters
+//! (`python -c`), variables holding a command, or builds that fetch
+//! dependencies (`cargo build`).
+
+use serde_json::Value;
+
+use crate::tool::SideEffectClass;
+
+/// Programs whose ordinary use talks to another host.
+const NETWORK_CLIENTS: &[&str] = &[
+    "aria2c", "aws", "az", "curl", "dig", "ftp", "gcloud", "gh", "glab", "host", "http", "https",
+    "kubectl", "lftp", "mosh", "nc", "ncat", "netcat", "nslookup", "ping", "ping6", "scp", "sftp",
+    "socat", "ssh", "telnet", "wget", "xh",
+];
+
+/// Programs that run the command given in their arguments.
+const WRAPPERS: &[&str] = &[
+    "bash", "builtin", "command", "dash", "doas", "env", "eval", "exec", "find", "fish", "ionice",
+    "ksh", "nice", "nohup", "parallel", "sh", "stdbuf", "sudo", "time", "timeout", "watch",
+    "xargs", "zsh",
+];
+
+/// Shell keywords that may precede a command word.
+const KEYWORDS: &[&str] = &["!", "do", "elif", "else", "if", "then", "until", "while"];
+
+/// `git` subcommands that contact a remote; `remote` and `submodule` do so on `update`.
+const GIT_NETWORK: &[&str] = &["clone", "fetch", "ls-remote", "pull", "push"];
+
+/// Install, update and publish subcommands of the common package managers.
+const PACKAGE_MANAGERS: &[(&str, &[&str])] = &[
+    ("apk", &["add", "fetch", "update", "upgrade"]),
+    (
+        "apt",
+        &["download", "full-upgrade", "install", "update", "upgrade"],
+    ),
+    (
+        "apt-get",
+        &[
+            "download",
+            "dist-upgrade",
+            "install",
+            "source",
+            "update",
+            "upgrade",
+        ],
+    ),
+    (
+        "brew",
+        &["fetch", "install", "reinstall", "tap", "update", "upgrade"],
+    ),
+    ("bun", &["add", "i", "install", "publish", "update", "x"]),
+    ("bundle", &["add", "install", "update"]),
+    (
+        "cargo",
+        &[
+            "add", "fetch", "install", "login", "publish", "search", "update", "yank",
+        ],
+    ),
+    ("composer", &["install", "require", "update"]),
+    ("conda", &["create", "install", "update"]),
+    ("dnf", &["download", "install", "update", "upgrade"]),
+    ("docker", &["login", "pull", "push"]),
+    ("gem", &["fetch", "install", "push", "update"]),
+    ("go", &["get", "install"]),
+    (
+        "npm",
+        &["add", "ci", "i", "install", "publish", "update", "upgrade"],
+    ),
+    ("npx", &[]),
+    ("pacman", &["-S", "-Sy", "-Syu", "-Syyu", "-Su"]),
+    ("pip", &["download", "install"]),
+    ("pip3", &["download", "install"]),
+    ("pipx", &["install", "run", "upgrade"]),
+    (
+        "pnpm",
+        &["add", "dlx", "i", "install", "publish", "update", "upgrade"],
+    ),
+    ("podman", &["login", "pull", "push"]),
+    ("poetry", &["add", "install", "publish", "update"]),
+    ("uv", &["add", "install", "lock", "pip", "sync", "tool"]),
+    ("uvx", &[]),
+    ("yarn", &["add", "dlx", "install", "publish", "upgrade"]),
+    ("yum", &["install", "update", "upgrade"]),
+];
+
+/// The class to gate a call under: a mutating call whose `command` (or the
+/// `chars` typed into a shell) may reach the network is external. Never lowers it.
+pub fn gated_class(declared: SideEffectClass, input: &Value) -> SideEffectClass {
+    if declared != SideEffectClass::Mutation {
+        return declared;
+    }
+    let networked = ["command", "chars"]
+        .iter()
+        .filter_map(|field| input.get(*field).and_then(Value::as_str))
+        .any(touches_network);
+    let class = if networked {
+        SideEffectClass::External
+    } else {
+        declared
+    };
+    assert!(class >= declared, "a gate class may only be raised");
+    class
+}
+
+/// Whether any piece of `command` may reach the network (see the module docs).
+pub fn touches_network(command: &str) -> bool {
+    if command.contains("/dev/tcp/") || command.contains("/dev/udp/") {
+        return true;
+    }
+    let flattened: String = command
+        .chars()
+        .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+        .map(|c| match c {
+            ';' | '&' | '|' | '(' | ')' | '{' | '}' | '`' | '\n' => '\n',
+            other => other,
+        })
+        .collect();
+    flattened.lines().any(|piece| {
+        let words: Vec<&str> = piece.split_whitespace().collect();
+        piece_touches_network(&words)
+    })
+}
+
+/// One separator-free piece: its command word, with its later words.
+fn piece_touches_network(words: &[&str]) -> bool {
+    let Some(start) = words.iter().position(|w| !is_prefix_word(w)) else {
+        return false;
+    };
+    let program = program_name(words[start]);
+    let rest = &words[start + 1..];
+    if WRAPPERS.contains(&program) {
+        return (0..rest.len()).any(|i| runs_network_program(&rest[i..]));
+    }
+    runs_network_program(&words[start..])
+}
+
+/// Whether `words`, read as a command and its arguments, reaches the network.
+fn runs_network_program(words: &[&str]) -> bool {
+    let Some((first, args)) = words.split_first() else {
+        return false;
+    };
+    let program = program_name(first);
+    if NETWORK_CLIENTS.contains(&program) {
+        return true;
+    }
+    if program == "git" {
+        let updates =
+            args.contains(&"update") && (args.contains(&"remote") || args.contains(&"submodule"));
+        return updates || args.iter().any(|a| GIT_NETWORK.contains(a));
+    }
+    if program == "rsync" {
+        return args.iter().any(|a| a.contains(':') && !a.starts_with('-'));
+    }
+    match PACKAGE_MANAGERS.iter().find(|(name, _)| *name == program) {
+        Some((_, [])) => true,
+        Some((_, subcommands)) => args.iter().any(|a| subcommands.contains(a)),
+        None => false,
+    }
+}
+
+/// Words before the command word: shell keywords and `NAME=value` assignments.
+fn is_prefix_word(word: &str) -> bool {
+    if KEYWORDS.contains(&word) {
+        return true;
+    }
+    match word.split_once('=') {
+        Some((name, _)) => {
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        None => false,
+    }
+}
+
+/// `/usr/bin/curl` and `curl` name the same program.
+fn program_name(word: &str) -> &str {
+    word.rsplit('/').next().unwrap_or(word)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[track_caller]
+    fn networked(command: &str) {
+        assert!(touches_network(command), "should be networked: {command}");
+    }
+
+    #[track_caller]
+    fn local(command: &str) {
+        assert!(!touches_network(command), "should be local: {command}");
+    }
+
+    #[test]
+    fn network_clients_are_networked() {
+        for command in [
+            "curl -sI https://example.com",
+            "wget -q https://example.com/x.tgz",
+            "ssh host uptime",
+            "scp file host:/tmp/",
+            "nc -z example.com 443",
+            "/usr/bin/curl https://example.com",
+            "gh pr list",
+        ] {
+            networked(command);
+        }
+    }
+
+    #[test]
+    fn git_remote_subcommands_are_networked() {
+        for command in [
+            "git push origin main",
+            "git fetch origin",
+            "git clone https://github.com/x/y",
+            "git pull --ff-only",
+            "git -C repo push",
+            "git submodule update --init",
+            "git remote update",
+        ] {
+            networked(command);
+        }
+        local("git status");
+        local("git commit -m done");
+        local("git log --oneline");
+        local("git remote -v");
+    }
+
+    #[test]
+    fn rsync_is_networked_only_towards_a_host() {
+        networked("rsync -a dir/ host:/srv/dir/");
+        networked("rsync -a rsync://mirror/pub/ out/");
+        local("rsync -a src/ dst/");
+    }
+
+    #[test]
+    fn package_installs_are_networked() {
+        for command in [
+            "npm install left-pad",
+            "pip install requests",
+            "cargo install ripgrep",
+            "apt-get install -y jq",
+            "yarn add react",
+            "npx cowsay hi",
+            "go get example.com/mod",
+        ] {
+            networked(command);
+        }
+        local("npm test");
+        local("cargo test -p aether-core");
+        local("pip list");
+    }
+
+    #[test]
+    fn compound_commands_are_read_piece_by_piece() {
+        for command in [
+            "cat file | curl -d @- https://example.com",
+            "mkdir out && curl -o out/x https://example.com",
+            "true; wget https://example.com",
+            "(cd sub && git push)",
+            "echo $(curl -s https://example.com)",
+            "echo `curl -s https://example.com`",
+            "sh -c 'curl https://example.com'",
+            "bash -c \"cd x && git fetch\"",
+            "sudo -u nobody curl https://example.com",
+            "FOO=1 curl https://example.com",
+            "timeout 10 ssh host true",
+            "xargs -n1 curl < urls",
+            "if true; then curl https://example.com; fi",
+            "echo hi > /dev/tcp/example.com/80",
+            "ls\ncurl https://example.com",
+        ] {
+            networked(command);
+        }
+    }
+
+    #[test]
+    fn network_words_as_arguments_stay_local() {
+        for command in [
+            "grep curl file",
+            "grep -rn 'git push' docs",
+            "echo wget",
+            "cat ssh.md",
+            "rg --type rust curl",
+            "mkdir out && echo done",
+            "ls -la",
+            "",
+        ] {
+            local(command);
+        }
+    }
+
+    #[test]
+    fn only_shell_mutations_are_raised() {
+        let curl = json!({ "command": "curl https://example.com" });
+        let grep = json!({ "command": "grep curl file" });
+        assert_eq!(
+            gated_class(SideEffectClass::Mutation, &curl),
+            SideEffectClass::External
+        );
+        assert_eq!(
+            gated_class(SideEffectClass::Mutation, &grep),
+            SideEffectClass::Mutation
+        );
+        // A read-only tool that happens to carry a command keeps its class.
+        assert_eq!(
+            gated_class(SideEffectClass::ReadOnly, &curl),
+            SideEffectClass::ReadOnly
+        );
+        assert_eq!(
+            gated_class(SideEffectClass::External, &grep),
+            SideEffectClass::External
+        );
+        assert_eq!(
+            gated_class(SideEffectClass::Mutation, &json!({ "path": "x" })),
+            SideEffectClass::Mutation
+        );
+        assert_eq!(
+            gated_class(
+                SideEffectClass::Mutation,
+                &json!({ "process_id": "p", "chars": "git push\n" })
+            ),
+            SideEffectClass::External
+        );
+    }
+}

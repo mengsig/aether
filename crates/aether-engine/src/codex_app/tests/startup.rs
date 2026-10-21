@@ -596,7 +596,8 @@ async fn thread_started_offline_and_resumed_with_network_is_told_network_is_back
     // thread/resume returns each turn's user inputs, oldest first.
     let mut history = vec![offline_input];
     for expect_note in [true, false] {
-        let mut t = turn(Some("th"), false);
+        // Ungated: a gated network-allowed turn sends its own note instead.
+        let mut t = turn(Some("th"), true);
         t.mcp = None;
         let turns: Vec<_> = history
             .iter()

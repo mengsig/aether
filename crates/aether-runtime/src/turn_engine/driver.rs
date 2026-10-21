@@ -1,4 +1,6 @@
 //! Native engine driver.
+use aether_core::shell_network::gated_class;
+
 use super::{
     Arc, BACKGROUND_GRACE, BTreeSet, BusMessage, CancellationToken, Commit, ContentBlock, Crossed,
     DeltaKind, Engine, EngineEvent, EngineOutcome, EngineRequest, EngineTurn, EventKind,
@@ -432,7 +434,7 @@ pub(super) async fn drive(
                             Verdict { allow: false, message: Some(TURN_IS_OVER.to_owned()) }
                         }
                         None => {
-                            let class = side_effect.unwrap_or_else(|| side_effect_of(&tool));
+                            let class = side_effect.unwrap_or_else(|| gated_class(side_effect_of(&tool), &tool_input));
                             permission_verdict(
                                 runtime,
                                 ctx,

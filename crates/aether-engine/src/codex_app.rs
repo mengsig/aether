@@ -54,6 +54,10 @@ const LOOPBACK_MIN_VERSION: EngineVersion = EngineVersion::new(0, 159, 0);
 /// Turn input, not developer instructions: those outlive the turn on resume.
 const LOOPBACK_INSTRUCTIONS: &str = "Network for this turn: offline sandbox. Only loopback (127.0.0.1, ::1) is reachable, so local servers work; external hosts and DNS are not, and approval or escalation does not grant network. Any \"network access is enabled\" note means loopback only, until a later turn's network note says otherwise.";
 
+/// A network-allowed turn under approvals: hosts are reached only through an
+/// escalation, which the runtime gates as an external effect.
+const GATED_NETWORK_INSTRUCTIONS: &str = "Network for this turn: commands run in a sandbox without network, loopback included. To reach a host or a local server, request escalation for that command; it runs once approved.";
+
 /// Supersedes [`LOOPBACK_INSTRUCTIONS`] on a later network-allowed turn of the same thread.
 const NETWORK_RESTORED_INSTRUCTIONS: &str = "Network for this turn: external hosts and DNS are reachable; any earlier offline-sandbox or loopback-only note no longer applies.";
 
@@ -261,11 +265,13 @@ pub fn steer_params(thread_id: &str, turn_id: &str, message: &crate::EngineInput
 /// every extra directory writable and network access matching the agent scope.
 ///
 /// An omitted model or effort leaves the native thread default in effect.
-/// `loopback_note_in_effect`: the thread's latest network note is the offline one.
+/// `loopback_note_in_effect`: the thread's latest network note is an offline or gated one.
 pub fn turn_params(turn: &EngineTurn, thread_id: &str, loopback_note_in_effect: bool) -> Value {
     let mut input = Vec::new();
     if loopback_sandboxed(turn) {
         input.push(json!({ "type": "text", "text": LOOPBACK_INSTRUCTIONS }));
+    } else if network_gated(turn) {
+        input.push(json!({ "type": "text", "text": GATED_NETWORK_INSTRUCTIONS }));
     } else if loopback_note_in_effect && turn.network_access && !turn.summary_only {
         input.push(json!({ "type": "text", "text": NETWORK_RESTORED_INSTRUCTIONS }));
     }
@@ -293,11 +299,11 @@ pub fn turn_params(turn: &EngineTurn, thread_id: &str, loopback_note_in_effect: 
             .collect();
         let environments = loopback_environments(turn);
         // Codex's seccomp would also block loopback; bwrap's namespace and socket
-        // filter deny egress instead.
+        // filter deny egress instead. A gated turn reaches hosts only by escalation.
         params["sandboxPolicy"] = json!({
             "type": "workspaceWrite",
             "writableRoots": roots,
-            "networkAccess": turn.network_access || environments.is_some(),
+            "networkAccess": (turn.network_access && !network_gated(turn)) || environments.is_some(),
         });
         // Resumed threads forget sticky environments, so every turn selects it. This
         // experimental field is checked by `thread/read` after turn/start; see LOOPBACK_MIN_VERSION.
@@ -314,8 +320,14 @@ fn loopback_sandboxed(turn: &EngineTurn) -> bool {
     cfg!(target_os = "linux") && !turn.network_access && !turn.summary_only
 }
 
+/// Whether the agent's network is behind approvals: Codex runs commands
+/// without network, so reaching a host takes an escalation the runtime gates.
+fn network_gated(turn: &EngineTurn) -> bool {
+    turn.network_access && !turn.bypass_permissions && !turn.summary_only
+}
+
 /// Whether the latest network note among `thread/resume`'s chronological turns is
-/// the offline one. Missing history counts as yes: the correction is true on any allowed turn.
+/// an offline or gated one. Missing history counts as yes: the correction is true on any allowed turn.
 fn loopback_note_in_effect(thread: &Value) -> bool {
     let Some(turns) = thread["turns"].as_array() else {
         return true;
@@ -328,8 +340,17 @@ fn loopback_note_in_effect(thread: &Value) -> bool {
         .filter_map(|item| item["content"].as_array())
         .flatten()
         .filter_map(|input| input["text"].as_str())
-        .filter(|text| [LOOPBACK_INSTRUCTIONS, NETWORK_RESTORED_INSTRUCTIONS].contains(text));
-    notes.next_back() == Some(LOOPBACK_INSTRUCTIONS)
+        .filter(|text| {
+            [
+                LOOPBACK_INSTRUCTIONS,
+                GATED_NETWORK_INSTRUCTIONS,
+                NETWORK_RESTORED_INSTRUCTIONS,
+            ]
+            .contains(text)
+        });
+    notes
+        .next_back()
+        .is_some_and(|note| note != NETWORK_RESTORED_INSTRUCTIONS)
 }
 
 /// The sole environment a loopback-sandboxed turn may run commands in.

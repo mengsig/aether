@@ -1,4 +1,6 @@
 //! Native engine bridge.
+use aether_core::shell_network::gated_class;
+
 use super::{
     ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalStatus, Arc, BusMessage,
     CancellationToken, Commit, EngineRequest, EventKind, Gate, Mutation, ResourceKey, Result,
@@ -65,7 +67,7 @@ pub(super) async fn handle_request(
                 // other: an MCP server's mutation needs the same answer a
                 // built-in one would, matched against the same resources and
                 // argument a remembered rule would see on the API path.
-                let class = tool.descriptor().side_effect;
+                let class = gated_class(tool.descriptor().side_effect, &req.input);
                 let gate = GateSubject {
                     native_call: None,
                     provider_call_id: None,
@@ -190,7 +192,7 @@ async fn decide_permission(
         .unwrap_or("tool")
         .to_owned();
     let tool_input = input.get("input").cloned().unwrap_or(json!({}));
-    let class = side_effect_of(&tool_name);
+    let class = gated_class(side_effect_of(&tool_name), &tool_input);
     let verdict = permission_verdict(
         runtime,
         ctx,
@@ -277,15 +279,20 @@ impl<'a> GateSubject<'a> {
 /// reach the engine through the bridge under an `mcp__aether__` prefix, so
 /// their real descriptor is what the log must carry; only a tool Aether does
 /// not know falls back to inferring from the name.
-pub(super) fn engine_call_class(runtime: &Arc<Runtime>, name: &str) -> SideEffectClass {
+pub(super) fn engine_call_class(
+    runtime: &Arc<Runtime>,
+    name: &str,
+    input: &Value,
+) -> SideEffectClass {
     // The contract tells the model both forms (`aether-engine`'s
     // `contract.rs`), so the dotted one has to be stripped too or the class
     // the gate used and the class the log records disagree.
     let bare = bridge_tool_name(name);
-    match runtime.tools.get(bare) {
+    let declared = match runtime.tools.get(bare) {
         Some(tool) => tool.descriptor().side_effect,
         None => side_effect_of(name),
-    }
+    };
+    gated_class(declared, input)
 }
 
 pub(super) fn bridge_tool_name(name: &str) -> &str {
