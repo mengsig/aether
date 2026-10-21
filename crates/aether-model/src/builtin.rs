@@ -448,6 +448,7 @@ fn claude_code() -> ProviderDef {
             logout: vec!["auth".into(), "logout".into()],
             logged_in_markers: vec!["\"loggedIn\": true".into(), "\"loggedIn\":true".into()],
             label: "Claude subscription via Claude Code".into(),
+            credential_file: Some("~/.claude/.credentials.json".into()),
         }),
         headers: BTreeMap::new(),
         models: vec![
@@ -527,6 +528,7 @@ fn codex_cli() -> ProviderDef {
             logout: vec!["logout".into()],
             logged_in_markers: vec!["Logged in".into()],
             label: "ChatGPT subscription via Codex".into(),
+            credential_file: None,
         }),
         headers: BTreeMap::new(),
         models: codex_models(),

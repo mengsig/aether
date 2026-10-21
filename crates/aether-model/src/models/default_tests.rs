@@ -26,6 +26,7 @@ fn configured(
                 logout: vec![],
                 logged_in_markers: vec!["authenticated".into()],
                 label: "isolated test CLI".into(),
+                credential_file: None,
             };
             (
                 id.into(),
