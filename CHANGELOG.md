@@ -6,19 +6,22 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
-### Fixed
+## 1.2.2
 
-- **Daemon recovery and diagnostics.** Damaged agent, task and lease records
-  are preserved with actionable quarantine notices. Recovery and background
-  task failures no longer stop unrelated work or the local serving loop.
-  `aether status` and `aether doctor` show recovery problems and the latest
-  persistent panic or fatal-error record; a prior crash is announced once
-  at the next startup.
-- **Resource hygiene (#240).** Workspace GC no longer keeps reporting a
-  discarded workspace whose directory is gone, and `aether send` warns on
-  stderr above 256 KiB and recommends an artifact; the message is still sent.
-  Storage GC also removes marked scratch directories of permanently final
-  agents while retaining live, resumable, and unproven owners.
+Released 2026-10-21. A patch release from an end-to-end pass over Aether:
+Claude agents get their real 1M window and compact at 256K, `/compact` asks
+the engine or API to fold its own context, `--no-yolo` gates shell commands
+that reach the network, the daemon isolates damaged records instead of
+stopping, `aether` offers a newer release on launch, and the TUI viewer
+reads PDF and HTML. Protocol version 24, unchanged; the new events and status
+fields are additive. Store schema 26, unchanged.
+
+### Before updating
+
+- Restart the daemon after the update (`aether stop`, then `aether`). A daemon
+  still running 1.2.1 keeps its old context windows, compaction and approval
+  gating until it restarts. From 1.2.2 on, a yes to the update offer on launch
+  does this for you.
 
 ### Added
 
@@ -26,15 +29,76 @@ release is also the text of its GitHub release.
   startup (bounded, cached for 6 hours, silent offline) and asks `Update and
   restart now? [Y/n]`; a yes runs `aether update`, stops the daemon and starts
   the new build. `s` skips a version. Off with `[update] check = false` or
-  `AETHER_MANAGED_BY`.
-
+  `AETHER_MANAGED_BY` (#245).
+- **`/compact` asks the engine to fold its own context.** On a Claude Code
+  agent it resumes the session with `/compact` and a short brief, keeps the
+  session and records the fold as `compaction.native` with its token counts
+  and time; a direct Anthropic agent asks the API's summarize compaction and
+  replays the signed block it returns. Other agents keep Aether's compactor,
+  and any engine failure falls back to it. `aether compact` now waits for the
+  outcome of its own request, prints who folded the context, and exits 1 with
+  what to do next on failure (`--no-wait` keeps the old behaviour) (#244).
 - **PDF and HTML in the file viewer.** PDF pages render through `pdftoppm` or
   `mutool` with a page counter. PgUp/PgDn turn pages, and Alt+T shows the page
   text from `pdftotext`, which is also the fallback without a renderer. HTML
   shows as readable text (headings, lists, tables, code, numbered links that
-  are never followed; scripts and styles dropped). Alt+T takes a screenshot
-  with headless Chromium, offline and sandboxed with no access to local
-  files. Alt+E opens the file in a browser.
+  are never followed; scripts and styles dropped), with parsing bounded in
+  time, nodes and depth. Alt+T takes a screenshot with headless Chromium,
+  offline and sandboxed with no access to local files. Alt+E opens the file
+  in a browser (#231).
+- **A host welcome block.** The optional `welcome` field of a host-commands
+  file is shown in the TUI header in place of the aether brand and puts the
+  host's commands first in the `/` palette and `?` help; a malformed welcome
+  drops only that block (mengsig/archon#210).
+
+### Changed
+
+- **Claude models carry their real 1M context window** and compact at an
+  absolute token count, 256K for Claude and 272K for Codex by default,
+  configurable per provider or model with `[models.compaction_tokens]` and
+  clamped to the window. Claude Code gets `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
+  and Codex `model_auto_compact_token_limit` so their own auto-compact fires
+  there, and the direct Anthropic provider uses server-side compaction. The
+  inspector bar, the footer, `inspect_state` and `list_models` measure
+  context against that threshold rather than the window (#244).
+- **First run picks the engine's own default model**, says what to run when
+  no engine is signed in, and shows the price up front (#236).
+
+### Fixed
+
+- **`--no-yolo` gates shell commands that reach the network.** A shell call
+  that runs a network client, a remote git subcommand, a package install,
+  rsync to a host or `/dev/tcp`, anywhere in a pipeline, chain, subshell or
+  `sh -c`, now asks as an external effect on the API path, the bridge and
+  Claude Code's permission prompts; gated Codex turns run with sandbox network
+  off. The heuristic only ever raises a call's class, and very large commands
+  are gated unread (see [the guide](https://github.com/mengsig/aether/blob/main/docs/guide.md))
+  (#238).
+- **Daemon recovery and diagnostics.** Damaged agent, task and lease records
+  are preserved with actionable quarantine notices. Recovery and background
+  task failures no longer stop unrelated work or the local serving loop, and
+  garbage collection waits while an owner is unknown. `aether status` and
+  `aether doctor` show recovery problems and the latest persistent panic or
+  fatal-error record; a prior crash is announced once at the next startup.
+- **Crash recovery hints.** When the run subscription ends before an outcome,
+  `aether run` names the agent and how to continue it, and a resumed agent is
+  told to issue one blocking call for a wait instead of polling (#241).
+- **Auth and doctor agree with what the daemon can run.** An expired Claude
+  login without a refresh token is no longer reported ready (the check follows
+  `CLAUDE_CONFIG_DIR`), and `aether doctor` names engines it finds that the
+  daemon's PATH cannot reach (#237).
+- **CLI consistency.** A `not_found` error code, unique live agent names,
+  durations for `--every`, finished schedules found by name, and the agent
+  as a positional argument of `aether events` (#239).
+- **Resource hygiene.** Workspace GC no longer keeps reporting a discarded
+  workspace whose directory is gone, and `aether send` warns on stderr above
+  256 KiB and recommends an artifact; the message is still sent. Storage GC
+  also removes marked scratch directories of permanently final agents while
+  retaining live, resumable, and unproven owners (#240).
+- **TUI.** Long cell text in Markdown tables wraps instead of being cut off
+  (#230). The viewer says plainly when a file is missing, each agent keeps its
+  own composer draft, and merged images over the byte limit are refused with
+  the draft kept (#242).
 
 ## 1.2.1
 
