@@ -435,6 +435,10 @@ mod tests {
         // Concurrent scoped subscribers race on tracing's callsite filtering.
         static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
         let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        // With one dispatcher, tracing-core registers a callsite against the hitting thread's
+        // default only, so a concurrent test without one caches "never"; a second keeps it honest.
+        static SECOND: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+        SECOND.get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::new()));
         let sink = Sink::default();
         let writer = sink.clone();
         let subscriber = tracing_subscriber::fmt()
