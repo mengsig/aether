@@ -33,9 +33,38 @@ use crate::tool::SideEffectClass;
 
 /// Programs whose ordinary use talks to another host.
 const NETWORK_CLIENTS: &[&str] = &[
-    "aria2c", "aws", "az", "curl", "dig", "ftp", "gcloud", "gh", "glab", "host", "http", "https",
-    "kubectl", "lftp", "mosh", "nc", "ncat", "netcat", "nslookup", "ping", "ping6", "scp", "sftp",
-    "socat", "ssh", "telnet", "wget", "xh",
+    "aria2c",
+    "aws",
+    "az",
+    "curl",
+    "dig",
+    "ftp",
+    "gcloud",
+    "gh",
+    "glab",
+    "host",
+    "http",
+    "https",
+    "kubectl",
+    "lftp",
+    "mosh",
+    "nc",
+    "ncat",
+    "netcat",
+    "nmap",
+    "nslookup",
+    "ping",
+    "ping6",
+    "rclone",
+    "scp",
+    "sftp",
+    "socat",
+    "ssh",
+    "telnet",
+    "traceroute",
+    "wget",
+    "whois",
+    "xh",
 ];
 
 /// Programs that run the command given in their arguments.
@@ -75,6 +104,7 @@ const PACKAGE_MANAGERS: &[(&str, &[&str])] = &[
     ),
     ("bun", &["add", "i", "install", "publish", "update", "x"]),
     ("bundle", &["add", "install", "update"]),
+    ("bunx", &[]),
     (
         "cargo",
         &[
@@ -86,10 +116,12 @@ const PACKAGE_MANAGERS: &[(&str, &[&str])] = &[
     ("dnf", &["download", "install", "update", "upgrade"]),
     ("docker", &["login", "pull", "push"]),
     ("gem", &["fetch", "install", "push", "update"]),
-    ("go", &["get", "install"]),
+    ("go", &["download", "get", "install"]),
     (
         "npm",
-        &["add", "ci", "i", "install", "publish", "update", "upgrade"],
+        &[
+            "add", "ci", "exec", "i", "install", "publish", "update", "upgrade", "x",
+        ],
     ),
     ("npx", &[]),
     ("pacman", &["-S", "-Sy", "-Syu", "-Syyu", "-Su"]),
@@ -274,12 +306,9 @@ fn runs_network_program(words: &[&str]) -> bool {
         return true;
     }
     if program.starts_with("python") {
-        return match args.iter().position(|a| *a == "-m") {
-            Some(flag) => runs_network_program(&args[flag + 1..]),
-            None => false,
-        };
+        return python_module_touches_network(args);
     }
-    if BARE_INSTALLERS.contains(&program) && args.iter().all(|a| a.starts_with('-')) {
+    if BARE_INSTALLERS.contains(&program) && !names_a_subcommand(args) {
         return true;
     }
     if program == "git" {
@@ -295,6 +324,29 @@ fn runs_network_program(words: &[&str]) -> bool {
         Some((_, subcommands)) => args.iter().any(|a| subcommands.contains(a)),
         None => false,
     }
+}
+
+/// `python [options] -m MODULE args` (or `-mMODULE`), read as `MODULE args`.
+fn python_module_touches_network(args: &[&str]) -> bool {
+    let Some(flag) = args.iter().position(|a| a.starts_with("-m")) else {
+        return false;
+    };
+    let module = &args[flag]["-m".len()..];
+    if module.is_empty() {
+        return runs_network_program(&args[flag + 1..]);
+    }
+    let mut words = vec![module];
+    words.extend_from_slice(&args[flag + 1..]);
+    runs_network_program(&words)
+}
+
+/// Whether some argument is a subcommand: not a flag, nor the value of a
+/// preceding `--long` flag (`yarn --cwd web` still runs the default install).
+fn names_a_subcommand(args: &[&str]) -> bool {
+    args.iter().enumerate().any(|(i, arg)| {
+        let after_long_flag = i > 0 && args[i - 1].starts_with("--") && !args[i - 1].contains('=');
+        !arg.starts_with('-') && !after_long_flag
+    })
 }
 
 /// Words before the command word: shell keywords and `NAME=value` assignments.
@@ -467,11 +519,20 @@ mod tests {
             "pip3.12 install requests",
             "/usr/bin/python3 -m pip install requests",
             "python -m pip download x",
+            "python -mpip install requests",
+            "yarn --cwd frontend",
+            "npm exec --yes --package cowsay -- cowsay hello",
+            "npm x cowsay",
+            "bunx cowsay hi",
+            "go mod download",
         ] {
             networked(command);
         }
         local("yarn test");
         local("python3 -m pytest");
+        local("python3 -mpytest");
+        local("yarn --cwd frontend test");
+        local("npm run build");
         local("python script.py");
     }
 
