@@ -38,7 +38,8 @@ fn load(app: &mut crate::App, effects: Vec<Effect>) {
     let Effect::PreviewFile(request) = &effects[0] else {
         panic!("expected a preview effect")
     };
-    let result = read(request).map_err(|e| format!("{e:#}"));
+    let mut documents = Documents::new(tools::Tools::default());
+    let result = read(request, &mut documents).map_err(|e| format!("{e:#}"));
     app.reduce(AppEvent::PreviewReady {
         id: request.id,
         result,

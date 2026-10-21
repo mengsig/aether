@@ -221,9 +221,19 @@ fn tasks_and_schedules_resolve_by_prefix_and_schedules_by_live_name() {
         resolve_schedule("nightly", &jobs).expect("live"),
         jobs[0].id
     );
-    assert!(
-        resolve_schedule("weekly", &jobs).is_err(),
-        "a cancelled name is free"
+    assert_eq!(
+        resolve_schedule("weekly", &jobs).expect("finished"),
+        jobs[1].id,
+        "a finished schedule is still found by name"
+    );
+    let reused = [
+        schedule("01J8C", "nightly", "cancelled"),
+        schedule("01J8D", "nightly", "active"),
+    ];
+    assert_eq!(
+        resolve_schedule("nightly", &reused).expect("live wins"),
+        reused[1].id,
+        "a live schedule holds the name"
     );
     assert_eq!(
         resolve_schedule("sch_01J8B", &jobs).expect("prefix"),
@@ -272,4 +282,12 @@ fn kinds_without_names_take_only_id_shapes_before_any_lookup() {
     }
     assert!("@last".parse::<RunRef>().is_ok());
     assert!("bad-task".parse::<AgentRef>().is_ok(), "agents have names");
+}
+
+#[test]
+fn an_unknown_reference_is_not_found_and_an_ambiguous_one_an_invalid_argument() {
+    let missing = resolve_agent("nobody", &fleet()).unwrap_err();
+    assert!(missing.downcast_ref::<NotFoundError>().is_some());
+    let ambiguous = resolve_agent("01J5", &fleet()).unwrap_err();
+    assert!(ambiguous.downcast_ref::<UsageError>().is_some());
 }

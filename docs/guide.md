@@ -311,6 +311,10 @@ the text is optional. The same limits apply as in the TUI, and a file that is
 not a PNG, JPEG, GIF or WebP, or is too large, is refused before anything is
 sent.
 
+`aether send` warns on stderr when the text is over 256 KiB, because all of
+it goes into the agent's context; the message is still sent. For bulk data,
+publish a file as an artifact and send its name instead.
+
 For a parsed command with `--json`, command errors print one JSON object on
 stdout and a human `Error: …` on stderr, with the existing exit code:
 
@@ -417,6 +421,18 @@ Images (PNG, JPEG, first GIF frame and WebP) use the terminal's detected
 Kitty, Sixel or iTerm2 support, with coloured Unicode half blocks otherwise.
 Markdown uses the transcript renderer; UTF-8 text and code use a fixed code
 colour. Press **Alt+E** while the viewer is visible to open any selected file
-externally. PDF, HTML and SVG currently offer this external action only.
+externally; for an HTML file this is your browser. SVG offers this external
+action only.
+
+PDF pages render as images when `pdftoppm` (poppler-utils) or `mutool`
+(MuPDF) is installed. The header shows the page number and **PgUp/PgDn** turn
+pages. **Alt+T** switches the page to its text (`pdftotext`). With no renderer
+the pane shows the page text, and with no PDF tools at all it says what to
+install. HTML files show as readable text: headings, paragraphs, lists,
+tables and code. Scripts and styles are dropped, and links are numbered and
+listed at the end but never followed. **Alt+T** takes a screenshot with
+headless Chromium when it is installed. The page renders offline in a
+sandbox, without JavaScript and without access to other local files.
+
 Files outside the workspace show their resolved path and require **Enter**
 a second time before previewing or opening externally. Remote agent files are not downloaded.

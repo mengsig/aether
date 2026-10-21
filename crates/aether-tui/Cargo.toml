@@ -44,6 +44,8 @@ tempfile = { workspace = true }
 ulid = { workspace = true }
 pulldown-cmark = { version = "0.13.0", default-features = false }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+html2text = { version = "0.17.4", default-features = false }
+html5ever = { version = "0.40.1", default-features = false }
 
 [dev-dependencies]
 aether-daemon = { workspace = true }

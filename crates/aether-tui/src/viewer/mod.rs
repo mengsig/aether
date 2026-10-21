@@ -1,12 +1,18 @@
 //! Local previews; reading and decoding happen in runner effects.
 pub mod cache;
+mod documents;
 pub(crate) mod files;
 pub mod graphics;
+mod html;
+mod html_dom;
 mod load;
+mod pdf;
 pub mod probe;
 pub mod references;
 mod render;
-pub use load::{Preview, ReadRequest, read};
+pub mod tools;
+pub use documents::Documents;
+pub use load::{Pages, Preview, ReadRequest, View, read};
 pub use render::{Hit, mark_references, render, split};
 
 use references::Reference;
@@ -71,6 +77,13 @@ impl Viewer {
         }
     }
 
+    pub fn pages(&self) -> Option<Pages> {
+        match self.preview.as_ref()?.as_ref().ok()? {
+            Preview::Text { pages, .. } | Preview::Image { pages, .. } => *pages,
+            _ => None,
+        }
+    }
+
     pub fn path(&self) -> Option<&PathBuf> {
         match self.preview.as_ref()?.as_ref().ok()? {
             Preview::Text { path, .. }
@@ -94,5 +107,9 @@ pub(crate) fn hides_composer(app: &crate::App) -> bool {
     visible(app) && app.viewer.fullscreen
 }
 
+#[cfg(test)]
+mod document_tests;
+#[cfg(test)]
+pub(crate) mod fixtures;
 #[cfg(test)]
 mod tests;

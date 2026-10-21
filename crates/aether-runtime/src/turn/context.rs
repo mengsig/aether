@@ -40,7 +40,7 @@ pub(crate) fn agent_temp_dir(
     let Some(leaf) = agent_temp_path(runtime, agent) else {
         return Ok(None);
     };
-    aether_core::agent_temp::ensure_leaf(&leaf, &runtime.config.instance_id)
+    aether_core::agent_temp::ensure_agent_leaf(&leaf, agent, &runtime.config.instance_id)
         .map_err(|e| RuntimeError::Invalid(format!("agent temp dir: {e}")))?;
     Ok(Some(leaf))
 }

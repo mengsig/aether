@@ -14,6 +14,9 @@ pub async fn new_agent(
         .map(|model| super::ModelChain::parse(&model).ok_or_else(super::model_format_error))
         .transpose()?;
     let client = super::connect_or_start(&socket).await?;
+    if let Some(name) = &name {
+        refuse_live_name(&client, name).await?;
+    }
     let agent = client
         .create_agent(super::CreateAgent {
             role: aether_core::agent::Role::ASSISTANT.into(),
@@ -31,6 +34,25 @@ pub async fn new_agent(
         ),
         serde_json::to_value(&agent)?,
     )
+}
+
+/// A name resolves only while unique among live agents, so a second live
+/// agent with it (the daemon trims names before storing) would make every later reference ambiguous.
+async fn refuse_live_name(client: &aether_client::Client, name: &str) -> anyhow::Result<()> {
+    let live = client
+        .list_agents(AgentQuery {
+            live_only: true,
+            ..Default::default()
+        })
+        .await?;
+    let Some(taken) = live.iter().find(|agent| agent.name == name.trim()) else {
+        return Ok(());
+    };
+    debug_assert!(taken.is_live());
+    Err(anyhow::Error::new(super::UsageError(format!(
+        "a live agent is already named `{name}` ({}); choose another name",
+        taken.id
+    ))))
 }
 
 pub async fn agents(
@@ -148,6 +170,9 @@ pub async fn send(
     let text = super::text_from_process_stdin(text, images.is_empty())?;
     if text.trim().is_empty() && images.is_empty() {
         bail!("nothing to send: give the text as an argument, or pipe it in or use `-` for stdin");
+    }
+    if let Some(warning) = super::input::large_message_warning(&text) {
+        eprintln!("{warning}");
     }
     // Read before connecting: a bad file is refused without a daemon.
     let attachments = images

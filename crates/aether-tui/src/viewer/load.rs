@@ -1,4 +1,4 @@
-use super::{graphics, probe::Protocol, references};
+use super::{Documents, graphics, probe::Protocol, references};
 use anyhow::{Context, bail, ensure};
 use ratatui::text::Line;
 use std::io::Read;
@@ -15,6 +15,24 @@ pub struct ReadRequest {
     pub protocol: Protocol,
     pub cell_pixels: (u16, u16),
     pub theme: crate::ui::theme::Theme,
+    /// One-based PDF page; the worker clamps it to the document.
+    pub page: u32,
+    pub view: View,
+}
+
+/// Which form of a PDF or HTML file to show; `Auto` is a PDF image or HTML text.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum View {
+    #[default]
+    Auto,
+    Text,
+    Rendered,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pages {
+    pub current: u32,
+    pub total: u32,
 }
 
 #[derive(Debug)]
@@ -22,12 +40,14 @@ pub enum Preview {
     Text {
         path: PathBuf,
         rows: Vec<Line<'static>>,
+        pages: Option<Pages>,
     },
     Image {
         path: PathBuf,
         rows: Vec<Line<'static>>,
         bytes: Vec<u8>,
         protocol: Protocol,
+        pages: Option<Pages>,
     },
     Outside(PathBuf),
     Unsupported(PathBuf),
@@ -37,7 +57,7 @@ pub enum Preview {
     },
 }
 
-pub fn read(request: &ReadRequest) -> anyhow::Result<Preview> {
+pub fn read(request: &ReadRequest, documents: &mut Documents) -> anyhow::Result<Preview> {
     ensure!(request.width > 0 && request.height > 0, "pane is too small");
     let workspace = request
         .workspace
@@ -54,8 +74,11 @@ pub fn read(request: &ReadRequest) -> anyhow::Result<Preview> {
         .unwrap_or("")
         .to_ascii_lowercase();
     let result = match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" => image(path.clone(), request),
-        "pdf" | "svg" | "html" | "htm" => Ok(Preview::Unsupported(path.clone())),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" => graphics::load_canonical(&path)
+            .and_then(|image| picture(path.clone(), &image, request, None)),
+        "pdf" => super::pdf::preview(path.clone(), request, documents),
+        "html" | "htm" => super::html::preview(path.clone(), request, documents),
+        "svg" => Ok(Preview::Unsupported(path.clone())),
         _ => text(path.clone(), ext == "md" || ext == "markdown", request),
     };
     Ok(
@@ -79,7 +102,17 @@ fn text(path: PathBuf, markdown: bool, request: &ReadRequest) -> anyhow::Result<
         bail!("binary file: use Alt+E to open externally");
     }
     let text = String::from_utf8(bytes).context("text preview needs UTF-8")?;
-    let clean = crate::ui::cells::text::clean(&text);
+    let rows = text_rows(&text, markdown, request);
+    Ok(Preview::Text {
+        path,
+        rows,
+        pages: None,
+    })
+}
+
+/// Clean and lay out at most 64 KiB / 4,000 lines, noting any truncation.
+pub(super) fn text_rows(text: &str, markdown: bool, request: &ReadRequest) -> Vec<Line<'static>> {
+    let clean = crate::ui::cells::text::clean(text);
     let mut end = clean.len().min(64 * 1024);
     while !clean.is_char_boundary(end) {
         end -= 1;
@@ -108,11 +141,16 @@ fn text(path: PathBuf, markdown: bool, request: &ReadRequest) -> anyhow::Result<
             "[Preview truncated; Alt+E opens the complete file]",
         ));
     }
-    Ok(Preview::Text { path, rows })
+    rows
 }
 
-fn image(path: PathBuf, request: &ReadRequest) -> anyhow::Result<Preview> {
-    let image = graphics::load_canonical(&path)?;
+/// Lay out a decoded image for the request's pane and terminal protocol.
+pub(super) fn picture(
+    path: PathBuf,
+    image: &graphics::DecodedImage,
+    request: &ReadRequest,
+    pages: Option<Pages>,
+) -> anyhow::Result<Preview> {
     let protocol = if request.cell_pixels.0 == 0 || request.cell_pixels.1 == 0 {
         Protocol::HalfBlocks
     } else {
@@ -122,7 +160,7 @@ fn image(path: PathBuf, request: &ReadRequest) -> anyhow::Result<Preview> {
         Vec::new()
     } else {
         graphics::encode_protocol(
-            &image,
+            image,
             protocol,
             request.width,
             request.height,
@@ -131,7 +169,7 @@ fn image(path: PathBuf, request: &ReadRequest) -> anyhow::Result<Preview> {
         )?
     };
     let rows = if protocol == Protocol::HalfBlocks {
-        graphics::render_half_blocks(&image, request.width, request.height)
+        graphics::render_half_blocks(image, request.width, request.height)
     } else {
         Vec::new()
     };
@@ -140,5 +178,20 @@ fn image(path: PathBuf, request: &ReadRequest) -> anyhow::Result<Preview> {
         rows,
         bytes,
         protocol,
+        pages,
     })
+}
+
+/// The pane's size in device pixels; half blocks count two pixels per row.
+pub(super) fn pane_pixels(request: &ReadRequest) -> (u32, u32) {
+    let (cell_width, cell_height) = match request.cell_pixels {
+        (0, _) | (_, 0) => (1, 2),
+        (width, height) => (u32::from(width), u32::from(height)),
+    };
+    let pixels = (
+        u32::from(request.width.max(1)) * cell_width,
+        u32::from(request.height.max(1)) * cell_height,
+    );
+    debug_assert!(pixels.0 > 0 && pixels.1 > 0);
+    pixels
 }

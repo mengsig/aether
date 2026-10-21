@@ -211,6 +211,12 @@ impl Runtime {
         let root = fs::canonicalize(configured)
             .map_err(|error| invalid(format!("resolve workspace GC root: {error}")))?;
         let mut cursor = self.workspace_gc_cursor.lock();
+        if cursor.root.as_ref() == Some(&root) {
+            cursor.pending.retain(|directory| {
+                !matches!(fs::symlink_metadata(directory), Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound)
+            });
+        }
         if cursor.root.as_ref() != Some(&root)
             || (cursor.directory.is_none() && cursor.pending.is_empty())
         {
@@ -255,6 +261,11 @@ impl Runtime {
         for directory in selected {
             if let Some(cursor) = cursor.as_mut() {
                 cursor.pending.pop_front();
+            }
+            if matches!(fs::symlink_metadata(&directory), Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound)
+            {
+                continue;
             }
             let mut candidate = workspace::gc::Candidate::new(directory);
             if !dry_run {

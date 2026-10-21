@@ -25,7 +25,8 @@ async fn fixture() -> anyhow::Result<()> {
         &mut app,
         agent,
         aether_core::model::MessageRole::Assistant,
-        "Here is [the preview](sample.png), and [notes](notes.md).",
+        "Here is [the preview](sample.png), and [notes](notes.md).\n\
+         Also report.pdf and page.html for review.",
     );
     app.options.cwd = Some(workspace);
     app.board.open = false;
@@ -56,6 +57,7 @@ async fn fixture_loop(app: &mut App) -> anyhow::Result<()> {
     let size = terminal.size()?;
     app.size = (size.width, size.height);
     let mut events = EventStream::new();
+    let mut documents = Some(crate::viewer::Documents::detect());
     let until = tokio::time::sleep(Duration::from_secs(25));
     tokio::pin!(until);
     loop {
@@ -68,8 +70,13 @@ async fn fixture_loop(app: &mut App) -> anyhow::Result<()> {
                 for effect in effects {
                     if let Effect::PreviewFile(request) = effect {
                         let id = request.id;
-                        let result = tokio::task::spawn_blocking(move || crate::viewer::read(&request)).await?
-                            .map_err(|e| format!("{e:#}"));
+                        let mut owned = documents.take();
+                        let (result, owned) = tokio::task::spawn_blocking(move || {
+                            let result = owned.as_mut().map(|d| crate::viewer::read(&request, d));
+                            (result, owned)
+                        }).await?;
+                        documents = owned;
+                        let result = result.context("fixture documents")?.map_err(|e| format!("{e:#}"));
                         app.reduce(AppEvent::PreviewReady { id,result });
                     }
                 }
@@ -107,6 +114,18 @@ fn fixture_event(app: &mut App, cache: &mut ViewCache, event: Event) -> Vec<Effe
             }
             Vec::new()
         }
+        // F9 reports clickable references so the PTY driver can click them.
+        Event::Key(key) if key.code == KeyCode::F(9) => {
+            let hits: String = cache
+                .file_hits
+                .iter()
+                .map(|hit| format!("{}@{},{};", hit.reference.target, hit.area.x, hit.area.y))
+                .collect();
+            let mut out = stdout();
+            let reported = write!(out, "HITS[{hits}]END").and_then(|()| out.flush());
+            assert!(reported.is_ok(), "fixture output closed");
+            Vec::new()
+        }
         Event::Mouse(mouse) => app.dispatch_mouse(mouse, cache),
         event => map_terminal_event(event)
             .map(|e| dispatch_app_event(app, cache, e))
@@ -117,6 +136,34 @@ fn fixture_event(app: &mut App, cache: &mut ViewCache, event: Event) -> Vec<Effe
 #[test]
 #[cfg(unix)]
 fn viewer_pty() {
+    let tools = crate::viewer::tools::Tools::detect();
+    run_pty(None, pdf_expectation(&tools));
+}
+
+/// Without any PDF tool on PATH the clicked PDF names what to install.
+#[test]
+#[cfg(unix)]
+fn viewer_pty_without_pdf_tools() {
+    let empty = tempfile::tempdir().unwrap();
+    run_pty(Some(empty.path()), "No PDF tools found");
+}
+
+/// poppler without pdftoppm still pages through the text.
+#[test]
+#[cfg(unix)]
+fn viewer_pty_with_text_tools_only() {
+    let tools = crate::viewer::tools::Tools::detect();
+    let (Some(pdfinfo), Some(pdftotext)) = (tools.pdfinfo, tools.pdftotext) else {
+        return;
+    };
+    let bin = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(pdfinfo, bin.path().join("pdfinfo")).unwrap();
+    std::os::unix::fs::symlink(pdftotext, bin.path().join("pdftotext")).unwrap();
+    run_pty(Some(bin.path()), "pages");
+}
+
+/// Drive the fixture in a PTY; `path` replaces PATH for the TUI and its tools.
+fn run_pty(path: Option<&std::path::Path>, pdf_shows: &str) {
     let dir = tempfile::tempdir().unwrap();
     image::RgbaImage::from_fn(8, 8, |x, y| {
         image::Rgba([(x * 31) as u8, (y * 31) as u8, 180, 255])
@@ -124,14 +171,22 @@ fn viewer_pty() {
     .save(dir.path().join("sample.png"))
     .unwrap();
     std::fs::write(dir.path().join("notes.md"), "# Notes\nA local preview.").unwrap();
+    let pdf = crate::viewer::fixtures::pdf(&["First page", "Second page"]);
+    std::fs::write(dir.path().join("report.pdf"), pdf).unwrap();
+    std::fs::write(dir.path().join("page.html"), crate::viewer::fixtures::HTML).unwrap();
     let script =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/viewer_pty.py");
-    let result = std::process::Command::new("python3")
+    let python = which("python3").expect("python3 on PATH");
+    let mut command = std::process::Command::new(python);
+    command
         .arg(script)
         .arg(std::env::current_exe().unwrap())
         .arg(dir.path())
-        .output()
-        .unwrap();
+        .env("VIEWER_PDF_SHOWS", pdf_shows);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    let result = command.output().unwrap();
     assert!(
         result.status.success(),
         "{}",
@@ -140,10 +195,30 @@ fn viewer_pty() {
     assert!(String::from_utf8_lossy(&result.stdout).contains("viewer PTY passed"));
 }
 
+fn which(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
 #[test]
 fn unsupported_terminal_restore_does_not_emit_kitty_commands() {
     let mut out = Vec::new();
     write_restore(&mut out, false).unwrap();
     assert!(out.starts_with(b"\x1b[?2026l"));
     assert!(!out.windows(3).any(|bytes| bytes == b"\x1b_G"));
+}
+
+/// What the pane shows for a clicked PDF with the tools on this machine.
+fn pdf_expectation(tools: &crate::viewer::tools::Tools) -> &'static str {
+    let renders = tools.pdftoppm.is_some() || tools.mutool.is_some();
+    let counts = tools.pdfinfo.is_some() || tools.mutool.is_some();
+    let text = tools.pdftotext.is_some();
+    match (renders || text, counts, text) {
+        (false, _, _) => "No PDF tools found",
+        (true, true, _) => "pages",
+        (true, false, true) => "showing the document text",
+        (true, false, false) => "pdftoppm needs pdfinfo",
+    }
 }

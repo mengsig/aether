@@ -574,6 +574,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Alt+Z` | toggle full screen file viewer |
 | `Alt+-` | narrow the file viewer |
 | `Alt+=` | widen the file viewer |
+| `Alt+T` | switch a PDF to text or an HTML file to a screenshot |
 | `Alt+N` | the notification center: answer, mark read, resolve, go to the chat |
 | `Alt+↑` | view the parent agent |
 | `Ctrl+T` | details: full outputs and reasoning |
@@ -886,6 +887,64 @@ controls are stripped. Only one decode runs at a time; rapid resize requests
 coalesce. A canonical path outside the workspace requires a second Enter
 before reading. Native protocol encodings are cached until the preview
 changes. Markdown uses existing styles; language-specific syntax highlighting
-is deferred. PDF, HTML and SVG offer **Alt+E** to open externally; in-pane PDF and
-HTML rendering are planned follow-ups. HTML scripts are never executed by the
-TUI.
+is deferred. SVG offers **Alt+E** to open externally only.
+
+### PDF
+
+A PDF renders one page at a time through the same graphics path as images.
+The worker uses `pdftoppm` (poppler-utils), or `mutool` (MuPDF) when poppler is
+missing, and counts pages with `pdfinfo` or `mutool info`. The header shows
+`page n/total`. **PgUp/PgDn** turn pages (arrows scroll), and **Alt+T**
+switches between the page image and its `pdftotext` text. Without a renderer the
+pane shows the page text. With `pdftotext` but neither `pdfinfo` nor `mutool`
+it shows the whole document's text, unpaged. Without PDF tools it names the
+packages to install.
+**Alt+E** still opens the file externally.
+
+Pages render only when shown, off the UI thread, one request at a time. Each
+tool runs as a child process with an argv, never a shell, in its own process
+group. It has a deadline: 10 s for page counts and text, 20 s for a page
+image. The whole group is killed at the deadline. The tools read a private
+copy of the checked file in a fresh temporary directory, never the path
+itself. PDFs are limited to 50 MiB and 100,000 pages. A page image is scaled
+so its longer side is at most 2,048 pixels, and its PNG is limited to 20 MiB
+before the usual image limits apply. The six most recent rendered pages
+(48 MiB at most) are cached, keyed by file size, modification time, page and
+size.
+
+### HTML
+
+HTML files up to 5 MiB show as readable text, rendered by the
+[`html2text`](https://crates.io/crates/html2text) crate on top of
+`html5ever` (about 100 KiB and 90 KiB of source; no default features).
+Headings, paragraphs, lists, tables, emphasis and code blocks keep their
+shape. `<script>`, `<style>` and `<head>` content is dropped, and terminal
+controls are stripped. Links are styled and numbered, and listed with their
+targets at the end. They are never fetched or followed. Text stops after
+4,000 rows. Mis-nested markup can make an HTML parser build far more than
+the file holds, so parsing stops after 3 s or 200,000 nodes, and a tree
+deeper than 512 elements is refused; **Alt+E** still opens such a file.
+
+**Alt+T** takes a screenshot with headless Chromium (`chromium`,
+`chromium-browser`, `google-chrome` or `google-chrome-stable` on `PATH`) and
+shows it through the image path. The page renders isolated:
+
+- Chromium never sees the file. The checked bytes are embedded in a fresh
+  temporary page, as the `srcdoc` of an `<iframe sandbox>` with no
+  permissions. Scripts, meta refresh and top-level navigation are off, and the
+  frame's origin is opaque.
+- A `Content-Security-Policy` of `default-src 'none'` refuses every fetch,
+  frame and font or image that is not a `data:` URL, including local files.
+- The browser is offline. A dead proxy serves every host, loopback included,
+  and host resolution is disabled.
+- A disposable profile and `HOME` live in the temporary directory, which is
+  deleted afterwards. Chromium's own sandbox stays on.
+- The process group is killed after 15 s.
+
+The screenshot shows the top of the page at the pane's shape (800 to 1,600
+pixels wide). **Alt+T** returns to text, and without Chromium it shows the text
+with a notice. **Alt+E** opens the file in your browser through `xdg-open` or
+`open`, outside these restrictions.
+
+Tools are found on `PATH` once per TUI start; restart the TUI after
+installing one.

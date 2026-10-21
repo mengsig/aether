@@ -32,6 +32,7 @@ actions! {
     ViewerFull, "viewer_full", "full screen file viewer", "alt+z";
     ViewerLess, "viewer_less", "narrow file viewer", "alt+-";
     ViewerMore, "viewer_more", "widen file viewer", "alt+=";
+    ViewerMode, "viewer_mode", "PDF/HTML text or image", "alt+t";
     Notifications, "notifications", "notification center", "alt+n";
     Details, "details", "details & reasoning", "ctrl+t";
     History, "history", "search history", "ctrl+r";

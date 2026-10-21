@@ -1,4 +1,4 @@
-//! What the agents' temp dirs hold. Reported only; nothing is removed yet.
+//! Inventory and ownership-safe cleanup of permanently final agents' scratch.
 
 use std::ffi::CString;
 use std::io;
@@ -13,13 +13,18 @@ use serde::Serialize;
 
 use super::MAX_ENTRIES;
 
-const POLICY: &str = "reported only; agent temp dirs are not cleaned up yet";
+const POLICY: &str =
+    "remove marked temp dirs of final agents; retain live, resumable and unproven owners";
 
 /// A directory opened this way is the directory itself, never a link to one.
 const DIR_FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
     .union(OFlags::NOFOLLOW)
     .union(OFlags::CLOEXEC);
+
+#[cfg(test)]
+#[path = "agent_temp/gc_tests.rs"]
+mod gc_tests;
 
 #[derive(Debug, Serialize)]
 pub(super) struct AgentTempReport {
@@ -284,4 +289,83 @@ mod tests {
         assert!(counted.truncated);
         assert_eq!(counted.bytes, (MAX_ENTRIES - 1) as u64);
     }
+}
+
+#[derive(Default, Serialize)]
+struct TempCleanupReport {
+    truncated: bool,
+    entries: Vec<TempDecision>,
+}
+
+#[derive(Serialize)]
+struct TempDecision {
+    path: PathBuf,
+    action: &'static str,
+    reason: &'static str,
+}
+
+impl crate::Runtime {
+    pub(super) fn gc_agent_temp(
+        &self,
+        root: &Path,
+        dry_run: bool,
+    ) -> crate::Result<serde_json::Value> {
+        use super::invalid;
+        use aether_core::agent_temp::{collect_leaf, leaf_name};
+        use aether_store::AgentFilter;
+
+        let _hold = self.hold();
+        let sched = self.sched.lock();
+        let turns = self.engine_turns.lock();
+        let in_flight = self.in_flight_agents(&sched, &turns)?;
+        let agents = self.store.agents(&AgentFilter::default())?;
+        let mut owners = std::collections::HashMap::<_, Vec<_>>::new();
+        for agent in &agents {
+            owners.entry(leaf_name(agent.id)).or_default().push(agent);
+        }
+        let mut report = TempCleanupReport::default();
+        let Some(entries) = super::read_directory(root).map_err(invalid)? else {
+            return serde_json::to_value(report).map_err(invalid);
+        };
+        for (index, entry) in entries.enumerate() {
+            if index == super::MAX_ENTRIES {
+                report.truncated = true;
+                break;
+            }
+            let entry = entry.map_err(invalid)?;
+            let name = entry.file_name();
+            let Some([agent]) = name
+                .to_str()
+                .and_then(|name| owners.get(name))
+                .map(Vec::as_slice)
+            else {
+                continue;
+            };
+            let decision = if temp_owner_final(agent) && !in_flight.contains(&agent.id) {
+                collect_leaf(root, agent.id, &self.config.instance_id, dry_run).map_err(invalid)?
+            } else {
+                "owner is live, resumable or in flight"
+            };
+            let action = match decision {
+                "removed" | "would_remove" => decision,
+                _ => "kept",
+            };
+            report.entries.push(TempDecision {
+                path: entry.path(),
+                action,
+                reason: decision,
+            });
+        }
+        debug_assert!(report.entries.len() <= super::MAX_ENTRIES);
+        debug_assert!(dry_run || report.entries.iter().all(|e| e.action != "would_remove"));
+        serde_json::to_value(report).map_err(invalid)
+    }
+}
+
+fn temp_owner_final(agent: &aether_core::agent::Agent) -> bool {
+    use aether_core::agent::AgentStatusKind;
+    matches!(
+        agent.status.kind(),
+        AgentStatusKind::Completed | AgentStatusKind::Cancelled
+    ) || (agent.status.kind() == AgentStatusKind::Failed && agent.restarted_as.is_some())
 }

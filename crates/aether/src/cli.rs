@@ -75,6 +75,7 @@ pub use providers::{auth, login, logout, models, providers};
 mod status;
 mod units;
 pub use status::{mcp_bridge, mcp_list, mcp_serve, status};
+pub(crate) use units::parse_every;
 
 mod agents;
 pub use agents::{
@@ -298,6 +299,18 @@ impl std::fmt::Display for UsageError {
 
 impl std::error::Error for UsageError {}
 
+/// A reference that names no record: reported with the `not_found` code.
+#[derive(Debug)]
+pub(crate) struct NotFoundError(pub(crate) String);
+
+impl std::fmt::Display for NotFoundError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NotFoundError {}
+
 /// The refusal for a `--model` that is not `provider/model[,provider/model...]`.
 pub(crate) fn model_format_error() -> anyhow::Error {
     anyhow::Error::new(UsageError(
@@ -381,6 +394,8 @@ pub(crate) fn error_json(error: &anyhow::Error, socket: &Path) -> serde_json::Va
             ClientError::Ssh(_) => serde_json::json!("ssh_failure"),
             ClientError::DeliveryUnconfirmed(_) => serde_json::json!("delivery_unconfirmed"),
         }
+    } else if error.downcast_ref::<NotFoundError>().is_some() {
+        serde_json::json!("not_found")
     } else if error.downcast_ref::<UsageError>().is_some() {
         serde_json::json!("invalid_argument")
     } else if is_network_error(error) {

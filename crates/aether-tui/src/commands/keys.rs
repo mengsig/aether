@@ -281,6 +281,13 @@ pub const KEYS: &[KeySpec] = &[
     key(Session, "Alt+=", "widen the file viewer", "widen viewer").bound(&[KeyAction::ViewerMore]),
     key(
         Session,
+        "Alt+T",
+        "switch a PDF to text or an HTML file to a screenshot",
+        "PDF/HTML text or image",
+    )
+    .bound(&[KeyAction::ViewerMode]),
+    key(
+        Session,
         "Alt+N",
         "the notification center: answer, mark read, resolve, go to the chat",
         "notification center",

@@ -1,0 +1,36 @@
+┌ page.html · Tab: chat ───────────────────────────────────┐
+│# Quarterly report                                        │
+│                                                          │
+│Revenue grew twelve percent; see the details[1].          │
+│                                                          │
+│## Highlights                                             │
+│* First item                                              │
+│* Second item                                             │
+│                                                          │
+│──────┬─────                                              │
+│Region│Sales                                              │
+│──────┼─────                                              │
+│North │42                                                 │
+│──────┴─────                                              │
+│                                                          │
+│fn main() {}                                              │
+│                                                          │
+│Links (not followed)                                      │
+│[1] https://example.com/details                           │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│Alt+T screenshot/text · Alt+E browser · Esc close         │
+└──────────────────────────────────────────────────────────┘

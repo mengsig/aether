@@ -115,6 +115,10 @@ impl Runtime {
         if let Some(root) = &self.config.agent_temp_root {
             report["agent_temp"] = serde_json::to_value(agent_temp::report(root).map_err(invalid)?)
                 .map_err(invalid)?;
+            let mut cleanup = self.gc_agent_temp(root, dry_run)?;
+            report["agent_temp"]["entries"] = cleanup["entries"].take();
+            report["agent_temp"]["truncated"] =
+                json!(report["agent_temp"]["truncated"] == true || cleanup["truncated"] == true);
         }
         if let Some(root) = &self.config.build_cache_root {
             report["build_cache"] =

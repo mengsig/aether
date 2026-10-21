@@ -428,8 +428,16 @@ warning shows both lengths. On macOS the default root,
 `~/Library/Application Support/aether/t`, plus an agent's directory is about
 62 bytes, so this warning always appears there. Set `temp_root` to a short,
 absolute directory that only you can write, such as `/Users/<you>/.aether-t`. `aether storage` reports the total bytes and the number
-of agent directories under `agent_temp`. Nothing is cleaned up automatically
-yet.
+of agent directories under `agent_temp`. Storage GC removes directories created
+with a full agent ownership marker once the agent is completed, cancelled, or
+failed with a durable successor, and has no admitted turn, lease or resource.
+A failed agent without a successor can still resume, so its scratch is kept.
+`aether storage --gc --dry-run` previews these decisions. Cleanup never follows
+symlinks or removes history or artifacts. Existing unmarked directories and
+directories whose agent history is unavailable are kept: Aether cannot prove
+their ownership and finality. Each leaf is limited to 10,000 entries and 64
+levels for cleanup; exceeding either limit returns an error without deleting
+its contents. Inventory bytes describe the tree before cleanup.
 
 ## Build cache
 

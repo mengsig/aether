@@ -529,7 +529,11 @@ pub(crate) enum ScheduleCmd {
     /// Create a timer that triggers an existing agent (--target), or starts a
     /// fresh root run in this directory on each occurrence (--objective).
     #[command(group(clap::ArgGroup::new("recurrence").required(true).args(["every", "cron"])))]
+    #[command(
+        after_help = "Example:\n  aether schedule create tick --every 5m --objective \"check the build\""
+    )]
     Create {
+        /// Name to refer to the schedule by later, in place of its id.
         name: String,
         /// Agent whose inbox receives each trigger; requires --payload.
         #[arg(
@@ -575,8 +579,9 @@ pub(crate) enum ScheduleCmd {
             require_equals = true
         )]
         network: Option<bool>,
-        /// Interval in seconds, preserving its cadence across restarts.
-        #[arg(long)]
+        /// Interval such as 30s, 5m, 1h or 1d (a bare number is seconds),
+        /// preserving its cadence across restarts.
+        #[arg(long, value_parser = cli::parse_every)]
         every: Option<std::num::NonZeroU64>,
         /// Five-field cron expression: minute hour day month weekday.
         #[arg(long)]
@@ -605,6 +610,7 @@ pub(crate) enum ScheduleCmd {
         #[arg(long)]
         json: bool,
     },
+    /// List schedules and their state.
     List {
         /// Only schedules that deliver to this agent.
         #[arg(long)]
@@ -613,30 +619,36 @@ pub(crate) enum ScheduleCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Show one schedule by id, id prefix or name; finished ones too.
     Inspect {
+        /// Schedule id, id prefix or name.
         id: cli::ScheduleRef,
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
+    /// Stop a schedule firing until it is resumed.
     Pause {
         id: cli::ScheduleRef,
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
+    /// Resume a paused schedule.
     Resume {
         id: cli::ScheduleRef,
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
+    /// Cancel a schedule for good; its history stays.
     Cancel {
         id: cli::ScheduleRef,
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
+    /// Show a schedule's occurrences, newest first.
     History {
         id: cli::ScheduleRef,
         /// Most deliveries to show.

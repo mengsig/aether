@@ -129,7 +129,7 @@ fn host_command(command: &str, ctx: &ToolContext) -> Result<tokio::process::Comm
         .envs(&ctx.env);
     pipes(&mut cmd, ctx);
     if let Some(dir) = &ctx.temp_dir {
-        aether_core::agent_temp::ensure_leaf(dir, &ctx.instance_id)
+        aether_core::agent_temp::ensure_agent_leaf(dir, ctx.agent_id, &ctx.instance_id)
             .map_err(|e| ToolError::Internal(format!("agent temp dir: {e}")))?;
         for name in aether_core::agent_temp::ENV_VARS {
             cmd.env(name, dir);

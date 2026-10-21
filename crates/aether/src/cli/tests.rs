@@ -818,3 +818,10 @@ fn a_bad_model_is_an_invalid_argument_that_points_to_the_model_list() {
     let code = error_json(&error, Path::new("/s"));
     assert_eq!(code["error"]["code"], "invalid_argument");
 }
+
+#[test]
+fn an_unmatched_reference_reports_not_found() {
+    let error = anyhow::Error::new(NotFoundError("no agent matches `budg`".into()));
+    let json = error_json(&error, Path::new("/s"));
+    assert_eq!(json["error"]["code"], "not_found");
+}

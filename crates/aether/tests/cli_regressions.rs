@@ -1464,6 +1464,17 @@ async fn an_agent_is_named_by_prefix_name_or_last_through_the_daemon() {
 }
 
 #[tokio::test]
+async fn new_refuses_a_name_a_live_agent_already_holds() {
+    let out = cli(&["new", "--name", "assistant", "--json"], Stub::default()).await;
+    assert_eq!(out.status.code(), Some(1));
+    let said = stderr(&out) + &stdout(&out);
+    assert!(said.contains("already named `assistant`"), "{said}");
+    assert!(said.contains("invalid_argument"), "{said}");
+    let padded = cli(&["new", "--name", " assistant "], Stub::default()).await;
+    assert_eq!(padded.status.code(), Some(1), "{}", stderr(&padded));
+}
+
+#[tokio::test]
 async fn viewed_names_the_agent_a_tui_beside_the_socket_views() {
     let viewing = Stub {
         viewed: Some(AGENT),

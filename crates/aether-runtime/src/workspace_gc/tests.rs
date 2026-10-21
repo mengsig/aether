@@ -622,6 +622,44 @@ async fn candidate_limit_reports_partial_byte_scope() {
 }
 
 #[tokio::test]
+async fn directory_discarded_after_listing_is_not_reported() {
+    let f = fixture().await;
+    let stale = f.managed.join(ulid::Ulid::generate().to_string());
+    fs::create_dir(&stale).unwrap();
+    let listed = f.collect(true);
+    assert!(
+        listed
+            .workspaces
+            .iter()
+            .any(|entry| entry.workspace == stale.join("workspace"))
+    );
+    assert!(
+        f.runtime
+            .workspace_gc_cursor
+            .lock()
+            .pending
+            .contains(&stale)
+    );
+    fs::remove_dir(&stale).unwrap();
+    for dry_run in [true, false, false] {
+        let report = f.collect(dry_run);
+        assert!(
+            report
+                .workspaces
+                .iter()
+                .all(|entry| !entry.workspace.starts_with(&stale))
+        );
+        assert!(
+            !f.runtime
+                .workspace_gc_cursor
+                .lock()
+                .pending
+                .contains(&stale)
+        );
+    }
+}
+
+#[tokio::test]
 async fn candidate_branch_is_not_an_independent_saved_ref() {
     let f = fixture().await;
     git(&f.manifest.workspace, &["checkout", "-qb", "private-child"]);

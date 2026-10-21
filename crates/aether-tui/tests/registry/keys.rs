@@ -139,6 +139,33 @@ fn snapshot(app: &App) -> String {
     )
 }
 
+fn stage_document(app: &mut App) {
+    use aether_tui::viewer::{Pages, Preview, ReadRequest, View};
+    app.viewer.open = true;
+    app.board.open = false;
+    app.viewer.pending = Some(ReadRequest {
+        id: app.viewer.request,
+        target: "report.pdf".into(),
+        workspace: "/workspace".into(),
+        approved_outside: None,
+        width: 40,
+        height: 20,
+        protocol: aether_tui::viewer::probe::Protocol::HalfBlocks,
+        cell_pixels: (0, 0),
+        theme: app.theme,
+        page: 2,
+        view: View::Text,
+    });
+    app.viewer.preview = Some(Ok(Preview::Text {
+        path: "/workspace/report.pdf".into(),
+        rows: Vec::new(),
+        pages: Some(Pages {
+            current: 2,
+            total: 3,
+        }),
+    }));
+}
+
 fn staged(stage: Stage) -> App {
     use aether_tui::testing::populated_app;
     let mut app = populated_app();
@@ -158,6 +185,7 @@ fn staged(stage: Stage) -> App {
                 std::path::PathBuf::from("preview.txt"),
             )));
         }
+        Stage::Document => stage_document(&mut app),
         Stage::Busy | Stage::Approval => {}
         Stage::ChildApproval => {
             let child = add_child(&mut app, viewed);

@@ -25,6 +25,8 @@ pub(super) enum Stage {
     /// A word cut with Ctrl+W, so the kill ring has something to paste.
     Killed,
     Viewer,
+    /// A PDF page shown as text, with pages either side.
+    Document,
     VoiceCapture,
     VoiceRecovery,
 }
@@ -113,6 +115,7 @@ pub(super) fn cases() -> Vec<KeyCase> {
         case("Alt+Z", Global, KeyCode::Char('z'), alt, Viewer),
         case("Alt+-", Global, KeyCode::Char('-'), alt, Viewer),
         case("Alt+=", Global, KeyCode::Char('='), alt, Viewer),
+        case("Alt+T", Global, KeyCode::Char('t'), alt, Document),
         case("Alt+N", Global, KeyCode::Char('n'), alt, Idle),
         case("Alt+↑", Global, KeyCode::Up, alt, Child),
         case("Ctrl+T", Global, KeyCode::Char('t'), ctrl, Busy),

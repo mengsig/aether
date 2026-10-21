@@ -1,7 +1,7 @@
 use super::LoopEvent;
 use crate::{
     app::AppEvent,
-    viewer::{Preview, ReadRequest, probe::Protocol},
+    viewer::{Documents, Preview, ReadRequest, probe::Protocol},
 };
 use std::io::Write;
 use std::path::PathBuf;
@@ -17,15 +17,25 @@ impl Reader {
     pub fn new(tx: mpsc::UnboundedSender<LoopEvent>) -> Self {
         let (latest, mut rx) = tokio::sync::watch::channel::<Option<ReadRequest>>(None);
         let task = tokio::spawn(async move {
+            // Requests run one at a time, so the page cache moves into each read and back.
+            let mut documents = None;
             while rx.changed().await.is_ok() {
                 let Some(request) = rx.borrow_and_update().clone() else {
                     continue;
                 };
                 let id = request.id;
-                let result =
-                    tokio::task::spawn_blocking(move || crate::viewer::read(&request)).await;
+                let mut owned = documents.take();
+                let result = tokio::task::spawn_blocking(move || {
+                    let documents = owned.get_or_insert_with(Documents::detect);
+                    let result = crate::viewer::read(&request, documents);
+                    (result, owned)
+                })
+                .await;
                 let result = match result {
-                    Ok(result) => result.map_err(|error| format!("{error:#}")),
+                    Ok((result, owned)) => {
+                        documents = owned;
+                        result.map_err(|error| format!("{error:#}"))
+                    }
                     Err(error) => Err(format!("preview worker failed: {error}")),
                 };
                 if tx

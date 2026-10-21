@@ -2,7 +2,7 @@ use super::{App, Effect};
 use crate::{
     keys::KeyAction,
     ui::cells::ChatCell,
-    viewer::{Preview, ReadRequest, references::Reference},
+    viewer::{Preview, ReadRequest, View, references::Reference},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -94,6 +94,8 @@ impl App {
             protocol: self.viewer.protocol,
             cell_pixels: self.viewer.cell_pixels,
             theme: self.theme,
+            page: 1,
+            view: View::Auto,
         };
         self.viewer.focused = true;
         self.request_preview(request)
@@ -164,6 +166,9 @@ impl App {
             let more = self.keys.matches(KeyAction::ViewerMore, key);
             return Some(self.resize_viewer(more));
         }
+        if self.keys.matches(KeyAction::ViewerMode, key) {
+            return Some(self.switch_view());
+        }
         if key.code == KeyCode::Tab && key.modifiers.is_empty() {
             self.viewer.focused = !self.viewer.focused;
             if !self.viewer.focused && self.viewer.fullscreen {
@@ -200,7 +205,55 @@ impl App {
         self.reload_preview()
     }
 
+    /// Alt+T: a PDF page between image and text, an HTML file between text and screenshot.
+    fn switch_view(&mut self) -> Vec<Effect> {
+        let Some(request) = self.viewer.pending.as_mut() else {
+            return Vec::new();
+        };
+        let kind = std::path::Path::new(&request.target)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        if !matches!(kind.as_deref(), Some("pdf" | "html" | "htm")) {
+            return Vec::new();
+        }
+        let shows_image = match &self.viewer.preview {
+            Some(Ok(Preview::Image { .. })) => true,
+            Some(Ok(Preview::Text { .. })) => false,
+            _ => request.view == View::Rendered,
+        };
+        request.view = if shows_image {
+            View::Text
+        } else {
+            View::Rendered
+        };
+        self.reload_preview()
+    }
+
+    /// PageUp/PageDown turn PDF pages; the first and last pages stay put.
+    fn turn_page(&mut self, forward: bool) -> Option<Vec<Effect>> {
+        let pages = self.viewer.pages()?;
+        debug_assert!((1..=pages.total).contains(&pages.current));
+        let next = if forward {
+            pages.current.saturating_add(1).min(pages.total)
+        } else {
+            pages.current.saturating_sub(1).max(1)
+        };
+        if next == pages.current {
+            return Some(Vec::new());
+        }
+        let request = self.viewer.pending.as_mut()?;
+        request.page = next;
+        Some(self.reload_preview())
+    }
+
     fn viewer_navigation(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
+        if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+            && self.viewer.picker.is_empty()
+            && let Some(effects) = self.turn_page(key.code == KeyCode::PageDown)
+        {
+            return Some(effects);
+        }
         let effects = match key.code {
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
                 let delta = match key.code {

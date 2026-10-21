@@ -16,7 +16,9 @@ use aether_core::schedule::{Schedule, ScheduleStatus};
 use aether_core::task::Task;
 use aether_core::tool::ApprovalRequest;
 use aether_protocol::{AgentQuery, TaskQuery};
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, ensure};
+
+use super::{NotFoundError, UsageError};
 
 /// The most recently created agent of the current run, or that run.
 pub(crate) const LAST: &str = "@last";
@@ -408,19 +410,22 @@ pub(crate) fn resolve_approval(
 }
 
 pub(crate) fn resolve_schedule(text: &str, jobs: &[Schedule]) -> anyhow::Result<ScheduleId> {
+    let is_live = |job: &Schedule| {
+        matches!(
+            job.status,
+            ScheduleStatus::Active { .. } | ScheduleStatus::Paused { .. }
+        )
+    };
+    // A finished schedule keeps its history, so its name finds it unless a
+    // live one holds the name now.
+    let live_holds_name = jobs.iter().any(|job| is_live(job) && job.name == text);
     let candidates = jobs
         .iter()
-        .map(|job| {
-            let live = matches!(
-                job.status,
-                ScheduleStatus::Active { .. } | ScheduleStatus::Paused { .. }
-            );
-            Candidate {
-                id: job.id.to_string(),
-                name: live.then_some(job.name.as_str()),
-                summary: super::short(&job.name, 32),
-                value: job.id,
-            }
+        .map(|job| Candidate {
+            id: job.id.to_string(),
+            name: (!live_holds_name || is_live(job)).then_some(job.name.as_str()),
+            summary: super::short(&job.name, 32),
+            value: job.id,
         })
         .collect();
     pick(text, ScheduleKind::NOUN, "aether schedule list", candidates)
@@ -460,9 +465,9 @@ fn pick<T>(
 ) -> anyhow::Result<T> {
     assert!(!text.is_empty(), "references are never empty");
     if text.starts_with('@') {
-        bail!(
+        return Err(anyhow::Error::new(UsageError(format!(
             "`{text}` is not a reference the CLI knows; `{LAST}` and `{VIEWED}` name an agent or a run"
-        );
+        ))));
     }
     let mut matches: Vec<_> = candidates
         .into_iter()
@@ -472,7 +477,9 @@ fn pick<T>(
         return Ok(matches.remove(0).value);
     }
     if matches.is_empty() {
-        bail!("no {noun} matches `{text}`; `{listed_by}` lists them (names match live ones only)");
+        return Err(anyhow::Error::new(NotFoundError(format!(
+            "no {noun} matches `{text}`; `{listed_by}` lists them (names match live ones only)"
+        ))));
     }
     // Newest first: ids are ULIDs, so the text sorts by creation time.
     matches.sort_by(|a, b| b.id.cmp(&a.id));
@@ -486,7 +493,7 @@ fn pick<T>(
     if matches.len() > SHOWN {
         message.push_str(&format!("\n  and {} more", matches.len() - SHOWN));
     }
-    bail!(message)
+    Err(anyhow::Error::new(UsageError(message)))
 }
 
 /// Whether `text` can begin an id with this prefix: Crockford base32, the
