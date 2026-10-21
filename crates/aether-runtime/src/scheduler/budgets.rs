@@ -45,7 +45,7 @@ fn check_budgets(
     })?;
     for agent in budgeted {
         let key = format!("budget.{}", agent.id);
-        match check_budget(runtime, &agent) {
+        match super::record_work(|| check_budget(runtime, &agent)) {
             Ok(()) => runtime.clear_problem(&key),
             Err(error) => {
                 blocked.insert(agent.id);
@@ -136,7 +136,7 @@ pub(super) fn enforce_deadlines(
     let at = now();
     for agent in live {
         let key = format!("deadline.{}", agent.id);
-        match check_deadline(runtime, agent, at) {
+        match super::record_work(|| check_deadline(runtime, agent, at)) {
             Ok(()) => runtime.clear_problem(&key),
             Err(error) => {
                 blocked.insert(agent.id);

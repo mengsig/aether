@@ -208,14 +208,7 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
             continue;
         }
         let id = agent.id;
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prepare_agent(runtime, agent, &canaries)
-        }))
-        .unwrap_or_else(|panic| {
-            Err(RuntimeError::Invalid(crate::turn::panic_message(
-                panic.as_ref(),
-            )))
-        });
+        let result = record_work(|| prepare_agent(runtime, agent, &canaries));
         match result {
             Ok(candidate) => {
                 runtime.clear_problem(&format!("scheduler.agent.{id}"));
@@ -236,6 +229,15 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
     }
     dispatch(runtime, ready, &lineage);
     Ok(())
+}
+
+fn record_work<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|panic| {
+        Err(RuntimeError::Invalid(format!(
+            "record processing panicked: {}; run `aether doctor`",
+            crate::turn::panic_message(panic.as_ref())
+        )))
+    })
 }
 
 fn prepare_agent(

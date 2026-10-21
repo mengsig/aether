@@ -33,7 +33,7 @@ pub(super) fn gate_dependencies(
         .filter(|t| t.owner.is_some() && !t.dependencies.is_empty())
     {
         let key = format!("dependency.{}", task.id);
-        match gate_task(runtime, &task) {
+        match super::record_work(|| gate_task(runtime, &task)) {
             Ok(()) => runtime.clear_problem(&key),
             Err(error) => {
                 blocked.extend(task.owner);
