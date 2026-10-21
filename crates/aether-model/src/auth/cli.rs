@@ -32,6 +32,10 @@ pub struct CliAuth {
     /// access token past its expiry with no refresh token is not ready.
     #[serde(default)]
     pub credential_file: Option<String>,
+    /// Environment variable naming a directory that replaces the one holding
+    /// `credential_file` (`CLAUDE_CONFIG_DIR`), as it does for the CLI.
+    #[serde(default)]
+    pub credential_dir_env: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,8 +141,24 @@ impl CliAuth {
     }
 
     fn login_expired(&self) -> bool {
-        let Some(path) = self.credential_file.as_deref().and_then(expand_home) else {
+        let override_dir = self
+            .credential_dir_env
+            .as_deref()
+            .and_then(std::env::var_os)
+            .filter(|dir| !dir.is_empty());
+        self.login_expired_in(override_dir)
+    }
+
+    fn login_expired_in(&self, override_dir: Option<std::ffi::OsString>) -> bool {
+        let Some(file) = self.credential_file.as_deref() else {
             return false;
+        };
+        let path = match (override_dir, std::path::Path::new(file).file_name()) {
+            (Some(dir), Some(name)) => std::path::Path::new(&dir).join(name),
+            _ => match expand_home(file) {
+                Some(path) => path,
+                None => return false,
+            },
         };
         let Ok(text) = std::fs::read_to_string(path) else {
             return false;
@@ -228,6 +248,7 @@ mod tests {
             logged_in_markers: vec!["\"loggedIn\": true".into(), "Logged in".into()],
             label: "fake".into(),
             credential_file: None,
+            credential_dir_env: None,
         }
     }
 
@@ -247,6 +268,22 @@ mod tests {
         let status = auth.status_uncached().await;
         assert!(!status.logged_in, "{status:?}");
         assert_eq!(status.detail, "sh: login expired, run `sh login`");
+    }
+
+    #[tokio::test]
+    async fn config_dir_override_selects_the_credential_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.json"),
+            r#"{"claudeAiOauth":{"expiresAt":1000}}"#,
+        )
+        .unwrap();
+        let auth = CliAuth {
+            credential_file: Some("/nonexistent/credentials.json".into()),
+            ..fake("true")
+        };
+        assert!(auth.login_expired_in(Some(dir.path().into())));
+        assert!(!auth.login_expired_in(None));
     }
 
     #[test]
