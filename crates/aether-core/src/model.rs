@@ -16,7 +16,7 @@ mod request;
 mod stream;
 mod usage;
 
-pub use capabilities::{CapabilityProfile, ThinkingSupport};
+pub use capabilities::{CapabilityProfile, SERVER_COMPACTION_KEY, ThinkingSupport};
 pub use error::{ModelError, ModelErrorClass, provider_exhaustion};
 pub use messages::{ContentBlock, Message, MessageRole, ToolResultBlock, text_of};
 pub use request::{

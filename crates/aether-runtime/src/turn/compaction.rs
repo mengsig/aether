@@ -482,6 +482,7 @@ pub(crate) async fn compact(
         trigger: Some(trigger.clone()),
     };
     let mut accounting_error = None;
+    let started = std::time::Instant::now();
     let report = compactor
         .compact_observed(
             inputs,
@@ -567,7 +568,7 @@ pub(crate) async fn compact(
             }
             preserve_newer_request(runtime, ctx, request_seq, &mut commit, &hold)?;
             runtime.apply_held(hold, commit)?;
-            tracing::info!(agent = %ctx.agent.id, version = checkpoint.version, attempts = compacted.attempts, trigger = trigger.name(), "compacted context");
+            tracing::info!(agent = %ctx.agent.id, version = checkpoint.version, attempts = compacted.attempts, elapsed_ms = started.elapsed().as_millis() as u64, trigger = trigger.name(), "compacted context");
             Ok(Some(checkpoint))
         }
         // A stop or interrupt is not a compactor failure: the request stays

@@ -15,6 +15,7 @@ workspace = true
 aether-core = { workspace = true }
 aether-store = { workspace = true }
 aether-model = { workspace = true }
+tokio = { workspace = true }
 tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -23,4 +24,3 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }

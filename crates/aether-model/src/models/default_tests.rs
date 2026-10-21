@@ -63,14 +63,7 @@ async fn authenticated_native_harnesses_precede_api_credentials() {
                 .unwrap()
                 .default_model()
                 .await,
-            Some(ModelRef::new(
-                expected,
-                if claude {
-                    "claude-opus-5-5"
-                } else {
-                    "gpt-6-astra"
-                },
-            ))
+            Some(ModelRef::new(expected, "default",))
         );
     }
 }
@@ -135,7 +128,7 @@ async fn disabled_native_provider_is_not_automatically_selected() {
             .unwrap()
             .default_model()
             .await,
-        Some(ModelRef::new("codex", "gpt-6-astra"))
+        Some(ModelRef::new("codex", "default"))
     );
 }
 
@@ -146,7 +139,7 @@ async fn invalid_explicit_default_falls_back_to_authenticated_native() {
             .unwrap()
             .default_model()
             .await,
-        Some(ModelRef::new("codex", "gpt-6-astra"))
+        Some(ModelRef::new("codex", "default"))
     );
 }
 

@@ -36,6 +36,13 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # models ship with one; set it here to rank others or to disagree.
 # "openrouter/openai/gpt-5" = "strong"
 
+[models.compaction_tokens]
+# Context size at which an agent compacts on its own, by "provider" or
+# "provider/model" (the model wins). Defaults: 256000 for Claude, 272000 for
+# Codex, else three quarters of the window; never above the model's window.
+# "claude-code" = 256000
+# "codex/gpt-6.1-sol" = 200000
+
 [approval]
 # What a new agent gets when it inherits nothing: "yolo" (the shipped
 # default) auto-approves every tool call, "ask" gates external side effects -

@@ -92,6 +92,7 @@ fn claude(
         strict_tools: true,
         cost: Some(cost),
         extensions: BTreeMap::new(),
+        compaction_tokens: None,
     }
 }
 
@@ -138,7 +139,7 @@ fn anthropic() -> ProviderDef {
             .with_tier(ModelTier::Frontier),
         ],
         default_capabilities: Some(claude(
-            200_000,
+            1_000_000,
             32_000,
             ThinkingSupport::None,
             false,
@@ -182,6 +183,7 @@ fn openai_priced(
         strict_tools: true,
         cost,
         extensions: BTreeMap::new(),
+        compaction_tokens: None,
     }
 }
 
@@ -339,6 +341,7 @@ fn local_profile() -> CapabilityProfile {
         strict_tools: false,
         cost: Some(ModelCost::default()),
         extensions: BTreeMap::new(),
+        compaction_tokens: None,
     }
 }
 
@@ -356,6 +359,7 @@ fn engine_profile(context: u32, max_out: u32) -> CapabilityProfile {
         strict_tools: false,
         cost: None,
         extensions: BTreeMap::new(),
+        compaction_tokens: None,
     }
 }
 
@@ -379,6 +383,9 @@ fn priced(mut model: ModelDef, cost: ModelCost) -> ModelDef {
     model.capabilities.cost = Some(cost);
     model
 }
+
+/// Every current Claude model has a 1M-token window.
+const CLAUDE_CONTEXT: u32 = 1_000_000;
 
 /// Codex works from a 272k window (its catalog's `context_window`).
 const CODEX_CONTEXT: u32 = 272_000;
@@ -445,34 +452,59 @@ fn claude_code() -> ProviderDef {
         headers: BTreeMap::new(),
         models: vec![
             priced(
-                engine_model("claude-opus-5-5", "Claude Opus 5.5", 200_000, 128_000)
-                    .with_aliases(["opus", "opus-5-5", "opus-5.5"])
-                    .with_tier(ModelTier::Strong),
+                engine_model(
+                    "claude-opus-5-5",
+                    "Claude Opus 5.5",
+                    CLAUDE_CONTEXT,
+                    128_000,
+                )
+                .with_aliases(["opus", "opus-5-5", "opus-5.5"])
+                .with_tier(ModelTier::Strong),
                 opus_cost(),
             ),
             // No price: `default` is whatever the CLI picks, so pricing it
             // would attribute one model's cost to another.
-            engine_model("default", "Claude Code default model", 200_000, 64_000),
+            engine_model(
+                "default",
+                "Claude Code default model",
+                CLAUDE_CONTEXT,
+                64_000,
+            ),
             priced(
-                engine_model("claude-fable-5-1", "Claude Fable 5.1", 200_000, 128_000)
-                    .with_aliases(["fable", "fable-5-1"])
-                    .with_tier(ModelTier::Frontier),
+                engine_model(
+                    "claude-fable-5-1",
+                    "Claude Fable 5.1",
+                    CLAUDE_CONTEXT,
+                    128_000,
+                )
+                .with_aliases(["fable", "fable-5-1"])
+                .with_tier(ModelTier::Frontier),
                 fable_cost(),
             ),
             priced(
-                engine_model("claude-sonnet-5-5", "Claude Sonnet 5.5", 200_000, 128_000)
-                    .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"])
-                    .with_tier(ModelTier::Balanced),
+                engine_model(
+                    "claude-sonnet-5-5",
+                    "Claude Sonnet 5.5",
+                    CLAUDE_CONTEXT,
+                    128_000,
+                )
+                .with_aliases(["sonnet", "sonnet-5-5", "sonnet-5.5"])
+                .with_tier(ModelTier::Balanced),
                 sonnet_cost(),
             ),
             priced(
-                engine_model("claude-haiku-5-5", "Claude Haiku 5.5", 200_000, 128_000)
-                    .with_aliases(["haiku", "haiku-5-5", "haiku-5.5"])
-                    .with_tier(ModelTier::Fast),
+                engine_model(
+                    "claude-haiku-5-5",
+                    "Claude Haiku 5.5",
+                    CLAUDE_CONTEXT,
+                    128_000,
+                )
+                .with_aliases(["haiku", "haiku-5-5", "haiku-5.5"])
+                .with_tier(ModelTier::Fast),
                 haiku_cost(),
             ),
         ],
-        default_capabilities: Some(engine_profile(200_000, 64_000)),
+        default_capabilities: Some(engine_profile(CLAUDE_CONTEXT, 64_000)),
         flags: ProviderFlags::default(),
         max_concurrent: None,
         family: Some(ModelFamily::Claude),

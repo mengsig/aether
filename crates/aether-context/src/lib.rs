@@ -89,6 +89,8 @@ pub struct Assembled {
     pub consumed_up_to: Option<u64>,
     /// The tail exceeded its budget or the context is near the threshold.
     pub needs_compaction: bool,
+    /// The size at which this model's context is compacted.
+    pub threshold_tokens: u32,
     pub dropped_messages: usize,
 }
 
@@ -276,6 +278,7 @@ impl ContextManager {
             consumed_inbox,
             consumed_up_to,
             needs_compaction,
+            threshold_tokens: budget.threshold_tokens(),
             dropped_messages: dropped,
         }
     }

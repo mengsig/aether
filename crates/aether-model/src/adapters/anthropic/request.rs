@@ -14,6 +14,10 @@ pub const API_VERSION: &str = "2023-06-01";
 pub const OAUTH_BETA: &str = "oauth-2025-04-20";
 const DEFAULT_MAX_TOKENS: u32 = 16_000;
 const DEFAULT_THINKING_BUDGET: u32 = 8_192;
+/// Beta for server-side compaction (`compact_20260112`).
+pub const COMPACTION_BETA: &str = "compact-2026-01-12";
+/// The API refuses a compaction trigger below this many input tokens.
+const MIN_COMPACTION_TRIGGER: u32 = 50_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BuiltRequest {
@@ -110,6 +114,13 @@ pub fn build(req: &ModelRequest, profile: &CapabilityProfile) -> Result<BuiltReq
     }
 
     let mut betas = Vec::new();
+    if let Some(tokens) = profile
+        .compaction_tokens
+        .filter(|_| profile.compacts_on_server())
+    {
+        obj.insert("context_management".into(), compaction_edit(tokens));
+        betas.push(COMPACTION_BETA.to_owned());
+    }
     for (key, value) in &req.extensions {
         match key.as_str() {
             "anthropic.betas" => {
@@ -202,6 +213,15 @@ fn effort_str(effort: Effort) -> &'static str {
     effort.as_str()
 }
 
+/// Server-side compaction at `tokens` input tokens. The returned compaction
+/// block stays in the transcript and is replayed with the next request.
+fn compaction_edit(tokens: u32) -> Value {
+    json!({"edits": [{
+        "type": "compact_20260112",
+        "trigger": {"type": "input_tokens", "value": tokens.max(MIN_COMPACTION_TRIGGER)},
+    }]})
+}
+
 fn build_messages(messages: &[Message]) -> Result<Vec<Value>, ModelError> {
     let mut out: Vec<Value> = Vec::with_capacity(messages.len());
     for (i, msg) in messages.iter().enumerate() {
@@ -270,6 +290,9 @@ fn block_to_json(block: &ContentBlock) -> Option<Value> {
         ContentBlock::Image { media_type, data } => Some(image_json(media_type, data)),
         // The runtime inlines stored images before a request; one that
         // reaches here has no bytes, so the model is told what was there.
+        ContentBlock::Compaction { content } => {
+            Some(json!({"type": "compaction", "content": content}))
+        }
         ContentBlock::ImageRef(image) => Some(json!({"type": "text", "text": image.label()})),
     }
 }
@@ -320,6 +343,51 @@ mod tests {
             max_output_tokens: 128_000,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn server_compaction_is_requested_and_its_block_is_replayed() {
+        let history = vec![
+            Message::user_text("hi"),
+            Message::assistant_blocks(vec![
+                ContentBlock::Compaction {
+                    content: "summary".into(),
+                },
+                ContentBlock::text("ok"),
+            ]),
+            Message::user_text("more"),
+        ];
+        let req = ModelRequest::new(ModelRef::new("anthropic", "claude-opus-5-5"), history);
+        let mut profile = adaptive_profile();
+        profile.compaction_tokens = Some(256_000);
+        let plain = build(&req, &profile).unwrap();
+        assert!(plain.body.get("context_management").is_none());
+        assert!(!plain.betas.iter().any(|b| b == COMPACTION_BETA));
+
+        profile.extensions.insert(
+            aether_core::model::SERVER_COMPACTION_KEY.into(),
+            Value::Bool(true),
+        );
+        let built = build(&req, &profile).unwrap();
+        assert_eq!(
+            built.body["context_management"],
+            json!({"edits": [{
+                "type": "compact_20260112",
+                "trigger": {"type": "input_tokens", "value": 256_000},
+            }]})
+        );
+        assert!(built.betas.iter().any(|b| b == COMPACTION_BETA));
+        assert_eq!(
+            built.body["messages"][1]["content"][0],
+            json!({"type": "compaction", "content": "summary"})
+        );
+
+        profile.compaction_tokens = Some(10_000);
+        let low = build(&req, &profile).unwrap();
+        assert_eq!(
+            low.body["context_management"]["edits"][0]["trigger"]["value"], 50_000,
+            "the API minimum"
+        );
     }
 
     #[test]

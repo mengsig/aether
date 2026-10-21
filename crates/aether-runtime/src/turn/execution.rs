@@ -476,7 +476,7 @@ pub(super) async fn run_link(
             commit.push_event(ctx.draft(EventKind::CompactionRequested {
                 trigger: CompactionTrigger::TokenThreshold {
                     tokens: snapshot.token_estimate,
-                    threshold: resolved.model.capabilities.context_window * 3 / 4,
+                    threshold: assembled.threshold_tokens,
                 },
             }));
         }

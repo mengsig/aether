@@ -108,6 +108,11 @@ pub enum ContentBlock {
     /// state carries this reference; the bytes are read back only to build
     /// a model request.
     ImageRef(AttachmentRef),
+    /// A server-side compaction summary (Anthropic `compact-2026-01-12`). It
+    /// must be replayed verbatim: the API drops everything before it.
+    Compaction {
+        content: String,
+    },
 }
 
 impl ContentBlock {

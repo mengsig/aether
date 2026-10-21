@@ -59,26 +59,26 @@ fn a_fresh_configuration_lists_the_claude_code_models_at_200k_only() {
         (
             "claude-opus-5-5".into(),
             aliases(&["opus", "opus-5-5", "opus-5.5"]),
-            200_000,
+            1_000_000,
             128_000,
         ),
-        ("default".into(), Vec::new(), 200_000, 64_000),
+        ("default".into(), Vec::new(), 1_000_000, 64_000),
         (
             "claude-fable-5-1".into(),
             aliases(&["fable", "fable-5-1"]),
-            200_000,
+            1_000_000,
             128_000,
         ),
         (
             "claude-sonnet-5-5".into(),
             aliases(&["sonnet", "sonnet-5-5", "sonnet-5.5"]),
-            200_000,
+            1_000_000,
             128_000,
         ),
         (
             "claude-haiku-5-5".into(),
             aliases(&["haiku", "haiku-5-5", "haiku-5.5"]),
-            200_000,
+            1_000_000,
             128_000,
         ),
     ];
@@ -111,7 +111,7 @@ fn the_documented_edit_adds_claude_opus_with_a_1m_window() {
         .resolve(&ModelRef::new("claude-code", "opus"))
         .expect("the base model resolves");
     assert_eq!(base.model.id, "claude-opus-5-5");
-    assert_eq!(base.model.capabilities.context_window, 200_000);
+    assert_eq!(base.model.capabilities.context_window, 1_000_000);
 
     // Everything but the window is the base model's.
     let mut expected = base.model.capabilities.clone();
@@ -215,7 +215,14 @@ capabilities = { context_window = 300000, max_output_tokens = 32000 }
             .model
             .capabilities
     };
-    assert_eq!(resolve("bare"), Default::default());
+    let mut bare = resolve("bare");
+    assert_eq!(
+        bare.compaction_tokens,
+        Some(128_000),
+        "clamped to its window"
+    );
+    bare.compaction_tokens = None;
+    assert_eq!(bare, Default::default());
     let complete = resolve("complete");
     assert_eq!(complete.context_window, 300_000);
     assert_eq!(complete.max_output_tokens, 32_000);

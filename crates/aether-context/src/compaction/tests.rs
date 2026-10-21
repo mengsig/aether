@@ -606,3 +606,33 @@ fn short_slices_starting_with_calls_fold_complete_pairs_forward() {
         assert_tool_results_preserved(&entries);
     }
 }
+
+#[tokio::test]
+async fn a_stalled_compactor_request_ends_with_a_timeout_error() {
+    let client = Arc::new(ScriptedClient::with_responses([ScriptedClient::text(
+        &good_json(),
+    )]));
+    client.set_delay(std::time::Duration::from_secs(30));
+    let compactor = Compactor::new(client, ModelRef::new("mock", "slow"))
+        .with_attempt_timeout(std::time::Duration::from_millis(50));
+    let a = agent();
+    let entries = vec![entry(1, MessageRole::User, "ship")];
+    let started = std::time::Instant::now();
+    let report = compactor
+        .compact_report(
+            CompactionInputs {
+                agent: &a,
+                task: None,
+                child_tasks: &[],
+                previous: None,
+                entries: &entries,
+                trigger: None,
+            },
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(report.result.is_err());
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    let error = report.attempts[0].error.as_ref().expect("timed out");
+    assert_eq!(error.class, ModelErrorClass::Timeout);
+}

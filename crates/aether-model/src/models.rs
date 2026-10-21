@@ -27,6 +27,13 @@ use crate::tier::ModelTier;
 pub use crate::auth::LoginMethod;
 pub use crate::registry::ResolvedModel;
 
+/// Automatic compaction points, whatever the larger window is.
+pub const CLAUDE_COMPACTION_TOKENS: u32 = 256_000;
+pub const CODEX_COMPACTION_TOKENS: u32 = 272_000;
+
+/// Capability extension set when the provider compacts on the server.
+use aether_core::model::SERVER_COMPACTION_KEY;
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ModelsError {
     #[error(transparent)]
@@ -141,7 +148,41 @@ impl Models {
     }
 
     pub fn resolve(&self, r: &ModelRef) -> Result<ResolvedModel, ModelsError> {
-        Ok(self.registry.resolve(r)?)
+        let mut resolved = self.registry.resolve(r)?;
+        resolved.model.capabilities =
+            self.effective_capabilities(&resolved.provider, &resolved.model);
+        Ok(resolved)
+    }
+
+    /// The catalogue profile plus where automatic compaction starts: the
+    /// operator's `[models.compaction_tokens]` (model, then provider), else 256K
+    /// for Claude and 272K for Codex, clamped to the window. Without a value the
+    /// proportional default applies. The direct Anthropic API compacts on the
+    /// server, which the profile records so Aether does not fold the same context.
+    fn effective_capabilities(
+        &self,
+        provider: &ProviderDef,
+        model: &ModelDef,
+    ) -> CapabilityProfile {
+        let mut profile = model.capabilities.clone();
+        let configured = &self.config.models.compaction_tokens;
+        let default = match provider.protocol {
+            Protocol::AnthropicMessages | Protocol::ClaudeCode => Some(CLAUDE_COMPACTION_TOKENS),
+            Protocol::Codex | Protocol::OpenaiCodexResponses => Some(CODEX_COMPACTION_TOKENS),
+            _ => None,
+        };
+        profile.compaction_tokens = configured
+            .get(&format!("{}/{}", provider.id, model.id))
+            .or_else(|| configured.get(&provider.id))
+            .copied()
+            .or(default)
+            .map(|tokens| tokens.min(profile.context_window));
+        if provider.id == "anthropic" && provider.protocol == Protocol::AnthropicMessages {
+            profile
+                .extensions
+                .insert(SERVER_COMPACTION_KEY.into(), serde_json::Value::Bool(true));
+        }
+        profile
     }
 
     /// The capability band of a model: the operator's `[models.tiers]`
@@ -312,9 +353,10 @@ impl Models {
         headers.extend(auth.headers);
         let mut capabilities = HashMap::new();
         for m in &provider.models {
-            capabilities.insert(m.id.clone(), m.capabilities.clone());
+            let profile = self.effective_capabilities(provider, m);
+            capabilities.insert(m.id.clone(), profile.clone());
             for alias in &m.aliases {
-                capabilities.insert(alias.clone(), m.capabilities.clone());
+                capabilities.insert(alias.clone(), profile.clone());
             }
         }
         if !capabilities.contains_key(&resolved.model.id) {
@@ -501,6 +543,77 @@ mod tests {
     use crate::auth::MemoryCredentialStore;
     use crate::config::AetherConfig;
 
+    fn builtin_models(config: AetherConfig) -> Models {
+        Models::new(
+            Registry::builtin(),
+            config,
+            Arc::new(MemoryCredentialStore::new()),
+            PathBuf::from("/unused"),
+        )
+        .expect("models")
+    }
+
+    fn resolved_compaction(models: &Models, provider: &str, model: &str) -> (u32, Option<u32>) {
+        let resolved = models
+            .resolve(&ModelRef::new(provider, model))
+            .expect("builtin model");
+        (
+            resolved.model.capabilities.context_window,
+            resolved.model.capabilities.compaction_tokens,
+        )
+    }
+
+    #[test]
+    fn compaction_starts_at_256k_for_claude_and_272k_for_codex() {
+        let models = builtin_models(AetherConfig::default());
+        for (provider, model, tokens) in [
+            ("claude-code", "opus", Some(256_000)),
+            ("claude-code", "default", Some(256_000)),
+            ("anthropic", "sonnet", Some(256_000)),
+            ("codex", "gpt-6.1-sol", Some(272_000)),
+            ("groq", "openai/gpt-oss-120b", None),
+        ] {
+            let (window, resolved) = resolved_compaction(&models, provider, model);
+            assert_eq!(resolved, tokens, "{provider}/{model}");
+            assert!(resolved.is_none_or(|t| t <= window), "{provider}/{model}");
+        }
+        assert_eq!(
+            resolved_compaction(&models, "claude-code", "opus").0,
+            1_000_000
+        );
+    }
+
+    #[test]
+    fn configured_compaction_tokens_prefer_the_model_and_stay_inside_the_window() {
+        let mut config = AetherConfig::default();
+        config
+            .models
+            .compaction_tokens
+            .insert("claude-code".into(), 100_000);
+        config
+            .models
+            .compaction_tokens
+            .insert("claude-code/claude-haiku-5-5".into(), 5_000_000);
+        config
+            .models
+            .compaction_tokens
+            .insert("groq".into(), 50_000);
+        let models = builtin_models(config);
+        assert_eq!(
+            resolved_compaction(&models, "claude-code", "opus").1,
+            Some(100_000)
+        );
+        assert_eq!(
+            resolved_compaction(&models, "claude-code", "haiku"),
+            (1_000_000, Some(1_000_000)),
+            "an alias resolves to its model entry, clamped to the window"
+        );
+        assert_eq!(
+            resolved_compaction(&models, "groq", "openai/gpt-oss-120b").1,
+            Some(50_000)
+        );
+    }
+
     #[test]
     fn catalogue_preserves_builtin_engine_aliases() {
         let models = Models::new(
@@ -522,7 +635,7 @@ mod tests {
             .find(|info| info.model == ModelRef::new("claude-code", "claude-opus-5-5"))
             .expect("builtin opus");
         assert_eq!(opus.aliases, ["opus", "opus-5-5", "opus-5.5"]);
-        assert_eq!(opus.capabilities.context_window, 200_000);
+        assert_eq!(opus.capabilities.context_window, 1_000_000);
         for alias in &opus.aliases {
             assert_eq!(
                 models.canonical(&ModelRef::new("claude-code", alias)),

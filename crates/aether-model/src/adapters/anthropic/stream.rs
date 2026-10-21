@@ -113,6 +113,9 @@ impl EventMapper for AnthropicMapper {
                         redacted: true,
                         signature: block.get("data").and_then(Value::as_str).map(str::to_owned),
                     },
+                    "compaction" => BlockStart::Compaction {
+                        content: str_of(block, "content"),
+                    },
                     "tool_use" => BlockStart::ToolUse {
                         id: str_of(block, "id"),
                         name: str_of(block, "name"),
@@ -155,6 +158,10 @@ impl EventMapper for AnthropicMapper {
                     "signature_delta" => out.push(StreamEvent::SignatureDelta {
                         index,
                         signature: str_of(delta, "signature"),
+                    }),
+                    "compaction_delta" => out.push(StreamEvent::CompactionDelta {
+                        index,
+                        content: str_of(delta, "content"),
                     }),
                     // Citations annotate text already delivered.
                     "citations_delta" => {}
@@ -385,6 +392,57 @@ mod tests {
             }
             other => panic!("unexpected first block {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_compaction_block_streams_into_the_response() {
+        let events = vec![
+            sse(
+                "message_start",
+                json!({"type":"message_start","message":{"id":"m","usage":{"input_tokens":1,"output_tokens":0}}}),
+            ),
+            sse(
+                "content_block_start",
+                json!({"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":null}}),
+            ),
+            sse(
+                "content_block_delta",
+                json!({"type":"content_block_delta","index":0,"delta":{"type":"compaction_delta","content":"Summary so far"}}),
+            ),
+            sse(
+                "content_block_stop",
+                json!({"type":"content_block_stop","index":0}),
+            ),
+            sse(
+                "content_block_start",
+                json!({"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}),
+            ),
+            sse(
+                "content_block_delta",
+                json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hi"}}),
+            ),
+            sse(
+                "content_block_stop",
+                json!({"type":"content_block_stop","index":1}),
+            ),
+            sse(
+                "message_delta",
+                json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}),
+            ),
+            sse("message_stop", json!({"type":"message_stop"})),
+        ];
+        let resp = collect(mapped_stream(events, AnthropicMapper::new()), |_| {})
+            .await
+            .expect("collect");
+        assert_eq!(
+            resp.content,
+            vec![
+                aether_core::model::ContentBlock::Compaction {
+                    content: "Summary so far".into()
+                },
+                aether_core::model::ContentBlock::text("Hi"),
+            ]
+        );
     }
 
     #[tokio::test]

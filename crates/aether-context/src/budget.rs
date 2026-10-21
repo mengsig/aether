@@ -11,6 +11,11 @@ pub struct ContextBudget {
     pub memory_max: u32,
     /// Fraction of the window at which compaction is requested.
     pub compaction_threshold_pct: u32,
+    /// Absolute size at which compaction is requested, when the model has one;
+    /// it replaces the fraction.
+    pub compaction_tokens: Option<u32>,
+    /// The provider compacts on its server; Aether folds only on overflow.
+    pub server_compaction: bool,
 }
 
 impl ContextBudget {
@@ -25,6 +30,8 @@ impl ContextBudget {
             reserve_output,
             memory_max: (window / 40).clamp(400, 2_000),
             compaction_threshold_pct: 75,
+            compaction_tokens: profile.compaction_tokens.map(|tokens| tokens.min(window)),
+            server_compaction: profile.compacts_on_server(),
         }
     }
 
@@ -36,7 +43,19 @@ impl ContextBudget {
     }
 
     pub fn over_threshold(&self, used: u32) -> bool {
-        used.saturating_mul(100) / self.window >= self.compaction_threshold_pct
+        if self.server_compaction {
+            return false;
+        }
+        match self.compaction_tokens {
+            Some(tokens) => used >= tokens,
+            None => used.saturating_mul(100) / self.window >= self.compaction_threshold_pct,
+        }
+    }
+
+    /// The size at which compaction is requested, for recording in the event.
+    pub fn threshold_tokens(&self) -> u32 {
+        self.compaction_tokens
+            .unwrap_or(self.window / 100 * self.compaction_threshold_pct)
     }
 
     /// Thinking budget for models that take a fixed count: a share of the
@@ -65,5 +84,27 @@ mod tests {
         let b = ContextBudget::for_profile(&profile, Some(64_000));
         assert_eq!(b.reserve_output, 32_000, "capped by the profile");
         assert_eq!(b.thinking_budget(), 16_000);
+    }
+
+    #[test]
+    fn an_absolute_threshold_replaces_the_fraction_and_stays_inside_the_window() {
+        let profile = CapabilityProfile {
+            context_window: 1_000_000,
+            compaction_tokens: Some(256_000),
+            ..Default::default()
+        };
+        let b = ContextBudget::for_profile(&profile, None);
+        assert!(!b.over_threshold(255_999));
+        assert!(b.over_threshold(256_000));
+        assert_eq!(b.threshold_tokens(), 256_000);
+        let small = CapabilityProfile {
+            context_window: 100_000,
+            compaction_tokens: Some(256_000),
+            ..Default::default()
+        };
+        assert_eq!(
+            ContextBudget::for_profile(&small, None).threshold_tokens(),
+            100_000
+        );
     }
 }

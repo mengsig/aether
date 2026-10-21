@@ -44,13 +44,24 @@ impl TokenEstimator {
                 }
                 ContentBlock::Image { data, .. } => (data.len() / 100) as u32 + 100,
                 ContentBlock::ImageRef(_) => STORED_IMAGE_TOKENS,
+                ContentBlock::Compaction { content } => self.text(content),
             };
         }
         total
     }
 
+    /// The provider drops everything before its newest compaction block, so
+    /// only the messages from that block on count against the window.
     pub fn messages(&self, messages: &[Message]) -> u32 {
-        messages.iter().map(|m| self.message(m)).sum()
+        let live_from = messages
+            .iter()
+            .rposition(|m| {
+                m.content
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::Compaction { .. }))
+            })
+            .unwrap_or(0);
+        messages[live_from..].iter().map(|m| self.message(m)).sum()
     }
 
     pub fn tools(&self, tools: &[ToolSpec]) -> u32 {

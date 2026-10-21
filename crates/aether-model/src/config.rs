@@ -594,18 +594,36 @@ pub struct ModelsSection {
     /// `"provider/model" = "fast" | "balanced" | "strong" | "frontier"`
     /// (`strongest` is read as `strong`); beats the catalog's own tier.
     pub tiers: BTreeMap<String, crate::tier::ModelTier>,
+    /// Context size at which Aether compacts automatically, keyed by
+    /// `provider` or `provider/model` (the model wins). Claude defaults to
+    /// 256000 and Codex to 272000; a value above the window is clamped to it.
+    pub compaction_tokens: BTreeMap<String, u32>,
 }
 
 impl ModelsSection {
     fn validate(&self) -> Result<(), String> {
-        match self
+        if let Some(key) = self
             .tiers
             .keys()
             .find(|key| aether_core::model::ModelRef::parse(key).is_none())
         {
-            Some(key) => Err(format!("models.tiers key `{key}` must be provider/model")),
-            None => Ok(()),
+            return Err(format!("models.tiers key `{key}` must be provider/model"));
         }
+        for (key, tokens) in &self.compaction_tokens {
+            if key.is_empty()
+                || (key.contains('/') && aether_core::model::ModelRef::parse(key).is_none())
+            {
+                return Err(format!(
+                    "models.compaction_tokens key `{key}` must be provider or provider/model"
+                ));
+            }
+            if *tokens == 0 {
+                return Err(format!(
+                    "models.compaction_tokens `{key}` must be above zero"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
