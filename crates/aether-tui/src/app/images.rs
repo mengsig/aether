@@ -69,6 +69,9 @@ impl App {
     }
 
     pub(crate) fn paste_clipboard(&mut self) -> Vec<Effect> {
+        if self.refuse_while_stale_reads() {
+            return Vec::new();
+        }
         self.input.image_reads += 1;
         vec![Effect::PasteClipboard]
     }
@@ -161,6 +164,16 @@ impl App {
         true
     }
 
+    /// Replies carry no owner, so while an old agent's reads are outstanding
+    /// no new read starts: every reply that arrives is then known to be stale.
+    fn refuse_while_stale_reads(&mut self) -> bool {
+        if self.input.stale_reads == 0 {
+            return false;
+        }
+        self.flash("a paste for the previous agent is still being read: try again in a moment");
+        true
+    }
+
     /// `Effect::AttachImage` finished.
     pub(crate) fn image_read(&mut self, image: Result<ImageAttachment, String>) {
         if self.drop_stale_read() {
@@ -235,6 +248,9 @@ impl App {
     }
 
     fn read_image(&mut self, source: ImageSource) -> Vec<Effect> {
+        if self.refuse_while_stale_reads() {
+            return Vec::new();
+        }
         self.input.image_reads += 1;
         vec![Effect::AttachImage(source)]
     }

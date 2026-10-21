@@ -432,3 +432,17 @@ fn a_draft_survives_the_selection_passing_through_nothing() {
     app.select(second);
     assert_eq!(app.input.text, "second draft");
 }
+
+#[test]
+fn no_read_starts_while_an_old_agents_read_is_outstanding() {
+    let (mut app, _first) = app_viewing(AgentStatus::Ready);
+    app.paste_clipboard_image();
+    app.select(AgentId::new());
+    assert!(app.paste_clipboard_image().is_empty());
+    assert!(app.paste_clipboard().is_empty());
+    assert_eq!(app.input.image_reads, 0);
+    app.image_read(Ok(png("late.png")));
+    assert!(app.input.images.is_empty());
+    assert_eq!(app.paste_clipboard_image().len(), 1);
+    assert_eq!(app.input.image_reads, 1);
+}
