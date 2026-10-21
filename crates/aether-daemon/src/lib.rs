@@ -6,6 +6,7 @@ mod authz;
 mod background;
 mod bridge;
 mod connection;
+mod crash;
 #[cfg(test)]
 mod env_tests;
 mod instance_lock;
@@ -169,6 +170,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     let pid_path = aether_protocol::paths::pid_path_for(socket);
     instance_lock::check_private_file_replacement(&pid_path)?;
     let store_path = instance.prepare_store()?;
+    crash::report_previous(&store_path);
     let store = Arc::new(SqliteStore::open(&store_path)?);
     let instance_id = aether_store::Store::instance_id(store.as_ref())?;
     let config_dir = aether_model::config::config_dir(config.config_dir.clone());

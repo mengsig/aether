@@ -14,6 +14,7 @@ pub mod attachment;
 pub mod bridge_bin;
 pub mod budget;
 pub mod checkpoint;
+pub mod crash;
 pub mod disk;
 pub mod error;
 pub mod event;

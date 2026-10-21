@@ -9,7 +9,15 @@ pub async fn status(
     json: bool,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
-    let client = connect(&socket).await?;
+    let client = connect(&socket).await.map_err(|error| {
+        match socket
+            .local_path()
+            .and_then(|_| aether_core::crash::problem(&aether_protocol::paths::store_path()))
+        {
+            Some(problem) => error.context(problem),
+            None => error,
+        }
+    })?;
     let s = client.status().await?;
     let installed = env!("CARGO_PKG_VERSION");
     let local = LocalInstall {

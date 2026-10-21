@@ -900,3 +900,10 @@ pub fn check_recovery(status: Option<&DaemonStatus>) -> Check {
         ),
     }
 }
+
+pub fn check_crash(paths: &Paths, command: &str) -> Check {
+    match aether_core::crash::problem(&paths.store_path()) {
+        Some(problem) => Check::warn("crash", problem, format!("{command} diagnose")),
+        None => Check::ok("crash", "no recorded daemon panic or fatal error"),
+    }
+}

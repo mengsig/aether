@@ -132,7 +132,12 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
     // Reads every agent and takes `sched`: on a slow disk that must not park an async worker.
     let reading = rt.clone();
     let (s, last_seq) = blocking(move || {
-        let status = reading.status().map_err(map_err)?;
+        let mut status = reading.status().map_err(map_err)?;
+        if let Some(paths) = &reading.config().storage_paths
+            && let Some(problem) = aether_core::crash::problem(&paths.store)
+        {
+            status.problems.push(problem);
+        }
         let last_seq = reading.store().last_seq().map_err(store_err)?;
         Ok::<_, ErrorReply>((status, last_seq))
     })

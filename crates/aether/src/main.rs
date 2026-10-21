@@ -4,6 +4,7 @@
 //! TUI. Everything else is a subcommand of the same executable.
 
 mod cli;
+mod crash;
 mod daemon_stop;
 mod doctor;
 mod logging;

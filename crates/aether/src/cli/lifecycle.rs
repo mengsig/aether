@@ -164,13 +164,32 @@ pub async fn daemon(
         println!("aetherd started (socket {})", socket.display());
         return Ok(());
     }
-    // Held here rather than in `run_daemon`: dropping the guard stops the log
-    // writer, and `record_startup_failure` below still has something to say.
-    let _log = crate::logging::init("aetherd.log", !detached).inspect_err(|e| {
-        if detached {
-            record_startup_failure(&socket, e);
-        }
-    })?;
+    foreground_daemon(
+        socket,
+        detached,
+        workspace,
+        max_concurrent,
+        yolo,
+        allow_remote,
+    )
+    .await
+}
+
+async fn foreground_daemon(
+    socket: PathBuf,
+    detached: bool,
+    workspace: Option<PathBuf>,
+    max_concurrent: Option<usize>,
+    yolo: bool,
+    allow_remote: bool,
+) -> anyhow::Result<()> {
+    let store = aether_protocol::paths::store_path();
+    crate::crash::install_hook(store.clone());
+    // Keep logging alive until both persistent and startup evidence is written.
+    let _log = match crate::logging::init("aetherd.log", !detached) {
+        Ok(log) => log,
+        Err(error) => return finish_daemon(&socket, &store, detached, Err(error)),
+    };
     let result = run_daemon(
         socket.clone(),
         detached,
@@ -180,7 +199,19 @@ pub async fn daemon(
         allow_remote,
     )
     .await;
-    report_startup_result(&socket, detached, &result);
+    finish_daemon(&socket, &store, detached, result)
+}
+
+fn finish_daemon(
+    socket: &Path,
+    store: &Path,
+    detached: bool,
+    result: anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let result = crate::crash::record_result(store, result).map_err(|error| {
+        error.context("Daemon stopped; run `aether doctor` and `aether diagnose`")
+    });
+    report_startup_result(socket, detached, &result);
     result
 }
 

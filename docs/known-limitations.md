@@ -240,6 +240,15 @@ isolation depend on the installed engine version and the platform; see
 
 ## Daemon crashes
 
+- Daemon panics and fatal returned errors replace one private crash record
+  beside the state database (`aether.db.crash.json`, at most 32 KiB). It includes
+  the time, bounded message and source location; for returned errors the
+  location is the recording boundary. The next startup reports it once;
+  acknowledgment retains the record for `aether status` and `aether doctor`.
+  `aether diagnose` includes the check with its text redacted, like other
+  diagnostic details. Clean shutdown does not erase it. `SIGKILL`, power
+  loss and failures that abort before the panic hook runs cannot be recorded.
+  An unwinding task panic may be recorded even if the daemon keeps running.
 - After a hard kill of the daemon (`kill -9`, power loss) its engine
   processes keep running until the next daemon start, which kills the process
   group of every engine it recorded, but only while the recorded pid and
