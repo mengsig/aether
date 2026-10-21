@@ -422,15 +422,11 @@ fn reads_finishing_after_an_agent_switch_do_not_attach_to_the_new_agent() {
 #[test]
 fn a_draft_survives_the_selection_passing_through_nothing() {
     let (mut app, first) = app_viewing(AgentStatus::Ready);
-    let second = AgentId::new();
     app.input.set_text("first draft");
-    app.select(second);
-    app.input.set_text("second draft");
-    app.selected = None;
+    app.clear_selection();
+    assert!(app.input.text.is_empty());
     app.select(first);
     assert_eq!(app.input.text, "first draft");
-    app.select(second);
-    assert_eq!(app.input.text, "second draft");
 }
 
 #[test]
@@ -445,4 +441,18 @@ fn no_read_starts_while_an_old_agents_read_is_outstanding() {
     assert!(app.input.images.is_empty());
     assert_eq!(app.paste_clipboard_image().len(), 1);
     assert_eq!(app.input.image_reads, 1);
+}
+
+#[test]
+fn text_typed_while_a_new_root_is_awaited_goes_to_that_root() {
+    let (mut app, first) = app_viewing(AgentStatus::Ready);
+    app.input.set_text("first draft");
+    app.clear_selection();
+    assert!(app.input.text.is_empty());
+    app.input.set_text("for the new root");
+    let root = AgentId::new();
+    app.select(root);
+    assert_eq!(app.input.text, "for the new root");
+    app.select(first);
+    assert_eq!(app.input.text, "first draft");
 }

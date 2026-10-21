@@ -249,7 +249,7 @@ impl App {
                                 )
                             })
                             .map(|n| n.agent.id);
-                        self.selected = None;
+                        self.clear_selection();
                         if let Some(next) = next {
                             effects.extend(self.select(next));
                         }

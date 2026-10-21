@@ -176,7 +176,7 @@ impl App {
         } else {
             // Nothing viewed until the new root arrives, so a message typed
             // meanwhile waits for it rather than reaching the old workspace.
-            self.selected = None;
+            self.clear_selection();
             self.dirty = true;
             self.flash(format!("new agent in {label}"));
             self.await_root_in(Some(path.clone()), None)
