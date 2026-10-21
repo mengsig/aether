@@ -242,6 +242,22 @@ fn protocol_note(
     Ok(())
 }
 
+/// A fold the engine made mid-turn settles no request: one still owed (an
+/// explicit fold or a handoff) is re-issued after it, so it still runs.
+fn record_turn_fold(runtime: &Runtime, ctx: &TurnCtx, outcome: EventKind) -> Result<()> {
+    debug_assert!(matches!(
+        outcome,
+        EventKind::CompactionNative { .. } | EventKind::CompactionFailed { .. }
+    ));
+    let hold = runtime.hold();
+    let owed = crate::turn::compaction_pending(runtime, ctx.agent.id)?.is_some();
+    let mut commit = Commit::new().event(ctx.draft(outcome));
+    crate::turn::preserve_newer_request(runtime, ctx, 0, &mut commit, &hold)?;
+    runtime.apply_held(hold, commit)?;
+    debug_assert!(!owed || crate::turn::compaction_pending(runtime, ctx.agent.id)?.is_some());
+    Ok(())
+}
+
 /// A tool call the engine made and has not reported a result for. The name is
 /// kept so a call refused without the engine's echo can still be closed.
 pub(super) struct PendingCall {
@@ -685,22 +701,24 @@ pub(super) fn handle_event(
             if let Some(tokens) = after_tokens {
                 note_context_usage(runtime, ctx, state, tokens);
             }
-            runtime.apply(Commit::new().event(ctx.draft(EventKind::CompactionNative {
+            let folded = EventKind::CompactionNative {
                 provider: snapshot.model.provider.clone(),
                 automatic,
                 before_tokens,
                 after_tokens,
                 duration_ms,
-            })))?;
+            };
+            record_turn_fold(runtime, ctx, folded)?;
         }
         EngineEvent::CompactionFailed { error } => {
-            runtime.apply(Commit::new().event(ctx.draft(EventKind::CompactionFailed {
+            let failed = EventKind::CompactionFailed {
                 error: format!(
                     "{} could not compact its context: {error}",
                     snapshot.model.provider
                 ),
                 models: vec![snapshot.model.clone()],
-            })))?;
+            };
+            record_turn_fold(runtime, ctx, failed)?;
         }
         EngineEvent::Note(text) => {
             tracing::debug!(agent = %ctx.agent.id, "{}", clamp(&text, MAX_ENGINE_ERROR))

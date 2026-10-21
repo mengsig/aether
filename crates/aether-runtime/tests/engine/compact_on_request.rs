@@ -190,3 +190,122 @@ async fn a_requested_compaction_runs_the_engine_s_own_fold_and_keeps_the_session
         }
     }
 }
+
+/// Folds or fails on its own in the middle of a reply turn, once let go.
+struct MidTurnFoldEngine {
+    turns: Arc<Mutex<Vec<EngineTurn>>>,
+    gate: Arc<tokio::sync::Notify>,
+    mid_turn: EngineEvent,
+}
+
+#[async_trait::async_trait]
+impl Engine for MidTurnFoldEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::CLAUDE_CODE
+    }
+    fn adapter(&self) -> String {
+        "mid-turn-fold-test/1".into()
+    }
+    fn compacts_natively(&self) -> bool {
+        true
+    }
+    async fn run(
+        &self,
+        turn: EngineTurn,
+        _cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        self.turns.lock().unwrap().push(turn.clone());
+        let mut events = FoldingEngine::events(&turn, true);
+        let gate = (!turn.compact_session).then(|| self.gate.clone());
+        if gate.is_some() {
+            events.insert(1, self.mid_turn.clone());
+        }
+        let (tx, rx) = mpsc::channel(8);
+        tokio::spawn(async move {
+            for (at, event) in events.into_iter().enumerate() {
+                if at == 1
+                    && let Some(gate) = &gate
+                {
+                    gate.notified().await;
+                }
+                if tx.send(event).await.is_err() {
+                    return;
+                }
+            }
+        });
+        Ok(EngineRun {
+            events: rx,
+            input: None,
+            decisions: None,
+            stop: None,
+        })
+    }
+}
+
+/// An engine's own fold mid-turn once settled the request queued behind it,
+/// so the person's /compact (or a handoff's checkpoint) never ran.
+#[tokio::test]
+async fn a_fold_the_engine_makes_mid_turn_leaves_a_queued_request_owed() {
+    let mid_turn_events = [
+        EngineEvent::Compacted {
+            automatic: true,
+            before_tokens: Some(9000),
+            after_tokens: Some(2000),
+            duration_ms: Some(1000),
+        },
+        EngineEvent::CompactionFailed {
+            error: "Conversation too long.".into(),
+        },
+    ];
+    for mid_turn in mid_turn_events {
+        let turns = Arc::new(Mutex::new(Vec::new()));
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let engine = Arc::new(MidTurnFoldEngine {
+            turns: turns.clone(),
+            gate: gate.clone(),
+            mid_turn,
+        });
+        let h = harness_with_engine(engine, Arc::default(), Arc::default()).await;
+        let id = chat_agent(&h);
+        wait_for(h.store.as_ref(), id, |a| {
+            a.status.kind() == AgentStatusKind::Waiting
+        })
+        .await;
+        h.runtime
+            .send_message(id, vec![ContentBlock::text("go on")], Actor::user())
+            .unwrap();
+        wait_for(h.store.as_ref(), id, |a| {
+            a.status.kind() == AgentStatusKind::Running
+        })
+        .await;
+        h.runtime.request_compaction(id, Actor::user()).unwrap();
+        gate.notify_one();
+        let requested_fold = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let events = h
+                    .store
+                    .events(0, 1000, &EventFilter::for_agent(id))
+                    .unwrap();
+                let fold = events.iter().find(|e| {
+                    matches!(
+                        e.kind,
+                        EventKind::CompactionNative {
+                            automatic: false,
+                            ..
+                        }
+                    )
+                });
+                if let Some(fold) = fold {
+                    break fold.clone();
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the queued /compact runs once the turn ends");
+        let recorded = turns.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 2, "the reply turn, then the requested fold");
+        assert!(recorded[1].compact_session);
+        assert_eq!(requested_fold.agent_id, Some(id));
+    }
+}

@@ -189,7 +189,9 @@ agent compacted on request keeps its session instead.
 
 `aether compact AGENT` waits for the outcome and prints it, and exits 1 when
 the compaction failed; `--no-wait` returns once the request is accepted. A
-failed compaction loses nothing: the agent keeps its full context.
+failed compaction loses nothing: the agent keeps its full context. A request
+made during a turn runs when that turn ends; a fold the engine makes on its
+own in the meantime does not settle it.
 
 The native rows describe the CLIs' own behaviour and are not tested by Aether:
 see Claude Code's

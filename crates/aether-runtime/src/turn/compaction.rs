@@ -106,7 +106,7 @@ pub(crate) fn compaction_pending_for_turn(
 /// A model change can land while a compactor awaits its provider. Re-issue
 /// the newer request after this one's result so the completion event does not
 /// make the latest handoff disappear from `compaction_pending`.
-pub(super) fn preserve_newer_request(
+pub(crate) fn preserve_newer_request(
     runtime: &Runtime,
     ctx: &TurnCtx,
     finished_seq: u64,

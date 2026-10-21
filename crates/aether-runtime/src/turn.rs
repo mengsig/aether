@@ -52,7 +52,9 @@ pub(crate) use state::{agent_row, agent_row_with_session, close_exhaustion_episo
 mod execution;
 use execution::*;
 mod compaction;
-pub(crate) use compaction::{compact, compaction_pending, compaction_pending_for_turn};
+pub(crate) use compaction::{
+    compact, compaction_pending, compaction_pending_for_turn, preserve_newer_request,
+};
 mod engine_compaction;
 mod failure;
 mod server_compaction;

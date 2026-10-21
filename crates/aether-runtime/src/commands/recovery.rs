@@ -48,24 +48,40 @@ impl Runtime {
                 .run(agent.run),
             );
         }
+        // Running turns compact at their next context assembly or when they end;
+        // a wake would steer the native model.
+        self.ready_for_compaction(&hold, &mut commit, &mut agent, by)?;
+        self.apply_held(hold, commit)?;
+        Ok(())
+    }
+
+    /// Ready a waiting agent for its owed fold, keeping the wait it returns to.
+    pub(crate) fn ready_for_compaction(
+        &self,
+        hold: &CommitHold<'_>,
+        commit: &mut Commit,
+        agent: &mut Agent,
+        by: Actor,
+    ) -> Result<()> {
+        debug_assert!(!agent.status.is_terminal());
         if let AgentStatus::Waiting { condition } = &agent.status {
             agent.resume_wait = Some(condition.clone());
             agent.transition(AgentStatus::Ready, now())?;
             commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
         }
-        // Running turns compact at their next context assembly; a wake would steer the native model.
-        if agent.status.kind() == AgentStatusKind::Ready {
-            self.push_inbox(
-                &hold,
-                &mut commit,
-                &agent,
-                InboxKind::Wake {
-                    reason: COMPACTION_WAKE.into(),
-                },
-                by,
-            )?;
+        if agent.status.kind() != AgentStatusKind::Ready {
+            return Ok(());
         }
-        self.apply_held(hold, commit)?;
+        let wake = self.push_inbox(
+            hold,
+            commit,
+            agent,
+            InboxKind::Wake {
+                reason: COMPACTION_WAKE.into(),
+            },
+            by,
+        )?;
+        debug_assert_eq!(wake.agent_id, agent.id);
         Ok(())
     }
 
