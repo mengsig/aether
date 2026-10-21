@@ -213,7 +213,11 @@ impl ContextManager {
         let fixed: u32 = layers.iter().map(|l| l.tokens).sum::<u32>() + tool_tokens;
         let tail_budget = budget.tail_budget(fixed);
         let mut dropped = 0usize;
-        let mut tail_tokens = est.messages(&messages);
+        let count = |messages: &[Message]| match budget.server_compaction {
+            true => est.messages_after_compaction(messages),
+            false => est.messages(messages),
+        };
+        let mut tail_tokens = count(&messages);
         while tail_tokens > tail_budget && messages.len() > 1 {
             // Drop whole exchanges: the oldest message plus any leading
             // assistant turns, so the tail always starts at a user turn and
@@ -225,7 +229,7 @@ impl ContextManager {
                 messages.len() <= before,
                 "sanitize must not grow a user-led tail"
             );
-            tail_tokens = est.messages(&messages);
+            tail_tokens = count(&messages);
         }
         let used = fixed + tail_tokens;
         let needs_compaction = dropped > 0 || budget.over_threshold(used);

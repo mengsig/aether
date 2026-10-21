@@ -177,7 +177,9 @@ impl Models {
             .copied()
             .or(default)
             .map(|tokens| tokens.min(profile.context_window));
-        if provider.id == "anthropic" && provider.protocol == Protocol::AnthropicMessages {
+        let listed = provider.models.iter().any(|m| m.id == model.id);
+        if listed && provider.id == "anthropic" && provider.protocol == Protocol::AnthropicMessages
+        {
             profile
                 .extensions
                 .insert(SERVER_COMPACTION_KEY.into(), serde_json::Value::Bool(true));
@@ -329,7 +331,6 @@ impl Models {
     /// Resolve auth and build (or reuse) the adapter for a model.
     pub async fn client(&self, r: &ModelRef) -> Result<Arc<dyn ModelClient>, ModelError> {
         let resolved = self
-            .registry
             .resolve(r)
             .map_err(|e| ModelError::new(ModelErrorClass::NotFound, e.to_string()))?;
         let provider = &resolved.provider;
@@ -561,6 +562,31 @@ mod tests {
             resolved.model.capabilities.context_window,
             resolved.model.capabilities.compaction_tokens,
         )
+    }
+
+    #[test]
+    fn server_compaction_is_marked_only_for_listed_direct_anthropic_models() {
+        let models = builtin_models(AetherConfig::default());
+        let provider = models
+            .registry()
+            .providers()
+            .iter()
+            .find(|p| p.id == "anthropic")
+            .expect("anthropic provider")
+            .clone();
+        let listed = provider.models.first().expect("a listed model");
+        assert!(
+            models
+                .effective_capabilities(&provider, listed)
+                .compacts_on_server()
+        );
+        let mut unlisted = listed.clone();
+        unlisted.id = "not-in-the-list".into();
+        assert!(
+            !models
+                .effective_capabilities(&provider, &unlisted)
+                .compacts_on_server()
+        );
     }
 
     #[test]
