@@ -204,7 +204,7 @@ fn missing_checkpoint_artifact(agent: AgentId) -> aether_core::checkpoint::Check
 async fn missing_workspace_or_checkpoint_artifact_only_blocks_its_agent() {
     for checkpoint in [false, true] {
         let dir = tempfile::tempdir().expect("private state");
-        let store = Arc::new(SqliteStore::open(&dir.path().join("state.db")).expect("store"));
+        let store = Arc::new(SqliteStore::open(dir.path().join("state.db")).expect("store"));
         let runtime = start(store.clone(), dir.path()).await;
         runtime.shutdown().await;
         let mut bad = interrupted(&runtime);
@@ -243,7 +243,7 @@ async fn missing_workspace_or_checkpoint_artifact_only_blocks_its_agent() {
 #[tokio::test]
 async fn unreadable_global_cancellation_journal_keeps_diagnostics_available() {
     let dir = tempfile::tempdir().expect("private state");
-    let store = Arc::new(SqliteStore::open(&dir.path().join("state.db")).expect("store"));
+    let store = Arc::new(SqliteStore::open(dir.path().join("state.db")).expect("store"));
     let runtime = start(store.clone(), dir.path()).await;
     runtime.shutdown().await;
     runtime

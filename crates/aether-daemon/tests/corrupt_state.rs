@@ -30,7 +30,7 @@ async fn create(connection: &mut RawConn) -> Agent {
 }
 
 fn seed(daemon: &TestDaemon, mut bad: Agent, mut good: Agent, kind: u8) {
-    let store = SqliteStore::open(&daemon.store_path()).unwrap();
+    let store = SqliteStore::open(daemon.store_path()).unwrap();
     good.paused = true;
     bad.paused = true;
     bad.status = AgentStatus::Running;
