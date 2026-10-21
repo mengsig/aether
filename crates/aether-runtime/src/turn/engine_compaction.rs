@@ -1,7 +1,7 @@
 //! A person's request to compact an engine agent goes to the engine's own
 //! compaction (Claude Code's `/compact`): it folds the live session in place,
 //! keeps the session, and needs no second model to read the transcript.
-use super::compaction::{preserve_newer_request, record_compaction_usage};
+use super::compaction::{RequestRef, preserve_newer_request, record_compaction_usage};
 use super::*;
 use crate::compaction_client::{Accounting, refuse_checkpoint_input};
 use aether_core::model::{ModelError, Usage};
@@ -28,7 +28,7 @@ struct NativeRun {
 pub(super) async fn try_engine_compaction(
     runtime: &Arc<Runtime>,
     ctx: &mut TurnCtx,
-    request_seq: u64,
+    request: RequestRef,
     cancel: &CancellationToken,
 ) -> Result<bool> {
     let Some(session) = ctx.agent.engine_session.clone() else {
@@ -78,7 +78,7 @@ pub(super) async fn try_engine_compaction(
     if cancel.is_cancelled() && !run.folded {
         return Ok(true);
     }
-    settle(runtime, ctx, request_seq, &resolved.provider.id, run)?;
+    settle(runtime, ctx, request, &resolved.provider.id, run)?;
     Ok(true)
 }
 
@@ -229,10 +229,11 @@ fn record_native_usage(
 fn settle(
     runtime: &Runtime,
     ctx: &mut TurnCtx,
-    request_seq: u64,
+    request: RequestRef,
     provider: &str,
     run: NativeRun,
 ) -> Result<()> {
+    debug_assert!(request.seq > 0, "a fold answers a stored request");
     let kind = if run.folded {
         if let Some(tokens) = run.after_tokens {
             ctx.agent.stats.context_tokens = Some(tokens);
@@ -258,11 +259,11 @@ fn settle(
     ctx.agent.updated_at = now();
     let hold = runtime.hold();
     let mut commit = Commit::new()
-        .event(ctx.draft(kind))
+        .event(ctx.draft(kind).caused_by(request.id))
         .mutate(Mutation::UpsertAgent(agent_row_with_session(
             runtime, ctx, &hold,
         )?));
-    preserve_newer_request(runtime, ctx, request_seq, &mut commit, &hold)?;
+    preserve_newer_request(runtime, ctx, request.seq, &mut commit, &hold)?;
     runtime.apply_held(hold, commit)?;
     Ok(())
 }

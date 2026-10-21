@@ -80,8 +80,21 @@ fn assert_native_summary(h: &Harness, agent: &Agent) -> Usage {
     assert_eq!(updated.stats.usage.input_tokens, 200);
     assert_eq!(updated.stats.usage.output_tokens, 20);
     assert!(updated.stats.usage.cost_usd > 0.0);
-    assert!(h.store.events(0, 1000, &EventFilter::own_events(agent.id)).unwrap().iter().any(|e| matches!(&e.kind,
-        EventKind::CompactionNative { provider, automatic: false, after_tokens: Some(20), .. } if provider == "anthropic")));
+    let events = h
+        .store
+        .events(0, 1000, &EventFilter::own_events(agent.id))
+        .unwrap();
+    let native = events.iter().find(|e| matches!(&e.kind,
+        EventKind::CompactionNative { provider, automatic: false, after_tokens: Some(20), .. } if provider == "anthropic"))
+        .expect("compaction.native");
+    let request = events
+        .iter()
+        .find(|e| matches!(e.kind, EventKind::CompactionRequested { .. }));
+    assert_eq!(
+        native.causation,
+        request.map(|e| e.id),
+        "the fold names its request"
+    );
     updated.stats.usage
 }
 

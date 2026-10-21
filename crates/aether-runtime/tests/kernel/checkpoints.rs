@@ -553,12 +553,23 @@ async fn manual_compaction_never_requests_a_reply_without_pending_work() {
             .store
             .events(boundary, 1000, &EventFilter::own_events(agent.id))
             .unwrap();
-        assert!(
-            events.iter().any(|event| matches!(
-                event.kind,
-                EventKind::CompactionCompleted { .. } | EventKind::CompactionFailed { .. }
-            )),
-            "{scenario}: {events:?}"
+        let outcome = events
+            .iter()
+            .find(|event| {
+                matches!(
+                    event.kind,
+                    EventKind::CompactionCompleted { .. } | EventKind::CompactionFailed { .. }
+                )
+            })
+            .unwrap_or_else(|| panic!("{scenario}: {events:?}"));
+        let request = events
+            .iter()
+            .find(|event| matches!(event.kind, EventKind::CompactionRequested { .. }))
+            .unwrap_or_else(|| panic!("{scenario}: {events:?}"));
+        assert_eq!(
+            outcome.causation,
+            Some(request.id),
+            "{scenario}: the outcome names the request it settles"
         );
         assert!(
             !events

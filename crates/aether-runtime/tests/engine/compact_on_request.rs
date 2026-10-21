@@ -175,6 +175,16 @@ async fn a_requested_compaction_runs_the_engine_s_own_fold_and_keeps_the_session
             EventKind::CompactionFailed { error, .. } => Some(error.clone()),
             _ => None,
         });
+        let requested = events
+            .iter()
+            .find(|e| matches!(e.kind, EventKind::CompactionRequested { .. }))
+            .expect("compaction.requested");
+        let outcome = events.iter().find(|e| settled(&e.kind)).unwrap();
+        assert_eq!(
+            outcome.causation,
+            Some(requested.id),
+            "the outcome names the request it settles"
+        );
         if folds {
             let (provider, automatic, before_tokens, after_tokens, duration_ms) =
                 native.expect("compaction.native");
@@ -307,5 +317,20 @@ async fn a_fold_the_engine_makes_mid_turn_leaves_a_queued_request_owed() {
         assert_eq!(recorded.len(), 2, "the reply turn, then the requested fold");
         assert!(recorded[1].compact_session);
         assert_eq!(requested_fold.agent_id, Some(id));
+        let events = h
+            .store
+            .events(0, 1000, &EventFilter::for_agent(id))
+            .unwrap();
+        let requests: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::CompactionRequested { .. }))
+            .collect();
+        assert_eq!(requests.len(), 2, "the request, then its re-issue");
+        assert_eq!(requests[1].causation, Some(requests[0].id));
+        assert_eq!(
+            requested_fold.causation,
+            Some(requests[1].id),
+            "the fold settles the re-issued request"
+        );
     }
 }

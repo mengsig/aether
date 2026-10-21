@@ -4,7 +4,15 @@ use aether_model::registry::RegistryError;
 
 pub(crate) struct PendingCompaction {
     pub trigger: CompactionTrigger,
-    pub request_seq: u64,
+    pub request: RequestRef,
+}
+
+/// The stored `compaction.requested` a fold answers. Its outcome names it as
+/// cause, so a client can tell the fold that settled its own request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RequestRef {
+    pub seq: u64,
+    pub id: aether_core::id::EventId,
 }
 
 /// Pin the handoff owed by the model this turn starts on. A later model
@@ -50,7 +58,10 @@ fn pending_request(runtime: &Runtime, agent: AgentId) -> Result<Option<PendingCo
             }
             Some(PendingCompaction {
                 trigger: trigger.clone(),
-                request_seq: event.seq,
+                request: RequestRef {
+                    seq: event.seq,
+                    id: event.id,
+                },
             })
         }
         _ => None,
@@ -95,7 +106,7 @@ pub(crate) fn compaction_pending_for_turn(
         if to != &ctx.agent.model
             || started
                 .first()
-                .is_some_and(|event| event.seq < pending.request_seq)
+                .is_some_and(|event| event.seq < pending.request.seq)
         {
             return Ok(None);
         }
@@ -114,11 +125,14 @@ pub(crate) fn preserve_newer_request(
     _hold: &CommitHold<'_>,
 ) -> Result<()> {
     if let Some(newer) = pending_request(runtime, ctx.agent.id)?
-        && newer.request_seq > finished_seq
+        && newer.request.seq > finished_seq
     {
-        commit.push_event(ctx.draft(EventKind::CompactionRequested {
-            trigger: newer.trigger,
-        }));
+        commit.push_event(
+            ctx.draft(EventKind::CompactionRequested {
+                trigger: newer.trigger,
+            })
+            .caused_by(newer.request.id),
+        );
     }
     Ok(())
 }
@@ -314,23 +328,19 @@ pub(super) fn handoff_losses(
 pub(crate) async fn compact(
     runtime: &Arc<Runtime>,
     ctx: &mut TurnCtx,
-    request: PendingCompaction,
+    pending: PendingCompaction,
     previous: Option<&aether_core::checkpoint::Checkpoint>,
     child_tasks: &[Task],
     cancel: &CancellationToken,
 ) -> Result<Option<aether_core::checkpoint::Checkpoint>> {
-    let PendingCompaction {
-        trigger,
-        request_seq,
-    } = request;
+    let PendingCompaction { trigger, request } = pending;
     // Asked for by someone: an engine that folds its own session does it in place.
     if matches!(trigger, CompactionTrigger::Explicit { .. })
-        && super::engine_compaction::try_engine_compaction(runtime, ctx, request_seq, cancel)
-            .await?
+        && super::engine_compaction::try_engine_compaction(runtime, ctx, request, cancel).await?
     {
         return Ok(None);
     }
-    if super::server_compaction::try_server_compaction(runtime, ctx, request_seq, &trigger, cancel)
+    if super::server_compaction::try_server_compaction(runtime, ctx, request, &trigger, cancel)
         .await?
     {
         return Ok(None);
@@ -357,10 +367,13 @@ pub(crate) async fn compact(
     let after = previous.map(|c| c.provenance.to_seq).unwrap_or(0);
     let entries = runtime.store.transcript(ctx.agent.id, after)?;
     let Some((fold, tail)) = aether_context::fold_range(&entries, keep_tail) else {
-        let mut commit = Commit::new().event(ctx.draft(EventKind::CompactionFailed {
-            error: "Nothing to compact: no older complete transcript remains outside the retained tail".into(),
-            models: Vec::new(),
-        }));
+        let mut commit = Commit::new().event(
+            ctx.draft(EventKind::CompactionFailed {
+                error: "Nothing to compact: no older complete transcript remains outside the retained tail".into(),
+                models: Vec::new(),
+            })
+            .caused_by(request.id),
+        );
         if let Some((from, to, session)) = &handoff {
             commit.push_event(ctx.draft(EventKind::ContextHandoff {
                 from: from.clone(),
@@ -377,7 +390,7 @@ pub(crate) async fn compact(
             }));
         }
         let hold = runtime.hold();
-        preserve_newer_request(runtime, ctx, request_seq, &mut commit, &hold)?;
+        preserve_newer_request(runtime, ctx, request.seq, &mut commit, &hold)?;
         runtime.apply_held(hold, commit)?;
         return Ok(None);
     };
@@ -390,10 +403,13 @@ pub(crate) async fn compact(
                 error: String,
                 models: Vec<ModelRef>|
      -> Result<()> {
-        let mut commit = Commit::new().event(ctx.draft(EventKind::CompactionFailed {
-            error: error.clone(),
-            models,
-        }));
+        let mut commit = Commit::new().event(
+            ctx.draft(EventKind::CompactionFailed {
+                error: error.clone(),
+                models,
+            })
+            .caused_by(request.id),
+        );
         if let Some((from, to, session)) = &handoff {
             let mut lost = handoff_losses(
                 runtime,
@@ -412,7 +428,7 @@ pub(crate) async fn compact(
             }));
         }
         let hold = runtime.hold();
-        preserve_newer_request(runtime, ctx, request_seq, &mut commit, &hold)?;
+        preserve_newer_request(runtime, ctx, request.seq, &mut commit, &hold)?;
         runtime.apply_held(hold, commit)?;
         Ok(())
     };
@@ -535,14 +551,17 @@ pub(crate) async fn compact(
                 .event(ctx.draft(EventKind::CheckpointCreated {
                     checkpoint: checkpoint.clone(),
                 }))
-                .event(ctx.draft(EventKind::CompactionCompleted {
-                    checkpoint: checkpoint.id,
-                    version: checkpoint.version,
-                    from_seq: checkpoint.provenance.from_seq,
-                    to_seq: checkpoint.provenance.to_seq,
-                    before_tokens: Some(history_tokens(previous, &entries)),
-                    after_tokens: Some(history_tokens(Some(&checkpoint), tail)),
-                }))
+                .event(
+                    ctx.draft(EventKind::CompactionCompleted {
+                        checkpoint: checkpoint.id,
+                        version: checkpoint.version,
+                        from_seq: checkpoint.provenance.from_seq,
+                        to_seq: checkpoint.provenance.to_seq,
+                        before_tokens: Some(history_tokens(previous, &entries)),
+                        after_tokens: Some(history_tokens(Some(&checkpoint), tail)),
+                    })
+                    .caused_by(request.id),
+                )
                 .mutate(Mutation::PutCheckpoint(checkpoint.clone()))
                 .mutate(Mutation::UpsertAgent(agent_row_with_session(
                     runtime, ctx, &hold,
@@ -581,7 +600,7 @@ pub(crate) async fn compact(
                     ),
                 }));
             }
-            preserve_newer_request(runtime, ctx, request_seq, &mut commit, &hold)?;
+            preserve_newer_request(runtime, ctx, request.seq, &mut commit, &hold)?;
             runtime.apply_held(hold, commit)?;
             tracing::info!(agent = %ctx.agent.id, version = checkpoint.version, attempts = compacted.attempts, elapsed_ms = started.elapsed().as_millis() as u64, trigger = trigger.name(), "compacted context");
             Ok(Some(checkpoint))

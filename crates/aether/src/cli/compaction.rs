@@ -3,14 +3,16 @@
 use super::{acted, connect, sane};
 use aether_client::SubscriptionFrame;
 use aether_core::agent::AgentStatusKind;
-use aether_core::event::{Event, EventKind};
-use aether_core::id::AgentId;
+use aether_core::event::{CompactionTrigger, Event, EventKind};
+use aether_core::id::{AgentId, EventId};
 use aether_protocol::EventQuery;
+use std::collections::HashSet;
 
 /// Exit status when the compaction ran and failed.
 const FAILED_EXIT: i32 = 1;
 
-const OUTCOMES: [&str; 3] = [
+const WATCHED: [&str; 4] = [
+    "compaction.requested",
     "compaction.completed",
     "compaction.native",
     "compaction.failed",
@@ -40,11 +42,17 @@ pub async fn compact(
     let cursor = client.status().await?.last_seq;
     let query = EventQuery {
         agent: Some(id),
-        types: OUTCOMES.map(String::from).to_vec(),
+        types: WATCHED.map(String::from).to_vec(),
         ..Default::default()
     };
     let mut sub = client.subscribe(Some(cursor), query, false).await?;
     let agent = client.get_agent(id).await?;
+    // Requests made from the cursor on, this command's among them; an outcome
+    // answers this command only when it names one of these as its cause.
+    let mut answering: HashSet<EventId> = pending_handoff(&client, id, cursor)
+        .await?
+        .into_iter()
+        .collect();
     client.compact(id).await?;
     if !json {
         eprintln!("{}", started_line(&sane(&agent.name), agent.status.kind()));
@@ -52,8 +60,15 @@ pub async fn compact(
     let started = std::time::Instant::now();
     while let Some(frame) = sub.next().await {
         match frame {
-            SubscriptionFrame::Event(event) if is_outcome(&event, id) => {
-                if !still_owed(&client, id, event.seq).await? {
+            SubscriptionFrame::Event(event) if event.agent_id != Some(id) => {}
+            SubscriptionFrame::Event(event) => {
+                if matches!(event.kind, EventKind::CompactionRequested { .. }) {
+                    answering.insert(event.id);
+                } else if is_outcome(&event)
+                    && event
+                        .causation
+                        .is_some_and(|cause| answering.contains(&cause))
+                {
                     return report(&event, started.elapsed(), json, &follow_up);
                 }
             }
@@ -80,42 +95,49 @@ fn started_line(name: &str, status: AgentStatusKind) -> String {
     )
 }
 
-fn is_outcome(event: &Event, id: AgentId) -> bool {
-    event.agent_id == Some(id)
-        && matches!(
-            event.kind,
-            EventKind::CompactionCompleted { .. }
-                | EventKind::CompactionNative { .. }
-                | EventKind::CompactionFailed { .. }
-        )
+fn is_outcome(event: &Event) -> bool {
+    matches!(
+        event.kind,
+        EventKind::CompactionCompleted { .. }
+            | EventKind::CompactionNative { .. }
+            | EventKind::CompactionFailed { .. }
+    )
 }
 
-/// A compaction is still owed after an outcome when a request follows it: this
-/// command's own, or one re-issued because the engine folded mid-turn.
-async fn still_owed(
+/// A handoff still owed at `cursor` takes this command's request in: the daemon
+/// records no new one, and the handoff's fold answers both.
+async fn pending_handoff(
     client: &aether_client::Client,
     id: AgentId,
-    outcome_seq: u64,
-) -> anyhow::Result<bool> {
-    const PAGE: usize = 64;
-    let query = EventQuery {
-        agent: Some(id),
-        types: vec!["compaction.requested".into()],
-        ..Default::default()
-    };
-    let mut after = outcome_seq;
+    cursor: u64,
+) -> anyhow::Result<Option<EventId>> {
+    const PAGE: usize = 32;
+    let mut before = cursor.saturating_add(1);
     loop {
-        let page = client.events(after, PAGE, query.clone()).await?;
-        debug_assert!(page.iter().all(|event| event.seq > after));
-        if page.iter().any(|event| event.agent_id == Some(id)) {
-            return Ok(true);
+        let query = EventQuery {
+            before: Some(before),
+            agent: Some(id),
+            types: WATCHED.map(String::from).to_vec(),
+            ..Default::default()
+        };
+        let page = client.events(0, PAGE, query).await?;
+        debug_assert!(page.iter().all(|event| event.seq < before));
+        // Children's events come too; only the agent's own latest one counts.
+        if let Some(latest) = page.iter().find(|event| event.agent_id == Some(id)) {
+            let handoff = matches!(
+                &latest.kind,
+                EventKind::CompactionRequested {
+                    trigger: CompactionTrigger::Handoff { .. }
+                }
+            );
+            return Ok(handoff.then_some(latest.id));
         }
         match page.last() {
-            Some(last) if page.len() == PAGE => {
-                debug_assert!(last.seq > after, "paging must move forward");
-                after = last.seq;
+            Some(oldest) if page.len() == PAGE => {
+                debug_assert!(oldest.seq < before, "paging must move back");
+                before = oldest.seq;
             }
-            _ => return Ok(false),
+            _ => return Ok(None),
         }
     }
 }

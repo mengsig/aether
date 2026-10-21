@@ -191,7 +191,10 @@ agent compacted on request keeps its session instead.
 the compaction failed; `--no-wait` returns once the request is accepted. A
 failed compaction loses nothing: the agent keeps its full context. A request
 made during a turn runs when that turn ends; a fold the engine makes on its
-own in the meantime does not settle it.
+own in the meantime does not settle it. Each `compaction.completed`,
+`compaction.native` or `compaction.failed` that answers a request names that
+`compaction.requested` event as its `causation`, which is how the command
+tells its own outcome from another request's.
 
 The native rows describe the CLIs' own behaviour and are not tested by Aether:
 see Claude Code's

@@ -76,9 +76,10 @@ struct Stub {
     replay_note: bool,
     /// The agent a TUI beside the socket views, for `@viewed`.
     viewed: Option<&'static str>,
-    /// Sent in order on the newest subscription once a compaction is requested,
-    /// from seq 10; `GetEvents` for `compaction.requested` answers from them.
-    compaction_events: Vec<EventKind>,
+    /// The agent's compaction log. Events up to `compaction_cursor` happened
+    /// before the command and answer history pages; the rest follow `compact`.
+    compaction_log: Vec<Event>,
+    compaction_cursor: u64,
 }
 impl Default for Stub {
     fn default() -> Self {
@@ -99,21 +100,29 @@ impl Default for Stub {
             features: Vec::new(),
             replay_note: false,
             viewed: None,
-            compaction_events: Vec::new(),
+            compaction_log: Vec::new(),
+            compaction_cursor: 0,
         }
     }
 }
 
-/// The stub's compaction events for the agent, numbered from seq 10.
-fn compaction_events(kinds: &[EventKind]) -> impl Iterator<Item = Event> + '_ {
-    kinds.iter().zip(10..).map(|(kind, seq)| {
-        Event::from_draft(
-            EventDraft::new(Actor::System, kind.clone()).agent(AGENT.parse().unwrap()),
+/// A compaction log for the stub agent from seq 1; each entry may name the
+/// index of the request it answers, which becomes the event's cause.
+fn compaction_log(entries: &[(EventKind, Option<usize>)]) -> Vec<Event> {
+    let mut log: Vec<Event> = Vec::new();
+    for (seq, (kind, cause)) in (1..).zip(entries) {
+        let mut draft = EventDraft::new(Actor::System, kind.clone()).agent(AGENT.parse().unwrap());
+        if let Some(cause) = cause {
+            draft = draft.caused_by(log[*cause].id);
+        }
+        log.push(Event::from_draft(
+            draft,
             EventId::new(),
             seq,
             AT.parse().unwrap(),
-        )
-    })
+        ));
+    }
+    log
 }
 
 /// The CLI exits on a run's last event without reading replies still on the way,
@@ -235,14 +244,19 @@ async fn cli_with_socket(
                     Ok(Reply::Agent(created))
                 }
                 Command::Compact { .. } => Ok(Reply::Ok),
-                Command::GetEvents { after, query, .. }
-                    if query.types == ["compaction.requested"] =>
+                Command::GetEvents { limit, query, .. }
+                    if query.types.iter().any(|t| t == "compaction.requested") =>
                 {
                     assert_eq!(query.agent, Some(AGENT.parse().unwrap()));
+                    let before = query.before.expect("history is read newest first");
+                    assert!(before <= stub.compaction_cursor + 1, "only history is paged");
                     Ok(Reply::Events(
-                        compaction_events(&stub.compaction_events)
-                            .filter(|event| event.seq > *after)
-                            .filter(|event| event.kind.type_name() == "compaction.requested")
+                        stub.compaction_log
+                            .iter()
+                            .rev()
+                            .filter(|event| event.seq < before)
+                            .take(*limit)
+                            .cloned()
                             .collect(),
                     ))
                 }
@@ -317,7 +331,7 @@ async fn cli_with_socket(
                 Command::Status => Ok(Reply::Status(
                     serde_json::from_value(json!({
                         "instance_id": "stub", "version": "stub", "pid": 1, "started_at": AT,
-                        "last_seq": stub.event_count.unwrap_or(0), "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
+                        "last_seq": stub.event_count.unwrap_or(stub.compaction_cursor), "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
                         "agents_blocked": 0, "tasks_active": 0, "pending_approvals": 0,
                         "usage_total": aether_core::model::Usage::default(), "mcp": [hostile_mcp()],
                         "providers": [{"provider": HOSTILE, "running": 0, "backoff": {"reason": HOSTILE, "until": AT}}]
@@ -596,8 +610,12 @@ async fn cli_with_socket(
             )
             .await;
             if let Command::Compact { .. } = &frame.command {
-                for event in compaction_events(&stub.compaction_events) {
+                for event in &stub.compaction_log {
+                    if event.seq <= stub.compaction_cursor {
+                        continue;
+                    }
                     let sub = next_sub - 1;
+                    let event = event.clone();
                     write_frame(&mut write, ServerFrame::Event { sub, event }).await;
                 }
             }
@@ -959,18 +977,40 @@ async fn compact_acknowledges_acceptance_and_points_to_observable_failure() {
     );
 }
 
+fn requested() -> EventKind {
+    EventKind::CompactionRequested {
+        trigger: aether_core::event::CompactionTrigger::Explicit { by: Actor::user() },
+    }
+}
+
+fn native(automatic: bool, after: u64) -> EventKind {
+    EventKind::CompactionNative {
+        provider: "claude-code".into(),
+        automatic,
+        before_tokens: Some(6164),
+        after_tokens: Some(after),
+        duration_ms: Some(6214),
+    }
+}
+
+fn timed_out() -> EventKind {
+    EventKind::CompactionFailed {
+        error: "the compactor timed out".into(),
+        models: vec![],
+    }
+}
+
+/// A stub whose agent logs `entries` once `compact` is asked.
+fn compacting(entries: &[(EventKind, Option<usize>)]) -> Stub {
+    Stub {
+        compaction_log: compaction_log(entries),
+        ..Stub::default()
+    }
+}
+
 #[tokio::test]
 async fn compact_waits_for_the_outcome_and_says_how_it_went() {
-    let folded = Stub {
-        compaction_events: vec![EventKind::CompactionNative {
-            provider: "claude-code".into(),
-            automatic: false,
-            before_tokens: Some(6164),
-            after_tokens: Some(932),
-            duration_ms: Some(6214),
-        }],
-        ..Stub::default()
-    };
+    let folded = compacting(&[(requested(), None), (native(false, 932), Some(0))]);
     let output = cli(&["compact", AGENT], folded).await;
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     assert!(stderr(&output).contains("usually takes under a minute or two"));
@@ -980,14 +1020,8 @@ async fn compact_waits_for_the_outcome_and_says_how_it_went() {
         stdout(&output)
     );
 
-    let failed = Stub {
-        compaction_events: vec![EventKind::CompactionFailed {
-            error: "the compactor timed out".into(),
-            models: vec![],
-        }],
-        ..Stub::default()
-    };
-    let output = cli(&["compact", AGENT, "--json"], failed).await;
+    let failed = || compacting(&[(requested(), None), (timed_out(), Some(0))]);
+    let output = cli(&["compact", AGENT, "--json"], failed()).await;
     assert_eq!(
         output.status.code(),
         Some(1),
@@ -996,51 +1030,70 @@ async fn compact_waits_for_the_outcome_and_says_how_it_went() {
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["outcome"], "failed");
     assert_eq!(value["event"]["kind"]["type"], "compaction.failed");
-    let failed = Stub {
-        compaction_events: vec![EventKind::CompactionFailed {
-            error: "the compactor timed out".into(),
-            models: vec![],
-        }],
-        ..Stub::default()
-    };
-    let text = stdout(&cli(&["compact", AGENT], failed).await);
+    let text = stdout(&cli(&["compact", AGENT], failed()).await);
     assert!(text.contains("Nothing was lost"), "{text}");
     assert!(text.contains(&format!("aether compact {AGENT}")), "{text}");
 }
 
-/// An outcome a request follows is not this command's: an earlier fold landing
-/// late, or the engine folding on its own mid-turn, which leaves the request owed.
+/// Outcomes that answer no request of this command's are not its: an earlier
+/// fold landing late, or the engine folding mid-turn, which leaves it owed.
 #[tokio::test]
 async fn compact_waits_past_outcomes_that_leave_the_compaction_owed() {
-    let requested = || EventKind::CompactionRequested {
-        trigger: aether_core::event::CompactionTrigger::Explicit { by: Actor::user() },
-    };
-    let native = |automatic, after| EventKind::CompactionNative {
-        provider: "claude-code".into(),
-        automatic,
-        before_tokens: Some(9000),
-        after_tokens: Some(after),
-        duration_ms: Some(1000),
-    };
-    let stub = Stub {
-        compaction_events: vec![
-            EventKind::CompactionFailed {
-                error: "an earlier fold failed".into(),
-                models: vec![],
-            },
-            requested(),
-            native(true, 4000),
-            requested(),
-            native(false, 932),
-        ],
-        ..Stub::default()
-    };
+    let mut stub = compacting(&[
+        (requested(), None),
+        (requested(), None),
+        (timed_out(), Some(0)),
+        (native(true, 4000), None),
+        (requested(), Some(1)),
+        (native(false, 932), Some(4)),
+    ]);
+    stub.compaction_cursor = 1;
     let output = cli(&["compact", AGENT, "--json"], stub).await;
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["outcome"], "completed");
-    assert_eq!(value["event"]["seq"], 14);
+    assert_eq!(value["event"]["seq"], 6);
     assert_eq!(value["event"]["kind"]["after_tokens"], 932);
+}
+
+/// A later request from someone else once kept this command waiting, then
+/// reported that fold's failure (or hung when it never settled) as its own.
+#[tokio::test]
+async fn compact_reports_its_own_outcome_not_a_later_request_s() {
+    let stub = compacting(&[
+        (requested(), None),
+        (native(false, 932), Some(0)),
+        (requested(), None),
+        (timed_out(), Some(2)),
+    ]);
+    let output = cli(&["compact", AGENT, "--json"], stub).await;
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["outcome"], "completed");
+    assert_eq!(value["event"]["seq"], 2);
+}
+
+/// A pending handoff takes the request in without a new event; its fold is
+/// this command's outcome.
+#[tokio::test]
+async fn compact_follows_a_pending_handoff_that_takes_the_request_in() {
+    let handoff = EventKind::CompactionRequested {
+        trigger: aether_core::event::CompactionTrigger::Handoff {
+            from: aether_core::model::ModelRef::new("mock", "m1"),
+            to: aether_core::model::ModelRef::new("mock", "m2"),
+            session: None,
+        },
+    };
+    let mut stub = compacting(&[
+        (timed_out(), None),
+        (handoff, None),
+        (native(false, 932), Some(1)),
+    ]);
+    stub.compaction_cursor = 2;
+    let output = cli(&["compact", AGENT, "--json"], stub).await;
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["event"]["seq"], 3);
 }
 
 #[test]

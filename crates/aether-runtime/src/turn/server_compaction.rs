@@ -1,6 +1,8 @@
 //! On request, a direct Anthropic conversation is folded by the API's own
 //! summarize compaction; the signed block it returns replaces the history.
-use super::compaction::{preserve_newer_request, record_compaction_usage, unanswered_tool_calls};
+use super::compaction::{
+    RequestRef, preserve_newer_request, record_compaction_usage, unanswered_tool_calls,
+};
 use super::*;
 use aether_core::model::ModelRequest;
 use aether_model::{ModelClient, Protocol, ResolvedModel};
@@ -8,7 +10,7 @@ use aether_model::{ModelClient, Protocol, ResolvedModel};
 pub(super) async fn try_server_compaction(
     runtime: &Arc<Runtime>,
     ctx: &mut TurnCtx,
-    request_seq: u64,
+    answering: RequestRef,
     trigger: &CompactionTrigger,
     cancel: &CancellationToken,
 ) -> Result<bool> {
@@ -57,7 +59,7 @@ pub(super) async fn try_server_compaction(
         return Ok(false);
     };
     let duration = started.elapsed();
-    settle(runtime, ctx, request_seq, trigger, response, duration)?;
+    settle(runtime, ctx, answering, trigger, response, duration)?;
     Ok(true)
 }
 
@@ -292,7 +294,7 @@ async fn invoke(
 fn settle(
     runtime: &Runtime,
     ctx: &mut TurnCtx,
-    request_seq: u64,
+    answering: RequestRef,
     trigger: &CompactionTrigger,
     response: ModelResponse,
     duration: Duration,
@@ -319,17 +321,20 @@ fn settle(
             content: response.content,
             invocation: None,
         }))
-        .event(ctx.draft(EventKind::CompactionNative {
-            provider: "anthropic".into(),
-            automatic: !matches!(trigger, CompactionTrigger::Explicit { .. }),
-            before_tokens: before,
-            after_tokens: Some(after),
-            duration_ms: Some(duration.as_millis() as u64),
-        }))
+        .event(
+            ctx.draft(EventKind::CompactionNative {
+                provider: "anthropic".into(),
+                automatic: !matches!(trigger, CompactionTrigger::Explicit { .. }),
+                before_tokens: before,
+                after_tokens: Some(after),
+                duration_ms: Some(duration.as_millis() as u64),
+            })
+            .caused_by(answering.id),
+        )
         .mutate(Mutation::UpsertAgent(agent_row_with_session(
             runtime, ctx, &hold,
         )?));
-    preserve_newer_request(runtime, ctx, request_seq, &mut commit, &hold)?;
+    preserve_newer_request(runtime, ctx, answering.seq, &mut commit, &hold)?;
     runtime.apply_held(hold, commit)?;
     Ok(())
 }
