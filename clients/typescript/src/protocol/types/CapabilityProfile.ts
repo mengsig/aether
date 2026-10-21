@@ -11,6 +11,7 @@ import type {
  * before they depend on a feature.
  */
 export interface CapabilityProfile {
+  "compaction_tokens"?: number | null;
   "context_window": number;
   "cost"?: ModelCost | null;
   "effort"?: boolean;

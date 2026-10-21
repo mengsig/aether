@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
+from ._ContentBlockCompaction import ContentBlockCompaction
 from ._ContentBlockImage import ContentBlockImage
 from ._ContentBlockImageRef import ContentBlockImageRef
 from ._ContentBlockText import ContentBlockText
@@ -17,5 +18,6 @@ ContentBlock = (
     ContentBlockToolUse |
     ContentBlockToolResult |
     ContentBlockImage |
-    ContentBlockImageRef
+    ContentBlockImageRef |
+    ContentBlockCompaction
 )

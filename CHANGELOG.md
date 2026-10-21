@@ -6,6 +6,15 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- **Daemon recovery and diagnostics.** Damaged agent, task and lease records
+  are preserved with actionable quarantine notices. Recovery and background
+  task failures no longer stop unrelated work or the local serving loop.
+  `aether status` and `aether doctor` show recovery problems and the latest
+  persistent panic or fatal-error record; a prior crash is announced once
+  at the next startup.
+
 ### Added
 
 - **Update offer on launch.** `aether` checks the latest release beside

@@ -4,6 +4,7 @@
 import type {
   AttachmentId,
   ToolResultBlock,
+  compact,
 } from "../../protocol.ts";
 
 /**
@@ -55,11 +56,21 @@ export interface ContentBlockImageRef {
   "type": "image_ref";
 }
 
+/**
+ * A server-side compaction summary (Anthropic `compact-2026-01-12`). It
+ * must be replayed verbatim: the API drops everything before it.
+ */
+export interface ContentBlockCompaction {
+  "content": string;
+  "type": "compaction";
+}
+
 export type ContentBlock =
     ContentBlockText |
     ContentBlockThinking |
     ContentBlockToolUse |
     ContentBlockToolResult |
     ContentBlockImage |
-    ContentBlockImageRef
+    ContentBlockImageRef |
+    ContentBlockCompaction
 ;

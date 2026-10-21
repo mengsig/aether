@@ -1856,6 +1856,15 @@
     "CapabilityProfile": {
       "description": "What a model can do. Declared per model in the registry so callers can ask\nbefore they depend on a feature.",
       "properties": {
+        "compaction_tokens": {
+          "description": "Context size at which Aether compacts automatically; `None` compacts at\nthree quarters of the window. Resolved per model, never above the window.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "context_window": {
           "format": "uint32",
           "minimum": 0,
@@ -4664,6 +4673,23 @@
             "type"
           ],
           "type": "object"
+        },
+        {
+          "description": "A server-side compaction summary (Anthropic `compact-2026-01-12`). It\nmust be replayed verbatim: the API drops everything before it.",
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "type": {
+              "const": "compaction",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "content"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -5113,6 +5139,13 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "problems": {
+          "description": "Recoverable daemon failures and quarantined records needing attention.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "providers": {
           "default": [],

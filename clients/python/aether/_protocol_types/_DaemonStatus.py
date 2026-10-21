@@ -27,6 +27,7 @@ class DaemonStatus(TypedDict, total=False):
     network_default: _protocol.NetworkPolicy  # optional
     pending_approvals: int
     pid: int
+    problems: list[str]  # optional
     providers: list[_protocol.ProviderHealth]  # optional
     resource_leases: list[_protocol.ResourceHolding]  # optional
     run_budget_usd: float | None  # optional

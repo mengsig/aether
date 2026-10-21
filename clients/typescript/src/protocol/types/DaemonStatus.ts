@@ -35,6 +35,7 @@ export interface DaemonStatus {
   "network_default"?: NetworkPolicy;
   "pending_approvals": number;
   "pid": number;
+  "problems"?: Array<string>;
   "providers"?: Array<ProviderHealth>;
   "resource_leases"?: Array<ResourceHolding>;
   "run_budget_usd"?: number | null;

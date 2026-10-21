@@ -11,6 +11,7 @@ class CapabilityProfile(TypedDict, total=False):
     What a model can do. Declared per model in the registry so callers can ask
     before they depend on a feature.
     """
+    compaction_tokens: int | None  # optional
     context_window: int
     cost: _protocol.ModelCost | None  # optional
     effort: bool  # optional
