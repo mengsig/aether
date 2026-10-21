@@ -456,7 +456,7 @@ async fn a_compact_turn_sends_the_compact_command_and_refuses_without_a_session(
     drop(run.stop.take());
     while run.events.recv().await.is_some() {}
     let sent = std::fs::read_to_string(dir.path().join("stdin")).unwrap();
-    assert!(sent.contains(r#""text":"/compact""#), "{sent}");
+    assert!(sent.contains(r#""text":"/compact Keep the summary concise"#), "{sent}");
     assert!(
         !sent.contains("hi"),
         "the turn's prompt is replaced: {sent}"

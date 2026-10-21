@@ -252,6 +252,8 @@ impl ClaudeCodeEngine {
 
 /// Claude Code compacts this many tokens below `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
 /// (its summary buffer) and accepts a window from 100K to 1M.
+/// A focused brief roughly halves how long Claude Code's own summary takes.
+const COMPACT_COMMAND: &str = "/compact Keep the summary concise, under 1,500 words: the goal and current task, decisions made and why, files, functions and commands involved, errors still open, and the next step.";
 const AUTO_COMPACT_BUFFER: u32 = 13_000;
 const AUTO_COMPACT_WINDOW: std::ops::RangeInclusive<u32> = 100_000..=1_000_000;
 
@@ -346,7 +348,7 @@ impl ClaudeCodeEngine {
                     "Compacting needs an existing Claude Code session and no tools".into(),
                 ));
             }
-            turn.prompt = "/compact".into();
+            turn.prompt = COMPACT_COMMAND.into();
             turn.images.clear();
         } else if !turn.summary_only {
             self.validate_network_policy(turn.network_access)?;
