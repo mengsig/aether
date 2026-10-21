@@ -68,6 +68,40 @@ fn a_fatal_daemon_start_is_reported_by_offline_status_and_doctor() {
 }
 
 #[test]
+fn an_existing_store_or_socket_owner_does_not_replace_crash_evidence() {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    for lock_name in ["data/aether.db.lock", "daemon.sock.lock"] {
+        let root = tempfile::tempdir().unwrap();
+        let store = root.path().join("data/aether.db");
+        crash::record(
+            &store,
+            CrashKind::Panic,
+            "original panic",
+            Some("worker.rs:7"),
+        )
+        .unwrap();
+        let marker = crash::path_for(&store);
+        let original = std::fs::read(&marker).unwrap();
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(root.path().join(lock_name))
+            .unwrap();
+        lock.lock().unwrap();
+        let result = command(root.path(), &["daemon", "--foreground"]);
+        assert!(!result.status.success());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("another aether daemon"), "{stderr}");
+        assert!(stderr.contains("aether status"), "{stderr}");
+        assert_eq!(std::fs::read(marker).unwrap(), original);
+    }
+}
+
+#[test]
 fn even_log_initialization_failure_leaves_persistent_evidence() {
     let root = tempfile::tempdir().unwrap();
     let data = root.path().join("data");

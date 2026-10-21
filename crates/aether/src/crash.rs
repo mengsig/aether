@@ -39,6 +39,9 @@ pub fn install_hook(store: PathBuf) {
 #[track_caller]
 pub fn record_result(store: &Path, result: anyhow::Result<()>) -> anyhow::Result<()> {
     let Err(error) = result else { return Ok(()) };
+    if error.is::<aether_daemon::LockBusy>() {
+        return Err(error);
+    }
     if PANIC_RECORDED.load(Ordering::Relaxed)
         && error
             .downcast_ref::<tokio::task::JoinError>()

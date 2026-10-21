@@ -209,6 +209,11 @@ fn finish_daemon(
     result: anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let result = crate::crash::record_result(store, result).map_err(|error| {
+        if error.is::<aether_daemon::LockBusy>() {
+            return error.context(
+                "Daemon start refused; run `aether status` to inspect the running daemon",
+            );
+        }
         error.context("Daemon stopped; run `aether doctor` and `aether diagnose`")
     });
     report_startup_result(socket, detached, &result);
