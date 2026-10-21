@@ -349,11 +349,9 @@ impl App {
     }
 
     pub(super) fn submit_input(&mut self) -> Vec<Effect> {
-        if self.input.images.len() > aether_core::attachment::MAX_IMAGES_PER_MESSAGE {
+        if let Some(reason) = self.oversized_images() {
             self.flash_error(format!(
-                "not sent: a message takes at most {} images ({} attached); remove some with Backspace at the start of the draft or /image --clear",
-                aether_core::attachment::MAX_IMAGES_PER_MESSAGE,
-                self.input.images.len()
+                "not sent: {reason}; remove some with Backspace at the start of the draft or /image --clear"
             ));
             return Vec::new();
         }

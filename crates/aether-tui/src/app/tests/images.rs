@@ -476,3 +476,17 @@ fn adopting_an_unowned_draft_merges_the_agents_parked_one() {
     app.select(first);
     assert_eq!(app.input.text, "typed meanwhile\nparked");
 }
+
+#[test]
+fn merged_images_over_the_byte_limit_do_not_send_or_lose_the_draft() {
+    let (mut app, _first) = app_viewing(AgentStatus::Ready);
+    let big = ImageAttachment {
+        data: "A".repeat(aether_core::attachment::MAX_MESSAGE_IMAGE_BYTES * 4 / 3 / 2 + 8),
+        ..png("big.png")
+    };
+    app.input.set_text("keep me");
+    app.input.images.extend([big.clone(), big]);
+    assert!(app.submit_input().is_empty());
+    assert_eq!(app.input.text, "keep me");
+    assert_eq!(app.input.images.len(), 2);
+}

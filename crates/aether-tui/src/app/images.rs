@@ -218,6 +218,24 @@ impl App {
         debug_assert!(self.input.images.len() <= MAX_IMAGES_PER_MESSAGE);
     }
 
+    /// Why the chips cannot leave as one message; merged drafts can exceed what `attach_image` allows.
+    pub(super) fn oversized_images(&self) -> Option<String> {
+        let images = &self.input.images;
+        if images.len() > MAX_IMAGES_PER_MESSAGE {
+            return Some(format!(
+                "a message takes at most {MAX_IMAGES_PER_MESSAGE} images ({} attached)",
+                images.len()
+            ));
+        }
+        let total = images.iter().map(ImageAttachment::size_bytes).sum::<u64>();
+        (total > MAX_MESSAGE_IMAGE_BYTES as u64).then(|| {
+            format!(
+                "the images of one message can total {} at most",
+                human_size(MAX_MESSAGE_IMAGE_BYTES as u64)
+            )
+        })
+    }
+
     /// `/image`: the clipboard image, a file, or `--clear`.
     pub(crate) fn run_image_command(&mut self, arg: ImageArg) -> Vec<Effect> {
         let typed = match arg {
