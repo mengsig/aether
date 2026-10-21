@@ -147,7 +147,10 @@ async fn a_stored_image_survives_a_restart_and_rides_along_with_the_history() {
     let first = harness_full(
         vec![ScriptedClient::text("a login form")],
         |_| {},
-        |config| config.attachment_dir = Some(dir.clone()),
+        |config| {
+            config.attachment_dir = Some(dir.clone());
+            config.workspace_root = Some(state.path().to_path_buf());
+        },
         None,
         None,
         Some(open()),
@@ -168,7 +171,10 @@ async fn a_stored_image_survives_a_restart_and_rides_along_with_the_history() {
     let second = harness_full(
         vec![ScriptedClient::text("still a login form")],
         |_| {},
-        |config| config.attachment_dir = Some(dir.clone()),
+        |config| {
+            config.attachment_dir = Some(dir.clone());
+            config.workspace_root = Some(state.path().to_path_buf());
+        },
         None,
         None,
         Some(open()),
@@ -408,7 +414,10 @@ async fn images_across_a_whole_request_stay_bounded_turn_after_turn_and_after_a_
     let first = harness_full(
         answers(4),
         |_| {},
-        |config| config.attachment_dir = Some(dir.clone()),
+        |config| {
+            config.attachment_dir = Some(dir.clone());
+            config.workspace_root = Some(state.path().to_path_buf());
+        },
         None,
         None,
         Some(open()),
@@ -435,7 +444,10 @@ async fn images_across_a_whole_request_stay_bounded_turn_after_turn_and_after_a_
     let second = harness_full(
         answers(1),
         |_| {},
-        |config| config.attachment_dir = Some(dir.clone()),
+        |config| {
+            config.attachment_dir = Some(dir.clone());
+            config.workspace_root = Some(state.path().to_path_buf());
+        },
         None,
         None,
         Some(open()),

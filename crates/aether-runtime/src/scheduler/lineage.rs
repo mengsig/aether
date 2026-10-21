@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 pub(super) struct Lineage {
     parents: HashMap<AgentId, AgentId>,
     caps: HashMap<AgentId, usize>,
+    unreadable: HashSet<AgentId>,
 }
 
 impl Lineage {
@@ -25,7 +26,7 @@ impl Lineage {
                     runtime.report_problem(format!("ancestor.{id}"), format!(
                         "Ancestor {id} cannot be read ({failed:?}); its descendants cannot run. Run `aether doctor` and `aether diagnose`."
                     ));
-                    lineage.caps.insert(id, 0);
+                    lineage.unreadable.insert(id);
                     continue;
                 }
             };
@@ -52,7 +53,11 @@ impl Lineage {
                 caps.insert(agent.id, cap);
             }
         }
-        Self { parents, caps }
+        Self {
+            parents,
+            caps,
+            unreadable: HashSet::new(),
+        }
     }
 
     /// Ancestors of `id`, nearest first.
@@ -67,6 +72,12 @@ impl Lineage {
             cursor = *parent;
         }
         out
+    }
+
+    pub(super) fn has_unreadable_ancestor(&self, id: AgentId) -> bool {
+        self.ancestors(id)
+            .iter()
+            .any(|id| self.unreadable.contains(id))
     }
 
     /// Whether some ancestor's cap is already met by its running descendants.

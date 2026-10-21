@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub(super) fn enforce_budgets(
     runtime: &Arc<Runtime>,
     blocked: &mut std::collections::HashSet<AgentId>,
+    errors: &mut Vec<crate::RuntimeError>,
 ) -> Result<()> {
     // Read before the pass: a commit landing while it runs was never looked
     // at, and recording a later count would mark it checked and skip it. The
@@ -22,7 +23,7 @@ pub(super) fn enforce_budgets(
     if runtime.sched.lock().budgets_checked_after == Some(watermark) {
         return Ok(());
     }
-    check_budgets(runtime, blocked)?;
+    check_budgets(runtime, blocked, errors)?;
     if blocked.is_empty() {
         runtime.sched.lock().budgets_checked_after = Some(watermark);
     }
@@ -35,6 +36,7 @@ pub(super) fn enforce_budgets(
 fn check_budgets(
     runtime: &Arc<Runtime>,
     blocked: &mut std::collections::HashSet<AgentId>,
+    errors: &mut Vec<crate::RuntimeError>,
 ) -> Result<()> {
     let budgeted = runtime.store.agents(&AgentFilter {
         live_only: true,
@@ -49,6 +51,7 @@ fn check_budgets(
                 blocked.insert(agent.id);
                 blocked.extend(runtime.store.subtree_ids(agent.id)?);
                 runtime.report_problem(key, format!("Budget for agent {} cannot be checked: {error}; its subtree is withheld. Run `aether doctor` and `aether diagnose`.", agent.id));
+                errors.push(error);
             }
         }
     }
@@ -128,6 +131,7 @@ pub(super) fn enforce_deadlines(
     runtime: &Arc<Runtime>,
     live: &[Agent],
     blocked: &mut std::collections::HashSet<AgentId>,
+    errors: &mut Vec<crate::RuntimeError>,
 ) -> Result<()> {
     let at = now();
     for agent in live {
@@ -138,6 +142,7 @@ pub(super) fn enforce_deadlines(
                 blocked.insert(agent.id);
                 blocked.extend(runtime.store.subtree_ids(agent.id)?);
                 runtime.report_problem(key, format!("Deadline for agent {} could not be enforced: {error}; its subtree is withheld. Run `aether doctor` and `aether diagnose`.", agent.id));
+                errors.push(error);
             }
         }
     }

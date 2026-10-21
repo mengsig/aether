@@ -189,17 +189,22 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
         expire_backoff(runtime)
     });
     let mut blocked = std::collections::HashSet::new();
+    let mut record_errors = Vec::new();
     guarded(runtime, faults, "enforce budgets", || {
-        enforce_budgets(runtime, &mut blocked)
+        enforce_budgets(runtime, &mut blocked, &mut record_errors)
     });
-    let live = live_after_enforcement(runtime, faults, &mut blocked)?;
+    let live = live_after_enforcement(runtime, faults, &mut blocked, &mut record_errors)?;
     let lineage = Lineage::from_store(&live, runtime);
     let mut ready: Vec<Runnable> = Vec::new();
     let at = now();
     let canaries = due_canaries(runtime, &live, at);
     for agent in live {
         // VISION §3.8: a paused agent receives no turns; its inbox fills.
-        if agent.paused || cancelling.contains(&agent.id) || blocked.contains(&agent.id) {
+        if agent.paused
+            || cancelling.contains(&agent.id)
+            || blocked.contains(&agent.id)
+            || lineage.has_unreadable_ancestor(agent.id)
+        {
             continue;
         }
         let id = agent.id;
@@ -220,6 +225,7 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
                 "Agent {id} could not be scheduled: {error}; it is withheld and will retry. Run `aether doctor` and `aether diagnose`.")),
         }
     }
+    faults.errors.extend(record_errors);
     // Even a person's message waits: every turn writes, and a disk this low
     // is about to refuse writes.
     if runtime.disk_is_low() {
@@ -320,6 +326,7 @@ fn live_after_enforcement(
     runtime: &Arc<Runtime>,
     faults: &mut Faults,
     blocked: &mut std::collections::HashSet<aether_core::id::AgentId>,
+    record_errors: &mut Vec<RuntimeError>,
 ) -> Result<Vec<Agent>> {
     let watermark = runtime.store.commits();
     let filter = AgentFilter {
@@ -328,13 +335,13 @@ fn live_after_enforcement(
     };
     let mut live = runtime.store.agents(&filter)?;
     guarded(runtime, faults, "enforce deadlines", || {
-        enforce_deadlines(runtime, &live, blocked)
+        enforce_deadlines(runtime, &live, blocked, record_errors)
     });
     isolated(runtime, faults, "fire schedules", || {
         crate::schedules::tick(runtime, now())
     });
     guarded(runtime, faults, "gate dependencies", || {
-        gate_dependencies(runtime, blocked)
+        gate_dependencies(runtime, blocked, record_errors)
     });
     if runtime.store.commits() != watermark {
         live = runtime.store.agents(&filter)?;

@@ -343,7 +343,7 @@ async fn unreadable_budget_descendant_withholds_only_its_subtree() {
         [child.id.to_string()],
     )
     .unwrap();
-    crate::scheduler::tick(&runtime).unwrap();
+    crate::scheduler::tick(&runtime).expect_err("the affected budget remains visible");
     assert!(
         runtime
             .problems()
@@ -359,7 +359,7 @@ async fn unreadable_budget_descendant_withholds_only_its_subtree() {
         store.agent(root.id).unwrap().unwrap().status,
         AgentStatus::Running
     );
-    crate::scheduler::tick(&runtime).unwrap();
+    crate::scheduler::tick(&runtime).expect_err("the affected budget remains visible");
     assert!(
         runtime
             .problems()

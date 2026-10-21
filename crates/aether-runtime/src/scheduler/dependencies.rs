@@ -22,6 +22,7 @@ use std::sync::Arc;
 pub(super) fn gate_dependencies(
     runtime: &Arc<Runtime>,
     blocked: &mut std::collections::HashSet<aether_core::id::AgentId>,
+    errors: &mut Vec<crate::RuntimeError>,
 ) -> Result<()> {
     let queued = runtime.store.tasks(&TaskFilter {
         statuses: vec![TaskStatusKind::Queued],
@@ -37,6 +38,7 @@ pub(super) fn gate_dependencies(
             Err(error) => {
                 blocked.extend(task.owner);
                 runtime.report_problem(key, format!("Dependencies for task {} cannot be checked: {error}; its owner is withheld. Run `aether doctor` and `aether diagnose`.", task.id));
+                errors.push(error);
             }
         }
     }
