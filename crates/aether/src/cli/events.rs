@@ -16,9 +16,12 @@ pub struct EventArgs {
     /// Only events with a sequence greater than this cursor.
     #[arg(long, default_value_t = 0)]
     after: u64,
-    /// Filter by agent.
-    #[arg(long)]
+    /// Filter by agent (id, prefix or name); `--agent` is the same.
+    #[arg(conflicts_with = "agent_flag")]
     agent: Option<AgentRef>,
+    /// Filter by agent, as the positional argument does.
+    #[arg(long = "agent", id = "agent_flag", value_name = "AGENT")]
+    agent_flag: Option<AgentRef>,
     /// Filter by run.
     #[arg(long)]
     run: Option<RunRef>,
@@ -32,7 +35,7 @@ pub struct EventArgs {
     #[arg(long = "family", value_delimiter = ',')]
     families: Vec<String>,
     /// Only events this recent (integer seconds, minutes, hours or days: 30s, 5m, 2h, 1d).
-    #[arg(long, value_parser = parse_duration)]
+    #[arg(long, value_parser = super::units::parse_duration)]
     since: Option<Duration>,
     /// Latest N matching events (default 50 on a terminal; unlimited when piped).
     #[arg(long)]
@@ -45,28 +48,6 @@ pub struct EventArgs {
     json: bool,
 }
 
-fn parse_duration(value: &str) -> Result<Duration, String> {
-    let split = value
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(value.len());
-    let (number, unit) = value.split_at(split);
-    let scale = match unit {
-        "s" => 1,
-        "m" => 60,
-        "h" => 3600,
-        "d" => 86400,
-        _ => return Err("use an integer duration with s, m, h or d (for example 2h)".into()),
-    };
-    let seconds = number
-        .parse::<u64>()
-        .ok()
-        .and_then(|n| n.checked_mul(scale));
-    match seconds {
-        Some(seconds) if seconds > 0 => Ok(Duration::from_secs(seconds)),
-        _ => Err("duration must be positive and within range".into()),
-    }
-}
-
 impl EventArgs {
     async fn query(&self, client: &Client, socket: &Endpoint) -> anyhow::Result<EventQuery> {
         let mut query = EventQuery {
@@ -74,7 +55,7 @@ impl EventArgs {
             families: self.families.clone(),
             ..Default::default()
         };
-        if let Some(agent) = &self.agent {
+        if let Some(agent) = self.agent.as_ref().or(self.agent_flag.as_ref()) {
             query.agent = Some(agent.resolve(client, socket).await?);
         }
         if let Some(run) = &self.run {
@@ -83,7 +64,10 @@ impl EventArgs {
         if let Some(task) = &self.task {
             query.task = Some(task.resolve(client).await?);
         }
-        debug_assert_eq!(query.agent.is_some(), self.agent.is_some());
+        debug_assert_eq!(
+            query.agent.is_some(),
+            self.agent.is_some() || self.agent_flag.is_some()
+        );
         Ok(query)
     }
 

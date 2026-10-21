@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use super::*;
+use crate::cli::units::parse_duration;
 use aether_core::{
     event::{Actor, EventDraft, EventKind},
     id::EventId,
@@ -35,6 +36,13 @@ fn event(at: &str) -> Event {
         1,
         at.parse().unwrap(),
     )
+}
+
+#[test]
+fn the_agent_is_positional_or_a_flag_but_not_both() {
+    assert!(args(&["agt_01J0000"]).agent.is_some());
+    assert!(args(&["--agent", "budg"]).agent_flag.is_some());
+    assert!(try_args(&["budg", "--agent", "other"]).is_err());
 }
 
 #[test]
