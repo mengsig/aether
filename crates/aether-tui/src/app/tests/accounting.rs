@@ -45,6 +45,45 @@ fn context_updates_can_shrink_after_compaction() {
     }
 }
 
+/// The context bar once kept the pre-fold count until the next turn reported usage.
+#[test]
+fn a_finished_fold_moves_the_context_reading_at_once() {
+    let (mut app, id) = app_with_agent();
+    app.context_tokens.insert(id, 109_292);
+    let folds = [
+        (
+            10,
+            EventKind::CompactionNative {
+                provider: "claude-code".into(),
+                automatic: false,
+                before_tokens: Some(109_292),
+                after_tokens: Some(3_596),
+                duration_ms: Some(19_000),
+            },
+            3_596,
+        ),
+        (
+            11,
+            EventKind::CompactionCompleted {
+                checkpoint: aether_core::id::CheckpointId::new(),
+                version: 1,
+                from_seq: 0,
+                to_seq: 9,
+                before_tokens: Some(3_596),
+                after_tokens: Some(1_200),
+            },
+            1_200,
+        ),
+    ];
+    for (seq, kind, after) in folds {
+        app.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(event(
+            seq, id, kind,
+        )))));
+        assert_eq!(app.context_tokens.get(&id), Some(&after));
+        assert_eq!(app.tree.nodes[&id].agent.stats.context_tokens, Some(after));
+    }
+}
+
 /// An engine notice in the viewed transcript containing `needle`.
 fn engine_notice_contains(app: &App, needle: &str) -> bool {
     models(app).iter().any(|m| {

@@ -123,13 +123,24 @@ impl App {
                 if let Some(agent) = agent
                     && let Some(tokens) = payload["tokens"].as_u64()
                 {
-                    self.context_tokens.insert(agent, tokens);
-                    if let Some(reading) = self.live_accounting.get_mut(&agent) {
-                        reading.context_tokens = Some(tokens);
-                    }
-                    if let Some(node) = self.tree.nodes.get_mut(&agent) {
-                        node.agent.stats.context_tokens = Some(tokens);
-                    }
+                    self.record_context(agent, tokens);
+                }
+            }
+            // A fold shrinks the context before any turn reports it again.
+            EventKind::CompactionCompleted {
+                after_tokens: Some(tokens),
+                ..
+            } => {
+                if let Some(agent) = agent {
+                    self.record_context(agent, u64::from(*tokens));
+                }
+            }
+            EventKind::CompactionNative {
+                after_tokens: Some(tokens),
+                ..
+            } => {
+                if let Some(agent) = agent {
+                    self.record_context(agent, *tokens);
                 }
             }
             EventKind::ProviderQuota {

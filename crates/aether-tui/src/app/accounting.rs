@@ -33,6 +33,23 @@ impl App {
         }
     }
 
+    /// A fresh context reading for the inspector, footer and board row.
+    pub(super) fn record_context(&mut self, agent: AgentId, tokens: u64) {
+        self.context_tokens.insert(agent, tokens);
+        if let Some(reading) = self.live_accounting.get_mut(&agent) {
+            reading.context_tokens = Some(tokens);
+        }
+        if let Some(node) = self.tree.nodes.get_mut(&agent) {
+            node.agent.stats.context_tokens = Some(tokens);
+        }
+        debug_assert_eq!(self.context_tokens.get(&agent), Some(&tokens));
+        debug_assert!(
+            self.live_accounting
+                .get(&agent)
+                .is_none_or(|reading| reading.context_tokens == Some(tokens))
+        );
+    }
+
     pub(super) fn restore_live_accounting(&mut self) {
         for (&agent, &reading) in &self.live_accounting {
             project(&mut self.tree, agent, reading);
