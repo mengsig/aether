@@ -291,13 +291,26 @@ mod tests {
     }
 }
 
+#[derive(Default, Serialize)]
+struct TempCleanupReport {
+    truncated: bool,
+    entries: Vec<TempDecision>,
+}
+
+#[derive(Serialize)]
+struct TempDecision {
+    path: PathBuf,
+    action: &'static str,
+    reason: &'static str,
+}
+
 impl crate::Runtime {
     pub(super) fn gc_agent_temp(
         &self,
         root: &Path,
         dry_run: bool,
     ) -> crate::Result<serde_json::Value> {
-        use super::{FileDecision, FileReport, invalid};
+        use super::invalid;
         use aether_core::agent_temp::{collect_leaf, leaf_name};
         use aether_store::AgentFilter;
 
@@ -310,7 +323,7 @@ impl crate::Runtime {
         for agent in &agents {
             owners.entry(leaf_name(agent.id)).or_default().push(agent);
         }
-        let mut report = FileReport::default();
+        let mut report = TempCleanupReport::default();
         let Some(entries) = super::read_directory(root).map_err(invalid)? else {
             return serde_json::to_value(report).map_err(invalid);
         };
@@ -337,9 +350,8 @@ impl crate::Runtime {
                 "removed" | "would_remove" => decision,
                 _ => "kept",
             };
-            report.entries.push(FileDecision {
+            report.entries.push(TempDecision {
                 path: entry.path(),
-                bytes: 0,
                 action,
                 reason: decision,
             });
