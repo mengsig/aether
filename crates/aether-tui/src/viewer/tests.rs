@@ -614,3 +614,23 @@ fn viewer_scroll_is_bounded_and_chat_escape_keeps_the_pane() {
     key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert!(app.viewer.open);
 }
+
+#[test]
+fn missing_file_says_not_found_with_the_name_in_the_title() {
+    let (_dir, mut app) = setup();
+    let effects = app.open_reference(references::Reference {
+        target: "missing-file.png".into(),
+        label: "missing".into(),
+    });
+    load(&mut app, effects);
+    let Some(Err(message)) = &app.viewer.preview else {
+        panic!("expected a load error");
+    };
+    assert!(
+        message.starts_with("File not found: missing-file.png"),
+        "{message}"
+    );
+    assert!(!message.contains("os error"), "{message}");
+    let text = crate::testing::render_to(&app, 160, 44);
+    assert!(text.contains(" missing-file.png"), "{text}");
+}

@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 
 const MAX_REFERENCES: usize = 256;
 const MAX_REFERENCE_BYTES: usize = 16 * 1024;
@@ -212,9 +212,20 @@ pub fn resolve(target: &str, workspace: &Path) -> Result<PathBuf> {
     } else {
         workspace.join(path)
     };
-    let canonical = candidate
-        .canonicalize()
-        .with_context(|| format!("resolve local file {}", candidate.display()))?;
+    let canonical = match candidate.canonicalize() {
+        Ok(canonical) => canonical,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let name = candidate.file_name().unwrap_or(candidate.as_os_str());
+            bail!(
+                "File not found: {}. Check the name, or ask the agent to create it.",
+                name.to_string_lossy()
+            );
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("resolve local file {}", candidate.display()));
+        }
+    };
     let metadata = canonical
         .metadata()
         .with_context(|| format!("inspect local file {}", canonical.display()))?;

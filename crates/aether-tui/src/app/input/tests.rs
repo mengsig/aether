@@ -726,8 +726,8 @@ fn apply_view_actions_applies_each_kind() {
         ViewAction::Effect(Box::new(Effect::Quit)),
         ViewAction::Command(SlashCommand::Mouse(Some(MouseMode::Scroll))),
     ]);
-    assert_eq!(app.input.text, "hi");
     assert_eq!(app.selected, Some(parent));
+    assert!(app.input.text.is_empty(), "the draft stays with its agent");
     assert_eq!(app.bottom.view_stack.len(), 1);
     assert_eq!(
         app.live_flash(),

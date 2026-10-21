@@ -26,6 +26,21 @@ pub struct InputState {
     pub(super) history_pos: Option<usize>,
 }
 
+/// What one agent's composer holds while another agent is on screen.
+#[derive(Debug, Default)]
+pub(crate) struct Draft {
+    text: String,
+    cursor: usize,
+    pastes: Vec<PastedText>,
+    images: Vec<aether_core::attachment::ImageAttachment>,
+}
+
+impl Draft {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.text.is_empty() && self.images.is_empty()
+    }
+}
+
 /// Effort levels in picker order, with a one-line description each.
 pub const EFFORTS: &[(Effort, &str)] = &[
     (Effort::Low, "fastest, quick answers"),
@@ -36,6 +51,22 @@ pub const EFFORTS: &[(Effort, &str)] = &[
 ];
 
 impl InputState {
+    /// Swap the composer's draft for `other`, returning the draft that was in it.
+    pub(crate) fn swap_draft(&mut self, other: Draft) -> Draft {
+        assert!(
+            other.cursor <= other.text.len(),
+            "draft cursor past its text"
+        );
+        self.revision += 1;
+        self.history_pos = None;
+        Draft {
+            text: std::mem::replace(&mut self.text, other.text),
+            cursor: std::mem::replace(&mut self.cursor, other.cursor),
+            pastes: std::mem::replace(&mut self.pastes, other.pastes),
+            images: std::mem::replace(&mut self.images, other.images),
+        }
+    }
+
     /// Replace the whole text; cursor goes to the end.
     pub fn set_text(&mut self, text: impl Into<String>) {
         self.revision += 1;

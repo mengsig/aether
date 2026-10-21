@@ -125,6 +125,8 @@ pub struct App {
     pub motion: Motion,
     pub size: (u16, u16),
     pub input: InputState,
+    /// Composer drafts of the agents not on screen, restored when one is selected again.
+    drafts: HashMap<AgentId, input_state::Draft>,
     pub tick: u64,
     /// Tick of the last periodic `Status` request. Ticks advance by varying
     /// steps, so the refresh is due by elapsed frames, never by divisibility.

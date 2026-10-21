@@ -9,6 +9,7 @@ use ratatui::{
     text::Line,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
+use std::path::{Path, PathBuf};
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Clone)]
@@ -51,6 +52,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let focus = if viewer.focused { "chat" } else { "focus" };
     let path = viewer
         .path()
+        .map(PathBuf::as_path)
+        .or_else(|| match viewer.preview {
+            Some(Err(_)) => viewer.pending.as_ref().map(|r| Path::new(&r.target)),
+            _ => None,
+        })
         .map(|p| clean(&p.file_name().unwrap_or(p.as_os_str()).to_string_lossy()))
         .unwrap_or_else(|| "Files".into());
     let page = viewer

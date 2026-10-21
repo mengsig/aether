@@ -185,6 +185,9 @@ Everything you send goes to the viewed agent.
   token caps only or token and dollar caps. Native Codex supports token caps;
   its API-equivalent estimates cannot enforce dollar caps.
 
+Each agent keeps its own draft: switching to another agent parks your text,
+pasted blocks and image chips, and selecting the first agent again brings them back.
+
 ### Images
 
 A message can carry images (a screenshot, a diagram) next to its text. There
@@ -888,6 +891,7 @@ coalesce. A canonical path outside the workspace requires a second Enter
 before reading. Native protocol encodings are cached until the preview
 changes. Markdown uses existing styles; language-specific syntax highlighting
 is deferred. SVG offers **Alt+E** to open externally only.
+A missing file shows `File not found: <name>` with the name in the pane title.
 
 ### PDF
 
@@ -948,3 +952,19 @@ with a notice. **Alt+E** opens the file in your browser through `xdg-open` or
 
 Tools are found on `PATH` once per TUI start; restart the TUI after
 installing one.
+
+## Scenario tests
+
+There is no `--script` mode: the TUI needs a terminal, and mouse input and
+multi-MIME clipboard contents (an image plus text) cannot be driven through
+one headlessly. Scenario tests instead drive the `App` state machine directly,
+inside `aether-tui`'s unit tests:
+
+- `crate::testing` builds apps (`populated_app`, `loaded_app`,
+  `app_with_transcript`) and `render_to(&app, w, h)` returns the screen as text.
+- `app.reduce(AppEvent::...)` feeds daemon replies, key presses, pastes and
+  previews; clicks arrive as the same events a mouse produces.
+- Assert on app state (`app.input`, `app.selected`, `app.viewer`) and on the
+  rendered text. Examples: `viewer/tests.rs` (open a reference, load it,
+  render the pane) and `app/tests/images.rs` (chips, drafts per agent).
+- Key chords are covered by the table in `tests/registry/key_cases.rs`.

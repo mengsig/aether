@@ -90,6 +90,7 @@ impl App {
             motion,
             size: (0, 0),
             input: InputState::default(),
+            drafts: HashMap::new(),
             tick: 0,
             status_requested_at: 0,
             status_poll_in_flight: false,

@@ -382,3 +382,26 @@ show = ["user_text", "assistant_text", "question", "approval", "error"]
         }
     }
 }
+
+#[test]
+fn composer_draft_and_chips_stay_with_their_agent() {
+    let (mut app, first) = app_viewing(AgentStatus::Ready);
+    let second = AgentId::new();
+    app.input.set_text("for the first");
+    app.input.images.push(png("big.png"));
+
+    app.select(second);
+    assert_eq!(app.selected, Some(second));
+    assert!(app.input.text.is_empty(), "{:?}", app.input.text);
+    assert!(app.input.images.is_empty());
+
+    app.input.set_text("for the second");
+    app.select(first);
+    assert_eq!(app.input.text, "for the first");
+    assert_eq!(app.input.images.len(), 1);
+    assert_eq!(app.input.cursor, "for the first".len());
+
+    app.select(second);
+    assert_eq!(app.input.text, "for the second");
+    assert!(app.input.images.is_empty());
+}

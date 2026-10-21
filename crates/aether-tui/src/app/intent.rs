@@ -46,6 +46,7 @@ impl App {
     fn show(&mut self, agent: AgentId) -> Vec<Effect> {
         if self.selected != Some(agent) {
             self.voice.selection += 1;
+            self.swap_drafts(agent);
         }
         self.selected = Some(agent);
         self.dirty = true;
@@ -57,6 +58,18 @@ impl App {
             });
         }
         effects
+    }
+
+    /// Park the composer's draft under the agent leaving the screen and bring back `agent`'s.
+    fn swap_drafts(&mut self, agent: AgentId) {
+        // With nothing on screen the draft belongs to no agent yet: it stays.
+        let Some(leaving) = self.selected else { return };
+        let incoming = self.drafts.remove(&agent).unwrap_or_default();
+        let outgoing = self.input.swap_draft(incoming);
+        if !outgoing.is_empty() {
+            self.drafts.insert(leaving, outgoing);
+        }
+        debug_assert!(!self.drafts.contains_key(&agent));
     }
 
     /// A reply named `agent`, which the tree may not show yet: a tree

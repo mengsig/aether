@@ -124,8 +124,12 @@ fn editing_aba_selection_and_late_errors_never_replace_a_new_draft() {
     assert_eq!(app.input.text, "kept");
     app.select(AgentId::new());
     assert!(app.voice_action(Action::Insert).is_empty());
-    assert_eq!(app.input.text, "kept");
+    assert!(
+        app.input.text.is_empty(),
+        "another agent's composer is empty"
+    );
     app.select(original);
+    assert_eq!(app.input.text, "kept");
     let id = record(&mut app);
     app.reduce(AppEvent::Voice(Reply::Recorded {
         id: id - 1,
