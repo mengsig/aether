@@ -240,6 +240,29 @@ fn wide_tables_stay_inside_narrow_chat_panes() {
 }
 
 #[test]
+fn long_table_cells_wrap_at_every_width() {
+    let md = "| step | detail |\n|---|---|\n| one | Run the full verification suite before opening the pull request |\n| two | short |";
+    for width in [60, 40, 24, 16, 10, 8] {
+        let lines = render(md, width, Style::default(), &Theme::default());
+        widths_ok(&lines, width);
+        let joined: String = lines.iter().map(text_of).collect::<Vec<_>>().join(" ");
+        if width >= 24 {
+            for word in ["verification", "pull", "request"] {
+                assert!(joined.contains(word), "{word} lost at width {width}");
+            }
+        }
+    }
+    let lines = render(md, 30, Style::default(), &Theme::default());
+    let texts: Vec<String> = lines.iter().map(text_of).collect();
+    assert!(texts.len() > 5, "cell did not wrap: {texts:?}");
+    let second = texts.iter().position(|t| t.starts_with("two")).unwrap();
+    assert!(
+        texts[second - 1].starts_with("    "),
+        "continuation not aligned"
+    );
+}
+
+#[test]
 fn long_words_are_split_instead_of_overflowing() {
     let lines = render(
         "https://example.com/a/very/long/path/that/never/ends/at/all",
