@@ -76,6 +76,8 @@ struct Stub {
     replay_note: bool,
     /// The agent a TUI beside the socket views, for `@viewed`.
     viewed: Option<&'static str>,
+    /// Sent on the newest subscription once a compaction is requested.
+    compaction_outcome: Option<EventKind>,
 }
 impl Default for Stub {
     fn default() -> Self {
@@ -96,6 +98,7 @@ impl Default for Stub {
             features: Vec::new(),
             replay_note: false,
             viewed: None,
+            compaction_outcome: None,
         }
     }
 }
@@ -568,6 +571,18 @@ async fn cli_with_socket(
                 },
             )
             .await;
+            if let (Command::Compact { .. }, Some(kind)) =
+                (&frame.command, &stub.compaction_outcome)
+            {
+                let event = Event::from_draft(
+                    EventDraft::new(Actor::System, kind.clone()).agent(AGENT.parse().unwrap()),
+                    EventId::new(),
+                    1,
+                    AT.parse().unwrap(),
+                );
+                let sub = next_sub - 1;
+                write_frame(&mut write, ServerFrame::Event { sub, event }).await;
+            }
             if let Command::Subscribe {
                 after, ref query, ..
             } = frame.command
@@ -898,9 +913,9 @@ async fn new_creates_a_taskless_owner_and_preserves_the_model_chain() {
 
 #[tokio::test]
 async fn compact_acknowledges_acceptance_and_points_to_observable_failure() {
-    let output = cli(&["compact", AGENT], Stub::default()).await;
+    let output = cli(&["compact", AGENT, "--no-wait"], Stub::default()).await;
     assert!(output.status.success(), "{}", stderr(&output));
-    assert!(stdout(&output).contains("Compaction request accepted; awaiting outcome."));
+    assert!(stdout(&output).contains("Compaction requested: older turns are summarized"));
     assert!(stdout(&output).contains(&format!("events --agent {AGENT} --follow")));
     assert!(stdout(&output).contains("aether --socket '"));
     let output = cli(&["events", "--agent", AGENT], Stub::default()).await;
@@ -912,7 +927,7 @@ async fn compact_acknowledges_acceptance_and_points_to_observable_failure() {
             .lines()
             .any(|line| line.ends_with("Compaction completed"))
     );
-    let output = cli(&["compact", AGENT, "--json"], Stub::default()).await;
+    let output = cli(&["compact", AGENT, "--json", "--no-wait"], Stub::default()).await;
     assert_eq!(output.status.code(), Some(0));
     assert!(output.stderr.is_empty());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
@@ -924,6 +939,55 @@ async fn compact_acknowledges_acceptance_and_points_to_observable_failure() {
             .unwrap()
             .contains("events --agent")
     );
+}
+
+#[tokio::test]
+async fn compact_waits_for_the_outcome_and_says_how_it_went() {
+    let folded = Stub {
+        compaction_outcome: Some(EventKind::CompactionNative {
+            provider: "claude-code".into(),
+            automatic: false,
+            before_tokens: Some(6164),
+            after_tokens: Some(932),
+            duration_ms: Some(6214),
+        }),
+        ..Stub::default()
+    };
+    let output = cli(&["compact", AGENT], folded).await;
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(stderr(&output).contains("usually takes under a minute or two"));
+    assert!(
+        stdout(&output).contains("Compaction completed by claude-code: 6164 -> 932 tokens in "),
+        "{}",
+        stdout(&output)
+    );
+
+    let failed = Stub {
+        compaction_outcome: Some(EventKind::CompactionFailed {
+            error: "the compactor timed out".into(),
+            models: vec![],
+        }),
+        ..Stub::default()
+    };
+    let output = cli(&["compact", AGENT, "--json"], failed).await;
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a failed fold is a failed command"
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["outcome"], "failed");
+    assert_eq!(value["event"]["kind"]["type"], "compaction.failed");
+    let failed = Stub {
+        compaction_outcome: Some(EventKind::CompactionFailed {
+            error: "the compactor timed out".into(),
+            models: vec![],
+        }),
+        ..Stub::default()
+    };
+    let text = stdout(&cli(&["compact", AGENT], failed).await);
+    assert!(text.contains("Nothing was lost"), "{text}");
+    assert!(text.contains(&format!("aether compact {AGENT}")), "{text}");
 }
 
 #[test]

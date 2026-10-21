@@ -16,7 +16,8 @@ pub use triggers::{CompactionTrigger, RecoveryClass};
 /// Acknowledging a request does not imply the asynchronous compaction succeeded.
 pub fn compaction_request_notice(follow_up: &str) -> String {
     format!(
-        "Compaction request accepted; awaiting outcome. See the transcript or run `{follow_up}`."
+        "Compaction requested: older turns are summarized as soon as the agent is free, \
+         usually within a minute or two. Watch the transcript or run `{follow_up}`."
     )
 }
 

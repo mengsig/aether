@@ -538,12 +538,16 @@ pub(crate) enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Compact an agent's context promptly; a reply runs only if other work is pending.
+    /// Compact an agent's context now and wait for the outcome; a reply runs
+    /// only if other work is pending. Exits 1 when the compaction failed.
     Compact {
         agent: cli::AgentRef,
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
+        /// Return once the request is accepted instead of waiting for the outcome.
+        #[arg(long)]
+        no_wait: bool,
     },
     /// Browse and curate durable memory.
     Memory {

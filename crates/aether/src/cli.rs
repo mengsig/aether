@@ -79,9 +79,11 @@ pub(crate) use units::parse_every;
 
 mod agents;
 pub use agents::{
-    agents, archive, cancel, compact, interrupt, new_agent, pause, restart, resume, send, trigger,
-    wake,
+    agents, archive, cancel, interrupt, new_agent, pause, restart, resume, send, trigger, wake,
 };
+
+mod compaction;
+pub use compaction::compact;
 
 mod input;
 pub use input::{text_from_file, text_from_process_stdin};

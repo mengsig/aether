@@ -484,7 +484,11 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 json,
             } => cli::resume(endpoint, agent, subtree, json).await,
             Cmd::Set { agent, knobs, json } => cli::set(endpoint, agent, knobs, json).await,
-            Cmd::Compact { agent, json } => cli::compact(endpoint, agent, json).await,
+            Cmd::Compact {
+                agent,
+                json,
+                no_wait,
+            } => return cli::compact(endpoint, agent, json, no_wait).await,
             Cmd::Memory { command } => match command {
                 MemoryCmd::Feedback { command } => cli::memory_feedback(endpoint, command).await,
                 MemoryCmd::Add { memory, json } => cli::memory_add(endpoint, memory, json).await,

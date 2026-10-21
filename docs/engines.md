@@ -171,17 +171,23 @@ depends on who runs the model loop.
 
 | Path | Who compacts | When | What you can configure |
 | --- | --- | --- | --- |
-| Native Claude Code | Claude Code, inside its own session. | Its own automatic policy. | Claude Code's settings, for example its auto-compact window (`autoCompactWindow`, `--autocompact`, `CLAUDE_CODE_AUTO_COMPACT_WINDOW`). |
-| Native Codex | Codex, inside its own session. | Its own automatic token threshold. | Codex's settings, for example `model_auto_compact_token_limit`. |
+| Native Claude Code | Claude Code, inside its own session. | At Aether's threshold for the model (256K by default): Aether sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` so Claude Code's auto-compact fires there. | `[models.compaction_tokens]` in `config.toml`. |
+| Native Codex | Codex, inside its own session. | At Aether's threshold for the model (272K by default), passed as `model_auto_compact_token_limit`. | `[models.compaction_tokens]` in `config.toml`. |
 | Aether's direct API loop | Aether asks a compactor model for a structured checkpoint, checks it, and folds the history itself. | At 75% of the model's window (or when history had to be trimmed), and after a completed task on a long-lived agent with at least six new transcript entries. | `model.compactor` and `model.compactor_effort` in `config.toml`. The 75% threshold is fixed. |
-| `/compact`, `aether compact`, and an agent's `request_checkpoint` | The same Aether checkpoint, on any agent. The compactor model writes the summary: `model.compactor` when it is set, otherwise a model of the agent's own provider, which for a native agent is a model of the same CLI. A Claude Code or Codex compactor writes it in a fresh, isolated CLI session; this is not the CLI's own `/compact`. An API compactor writes it with an API request, for a native agent too. A native compactor cannot run for an agent in a container backend, which needs an API compactor. | Only on request, before the agent's next turn. | The compactor model and effort. |
+| `/compact` and `aether compact` on a Claude Code agent with a session on the host | Claude Code's own `/compact`, run in the agent's session. The session is kept and the fold is recorded as `compaction.native` with its token counts and time. | Now, or as soon as a running turn ends. | Nothing; it uses the agent's model. |
+| `/compact` and `aether compact` on other agents, and an agent's `request_checkpoint` | The same Aether checkpoint, on any agent. The compactor model writes the summary: `model.compactor` when it is set, otherwise a model of the agent's own provider, which for a native agent is a model of the same CLI. A Claude Code or Codex compactor writes it in a fresh, isolated CLI session; this is not the CLI's own `/compact`. An API compactor writes it with an API request, for a native agent too. A native compactor cannot run for an agent in a container backend, which needs an API compactor. | Only on request, before the agent's next turn. | The compactor model and effort. |
 
 On a native session Aether still records context usage, but usage never
 requests an Aether summary or a task-boundary checkpoint, and automatic
 requests stored by an older version are ignored. Explicit checkpoints and
 handoffs to another provider still run. After a successful checkpoint a native
 agent continues in a new CLI session started from Aether's recorded history,
-so state that only the old CLI session held is not carried over.
+so state that only the old CLI session held is not carried over. A Claude Code
+agent compacted on request keeps its session instead.
+
+`aether compact AGENT` waits for the outcome and prints it, and exits 1 when
+the compaction failed; `--no-wait` returns once the request is accepted. A
+failed compaction loses nothing: the agent keeps its full context.
 
 The native rows describe the CLIs' own behaviour and are not tested by Aether:
 see Claude Code's

@@ -372,21 +372,3 @@ pub async fn resume(
     }
     Ok(())
 }
-
-pub async fn compact(
-    socket: impl Into<aether_client::Endpoint>,
-    agent: super::AgentRef,
-    json: bool,
-) -> anyhow::Result<()> {
-    let socket = socket.into();
-    let client = connect(&socket).await?;
-    let id = agent.resolve(&client, &socket).await?;
-    client.compact(id).await?;
-    let follow_up = format!("{} events --agent {id} --follow", socket.command_hint(true));
-    acted(
-        json,
-        &aether_core::event::compaction_request_notice(&follow_up),
-        serde_json::json!({"agent": id, "compaction_requested": true,
-            "outcome": "accepted", "follow_up": follow_up}),
-    )
-}

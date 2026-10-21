@@ -544,8 +544,10 @@ On Unix, Ctrl+Z suspends the TUI after restoring the terminal. Use your shell's
 `/compact` and `aether compact AGENT_ID` fold older context without requesting
 an assistant reply. Pending messages still receive replies once the agent's
 wait lets them through; a waiting agent returns to its wait. Empty context or a
-failed compactor produces a notice without a reply call; successful compaction
-still uses the configured compactor. An agent's `request_checkpoint` tool keeps
+failed compactor produces a notice without a reply call. A Claude Code agent
+runs Claude Code's own `/compact` in its session; other agents use the
+configured compactor. The transcript shows the fold while it runs, then who
+folded it, the token counts and how long it took. An agent's `request_checkpoint` tool keeps
 its normal continuation, and changing models preserves handoff compaction.
 A request during a running turn waits for its next context assembly.
 

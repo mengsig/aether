@@ -239,7 +239,7 @@ pub(super) fn then_operation(then: &Then) -> &'static str {
         Then::Host(_) => "host workspace service",
         Then::RootDefaults { .. } | Then::AgentCreated(_) => "starting the agent",
         Then::Ignore => "that request",
-        Then::CompactionAccepted(_) => "requesting compaction",
+        Then::CompactionAccepted(_) => "asking to compact the context",
         Then::VoiceReply(_) => "sending a voice reply",
         Then::Status | Then::StatusPoll => "refreshing status",
         Then::Tree => "refreshing the agent tree",
