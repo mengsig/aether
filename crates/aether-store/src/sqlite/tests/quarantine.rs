@@ -112,6 +112,57 @@ impl Record {
 }
 
 #[test]
+fn unidentifiable_quarantines_are_not_assumed_to_have_disappeared() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    for key in [
+        "quarantine.agents.unreadable-key",
+        "quarantine.unknown.record",
+    ] {
+        store
+            .commit(Commit::new().mutate(Mutation::SetMeta {
+                key: key.into(),
+                value: "{broken".into(),
+            }))
+            .unwrap();
+    }
+    let notices = store.quarantines().unwrap();
+    assert_eq!(notices.len(), 2);
+    assert!(
+        notices
+            .iter()
+            .all(|notice| notice.reason.contains("unreadable"))
+    );
+}
+
+#[test]
+fn deleting_a_quarantined_record_removes_its_notice() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    for record in seed(&store) {
+        record.replace_body(&store, &"{broken");
+        assert!(record.read(&store).is_err());
+        assert_eq!(store.quarantines().unwrap().len(), 1);
+        assert_eq!(
+            store
+                .conn
+                .lock()
+                .execute(
+                    &format!("DELETE FROM {} WHERE {}=?1", record.table, record.key),
+                    [&record.id],
+                )
+                .unwrap(),
+            1
+        );
+        assert!(store.quarantines().unwrap().is_empty());
+        assert!(
+            store
+                .meta(&format!("quarantine.{}.{}", record.table, record.id))
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[test]
 fn malformed_records_keep_healthy_siblings_and_preserve_the_raw_body() {
     let store = SqliteStore::open_in_memory().unwrap();
     let damaged = seed(&store);

@@ -116,17 +116,24 @@ impl SqliteStore {
     }
 
     pub(super) fn list_quarantines(&self) -> Result<Vec<RecordQuarantine>> {
-        let conn = self.read_conn();
-        let mut statement =
-            conn.prepare("SELECT key, value FROM meta WHERE key LIKE 'quarantine.%' ORDER BY key")?;
-        let rows = statement.query_map([], |row| {
-            let key: String = row.get(0)?;
-            let body = row.get::<_, String>(1).map_err(|error| error.to_string());
-            Ok((key, body))
-        })?;
+        let rows = {
+            let conn = self.read_conn();
+            let mut statement = conn.prepare(
+                "SELECT key, value FROM meta WHERE key LIKE 'quarantine.%' ORDER BY key",
+            )?;
+            statement
+                .query_map([], |row| {
+                    let key: String = row.get(0)?;
+                    let body = row.get::<_, String>(1).map_err(|error| error.to_string());
+                    Ok((key, body))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
         let mut notices = Vec::new();
-        for row in rows {
-            let (key, body) = row?;
+        for (key, body) in rows {
+            if self.clear_removed_quarantine(&key)? {
+                continue;
+            }
             let decoded =
                 body.and_then(|body| serde_json::from_str(&body).map_err(|e| e.to_string()));
             notices.push(decoded.unwrap_or_else(|reason| {
@@ -139,6 +146,27 @@ impl SqliteStore {
             }));
         }
         Ok(notices)
+    }
+
+    fn clear_removed_quarantine(&self, key: &str) -> Result<bool> {
+        use aether_core::id::{AgentId, TaskId};
+
+        let Some((table, id)) = key.strip_prefix(PREFIX).and_then(|key| key.split_once('.')) else {
+            return Ok(false);
+        };
+        let column = match table {
+            "agents" if id.parse::<AgentId>().is_ok() => "id",
+            "tasks" if id.parse::<TaskId>().is_ok() => "id",
+            "leases" if id.parse::<AgentId>().is_ok() => "agent_id",
+            _ => return Ok(false),
+        };
+        let changed = self.conn.lock().execute(
+            &format!(
+                "DELETE FROM meta WHERE key=?1 AND NOT EXISTS (SELECT 1 FROM {table} WHERE {column}=?2)"
+            ),
+            params![key, id],
+        )?;
+        Ok(changed > 0)
     }
 }
 

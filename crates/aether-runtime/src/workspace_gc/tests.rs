@@ -569,42 +569,54 @@ async fn symlink_candidate_is_kept_and_admission_rechecks_deleted_workspace() {
 
 #[tokio::test]
 async fn corrupt_owner_discovered_after_startup_prevents_workspace_collection() {
-    let mut f = fixture().await;
-    let path = f._temp.path().join("state.db");
-    f.runtime = Runtime::start_with_engines(
-        f.runtime.config.clone(),
-        Arc::new(aether_store::SqliteStore::open(&path).unwrap()),
-        f.runtime.models.clone(),
-        f.runtime.tools.clone(),
-        None,
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    f.runtime.shutdown.cancel();
-    let mut owner = f.owner(AgentStatus::Running);
-    f.store(owner.clone());
-    let connection = rusqlite::Connection::open(path).unwrap();
-    assert_eq!(
-        connection
-            .execute(
-                "UPDATE agents SET body='{' WHERE id=?1",
-                [owner.id.to_string()]
-            )
-            .unwrap(),
-        1
-    );
-    assert!(f.runtime.store.quarantines().unwrap().is_empty());
-    let preview = f.collect(true);
-    assert_eq!(preview.workspaces[0].action, WorkspaceGcAction::Kept);
-    assert!(preview.workspaces[0].reason.contains("quarantined"));
-    f.assert_kept("aether doctor");
-    owner.status = AgentStatus::Completed { summary: None };
-    f.store(owner);
-    assert_eq!(
-        f.collect(false).workspaces[0].action,
-        WorkspaceGcAction::Removed
-    );
+    for delete_owner in [false, true] {
+        let mut f = fixture().await;
+        let path = f._temp.path().join("state.db");
+        f.runtime = Runtime::start_with_engines(
+            f.runtime.config.clone(),
+            Arc::new(aether_store::SqliteStore::open(&path).unwrap()),
+            f.runtime.models.clone(),
+            f.runtime.tools.clone(),
+            None,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        f.runtime.shutdown.cancel();
+        let mut owner = f.owner(AgentStatus::Running);
+        f.store(owner.clone());
+        let connection = rusqlite::Connection::open(path).unwrap();
+        assert_eq!(
+            connection
+                .execute(
+                    "UPDATE agents SET body='{' WHERE id=?1",
+                    [owner.id.to_string()]
+                )
+                .unwrap(),
+            1
+        );
+        assert!(f.runtime.store.quarantines().unwrap().is_empty());
+        let preview = f.collect(true);
+        assert_eq!(preview.workspaces[0].action, WorkspaceGcAction::Kept);
+        assert!(preview.workspaces[0].reason.contains("quarantined"));
+        f.assert_kept("aether doctor");
+        if delete_owner {
+            assert_eq!(
+                connection
+                    .execute("DELETE FROM agents WHERE id=?1", [owner.id.to_string()])
+                    .unwrap(),
+                1
+            );
+        } else {
+            owner.status = AgentStatus::Completed { summary: None };
+            f.store(owner);
+        }
+        assert_eq!(
+            f.collect(false).workspaces[0].action,
+            WorkspaceGcAction::Removed
+        );
+        assert!(f.runtime.store.quarantines().unwrap().is_empty());
+    }
 }
 
 #[tokio::test]
