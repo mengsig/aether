@@ -36,7 +36,7 @@ fn board(app: &mut App, w: u16, h: u16) -> Docked {
     Docked { buffer, rows, x }
 }
 
-fn context_window(app: &mut App, window: u32) {
+fn context_window(app: &mut App, window: u32, compaction_tokens: Option<u32>) {
     use aether_protocol::ModelInfo;
     let model = app.selected_agent().expect("a viewed agent").model.clone();
     app.models.push(ModelInfo {
@@ -47,6 +47,7 @@ fn context_window(app: &mut App, window: u32) {
         model,
         capabilities: aether_core::model::CapabilityProfile {
             context_window: window,
+            compaction_tokens,
             ..Default::default()
         },
         configured: true,
@@ -68,7 +69,7 @@ fn root_alias_context_bar_and_footer_support_new_and_old_catalogues() {
         node.agent.name = "assistant".into();
         node.agent.model = ModelRef::new("claude-code", "opus");
         app.context_tokens.insert(id, 82_000);
-        context_window(&mut app, 200_000);
+        context_window(&mut app, 1_000_000, Some(256_000));
         let catalogue = app.models.last_mut().expect("catalogue entry");
         catalogue.model.model = "claude-opus-5-5".into();
         catalogue.aliases = vec!["opus".into()];
@@ -82,10 +83,10 @@ fn root_alias_context_bar_and_footer_support_new_and_old_catalogues() {
             .find(|row| row.trim_start().starts_with("Context"))
             .expect("context row");
         assert!(context.contains(app.theme.glyphs().bar), "{text}");
-        assert!(context.contains("41%"), "{text}");
-        assert!(text.contains("82k of 200k"), "{text}");
+        assert!(context.contains("32%"), "{text}");
+        assert!(text.contains("82k of 256k until compaction"), "{text}");
         let screen = rows(&docked.buffer).join("\n");
-        assert!(screen.contains("59% context left"), "{screen}");
+        assert!(screen.contains("68% until compaction"), "{screen}");
 
         let catalogue = app.models.last_mut().expect("catalogue entry");
         let mut legacy = serde_json::to_value(&*catalogue).expect("wire catalogue");
@@ -99,12 +100,12 @@ fn root_alias_context_bar_and_footer_support_new_and_old_catalogues() {
             .expect("size-only context row");
         assert_eq!(context.trim(), "Context    82k");
         let screen = rows(&docked.buffer).join("\n");
-        assert!(!screen.contains("% context left"), "{screen}");
+        assert!(!screen.contains("% until compaction"), "{screen}");
 
         app.tree.nodes.get_mut(&id).expect("root").agent.model.model = "claude-opus-5-5".into();
         app.rebuild_after_tree_change();
         let screen = rows(&board(&mut app, 160, 44).buffer).join("\n");
-        assert!(screen.contains("59% context left"), "{screen}");
+        assert!(screen.contains("68% until compaction"), "{screen}");
     }
 }
 
@@ -257,7 +258,7 @@ fn the_inspector_shows_context_pressure_as_a_bar() {
         for (used, percent, bold) in [(75_000u64, "75%", false), (90_000, "90%", true)] {
             let mut app = quiet(loaded_app(1, 0, 0));
             app.theme = dark(ascii);
-            context_window(&mut app, 100_000);
+            context_window(&mut app, 1_000_000, Some(100_000));
             let id = viewed(&app);
             app.context_tokens.insert(id, used);
             let docked = board(&mut app, 160, 44);
@@ -269,7 +270,7 @@ fn the_inspector_shows_context_pressure_as_a_bar() {
                 .unwrap_or_else(|| panic!("no context row:\n{text}"));
             let row = &board[y];
             assert!(row.trim_end().ends_with(percent), "{row:?}");
-            let detail = format!("{}k of 100k", used / 1_000);
+            let detail = format!("{}k of 100k until compaction", used / 1_000);
             assert!(board[y + 1].contains(&detail), "{:?}", board[y + 1]);
 
             let theme = &app.theme;

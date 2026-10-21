@@ -559,6 +559,8 @@ pub struct InspectorModel {
     pub asks: Option<Asks>,
     pub context_used: Option<u64>,
     pub context_window: Option<u64>,
+    /// Where the agent compacts; the context bar measures against it.
+    pub compaction_threshold: Option<u64>,
     pub model: String,
     pub effort: Option<Effort>,
     pub tokens_in: u64,
@@ -635,6 +637,7 @@ impl InspectorModel {
                 .copied()
                 .or(a.stats.context_tokens),
             context_window: app.context_window(&a.model),
+            compaction_threshold: app.compaction_threshold(&a.model),
             model: a.model.model.clone(),
             effort: a.config.effort,
             tokens_in: usage.input_tokens,

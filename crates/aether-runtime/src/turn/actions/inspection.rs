@@ -30,23 +30,24 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
             subtree_spend += member.stats.usage;
         }
     }
-    let threshold = resolved
-        .model
-        .capabilities
-        .compaction_tokens
-        .unwrap_or(window / 4 * 3);
-    let used_percent = agent
-        .stats
-        .context_tokens
-        .filter(|_| window > 0)
-        .map(|used| used as f64 / f64::from(window) * 100.0);
+    let threshold = aether_context::ContextBudget::for_profile(&resolved.model.capabilities, None)
+        .threshold_tokens();
+    let percent_of = |whole: u32| {
+        agent
+            .stats
+            .context_tokens
+            .filter(|_| whole > 0)
+            .map(|used| used as f64 / f64::from(whole) * 100.0)
+    };
+    let threshold_percent_of_window =
+        (window > 0).then(|| f64::from(threshold) / f64::from(window) * 100.0);
     let data = serde_json::json!({
         "agent": agent.id,
         "parent": agent.parent,
         "model": agent.model,
         "effort": agent.config.effort,
         "task": ctx.task,
-        "context": {"tokens": agent.stats.context_tokens, "window": window, "used_percent": used_percent, "at_compaction_threshold": agent.stats.context_tokens.map(|used| used >= u64::from(threshold))},
+        "context": {"tokens": agent.stats.context_tokens, "window": window, "used_percent": percent_of(window), "compaction_threshold_tokens": threshold, "compaction_threshold_used_percent": percent_of(threshold), "at_compaction_threshold": agent.stats.context_tokens.map(|used| used >= u64::from(threshold))},
         "remaining_token_budget": agent.remaining_budget(),
         "cost_budget": agent.config.cost_budget,
         "subtree_cost_spent_usd": subtree_spend.cost_usd,
@@ -67,7 +68,8 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
         "compaction": {
             "model": runtime.models.compactor_for(&agent.model),
             "effort": runtime.models.config().model.compactor_effort.unwrap_or(aether_core::model::Effort::Medium),
-            "pressure_threshold_percent": 75,
+            "threshold_tokens": threshold,
+            "threshold_percent_of_window": threshold_percent_of_window,
             "manual_minimum": "Engine: any nonempty recorded transcript. API: an older complete turn beyond the six-entry retained tail.",
             "task_boundary": "Long-lived agents after at least six new transcript entries.",
             "checkpoint": agent.checkpoint
@@ -132,7 +134,7 @@ async fn list_models(
             .capabilities
             .cost
             .or_else(|| runtime.models.registry().api_equivalent_price(&resolved));
-        let entry = serde_json::json!({"model": info.model, "name": info.name, "provider_name": info.provider_name, "configured": configured, "available": available, "context_window": info.capabilities.context_window, "effort_supported": info.capabilities.effort, "tier": info.tier, "api_equivalent_cost": cost});
+        let entry = serde_json::json!({"model": info.model, "name": info.name, "provider_name": info.provider_name, "configured": configured, "available": available, "context_window": info.capabilities.context_window, "compaction_threshold_tokens": aether_context::ContextBudget::for_profile(&info.capabilities, None).threshold_tokens(), "effort_supported": info.capabilities.effort, "tier": info.tier, "api_equivalent_cost": cost});
         if selected {
             models.push(entry);
         } else if available {

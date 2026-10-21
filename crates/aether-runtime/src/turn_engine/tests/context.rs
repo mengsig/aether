@@ -9,8 +9,8 @@ use aether_tools::HarnessAction;
 #[tokio::test]
 async fn a_1m_model_added_in_providers_toml_measures_context_against_1m() {
     for (model, window, reported_window) in [
-        ("claude-opus-5-5", 1_000_000_u64, 200_000_u64),
-        ("claude-opus-5-5[1m]", 1_000_000, 200_000),
+        ("claude-opus-5-5", 1_000_000_u64, 500_000_u64),
+        ("claude-opus-5-5[1m]", 1_000_000, 500_000),
     ] {
         let config_dir = tempfile::tempdir().expect("config dir");
         std::fs::write(

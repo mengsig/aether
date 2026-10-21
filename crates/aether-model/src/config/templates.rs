@@ -41,7 +41,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # "provider/model" (the model wins). Defaults: 256000 for Claude, 272000 for
 # Codex, else three quarters of the window; never above the model's window.
 # "claude-code" = 256000
-# "codex/gpt-6.1-sol" = 200000
+# "codex/gpt-6.1-sol" = 160000
 
 [approval]
 # What a new agent gets when it inherits nothing: "yolo" (the shipped

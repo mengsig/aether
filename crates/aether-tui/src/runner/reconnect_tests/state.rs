@@ -138,25 +138,25 @@ async fn reconnect_offline_context_usage_matches_fresh_capacity_display() {
         .iter()
         .find(|m| m.capabilities.context_window >= 100_000)
         .unwrap();
-    let window = u64::from(model.capabilities.context_window);
+    let threshold = live.compaction_threshold(&model.model).unwrap();
     fixture.agent.model = model.model.clone();
-    fixture.agent.stats.context_tokens = Some(window / 2);
+    fixture.agent.stats.context_tokens = Some(threshold / 2);
     fixture.put_agent(fixture.agent.clone());
     fixture.reconnect(&mut live).await;
-    assert_eq!(live.context_tokens[&fixture.agent.id], window / 2);
+    assert_eq!(live.context_tokens[&fixture.agent.id], threshold / 2);
     live.reduce(AppEvent::Disconnected { because: None });
-    fixture.agent.stats.context_tokens = Some(window / 4);
+    fixture.agent.stats.context_tokens = Some(threshold / 4);
     fixture.put_agent(fixture.agent.clone());
     fixture.commit(vec![EventKind::Custom {
         name: "context.usage".into(),
-        payload: serde_json::json!({"tokens": window / 4}),
+        payload: serde_json::json!({"tokens": threshold / 4}),
     }]);
     fixture.reconnect(&mut live).await;
     let fresh = fixture.fresh().await;
     assert_eq!(live.context_tokens, fresh.context_tokens);
-    assert_eq!(live.context_tokens[&fixture.agent.id], window / 4);
-    assert!(crate::testing::render_to(&live, 180, 30).contains("75% context left"));
-    assert!(crate::testing::render_to(&fresh, 180, 30).contains("75% context left"));
+    assert_eq!(live.context_tokens[&fixture.agent.id], threshold / 4);
+    assert!(crate::testing::render_to(&live, 180, 30).contains("75% until compaction"));
+    assert!(crate::testing::render_to(&fresh, 180, 30).contains("75% until compaction"));
     fixture.stop().await;
 }
 

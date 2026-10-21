@@ -116,7 +116,7 @@ fn the_status_line_drops_right_to_left_and_keeps_the_agent() {
     }
 }
 
-/// SPEC §1.1 item 6: hints on the left, `$run · NN% context left` on the
+/// SPEC §1.1 item 6: hints on the left, `$run · NN% until compaction` on the
 /// right. Keys are bold, their words dim.
 #[test]
 fn the_hint_row_shows_the_keys_the_run_cost_and_the_context_left() {
@@ -140,7 +140,8 @@ fn the_hint_row_shows_the_keys_the_run_cost_and_the_context_left() {
                 provider_name: "anthropic".into(),
                 model,
                 capabilities: aether_core::model::CapabilityProfile {
-                    context_window: 200_000,
+                    context_window: 1_000_000,
+                    compaction_tokens: Some(256_000),
                     ..Default::default()
                 },
                 configured: true,
@@ -158,7 +159,7 @@ fn the_hint_row_shows_the_keys_the_run_cost_and_the_context_left() {
             );
             assert!(
                 hint.trim_end()
-                    .ends_with(&format!("$1.84 {dot} 82% context left")),
+                    .ends_with(&format!("$1.84 {dot} 86% until compaction")),
                 "ascii={ascii} at {width}: {hint:?}"
             );
             let y = (rows.len() - 1) as u16;

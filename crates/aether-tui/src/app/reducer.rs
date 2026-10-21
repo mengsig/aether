@@ -465,6 +465,19 @@ impl App {
             .map(|info| u64::from(info.capabilities.context_window))
     }
 
+    /// Context size at which the model's agent compacts: the catalogue's
+    /// `compaction_tokens`, else three quarters of the window.
+    pub fn compaction_threshold(&self, model: &ModelRef) -> Option<u64> {
+        let capabilities = &self.model_info(model)?.capabilities;
+        let window = u64::from(capabilities.context_window);
+        Some(
+            capabilities
+                .compaction_tokens
+                .map_or(window / 4 * 3, u64::from)
+                .min(window),
+        )
+    }
+
     /// Whether the selected agent has an approval waiting on the person.
     pub fn approval_pending(&self) -> bool {
         self.selected

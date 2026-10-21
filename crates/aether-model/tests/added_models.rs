@@ -51,7 +51,7 @@ fn row(info: &ModelInfo) -> (String, Vec<String>, u32, u32) {
 }
 
 #[test]
-fn a_fresh_configuration_lists_the_claude_code_models_at_200k_only() {
+fn a_fresh_configuration_lists_the_claude_code_models_at_1m_with_a_256k_threshold() {
     let dir = tempfile::tempdir().expect("config dir");
     let models = Models::load(Some(dir.path().to_path_buf())).expect("fresh configuration");
     let aliases = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
@@ -82,8 +82,14 @@ fn a_fresh_configuration_lists_the_claude_code_models_at_200k_only() {
             128_000,
         ),
     ];
-    let listed: Vec<_> = claude_code_rows(&models).iter().map(row).collect();
+    let rows = claude_code_rows(&models);
+    let listed: Vec<_> = rows.iter().map(row).collect();
     assert_eq!(listed, expected);
+    assert!(
+        rows.iter()
+            .all(|info| info.capabilities.compaction_tokens == Some(256_000)),
+        "clients measure context against the compaction threshold"
+    );
     assert!(
         models
             .resolve(&ModelRef::new("claude-code", OPUS_1M))

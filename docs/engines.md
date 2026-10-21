@@ -108,9 +108,10 @@ its own window, and its
 says recent models can already run with a 1M window without a suffix.
 
 Aether records the context token count Claude Code reports and divides it by
-the registry figure of the agent's model. It does not read the window the CLI
-reports, so the percentage in the TUI and in `inspect_state` is relative to
-Aether's figure both before and after a turn. Aether does not set
+the agent's compaction threshold (256K for Claude unless `[models.compaction_tokens]`
+sets another, never above the registry window). It does not read the window the
+CLI reports, so the percentage in the TUI and in `inspect_state` is relative to
+Aether's figures both before and after a turn. Aether does not set
 `CLAUDE_CODE_DISABLE_1M_CONTEXT`, and it passes a `[1m]` model id to
 `claude --model` unchanged.
 

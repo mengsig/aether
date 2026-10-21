@@ -223,7 +223,7 @@ impl Models {
                     },
                     provider_name: p.name.clone(),
                     capabilities: {
-                        let mut capabilities = m.capabilities.clone();
+                        let mut capabilities = self.effective_capabilities(p, m);
                         // A native engine's list price does not imply enforceable cost.
                         capabilities.extensions.insert(
                             "aether.cost_budget".into(),
@@ -638,6 +638,38 @@ mod tests {
             resolved_compaction(&models, "groq", "openai/gpt-oss-120b").1,
             Some(50_000)
         );
+    }
+
+    #[test]
+    fn the_catalogue_carries_the_effective_compaction_threshold() {
+        let mut config = AetherConfig::default();
+        config
+            .models
+            .compaction_tokens
+            .insert("groq".into(), 50_000);
+        let models = builtin_models(config);
+        let threshold = |provider: &str, model: &str| {
+            let info = models
+                .list()
+                .into_iter()
+                .find(|info| info.model == ModelRef::new(provider, model))
+                .expect("listed model");
+            (
+                info.capabilities.context_window,
+                info.capabilities.compaction_tokens,
+            )
+        };
+        assert_eq!(
+            threshold("claude-code", "claude-opus-5-5"),
+            (1_000_000, Some(256_000))
+        );
+        assert_eq!(threshold("codex", "gpt-6-astra"), (272_000, Some(272_000)));
+        assert_eq!(
+            threshold("groq", "openai/gpt-oss-120b").1,
+            Some(50_000),
+            "an operator value reaches the catalogue"
+        );
+        assert_eq!(threshold("openai", "gpt-6-astra").1, None);
     }
 
     #[test]

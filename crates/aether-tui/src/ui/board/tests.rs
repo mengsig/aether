@@ -37,7 +37,8 @@ fn mock_app(cursor: fn(&Fleet) -> AgentId) -> Fleet {
             name: model.into(),
             provider_name: "Anthropic".into(),
             capabilities: aether_core::model::CapabilityProfile {
-                context_window: 200_000,
+                context_window: 1_000_000,
+                compaction_tokens: Some(256_000),
                 ..Default::default()
             },
             configured: true,
@@ -233,8 +234,8 @@ fn docked_board_at_48_columns_matches_the_mock() {
         "per line), keep the table byte-identical,",
         "delegate tests, update docs/cli.md.",
         "",
-        &bar_line(44, 41, &dark()),
-        "           82k of 200k",
+        &bar_line(44, 32, &dark()),
+        "           82k of 256k until compaction",
         "Model      sonnet-5.5 · medium",
         "Tokens     32k in · 380k cached · 18.2k out",
         "Cost       $0.38 · $0.51 with children",
@@ -463,8 +464,8 @@ fn overlay_at_80_columns_covers_the_screen_and_matches_the_mock() {
         "◆ Asks: should --json include imported runs, or only live ones?",
         "  enter view and reply",
         "",
-        &bar_line(76, 18, &theme),
-        "           36k of 200k",
+        &bar_line(76, 14, &theme),
+        "           36k of 256k until compaction · window 1M",
         "Model      haiku-4.5 · low",
         "Tokens     25k in · 71k cached · 4.1k out",
         "Cost       $0.09",
@@ -988,7 +989,68 @@ fn input_excludes_cache_reads_and_context_stays_unchanged() {
         .cache_write_tokens = 700;
     let text = inner_rows(&draw_docked(&f.app, 56, 44, &dark())).join("\n");
     assert!(text.contains("32k in · 380k cached · 18.2k out"), "{text}");
-    assert!(text.contains("82k of 200k"), "{text}");
+    assert!(text.contains("82k of 256k until compaction"), "{text}");
+}
+
+/// The inspector rows of the implementer on a model with the given profile.
+fn context_rows(window: u32, compaction_tokens: Option<u32>, used: u64) -> Vec<String> {
+    let mut f = mock_app(|f| f.implementer);
+    for info in &mut f.app.models {
+        info.capabilities.context_window = window;
+        info.capabilities.compaction_tokens = compaction_tokens;
+    }
+    f.app.context_tokens.insert(f.implementer, used);
+    inner_rows(&draw_docked(&f.app, 76, 44, &dark()))
+}
+
+fn context_detail_row(rows: &[String]) -> String {
+    let at = rows
+        .iter()
+        .position(|row| row.starts_with("Context"))
+        .expect("a context row");
+    format!("{} | {}", rows[at].trim_end(), rows[at + 1].trim())
+}
+
+#[test]
+fn a_claude_context_bar_counts_to_the_256k_threshold_not_the_1m_window() {
+    let row = context_detail_row(&context_rows(1_000_000, Some(256_000), 41_300));
+    assert!(
+        row.ends_with("16% | 41.3k of 256k until compaction · window 1M"),
+        "{row}"
+    );
+}
+
+#[test]
+fn a_codex_context_bar_counts_to_the_272k_window() {
+    let row = context_detail_row(&context_rows(272_000, Some(272_000), 136_000));
+    assert!(
+        row.ends_with("50% | 136k of 272k until compaction"),
+        "{row}"
+    );
+}
+
+#[test]
+fn a_configured_threshold_sets_the_context_bar() {
+    let row = context_detail_row(&context_rows(1_000_000, Some(100_000), 25_000));
+    assert!(
+        row.ends_with("25% | 25k of 100k until compaction · window 1M"),
+        "{row}"
+    );
+}
+
+#[test]
+fn a_model_without_a_threshold_counts_to_75_percent_of_its_window() {
+    let row = context_detail_row(&context_rows(400_000, None, 150_000));
+    assert!(
+        row.ends_with("50% | 150k of 300k until compaction · window 400k"),
+        "{row}"
+    );
+}
+
+#[test]
+fn a_context_at_the_threshold_reads_as_compacting() {
+    let row = context_detail_row(&context_rows(1_000_000, Some(256_000), 300_000));
+    assert!(row.ends_with("100% | at threshold · compacting"), "{row}");
 }
 
 #[test]

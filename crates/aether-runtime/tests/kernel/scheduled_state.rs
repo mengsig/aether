@@ -100,7 +100,7 @@ async fn state_tools_report_runtime_facts_without_mutating_task_state() {
         .find(|v| v.get("compaction").is_some())
         .expect("state result");
     assert_eq!(state["model"], json!(agent.model));
-    assert_eq!(state["compaction"]["pressure_threshold_percent"], 75);
+    assert!(state["compaction"]["threshold_tokens"].is_u64());
     assert_eq!(state["compaction"]["effort"], "medium");
     let catalog = outputs
         .iter()
@@ -112,6 +112,10 @@ async fn state_tools_report_runtime_facts_without_mutating_task_state() {
     assert_eq!(models[1]["model"]["model"], "gpt-6.1-sol");
     assert_eq!(models[2]["model"]["model"], "gpt-6-luna");
     assert_eq!(models[1]["api_equivalent_cost"]["input_per_mtok"], 2.0);
+    assert_eq!(
+        models[1]["compaction_threshold_tokens"], 272_000,
+        "the catalog says where Codex compacts"
+    );
     assert!(
         catalog["guidance"]
             .as_str()
@@ -181,6 +185,53 @@ async fn inspect_state_reports_cost_budget_turn_limit_and_deadline() {
     assert!(state["turns_taken"].is_u64());
     assert!(state["subtree_cost_spent_usd"].is_number());
     assert!(state["subtree_cost_is_a_floor"].is_boolean());
+}
+
+#[tokio::test]
+async fn inspect_state_measures_context_against_the_compaction_threshold() {
+    let h = harness(vec![
+        ScriptedClient::tool_call("inspect_state", json!({})),
+        ScriptedClient::tool_call("complete_task", json!({"summary": "done"})),
+    ])
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(spec("report the threshold"), Actor::user())
+        .unwrap();
+    h.wait_until(agent.id, |s| s.is_terminal()).await;
+    let state = h
+        .store
+        .events(0, 10_000, &EventFilter::for_agent(agent.id))
+        .unwrap()
+        .into_iter()
+        .find_map(|e| match e.kind {
+            EventKind::ToolSucceeded { outcome, .. } => {
+                outcome.structured.filter(|v| v.get("compaction").is_some())
+            }
+            _ => None,
+        })
+        .expect("inspect_state result");
+    let capabilities = h
+        .runtime
+        .models()
+        .resolve(&agent.model)
+        .unwrap()
+        .model
+        .capabilities;
+    let threshold = capabilities.compaction_tokens.expect("a Claude threshold");
+    assert!(threshold < capabilities.context_window);
+    assert_eq!(state["context"]["window"], capabilities.context_window);
+    assert_eq!(state["context"]["compaction_threshold_tokens"], threshold);
+    assert_eq!(state["compaction"]["threshold_tokens"], threshold);
+    assert_eq!(
+        state["compaction"]["threshold_percent_of_window"],
+        f64::from(threshold) / f64::from(capabilities.context_window) * 100.0
+    );
+    assert!(
+        state["compaction"]
+            .get("pressure_threshold_percent")
+            .is_none()
+    );
 }
 
 #[tokio::test]

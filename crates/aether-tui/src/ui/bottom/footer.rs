@@ -1,5 +1,5 @@
 //! Hint row (SPEC §1.1 item 6): contextual hints left (hidden while typing,
-//! replaced by a live flash or `● Listening` while dictating), `$run · NN% context left` right, quota chip. Owner: W1.
+//! replaced by a live flash or `● Listening` while dictating), `$run · NN% until compaction` right, quota chip. Owner: W1.
 
 use aether_core::model::Usage;
 use ratatui::Frame;
@@ -278,7 +278,7 @@ fn hint_spans(text: &str, separator: &str, room: usize, theme: &Theme) -> Vec<Sp
     spans
 }
 
-/// `[quota chip · ]$run · NN% context left[ · notifications]`: the notification
+/// `[quota chip · ]$run · NN% until compaction[ · notifications]`: the notification
 /// count keeps the bottom-right corner and is dropped only when nothing else fits.
 fn right_side(
     app: &App,
@@ -330,7 +330,7 @@ fn notification_chip(app: &App, theme: &Theme, room: usize) -> Option<(String, S
         .map(|text| (text, style))
 }
 
-/// `[quota chip · ]$run · NN% context left`: context shortens to `NN%`, then cost
+/// `[quota chip · ]$run · NN% until compaction`: context shortens to `NN%`, then cost
 /// outranks it, then `NN%` alone; the chip is cut last: a quota failure is never silent.
 fn usage_side(
     app: &App,
@@ -384,16 +384,16 @@ fn usage_side(
         .and_then(|node| run_cost(&node.subtree_usage));
     let left = agent.and_then(|a| {
         let used = *app.context_tokens.get(&a.id)?;
-        let window = app.context_window(&a.model).filter(|w| *w > 0)?;
+        let threshold = app.compaction_threshold(&a.model).filter(|t| *t > 0)?;
         let used_pct = (used
-            .min(window)
+            .min(threshold)
             .saturating_mul(100)
-            .saturating_add(window / 2))
-            / window;
+            .saturating_add(threshold / 2))
+            / threshold;
         Some(100u64.saturating_sub(used_pct))
     });
     let short = left.map(|left| format!("{left}%"));
-    let full = left.map(|left| format!("{left}% context left"));
+    let full = left.map(|left| format!("{left}% until compaction"));
     let ladder = [
         [cost.as_deref(), full.as_deref()],
         [cost.as_deref(), short.as_deref()],
@@ -490,7 +490,7 @@ mod tests {
         app.selected.expect("a viewed agent")
     }
 
-    /// The viewed child spent $0.51 with children and used 41% of a 200k window.
+    /// The viewed child spent $0.51 with children and used 32% of a 256k compaction threshold.
     fn busy_child() -> App {
         let mut app = app_viewing_child();
         let id = viewed(&app);
@@ -505,7 +505,8 @@ mod tests {
             name: "Sonnet 5.5".into(),
             provider_name: "Anthropic".into(),
             capabilities: aether_core::model::CapabilityProfile {
-                context_window: 200_000,
+                context_window: 1_000_000,
+                compaction_tokens: Some(256_000),
                 ..Default::default()
             },
             configured: true,
@@ -545,11 +546,35 @@ mod tests {
         format!("  {left}{}{right} ", " ".repeat(gap))
     }
 
+    fn footer_with_profile(window: u32, compaction_tokens: Option<u32>, used: u64) -> String {
+        let mut app = busy_child();
+        let capabilities = &mut app.models.last_mut().expect("catalogue entry").capabilities;
+        capabilities.context_window = window;
+        capabilities.compaction_tokens = compaction_tokens;
+        app.context_tokens.insert(viewed(&app), used);
+        row(&app, &dark_theme(false), 120)
+    }
+
     #[test]
-    fn extreme_context_usage_shows_no_context_left() {
+    fn the_footer_counts_to_the_compaction_threshold_not_the_window() {
+        let claude = footer_with_profile(1_000_000, Some(256_000), 41_300);
+        assert!(claude.contains("84% until compaction"), "{claude}");
+        let codex = footer_with_profile(272_000, Some(272_000), 68_000);
+        assert!(codex.contains("75% until compaction"), "{codex}");
+        let configured = footer_with_profile(1_000_000, Some(100_000), 25_000);
+        assert!(configured.contains("75% until compaction"), "{configured}");
+        let proportional = footer_with_profile(400_000, None, 150_000);
+        assert!(
+            proportional.contains("50% until compaction"),
+            "{proportional}"
+        );
+    }
+
+    #[test]
+    fn extreme_context_usage_shows_nothing_until_compaction() {
         let mut app = busy_child();
         app.context_tokens.insert(viewed(&app), u64::MAX);
-        assert!(row(&app, &dark_theme(false), 120).contains("0% context left"));
+        assert!(row(&app, &dark_theme(false), 120).contains("0% until compaction"));
     }
 
     #[test]
@@ -617,10 +642,10 @@ mod tests {
                                 assert!(text.contains("$0.51"), "{text:?}");
                             }
                             if text.contains('%') {
-                                assert!(text.contains("59%"), "{text:?}");
+                                assert!(text.contains("68%"), "{text:?}");
                             }
                             if text.contains("context") {
-                                assert!(text.contains("59% context left"), "{text:?}");
+                                assert!(text.contains("68% until compaction"), "{text:?}");
                             }
                         }
                     }
@@ -633,7 +658,7 @@ mod tests {
     fn resting_hints_offer_the_way_back_from_a_child() {
         let app = busy_child();
         let theme = dark_theme(false);
-        let right = "$0.51 · 59% context left";
+        let right = "$0.51 · 68% until compaction";
         assert_eq!(
             row(&app, &theme, 120),
             spread(
@@ -644,11 +669,7 @@ mod tests {
         );
         assert_eq!(
             row(&app, &theme, 80),
-            spread(
-                "? shortcuts · ctrl+g agents · alt+↑ back to aether",
-                right,
-                80
-            )
+            spread("? shortcuts · ctrl+g agents", right, 80)
         );
         assert_eq!(
             row(&app, &theme, 60),
@@ -730,14 +751,18 @@ mod tests {
         app.input.set_text("half a thought");
         assert_eq!(
             row(&app, &theme, 80),
-            spread("", "$0.51 · 59% context left", 80)
+            spread("", "$0.51 · 68% until compaction", 80)
         );
 
         app.flash("effort → high (next turn)");
         let terminal = draw(&app, &theme, 80);
         assert_eq!(
             screen_text(&terminal),
-            spread("effort → high (next turn)", "$0.51 · 59% context left", 80)
+            spread(
+                "effort → high (next turn)",
+                "$0.51 · 68% until compaction",
+                80
+            )
         );
         assert!(shows(&terminal.backend().buffer()[(2, 0)], theme.text()));
 
@@ -755,7 +780,7 @@ mod tests {
         let terminal = draw(&app, &theme, 120);
         let text = screen_text(&terminal);
         assert!(
-            text.ends_with("anthropic weekly limit reached · $0.51 · 59% context left "),
+            text.ends_with("anthropic weekly limit reached · $0.51 · 68% until compaction "),
             "{text:?}"
         );
         let chip_x = u16::try_from(text.find("anthropic").expect("chip")).expect("narrow");
@@ -766,7 +791,7 @@ mod tests {
 
         let narrow = row(&app, &theme, 50);
         assert!(
-            narrow.ends_with("anthropic weekly limit reached · $0.51 · 59% "),
+            narrow.ends_with("anthropic weekly limit reached · $0.51 · 68% "),
             "{narrow:?}"
         );
         let tight = row(&app, &theme, 30);
@@ -921,7 +946,9 @@ mod tests {
             );
             assert!(text.contains(actions), "{screen_width} cols: {text}");
             assert!(
-                text.ends_with("context left ") || text.ends_with(" 59% ") || !text.contains('%'),
+                text.ends_with("until compaction ")
+                    || text.ends_with(" 68% ")
+                    || !text.contains('%'),
                 "a figure shortens or drops whole: {text}"
             );
         }
@@ -935,7 +962,7 @@ mod tests {
         assert_eq!(hints(&app), "");
         assert_eq!(
             row(&app, &dark_theme(false), 120),
-            spread("", "$0.51 · 59% context left", 120)
+            spread("", "$0.51 · 68% until compaction", 120)
         );
     }
 
@@ -949,18 +976,18 @@ mod tests {
                 .map(|span| span.content.as_ref())
                 .collect()
         };
-        assert_eq!(text(&app, 24), "$0.51 · 59% context left");
-        assert_eq!(text(&app, 23), "$0.51 · 59%");
+        assert_eq!(text(&app, 28), "$0.51 · 68% until compaction");
+        assert_eq!(text(&app, 27), "$0.51 · 68%");
         assert_eq!(text(&app, 10), "$0.51");
-        assert_eq!(text(&app, 4), "59%");
+        assert_eq!(text(&app, 4), "68%");
         assert_eq!(text(&app, 2), "");
         let id = viewed(&app);
         app.tree.nodes.get_mut(&id).expect("node").subtree_usage = Usage {
             cost_complete: false,
             ..Usage::default()
         };
-        assert_eq!(text(&app, 16), "59% context left");
-        assert_eq!(text(&app, 15), "59%");
+        assert_eq!(text(&app, 20), "68% until compaction");
+        assert_eq!(text(&app, 19), "68%");
         assert_eq!(text(&app, 2), "");
     }
 
@@ -992,7 +1019,7 @@ mod tests {
                 docked(&app, &theme),
                 spread(
                     "enter · esc · ⇧x/d/p/i stop/remove/pause/interrupt",
-                    "59%",
+                    "68%",
                     58
                 )
             );
@@ -1017,7 +1044,7 @@ mod tests {
         app.size = (160, 44);
         for ascii in [false, true] {
             let text = row(&app, &dark_theme(ascii), 110);
-            assert!(text.ends_with("59% context left "), "{text}");
+            assert!(text.ends_with("68% until compaction "), "{text}");
             assert!(text.contains("enter") && text.contains("esc"), "{text}");
             assert!(
                 text.contains("stop/remove/pause/interrupt") || text.contains("⇧i interrupt"),

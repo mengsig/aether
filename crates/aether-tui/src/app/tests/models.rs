@@ -11,7 +11,8 @@ fn catalogue_lookup_respects_provider_and_case_and_remembers_aliases_canonically
         name: "Claude Opus 5.5".into(),
         provider_name: provider.into(),
         capabilities: aether_core::model::CapabilityProfile {
-            context_window: 200_000,
+            context_window: 1_000_000,
+            compaction_tokens: Some(256_000),
             ..Default::default()
         },
         configured: true,
@@ -26,7 +27,11 @@ fn catalogue_lookup_respects_provider_and_case_and_remembers_aliases_canonically
         assert_eq!(info.model, ModelRef::new("claude-code", "claude-opus-5-5"));
         assert_eq!(
             app.context_window(&ModelRef::new("claude-code", name)),
-            Some(200_000)
+            Some(1_000_000)
+        );
+        assert_eq!(
+            app.compaction_threshold(&ModelRef::new("claude-code", name)),
+            Some(256_000)
         );
     }
     for (provider, name) in [

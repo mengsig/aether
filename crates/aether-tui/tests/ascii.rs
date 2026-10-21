@@ -355,7 +355,8 @@ fn ascii_board_inspector_over_every_status() {
                 name: "model".into(),
                 provider_name: "mock".into(),
                 capabilities: CapabilityProfile {
-                    context_window: 100_000,
+                    context_window: 1_000_000,
+                    compaction_tokens: Some(100_000),
                     ..Default::default()
                 },
                 configured: true,
@@ -366,7 +367,10 @@ fn ascii_board_inspector_over_every_status() {
             app.board.open = true;
             let text = render_to(&app, 160, 48);
             assert!(text.contains("75%"), "{status:?}: no context bar\n{text}");
-            assert!(text.contains("75k of 100k"), "{status:?}:\n{text}");
+            assert!(
+                text.contains("75k of 100k until compaction"),
+                "{status:?}:\n{text}"
+            );
             if ascii {
                 assert!(text.is_ascii(), "{status:?}:\n{text}");
                 assert!(text.contains("===-"), "{status:?}: bar\n{text}");

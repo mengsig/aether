@@ -281,15 +281,15 @@ fn asks_lines(asks: &Asks, width: usize, theme: &Theme) -> Vec<Line<'static>> {
     out
 }
 
-/// `Context    ━━━━━━━━──────   41%` then `82k of 200k`.
+/// `Context    ━━━━━━━━──────   41%` then `82k of 256k until compaction · window 1M`.
 fn context_lines(model: &InspectorModel, width: usize, theme: &Theme) -> Vec<Line<'static>> {
     let Some(used) = model.context_used else {
         return Vec::new();
     };
-    let Some(window) = model.context_window.filter(|w| *w > 0) else {
+    let Some(threshold) = model.compaction_threshold.filter(|t| *t > 0) else {
         return field("Context", vec![tokens_short(used)], width, theme);
     };
-    let percent = (used.saturating_mul(100) / window).min(100);
+    let percent = (used.saturating_mul(100) / threshold).min(100);
     let percent_style = if percent >= CONTEXT_WARN_PERCENT {
         theme.text().patch(theme.title())
     } else {
@@ -309,11 +309,7 @@ fn context_lines(model: &InspectorModel, width: usize, theme: &Theme) -> Vec<Lin
         ));
     }
     bar.push(Span::styled(format!("{percent:>5}%"), percent_style));
-    let detail = if percent >= 100 {
-        format!("full {} compacting", g.dot)
-    } else {
-        format!("{} of {}", tokens_short(used), tokens_short(window))
-    };
+    let detail = context_detail(model, used, threshold, width, theme);
     vec![
         Line::from(fit_spans(bar, width, theme)),
         Line::from(fit_spans(
@@ -322,6 +318,37 @@ fn context_lines(model: &InspectorModel, width: usize, theme: &Theme) -> Vec<Lin
             theme,
         )),
     ]
+}
+
+/// The line under the context bar; the real window is added only when it fits.
+fn context_detail(
+    model: &InspectorModel,
+    used: u64,
+    threshold: u64,
+    width: usize,
+    theme: &Theme,
+) -> String {
+    let dot = theme.glyphs().dot;
+    if used >= threshold {
+        return format!("at threshold {dot} compacting");
+    }
+    let until = format!(
+        "{} of {} until compaction",
+        tokens_short(used),
+        tokens_short(threshold)
+    );
+    let room = width.saturating_sub(usize::from(LABEL_WIDTH));
+    match model.context_window.filter(|window| *window > threshold) {
+        Some(window) => {
+            let with_window = format!("{until} {dot} window {}", tokens_short(window));
+            if with_window.width() <= room {
+                with_window
+            } else {
+                until
+            }
+        }
+        None => until,
+    }
 }
 
 /// `32k in`, `380k cached`, `18.2k out`
