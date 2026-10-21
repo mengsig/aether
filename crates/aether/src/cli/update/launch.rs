@@ -233,8 +233,10 @@ pub async fn offer(
     match answer {
         Answer::No => Ok(()),
         Answer::Skip => {
-            skip(&state_path, latest)?;
-            eprintln!("Skipping {latest}; the next release will be offered.");
+            match skip(&state_path, latest) {
+                Ok(()) => eprintln!("Skipping {latest}; the next release will be offered."),
+                Err(error) => eprintln!("Could not remember skipping {latest}: {error:#}"),
+            }
             Ok(())
         }
         Answer::Yes => update_and_restart(endpoint, socket, explicit_socket).await,
@@ -251,8 +253,9 @@ async fn update_and_restart(
 ) -> anyhow::Result<()> {
     let binary = Installation::of_running_binary()?.binary().to_path_buf();
     if let Err(error) = stop_daemon(endpoint, &socket).await {
-        eprintln!("Not updated: {error:#}\nStarting the current build.");
-        return Ok(());
+        // The daemon may be gone or going, so this client cannot be trusted: start afresh.
+        eprintln!("Not updated: {error:#}\nRestarting the current build.");
+        return restart_as(&binary);
     }
     let options = UpdateOptions {
         check: false,
@@ -266,13 +269,22 @@ async fn update_and_restart(
     restart_as(&binary)
 }
 
+/// Whether a daemon still listens on `socket` or holds its lock: it keeps
+/// the lock through its own cleanup, after the listener is gone.
+async fn stopping(socket: &Path) -> anyhow::Result<bool> {
+    if super::daemon::probe(socket).await.is_running() {
+        return Ok(true);
+    }
+    aether_daemon::socket_lock_is_held(socket).context("could not check the daemon's lock")
+}
+
 /// Ask the daemon to stop and wait, boundedly, until nothing listens.
 async fn stop_daemon(endpoint: aether_client::Endpoint, socket: &Path) -> anyhow::Result<()> {
     super::super::stop_endpoint(endpoint, false)
         .await
         .context("could not stop the daemon")?;
     let deadline = tokio::time::Instant::now() + STOP_WAIT;
-    while super::daemon::probe(socket).await.is_running() {
+    while stopping(socket).await? {
         ensure!(
             tokio::time::Instant::now() < deadline,
             "the daemon on {} did not stop within {}s",
