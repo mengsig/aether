@@ -649,14 +649,14 @@ async fn directory_discarded_after_listing_is_not_reported() {
                 .iter()
                 .all(|entry| !entry.workspace.starts_with(&stale))
         );
+        assert!(
+            !f.runtime
+                .workspace_gc_cursor
+                .lock()
+                .pending
+                .contains(&stale)
+        );
     }
-    assert!(
-        !f.runtime
-            .workspace_gc_cursor
-            .lock()
-            .pending
-            .contains(&stale)
-    );
 }
 
 #[tokio::test]
