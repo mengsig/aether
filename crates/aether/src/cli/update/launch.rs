@@ -19,8 +19,9 @@ pub const STATE_FILE: &str = "update-check.json";
 const FRESH_FOR_SECS: u64 = 6 * 60 * 60;
 /// The whole request for the latest version.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(2);
-/// How long startup waits for an answer that is not ready yet.
-const MAX_WAIT: Duration = Duration::from_millis(300);
+/// How long a stopping daemon has to release its socket.
+const STOP_WAIT: Duration = Duration::from_secs(10);
+const STOP_POLL: Duration = Duration::from_millis(100);
 /// Set on the restart after an update so a stale answer cannot offer it twice.
 const RESTARTED_VARIABLE: &str = "AETHER_UPDATE_RESTARTED";
 /// Set by whatever manages this Aether, such as Archon, which then owns updates.
@@ -147,16 +148,18 @@ impl LaunchCheck {
         Some(Self { task, state_path })
     }
 
-    /// The newer release, if the check has found one by now. Startup waits a
-    /// moment at most; an answer that is late is kept for the next launch.
+    /// The newer release, if the check has already found one. Startup never
+    /// waits: an answer that is late is cached for the next launch.
     async fn newer(self) -> Option<Version> {
-        match tokio::time::timeout(MAX_WAIT, self.task).await {
-            Ok(Ok(found)) => found,
-            Ok(Err(error)) => {
+        if !self.task.is_finished() {
+            return None;
+        }
+        match self.task.await {
+            Ok(found) => found,
+            Err(error) => {
                 tracing::debug!("update check task failed: {error}");
                 None
             }
-            Err(_) => None,
         }
     }
 }
@@ -238,32 +241,47 @@ pub async fn offer(
     }
 }
 
+/// Stop the daemon with this (still compatible) build, update with nothing
+/// holding the socket, then start the new build. A failed update restarts
+/// the current build, since its daemon is gone.
 async fn update_and_restart(
     endpoint: aether_client::Endpoint,
     socket: PathBuf,
     explicit_socket: bool,
 ) -> anyhow::Result<()> {
     let binary = Installation::of_running_binary()?.binary().to_path_buf();
+    if let Err(error) = stop_daemon(endpoint, &socket).await {
+        eprintln!("Not updated: {error:#}\nStarting the current build.");
+        return Ok(());
+    }
     let options = UpdateOptions {
         check: false,
         version: None,
         json: false,
         yes: false,
     };
-    let replaced = match super::run_update(socket, explicit_socket, options).await {
-        Ok((_, replaced)) => replaced,
-        Err(error) => {
-            eprintln!("Not updated: {error:#}\nStarting the current build.");
-            return Ok(());
-        }
-    };
-    if !replaced {
-        return Ok(());
-    }
-    if let Err(error) = super::super::stop_endpoint(endpoint, false).await {
-        eprintln!("Could not stop the old daemon: {error:#}");
+    if let Err(error) = super::run_update(socket, explicit_socket, options).await {
+        eprintln!("Not updated: {error:#}\nStarting the current build.");
     }
     restart_as(&binary)
+}
+
+/// Ask the daemon to stop and wait, boundedly, until nothing listens.
+async fn stop_daemon(endpoint: aether_client::Endpoint, socket: &Path) -> anyhow::Result<()> {
+    super::super::stop_endpoint(endpoint, false)
+        .await
+        .context("could not stop the daemon")?;
+    let deadline = tokio::time::Instant::now() + STOP_WAIT;
+    while super::daemon::probe(socket).await.is_running() {
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "the daemon on {} did not stop within {}s",
+            socket.display(),
+            STOP_WAIT.as_secs()
+        );
+        tokio::time::sleep(STOP_POLL).await;
+    }
+    Ok(())
 }
 
 /// Replace this process with `binary` run with the arguments this one got.
@@ -395,6 +413,18 @@ mod tests {
         assert_eq!(answered("what\n"), Answer::No);
         assert_eq!(answered(""), Answer::No, "a closed input is not a yes");
         assert_eq!(answered("s\n"), Answer::Skip);
+    }
+
+    #[tokio::test]
+    async fn startup_does_not_wait_for_an_unfinished_check() {
+        let task = tokio::spawn(std::future::pending::<Option<Version>>());
+        let check = LaunchCheck {
+            task,
+            state_path: PathBuf::new(),
+        };
+        let started = std::time::Instant::now();
+        assert_eq!(check.newer().await, None);
+        assert!(started.elapsed() < Duration::from_millis(100));
     }
 
     #[tokio::test]

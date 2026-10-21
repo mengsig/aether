@@ -153,12 +153,12 @@ checksum and its archive. Every request has a deadline.
 ### The check on launch
 
 When you start `aether` in a terminal against a local daemon, it also looks at
-the latest release's `VERSION` beside startup (2 s at most; startup waits 0.3 s
-at most for it) and remembers the answer for 6 hours in
+the latest release's `VERSION` beside startup (2 s at most; startup never waits for it,
+so the first launch after the cache expires is offered on the next one) and remembers the answer for 6 hours in
 `update-check.json` in the data directory. Offline, or on any error, it says
 nothing. If a newer release exists and `aether update` can replace this binary,
 it asks `Aether X.Y.Z is available. Update and restart now? [Y/n]`: `y` or
-Enter runs `aether update`, stops the daemon and starts the new build with the
+Enter stops the daemon, runs `aether update` and starts the new build with the
 same arguments; `n` carries on; `s` skips that version, and the next release is
 offered again. Nothing is installed without a yes, and a closed stdin is a no.
 
