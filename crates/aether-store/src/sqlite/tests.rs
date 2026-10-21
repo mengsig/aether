@@ -114,6 +114,7 @@ fn artifact_named(name: &str) -> Artifact {
 mod transactions;
 
 mod plans;
+mod quarantine;
 mod queries;
 mod subtree;
 

@@ -13,6 +13,9 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DaemonStatus {
+    /// Recoverable daemon failures and quarantined records needing attention.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub problems: Vec<String>,
     pub instance_id: String,
     pub version: String,
     pub pid: u32,

@@ -631,7 +631,9 @@ impl ModelsSection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{path}: {reason}")]
+#[error(
+    "{path}: {reason}. Fix the named setting in this file, then run `aether doctor` before starting the daemon again."
+)]
 pub struct ConfigError {
     pub path: String,
     pub reason: String,

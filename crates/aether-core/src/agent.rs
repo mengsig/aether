@@ -335,10 +335,9 @@ impl Agent {
 /// Dollars without float noise (`0.1 + 0.2` reads `0.3`). Not `:.2`: a budget
 /// of a fraction of a cent must read back, so six decimals, zeros trimmed.
 pub fn format_usd(amount: f64) -> String {
-    assert!(
-        amount.is_finite(),
-        "a dollar amount must be finite: {amount}"
-    );
+    if !amount.is_finite() {
+        return "unavailable (non-finite amount; run `aether doctor`)".into();
+    }
     let fixed = format!("{amount:.6}");
     let trimmed = fixed.trim_end_matches('0').trim_end_matches('.');
     assert!(!trimmed.is_empty(), "formatting {amount} left nothing");

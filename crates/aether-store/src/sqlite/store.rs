@@ -280,16 +280,19 @@ impl Store for SqliteStore {
     }
 
     fn agent(&self, id: AgentId) -> Result<Option<Agent>> {
-        self.read_one("SELECT body FROM agents WHERE id = ?1", &id.to_string())
+        self.record_one(
+            "agents",
+            "SELECT body FROM agents WHERE id = ?1",
+            &id.to_string(),
+            |record: &Agent| record.id.to_string(),
+        )
     }
 
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool> {
-        // A miss scans every agent, so it must not hold the writer while it does.
-        Ok(self.read_conn().query_row(
-            "SELECT EXISTS(SELECT 1 FROM agents WHERE json_extract(body, '$.scope.repository') = ?1)",
-            [repository],
-            |row| row.get(0),
-        )?)
+        Ok(self
+            .agents(&AgentFilter::default())?
+            .iter()
+            .any(|agent| agent.scope.repository.as_deref() == Some(repository)))
     }
 
     fn resolve_repository(&self, repository: &str) -> Result<String> {
@@ -317,12 +320,16 @@ impl Store for SqliteStore {
         let mut args: Arguments = Vec::new();
         let sql = agent_list_sql(filter, &mut args);
         let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
-        let mut agents: Vec<Agent> = self.record_list("agents", &sql, &refs, |agent: &Agent| agent.id.to_string())?;
+        let mut agents: Vec<Agent> =
+            self.record_list("agents", &sql, &refs, |agent: &Agent| agent.id.to_string())?;
         // `archived` lives in the JSON body, not a column: it is a view
         // filter on a bounded set, so it is cheaper to drop here than to
         // migrate the table for it.
         if filter.exclude_archived {
             agents.retain(|a| !a.archived);
+        }
+        if filter.budgeted_only {
+            agents.retain(|a| a.config.token_budget.is_some() || a.config.cost_budget.is_some());
         }
         Ok(agents)
     }
@@ -342,20 +349,15 @@ impl Store for SqliteStore {
     }
 
     fn fleet_usage(&self) -> Result<Usage> {
-        let conn = self.read_conn();
-        let mut stmt = conn.prepare_cached(
-            "SELECT json_extract(body, '$.stats.usage') FROM agents WHERE status != ?1",
+        let agents = self.record_list(
+            "agents",
+            "SELECT id, body FROM agents WHERE status != ?1",
+            &[&AgentStatusKind::Imported.as_str()],
+            |agent: &Agent| agent.id.to_string(),
         )?;
-        let rows = stmt.query_map([AgentStatusKind::Imported.as_str()], |row| {
-            row.get::<_, Option<String>>(0)
-        })?;
         let mut total = Usage::default();
-        for row in rows {
-            // An omitted stats or usage field reads as default usage, as in `Agent`.
-            let Some(json) = row? else { continue };
-            let usage: Usage = serde_json::from_str(&json)
-                .map_err(|e| StoreError::Corrupt(format!("invalid agent usage: {e}")))?;
-            total += usage;
+        for agent in agents {
+            total += agent.stats.usage;
         }
         Ok(total)
     }
@@ -382,7 +384,12 @@ impl Store for SqliteStore {
     }
 
     fn task(&self, id: TaskId) -> Result<Option<Task>> {
-        self.read_one("SELECT body FROM tasks WHERE id = ?1", &id.to_string())
+        self.record_one(
+            "tasks",
+            "SELECT body FROM tasks WHERE id = ?1",
+            &id.to_string(),
+            |record: &Task| record.id.to_string(),
+        )
     }
 
     fn tasks(&self, filter: &TaskFilter) -> Result<Vec<Task>> {
@@ -415,14 +422,21 @@ impl Store for SqliteStore {
     }
 
     fn lease(&self, agent: AgentId) -> Result<Option<Lease>> {
-        self.read_one(
+        self.record_one(
+            "leases",
             "SELECT body FROM leases WHERE agent_id = ?1",
             &agent.to_string(),
+            |lease: &Lease| lease.agent_id.to_string(),
         )
     }
 
     fn leases(&self) -> Result<Vec<Lease>> {
-        self.record_list("leases", "SELECT agent_id, body FROM leases ORDER BY expires_at ASC", &[], |lease: &Lease| lease.agent_id.to_string())
+        self.record_list(
+            "leases",
+            "SELECT agent_id, body FROM leases ORDER BY expires_at ASC",
+            &[],
+            |lease: &Lease| lease.agent_id.to_string(),
+        )
     }
 
     fn snapshot(&self, id: SnapshotId) -> Result<Option<InvocationSnapshot>> {
@@ -817,12 +831,6 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
             })
             .collect();
         sql.push_str(&format!(" AND status NOT IN ({})", terminal.join(",")));
-    }
-    if filter.budgeted_only {
-        sql.push_str(
-            " AND (json_extract(body, '$.config.token_budget') IS NOT NULL
-                 OR json_extract(body, '$.config.cost_budget') IS NOT NULL)",
-        );
     }
     if !filter.statuses.is_empty() {
         let placeholders: Vec<String> = filter

@@ -35,6 +35,7 @@ pub(super) fn welcome() -> Welcome {
 
 fn status(pid: u32) -> DaemonStatus {
     DaemonStatus {
+        problems: Vec::new(),
         instance_id: "inst".into(),
         version: "test".into(),
         pid,

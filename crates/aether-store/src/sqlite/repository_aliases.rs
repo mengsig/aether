@@ -16,10 +16,11 @@ use crate::{RepositoryAliasMove, Result, StoreError};
 impl SqliteStore {
     pub(super) fn resolve_repository_id(&self, repository: &str) -> Result<String> {
         let canonical = canonical_of(&self.read_conn(), repository)?;
-        debug_assert!(
-            canonical.as_deref() != Some(repository),
-            "an alias of itself"
-        );
+        if canonical.as_deref() == Some(repository) {
+            return Err(StoreError::Corrupt(format!(
+                "repository alias `{repository}` points to itself; run `aether doctor`"
+            )));
+        }
         Ok(canonical.unwrap_or_else(|| repository.to_owned()))
     }
 

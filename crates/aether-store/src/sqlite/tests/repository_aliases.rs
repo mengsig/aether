@@ -324,3 +324,21 @@ fn a_move_that_fails_partway_leaves_every_memory_where_it_was() {
     );
     assert_eq!(store.last_seq().unwrap(), seq);
 }
+
+#[test]
+fn a_stored_self_alias_returns_a_corruption_error() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    store
+        .conn
+        .lock()
+        .execute_batch(
+            "PRAGMA ignore_check_constraints=ON;
+         INSERT INTO repository_aliases(alias,canonical,created_at,body)
+         VALUES ('self','self','2026-01-01T00:00:00Z','{}');
+         PRAGMA ignore_check_constraints=OFF;",
+        )
+        .unwrap();
+    let error = store.resolve_repository("self").unwrap_err();
+    assert!(matches!(error, StoreError::Corrupt(_)));
+    assert!(error.to_string().contains("points to itself"));
+}

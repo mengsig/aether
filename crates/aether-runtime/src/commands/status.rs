@@ -59,6 +59,7 @@ impl Runtime {
         let engine_turns_running = self.sched.lock().on_engine() as u32;
         let started = std::time::Instant::now();
         let mut status = RuntimeStatus {
+            problems: self.problems()?,
             yolo: self.config.yolo,
             network_default: self.config.network_default,
             max_concurrent_turns: self.config.max_concurrent_turns,

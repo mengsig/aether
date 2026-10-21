@@ -1,4 +1,4 @@
-use crate::{Result, SchedulerState};
+use crate::SchedulerState;
 use aether_core::{agent::Agent, id::AgentId};
 use std::collections::{HashMap, HashSet};
 
@@ -11,7 +11,7 @@ pub(super) struct Lineage {
 impl Lineage {
     /// Load only missing ancestors, not the entire historical fleet. Finished
     /// intermediates remain part of the tree and cannot release ancestor caps.
-    pub(super) fn from_store(live: &[Agent], store: &dyn aether_store::Store) -> Result<Self> {
+    pub(super) fn from_store(live: &[Agent], runtime: &crate::Runtime) -> Self {
         let mut lineage = Self::of(live);
         let mut seen: HashSet<_> = live.iter().map(|agent| agent.id).collect();
         let mut pending: Vec<_> = lineage.parents.values().copied().collect();
@@ -19,9 +19,17 @@ impl Lineage {
             if !seen.insert(id) {
                 continue;
             }
-            let agent = store.agent(id)?.ok_or_else(|| {
-                aether_store::StoreError::Corrupt(format!("missing ancestor {id}"))
-            })?;
+            let agent = match runtime.store.agent(id) {
+                Ok(Some(agent)) => agent,
+                failed => {
+                    runtime.report_problem(format!("ancestor.{id}"), format!(
+                        "Ancestor {id} cannot be read ({failed:?}); its descendants cannot run. Run `aether doctor` and `aether diagnose`."
+                    ));
+                    lineage.caps.insert(id, 0);
+                    continue;
+                }
+            };
+            runtime.clear_problem(&format!("ancestor.{id}"));
             if let Some(parent) = agent.parent {
                 lineage.parents.insert(id, parent);
                 pending.push(parent);
@@ -30,7 +38,7 @@ impl Lineage {
                 lineage.caps.insert(id, cap);
             }
         }
-        Ok(lineage)
+        lineage
     }
 
     pub(super) fn of(live: &[Agent]) -> Self {

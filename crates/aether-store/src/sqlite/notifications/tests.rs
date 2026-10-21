@@ -134,3 +134,25 @@ fn pruning_drops_only_the_oldest_resolved_notifications() {
         3
     );
 }
+
+#[test]
+fn an_indexed_notification_state_mismatch_returns_an_error() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let record = notification("source", None, "title");
+    put(&store, &record).unwrap();
+    store
+        .conn
+        .lock()
+        .execute(
+            "UPDATE notifications SET state='resolved' WHERE id=?1",
+            [record.id.to_string()],
+        )
+        .unwrap();
+    let filter = NotificationFilter {
+        states: vec![NotificationState::Resolved],
+        ..Default::default()
+    };
+    let error = store.notifications(&filter).unwrap_err();
+    assert!(matches!(error, StoreError::Corrupt(_)));
+    assert!(error.to_string().contains(&record.id.to_string()));
+}

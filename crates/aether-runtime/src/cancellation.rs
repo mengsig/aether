@@ -113,18 +113,28 @@ pub(crate) fn pending_agents(runtime: &Runtime) -> Result<HashSet<AgentId>> {
     if pending.is_empty() {
         return Ok(HashSet::new());
     }
-    let agents = runtime.store.agents(&AgentFilter::default())?;
-    Ok(pending
-        .keys()
-        .flat_map(|id| aether_core::agent::subtree_of(&agents, *id))
-        .collect())
+    let mut affected = HashSet::new();
+    for id in pending.keys() {
+        affected.insert(*id);
+        affected.extend(runtime.store.subtree_ids(*id)?);
+    }
+    Ok(affected)
 }
 
 pub(crate) fn drain(runtime: &Runtime) -> Result<()> {
+    let mut first_error = None;
     for id in load(runtime)?.keys().copied().collect::<Vec<_>>() {
-        process(runtime, id)?;
+        match process(runtime, id) {
+            Ok(()) => runtime.clear_problem(&format!("cancellation.{id}")),
+            Err(error) => {
+                runtime.report_problem(format!("cancellation.{id}"), format!(
+                    "Cancellation of {id} is still pending: {error}. Its subtree cannot run. Run `aether doctor` and `aether diagnose`."
+                ));
+                first_error.get_or_insert(error);
+            }
+        }
     }
-    Ok(())
+    first_error.map_or(Ok(()), Err)
 }
 
 pub(crate) fn process(runtime: &Runtime, id: AgentId) -> Result<()> {

@@ -76,7 +76,11 @@ impl SqliteStore {
                 body
             ],
         )?;
-        assert_eq!(changed, 1, "an upsert writes exactly one row");
+        if changed != 1 {
+            return Err(StoreError::Corrupt(
+                "Push subscription was not saved exactly once; run `aether doctor`".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -87,7 +91,11 @@ impl SqliteStore {
             "DELETE FROM push_subscriptions WHERE device = ?1",
             [device.to_string()],
         )?;
-        assert!(removed <= 1, "the device is the primary key");
+        if removed > 1 {
+            return Err(StoreError::Corrupt(
+                "Duplicate push subscriptions were removed; run `aether doctor`".into(),
+            ));
+        }
         Ok(removed == 1)
     }
 
@@ -117,7 +125,11 @@ impl SqliteStore {
             "DELETE FROM push_subscriptions WHERE device = ?1",
             [device.to_string()],
         )?;
-        assert_eq!(removed, 1, "the row was read in this transaction");
+        if removed != 1 {
+            return Err(StoreError::Corrupt(
+                "Push subscription changed during removal; run `aether doctor`".into(),
+            ));
+        }
         tx.commit()?;
         Ok(true)
     }

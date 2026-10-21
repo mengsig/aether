@@ -18,6 +18,7 @@ pub(crate) fn screen_text(terminal: &Terminal<TestBackend>) -> String {
 /// about one of its fields.
 pub(crate) fn quiet_status() -> aether_protocol::DaemonStatus {
     aether_protocol::DaemonStatus {
+        problems: Vec::new(),
         approval_default: Default::default(),
         network_default: Default::default(),
         max_concurrent_turns: None,

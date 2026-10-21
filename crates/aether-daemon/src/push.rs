@@ -153,8 +153,13 @@ async fn catch_up(
         let Some(last) = page.last() else {
             return;
         };
-        assert!(page.len() <= REPLAY_PAGE, "the store honours the page size");
-        assert!(last.seq > *seen, "a replayed page moves the cursor on");
+        if page.len() > REPLAY_PAGE || last.seq <= *seen {
+            tracing::error!(
+                after = *seen,
+                "push replay returned an invalid page; run `aether doctor`"
+            );
+            return;
+        }
         for event in &page {
             observe(notifier, event, seen);
         }
@@ -267,7 +272,12 @@ impl Fleet for StoreFleet {
         let Some(found) = self.0.agent(agent).map_err(store_error)? else {
             return Ok(None);
         };
-        assert_eq!(found.id, agent, "the store answers for the agent asked for");
+        if found.id != agent {
+            return Err(store_error(format!(
+                "Stored agent {agent} contains identity {}; run `aether doctor`",
+                found.id
+            )));
+        }
         Ok(Some(AgentFacts {
             root: found.parent.is_none(),
             block: operator_block(&found.status),

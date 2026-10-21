@@ -152,6 +152,12 @@ fn guarded(
 /// One scheduling pass. Public for tests. Every step runs even when an
 /// earlier one failed; the first failure is returned once the pass is done.
 pub fn tick(runtime: &Arc<Runtime>) -> Result<()> {
+    if runtime
+        .recovery_failed
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return Ok(());
+    }
     let mut faults = Faults::default();
     pass(runtime, &mut faults)?;
     match faults.errors.into_iter().next() {
@@ -161,7 +167,8 @@ pub fn tick(runtime: &Arc<Runtime>) -> Result<()> {
 }
 
 fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
-    guarded(runtime, faults, "drain cancellations", || {
+    let cancelling = crate::cancellation::pending_agents(runtime)?;
+    isolated(runtime, faults, "drain cancellations", || {
         crate::cancellation::drain(runtime)
     });
     isolated(runtime, faults, "expire backoff", || {
@@ -171,13 +178,13 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
         enforce_budgets(runtime)
     });
     let live = live_after_enforcement(runtime, faults)?;
-    let lineage = Lineage::from_store(&live, runtime.store.as_ref())?;
+    let lineage = Lineage::from_store(&live, runtime);
     let mut ready: Vec<Runnable> = Vec::new();
     let at = now();
     let canaries = due_canaries(runtime, &live, at);
     for agent in live {
         // VISION §3.8: a paused agent receives no turns; its inbox fills.
-        if agent.paused {
+        if agent.paused || cancelling.contains(&agent.id) {
             continue;
         }
         let woken = match &agent.status {

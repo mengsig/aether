@@ -1,5 +1,5 @@
 use super::{SqliteStore, fts_query, nested_scope_range, scope_key};
-use crate::{MemoryQuery, Result};
+use crate::{MemoryQuery, Result, StoreError};
 use aether_core::memory::{MemoryRecord, MemoryRecorder};
 
 impl SqliteStore {
@@ -35,16 +35,15 @@ impl SqliteStore {
         let conn = self.read_conn();
         let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
         let records: Vec<MemoryRecord> = Self::read_many(&conn, &sql, &refs)?;
-        debug_assert!(
-            records
-                .iter()
-                .all(|record| record.is_proposed() == query.proposed)
-        );
-        debug_assert!(
-            records
-                .iter()
-                .all(|record| query.include_forgotten || record.forgotten_at.is_none())
-        );
+        if let Some(record) = records.iter().find(|record| {
+            record.is_proposed() != query.proposed
+                || (!query.include_forgotten && record.forgotten_at.is_some())
+        }) {
+            return Err(StoreError::Corrupt(format!(
+                "memory {} body disagrees with its indexed state; run `aether doctor`",
+                record.id
+            )));
+        }
         Ok(records)
     }
 }

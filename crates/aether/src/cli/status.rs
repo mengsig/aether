@@ -61,7 +61,11 @@ fn human_status(
     version: Option<&str>,
     at: Timestamp,
 ) -> Vec<String> {
-    let mut out = Vec::new();
+    let mut out: Vec<String> = s
+        .problems
+        .iter()
+        .map(|problem| format!("Needs attention: {}", sane(problem)))
+        .collect();
     out.push(format!(
         "aetherd {} (pid {}) instance {}",
         sane(&s.version),

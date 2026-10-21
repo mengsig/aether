@@ -399,3 +399,65 @@ fn feedback_columns_match_the_full_record_for_every_verdict_and_evidence() {
         }
     }
 }
+
+#[test]
+fn feedback_with_a_mismatched_memory_returns_a_corruption_error() {
+    let votes = Votes::new();
+    let memory = MemoryId::new();
+    let record = votes.cast(memory, TaskId::new(), MemoryVerdict::Helped, 1);
+    votes
+        .store
+        .conn
+        .lock()
+        .execute(
+            "UPDATE memory_feedback SET body=json_set(body, '$.memory', ?1) WHERE id=?2",
+            params![MemoryId::new().to_string(), record.id.to_string()],
+        )
+        .unwrap();
+    let error = votes.store.memory_feedback(memory, 10).unwrap_err();
+    assert!(matches!(error, StoreError::Corrupt(_)));
+    assert!(error.to_string().contains(&record.id.to_string()));
+}
+
+#[test]
+fn invalid_feedback_mutations_return_errors_without_changing_records() {
+    let votes = Votes::new();
+    let mut record = votes.unsaved(
+        MemoryId::new(),
+        TaskId::new(),
+        MemoryVerdict::Helped,
+        MemoryEvidence::Review,
+        1,
+    );
+    record.retracted_at = Some(now());
+    let result = votes
+        .store
+        .commit(Commit::new().mutate(Mutation::RecordMemoryFeedback(record.clone())));
+    assert!(matches!(result, Err(StoreError::Corrupt(_))));
+    assert!(
+        votes
+            .store
+            .memory_feedback_record(record.id)
+            .unwrap()
+            .is_none()
+    );
+    record.retracted_at = None;
+    votes.insert(&record);
+    for reason in [
+        " ".to_owned(),
+        "x".repeat(aether_core::memory_feedback::MAX_FEEDBACK_REASON_CHARS + 1),
+    ] {
+        let result = votes
+            .store
+            .commit(Commit::new().mutate(Mutation::RetractMemoryFeedback {
+                id: record.id,
+                at: now(),
+                reason,
+            }));
+        assert!(matches!(result, Err(StoreError::Corrupt(_))));
+        assert_eq!(
+            votes.store.memory_feedback_record(record.id).unwrap(),
+            Some(record.clone())
+        );
+    }
+}

@@ -295,11 +295,12 @@ impl Runtime {
         reason: &str,
         at: aether_core::time::Timestamp,
     ) -> crate::Result<()> {
-        assert!(
-            artifact.evicted_at.is_none(),
-            "artifact {} is already evicted",
-            artifact.id
-        );
+        if artifact.evicted_at.is_some() {
+            return Err(crate::RuntimeError::Invalid(format!(
+                "Artifact {} is already evicted; run `aether doctor` to inspect retention state",
+                artifact.id
+            )));
+        }
         // On the run's log, so a report of that run still says the
         // payload is gone rather than losing the record of it.
         let run = match artifact.agent_id {

@@ -15,13 +15,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
-mod quarantine;
 mod blobs;
 mod checkpoint;
 mod devices;
 mod engine_sessions;
 mod event_queries;
 mod history_retention;
+mod quarantine;
 pub use history_retention::RunExpiry;
 mod ledger;
 mod memories;

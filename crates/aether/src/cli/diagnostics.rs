@@ -89,6 +89,7 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
         doctor::check_credentials_dir(&paths),
         doctor::check_socket(&paths, daemon, env!("CARGO_PKG_VERSION"), &command),
         doctor::check_store(&paths),
+        doctor::check_recovery(status.as_ref()),
         doctor::check_disk(
             &paths,
             disk_floor,

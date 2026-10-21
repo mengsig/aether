@@ -30,6 +30,7 @@ impl aether_client::mcp::CommandSink for RecordingSink {
         self.seen.lock().expect("lock").push(command.clone());
         Ok(match command {
             Command::Status => Reply::Status(DaemonStatus {
+                problems: Vec::new(),
                 instance_id: "inst".into(),
                 version: "test".into(),
                 pid: 1,

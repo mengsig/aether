@@ -255,10 +255,11 @@ fn recipient_of(inner: &Inner, device: DeviceId) -> Result<Recipient, PushError>
     let Some(stored) = inner.store.subscription(device)? else {
         return Ok(Recipient::Unsubscribed);
     };
-    assert_eq!(
-        stored.device, device,
-        "a subscription belongs to the device asked for"
-    );
+    if stored.device != device {
+        return Err(PushError::Store(format!(
+            "Push subscription for {device} contains a different device; run `aether doctor`"
+        )));
+    }
     let Some(devices) = inner.devices.get() else {
         return Ok(Recipient::Subscribed(stored));
     };

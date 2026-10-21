@@ -104,6 +104,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
     app.reduce(AppEvent::Reply {
         then: Then::Status,
         result: Ok(Reply::Status(DaemonStatus {
+            problems: Vec::new(),
             instance_id: "test".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             pid: std::process::id(),

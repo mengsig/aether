@@ -21,6 +21,10 @@ const MAX_KEY_FILE_BYTES: u64 = 4096;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VapidError {
+    #[error(
+        "push audience is not a bare HTTPS origin; run `aether doctor` and renew the device's push subscription"
+    )]
+    Audience,
     #[error("{path}: {source}")]
     Io {
         path: PathBuf,
@@ -110,14 +114,10 @@ impl VapidKey {
         subject: Option<&str>,
         now: SystemTime,
     ) -> Result<String, VapidError> {
-        assert!(
-            audience.starts_with("https://"),
-            "the audience is an https origin"
-        );
-        assert!(
-            !audience["https://".len()..].contains('/'),
-            "an origin has no path"
-        );
+        let origin = url::Url::parse(audience).map_err(|_| VapidError::Audience)?;
+        if origin.scheme() != "https" || origin.origin().ascii_serialization() != audience {
+            return Err(VapidError::Audience);
+        }
         let issued = now
             .duration_since(UNIX_EPOCH)
             .map_err(|_| VapidError::Clock)?;

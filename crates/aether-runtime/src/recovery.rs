@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+mod validation;
+
 use aether_core::agent::{AgentStatus, AgentStatusKind, BlockReason};
 use aether_core::event::{Actor, EventDraft, EventKind, RecoveryClass};
 use aether_core::id::{AgentId, ToolCallId};
@@ -63,8 +65,24 @@ fn recover_with_boot_id(runtime: &Arc<Runtime>, current_boot: Option<&str>) -> R
             ));
         }
     }
+    for record in runtime
+        .store
+        .quarantines()?
+        .into_iter()
+        .filter(|q| q.table == "leases")
+    {
+        if let Ok(id) = record.id.parse::<AgentId>() {
+            validation::quarantine_failed_recovery(
+                runtime,
+                id,
+                &crate::RuntimeError::Invalid(record.reason),
+            )?;
+            stale.retain(|lease| lease.agent_id != id);
+        }
+    }
     let quarantined = recover_leases(runtime, stale, rebooted)?;
     requarantine_inspected(runtime, &quarantined, rebooted)?;
+    validation::validate_live(runtime)?;
     runtime.apply(Commit::new().mutate(Mutation::SetMeta {
         key: BOOT_ID_META.into(),
         // Forget an unavailable boot rather than comparing a later boot with
@@ -85,150 +103,198 @@ pub(crate) fn recover_leases(
     let mut quarantined: Vec<AgentId> = Vec::new();
     let cancelling = crate::cancellation::pending_agents(runtime)?;
     for lease in stale {
-        // The scheduler retries durable cancellations before dispatching any work.
         if cancelling.contains(&lease.agent_id) {
             continue;
         }
-        let Some(mut agent) = runtime.store.agent(lease.agent_id)? else {
-            runtime.apply(Commit::new().mutate(Mutation::ClearLease(lease.agent_id)))?;
-            continue;
-        };
-        let found = classify(runtime, &agent, rebooted)?;
-        let (class, detail) = (found.class, found.detail.clone());
-        // After a reboot nothing can still be writing: what inspection would
-        // fence off, including cancelled calls' keys, is released instead.
-        let held = if class == RecoveryClass::Inspect || rebooted {
-            let mut keys = unreleased_keys(runtime, agent.id)?;
-            keys.extend(found.cancelled_keys.iter().cloned());
-            keys.sort();
-            keys.dedup();
-            keys
-        } else {
-            Vec::new()
-        };
-        let at = now();
-        let hold = runtime.hold();
-        let mut commit = Commit::new();
-        let (aid, parent, run) = (agent.id, agent.parent, agent.run);
-        let base = move |kind: EventKind| {
-            EventDraft::new(Actor::System, kind)
-                .agent(aid)
-                .parent(parent)
-                .run(run)
-        };
-        commit.push_event(base(EventKind::LeaseExpired {
-            holder: lease.holder.clone(),
-        }));
-        commit.push_mutation(Mutation::ClearLease(agent.id));
-        for call in &found.open_calls {
-            crate::tool_interruption::record(
-                &mut commit,
-                &agent,
-                *call,
-                found
-                    .calls
-                    .get(call)
-                    .map_or("unknown tool", |call| call.name.as_str()),
-                &found
-                    .calls
-                    .get(call)
-                    .map_or(serde_json::Value::Null, |call| call.input.clone()),
-                &format!("recovery.classified ({class:?}): {detail}"),
-            );
-        }
-        if let Some((invocation, snapshot)) = found.open_invocation {
-            commit.push_event(base(EventKind::InvocationFailed {
-                class: None,
-                invocation,
-                snapshot,
-                error: "daemon restarted during the turn".into(),
-                retryable: true,
-                cancelled: false,
-                partial: Vec::new(),
-            }));
-        }
-        commit.push_event(base(EventKind::RecoveryClassified {
-            class,
-            detail: detail.clone(),
-        }));
-        if class != RecoveryClass::Inspect && !held.is_empty() {
-            commit.push_event(base(EventKind::ResourceReleased { keys: held.clone() }));
-        }
-        if agent.status.is_terminal() {
-            commit.push_mutation(Mutation::UpsertAgent(agent));
-            runtime.apply_held(hold, commit)?;
-            continue;
-        }
-        let next = match class {
-            RecoveryClass::Resume | RecoveryClass::Retry => AgentStatus::Ready,
-            RecoveryClass::Inspect => AgentStatus::Blocked {
-                reason: BlockReason::Inspection {
-                    detail: detail.clone(),
-                },
-            },
-        };
-        // A turn waiting for a resource key is interrupted like any other: the
-        // lease table died with the daemon, so the wait cannot be resumed and
-        // the classification decides where the agent goes. A dependency gate,
-        // an inspection or an operator pause is not this pass's business.
-        let interrupted = matches!(
-            agent.status.kind(),
-            AgentStatusKind::Running | AgentStatusKind::Ready
-        ) || matches!(
-            &agent.status,
-            AgentStatus::Blocked {
-                reason: BlockReason::Resource { .. }
+        let id = lease.agent_id;
+        let recovered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            recover_lease(runtime, lease, rebooted)
+        }))
+        .unwrap_or_else(|panic| {
+            Err(crate::RuntimeError::Invalid(format!(
+                "recovery panicked for {id}: {}; run `aether doctor`",
+                crate::turn::panic_message(panic.as_ref())
+            )))
+        });
+        match recovered {
+            Ok(Some(id)) => quarantined.push(id),
+            Ok(None) => {}
+            Err(error) => {
+                validation::quarantine_failed_recovery(runtime, id, &error)?;
+                quarantined.push(id);
             }
-        );
-        if interrupted {
-            if agent.status.kind() != next.kind() || agent.status != next {
-                agent.transition(next.clone(), at)?;
-            }
-            match &next {
-                AgentStatus::Blocked { reason } => {
-                    commit.push_event(base(EventKind::AgentBlocked {
-                        reason: reason.describe(),
-                        dependency: reason.dependency(),
-                    }));
-                    // VISION §15: the tool process that took these keys may
-                    // have outlived the daemon and still be writing. Nobody
-                    // else takes them until a person clears the inspection.
-                    if !held.is_empty() {
-                        commit.push_event(base(EventKind::ResourceAcquired { keys: held.clone() }));
-                    }
-                }
-                _ => commit.push_event(base(EventKind::AgentResumed {
-                    reason: "recovered after restart".into(),
-                    via: None,
-                })),
-            }
-            // Ready alone does not make the agent run: a turn interrupted
-            // after its last assistant message reads as answered. A retry
-            // needs the wake that says otherwise, once per restart.
-            if class == RecoveryClass::Retry {
-                runtime.push_inbox(
-                    &hold,
-                    &mut commit,
-                    &agent,
-                    aether_core::inbox::InboxKind::Wake {
-                        reason: detail.clone(),
-                    },
-                    Actor::System,
-                )?;
-            }
-        }
-        commit.push_mutation(Mutation::UpsertAgent(agent));
-        runtime.apply_held(hold, commit)?;
-        // Only once the acquisition is in the log: a hold no event explains
-        // is a key nobody can account for.
-        if class == RecoveryClass::Inspect && !held.is_empty() {
-            runtime.resources.quarantine(aid, held);
-        }
-        if class == RecoveryClass::Inspect {
-            quarantined.push(aid);
         }
     }
     Ok(quarantined)
+}
+
+fn recover_lease(
+    runtime: &Arc<Runtime>,
+    lease: aether_core::lease::Lease,
+    rebooted: bool,
+) -> Result<Option<AgentId>> {
+    let Some(mut agent) = runtime.store.agent(lease.agent_id)? else {
+        runtime.apply(Commit::new().mutate(Mutation::ClearLease(lease.agent_id)))?;
+        return Ok(None);
+    };
+    let found = classify_or_inspect(runtime, &agent, rebooted)?;
+    let held = if found.class == RecoveryClass::Inspect || rebooted {
+        let mut keys = unreleased_keys(runtime, agent.id)?;
+        keys.extend(found.cancelled_keys.iter().cloned());
+        keys.sort();
+        keys.dedup();
+        keys
+    } else {
+        Vec::new()
+    };
+    let hold = runtime.hold();
+    let mut commit = interruption_commit(&agent, &lease, &found, &held);
+    let terminal = agent.status.is_terminal();
+    if !terminal {
+        resume_recovered(runtime, &hold, &mut commit, &mut agent, &found, &held)?;
+    }
+    let id = agent.id;
+    commit.push_mutation(Mutation::UpsertAgent(agent));
+    runtime.apply_held(hold, commit)?;
+    if terminal {
+        return Ok(None);
+    }
+    // Quarantine only after its event commits: no unexplained in-memory hold.
+    if found.class == RecoveryClass::Inspect && !held.is_empty() {
+        runtime.resources.quarantine(id, held);
+    }
+    Ok((found.class == RecoveryClass::Inspect).then_some(id))
+}
+
+fn recovery_event(agent: &aether_core::agent::Agent, kind: EventKind) -> EventDraft {
+    EventDraft::new(Actor::System, kind)
+        .agent(agent.id)
+        .parent(agent.parent)
+        .run(agent.run)
+}
+
+fn interruption_commit(
+    agent: &aether_core::agent::Agent,
+    lease: &aether_core::lease::Lease,
+    found: &Interrupted,
+    held: &[ResourceKey],
+) -> Commit {
+    let mut commit = Commit::new()
+        .event(recovery_event(
+            agent,
+            EventKind::LeaseExpired {
+                holder: lease.holder.clone(),
+            },
+        ))
+        .mutate(Mutation::ClearLease(agent.id));
+    record_open_calls(&mut commit, agent, found);
+    if let Some((invocation, snapshot)) = found.open_invocation {
+        commit.push_event(recovery_event(agent, EventKind::InvocationFailed {
+            class: None, invocation, snapshot,
+            error: "daemon restarted during the turn; run `aether doctor` if recovery needs attention".into(),
+            retryable: true, cancelled: false, partial: Vec::new(),
+        }));
+    }
+    commit.push_event(recovery_event(
+        agent,
+        EventKind::RecoveryClassified {
+            class: found.class,
+            detail: found.detail.clone(),
+        },
+    ));
+    if found.class != RecoveryClass::Inspect && !held.is_empty() {
+        commit.push_event(recovery_event(
+            agent,
+            EventKind::ResourceReleased {
+                keys: held.to_vec(),
+            },
+        ));
+    }
+    commit
+}
+
+fn record_open_calls(commit: &mut Commit, agent: &aether_core::agent::Agent, found: &Interrupted) {
+    for id in &found.open_calls {
+        let call = found.calls.get(id);
+        crate::tool_interruption::record(
+            commit,
+            agent,
+            *id,
+            call.map_or("unknown tool", |call| call.name.as_str()),
+            &call.map_or(serde_json::Value::Null, |call| call.input.clone()),
+            &format!("recovery.classified ({:?}): {}", found.class, found.detail),
+        );
+    }
+}
+
+fn resume_recovered(
+    runtime: &Runtime,
+    hold: &crate::CommitHold<'_>,
+    commit: &mut Commit,
+    agent: &mut aether_core::agent::Agent,
+    found: &Interrupted,
+    held: &[ResourceKey],
+) -> Result<()> {
+    let interrupted = matches!(
+        agent.status.kind(),
+        AgentStatusKind::Running | AgentStatusKind::Ready
+    ) || matches!(
+        &agent.status,
+        AgentStatus::Blocked {
+            reason: BlockReason::Resource { .. }
+        }
+    );
+    if !interrupted {
+        return Ok(());
+    }
+    let next = match found.class {
+        RecoveryClass::Resume | RecoveryClass::Retry => AgentStatus::Ready,
+        RecoveryClass::Inspect => AgentStatus::Blocked {
+            reason: BlockReason::Inspection {
+                detail: found.detail.clone(),
+            },
+        },
+    };
+    if agent.status != next {
+        agent.transition(next, now())?;
+    }
+    if let AgentStatus::Blocked { reason } = &agent.status {
+        commit.push_event(recovery_event(
+            agent,
+            EventKind::AgentBlocked {
+                reason: reason.describe(),
+                dependency: reason.dependency(),
+            },
+        ));
+        if !held.is_empty() {
+            commit.push_event(recovery_event(
+                agent,
+                EventKind::ResourceAcquired {
+                    keys: held.to_vec(),
+                },
+            ));
+        }
+    } else {
+        commit.push_event(recovery_event(
+            agent,
+            EventKind::AgentResumed {
+                reason: "recovered after restart".into(),
+                via: None,
+            },
+        ));
+    }
+    if found.class == RecoveryClass::Retry {
+        runtime.push_inbox(
+            hold,
+            commit,
+            agent,
+            aether_core::inbox::InboxKind::Wake {
+                reason: found.detail.clone(),
+            },
+            Actor::System,
+        )?;
+    }
+    Ok(())
 }
 
 /// The inspection hold outlives daemon restarts on the same host boot.
@@ -253,7 +319,13 @@ fn requarantine_inspected(runtime: &Arc<Runtime>, done: &[AgentId], rebooted: bo
         else {
             continue;
         };
-        let held = unreleased_keys(runtime, agent.id)?;
+        let held = match unreleased_keys(runtime, agent.id) {
+            Ok(keys) => keys,
+            Err(error) => {
+                validation::quarantine_failed_recovery(runtime, agent.id, &error)?;
+                continue;
+            }
+        };
         if rebooted {
             // These calls were cancelled in the log when inspection began,
             // so classify() can no longer find them open. Keep the inspection
@@ -329,6 +401,12 @@ fn walk_events(
     loop {
         let page = runtime.store.events(after, TURN_EVENT_PAGE, &filter)?;
         let Some(last) = page.last() else { break };
+        if last.seq <= after || page.len() > TURN_EVENT_PAGE {
+            return Err(aether_store::StoreError::Corrupt(format!(
+                "Agent {agent} recovery returned an invalid event page; run `aether doctor`"
+            ))
+            .into());
+        }
         after = last.seq;
         for event in &page {
             visit(&event.kind);
@@ -376,6 +454,41 @@ fn turn_start_seq(runtime: &Runtime, agent: AgentId) -> Result<u64> {
         .first()
         .map(|e| e.seq)
         .unwrap_or(0))
+}
+
+/// Unreadable turn history cannot prove a retry safe. Resource history is
+/// still read by the caller before any lease is cleared or agent is changed.
+fn classify_or_inspect(
+    runtime: &Runtime,
+    agent: &aether_core::agent::Agent,
+    rebooted: bool,
+) -> Result<Interrupted> {
+    match classify(runtime, agent, rebooted) {
+        Ok(found) => Ok(found),
+        Err(
+            error @ crate::RuntimeError::Store(
+                aether_store::StoreError::Serde(_)
+                | aether_store::StoreError::Corrupt(_)
+                | aether_store::StoreError::HistoryExpired { .. },
+            ),
+        ) => {
+            let detail = format!(
+                "Could not recover agent {} because its stored turn history is unreadable: \
+                 {error}. Run `aether doctor` before attempting `aether wake {}`.",
+                agent.id, agent.id
+            );
+            tracing::error!(agent = %agent.id, %error, "recovery requires inspection; run `aether doctor`");
+            Ok(Interrupted {
+                calls: Default::default(),
+                class: RecoveryClass::Inspect,
+                detail,
+                open_calls: Vec::new(),
+                cancelled_keys: Vec::new(),
+                open_invocation: None,
+            })
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Look at the events since the agent's last turn start and decide.

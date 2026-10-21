@@ -34,6 +34,11 @@ impl SqliteStore {
             [],
             |r| r.get(0),
         )?;
+        if store.is_empty() {
+            return Err(StoreError::Corrupt(
+                "meta.instance_id is empty; run `aether doctor` and `aether diagnose`".into(),
+            ));
+        }
         let found = Self::read_ledger(&tx)?;
         if found.as_ref().is_some_and(|ledger| ledger.store == store) {
             return Ok(());
@@ -66,8 +71,11 @@ impl SqliteStore {
             })
             .optional()?;
         raw.map(|raw| {
-            serde_json::from_str(&raw)
-                .map_err(|e| StoreError::Corrupt(format!("meta.{LEDGER_KEY} does not parse: {e}")))
+            let ledger: SubmissionLedger = serde_json::from_str(&raw).map_err(|e| {
+                StoreError::Corrupt(format!("meta.{LEDGER_KEY} does not parse: {e}"))
+            })?;
+            validate_ledger(&ledger)?;
+            Ok(ledger)
         })
         .transpose()
     }
@@ -75,12 +83,6 @@ impl SqliteStore {
     pub(super) fn ledger_in(tx: &Connection) -> Result<SubmissionLedger> {
         let ledger = Self::read_ledger(tx)?
             .ok_or_else(|| StoreError::Corrupt(format!("missing meta.{LEDGER_KEY}")))?;
-        if ledger.forgotten > ledger.recorded {
-            return Err(StoreError::Corrupt(format!(
-                "meta.{LEDGER_KEY} forgot receipt {} of {} recorded",
-                ledger.forgotten, ledger.recorded
-            )));
-        }
         Ok(ledger)
     }
 
@@ -98,6 +100,12 @@ impl SqliteStore {
     /// Number the receipt this transaction is about to insert.
     pub(super) fn next_submission_ordinal(tx: &Connection) -> Result<u64> {
         let mut ledger = Self::ledger_in(tx)?;
+        if ledger.recorded >= i64::MAX as u64 {
+            return Err(StoreError::Corrupt(
+                "submission ordinals are exhausted; run `aether doctor` and `aether diagnose`"
+                    .into(),
+            ));
+        }
         let ordinal = ledger.next_ordinal();
         Self::write_ledger(tx, &ledger)?;
         Ok(ordinal)
@@ -119,4 +127,20 @@ impl SqliteStore {
         ledger.forget(*ordinal, at);
         Self::write_ledger(tx, &ledger)
     }
+}
+
+fn validate_ledger(ledger: &SubmissionLedger) -> Result<()> {
+    if ledger.store.is_empty() || ledger.epoch.is_empty() {
+        return Err(StoreError::Corrupt(
+            "submission ledger has an empty identity; run `aether doctor` and `aether diagnose`"
+                .into(),
+        ));
+    }
+    if ledger.forgotten > ledger.recorded || ledger.recorded > i64::MAX as u64 {
+        return Err(StoreError::Corrupt(format!(
+            "submission ledger has invalid ordinals (forgotten {}, recorded {}); run `aether doctor` and `aether diagnose`",
+            ledger.forgotten, ledger.recorded
+        )));
+    }
+    Ok(())
 }

@@ -193,3 +193,60 @@ fn a_ledger_that_does_not_parse_is_corruption_not_a_fresh_start() {
         store.commit(Commit::new().mutate(Mutation::RecordSubmission(submission("k", now()))));
     assert!(refused.is_err(), "a receipt is never recorded unnumbered");
 }
+
+#[test]
+fn invalid_stored_ledgers_fail_before_core_invariants_or_writes() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let original = store.submission_ledger().unwrap();
+    for (recorded, forgotten, empty_epoch) in [
+        (0, 1, false),
+        (u64::MAX, 0, false),
+        (0, 0, true),
+        (i64::MAX as u64, 0, false),
+    ] {
+        let mut bad = original.clone();
+        bad.recorded = recorded;
+        bad.forgotten = forgotten;
+        if empty_epoch {
+            bad.epoch.clear();
+        }
+        let body = serde_json::to_string(&bad).unwrap();
+        store
+            .conn
+            .lock()
+            .execute(
+                "UPDATE meta SET value=?1 WHERE key='submissions.ledger'",
+                [&body],
+            )
+            .unwrap();
+        let error = store
+            .commit(Commit::new().mutate(Mutation::RecordSubmission(submission("refused", now()))))
+            .unwrap_err();
+        assert!(matches!(error, StoreError::Corrupt(_)), "{error}");
+        assert!(error.to_string().contains("aether doctor"));
+        assert!(
+            store
+                .submission(&IdempotencyKey("refused".into()))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store.meta("submissions.ledger").unwrap(), Some(body));
+    }
+}
+
+#[test]
+fn reopening_with_an_empty_store_identity_returns_a_diagnostic_error() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("store.db");
+    let store = SqliteStore::open(&path).unwrap();
+    store
+        .conn
+        .lock()
+        .execute("UPDATE meta SET value='' WHERE key='instance_id'", [])
+        .unwrap();
+    drop(store);
+    let error = SqliteStore::open(&path).unwrap_err();
+    assert!(matches!(error, StoreError::Corrupt(_)));
+    assert!(error.to_string().contains("instance_id is empty"));
+    assert!(error.to_string().contains("aether diagnose"));
+}

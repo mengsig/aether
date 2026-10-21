@@ -47,7 +47,11 @@ pub(super) fn read_artifact_slice(
     let mut bytes = store
         .read_artifact_range(id, 0, cap.saturating_add(1))?
         .unwrap_or_default();
-    assert!(bytes.len() <= cap.saturating_add(1), "the store over-read");
+    if bytes.len() > cap.saturating_add(1) {
+        return Err(aether_store::StoreError::Corrupt(format!(
+            "Artifact {id} exceeded the requested read limit; run `aether doctor`"
+        )));
+    }
     let truncated = bytes.len() > cap;
     if truncated {
         bytes.truncate(text_safe_end(&bytes, cap));

@@ -138,6 +138,7 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
     })
     .await??;
     Ok(Reply::Status(DaemonStatus {
+        problems: s.problems,
         instance_id: daemon.instance_id.clone(),
         version: daemon.version.clone(),
         pid: std::process::id(),

@@ -834,3 +834,16 @@ fn config_directory_umask_child() {
         0o700
     );
 }
+
+#[test]
+fn truncated_security_value_names_the_file_setting_and_next_command() {
+    let dir = tempfile::tempdir().expect("private config");
+    let path = dir.path().join("config.toml");
+    std::fs::write(&path, "[approval]\nyolo = tru").expect("truncated value");
+    let error = super::load_config(dir.path())
+        .expect_err("never default security settings after a parse failure")
+        .to_string();
+    assert!(error.contains(&path.display().to_string()));
+    assert!(error.contains("yolo"));
+    assert!(error.contains("aether doctor"));
+}

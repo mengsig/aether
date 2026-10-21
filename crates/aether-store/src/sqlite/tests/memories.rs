@@ -676,3 +676,59 @@ fn recorded_by_sql_agrees_with_the_predicate() {
     assert_eq!(sql, predicate);
     assert_eq!(sql.len(), 4);
 }
+
+fn boundary_memory() -> MemoryRecord {
+    MemoryRecord::from_candidate(
+        MemoryCandidate {
+            scope: MemoryScope::Global,
+            kind: MemoryKind::Fact,
+            text: "boundary record".into(),
+            structured: None,
+            importance: 0.5,
+            confidence: 0.5,
+            tags: vec![],
+            provenance: MemoryProvenance::default(),
+            supersedes: None,
+        },
+        now(),
+    )
+}
+
+#[test]
+fn indexed_memory_state_mismatches_return_errors() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let record = boundary_memory();
+    store
+        .commit(Commit::new().mutate(Mutation::PutMemory(record.clone())))
+        .unwrap();
+    for field in ["proposed_at", "forgotten_at"] {
+        let mut body = serde_json::to_value(&record).unwrap();
+        body[field] = serde_json::to_value(now()).unwrap();
+        store
+            .conn
+            .lock()
+            .execute(
+                "UPDATE memories SET body=?1 WHERE id=?2",
+                params![body.to_string(), record.id.to_string()],
+            )
+            .unwrap();
+        let error = store.memories(&MemoryQuery::default()).unwrap_err();
+        assert!(matches!(error, StoreError::Corrupt(_)));
+        assert!(error.to_string().contains(&record.id.to_string()));
+    }
+}
+
+#[test]
+fn invalid_memory_proposals_are_rejected_without_writing() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mut accepted_without_proposal = boundary_memory();
+    accepted_without_proposal.accepted_at = Some(now());
+    let mut superseded_proposal = boundary_memory();
+    superseded_proposal.proposed_at = Some(now());
+    superseded_proposal.superseded_by = Some(MemoryId::new());
+    for record in [accepted_without_proposal, superseded_proposal] {
+        let result = store.commit(Commit::new().mutate(Mutation::PutMemory(record.clone())));
+        assert!(matches!(result, Err(StoreError::Corrupt(_))));
+        assert!(store.memory(record.id).unwrap().is_none());
+    }
+}

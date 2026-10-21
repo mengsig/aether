@@ -101,6 +101,7 @@ pub struct AgentUpdate {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RuntimeStatus {
+    pub problems: Vec<String>,
     pub agents_live: u32,
     pub agents_running: u32,
     pub agents_waiting: u32,

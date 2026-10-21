@@ -258,8 +258,14 @@ impl SqliteStore {
 }
 
 fn put_memory(tx: &Transaction<'_>, mem: &aether_core::memory::MemoryRecord) -> Result<()> {
-    debug_assert!(mem.accepted_at.is_none() || mem.proposed_at.is_some());
-    debug_assert!(!mem.is_proposed() || mem.superseded_by.is_none());
+    if (mem.accepted_at.is_some() && mem.proposed_at.is_none())
+        || (mem.is_proposed() && mem.superseded_by.is_some())
+    {
+        return Err(StoreError::Corrupt(format!(
+            "memory {} has inconsistent proposal state; run `aether doctor`",
+            mem.id
+        )));
+    }
     let kind = serde_json::to_value(mem.kind)?;
     let kind = kind
         .as_str()

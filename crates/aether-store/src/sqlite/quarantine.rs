@@ -1,10 +1,10 @@
 //! Preserve malformed records in place while making list reads usable.
 
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 use serde::de::DeserializeOwned;
 
 use super::SqliteStore;
-use crate::{RecordQuarantine, Result};
+use crate::{RecordQuarantine, Result, StoreError};
 
 const PREFIX: &str = "quarantine.";
 
@@ -19,38 +19,89 @@ impl SqliteStore {
         let rows = {
             let conn = self.read_conn();
             let mut statement = conn.prepare(sql)?;
-            statement.query_map(params, |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?.collect::<rusqlite::Result<Vec<_>>>()?
+            statement
+                .query_map(params, |row| {
+                    Ok((
+                        row.get::<_, String>(0)
+                            .unwrap_or_else(|error| format!("unreadable-key:{error}")),
+                        row.get::<_, String>(1).map_err(|error| error.to_string()),
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
         };
-        let quarantined: std::collections::BTreeSet<_> = self.list_quarantines()?.into_iter()
-            .filter(|record| record.table == table).map(|record| record.id).collect();
+        let quarantined: std::collections::BTreeSet<_> = self
+            .list_quarantines()?
+            .into_iter()
+            .filter(|record| record.table == table)
+            .map(|record| record.id)
+            .collect();
         let mut records = Vec::with_capacity(rows.len());
         for (id, body) in rows {
-            let decoded = serde_json::from_str::<T>(&body)
-                .map_err(|error| error.to_string())
-                .and_then(|record| {
-                    if identity(&record) == id { Ok(record) }
-                    else { Err("the stored identity disagrees with the row key".into()) }
-                });
-            match decoded {
+            match decode_record(&id, &body, &identity) {
                 Ok(record) => {
                     if quarantined.contains(&id) {
-                        self.conn.lock().execute("DELETE FROM meta WHERE key=?1", [format!("{PREFIX}{table}.{id}")])?;
+                        self.clear_quarantine(table, &id)?;
                     }
                     records.push(record);
                 }
-                Err(reason) => self.quarantine_record(table, &id, &reason)?,
+                Err(reason) => {
+                    self.quarantine_record(table, &id, &reason)?;
+                }
             }
         }
         Ok(records)
     }
 
-    pub(super) fn quarantine_record(&self, table: &str, id: &str, reason: &str) -> Result<()> {
+    pub(super) fn record_one<T: DeserializeOwned>(
+        &self,
+        table: &str,
+        sql: &str,
+        id: &str,
+        identity: impl Fn(&T) -> String,
+    ) -> Result<Option<T>> {
+        let body = self
+            .read_conn()
+            .query_row(sql, [id], |row| {
+                Ok(row.get::<_, String>(0).map_err(|error| error.to_string()))
+            })
+            .optional()?;
+        let Some(body) = body else { return Ok(None) };
+        match decode_record(id, &body, &identity) {
+            Ok(record) => {
+                if self.meta_quarantine_exists(table, id)? {
+                    self.clear_quarantine(table, id)?;
+                }
+                Ok(Some(record))
+            }
+            Err(reason) => Err(StoreError::Corrupt(
+                self.quarantine_record(table, id, &reason)?,
+            )),
+        }
+    }
+
+    fn meta_quarantine_exists(&self, table: &str, id: &str) -> Result<bool> {
+        Ok(self.read_conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE key=?1)",
+            [format!("{PREFIX}{table}.{id}")],
+            |row| row.get(0),
+        )?)
+    }
+
+    fn clear_quarantine(&self, table: &str, id: &str) -> Result<()> {
+        self.conn.lock().execute(
+            "DELETE FROM meta WHERE key=?1",
+            [format!("{PREFIX}{table}.{id}")],
+        )?;
+        Ok(())
+    }
+
+    pub(super) fn quarantine_record(&self, table: &str, id: &str, reason: &str) -> Result<String> {
         let record = RecordQuarantine {
             table: table.into(),
             id: id.into(),
-            reason: format!("Cannot read {table} record {id}: {reason}. Run `aether doctor` and `aether diagnose`. The original row is preserved."),
+            reason: format!(
+                "Cannot read {table} record {id}: {reason}. Run `aether doctor` and `aether diagnose`. The original row is preserved."
+            ),
         };
         let body = serde_json::to_string(&record)?;
         let key = format!("{PREFIX}{table}.{id}");
@@ -61,10 +112,45 @@ impl SqliteStore {
         if changed > 0 {
             tracing::error!(table, id, %reason, "record quarantined; run `aether doctor`");
         }
-        Ok(())
+        Ok(record.reason)
     }
 
     pub(super) fn list_quarantines(&self) -> Result<Vec<RecordQuarantine>> {
-        Self::read_many(&self.read_conn(), "SELECT value FROM meta WHERE key LIKE 'quarantine.%' ORDER BY key", &[])
+        let conn = self.read_conn();
+        let mut statement =
+            conn.prepare("SELECT key, value FROM meta WHERE key LIKE 'quarantine.%' ORDER BY key")?;
+        let rows = statement.query_map([], |row| {
+            let key: String = row.get(0)?;
+            let body = row.get::<_, String>(1).map_err(|error| error.to_string());
+            Ok((key, body))
+        })?;
+        let mut notices = Vec::new();
+        for row in rows {
+            let (key, body) = row?;
+            let decoded =
+                body.and_then(|body| serde_json::from_str(&body).map_err(|e| e.to_string()));
+            notices.push(decoded.unwrap_or_else(|reason| {
+                let (table, id) = key.strip_prefix(PREFIX).unwrap_or(&key)
+                    .split_once('.').unwrap_or(("meta", key.as_str()));
+                RecordQuarantine {
+                    table: table.into(), id: id.into(),
+                    reason: format!("Quarantine notice {key} is unreadable: {reason}; run `aether doctor` and `aether diagnose`. The original record remains preserved."),
+                }
+            }));
+        }
+        Ok(notices)
     }
+}
+
+fn decode_record<T: DeserializeOwned>(
+    id: &str,
+    body: &std::result::Result<String, String>,
+    identity: &impl Fn(&T) -> String,
+) -> std::result::Result<T, String> {
+    let body = body.as_ref().map_err(Clone::clone)?;
+    let record = serde_json::from_str(body).map_err(|error| error.to_string())?;
+    if identity(&record) != id {
+        return Err("the stored identity disagrees with the row key".into());
+    }
+    Ok(record)
 }

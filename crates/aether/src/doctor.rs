@@ -882,3 +882,21 @@ pub fn check_remote(status: Option<&RemoteStatus>, command: &str) -> Check {
 
 #[cfg(test)]
 mod tests;
+
+/// Stored record quarantine and background failures reported by the daemon.
+pub fn check_recovery(status: Option<&DaemonStatus>) -> Check {
+    match status {
+        Some(status) if !status.problems.is_empty() => {
+            Check::warn("recovery", status.problems.join("\n"), "aether diagnose")
+        }
+        Some(_) => Check::ok(
+            "recovery",
+            "no quarantined records or daemon failures reported",
+        ),
+        None => Check::warn(
+            "recovery",
+            "daemon recovery status is unavailable",
+            "aether diagnose",
+        ),
+    }
+}

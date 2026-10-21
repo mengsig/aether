@@ -619,3 +619,12 @@ fn a_raised_class_keeps_the_gate_of_either_class() {
     assert!(!ApprovalPolicy::default().requires_raised(Mutation, Mutation));
     assert!(!ApprovalPolicy::none().requires_raised(ReadOnly, External));
 }
+
+#[test]
+fn non_finite_dollars_are_reported_without_panicking() {
+    for amount in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let text = format_usd(amount);
+        assert!(text.contains("non-finite amount"));
+        assert!(text.contains("aether doctor"));
+    }
+}

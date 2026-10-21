@@ -70,10 +70,18 @@ impl SqliteStore {
             &conn,
             "SELECT body FROM memory_feedback WHERE memory_id = ?1
              ORDER BY created_at DESC, id DESC LIMIT ?2",
-            &[&memory.to_string(), &(limit as i64)],
+            &[
+                &memory.to_string(),
+                &i64::try_from(limit).unwrap_or(i64::MAX),
+            ],
         )?;
         debug_assert!(records.len() <= limit);
-        debug_assert!(records.iter().all(|record| record.spec.memory == memory));
+        if let Some(record) = records.iter().find(|record| record.spec.memory != memory) {
+            return Err(StoreError::Corrupt(format!(
+                "feedback {} body disagrees with its indexed memory; run `aether doctor`",
+                record.id
+            )));
+        }
         Ok(records)
     }
 
@@ -113,8 +121,12 @@ impl SqliteStore {
         tx: &Transaction<'_>,
         record: &MemoryFeedback,
     ) -> Result<()> {
-        debug_assert!(record.retracted_at.is_none());
-        debug_assert!(record.retraction_reason.is_none());
+        if record.retracted_at.is_some() || record.retraction_reason.is_some() {
+            return Err(StoreError::Corrupt(format!(
+                "cannot insert already retracted feedback {}; run `aether doctor`",
+                record.id
+            )));
+        }
         let task_id = record.spec.task.to_string();
         let verdict = match record.spec.verdict {
             MemoryVerdict::Helped => "helped",
@@ -156,8 +168,11 @@ impl SqliteStore {
         at: Timestamp,
         reason: &str,
     ) -> Result<()> {
-        debug_assert!(!reason.trim().is_empty());
-        debug_assert!(reason.chars().count() <= MAX_FEEDBACK_REASON_CHARS);
+        if reason.trim().is_empty() || reason.chars().count() > MAX_FEEDBACK_REASON_CHARS {
+            return Err(StoreError::Corrupt(format!(
+                "feedback {id} retraction needs a nonempty reason of at most {MAX_FEEDBACK_REASON_CHARS} characters; run `aether doctor`"
+            )));
+        }
         let changed = tx.execute(
             "UPDATE memory_feedback SET retracted_at = ?1,
              body = json_set(body, '$.retracted_at', ?1, '$.retraction_reason', ?2)
