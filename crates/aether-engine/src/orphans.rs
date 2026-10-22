@@ -189,7 +189,8 @@ fn kill_matching_group(_pid: u32, _recorded: u64) -> bool {
 ///
 /// The token is random per engine spawn, so a match proves descent from that
 /// engine. A pidfd is opened before the environment is read, so the pid
-/// cannot be reused between the check and the signal.
+/// cannot be reused between the check and the signal. Unexpected errors are
+/// returned so the caller keeps the record and the next start retries.
 #[cfg(target_os = "linux")]
 fn kill_tagged(token: &str) -> io::Result<()> {
     use rustix::process::{Pid as RustixPid, PidfdFlags, Signal as RustixSignal};
@@ -208,12 +209,23 @@ fn kill_tagged(token: &str) -> io::Result<()> {
         let Some(raw) = RustixPid::from_raw(pid as i32) else {
             continue;
         };
-        let Ok(pidfd) = rustix::process::pidfd_open(raw, PidfdFlags::empty()) else {
-            continue;
+        let pidfd = match rustix::process::pidfd_open(raw, PidfdFlags::empty()) {
+            Ok(pidfd) => pidfd,
+            Err(rustix::io::Errno::SRCH) => continue,
+            Err(errno) => return Err(errno.into()),
         };
-        // Unreadable means gone, or not ours to inspect (another user, non-dumpable).
-        let Ok(environment) = std::fs::read(entry.path().join("environ")) else {
-            continue;
+        // Gone, or not ours to inspect (another user, non-dumpable): skip.
+        let environment = match std::fs::read(entry.path().join("environ")) {
+            Ok(environment) => environment,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) || error.raw_os_error() == Some(nix::libc::ESRCH) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
         };
         if !environment
             .split(|b| *b == 0)
@@ -223,9 +235,7 @@ fn kill_tagged(token: &str) -> io::Result<()> {
         }
         match rustix::process::pidfd_send_signal(&pidfd, RustixSignal::KILL) {
             Ok(()) | Err(rustix::io::Errno::SRCH) => {}
-            Err(errno) => {
-                tracing::warn!(pid, %errno, "could not kill a process left by an engine");
-            }
+            Err(errno) => return Err(errno.into()),
         }
     }
     Ok(())
