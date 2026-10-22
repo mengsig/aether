@@ -1,7 +1,6 @@
 //! The run hard stop: past `run_hard_stop_usd` or `run_hard_stop_tokens` a
 //! run's live agents are interrupted and none of its turns is admitted. The
 //! agents are not failed, so raising the limit lets them carry on.
-use super::Runnable;
 use crate::{Result, Runtime};
 use aether_core::{
     agent::Agent,
@@ -13,72 +12,95 @@ use aether_core::{
 use aether_store::{AgentFilter, Commit, EventFilter};
 use std::{collections::BTreeMap, sync::Arc};
 
-/// The turns this pass may start: those whose run is under its hard stop,
-/// counting what the turn is expected to add. A configured stop crossed by
-/// the run's recorded spend also interrupts the run's running turns.
-pub(super) fn admit_under_hard_stop(
-    runtime: &Arc<Runtime>,
-    ready: Vec<Runnable>,
-) -> Result<Vec<Runnable>> {
+/// What one pass knows about a run that is under its stop: the spend on
+/// record, what a turn of it costs on average, and the turns running or
+/// already started this pass.
+struct RunReserve {
+    spent: Usage,
+    turn: Usage,
+    turns: usize,
+}
+
+/// Turn admission against the hard stop. `enforce` interrupts runs past it;
+/// dispatch then asks `try_start` for each turn it actually selects, so only
+/// a turn that starts reserves anything.
+pub(super) struct Reserve {
+    stop: HardStop,
+    runs: BTreeMap<RunId, RunReserve>,
+    refused: BTreeMap<RunId, StopCrossing>,
+    seen: Vec<RunId>,
+}
+
+impl Reserve {
+    /// True and reserves the run's average turn when the turn fits under the
+    /// stop; false, remembering why, when it would cross it.
+    pub(super) fn try_start(&mut self, run: RunId) -> bool {
+        if self.refused.contains_key(&run) {
+            return false;
+        }
+        let Some(state) = self.runs.get_mut(&run) else {
+            return true;
+        };
+        let mut reserve = Usage::default();
+        for _ in 0..=state.turns {
+            reserve += state.turn;
+        }
+        if let Some(crossing) = self.stop.crossing_with(&state.spent, &reserve) {
+            self.refused.insert(run, crossing);
+            return false;
+        }
+        state.turns += 1;
+        true
+    }
+
+    /// Say which runs are held, and forget the ones that no longer are.
+    pub(super) fn finish(self, runtime: &Runtime) {
+        for run in &self.seen {
+            match self.refused.get(run) {
+                Some(crossing) => {
+                    runtime.report_problem(problem_key(*run), refusal_message(*run, crossing))
+                }
+                None => runtime.clear_problem(&problem_key(*run)),
+            }
+        }
+    }
+}
+
+/// Interrupt the running turns of every run past its stop, and set up the
+/// admission of the rest. With no stop configured nothing is read or changed.
+pub(super) fn enforce_hard_stops(runtime: &Arc<Runtime>) -> Result<Reserve> {
     let stop = runtime.config.run_hard_stop;
+    let mut reserve = Reserve {
+        stop,
+        runs: BTreeMap::new(),
+        refused: BTreeMap::new(),
+        seen: Vec::new(),
+    };
     if !stop.is_set() {
-        return Ok(ready);
+        return Ok(reserve);
     }
     let agents = runtime.store.agents(&AgentFilter::default())?;
     let mut by_run: BTreeMap<RunId, Vec<&Agent>> = BTreeMap::new();
     for agent in &agents {
         by_run.entry(agent.run).or_default().push(agent);
     }
-    let mut refused = BTreeMap::new();
-    let mut running_by_run = BTreeMap::new();
     for (run, members) in &by_run {
-        let live = members.iter().filter(|a| a.is_live()).count();
-        if live == 0 {
+        if !members.iter().any(|a| a.is_live()) {
             runtime.clear_problem(&problem_key(*run));
             continue;
         }
+        reserve.seen.push(*run);
         let spent = run_usage(members.iter().copied());
         if let Some(crossing) = stop.crossing(&spent) {
             interrupt_run(runtime, *run, members, &spent, &crossing)?;
-            refused.insert(*run, crossing);
-        } else {
-            running_by_run.insert(*run, running_turns(runtime, members));
-        }
-    }
-    let admitted = admit_within_reserve(&stop, &by_run, &mut refused, running_by_run, ready);
-    report_refusals(runtime, &by_run, &refused);
-    Ok(admitted)
-}
-
-/// Admit candidates one at a time, each reserving its own average turn on top
-/// of the turns running and the candidates already admitted in this pass.
-fn admit_within_reserve(
-    stop: &HardStop,
-    by_run: &BTreeMap<RunId, Vec<&Agent>>,
-    refused: &mut BTreeMap<RunId, StopCrossing>,
-    mut starting: BTreeMap<RunId, usize>,
-    ready: Vec<Runnable>,
-) -> Vec<Runnable> {
-    let mut admitted = Vec::new();
-    for candidate in ready {
-        let run = candidate.agent.run;
-        if refused.contains_key(&run) {
+            reserve.refused.insert(*run, crossing);
             continue;
         }
-        let members = &by_run[&run];
-        let spent = run_usage(members.iter().copied());
-        let slot = starting.entry(run).or_default();
-        match reserved_crossing(stop, members, &spent, *slot + 1) {
-            Some(crossing) => {
-                refused.insert(run, crossing);
-            }
-            None => {
-                *slot += 1;
-                admitted.push(candidate);
-            }
-        }
+        let turns = running_turns(runtime, members);
+        let turn = average_turn_usage(members.iter().copied());
+        reserve.runs.insert(*run, RunReserve { spent, turn, turns });
     }
-    admitted
+    Ok(reserve)
 }
 
 fn running_turns(runtime: &Runtime, members: &[&Agent]) -> usize {
@@ -89,40 +111,8 @@ fn running_turns(runtime: &Runtime, members: &[&Agent]) -> usize {
         .count()
 }
 
-/// What `turns` more turns (running or about to start) would cross: recorded
-/// spend plus the run's average turn for each of them.
-fn reserved_crossing(
-    stop: &HardStop,
-    members: &[&Agent],
-    spent: &Usage,
-    turns: usize,
-) -> Option<StopCrossing> {
-    debug_assert!(turns > 0, "admission reserves at least the candidate");
-    let turn = average_turn_usage(members.iter().copied());
-    let mut reserve = Usage::default();
-    for _ in 0..turns {
-        reserve += turn;
-    }
-    stop.crossing_with(spent, &reserve)
-}
-
 fn problem_key(run: RunId) -> String {
     format!("hard_stop.{run}")
-}
-
-fn report_refusals(
-    runtime: &Runtime,
-    by_run: &BTreeMap<RunId, Vec<&Agent>>,
-    refused: &BTreeMap<RunId, StopCrossing>,
-) {
-    for run in by_run.keys() {
-        match refused.get(run) {
-            Some(crossing) => {
-                runtime.report_problem(problem_key(*run), refusal_message(*run, crossing))
-            }
-            None => runtime.clear_problem(&problem_key(*run)),
-        }
-    }
 }
 
 /// The refusal a person reads: what was crossed and how to lift it.

@@ -1,4 +1,4 @@
-use super::{Runnable, lineage::Lineage};
+use super::{Runnable, hard_stop::Reserve, lineage::Lineage};
 use crate::{RunningTurn, Runtime, SchedulerState};
 use aether_core::{agent::Agent, id::AgentId, model::ModelRef};
 use std::{
@@ -12,7 +12,12 @@ use tokio_util::sync::CancellationToken;
 /// in that order. A person's message bypasses limits 2 to 4; it never
 /// bypasses limit 5, because two agents mutating the same file is data loss,
 /// not a queueing decision (see ARCHITECTURE, resource leases).
-pub(super) fn dispatch(runtime: &Arc<Runtime>, ready: Vec<Runnable>, lineage: &Lineage) {
+pub(super) fn dispatch(
+    runtime: &Arc<Runtime>,
+    ready: Vec<Runnable>,
+    lineage: &Lineage,
+    reserve: &mut Reserve,
+) {
     let limits = provider_limits(runtime, &ready);
     let engines = engine_providers(runtime, &ready);
     let mut sched = runtime.sched.lock();
@@ -28,6 +33,10 @@ pub(super) fn dispatch(runtime: &Arc<Runtime>, ready: Vec<Runnable>, lineage: &L
     while let Some(index) = pick(runtime, &remaining, &sched, lineage, &limits, &engines) {
         // Not swap_remove: `pick`'s index tiebreak is the ready order.
         let Runnable { agent, addressed } = remaining.remove(index);
+        // Only a turn selected to start reserves spend under the hard stop.
+        if !reserve.try_start(agent.run) {
+            continue;
+        }
         let cancel = CancellationToken::new();
         let interrupt = cancel.child_token();
         // The turn starts on the first link that can carry it; the turn keeps

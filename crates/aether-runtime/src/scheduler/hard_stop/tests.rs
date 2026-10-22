@@ -85,11 +85,16 @@ fn hard_stops(runtime: &Runtime, run: RunId) -> Vec<EventKind> {
         .collect()
 }
 
-fn runnable(agent: &Agent) -> Vec<Runnable> {
-    vec![Runnable {
-        agent: agent.clone(),
-        addressed: true,
-    }]
+/// One scheduler pass in which dispatch selects `candidates` in order: how
+/// many of them the stop admits.
+fn start_all(runtime: &Arc<Runtime>, candidates: &[&Agent]) -> usize {
+    let mut reserve = enforce_hard_stops(runtime).expect("enforce");
+    let started = candidates
+        .iter()
+        .filter(|a| reserve.try_start(a.run))
+        .count();
+    reserve.finish(runtime);
+    started
 }
 
 #[tokio::test]
@@ -106,8 +111,11 @@ async fn crossing_the_usd_stop_interrupts_every_live_agent_and_records_it() {
     spend(&runtime, &first, 6.0, 0, 1);
     let token_a = run_turn(&runtime, &first);
     let token_b = run_turn(&runtime, &second);
-    let admitted = admit_under_hard_stop(&runtime, runnable(&first)).expect("pass");
-    assert!(admitted.is_empty(), "a held run admitted a turn");
+    assert_eq!(
+        start_all(&runtime, &[&first]),
+        0,
+        "a held run admitted a turn"
+    );
     assert!(token_a.is_cancelled() && token_b.is_cancelled());
     let events = hard_stops(&runtime, run);
     let [
@@ -125,7 +133,7 @@ async fn crossing_the_usd_stop_interrupts_every_live_agent_and_records_it() {
         (limit.as_str(), usage.cost_usd, *interrupted),
         ("run_hard_stop_usd = 5", 6.0, 2)
     );
-    admit_under_hard_stop(&runtime, runnable(&first)).expect("second pass");
+    start_all(&runtime, &[&first]);
     assert_eq!(
         hard_stops(&runtime, run).len(),
         1,
@@ -149,8 +157,8 @@ async fn the_token_stop_holds_a_run_with_no_dollar_cost() {
     let agent = agent_in(&runtime, "claude-code");
     spend(&runtime, &agent, 0.0, 1_500, 1);
     let token = run_turn(&runtime, &agent);
-    let admitted = admit_under_hard_stop(&runtime, runnable(&agent)).expect("pass");
-    assert!(admitted.is_empty() && token.is_cancelled());
+    assert_eq!(start_all(&runtime, &[&agent]), 0);
+    assert!(token.is_cancelled());
     let events = hard_stops(&runtime, agent.run);
     assert!(
         matches!(events.as_slice(), [EventKind::RunHardStop { limit, .. }] if limit == "run_hard_stop_tokens = 1000"),
@@ -168,8 +176,11 @@ async fn admission_refuses_a_turn_whose_reserve_would_cross_the_stop() {
     let agent = agent_in(&runtime, "anthropic");
     // $4 over 2 turns: under the stop, but another $2 turn would cross it.
     spend(&runtime, &agent, 4.0, 0, 2);
-    let admitted = admit_under_hard_stop(&runtime, runnable(&agent)).expect("pass");
-    assert!(admitted.is_empty(), "a turn that would cross was admitted");
+    assert_eq!(
+        start_all(&runtime, &[&agent]),
+        0,
+        "a turn that would cross was admitted"
+    );
     assert!(
         hard_stops(&runtime, agent.run).is_empty(),
         "nothing had crossed yet"
@@ -187,8 +198,7 @@ async fn without_a_configured_stop_nothing_changes() {
     let agent = agent_in(&runtime, "anthropic");
     spend(&runtime, &agent, 1_000_000.0, 1 << 40, 2);
     let token = run_turn(&runtime, &agent);
-    let admitted = admit_under_hard_stop(&runtime, runnable(&agent)).expect("pass");
-    assert_eq!(admitted.len(), 1);
+    assert_eq!(start_all(&runtime, &[&agent]), 1);
     assert!(!token.is_cancelled());
     assert!(hard_stops(&runtime, agent.run).is_empty());
 }
@@ -205,10 +215,21 @@ async fn one_pass_reserves_each_candidate_it_admits() {
     let third = child_of(&runtime, "anthropic", Some(first.id));
     // $6 over 3 turns: one more $2 turn fits under $10, a second reaches it.
     spend(&runtime, &first, 6.0, 0, 3);
-    let ready = [&first, &second, &third].map(|a| Runnable {
-        agent: a.clone(),
-        addressed: false,
-    });
-    let admitted = admit_under_hard_stop(&runtime, ready.into()).expect("pass");
-    assert_eq!(admitted.len(), 1, "the batch was admitted past the stop");
+    let started = start_all(&runtime, &[&first, &second, &third]);
+    assert_eq!(started, 1, "the batch was admitted past the stop");
+}
+
+#[tokio::test]
+async fn a_candidate_dispatch_skips_reserves_nothing() {
+    let (runtime, _dir) = runtime_with(HardStop {
+        usd: Some(10.0),
+        tokens: None,
+    })
+    .await;
+    let skipped = agent_in(&runtime, "anthropic");
+    let eligible = child_of(&runtime, "anthropic", Some(skipped.id));
+    spend(&runtime, &skipped, 6.0, 0, 3);
+    // Dispatch passed over `skipped` (say, a backed-off provider) and only
+    // selects `eligible`: the budget it left unused is still there.
+    assert_eq!(start_all(&runtime, &[&eligible]), 1);
 }
