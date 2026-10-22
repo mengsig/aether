@@ -93,3 +93,37 @@ async fn an_oversized_trigger_or_schedule_payload_is_refused() {
             .contains("schedule payload")
     );
 }
+
+#[tokio::test]
+async fn a_spawn_schedule_whose_runs_would_be_oversized_is_refused() {
+    let h = harness(vec![]).await;
+    let limit = aether_core::limits::MAX_MESSAGE_BYTES;
+    let template = aether_core::schedule::SpawnSpec {
+        role: "worker".into(),
+        name: None,
+        objective: "x".repeat(limit - 100),
+        model: None,
+        fallbacks: vec![],
+        scope: None,
+        config: None,
+        approval: None,
+    };
+    let spec = aether_core::schedule::CreateScheduleSpec {
+        name: "nightly".into(),
+        target: aether_core::schedule::ScheduleTarget::Spawn(template),
+        recurrence: aether_core::schedule::Recurrence::Interval {
+            seconds: std::num::NonZeroU64::new(3600).expect("nonzero"),
+        },
+        missed: Default::default(),
+        busy: Default::default(),
+        payload: serde_json::Value::Null,
+        max_deliveries: None,
+    };
+    let refusal = h.runtime.create_schedule(spec, Actor::user());
+    assert!(
+        refusal
+            .expect_err("schedule")
+            .to_string()
+            .contains("scheduled run objective")
+    );
+}

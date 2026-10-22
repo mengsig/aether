@@ -78,6 +78,15 @@ impl Runtime {
             ));
         }
         crate::commands::check_payload_size("schedule payload", &spec.payload)?;
+        if let ScheduleTarget::Spawn(template) = &spec.target {
+            // Each run's objective is the template plus the payload and a
+            // line naming the schedule; the slack covers that line.
+            const SUFFIX_SLACK: usize = 1024;
+            crate::commands::check_text_size(
+                "scheduled run objective (template and payload)",
+                template.objective.len() + spec.payload.to_string().len() + SUFFIX_SLACK,
+            )?;
+        }
         let at = now();
         let next_due = next_occurrence(&spec.recurrence, at)?;
         let target = match spec.target {

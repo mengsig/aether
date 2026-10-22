@@ -53,8 +53,8 @@ pub struct CreateAgentSpec {
 }
 
 pub use aether_core::inbox::MessageDelivery;
-pub(crate) use messaging::check_payload_size;
 pub use messaging::pending_question;
+pub(crate) use messaging::{check_payload_size, check_text_size};
 
 /// What a pause moved (§3.1). `changed` is empty when every target was
 /// already paused; `mid_turn` names those still finishing a turn, so a caller
