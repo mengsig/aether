@@ -30,6 +30,7 @@ async fn the_http_endpoint_refuses_bad_tokens_throttles_guessing_and_never_locks
     // Repeated guesses are throttled, yet the valid token is still served.
     let mut statuses = Vec::new();
     for _ in 0..8 {
+        let started = std::time::Instant::now();
         let bad = http
             .post(&url)
             .header("authorization", "Bearer nope")
@@ -37,6 +38,12 @@ async fn the_http_endpoint_refuses_bad_tokens_throttles_guessing_and_never_locks
             .send()
             .await
             .expect("bad attempt");
+        if bad.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            assert!(
+                started.elapsed() >= std::time::Duration::from_millis(400),
+                "a throttled guess must be paced, not answered at full speed"
+            );
+        }
         statuses.push(bad.status());
     }
     assert_eq!(statuses[0], reqwest::StatusCode::UNAUTHORIZED);

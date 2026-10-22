@@ -56,6 +56,9 @@ const CONNECTION_MAX_LIFETIME: Duration = Duration::from_secs(60);
 /// further failures are answered 429. A valid token is never refused for it.
 const MAX_AUTH_FAILURES: u32 = 5;
 const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+/// Held before a throttled failure is answered, so a guesser that ignores
+/// 429 is paced per connection (at most `MAX_CONNECTIONS` at once).
+const THROTTLED_FAILURE_DELAY: Duration = Duration::from_millis(500);
 /// Peers tracked for backoff. Bounded so the map is not itself a way to
 /// spend the daemon's memory.
 const MAX_TRACKED_PEERS: usize = 1024;
@@ -187,6 +190,7 @@ async fn answer(
     // port from a closed one by the status it gets back.
     let Some(surface) = authorize(sink, &auth.token, &request).await else {
         if auth.backoff.failed(peer) {
+            tokio::time::sleep(THROTTLED_FAILURE_DELAY).await;
             return status(
                 StatusCode::TOO_MANY_REQUESTS,
                 "too many failed authentications from here; wait a minute, then retry with the token `aether mcp` prints",
