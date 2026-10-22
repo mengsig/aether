@@ -122,10 +122,10 @@ start_test_daemon() {
 step "daemon"
 start_test_daemon
 "$BIN" status | tee "$ROOT/status.log"
-# No [scheduler] cap or budget is configured here, and the mock provider is
-# not an engine, so the limits line must show the uncapped/no-budget defaults
-# whatever the live agent counts say.
-grep -qE '^limits +[0-9]+ turns global · engines 0 running · uncapped · run budget none$' \
+# No [scheduler] cap, budget or hard stop is configured here, and the mock
+# provider is not an engine, so the limits line must show the uncapped/no-budget
+# defaults whatever the live agent counts say.
+grep -qE '^limits +[0-9]+ turns global · engines 0 running · uncapped · run budget none · hard stop none$' \
   "$ROOT/status.log" \
   || { echo "limits line missing or unexpected: $(cat "$ROOT/status.log")"; exit 1; }
 step "models"
