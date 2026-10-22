@@ -159,11 +159,15 @@ fn interrupt_run(
     if already_recorded(runtime, run, &crossing.limit)? {
         return Ok(());
     }
-    let root = members
+    let Some(root) = members
         .iter()
         .find(|a| a.parent.is_none())
         .or(members.first())
-        .expect("a run with a live agent has members");
+    else {
+        return Err(crate::RuntimeError::Invalid(format!(
+            "run {run} crossed its hard stop but has no agents"
+        )));
+    };
     tracing::warn!(%run, reason = %crossing.reason, "run hard stop; interrupting its agents");
     let event = EventDraft::new(
         Actor::Scheduler,
