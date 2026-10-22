@@ -81,15 +81,19 @@ mod tests {
         sigprocmask(SigmaskHow::SIG_BLOCK, Some(&blocked), None).unwrap();
     }
 
-    /// `SigIgn`/`SigBlk` masks from /proc, as hex bitsets.
-    const MASKS: &str = "grep -E '^(SigIgn|SigBlk)' /proc/self/status";
+    /// Print the child's own `SigIgn`/`SigBlk` lines from /proc, as hex bitsets.
+    /// No shell in between: dash (Ubuntu's `sh`) clears its signal mask itself.
+    fn read_masks() -> Command {
+        let mut command = Command::new("grep");
+        command.args(["-E", "^(SigIgn|SigBlk)", "/proc/self/status"]);
+        command
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn child_starts_with_default_signal_state() {
         poison_parent();
-        let mut command = Command::new("sh");
-        command.args(["-c", MASKS]);
+        let mut command = read_masks();
         let plain = command.output().unwrap();
         let plain = String::from_utf8(plain.stdout).unwrap();
         assert!(!plain.contains("SigIgn:\t0000000000000000"), "{plain}");
