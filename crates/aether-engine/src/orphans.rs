@@ -324,6 +324,7 @@ mod tests {
     }
 
     /// Poll up to 5s until a `sleep 31` process exists (or not), per `running`.
+    #[allow(clippy::unwrap_used)]
     fn wait_for_sleep31(running: bool) -> bool {
         for _ in 0..100 {
             let found = std::process::Command::new("pgrep")
