@@ -66,7 +66,7 @@ run_lint() {
 }
 
 run_test() {
-  step "cargo test";          cargo test --workspace
+  step "cargo test";          cargo test --workspace --no-fail-fast
 }
 
 check_client_drift() {
