@@ -165,12 +165,15 @@ async fn clean_daemon_run(root: &Path) -> Output {
     })
     .await
     .unwrap();
+    // The start acknowledged the evidence, so it is history rather than a problem (#267).
     let status = client.status().await.unwrap();
     assert!(
-        status
+        !status
             .problems
             .iter()
-            .any(|p| p.contains("once-only regression"))
+            .any(|p| p.contains("once-only regression")),
+        "{:?}",
+        status.problems
     );
     client.shutdown().await.unwrap();
     let output = tokio::time::timeout(Duration::from_secs(20), child.wait_with_output())
@@ -205,6 +208,21 @@ async fn startup_prints_evidence_once_and_clean_shutdown_keeps_it() {
     );
     let evidence = crash::read(&store).unwrap().unwrap();
     assert!(evidence.acknowledged);
+    let doctor = command(root.path(), &["doctor", "--json"]);
+    let report: Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    let check = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "crash")
+        .unwrap();
+    assert_eq!(check["level"], "ok");
+    assert!(
+        check["detail"]
+            .as_str()
+            .unwrap()
+            .contains("once-only regression")
+    );
     let second = clean_daemon_run(root.path()).await;
     assert!(!String::from_utf8_lossy(&second.stderr).contains("once-only regression"));
     assert_eq!(crash::read(&store).unwrap().unwrap(), evidence);
