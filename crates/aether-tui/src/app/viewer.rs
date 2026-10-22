@@ -4,6 +4,7 @@ use crate::{
     ui::cells::ChatCell,
     viewer::{Preview, ReadRequest, View, references::Reference},
 };
+use crate::ui::layout::BOARD_DOCK_MIN_COLS;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl App {
@@ -64,10 +65,9 @@ impl App {
         self.viewer.preview = None;
         self.viewer.cursor = 0;
         self.viewer.scroll = 0;
+        self.hide_board_for_viewer();
         self.viewer.open = true;
         self.viewer.focused = true;
-        self.board.open = false;
-        self.leave_board();
     }
 
     pub(crate) fn open_reference(&mut self, reference: Reference) -> Vec<Effect> {
@@ -102,12 +102,11 @@ impl App {
     }
 
     fn request_preview(&mut self, mut request: ReadRequest) -> Vec<Effect> {
+        self.hide_board_for_viewer();
         self.viewer.open = true;
         self.viewer.picker.clear();
         self.viewer.scroll = 0;
         self.viewer.request = self.viewer.request.wrapping_add(1);
-        self.board.open = false;
-        self.leave_board();
         let (_, area) = crate::viewer::split(
             ratatui::layout::Rect::new(0, 0, self.size.0, self.size.1),
             &self.viewer,
@@ -148,9 +147,7 @@ impl App {
                 && key.code == KeyCode::Char('c')
                 && key.modifiers == KeyModifiers::CONTROL)
         {
-            self.viewer.open = false;
-            self.viewer.pending = None;
-            self.viewer.preview = None;
+            self.close_viewer();
             return Some(Vec::new());
         }
         if self.keys.matches(KeyAction::ViewerFull, key) {
@@ -304,6 +301,27 @@ impl App {
             .min(max) as u16;
         debug_assert!(self.viewer.cursor < rows);
         debug_assert!(usize::from(self.viewer.scroll) <= max);
+    }
+
+    /// The viewer takes the board's room; remember it unless the viewer is already open.
+    fn hide_board_for_viewer(&mut self) {
+        if !self.viewer.open {
+            self.viewer.board_was_open = self.board.open;
+        }
+        self.board.open = false;
+        self.leave_board();
+    }
+
+    fn close_viewer(&mut self) {
+        debug_assert!(self.viewer.open);
+        self.viewer.open = false;
+        self.viewer.pending = None;
+        self.viewer.preview = None;
+        let restore = std::mem::take(&mut self.viewer.board_was_open);
+        if restore && self.size.0 >= BOARD_DOCK_MIN_COLS {
+            self.board.open = true;
+        }
+        debug_assert!(!self.viewer.open);
     }
 
     pub(crate) fn reload_preview(&mut self) -> Vec<Effect> {

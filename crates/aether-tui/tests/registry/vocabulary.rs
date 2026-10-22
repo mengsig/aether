@@ -117,6 +117,7 @@ fn the_palette_is_the_ranked_vocabulary() {
             "approvals",
             "usage",
             "settings",
+            "theme",
             "remember",
             "stop",
             "cancel",

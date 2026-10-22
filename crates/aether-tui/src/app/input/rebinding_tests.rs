@@ -81,6 +81,20 @@ fn enter_activates_a_slash_row_when_send_is_rebound() {
 }
 
 #[test]
+fn typing_theme_and_enter_opens_the_theme_list_not_settings() {
+    let mut app = crate::testing::app_with_transcript(&[]);
+    app.dispatch_key(plain(KeyCode::Char('/')));
+    for c in "theme".chars() {
+        app.dispatch_key(plain(KeyCode::Char(c)));
+    }
+    assert!(app.dispatch_key(plain(KeyCode::Enter)).is_empty());
+    assert_eq!(
+        app.bottom.top_view().and_then(|view| view.kind()),
+        Some(ViewKind::Theme)
+    );
+}
+
+#[test]
 fn rebound_history_repeats_before_local_modified_enter_handling() {
     let mut app = crate::testing::app_with_transcript(&[]);
     app.input.history = vec!["older".into(), "newer".into()];

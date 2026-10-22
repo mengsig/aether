@@ -703,6 +703,7 @@ listed. A few take an argument directly: `/theme nord`, `/mouse scroll`,
 | `/approvals` | remembered approval rules and the auto-approve toggle |  |
 | `/usage` | providers, sign-in, health and account limits |  |
 | `/settings` | theme, motion, mouse and ascii |  |
+| `/theme [name]` | choose the colour theme; a name sets it directly |  |
 | `/remember [--agent\|--global\|--repository] <durable fact>` | record an operator fact; default: the viewed agent only |  |
 | `/stop` | interrupt the current turn; the agent keeps its context | `Esc` |
 | `/cancel` | end the viewed agent for good (asks first) |  |

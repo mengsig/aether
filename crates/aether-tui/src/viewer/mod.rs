@@ -21,6 +21,8 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub struct Viewer {
     pub open: bool,
+    /// The docked board was showing when the viewer opened; closing puts it back.
+    pub board_was_open: bool,
     pub fullscreen: bool,
     pub focused: bool,
     pub share: u16,
@@ -42,6 +44,7 @@ impl Default for Viewer {
     fn default() -> Self {
         Self {
             open: false,
+            board_was_open: false,
             fullscreen: false,
             focused: true,
             share: 50,

@@ -128,19 +128,38 @@ pub(super) fn text_rows(text: &str, markdown: bool, request: &ReadRequest) -> Ve
             &request.theme,
         )
     } else {
-        crate::ui::cells::text::wrap_text(
-            &limited,
-            request.theme.code(),
-            usize::from(request.width.max(10)),
-            Vec::new(),
-            Vec::new(),
-        )
+        verbatim_rows(&limited, request.theme.code(), usize::from(request.width.max(10)))
     };
     if truncated {
         rows.push(Line::from(
             "[Preview truncated; Alt+E opens the complete file]",
         ));
     }
+    rows
+}
+
+/// Hard-wrap `text` at `width` columns keeping every leading space: code and
+/// plain text must show as written, so nothing is trimmed at a row's start.
+pub(super) fn verbatim_rows(text: &str, style: ratatui::style::Style, width: usize) -> Vec<Line<'static>> {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    debug_assert!(width > 0);
+    let mut rows = Vec::new();
+    for source in text.split('\n') {
+        let mut row = String::new();
+        let mut used = 0;
+        for grapheme in source.graphemes(true) {
+            let cell = grapheme.width();
+            if used + cell > width && used > 0 {
+                rows.push(Line::styled(std::mem::take(&mut row), style));
+                used = 0;
+            }
+            row.push_str(grapheme);
+            used += cell;
+        }
+        rows.push(Line::styled(row, style));
+    }
+    debug_assert!(!rows.is_empty());
     rows
 }
 

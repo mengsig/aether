@@ -634,3 +634,63 @@ fn missing_file_says_not_found_with_the_name_in_the_title() {
     let text = crate::testing::render_to(&app, 160, 44);
     assert!(text.contains(" missing-file.png"), "{text}");
 }
+
+#[test]
+fn code_keeps_leading_indentation_tabs_and_wrapped_rows() {
+    let (dir, mut app) = setup();
+    std::fs::write(
+        dir.path().join("calc.py"),
+        "def add(a, b):\n    return a + b\n\tif a:\n        pass\n",
+    )
+    .unwrap();
+    let effects = app.open_reference(references::Reference {
+        target: "calc.py".into(),
+        label: "calc".into(),
+    });
+    load(&mut app, effects);
+    let Some(Ok(Preview::Text { rows, .. })) = &app.viewer.preview else {
+        panic!("expected a text preview")
+    };
+    let lines: Vec<String> = rows.iter().map(|r| r.to_string()).collect();
+    assert_eq!(lines[0], "def add(a, b):");
+    assert_eq!(lines[1], "    return a + b");
+    assert_eq!(lines[2], "    if a:", "a tab expands to four columns");
+    assert_eq!(lines[3], "        pass");
+    let screen = crate::testing::render_to(&app, 160, 40);
+    assert!(screen.contains("│    return a + b"), "{screen}");
+}
+
+#[test]
+fn long_indented_lines_wrap_without_losing_leading_spaces() {
+    let request_width = 12;
+    let theme = crate::ui::theme::Theme::default();
+    let rows = load::verbatim_rows("    abcdefghijklmnop", theme.code(), request_width);
+    let lines: Vec<String> = rows.iter().map(|r| r.to_string()).collect();
+    assert_eq!(lines, ["    abcdefgh", "ijklmnop"]);
+}
+
+#[test]
+fn closing_the_viewer_restores_the_board_it_hid() {
+    let (_dir, mut app) = setup();
+    app.board.open = true;
+    key(&mut app, KeyCode::Char('o'), KeyModifiers::ALT);
+    assert!(!app.board.open, "the viewer takes the board's room");
+    let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    load(&mut app, effects);
+    key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!app.viewer.open);
+    assert!(app.board.open, "closing the viewer shows the board again");
+}
+
+#[test]
+fn closing_the_viewer_leaves_a_board_that_was_hidden_hidden() {
+    let (_dir, mut app) = setup();
+    assert!(!app.board.open);
+    key(&mut app, KeyCode::Char('o'), KeyModifiers::ALT);
+    let effects = key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    load(&mut app, effects);
+    let reload = app.reload_preview();
+    load(&mut app, reload);
+    key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!app.board.open);
+}
