@@ -401,11 +401,12 @@ pub(super) fn handle_event(
                     },
                 );
             }
-            if content.iter().any(|block| {
+            let has_text = content.iter().any(|block| {
                 matches!(block,
                     ContentBlock::Text { text } if !text.trim().is_empty()
                 )
-            }) {
+            });
+            if has_text {
                 crate::turn::reply_obligation::answer(ctx);
             }
             state.tool_names.clear();
@@ -526,7 +527,7 @@ pub(super) fn handle_event(
                 ctx.add_usage(usage);
             }
             ctx.agent.updated_at = at;
-            if let Some(given) = crate::turn::reply_obligation::take_given_draft(ctx) {
+            if has_text && let Some(given) = crate::turn::reply_obligation::take_given_draft(ctx) {
                 commit.push_event(given);
             }
             let hold = runtime.hold();

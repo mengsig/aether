@@ -82,7 +82,7 @@ pub(super) async fn steer(
     steering.handed(pending);
     // What did not fit this line follows as soon as the engine takes input.
     steering.retry = more_queued;
-    ctx.user_reply_pending |= from_user;
+    crate::turn::reply_obligation::owe(ctx, from_user);
     Ok(())
 }
 
@@ -163,7 +163,7 @@ pub(super) fn record_consumed(
 ) -> Result<()> {
     // Acceptance orders the message after any text still arriving for the
     // previous input. A reply emitted before this point cannot answer it.
-    ctx.user_reply_pending |= pending.from_user;
+    crate::turn::reply_obligation::owe(ctx, pending.from_user);
     ctx.agent.inbox_cursor = ctx.agent.inbox_cursor.max(pending.up_to);
     ctx.agent.updated_at = now();
     let hold = runtime.hold();

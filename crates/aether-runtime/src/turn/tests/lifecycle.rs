@@ -88,6 +88,25 @@ async fn reply_obligation_survives_a_restart_until_the_reply_is_written() {
 }
 
 #[tokio::test]
+async fn a_new_user_input_voids_an_earlier_unrecorded_answer() {
+    use crate::turn::reply_obligation::{answer, owe, take_given_draft};
+
+    let (mut harness, _dir) = ComposeHarness::new().await;
+    let ctx = &mut harness.ctx;
+    ctx.user_reply_pending = true;
+    answer(ctx);
+    assert!(ctx.reply_given_unrecorded);
+    owe(ctx, false);
+    assert!(
+        ctx.reply_given_unrecorded,
+        "a non-user input changes nothing"
+    );
+    owe(ctx, true);
+    assert!(ctx.user_reply_pending);
+    assert!(take_given_draft(ctx).is_none());
+}
+
+#[tokio::test]
 async fn direct_user_question_requires_visible_reply_before_waiting() {
     let (mut harness, _dir) = ComposeHarness::new().await;
     let condition = WaitCondition::MessageFrom {

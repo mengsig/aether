@@ -58,6 +58,14 @@ pub(crate) fn load(runtime: &Runtime, agent: AgentId) -> Result<bool> {
     }
 }
 
+/// A new user input arrived: an earlier streamed answer cannot discharge it.
+pub(crate) fn owe(ctx: &mut TurnCtx, from_user: bool) {
+    if from_user {
+        ctx.user_reply_pending = true;
+        ctx.reply_given_unrecorded = false;
+    }
+}
+
 /// Visible assistant text has answered in memory; the log learns of it only
 /// with the committed reply (`take_given_draft`), never before it is durable.
 pub(crate) fn answer(ctx: &mut TurnCtx) {
