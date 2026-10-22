@@ -10,8 +10,9 @@ GitHub activity; only accepted requests cause agent work.
 1. Install `gh` and `git` in the daemon's environment. Run `gh auth login` with
    repository read and collaborator-permission access. Aether does not save a
    second token. `git` uses the same `gh` credential helper for private clones.
-2. Add a repository with the CLI. This selects the repository and starts
-   polling. Mention
+2. Add a repository with the CLI. This selects the repository and, if the
+   watcher was off, turns it on and says so; `aether github-watcher disable`
+   stops all polling. Mention
    `@Aether` in a new issue, PR, comment, or submitted review. Matching is
    case insensitive. Aether creates one agent and checkout per issue/PR thread;
    later mentions on that thread reach the same live agent.

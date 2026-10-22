@@ -52,9 +52,10 @@ const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// a slot rather than using it; a client that needs another opens one.
 const CONNECTION_MAX_LIFETIME: Duration = Duration::from_secs(60);
 
-/// Failed authentication doubles the wait from here, up to the ceiling.
-const AUTH_BACKOFF_BASE: Duration = Duration::from_millis(250);
-const AUTH_BACKOFF_MAX: Duration = Duration::from_secs(30);
+/// A source may fail to authenticate this many times per window before its
+/// further failures are answered 429. A valid token is never refused for it.
+const MAX_AUTH_FAILURES: u32 = 5;
+const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
 /// Peers tracked for backoff. Bounded so the map is not itself a way to
 /// spend the daemon's memory.
 const MAX_TRACKED_PEERS: usize = 1024;
@@ -174,12 +175,6 @@ async fn answer(
     peer: IpAddr,
     request: Request<Incoming>,
 ) -> Response<Full<Bytes>> {
-    if auth.backoff.blocked(peer) {
-        return status(
-            StatusCode::TOO_MANY_REQUESTS,
-            "too many failed authentications from here; wait and try again",
-        );
-    }
     // No legitimate caller here is a browser, so every origin is refused
     // rather than allowlisted: it closes DNS rebinding without a setting.
     if request.headers().contains_key(hyper::header::ORIGIN) {
@@ -191,10 +186,14 @@ async fn answer(
     // Before the method check, so an unauthenticated probe cannot tell this
     // port from a closed one by the status it gets back.
     let Some(surface) = authorize(sink, &auth.token, &request).await else {
-        auth.backoff.failed(peer);
+        if auth.backoff.failed(peer) {
+            return status(
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many failed authentications from here; wait a minute, then retry with the token `aether mcp` prints",
+            );
+        }
         return status(StatusCode::UNAUTHORIZED, "a valid bearer token is required");
     };
-    auth.backoff.cleared(peer);
     tracing::debug!(%peer, caller = %describe(&surface), "mcp server: authorized");
     if request.method() != Method::POST {
         return status(StatusCode::METHOD_NOT_ALLOWED, "only POST is served");
@@ -282,9 +281,9 @@ fn bearer(request: &Request<Incoming>) -> Option<&str> {
         .map(|(_, presented)| presented)
 }
 
-/// How long a peer that failed to authenticate must wait. A token holder
-/// gets in on its first try and is never delayed; guessing costs
-/// exponentially more per attempt.
+/// Counts failed authentications per source in a fixed window. Only failures
+/// are throttled: a request that presents a valid token is served whatever
+/// its source has failed before, so one bad attempt never locks a client out.
 #[derive(Debug, Default)]
 struct Backoff {
     peers: Mutex<HashMap<IpAddr, Penalty>>,
@@ -293,53 +292,49 @@ struct Backoff {
 #[derive(Debug, Clone, Copy)]
 struct Penalty {
     failures: u32,
-    until: Instant,
+    window_start: Instant,
 }
 
 impl Backoff {
-    fn blocked(&self, peer: IpAddr) -> bool {
-        // A poisoned lock means a panic while recording a failure; refuse
-        // rather than let the refusal be the thing that opens the door.
-        let Ok(peers) = self.peers.lock() else {
+    /// Records one failure; true once the source is over its budget and
+    /// should be told to wait.
+    fn failed(&self, peer: IpAddr) -> bool {
+        // A poisoned lock means a panic while recording; throttle rather
+        // than let the failure path be the thing that opens the door.
+        let Ok(mut peers) = self.peers.lock() else {
             return true;
         };
-        peers
-            .get(&peer)
-            .is_some_and(|penalty| Instant::now() < penalty.until)
-    }
-
-    fn failed(&self, peer: IpAddr) {
-        let Ok(mut peers) = self.peers.lock() else {
-            return;
+        let now = Instant::now();
+        let failures = match peers.get(&peer) {
+            Some(p) if now.duration_since(p.window_start) < AUTH_FAILURE_WINDOW => {
+                p.failures.saturating_add(1)
+            }
+            _ => 1,
         };
-        let failures = peers.get(&peer).map_or(1, |p| p.failures.saturating_add(1));
-        let wait = AUTH_BACKOFF_BASE
-            .saturating_mul(1u32 << failures.min(8))
-            .min(AUTH_BACKOFF_MAX);
-        let penalty = Penalty {
-            failures,
-            until: Instant::now() + wait,
+        let window_start = match peers.get(&peer) {
+            Some(p) if failures > 1 => p.window_start,
+            _ => now,
         };
         if peers.len() >= MAX_TRACKED_PEERS && !peers.contains_key(&peer) {
             evict_one(&mut peers);
         }
-        peers.insert(peer, penalty);
-    }
-
-    /// A peer that authenticated owes nothing.
-    fn cleared(&self, peer: IpAddr) {
-        if let Ok(mut peers) = self.peers.lock() {
-            peers.remove(&peer);
-        }
+        peers.insert(
+            peer,
+            Penalty {
+                failures,
+                window_start,
+            },
+        );
+        failures > MAX_AUTH_FAILURES
     }
 }
 
-/// Drop the peer whose penalty expires first, so the map stays bounded and
-/// the peer still being slowed keeps its penalty.
+/// Drop the peer whose window opened first, so the map stays bounded and
+/// a peer still being throttled keeps its count.
 fn evict_one(peers: &mut HashMap<IpAddr, Penalty>) {
     let Some(soonest) = peers
         .iter()
-        .min_by_key(|(_, penalty)| penalty.until)
+        .min_by_key(|(_, penalty)| penalty.window_start)
         .map(|(addr, _)| *addr)
     else {
         return;
@@ -360,30 +355,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_failed_guess_is_slowed_and_a_success_clears_it() {
+    fn one_failure_is_not_throttled_but_repeated_ones_are() {
         let backoff = Backoff::default();
         let peer: IpAddr = "10.0.0.1".parse().expect("addr");
-        assert!(!backoff.blocked(peer), "a peer starts unpenalized");
-        backoff.failed(peer);
-        assert!(backoff.blocked(peer), "a guess costs a wait");
-        backoff.cleared(peer);
-        assert!(!backoff.blocked(peer), "authenticating clears it");
+        for attempt in 1..=MAX_AUTH_FAILURES {
+            assert!(!backoff.failed(peer), "failure {attempt} is within budget");
+        }
+        assert!(backoff.failed(peer), "the next failure is throttled");
     }
 
     #[test]
-    fn the_wait_grows_and_stops_at_the_ceiling() {
+    fn another_source_keeps_its_own_budget() {
         let backoff = Backoff::default();
-        let peer: IpAddr = "10.0.0.2".parse().expect("addr");
-        for _ in 0..40 {
+        let noisy: IpAddr = "10.0.0.2".parse().expect("addr");
+        let other: IpAddr = "10.0.0.3".parse().expect("addr");
+        for _ in 0..=MAX_AUTH_FAILURES {
+            backoff.failed(noisy);
+        }
+        assert!(
+            !backoff.failed(other),
+            "someone else's failures are not mine"
+        );
+    }
+
+    #[test]
+    fn the_budget_returns_when_the_window_passes() {
+        let backoff = Backoff::default();
+        let peer: IpAddr = "10.0.0.4".parse().expect("addr");
+        for _ in 0..=MAX_AUTH_FAILURES {
             backoff.failed(peer);
         }
-        let peers = backoff.peers.lock().expect("lock");
-        let penalty = peers.get(&peer).expect("tracked");
-        assert!(penalty.failures >= 40);
-        assert!(
-            penalty.until <= Instant::now() + AUTH_BACKOFF_MAX,
-            "the wait is capped, so a peer is never locked out forever"
-        );
+        let mut peers = backoff.peers.lock().expect("lock");
+        let penalty = peers.get_mut(&peer).expect("tracked");
+        penalty.window_start = Instant::now() - AUTH_FAILURE_WINDOW - Duration::from_secs(1);
+        drop(peers);
+        assert!(!backoff.failed(peer), "an old window no longer counts");
     }
 
     #[test]

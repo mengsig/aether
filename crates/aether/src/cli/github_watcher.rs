@@ -43,6 +43,7 @@ pub async fn run(
     let client = connect_or_start(&socket).await?;
     let current = client.github_watcher().await?;
     let mut config = current.config.clone();
+    let mut started_polling = false;
     let json = match command {
         GithubWatcherCmd::Status { json } => return show(json, &current, &socket),
         GithubWatcherCmd::Add {
@@ -87,6 +88,7 @@ pub async fn run(
             };
             let dispatch = add_dispatch(agent, spawn);
             apply_add(&mut config, repository, dispatch, allowed_users)?;
+            started_polling = !current.config.enabled && config.enabled;
             json
         }
         GithubWatcherCmd::AllowedUsers {
@@ -146,7 +148,21 @@ pub async fn run(
     let updated = client
         .configure_github_watcher(config, current.revision)
         .await?;
+    if started_polling {
+        eprintln!(
+            "{}",
+            polling_started_notice(&super::command_hint(&socket, false))
+        );
+    }
     show(json, &updated, &socket)
+}
+
+/// Said after `add` flips the global switch, so it is never a surprise.
+fn polling_started_notice(command: &str) -> String {
+    format!(
+        "The GitHub watcher was off and `add` turned it on, so polling has started. \
+         Run `{command} github-watcher disable` to stop all polling."
+    )
 }
 
 /// Resolves `add`'s flags into a dispatch decision. `--agent` and
@@ -472,6 +488,13 @@ mod tests {
             add_dispatch(None, Some(template)),
             AddDispatch::Thread(_)
         ));
+    }
+
+    #[test]
+    fn the_notice_names_what_happened_and_how_to_stop_it() {
+        let notice = polling_started_notice("aether");
+        assert!(notice.contains("turned it on"));
+        assert!(notice.contains("aether github-watcher disable"));
     }
 
     #[test]

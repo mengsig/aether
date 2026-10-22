@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn the_http_endpoint_refuses_everything_but_a_valid_token() {
+async fn the_http_endpoint_refuses_bad_tokens_throttles_guessing_and_never_locks_out_a_valid_one() {
     let sink: Arc<dyn aether_client::mcp::CommandSink> = Arc::new(RecordingSink::default());
     let shutdown = tokio_util::sync::CancellationToken::new();
     let (bound, serving) = serve_http(sink, shutdown.clone()).await;
@@ -17,21 +17,36 @@ async fn the_http_endpoint_refuses_everything_but_a_valid_token() {
         .expect("request without a token");
     assert_eq!(refused.status(), reqwest::StatusCode::UNAUTHORIZED);
 
-    // The refusal above already cost this peer a wait, so the next attempt is
-    // turned away before the token is even looked at: guessing must not be
-    // free against an endpoint that can create agents.
-    let again = http
-        .post(&url)
-        .header("authorization", "Bearer nope")
-        .json(&body)
-        .send()
-        .await
-        .expect("second attempt");
+    let good = |http: &reqwest::Client| {
+        http.post(&url)
+            .header("authorization", format!("Bearer {TOKEN}"))
+            .json(&body)
+            .send()
+    };
+    // One bad attempt must not lock out the valid client behind it.
+    let ok = good(&http).await.expect("valid after one failure");
+    assert_eq!(ok.status(), reqwest::StatusCode::OK);
+
+    // Repeated guesses are throttled, yet the valid token is still served.
+    let mut statuses = Vec::new();
+    for _ in 0..8 {
+        let bad = http
+            .post(&url)
+            .header("authorization", "Bearer nope")
+            .json(&body)
+            .send()
+            .await
+            .expect("bad attempt");
+        statuses.push(bad.status());
+    }
+    assert_eq!(statuses[0], reqwest::StatusCode::UNAUTHORIZED);
     assert_eq!(
-        again.status(),
+        *statuses.last().expect("attempts"),
         reqwest::StatusCode::TOO_MANY_REQUESTS,
-        "a failed attempt must slow the next one"
+        "repeated failures must be throttled"
     );
+    let ok = good(&http).await.expect("valid while throttled");
+    assert_eq!(ok.status(), reqwest::StatusCode::OK);
 
     shutdown.cancel();
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), serving).await;
