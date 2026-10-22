@@ -23,7 +23,8 @@ const MAX_HTML_BYTES: u64 = 5 * 1024 * 1024;
 const MAX_PNG_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_ROWS: usize = 4000;
 const MAX_LINKS: usize = 200;
-const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Chromium's multi-process start is CPU-bound: a loaded machine took 4x longer than an idle one.
+const SCREENSHOT_TIMEOUT: Duration = Duration::from_secs(60);
 /// Inherited by the sandboxed frame: no scripts, frames, fetches or files; inline styles only.
 const POLICY: &str = "default-src 'none'; img-src data:; style-src 'unsafe-inline' data:; \
      font-src data:";
