@@ -60,8 +60,14 @@ pub fn parse_trigger_payload(payload: &str) -> anyhow::Result<serde_json::Value>
     })
 }
 
-/// Message text above this many bytes draws a warning; it is still sent.
+/// Message text above this many bytes draws a warning; above
+/// [`aether_core::limits::MAX_MESSAGE_BYTES`] it is refused.
 pub const LARGE_MESSAGE_BYTES: usize = 256 * 1024;
+
+/// Refuses text the engine could not take, before any daemon is contacted.
+pub fn check_text_fits(what: &str, text: &str) -> anyhow::Result<()> {
+    aether_core::limits::check_text_size(what, text.len()).map_err(anyhow::Error::msg)
+}
 
 /// The warning for a message too large to paste into a conversation, if any.
 pub fn large_message_warning(text: &str) -> Option<String> {
@@ -84,6 +90,15 @@ mod tests {
         assert!(large_message_warning(&"x".repeat(LARGE_MESSAGE_BYTES + 1)).is_some());
         let warning = large_message_warning(&"x".repeat(10 * 1024 * 1024)).unwrap();
         assert!(warning.contains("10240 KiB") && warning.contains("artifact"));
+    }
+
+    #[test]
+    fn text_over_the_engine_limit_is_refused_with_advice() {
+        let limit = aether_core::limits::MAX_MESSAGE_BYTES;
+        assert!(check_text_fits("message", &"x".repeat(limit)).is_ok());
+        let refusal = check_text_fits("objective", &"x".repeat(limit + 1)).unwrap_err();
+        let refusal = refusal.to_string();
+        assert!(refusal.contains("objective") && refusal.contains("artifact"));
     }
 
     fn words(list: &[&str]) -> Vec<String> {

@@ -401,14 +401,14 @@ pub fn check_store(paths: &Paths) -> Check {
             return Check::fail(
                 "store",
                 format!("{}: {answer}", path.display()),
-                "restore the store from a backup; agents cannot run on a corrupt log",
+                "stop the daemon, then restore the newest file in migration-backups/ or backups/ (steps in docs/migration-backups.md); agents cannot run on a corrupt log",
             );
         }
         Err(e) => {
             return Check::fail(
                 "store",
                 format!("{}: {e}", path.display()),
-                "restore the store from a backup",
+                "stop the daemon, then restore the newest file in migration-backups/ or backups/ (steps in docs/migration-backups.md)",
             );
         }
     }

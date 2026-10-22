@@ -15,6 +15,43 @@ pub async fn storage(
     Ok(())
 }
 
+/// `aether storage backup`: a verified compressed copy of the local database.
+pub fn storage_backup(output: Option<std::path::PathBuf>, json: bool) -> anyhow::Result<()> {
+    let database = aether_protocol::paths::store_path();
+    anyhow::ensure!(
+        database.is_file(),
+        "no database at {}: nothing to back up (is AETHER_DATA_DIR set differently from the daemon's?)",
+        database.display()
+    );
+    let directory = output.unwrap_or_else(|| {
+        database
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("backups")
+    });
+    let backup = aether_store::backup_database(&database, &directory).map_err(|error| {
+        anyhow::anyhow!(
+            "could not back up {}: {error}; if the file is corrupt, restore the newest file in \
+             {} (see docs/migration-backups.md)",
+            database.display(),
+            database.with_file_name("migration-backups").display()
+        )
+    })?;
+    let bytes = std::fs::metadata(&backup)?.len();
+    if json {
+        let report = serde_json::json!({"backup": backup, "bytes": bytes});
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    println!(
+        "backed up {} to {} ({} bytes); restore steps: docs/migration-backups.md",
+        database.display(),
+        backup.display(),
+        bytes
+    );
+    Ok(())
+}
+
 /// Exact bytes for `--json`, scaled ones for a person.
 fn storage_text(report: &Value, dry_run: bool, json: bool) -> anyhow::Result<String> {
     if json {

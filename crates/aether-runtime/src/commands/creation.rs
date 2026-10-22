@@ -147,6 +147,9 @@ impl Runtime {
                 "a sub-agent needs an explicit effort: low, medium, high, xhigh or max".into(),
             ));
         }
+        if let Some(objective) = &spec.objective {
+            super::messaging::check_text_size("task objective", objective.len())?;
+        }
         let checked = preflight.checked;
         let parent = match spec.parent {
             Some(id) => Some(self.live_agent(id, "parent")?),

@@ -246,12 +246,20 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             Cmd::Serve { allow_remote } => cli::serve(socket, allow_remote).await,
             Cmd::Schema => cli::schema(),
             Cmd::Storage { command, json } => {
+                if let Some(StorageCmd::Backup {
+                    output,
+                    json: backup_json,
+                }) = command
+                {
+                    return cli::storage_backup(output, json || backup_json).map(|()| 0);
+                }
                 let (gc, dry_run, prune_build_output, json) = match command {
                     Some(StorageCmd::Gc {
                         dry_run,
                         prune_build_output,
                         json: gc_json,
                     }) => (true, dry_run, prune_build_output, json || gc_json),
+                    Some(StorageCmd::Backup { .. }) => unreachable!("handled above"),
                     None => (false, true, false, json),
                 };
                 cli::storage(endpoint, gc, dry_run, prune_build_output, json).await
@@ -298,6 +306,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                     Some(path) => cli::text_from_file(&path)?,
                     None => cli::text_from_process_stdin(objective, true)?,
                 };
+                cli::check_text_fits("objective", &objective)?;
                 return cli::run(
                     endpoint,
                     explicit_socket,

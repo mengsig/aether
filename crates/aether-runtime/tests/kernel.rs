@@ -195,6 +195,8 @@ mod memory_scope;
 mod memory_support;
 #[path = "kernel/message_fanout.rs"]
 mod message_fanout;
+#[path = "kernel/message_limits.rs"]
+mod message_limits;
 #[path = "kernel/model_effort.rs"]
 mod model_effort;
 #[path = "kernel/model_profiles.rs"]

@@ -63,6 +63,26 @@ fn the_checkpointer_copies_the_wal_into_the_database() {
     }
 }
 
+/// One large write left a 165 MB WAL on disk for good, because a passive
+/// checkpoint reuses the file without shrinking it.
+#[test]
+fn the_checkpointer_truncates_a_large_wal_once_it_is_copied() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("aether.db");
+    let store = SqliteStore::open_checkpointing(&path, Duration::from_millis(20)).expect("open");
+    commit_megabytes(&store, 24);
+    let wal = path.with_extension("db-wal");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while file_len(&wal) > 1 << 20 {
+        assert!(
+            Instant::now() < deadline,
+            "the WAL is still {} bytes",
+            file_len(&wal)
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// The first commit after the checkpointer empties the WAL still syncs the new
 /// WAL header. fsync(2) waits on the ext4 journal (30 s under load); fdatasync
 /// does not. `.cargo/config.toml` sets this for the bundled SQLite build.

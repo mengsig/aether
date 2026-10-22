@@ -771,6 +771,16 @@ pub(crate) enum RetentionCmd {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum StorageCmd {
+    /// Write a verified, compressed copy of the database, running daemon or not.
+    /// Reads the local store file, so it needs no daemon.
+    Backup {
+        /// Directory for the copy [default: `backups/` beside the database].
+        #[arg(long, value_name = "DIR")]
+        output: Option<std::path::PathBuf>,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove eligible workspaces and migration backups.
     Gc {
         /// Report what would be removed; remove nothing.

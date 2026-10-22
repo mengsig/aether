@@ -18,28 +18,49 @@ pub(crate) fn before_migration(conn: &Connection, path: &Path) -> Result<Option<
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("migration-backups");
-    std::fs::create_dir_all(&directory)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
-    }
-    let destination = directory.join(format!(
+    let name = format!(
         "schema-{version}-before-{}-{}.sqlite.zst",
         schema::SCHEMA_VERSION,
         ulid::Ulid::generate()
-    ));
-    let snapshot = tempfile::NamedTempFile::new_in(&directory)?;
+    );
+    let destination = write_snapshot(conn, &directory, &name)?;
+    tracing::info!(from_version = version, to_version = schema::SCHEMA_VERSION, path = %destination.display(), "saved compressed database before schema migration");
+    Ok(Some(destination))
+}
+
+/// A verified compressed snapshot of the database at `database` in
+/// `directory`, taken while a daemon may be running: SQLite's backup API reads
+/// a consistent state including committed WAL data.
+pub fn backup_database(database: &Path, directory: &Path) -> Result<PathBuf> {
+    assert!(!database.as_os_str().is_empty(), "no database path given");
+    let conn = Connection::open_with_flags(database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    conn.busy_timeout(std::time::Duration::from_secs(30))?;
+    let name = format!("aether-backup-{}.sqlite.zst", ulid::Ulid::generate());
+    write_snapshot(&conn, directory, &name)
+}
+
+/// Snapshot `conn`'s database into `directory/name`: copy, check the header,
+/// compress, decompress and compare, and only then publish the file under its
+/// final name. An existing file of that name is never overwritten.
+fn write_snapshot(conn: &Connection, directory: &Path, name: &str) -> Result<PathBuf> {
+    std::fs::create_dir_all(directory)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let destination = directory.join(name);
+    let snapshot = tempfile::NamedTempFile::new_in(directory)?;
     // SQLite's backup API includes committed WAL data and preserves row IDs,
     // which are referenced by the external-content memory search index.
     conn.backup(rusqlite::MAIN_DB, snapshot.path(), None)?;
     let length = check_snapshot(snapshot.path())?;
-    let compressed = tempfile::NamedTempFile::new_in(&directory)?;
+    let compressed = tempfile::NamedTempFile::new_in(directory)?;
     let written = compress(&mut snapshot.reopen()?, compressed.as_file())?;
     compressed.as_file().sync_all()?;
     if written.0 != length || decompressed_digest(compressed.path())? != written {
         return Err(StoreError::Io(std::io::Error::other(
-            "compressed migration backup does not decompress to the snapshot",
+            "compressed backup does not decompress to the snapshot",
         )));
     }
     let file = compressed
@@ -47,9 +68,9 @@ pub(crate) fn before_migration(conn: &Connection, path: &Path) -> Result<Option<
         .map_err(|error| StoreError::Io(error.error))?;
     file.sync_all()?;
     #[cfg(unix)]
-    std::fs::File::open(&directory)?.sync_all()?;
-    tracing::info!(from_version = version, to_version = schema::SCHEMA_VERSION, path = %destination.display(), bytes = file.metadata()?.len(), "saved compressed database before schema migration");
-    Ok(Some(destination))
+    std::fs::File::open(directory)?.sync_all()?;
+    debug_assert!(file.metadata()?.len() > 0, "published an empty backup");
+    Ok(destination)
 }
 
 /// The snapshot's length, once its SQLite header accounts for every byte of
@@ -112,6 +133,40 @@ fn hashed_copy(source: &mut impl Read, sink: &mut impl Write) -> Result<(u64, Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_backup_of_a_live_wal_database_restores_its_rows() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("aether.db");
+        let conn = Connection::open(&path).expect("database");
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL; CREATE TABLE t(x); INSERT INTO t VALUES (randomblob(20000));",
+        )
+        .expect("rows");
+        let backup = backup_database(&path, &directory.path().join("backups")).expect("backup");
+        let restored = directory.path().join("restored.db");
+        let mut decoder =
+            zstd::stream::Decoder::new(std::fs::File::open(&backup).expect("backup file"))
+                .expect("zstd frame");
+        std::io::copy(
+            &mut decoder,
+            &mut std::fs::File::create(&restored).expect("restored"),
+        )
+        .expect("decompress");
+        let rows: i64 = Connection::open(&restored)
+            .expect("restored database")
+            .query_row("SELECT count(*) FROM t", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn backing_up_a_file_that_is_not_a_database_fails() {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("aether.db");
+        std::fs::write(&path, vec![7u8; 8192]).expect("garbage");
+        assert!(backup_database(&path, &directory.path().join("backups")).is_err());
+    }
 
     #[test]
     fn a_snapshot_shorter_or_longer_than_its_header_says_is_refused() {

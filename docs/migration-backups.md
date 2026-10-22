@@ -24,6 +24,22 @@ anything within `backups_days` (fourteen days by default); `backups_days = 0`
 turns off only the age rule. `aether storage` lists the backups' bytes and the
 decision for each file. See [storage configuration](configuration.md#storage).
 
+## Backing up on demand
+
+`aether storage backup` writes a verified, zstd-compressed snapshot of the
+database to `backups/` beside it (`--output DIR` chooses another directory),
+whether or not the daemon runs. It uses the same copy, header check and
+decompress-and-compare steps as a pre-migration snapshot, and never
+overwrites an existing file. Storage maintenance does not delete these
+files; remove them yourself when you no longer need them. Take one before an
+upgrade you are unsure about, or on a schedule from cron.
+
+If the database is malformed (`aether doctor` reports a failing `store`
+check), the backup command may fail too: restore the newest snapshot from
+`migration-backups/` or `backups/` as described below. Large message bodies
+bloat the database; messages and task objectives above 2 MiB are refused
+(attach the content as a file or artifact instead).
+
 ## Restoring a backup
 
 `aether stop` returns once the daemon has accepted the request, before it has
@@ -37,7 +53,7 @@ aether stop
 cd ~/.local/share/aether            # the directory holding aether.db
 flock aether.db.lock sh -euc '
   cp aether.db aether.db.before-restore
-  zstd -d -f migration-backups/schema-21-before-22-<id>.sqlite.zst -o aether.db
+  zstd -d -f migration-backups/<file>.sqlite.zst -o aether.db
   rm -f aether.db-wal aether.db-shm
 '
 ```

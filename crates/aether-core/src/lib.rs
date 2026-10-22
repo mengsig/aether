@@ -23,6 +23,7 @@ pub mod id;
 pub mod idempotency;
 pub mod inbox;
 pub mod lease;
+pub mod limits;
 pub mod mcp;
 pub mod memory;
 pub mod memory_feedback;

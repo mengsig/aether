@@ -171,6 +171,7 @@ pub async fn send(
     if text.trim().is_empty() && images.is_empty() {
         bail!("nothing to send: give the text as an argument, or pipe it in or use `-` for stdin");
     }
+    super::input::check_text_fits("message", &text)?;
     if let Some(warning) = super::input::large_message_warning(&text) {
         eprintln!("{warning}");
     }

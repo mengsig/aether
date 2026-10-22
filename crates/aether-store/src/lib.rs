@@ -43,6 +43,7 @@ use aether_core::tool::ApprovalRequest;
 
 use aether_core::memory_feedback::{FeedbackTally, MemoryFeedback};
 
+pub use migration_backup::backup_database;
 pub use schema::SCHEMA_VERSION;
 pub use sqlite::{PushSubscriptionRow, RunExpiry, SqliteStore};
 

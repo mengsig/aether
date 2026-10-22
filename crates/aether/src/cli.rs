@@ -26,7 +26,7 @@ pub(crate) use memory_proposals::OperatorScopeRef;
 pub(crate) use resolve::{AgentRef, ApprovalRef, RunRef, ScheduleRef, TargetRef, TaskRef};
 
 mod storage;
-pub use storage::storage;
+pub use storage::{storage, storage_backup};
 mod retention;
 pub use retention::retention_preview;
 mod workspace;
@@ -86,7 +86,7 @@ mod compaction;
 pub use compaction::compact;
 
 mod input;
-pub use input::{text_from_file, text_from_process_stdin};
+pub use input::{check_text_fits, text_from_file, text_from_process_stdin};
 
 mod tasks;
 #[cfg(test)]

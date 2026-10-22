@@ -26,6 +26,7 @@ impl Runtime {
         if spec.objective.trim().is_empty() {
             return Err(RuntimeError::Invalid("task objective is empty".into()));
         }
+        super::messaging::check_text_size("task objective", spec.objective.len())?;
         let at = now();
         // Held across the owner and dependency reads, keyed or not: the owner
         // row is written back whole, and its `current_task` must not be lost.
