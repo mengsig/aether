@@ -23,6 +23,7 @@ impl UsageProcess {
             .stderr(Stdio::null())
             .kill_on_drop(true);
         command.as_std_mut().process_group(0);
+        aether_spawn::reset_signals(command.as_std_mut());
         crate::strip_hidden(&mut command, hidden_env);
         let child = command.spawn().map_err(|source| match source.kind() {
             std::io::ErrorKind::NotFound => EngineError::NotInstalled {

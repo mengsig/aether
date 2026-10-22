@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 aether-core = { workspace = true }
+aether-spawn = { workspace = true }
 aether-net = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -39,4 +40,5 @@ pty-process = { version = "0.5.3", features = ["async"] }
 rustix = { version = "1.1.4", features = ["process"] }
 
 [dev-dependencies]
+aether-spawn = { workspace = true, features = ["test-support"] }
 nix = { workspace = true, features = ["fs"] }

@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 aether-core = { workspace = true }
+aether-spawn = { workspace = true }
 aether-protocol = { workspace = true }
 aether-client = { workspace = true }
 aether-tools = { workspace = true }

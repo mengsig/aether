@@ -428,6 +428,7 @@ impl Engine for CodexAppEngine {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
         command.as_std_mut().process_group(0);
+        aether_spawn::reset_signals(command.as_std_mut());
         crate::strip_hidden(&mut command, &turn.hidden_env);
         crate::export_temp_dir(&mut command, turn.temp_dir.as_deref());
         crate::export_build_env(&mut command, &turn.build_env);

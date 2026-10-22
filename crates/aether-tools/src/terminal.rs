@@ -23,7 +23,9 @@ pub(crate) fn spawn(
             None => cmd.env_remove(key),
         };
     }
-    let child = cmd.spawn(pts).map_err(pty_error)?;
+    let child = aether_spawn::reset_pty_signals(cmd)
+        .spawn(pts)
+        .map_err(pty_error)?;
     Ok((child, pty))
 }
 

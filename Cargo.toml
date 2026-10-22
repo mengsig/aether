@@ -19,6 +19,7 @@ aether-tools = { path = "crates/aether-tools" }
 aether-context = { path = "crates/aether-context" }
 aether-memory = { path = "crates/aether-memory" }
 aether-net = { path = "crates/aether-net" }
+aether-spawn = { path = "crates/aether-spawn" }
 aether-runtime = { path = "crates/aether-runtime" }
 aether-protocol = { path = "crates/aether-protocol" }
 aether-client = { path = "crates/aether-client" }

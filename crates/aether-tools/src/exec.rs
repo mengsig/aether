@@ -416,6 +416,7 @@ fn pipes(cmd: &mut tokio::process::Command, ctx: &ToolContext) {
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .process_group(0);
+    aether_spawn::reset_signals(cmd.as_std_mut());
 }
 
 #[cfg(test)]

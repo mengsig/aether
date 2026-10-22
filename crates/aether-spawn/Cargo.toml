@@ -1,0 +1,31 @@
+[package]
+name = "aether-spawn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Clean signal state for the child processes Aether spawns"
+
+# The one crate allowed unsafe code: `pre_exec` is an unsafe API.
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
+pty-process = { version = "0.5.3", features = ["async"] }
+
+[features]
+# Lets a test process ignore SIGINT the way a `&`-launched daemon does.
+test-support = []
+
+[dev-dependencies]
+tokio = { workspace = true }

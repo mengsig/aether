@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::*;
 use crate::testing::{Observed, WAIT_CEILING, ctx_in, wait_for};
 
@@ -308,6 +310,7 @@ async fn terminal_stop_kills_the_session_and_pipe_processes_reject_input() {
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn terminal_control_input_and_hidden_environment_are_preserved() {
+    aether_spawn::ignore_sigint().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let mut ctx = ctx_in(dir.path());
     ctx.env
@@ -326,4 +329,41 @@ async fn terminal_control_input_and_hidden_environment_are_preserved() {
     assert!(out.text.contains("INTERRUPTED"), "{}", out.text);
     assert_eq!(out.status.exit_code, Some(0));
     reg.stop(ctx.agent_id, p.id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_job_stops_on_group_sigint_although_the_daemon_ignores_it() {
+    aether_spawn::ignore_sigint().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = ctx_in(dir.path());
+    let reg = BackgroundProcesses::new();
+    let p = reg
+        .start(
+            ctx.agent_id,
+            "echo $$ > leader.tmp; mv leader.tmp leader; exec sleep 60",
+            &ctx,
+        )
+        .unwrap();
+    wait_for("the job to record its pid", || {
+        match dir.path().join("leader").exists() {
+            true => Observed::Held,
+            false => Observed::Pending("no pid file yet".into()),
+        }
+    })
+    .await;
+    let leader: i32 = std::fs::read_to_string(dir.path().join("leader"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(leader > 1, "a group id of {leader} would signal other jobs");
+    nix::sys::signal::killpg(
+        nix::unistd::Pid::from_raw(leader),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .unwrap();
+    let mut reaped = reg.reaped(ctx.agent_id, p.id).unwrap();
+    let exited = tokio::time::timeout(Duration::from_secs(10), reaped.wait_for(|done| *done)).await;
+    reg.stop_all().await;
+    assert!(exited.is_ok(), "SIGINT to the job's group did not stop it");
 }

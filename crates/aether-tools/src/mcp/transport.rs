@@ -172,6 +172,7 @@ impl StdioTransport {
             .stderr(std::process::Stdio::inherit())
             .kill_on_drop(true)
             .process_group(0);
+        aether_spawn::reset_signals(command.as_std_mut());
         // A server runs an agent's tool calls, so it is a tool child: the
         // daemon's named credentials must not travel into it either.
         for name in hidden_env {

@@ -601,6 +601,7 @@ where
         .kill_on_drop(true);
     // Own process group so cancellation can take the CLI's children with it.
     command.as_std_mut().process_group(0);
+    aether_spawn::reset_signals(command.as_std_mut());
     command.envs(extra_env.iter().cloned());
     strip_hidden(&mut command, hidden_env);
     export_temp_dir(&mut command, temp_dir);
