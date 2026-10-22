@@ -192,3 +192,23 @@ async fn without_a_configured_stop_nothing_changes() {
     assert!(!token.is_cancelled());
     assert!(hard_stops(&runtime, agent.run).is_empty());
 }
+
+#[tokio::test]
+async fn one_pass_reserves_each_candidate_it_admits() {
+    let (runtime, _dir) = runtime_with(HardStop {
+        usd: Some(10.0),
+        tokens: None,
+    })
+    .await;
+    let first = agent_in(&runtime, "anthropic");
+    let second = child_of(&runtime, "anthropic", Some(first.id));
+    let third = child_of(&runtime, "anthropic", Some(first.id));
+    // $6 over 3 turns: one more $2 turn fits under $10, a second reaches it.
+    spend(&runtime, &first, 6.0, 0, 3);
+    let ready = [&first, &second, &third].map(|a| Runnable {
+        agent: a.clone(),
+        addressed: false,
+    });
+    let admitted = admit_under_hard_stop(&runtime, ready.into()).expect("pass");
+    assert_eq!(admitted.len(), 1, "the batch was admitted past the stop");
+}

@@ -221,6 +221,9 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
         }
     }
     faults.errors.extend(record_errors);
+    // Before the dispatch gates below: a held run's turns stop even when no
+    // new turn may start.
+    let ready = admit_under_hard_stop(runtime, ready)?;
     // Even a person's message waits: every turn writes, and a disk this low
     // is about to refuse writes.
     if runtime.disk_is_low() {
@@ -229,7 +232,6 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
     if faults.withhold_dispatch {
         return Ok(());
     }
-    let ready = admit_under_hard_stop(runtime, ready)?;
     dispatch(runtime, ready, &lineage);
     Ok(())
 }
