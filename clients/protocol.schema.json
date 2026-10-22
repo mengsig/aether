@@ -5177,6 +5177,23 @@
             "null"
           ]
         },
+        "run_hard_stop_tokens": {
+          "description": "Tokens at which the same stop applies, for engines with no dollar cost.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "run_hard_stop_usd": {
+          "description": "Dollars at which a run's live agents are interrupted and its turns\nrefused. Absent when no hard stop is configured, and on older daemons.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "runs": {
           "default": [],
           "description": "Spend and forecast for every run that still has a live agent.",
@@ -7766,6 +7783,37 @@
             "type",
             "reason",
             "usage"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A run crossed its hard spend stop: every live agent in it was\ninterrupted (not failed) and no new turn is admitted until the limit\nis raised.",
+          "properties": {
+            "interrupted": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "limit": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "const": "run.hard_stop",
+              "type": "string"
+            },
+            "usage": {
+              "$ref": "#/$defs/Usage"
+            }
+          },
+          "required": [
+            "type",
+            "reason",
+            "limit",
+            "usage",
+            "interrupted"
           ],
           "type": "object"
         },

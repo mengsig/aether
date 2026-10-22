@@ -71,6 +71,13 @@ pub struct DaemonStatus {
     /// Absent when no budget is configured, and on older daemons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_budget_usd: Option<f64>,
+    /// Dollars at which a run's live agents are interrupted and its turns
+    /// refused. Absent when no hard stop is configured, and on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_hard_stop_usd: Option<f64>,
+    /// Tokens at which the same stop applies, for engines with no dollar cost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_hard_stop_tokens: Option<u64>,
     /// Configured MCP servers and their health.
     #[serde(default)]
     pub mcp: Vec<McpServerHealth>,

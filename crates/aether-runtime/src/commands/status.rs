@@ -66,6 +66,8 @@ impl Runtime {
             max_concurrent_engine_turns: self.config.max_concurrent_engine_turns,
             engine_turns_running,
             run_budget_usd: self.config.run_budget_usd,
+            run_hard_stop_usd: self.config.run_hard_stop.usd,
+            run_hard_stop_tokens: self.config.run_hard_stop.tokens,
             engines,
             providers: timed("providers", || self.provider_health())?,
             resource_leases: timed("resource_leases", || self.resource_holdings()),

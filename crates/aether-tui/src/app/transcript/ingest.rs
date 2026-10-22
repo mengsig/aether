@@ -1456,6 +1456,17 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
         EventKind::BudgetExceeded { reason, .. } => {
             error_cell(t, at, &format!("Budget exceeded: {reason}"), None)
         }
+        EventKind::RunHardStop {
+            reason,
+            limit,
+            interrupted,
+            ..
+        } => error_cell(
+            t,
+            at,
+            &format!("Run hard stop: {reason} ({limit}); {interrupted} running turns interrupted"),
+            None,
+        ),
         EventKind::McpServerFailed { server, error } => notice(
             t,
             at,

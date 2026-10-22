@@ -25,6 +25,8 @@ pub(crate) fn quiet_status() -> aether_protocol::DaemonStatus {
         max_concurrent_engine_turns: None,
         engine_turns_running: 0,
         run_budget_usd: None,
+        run_hard_stop_usd: None,
+        run_hard_stop_tokens: None,
         instance_id: "test".into(),
         version: "0.1.0".into(),
         pid: 1,

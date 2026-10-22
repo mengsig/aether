@@ -66,6 +66,7 @@ from ._EventKindProviderQuota import EventKindProviderQuota
 from ._EventKindProviderRecovered import EventKindProviderRecovered
 from ._EventKindQuestionAsked import EventKindQuestionAsked
 from ._EventKindRecoveryClassified import EventKindRecoveryClassified
+from ._EventKindRunHardStop import EventKindRunHardStop
 from ._EventKindRunImported import EventKindRunImported
 from ._EventKindSnapshotCreated import EventKindSnapshotCreated
 from ._EventKindTaskAssigned import EventKindTaskAssigned
@@ -167,6 +168,7 @@ EventKind = (
     EventKindBudgetWarning |
     EventKindDeadlinePassed |
     EventKindBudgetExceeded |
+    EventKindRunHardStop |
     EventKindDaemonStarted |
     EventKindDaemonStopped |
     EventKindCustom

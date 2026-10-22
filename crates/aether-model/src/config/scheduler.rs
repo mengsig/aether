@@ -20,6 +20,12 @@ pub struct SchedulerSection {
     /// Dollars one run may spend before new delegations are refused; unset
     /// means no run budget.
     pub run_budget_usd: Option<f64>,
+    /// Dollars at which a run's live agents are interrupted and no new turn
+    /// is admitted; unset means no hard stop.
+    pub run_hard_stop_usd: Option<f64>,
+    /// Tokens at which the same stop applies, for engines that report no
+    /// dollar cost; unset means no token stop.
+    pub run_hard_stop_tokens: Option<u64>,
     /// How long an engine turn keeps waiting out network, timeout, capacity
     /// and server failures before the agent fails; unset means two hours.
     pub engine_transient_retry_minutes: Option<u64>,
@@ -99,6 +105,29 @@ impl SchedulerSection {
             ));
         }
         Ok(Some(usd))
+    }
+
+    /// The configured hard stop. Non-positive values cannot mean what they say
+    /// (a zero stop would interrupt every run at once), so they are reported.
+    pub fn run_hard_stop(&self) -> Result<aether_core::budget::HardStop, String> {
+        if let Some(usd) = self.run_hard_stop_usd
+            && (!usd.is_finite() || usd <= 0.0)
+        {
+            return Err(format!(
+                "scheduler.run_hard_stop_usd must be a positive number of dollars (got {usd}); \
+                 remove it for no hard stop"
+            ));
+        }
+        if self.run_hard_stop_tokens == Some(0) {
+            return Err(
+                "scheduler.run_hard_stop_tokens must be positive; remove it for no token stop"
+                    .into(),
+            );
+        }
+        Ok(aether_core::budget::HardStop {
+            usd: self.run_hard_stop_usd,
+            tokens: self.run_hard_stop_tokens,
+        })
     }
 
     /// The configured grace. `None` means the runtime default applies. Zero

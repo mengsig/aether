@@ -268,6 +268,14 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             reason,
         }
     })?;
+    let run_hard_stop = models
+        .config()
+        .scheduler
+        .run_hard_stop()
+        .map_err(|reason| aether_model::config::ConfigError {
+            path: "config.toml".into(),
+            reason,
+        })?;
     let mut disk_floor = models.config().scheduler.disk_floor().map_err(|reason| {
         aether_model::config::ConfigError {
             path: "config.toml".into(),
@@ -325,6 +333,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             ),
             max_concurrent_engine_turns,
             run_budget_usd,
+            run_hard_stop,
             wait_timeout,
             resource_wait_timeout: wait_timeout
                 .unwrap_or(aether_runtime::DEFAULT_RESOURCE_WAIT_TIMEOUT),

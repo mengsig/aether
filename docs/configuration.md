@@ -73,8 +73,26 @@ section and key. Omitted settings use the shipped defaults.
 | `scheduler.max_concurrent_turns` | `32` | Bound simultaneous model turns. |
 | `scheduler.max_concurrent_engine_turns` | Unset | Add a limit for native CLI turns. |
 | `scheduler.run_budget_usd` | Unset | Refuse new delegation once recorded run spend reaches the limit. |
+| `scheduler.run_hard_stop_usd` | Unset | Hard spend stop per run, in dollars. See [Run hard stop](#run-hard-stop). |
+| `scheduler.run_hard_stop_tokens` | Unset | The same stop in total tokens, for engines that report no dollar cost. |
 | `approval.default` | `"yolo"` | `"ask"` gates external effects; local mutations need an explicit agent policy. |
 | `retention.completed_run_days` | `7` | Retain eligible completed runs this many days. |
+
+### Run hard stop
+
+When a run's recorded spend (every agent in it, ended ones included) reaches
+`scheduler.run_hard_stop_usd` or `scheduler.run_hard_stop_tokens`, the daemon
+interrupts every running turn in that run and records one `run.hard_stop`
+event with the reason, the limit and the measured spend. The agents are
+interrupted, not failed. The TUI shows the event, and `aether status` lists the
+configured stops and reports the held run as a problem.
+
+Turn admission also reserves the run's average turn cost for each turn already
+running and for the candidate, and refuses a turn that would cross the stop.
+The refusal names the limit to raise. To resume, raise the limit in
+`config.toml`, restart the daemon and message the agent. Dollar spend is a floor
+when an engine reports no cost; use the token stop there. Both values must be
+positive, and with neither set nothing changes.
 
 `network.default` is `"allowed"`. Scope and native-engine restrictions still
 apply; approval policy alone is not a sandbox. See the

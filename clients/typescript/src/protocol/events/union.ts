@@ -65,6 +65,7 @@ import type {
   EventKindProviderRecovered,
   EventKindQuestionAsked,
   EventKindRecoveryClassified,
+  EventKindRunHardStop,
   EventKindRunImported,
   EventKindSnapshotCreated,
   EventKindTaskAssigned,
@@ -167,6 +168,7 @@ export type EventKind =
     EventKindBudgetWarning |
     EventKindDeadlinePassed |
     EventKindBudgetExceeded |
+    EventKindRunHardStop |
     EventKindDaemonStarted |
     EventKindDaemonStopped |
     EventKindCustom

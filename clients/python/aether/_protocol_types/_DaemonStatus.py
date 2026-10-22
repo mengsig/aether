@@ -31,6 +31,8 @@ class DaemonStatus(TypedDict, total=False):
     providers: list[_protocol.ProviderHealth]  # optional
     resource_leases: list[_protocol.ResourceHolding]  # optional
     run_budget_usd: float | None  # optional
+    run_hard_stop_tokens: int | None  # optional
+    run_hard_stop_usd: float | None  # optional
     runs: list[_protocol.RunSummary]  # optional
     started_at: str
     tasks_active: int

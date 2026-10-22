@@ -3,6 +3,7 @@
 
 import type {
   RunId,
+  Usage,
 } from "../../protocol.ts";
 
 /**
@@ -16,4 +17,16 @@ export interface EventKindRunImported {
   "source_instance": string;
   "source_run": RunId;
   "type": "run.imported";
+}
+/**
+ * A run crossed its hard spend stop: every live agent in it was
+ * interrupted (not failed) and no new turn is admitted until the limit
+ * is raised.
+ */
+export interface EventKindRunHardStop {
+  "interrupted": number;
+  "limit": string;
+  "reason": string;
+  "type": "run.hard_stop";
+  "usage": Usage;
 }

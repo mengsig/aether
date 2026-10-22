@@ -126,6 +126,8 @@ pub struct RuntimeStatus {
     pub engine_turns_running: u32,
     /// Daemon-wide dollar budget every run is held to; `None` means none.
     pub run_budget_usd: Option<f64>,
+    pub run_hard_stop_usd: Option<f64>,
+    pub run_hard_stop_tokens: Option<u64>,
     /// Adapter labels of the engines found on this machine, e.g. `codex-app/0.153.4`.
     pub engines: Vec<String>,
     /// Per-provider concurrency and health, for anyone deciding where work

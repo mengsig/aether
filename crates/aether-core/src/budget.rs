@@ -66,6 +66,89 @@ pub fn run_usage<'a>(agents: impl IntoIterator<Item = &'a Agent>) -> Usage {
     })
 }
 
+/// A run's hard spend stop: past it the run's live agents are interrupted and
+/// no new turn is admitted. Either limit alone is enough; tokens exist for
+/// engines that report no dollar figure.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct HardStop {
+    pub usd: Option<f64>,
+    pub tokens: Option<u64>,
+}
+
+/// Which limit a run's spend reached, and the figure it was measured at.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StopCrossing {
+    pub reason: String,
+    pub limit: String,
+}
+
+impl HardStop {
+    pub fn is_set(&self) -> bool {
+        self.usd.is_some() || self.tokens.is_some()
+    }
+
+    /// The limit `spent` has reached, if any. Dollars are checked first; they
+    /// are a floor when part of the run is unpriced, so a crossing is certain.
+    pub fn crossing(&self, spent: &Usage) -> Option<StopCrossing> {
+        if let Some(limit) = self.usd.filter(|limit| spent.cost_usd >= *limit) {
+            return Some(StopCrossing {
+                reason: format!(
+                    "run spend {} reached its ${limit} hard stop",
+                    spent.cost_line()
+                ),
+                limit: format!("run_hard_stop_usd = {limit}"),
+            });
+        }
+        let limit = self.tokens.filter(|limit| spent.total_tokens() >= *limit)?;
+        Some(StopCrossing {
+            reason: format!(
+                "run token use {} reached its {limit} token hard stop",
+                spent.total_tokens()
+            ),
+            limit: format!("run_hard_stop_tokens = {limit}"),
+        })
+    }
+
+    /// The limit `spent` plus `reserve` would reach: what turn admission
+    /// weighs, so a turn is refused before it is paid for.
+    pub fn crossing_with(&self, spent: &Usage, reserve: &Usage) -> Option<StopCrossing> {
+        let mut projected = *spent;
+        projected.cost_usd += reserve.cost_usd;
+        projected.input_tokens = projected.input_tokens.saturating_add(reserve.input_tokens);
+        projected.output_tokens = projected
+            .output_tokens
+            .saturating_add(reserve.output_tokens);
+        projected.cache_read_tokens = projected
+            .cache_read_tokens
+            .saturating_add(reserve.cache_read_tokens);
+        projected.cache_write_tokens = projected
+            .cache_write_tokens
+            .saturating_add(reserve.cache_write_tokens);
+        self.crossing(&projected)
+    }
+}
+
+/// What one more turn of a run is expected to spend: the average of the run's
+/// finished turns. Zero for a run with none, which has nothing to estimate from.
+pub fn average_turn_usage<'a>(agents: impl IntoIterator<Item = &'a Agent>) -> Usage {
+    let (mut total, mut turns) = (Usage::default(), 0u64);
+    for agent in agents {
+        total += agent.stats.usage;
+        turns += u64::from(agent.stats.turns);
+    }
+    if turns == 0 {
+        return Usage::default();
+    }
+    Usage {
+        cost_usd: total.cost_usd / turns as f64,
+        input_tokens: total.input_tokens / turns,
+        output_tokens: total.output_tokens / turns,
+        cache_read_tokens: total.cache_read_tokens / turns,
+        cache_write_tokens: total.cache_write_tokens / turns,
+        ..Usage::default()
+    }
+}
+
 /// One summary per run that still has a live agent, oldest run first.
 ///
 /// `window_start` holds, for each agent with a receipt in the last

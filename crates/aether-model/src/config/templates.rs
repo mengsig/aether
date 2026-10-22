@@ -101,6 +101,12 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # already running are never cancelled, and a provider that reports no dollar
 # cost counts as zero, so the figure is a floor.
 # run_budget_usd = 25.0
+# Hard stop per run: once its spend reaches either limit, every live agent in
+# the run is interrupted (not failed) and none of its turns starts. Raise the
+# limit and restart the daemon to let them carry on. The token form covers
+# engines that report no dollar cost.
+# run_hard_stop_usd = 50.0
+# run_hard_stop_tokens = 50000000
 # New turns wait while the filesystem holding the data directory has less
 # free space than this, in MiB; a full disk refuses the writes a turn makes.
 # Turns already running carry on. Unset means the smaller of 5 GiB and 2% of

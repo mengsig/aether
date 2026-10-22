@@ -57,6 +57,8 @@ impl aether_client::mcp::CommandSink for RecordingSink {
                 max_concurrent_engine_turns: None,
                 engine_turns_running: 0,
                 run_budget_usd: None,
+                run_hard_stop_usd: None,
+                run_hard_stop_tokens: None,
                 mcp: Vec::new(),
                 low_disk: None,
                 bridge: None,

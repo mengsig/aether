@@ -170,6 +170,8 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
         max_concurrent_engine_turns: s.max_concurrent_engine_turns,
         engine_turns_running: s.engine_turns_running,
         run_budget_usd: s.run_budget_usd,
+        run_hard_stop_usd: s.run_hard_stop_usd,
+        run_hard_stop_tokens: s.run_hard_stop_tokens,
         mcp: s.mcp,
         low_disk: s.low_disk,
         bridge: rt

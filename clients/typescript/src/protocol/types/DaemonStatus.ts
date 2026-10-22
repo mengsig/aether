@@ -39,6 +39,8 @@ export interface DaemonStatus {
   "providers"?: Array<ProviderHealth>;
   "resource_leases"?: Array<ResourceHolding>;
   "run_budget_usd"?: number | null;
+  "run_hard_stop_tokens"?: number | null;
+  "run_hard_stop_usd"?: number | null;
   "runs"?: Array<RunSummary>;
   "started_at": string;
   "tasks_active": number;

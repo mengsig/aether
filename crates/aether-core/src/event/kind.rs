@@ -519,6 +519,16 @@ pub enum EventKind {
     /// A budget is spent; the agent stops as Failed with this reason.
     #[serde(rename = "budget.exceeded")]
     BudgetExceeded { reason: String, usage: Usage },
+    /// A run crossed its hard spend stop: every live agent in it was
+    /// interrupted (not failed) and no new turn is admitted until the limit
+    /// is raised.
+    #[serde(rename = "run.hard_stop")]
+    RunHardStop {
+        reason: String,
+        limit: String,
+        usage: Usage,
+        interrupted: u32,
+    },
     #[serde(rename = "daemon.started")]
     DaemonStarted { version: String, pid: u32 },
     #[serde(rename = "daemon.stopped")]

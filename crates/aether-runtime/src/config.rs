@@ -47,6 +47,9 @@ pub struct RuntimeConfig {
     /// in it. `None` means no run budget. Turns already running are never
     /// cancelled for it.
     pub run_budget_usd: Option<f64>,
+    /// Spend at which a run's live agents are interrupted and no new turn is
+    /// admitted. Unset means nothing changes.
+    pub run_hard_stop: aether_core::budget::HardStop,
     pub lease_ttl: Duration,
     /// Model used when an agent is created without one.
     pub default_model: Option<ModelRef>,
@@ -138,6 +141,7 @@ impl Default for RuntimeConfig {
             attachment_dir: None,
             max_concurrent_engine_turns: None,
             run_budget_usd: None,
+            run_hard_stop: Default::default(),
             lease_ttl: Duration::from_secs(120),
             default_model: None,
             workspace_root: None,

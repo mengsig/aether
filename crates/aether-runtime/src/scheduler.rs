@@ -18,6 +18,7 @@ use std::{sync::Arc, time::Duration};
 mod budgets;
 mod dependencies;
 mod dispatch;
+mod hard_stop;
 mod lineage;
 mod providers;
 mod wake;
@@ -29,6 +30,7 @@ use budgets::{enforce_budgets, enforce_deadlines};
 use dependencies::gate_dependencies;
 use dispatch::dispatch;
 pub(crate) use dispatch::{claim_link, hold_after_entry_refusal};
+use hard_stop::admit_under_hard_stop;
 use lineage::Lineage;
 pub(crate) use lineage::{CapHolder, cap_holder, on_provider_descendants};
 pub(crate) use providers::{
@@ -227,6 +229,7 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
     if faults.withhold_dispatch {
         return Ok(());
     }
+    let ready = admit_under_hard_stop(runtime, ready)?;
     dispatch(runtime, ready, &lineage);
     Ok(())
 }

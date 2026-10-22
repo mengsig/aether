@@ -129,7 +129,7 @@ fn limits_line(s: &aether_protocol::DaemonStatus) -> String {
     // where the daemon stands against both. Their own line: the `engines`
     // line below lists what is installed, which is a different question.
     format!(
-        "limits   {} turns global · engines {} · run budget {}",
+        "limits   {} turns global · engines {} · run budget {} · hard stop {}",
         s.max_concurrent_turns
             .map(|n| n.to_string())
             .unwrap_or_else(|| "?".into()),
@@ -149,8 +149,23 @@ fn limits_line(s: &aether_protocol::DaemonStatus) -> String {
                 None => format!("${budget}, no live run"),
             },
             None => "none".to_owned(),
-        }
+        },
+        hard_stop_text(s)
     )
+}
+
+fn hard_stop_text(s: &aether_protocol::DaemonStatus) -> String {
+    let mut limits = Vec::new();
+    if let Some(usd) = s.run_hard_stop_usd {
+        limits.push(format!("${usd}"));
+    }
+    if let Some(tokens) = s.run_hard_stop_tokens {
+        limits.push(format!("{tokens} tokens"));
+    }
+    if limits.is_empty() {
+        return "none".to_owned();
+    }
+    limits.join(" or ")
 }
 
 fn approval_line(s: &aether_protocol::DaemonStatus) -> String {
