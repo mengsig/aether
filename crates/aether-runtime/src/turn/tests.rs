@@ -38,6 +38,7 @@ impl ComposeHarness {
             hard_cancel: CancellationToken::new(),
             recovery_checked_for: None,
             user_reply_pending: false,
+            reply_given_unrecorded: false,
             start_handoff: None,
         };
         (Self { runtime, ctx }, dir)

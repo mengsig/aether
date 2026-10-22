@@ -71,8 +71,19 @@ async fn reply_obligation_survives_a_restart_until_the_reply_is_written() {
     assert!(reply_obligation::load(&harness.runtime, agent).expect("owed"));
 
     harness.ctx.user_reply_pending = true;
-    reply_obligation::clear(&harness.runtime, &mut harness.ctx).expect("clear");
+    reply_obligation::answer(&mut harness.ctx);
     assert!(!harness.ctx.user_reply_pending);
+    assert!(
+        reply_obligation::load(&harness.runtime, agent).expect("not yet committed"),
+        "an answer in memory alone must not clear the durable debt"
+    );
+    let given = reply_obligation::take_given_draft(&mut harness.ctx).expect("unrecorded answer");
+    assert!(reply_obligation::take_given_draft(&mut harness.ctx).is_none());
+    harness
+        .runtime
+        .store
+        .commit(Commit::new().event(given))
+        .expect("record the reply");
     assert!(!reply_obligation::load(&harness.runtime, agent).expect("given"));
 }
 

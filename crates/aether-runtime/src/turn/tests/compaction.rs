@@ -146,6 +146,7 @@ async fn explicit_requests_do_not_replace_a_pending_model_handoff() {
         hard_cancel: CancellationToken::new(),
         recovery_checked_for: None,
         user_reply_pending: false,
+        reply_given_unrecorded: false,
         start_handoff: None,
     };
     let outcome = apply_action(

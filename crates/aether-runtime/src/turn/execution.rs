@@ -674,6 +674,14 @@ pub(super) async fn run_link(
             content: response.content.clone(),
             invocation: Some(invocation_id),
         }));
+        if response
+            .content
+            .iter()
+            .any(|block| matches!(block, ContentBlock::Text { text } if !text.trim().is_empty()))
+        {
+            super::reply_obligation::answer(ctx);
+            commit.push_event(super::reply_obligation::given_draft(ctx));
+        }
     }
     // Scoped: the hold is not `Send`, and this turn awaits its tools below.
     {
@@ -694,13 +702,6 @@ pub(super) async fn run_link(
     }
 
     // ---- 6. tools and actions ------------------------------------------------
-    if response
-        .content
-        .iter()
-        .any(|block| matches!(block, ContentBlock::Text { text } if !text.trim().is_empty()))
-    {
-        super::reply_obligation::clear(runtime, ctx)?;
-    }
     let tool_uses: Vec<(String, String, serde_json::Value)> = response
         .tool_uses()
         .map(|(id, name, input)| (id.to_owned(), name.to_owned(), input.clone()))

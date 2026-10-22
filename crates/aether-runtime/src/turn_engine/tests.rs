@@ -439,6 +439,7 @@ pub(super) async fn started_agent_ctx(runtime: &Arc<Runtime>) -> TurnCtx {
         hard_cancel: CancellationToken::new(),
         recovery_checked_for: None,
         user_reply_pending: false,
+        reply_given_unrecorded: false,
         start_handoff: None,
     }
 }

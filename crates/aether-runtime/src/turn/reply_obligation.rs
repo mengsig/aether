@@ -3,7 +3,7 @@
 use aether_core::event::{EventDraft, EventKind};
 use aether_core::id::AgentId;
 use aether_core::inbox::InboxItem;
-use aether_store::{Commit, EventFilter};
+use aether_store::EventFilter;
 
 use super::{Result, Runtime, TurnCtx, has_direct_user_message};
 
@@ -58,17 +58,25 @@ pub(crate) fn load(runtime: &Runtime, agent: AgentId) -> Result<bool> {
     }
 }
 
-/// Visible assistant text has answered: drop the in-memory flag and record it.
-pub(crate) fn clear(runtime: &Runtime, ctx: &mut TurnCtx) -> Result<()> {
-    if !ctx.user_reply_pending {
-        return Ok(());
+/// Visible assistant text has answered in memory; the log learns of it only
+/// with the committed reply (`take_given_draft`), never before it is durable.
+pub(crate) fn answer(ctx: &mut TurnCtx) {
+    if ctx.user_reply_pending {
+        ctx.user_reply_pending = false;
+        ctx.reply_given_unrecorded = true;
     }
-    ctx.user_reply_pending = false;
-    let given = ctx.draft(EventKind::Custom {
+}
+
+/// The event closing the debt, to commit with the reply that paid it.
+pub(crate) fn given_draft(ctx: &mut TurnCtx) -> EventDraft {
+    ctx.reply_given_unrecorded = false;
+    ctx.draft(EventKind::Custom {
         name: REPLY_GIVEN.into(),
         payload: serde_json::Value::Null,
-    });
-    let hold = runtime.hold();
-    runtime.apply_held(hold, Commit::new().event(given))?;
-    Ok(())
+    })
+}
+
+/// `given_draft` when an answered reply is still unrecorded.
+pub(crate) fn take_given_draft(ctx: &mut TurnCtx) -> Option<EventDraft> {
+    ctx.reply_given_unrecorded.then(|| given_draft(ctx))
 }

@@ -332,7 +332,7 @@ pub(super) fn handle_event(
             let delta = match se {
                 StreamEvent::TextDelta { text, .. } => {
                     if !text.trim().is_empty() {
-                        crate::turn::reply_obligation::clear(runtime, ctx)?;
+                        crate::turn::reply_obligation::answer(ctx);
                     }
                     if state.keep_text(&text) {
                         protocol_note(
@@ -406,7 +406,7 @@ pub(super) fn handle_event(
                     ContentBlock::Text { text } if !text.trim().is_empty()
                 )
             }) {
-                crate::turn::reply_obligation::clear(runtime, ctx)?;
+                crate::turn::reply_obligation::answer(ctx);
             }
             state.tool_names.clear();
             state.invoked = true;
@@ -526,6 +526,9 @@ pub(super) fn handle_event(
                 ctx.add_usage(usage);
             }
             ctx.agent.updated_at = at;
+            if let Some(given) = crate::turn::reply_obligation::take_given_draft(ctx) {
+                commit.push_event(given);
+            }
             let hold = runtime.hold();
             commit.push_mutation(Mutation::UpsertAgent(crate::turn::agent_row(
                 runtime, ctx, &hold,

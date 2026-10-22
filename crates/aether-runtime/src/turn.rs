@@ -211,6 +211,8 @@ pub(crate) struct TurnCtx {
     pub(crate) recovery_checked_for: Option<aether_core::model::ModelRef>,
     /// A direct user message received this turn still needs visible assistant text.
     pub(crate) user_reply_pending: bool,
+    /// The reply was answered in memory but its `reply.given` is not yet committed.
+    pub(crate) reply_given_unrecorded: bool,
     /// The handoff this model owed when the turn started, before later
     /// selections could replace the ledger's latest request.
     pub(crate) start_handoff: Option<compaction::PendingCompaction>,
@@ -359,6 +361,7 @@ fn begin_turn(
         hard_cancel: cancel.clone(),
         recovery_checked_for: None,
         user_reply_pending: reply_obligation::load(runtime, agent_id)?,
+        reply_given_unrecorded: false,
         start_handoff,
     };
     let mut commit = start_commit(&ctx, &lease, task.as_mut(), at)?;
