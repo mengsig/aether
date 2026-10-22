@@ -650,9 +650,12 @@ pub(crate) async fn execute(
         if let Some(gave_up) = gave_up {
             error = format!("{error} ({gave_up})");
         }
-        let class = crate::exhaustion::engine_error_class(
-            outcome.error.as_deref().unwrap_or("unknown error"),
-        );
+        let class = match stalled {
+            Some(_) => super::ModelErrorClass::Timeout,
+            None => crate::exhaustion::engine_error_class(
+                outcome.error.as_deref().unwrap_or("unknown error"),
+            ),
+        };
         record_engine_failure(runtime, ctx, &snapshot, &error, class, false, uncommitted)?;
         // The failure is recorded, but the agent idles until spoken to: a
         // message resumes the session, where a failed agent is gone for good.

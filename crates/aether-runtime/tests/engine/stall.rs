@@ -156,18 +156,20 @@ async fn an_engine_that_keeps_stalling_ends_the_turn_with_an_actionable_error() 
         .store
         .events(0, 10_000, &EventFilter::own_events(id))
         .unwrap();
-    let said = events
+    let (said, class) = events
         .iter()
         .filter_map(|event| match &event.kind {
             EventKind::InvocationFailed {
                 error,
+                class,
                 retryable: false,
                 ..
-            } => Some(error.clone()),
+            } => Some((error.clone(), *class)),
             _ => None,
         })
         .next_back()
         .expect("a terminal failure is recorded");
+    assert_eq!(class, Some(aether_core::model::ModelErrorClass::Timeout));
     assert!(
         said.contains("engine stalled") && said.contains("message it to resume"),
         "{said}"
