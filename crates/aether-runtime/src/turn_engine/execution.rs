@@ -292,6 +292,7 @@ pub(crate) async fn execute(
     let mut delivered = false;
     let mut earlier_tools = false;
     let mut recovered_session = false;
+    let mut stalls = 0u32;
     let mut run = loop {
         if cancel.is_cancelled() {
             return Ok(EngineLink::Done(Next::Cancelled(Some("cancelled".into()))));
@@ -333,9 +334,30 @@ pub(crate) async fn execute(
         let pending_request = !req_rx.is_empty();
         drop(registered);
         drop(req_rx);
-        let class = crate::exhaustion::engine_error_class(
-            run.outcome.error.as_deref().unwrap_or("unknown error"),
-        );
+        let class = match run.stalled {
+            Some(_) => super::ModelErrorClass::Timeout,
+            None => crate::exhaustion::engine_error_class(
+                run.outcome.error.as_deref().unwrap_or("unknown error"),
+            ),
+        };
+        if run.stalled.is_none() {
+            super::stall::clear_problem(runtime, ctx);
+        }
+        if let Some(silent) = run.stalled {
+            stalls += 1;
+            super::stall::record(
+                runtime,
+                ctx,
+                engine.kind(),
+                &resolved.model.id,
+                silent,
+                stalls,
+            )?;
+            if stalls > super::stall::MAX_RETRIES {
+                gave_up = Some(super::stall::gave_up(silent, stalls));
+                break run;
+            }
+        }
         // A crossed grant is not a lost session: retrying would spend past a
         // budget that is already gone. Nor is a transient failure to reopen
         // it: that session still holds its context and is waited out below.
@@ -518,6 +540,7 @@ pub(crate) async fn execute(
         ran_tools,
         budget_stop,
         uncommitted,
+        stalled,
         ..
     } = run;
 
@@ -627,10 +650,18 @@ pub(crate) async fn execute(
         if let Some(gave_up) = gave_up {
             error = format!("{error} ({gave_up})");
         }
-        let class = crate::exhaustion::engine_error_class(
-            outcome.error.as_deref().unwrap_or("unknown error"),
-        );
+        let class = match stalled {
+            Some(_) => super::ModelErrorClass::Timeout,
+            None => crate::exhaustion::engine_error_class(
+                outcome.error.as_deref().unwrap_or("unknown error"),
+            ),
+        };
         record_engine_failure(runtime, ctx, &snapshot, &error, class, false, uncommitted)?;
+        // The failure is recorded, but the agent idles until spoken to: a
+        // message resumes the session, where a failed agent is gone for good.
+        if stalled.is_some() {
+            return Ok(EngineLink::Done(Next::Interrupted));
+        }
         if crate::exhaustion::recoverable_by_fallback(class) {
             return Ok(EngineLink::Exhausted { class, error });
         }
@@ -1059,5 +1090,6 @@ pub(super) fn test_run() -> DriveResult {
         pricing: super::TurnPricing::default(),
         cleaned_up: true,
         uncommitted: Uncommitted::default(),
+        stalled: None,
     }
 }

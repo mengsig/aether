@@ -244,6 +244,15 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             reason,
         })?
         .unwrap_or(aether_runtime::DEFAULT_ENGINE_TRANSIENT_RETRY_WINDOW);
+    let engine_stall_timeout = models
+        .config()
+        .scheduler
+        .engine_stall_timeout()
+        .map_err(|reason| aether_model::config::ConfigError {
+            path: "config.toml".into(),
+            reason,
+        })?
+        .unwrap_or(aether_runtime::DEFAULT_ENGINE_STALL_TIMEOUT);
     let max_concurrent_engine_turns =
         models
             .config()
@@ -321,6 +330,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 .unwrap_or(aether_runtime::DEFAULT_RESOURCE_WAIT_TIMEOUT),
             engine_park_grace,
             engine_transient_retry_window,
+            engine_stall_timeout,
             yolo,
             approval_default: models.config().approval.default,
             network_default: models.config().network.default,

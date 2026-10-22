@@ -858,6 +858,25 @@ attempt starts after it ends. The agent then fails, the error names the class
 and how long it retried, and every responsible ancestor is told. The turn
 keeps its scheduler and engine-cap slot while it waits.
 
+### Stalled turns
+
+A request can go out and never be answered: no reply, no error, no exit. The
+engine's own timeouts do not end that, so Aether watches each native turn.
+When an engine has produced nothing (no stream, message, tool result or
+bridge request) for `[scheduler] engine_stall_minutes` (15 by default; `0`
+turns the watchdog off) and no tool call is running, no background task is
+owed and no harness action is winding the turn down, the turn is stalled. A
+running tool is not silence: it keeps its own timeout.
+
+A stall emits an `agent.stalled` event with `agent`, `engine`, `model`,
+`silent_secs` and `attempt` (1 for the first stall of the turn), so clients can
+subscribe to it. Aether then stops the engine process and resumes the same
+session, like a transient failure, waiting with the same backoff. After two
+retries (the third stall) the turn ends with a recorded error saying the
+engine stalled; the agent goes idle and a message resumes its session. While
+an agent is stalled, `aether status` lists it under "Needs attention", and the
+TUI and `aether run` print a notice for each stall.
+
 ### Launch identity and child telemetry
 
 The runtime calls `Engine::run_with_context(turn, context, cancel)` for normal,

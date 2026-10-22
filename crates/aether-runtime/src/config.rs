@@ -23,6 +23,10 @@ pub const DEFAULT_ENGINE_TRANSIENT_RETRY_WINDOW: Duration = Duration::from_secs(
 /// First wait after a transient native engine failure; each later one doubles.
 pub const DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR: Duration = Duration::from_secs(15);
 
+/// How long a native engine turn may stay silent, with no tool running,
+/// before the stall watchdog interrupts it.
+pub const DEFAULT_ENGINE_STALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     /// Identity recorded on leases; the daemon instance id.
@@ -82,6 +86,9 @@ pub struct RuntimeConfig {
     /// First backoff after a transient native failure; doubles per retry up
     /// to a five minute cap.
     pub engine_transient_retry_floor: Duration,
+    /// Silence, with no tool running, after which a native engine turn is
+    /// interrupted and resumed. Zero turns the watchdog off.
+    pub engine_stall_timeout: Duration,
     /// `host:port` targets probed before relaunching an engine after a
     /// network failure. `None` probes the engine's provider host; empty skips
     /// the probe.
@@ -148,6 +155,7 @@ impl Default for RuntimeConfig {
             exhaustion_probe_floor: DEFAULT_EXHAUSTION_PROBE_FLOOR,
             engine_transient_retry_window: DEFAULT_ENGINE_TRANSIENT_RETRY_WINDOW,
             engine_transient_retry_floor: DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR,
+            engine_stall_timeout: DEFAULT_ENGINE_STALL_TIMEOUT,
             engine_probe_targets: None,
             yolo: false,
             approval_default: aether_core::agent::ApprovalDefault::default(),

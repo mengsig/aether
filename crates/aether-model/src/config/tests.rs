@@ -298,6 +298,33 @@ fn an_engine_transient_retry_window_is_bounded_and_may_be_zero() {
     }
 }
 
+#[test]
+fn an_engine_stall_timeout_is_bounded_and_zero_turns_it_off() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let write = |body: &str| {
+        std::fs::write(dir.path().join("config.toml"), body).expect("write");
+        load_config(dir.path())
+    };
+    let err = write("[scheduler]\nengine_stall_minutes = 99999999\n")
+        .expect_err("past a week the agent is hung, not slow");
+    assert!(err.reason.contains("engine_stall_minutes"), "{err}");
+    for (body, timeout) in [
+        ("[scheduler]\nengine_stall_minutes = 0\n", Some(0)),
+        ("[scheduler]\nengine_stall_minutes = 30\n", Some(30 * 60)),
+        ("[scheduler]\n", None),
+    ] {
+        assert_eq!(
+            write(body)
+                .expect("load")
+                .scheduler
+                .engine_stall_timeout()
+                .expect("valid"),
+            timeout.map(std::time::Duration::from_secs),
+            "{body}"
+        );
+    }
+}
+
 /// The knob is operator-facing (README, `docs/engines.md`), so a value
 /// that cannot mean what it says has to be reported at load, not
 /// silently replaced by the default.

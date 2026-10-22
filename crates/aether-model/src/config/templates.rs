@@ -88,6 +88,10 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # provider capacity and server errors (backing off up to 5 minutes between
 # attempts and resuming its session) before it fails. 0 fails at once.
 # engine_transient_retry_minutes = 120
+# How long an engine-backed agent may produce no output, with no tool running,
+# before the turn counts as stalled: it is interrupted and its session resumed
+# (twice at most), then the turn fails visibly. 0 turns the watchdog off.
+# engine_stall_minutes = 15
 # Maximum simultaneous turns on an engine (Claude Code, Codex) across the
 # daemon; unset means only the limits above apply. Engine turns are what a
 # subscription window is spent on, so this bounds burn rate directly.

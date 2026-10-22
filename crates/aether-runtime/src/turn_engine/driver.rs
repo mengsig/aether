@@ -50,6 +50,8 @@ pub(super) struct DriveResult {
     /// Streamed after the engine's last committed message; shown live, so a
     /// failure record keeps it.
     pub(super) uncommitted: Uncommitted,
+    /// The watchdog ended the turn after this much silence.
+    pub(super) stalled: Option<std::time::Duration>,
 }
 
 fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
@@ -154,6 +156,7 @@ fn failed_launch(
         pricing,
         cleaned_up: true,
         uncommitted: Uncommitted::default(),
+        stalled: None,
     }
 }
 
@@ -262,7 +265,15 @@ pub(super) async fn drive(
     // the same stop the scheduler's sweep performs.
     let mut budget_stop: Option<Crossed> = None;
     let mut subtree = SubtreeUsage::default();
+    let mut watchdog = super::stall::Watchdog::new(runtime.config.engine_stall_timeout);
+    let mut stalled: Option<std::time::Duration> = None;
+    // Set by an engine event or bridge request; applied once it is handled,
+    // so an approval the operator took hours over is not engine silence.
+    let mut touch_pending = false;
     let mut outcome = loop {
+        if std::mem::take(&mut touch_pending) {
+            watchdog.touch();
+        }
         if native_wait
             .as_ref()
             .is_some_and(|wait| wait.ready(runtime, ctx))
@@ -274,7 +285,23 @@ pub(super) async fn drive(
         }
         let native_deadline = native_wait.as_ref().and_then(|wait| wait.deadline());
         let accounting_deadline = state.accounting.deadline();
+        // Something else owns the clock while a tool runs, the engine owes
+        // an answer to background work, or the turn is winding down.
+        let waiting = !state.calls.is_empty()
+            || !background.is_empty()
+            || settled.is_some()
+            || park.is_some()
+            || reap_grace.is_some()
+            || question.is_some()
+            || native_wait.is_some();
+        let stall_deadline = watchdog.deadline(waiting);
         tokio::select! {
+            () = tokio::time::sleep_until(stall_deadline.unwrap_or_else(tokio::time::Instant::now)), if stall_deadline.is_some() => {
+                let silent = watchdog.silent_for();
+                tracing::warn!(agent = %ctx.agent.id, silent_secs = silent.as_secs(), "engine turn stalled; interrupting it");
+                stalled = Some(silent);
+                break super::stall::stalled_outcome(silent);
+            }
             ready = async {
                 match input.as_ref() {
                     Some(tx) => tx.reserve().await.is_ok(),
@@ -301,6 +328,7 @@ pub(super) async fn drive(
                 subtree.note_own_commits(runtime.store.commits().saturating_sub(commits_before));
             }
             ev = run.events.recv() => {
+                touch_pending = true;
                 if ev.as_ref().is_some_and(writes_record) {
                     // Held readings precede what this commits, and are never
                     // left behind a wait on an operator or the engine.
@@ -568,6 +596,7 @@ pub(super) async fn drive(
                 }
             }
             req = req_rx.recv() => {
+                touch_pending = true;
                 if let Some(req) = req {
                     receipt_seen = false;
                     activity_seen = true;
@@ -716,7 +745,7 @@ pub(super) async fn drive(
     let class = crate::exhaustion::engine_error_class(outcome.error.as_deref().unwrap_or(""));
     let mut cleaned_up = false;
     if outcome.is_error
-        && crate::exhaustion::native_transient(class)
+        && (stalled.is_some() || crate::exhaustion::native_transient(class))
         && park.is_none()
         && budget_stop.is_none()
         && !outcome.interrupted
@@ -867,6 +896,7 @@ pub(super) async fn drive(
         pricing: state.pricing,
         cleaned_up,
         uncommitted,
+        stalled,
     })
 }
 
