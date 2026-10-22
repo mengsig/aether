@@ -71,6 +71,7 @@ use capacity::*;
 mod actions;
 pub(crate) use actions::apply_action;
 pub(crate) use waiting::validate_wait;
+pub(crate) mod reply_obligation;
 mod waiting;
 pub(crate) use waiting::has_direct_user_message;
 use waiting::*;
@@ -357,7 +358,7 @@ fn begin_turn(
         base_actor: Actor::agent(agent_id),
         hard_cancel: cancel.clone(),
         recovery_checked_for: None,
-        user_reply_pending: false,
+        user_reply_pending: reply_obligation::load(runtime, agent_id)?,
         start_handoff,
     };
     let mut commit = start_commit(&ctx, &lease, task.as_mut(), at)?;

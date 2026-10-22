@@ -168,19 +168,23 @@ pub(super) fn record_consumed(
     ctx.agent.updated_at = now();
     let hold = runtime.hold();
     let row = crate::turn::agent_row(runtime, ctx, &hold)?;
-    runtime.apply_held(
-        hold,
-        Commit::new()
-            .event(ctx.draft(EventKind::AgentMessage {
-                role: MessageRole::User,
-                content: pending.message.content,
-                invocation: None,
-            }))
-            .event(ctx.draft(EventKind::InboxConsumed {
-                up_to: pending.up_to,
-                items: pending.ids,
-            }))
-            .mutate(Mutation::UpsertAgent(row)),
-    )?;
+    let mut commit = Commit::new()
+        .event(ctx.draft(EventKind::AgentMessage {
+            role: MessageRole::User,
+            content: pending.message.content,
+            invocation: None,
+        }))
+        .event(ctx.draft(EventKind::InboxConsumed {
+            up_to: pending.up_to,
+            items: pending.ids,
+        }))
+        .mutate(Mutation::UpsertAgent(row));
+    if pending.from_user {
+        commit.push_event(crate::turn::reply_obligation::owed_draft(
+            ctx,
+            pending.up_to,
+        ));
+    }
+    runtime.apply_held(hold, commit)?;
     Ok(())
 }

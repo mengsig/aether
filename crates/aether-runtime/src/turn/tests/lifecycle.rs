@@ -29,6 +29,53 @@ fn only_direct_user_inbox_messages_require_a_reply() {
     ))]));
 }
 
+#[test]
+fn only_user_messages_up_to_the_cursor_create_an_obligation() {
+    use crate::turn::reply_obligation::consumed_user_message;
+    use aether_core::id::{InboxItemId, MessageId};
+    use aether_core::inbox::{InboxItem, InboxKind};
+
+    let item = |seq, from| InboxItem {
+        id: InboxItemId::new(),
+        agent_id: AgentId::new(),
+        seq,
+        kind: InboxKind::Message {
+            message_id: MessageId::new(),
+            from,
+            content: vec![ContentBlock::Text { text: "hi".into() }],
+        },
+        delivered_at: now(),
+    };
+    let queue = [
+        item(1, Actor::agent(AgentId::new())),
+        item(2, Actor::user()),
+    ];
+    assert!(!consumed_user_message(&queue, 1));
+    assert!(consumed_user_message(&queue, 2));
+}
+
+#[tokio::test]
+async fn reply_obligation_survives_a_restart_until_the_reply_is_written() {
+    use crate::turn::reply_obligation::{self, owed_draft};
+
+    let (mut harness, _dir) = ComposeHarness::new().await;
+    let agent = harness.ctx.agent.id;
+    assert!(!reply_obligation::load(&harness.runtime, agent).expect("empty log"));
+
+    let owed = owed_draft(&harness.ctx, 1);
+    harness
+        .runtime
+        .store
+        .commit(Commit::new().event(owed))
+        .expect("record the debt");
+    assert!(reply_obligation::load(&harness.runtime, agent).expect("owed"));
+
+    harness.ctx.user_reply_pending = true;
+    reply_obligation::clear(&harness.runtime, &mut harness.ctx).expect("clear");
+    assert!(!harness.ctx.user_reply_pending);
+    assert!(!reply_obligation::load(&harness.runtime, agent).expect("given"));
+}
+
 #[tokio::test]
 async fn direct_user_question_requires_visible_reply_before_waiting() {
     let (mut harness, _dir) = ComposeHarness::new().await;

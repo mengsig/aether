@@ -464,6 +464,9 @@ pub(super) async fn run_link(
                 up_to,
                 items: assembled.consumed_inbox.clone(),
             }));
+            if reply_obligation::consumed_user_message(&queued_inbox, up_to) {
+                commit.push_event(reply_obligation::owed_draft(ctx, up_to));
+            }
             commit.push_mutation(Mutation::UpsertAgent(agent_row(runtime, ctx, &hold)?));
         }
         // A new-model handoff already folds this turn's transcript on the
@@ -696,7 +699,7 @@ pub(super) async fn run_link(
         .iter()
         .any(|block| matches!(block, ContentBlock::Text { text } if !text.trim().is_empty()))
     {
-        ctx.user_reply_pending = false;
+        super::reply_obligation::clear(runtime, ctx)?;
     }
     let tool_uses: Vec<(String, String, serde_json::Value)> = response
         .tool_uses()

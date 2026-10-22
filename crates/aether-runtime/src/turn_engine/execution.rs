@@ -213,6 +213,9 @@ pub(crate) async fn execute(
             up_to,
             items: assembled.consumed_inbox.clone(),
         }));
+        if crate::turn::reply_obligation::consumed_user_message(&queued_inbox, up_to) {
+            commit.push_event(crate::turn::reply_obligation::owed_draft(ctx, up_to));
+        }
     }
     // Scoped: the hold is not `Send`. `agent_row` and `touch` read rows this
     // commit writes back, so both run under it.

@@ -497,3 +497,61 @@ async fn a_host_reboot_retries_interrupted_and_previously_inspected_mutations() 
         );
     }
 }
+
+fn reply_obligation_events(store: &dyn Store, id: AgentId) -> Vec<String> {
+    store
+        .events(0, 10_000, &EventFilter::own_events(id))
+        .expect("events")
+        .into_iter()
+        .filter_map(|event| match event.kind {
+            EventKind::Custom { name, .. } if name.starts_with("reply.") => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A person's question is consumed and the daemon dies before the answer: the
+/// restarted turn still owes the reply, refuses to wait, and clears the debt
+/// once it answers in text.
+#[tokio::test]
+async fn a_kill_after_a_user_message_is_consumed_keeps_the_reply_owed() {
+    let h = harness(vec![ScriptedClient::text("never arrives")]).await;
+    h.client.set_delay(Duration::from_secs(3600));
+    let mut s = idle_spec();
+    s.objective = Some("watch the build".into());
+    let (agent, _) = h.runtime.create_agent(s, Actor::user()).expect("create");
+    wait_for_event(h.store.as_ref(), agent.id, "snapshot.created").await;
+    h.runtime
+        .send_message(agent.id, vec![ContentBlock::text("status?")], Actor::user())
+        .expect("a person asks");
+
+    let h2 = second_daemon_over(&h, vec![ScriptedClient::text("never arrives")]).await;
+    h2.client.set_delay(Duration::from_secs(3600));
+    wait_until_events(h2.store.as_ref(), agent.id, |_| {
+        reply_obligation_events(h2.store.as_ref(), agent.id) == ["reply.owed"]
+    })
+    .await;
+
+    let h3 = second_daemon_over(
+        &h2,
+        vec![
+            ScriptedClient::tool_call("wait_for", json!({"timeout_seconds": 3600})),
+            ScriptedClient::text("All green."),
+        ],
+    )
+    .await;
+    wait_until_events(h3.store.as_ref(), agent.id, |_| {
+        reply_obligation_events(h3.store.as_ref(), agent.id) == ["reply.owed", "reply.given"]
+    })
+    .await;
+    let log = format!(
+        "{:?}",
+        h3.store
+            .events(0, 10_000, &EventFilter::for_agent(agent.id))
+            .expect("events")
+    );
+    assert!(
+        log.contains("Reply in visible assistant text"),
+        "the restarted turn must refuse to wait while the reply is owed"
+    );
+}

@@ -332,7 +332,7 @@ pub(super) fn handle_event(
             let delta = match se {
                 StreamEvent::TextDelta { text, .. } => {
                     if !text.trim().is_empty() {
-                        ctx.user_reply_pending = false;
+                        crate::turn::reply_obligation::clear(runtime, ctx)?;
                     }
                     if state.keep_text(&text) {
                         protocol_note(
@@ -406,7 +406,7 @@ pub(super) fn handle_event(
                     ContentBlock::Text { text } if !text.trim().is_empty()
                 )
             }) {
-                ctx.user_reply_pending = false;
+                crate::turn::reply_obligation::clear(runtime, ctx)?;
             }
             state.tool_names.clear();
             state.invoked = true;

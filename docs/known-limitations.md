@@ -180,10 +180,10 @@ looks like a boundary and is not one.
 - Delivery acknowledgment is not answer/compliance verification. Steering a
   running child across restarts and providers is only partly verified
   (roadmap).
-- After a direct user message, `wait_for` requires visible assistant text in
-  the active turn. If the daemon crashes after consuming that message but
-  before a reply, the in-memory requirement is lost on restart; the runtime
-  also cannot judge whether the text actually answers the question.
+- After a direct user message, `wait_for` requires visible assistant text
+  until the agent replies; the requirement is recorded in the event log and
+  survives a daemon restart. The runtime cannot judge whether the text
+  actually answers the question.
 - If the TUI disconnects during a new agent's model patch, its initial
   messages stay held until `/model` is retried after reconnecting. A later
   queued choice can still appear in the picker as the latest choice even
