@@ -16,6 +16,7 @@ pub(super) const MAX_RETRIES: u32 = 2;
 pub(super) struct Watchdog {
     timeout: Duration,
     last_activity: Instant,
+    was_waiting: bool,
 }
 
 impl Watchdog {
@@ -24,6 +25,7 @@ impl Watchdog {
         Self {
             timeout,
             last_activity: Instant::now(),
+            was_waiting: false,
         }
     }
 
@@ -33,7 +35,13 @@ impl Watchdog {
 
     /// When the turn counts as stalled. `None` while the watchdog is off or
     /// the turn legitimately waits on something else (`waiting` is true).
-    pub(super) fn deadline(&self, waiting: bool) -> Option<Instant> {
+    /// The clock restarts when such a wait ends: the engine only now gets
+    /// to answer whatever it waited for.
+    pub(super) fn deadline(&mut self, waiting: bool) -> Option<Instant> {
+        if self.was_waiting && !waiting {
+            self.touch();
+        }
+        self.was_waiting = waiting;
         if self.timeout.is_zero() || waiting {
             return None;
         }
@@ -126,6 +134,15 @@ mod tests {
             Duration::from_secs(40)
         );
         assert_eq!(dog.silent_for(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_clock_restarts_when_a_wait_ends() {
+        let mut dog = Watchdog::new(Duration::from_secs(60));
+        assert!(dog.deadline(true).is_none());
+        tokio::time::advance(Duration::from_secs(3600)).await;
+        let deadline = dog.deadline(false).unwrap();
+        assert!(deadline > Instant::now(), "a long wait is not silence");
     }
 
     #[test]
