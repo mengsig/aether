@@ -60,7 +60,8 @@ additive. Store schema 26, unchanged.
 - `aether diagnose` writes `aether-diagnose-<time>` when `--out` is left out,
   and `aether version` prints the version and protocol version (#265).
 - `aether github-watcher add` says when it turns polling on (#271).
-- `/theme` opens the theme list instead of the Settings form (#270).
+- `/theme` opens the theme list instead of the Settings form (#270), and the
+  remote web app's palette has its own `/theme` too.
 
 ### Fixed
 
@@ -91,6 +92,9 @@ additive. Store schema 26, unchanged.
   `aether run` keeps replies of separate turns on separate lines (#265).
 - **TUI.** The file viewer keeps the indentation of plain text and code, and
   closing it shows the board it hid again (#270).
+- The prompt-integrity tests that send an oversized message run on a
+  small-context model, so they stay under the new 2 MiB message limit and
+  still reach the context-budget check (#282).
 
 ## 1.2.2
 
