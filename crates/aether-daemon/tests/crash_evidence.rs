@@ -6,7 +6,7 @@ use aether_core::crash::{self, CrashKind};
 use support::{RawConn, TestDaemon};
 
 #[tokio::test]
-async fn status_keeps_crash_evidence_after_startup_acknowledgment() {
+async fn status_reports_crash_evidence_until_a_startup_acknowledges_it() {
     let mut daemon = TestDaemon::start().await;
     crash::record(
         &daemon.store_path(),
@@ -22,17 +22,19 @@ async fn status_keeps_crash_evidence_after_startup_acknowledgment() {
             .await
             .unwrap();
         let reply = connection.call(serde_json::json!({"cmd":"status"})).await;
-        let problems = reply["result"]["Ok"]["data"]["problems"]
-            .as_array()
-            .unwrap();
-        assert!(
+        let status = &reply["result"]["Ok"]["data"];
+        assert!(status.is_object(), "{reply}");
+        // An empty problem list is left out of the reply.
+        let listed = status["problems"].as_array().is_some_and(|problems| {
             problems
                 .iter()
-                .any(|p| p.as_str().unwrap().contains("prior failure")),
-            "{reply}"
-        );
+                .any(|p| p.as_str().unwrap().contains("prior failure"))
+        });
+        // The evidence outlives every restart, but once a start acknowledged it
+        // it is history, not a problem (#267).
         let record = crash::read(&daemon.store_path()).unwrap().unwrap();
         assert_eq!(record.acknowledged, restart > 0);
+        assert_eq!(listed, !record.acknowledged, "{reply}");
         if restart > 0 {
             assert!(
                 crash::acknowledge_startup(&daemon.store_path())
