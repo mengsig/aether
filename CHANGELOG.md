@@ -6,24 +6,91 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.3
+
+Released 2026-10-22. A patch release that fixes what the 2026-10-22
+end-to-end pass found (#262, #263, #265-#271): a silent engine turn is
+stopped and resumed instead of hanging, ^C reaches spawned tools again, a
+killed daemon's leftover tool processes are reaped at the next start, and
+oversized messages are refused before they bloat the store. It also adds a
+hard spend stop per run (#100), keeps reply obligations across daemon
+restarts (#104) and records the tools a Codex agent was offered (#221).
+Protocol version 24, unchanged; the new status fields and events are
+additive. Store schema 26, unchanged.
+
+### Before updating
+
+- Restart the daemon after the update (`aether stop`, then `aether`); a yes
+  to the update offer on launch does this for you. A daemon still running
+  1.2.2 has no stall watchdog, hard stop or message size limit until it
+  restarts.
+- New agents with no `model.default` now use the engine's balanced, priced
+  model (`claude-code/claude-sonnet-5-5`, `codex/gpt-6.1-sol`) rather than
+  the CLI's unpriced `default`. Set `model.default` to keep another one. An
+  unknown `model.default` is now refused by name when an agent is created
+  instead of being replaced silently.
+- Messages and task objectives above 2 MiB are refused; attach large content
+  as a file or artifact.
+
+### Added
+
+- **Hard spend stop per run.** `[scheduler] run_hard_stop_usd` and
+  `run_hard_stop_tokens` interrupt every running turn of a run once its
+  recorded spend reaches either limit, record one `run.hard_stop` event and
+  refuse turns whose reserved estimate would cross the stop. `aether status`
+  lists the configured stops and reports a held run (#100).
+- **Stall watchdog for engine turns.** After 15 silent minutes with no tool
+  running (`[scheduler] engine_stall_minutes`, `0` turns it off) Aether
+  records an `agent.stalled` event, stops the engine and resumes its session,
+  twice at most, then ends the turn with a visible error and leaves the agent
+  idle. `aether status`, `aether run` and the TUI show the stall (#263).
+- **`aether storage backup`** writes a verified, zstd-compressed snapshot of
+  the database to `backups/` (`--output DIR` for another directory), whether
+  or not the daemon runs (#268).
+- `aether run` takes `--token-budget`, `--cost-budget` and `--max-turns`
+  (#265).
+
 ### Changed
 
-- `aether daemon --help` and `aether serve --help` print their help again.
-- `aether run` takes `--token-budget`, `--cost-budget` and `--max-turns`, and
-  keeps replies of separate turns on separate lines.
+- **New agents default to a priced, balanced model**, and an unknown
+  `model.default` is refused by name with the valid choices (#266).
 - `aether schedule create --target` no longer needs `--payload`; pause, resume
-  and cancel print one summary line.
-- `aether diagnose` writes `aether-diagnose-<time>` when `--out` is left out.
-- `aether version` prints the version and protocol version.
+  and cancel print one summary line, and `--every` errors say a bare number
+  counts seconds (#265).
+- `aether diagnose` writes `aether-diagnose-<time>` when `--out` is left out,
+  and `aether version` prints the version and protocol version (#265).
+- `aether github-watcher add` says when it turns polling on (#271).
+- `/theme` opens the theme list instead of the Settings form (#270).
 
 ### Fixed
 
-- An engine turn whose model request is never answered no longer hangs for
-  hours. After 15 silent minutes with no tool running (`[scheduler]
-  engine_stall_minutes`, `0` turns it off) Aether records an `agent.stalled`
-  event, stops the engine and resumes its session, twice at most, then ends
-  the turn with a visible error and leaves the agent idle. `aether status` and
-  the TUI show the stall. Closes #263.
+- **^C stops spawned processes again.** Tool commands, PTY terminals, MCP
+  servers and engine CLIs no longer inherit an ignored SIGINT from a daemon
+  started in the background (#262).
+- **Leftover processes after a killed daemon.** Each engine carries a random
+  token, and the next daemon start kills every live process holding it, so a
+  shell tool's own process group no longer survives a `kill -9` of the daemon
+  (#269).
+- **Store and WAL bloat.** Messages, task objectives, trigger and schedule
+  payloads above 2 MiB are refused with the size and the limit, and the
+  checkpointer truncates a fully copied WAL above 8 MiB (#268).
+- **Reply obligations survive a daemon restart.** A direct message that owes a
+  reply is recorded as `reply.owed` and discharged by `reply.given` with the
+  committed reply, so a restarted turn still answers it (#104).
+- **Login guidance and quieter diagnostics.** A Claude Code or Codex run
+  rejected with a 401 names the login command; a crash a later start
+  acknowledged no longer counts as a problem in `aether status` or
+  `aether doctor`; a held storage sweep lock is a quiet skip (#267).
+- **MCP HTTP authentication.** Failed authentications are throttled per
+  source and paced, without locking out a client that presents a valid token
+  (#271).
+- **Codex tool inventory.** The Codex session event lists the tools Aether
+  offered, and a missing `complete_task`, `fail_task` or `delegate` is flagged
+  as a protocol warning (#221).
+- `aether daemon --help` and `aether serve --help` print their help again, and
+  `aether run` keeps replies of separate turns on separate lines (#265).
+- **TUI.** The file viewer keeps the indentation of plain text and code, and
+  closing it shows the board it hid again (#270).
 
 ## 1.2.2
 

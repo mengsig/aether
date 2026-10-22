@@ -26,7 +26,7 @@ import warnings
 from . import protocol
 
 CLIENT_NAME = "aether-python"
-CLIENT_VERSION = "1.2.2"
+CLIENT_VERSION = "1.2.3"
 
 # Longest accepted frame, matching the daemon's own cap.
 MAX_LINE = 64 * 1024 * 1024
