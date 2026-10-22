@@ -92,7 +92,7 @@ async fn memory_retrieval_failure_fails_the_child_and_notifies_its_parent() {
 
 #[tokio::test]
 async fn oversized_api_input_is_rejected_before_consuming_the_inbox() {
-    let h = harness(vec![ScriptedClient::text("must not be invoked")]).await;
+    let h = small_context_harness(vec![ScriptedClient::text("must not be invoked")]).await;
     let (agent, _) = h
         .runtime
         .create_agent(idle_spec(), Actor::user())
@@ -136,8 +136,8 @@ async fn oversized_api_input_is_rejected_before_consuming_the_inbox() {
 
 #[tokio::test]
 async fn oversized_fixed_context_is_rejected_before_invoking_the_provider() {
-    let h = harness(vec![ScriptedClient::text("must not be invoked")]).await;
-    let model = ModelRef::new("anthropic", "claude-sonnet-5-5");
+    let h = small_context_harness(vec![ScriptedClient::text("must not be invoked")]).await;
+    let model = ModelRef::new("small", "m");
     let window = h
         .runtime
         .models()
@@ -238,7 +238,7 @@ async fn oversized_api_context_tries_a_larger_fallback_without_calling_the_small
 
 #[tokio::test]
 async fn local_context_exhaustion_is_reported_directly_to_every_ancestor() {
-    let h = harness(vec![ScriptedClient::text("must not be invoked")]).await;
+    let h = small_context_harness(vec![ScriptedClient::text("must not be invoked")]).await;
     let (root, _) = h
         .runtime
         .create_agent(
