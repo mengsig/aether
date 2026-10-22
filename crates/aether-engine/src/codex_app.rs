@@ -432,6 +432,7 @@ impl Engine for CodexAppEngine {
         crate::strip_hidden(&mut command, &turn.hidden_env);
         crate::export_temp_dir(&mut command, turn.temp_dir.as_deref());
         crate::export_build_env(&mut command, &turn.build_env);
+        let run_token = crate::orphans::tag(&mut command);
         let mut child = command.spawn().map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => EngineError::NotInstalled {
                 program: self.program.clone(),
@@ -441,7 +442,8 @@ impl Engine for CodexAppEngine {
                 source: e,
             },
         })?;
-        let engine_record = crate::orphans::EngineRecord::register(child.id());
+        let engine_record =
+            crate::orphans::EngineRecord::register(child.id(), run_token.as_deref());
         let stdin = child
             .stdin
             .take()

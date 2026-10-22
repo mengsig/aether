@@ -87,7 +87,7 @@ aether
 
 Aether opens the terminal UI in your current project and starts its daemon on demand; type a request to begin.
 Use `/model` to choose a model, `?` with an empty draft for shortcuts, and `/quit` to leave while agents keep running.
-With a provider signed in, new agents use that engine's own `default` model rather than its priciest one; the status line shows the model and its price before your first turn (`aether models` lists every price).
+With a provider signed in, new agents use that engine's balanced, priced model (`claude-code/claude-sonnet-5-5`, `codex/gpt-6.1-sol`) rather than its priciest one or the CLI's unpriced `default`; the status line shows the model and its price before your first turn (`aether models` lists every price).
 On a first start with neither engine signed in and no other provider configured,
 no agent is created and you see “no model to run on yet”; use `/login claude-code` or `/login codex`, then send a request.
 `aether run` in that state fails with “run `aether login claude-code` or `aether login codex`, or pass --model”.

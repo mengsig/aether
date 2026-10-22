@@ -655,10 +655,17 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
                     }
                     bad(e.to_string())
                 })?;
-            if let Some(model) = &config.model.compactor
-                && aether_core::model::ModelRef::parse(model).is_none()
-            {
-                return Err(bad("model.compactor must be provider/model".into()));
+            for (key, setting) in [
+                ("default", &config.model.default),
+                ("compactor", &config.model.compactor),
+            ] {
+                if let Some(model) = setting
+                    && aether_core::model::ModelRef::parse(model).is_none()
+                {
+                    return Err(bad(format!(
+                        "model.{key} `{model}` must be provider/model; run `aether models` to list the valid choices"
+                    )));
+                }
             }
             config.models.validate().map_err(&bad)?;
             config.providers.validate().map_err(&bad)?;
