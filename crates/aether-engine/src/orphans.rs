@@ -108,7 +108,20 @@ pub fn reap(dir: &Path) -> io::Result<Vec<u32>> {
         else {
             continue;
         };
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            // The engine's own run already dropped its record.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "reading engine record {}: {error}; fix its permissions or remove it, then restart",
+                        path.display()
+                    ),
+                ));
+            }
+        };
         let mut lines = text.lines();
         let recorded = lines
             .next()
@@ -374,6 +387,14 @@ mod tests {
         child.wait().unwrap();
         let gone = wait_for_sleep31(false);
         assert!(gone, "the setsid descendant must be killed by its token");
+    }
+
+    #[test]
+    fn keeps_a_record_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("4194300"), [0xff, 0xfe]).unwrap();
+        assert!(reap(dir.path()).is_err());
+        assert!(dir.path().join("4194300").exists());
     }
 
     #[test]
