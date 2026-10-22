@@ -85,6 +85,14 @@ pub(crate) fn check_content_size(content: &[ContentBlock]) -> Result<()> {
     check_text_size("message", bytes)
 }
 
+/// Refuses a JSON payload that renders into an engine record above the limit.
+pub(crate) fn check_payload_size(what: &str, payload: &serde_json::Value) -> Result<()> {
+    let bytes = serde_json::to_vec(payload)
+        .map_err(|e| RuntimeError::Invalid(format!("{what} is not serializable: {e}")))?
+        .len();
+    check_text_size(what, bytes)
+}
+
 /// [`aether_core::limits::check_text_size`] as the runtime's refusal.
 pub(crate) fn check_text_size(what: &str, bytes: usize) -> Result<()> {
     aether_core::limits::check_text_size(what, bytes).map_err(RuntimeError::Invalid)
@@ -434,6 +442,8 @@ impl Runtime {
                 "trigger source may not contain the operator marker".into(),
             ));
         }
+        check_payload_size("trigger payload", &payload)?;
+        check_text_size("trigger source", source.len())?;
         let at = now();
         // Before the liveness read, as in `send_message_keyed`.
         let hold = self.hold();

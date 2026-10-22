@@ -56,3 +56,40 @@ async fn an_oversized_objective_is_refused_for_tasks_and_agents() {
     let agent = h.runtime.create_agent(spec, Actor::user());
     assert!(agent.expect_err("agent").to_string().contains("artifact"));
 }
+
+#[tokio::test]
+async fn an_oversized_trigger_or_schedule_payload_is_refused() {
+    let h = harness(vec![]).await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(idle_spec(), Actor::user())
+        .expect("agent");
+    let payload = serde_json::json!({"log": oversized()});
+    let trigger = h
+        .runtime
+        .trigger_agent(agent.id, "ci".into(), payload.clone(), Actor::user());
+    assert!(
+        trigger
+            .expect_err("trigger")
+            .to_string()
+            .contains("artifact")
+    );
+    let spec = aether_core::schedule::CreateScheduleSpec {
+        name: "nightly".into(),
+        target: aether_core::schedule::ScheduleTarget::Agent(agent.id),
+        recurrence: aether_core::schedule::Recurrence::Interval {
+            seconds: std::num::NonZeroU64::new(3600).expect("nonzero"),
+        },
+        missed: Default::default(),
+        busy: Default::default(),
+        payload,
+        max_deliveries: None,
+    };
+    let schedule = h.runtime.create_schedule(spec, Actor::user());
+    assert!(
+        schedule
+            .expect_err("schedule")
+            .to_string()
+            .contains("schedule payload")
+    );
+}

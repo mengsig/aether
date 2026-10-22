@@ -77,6 +77,7 @@ impl Runtime {
                 "schedule name must not contain control characters".into(),
             ));
         }
+        crate::commands::check_payload_size("schedule payload", &spec.payload)?;
         let at = now();
         let next_due = next_occurrence(&spec.recurrence, at)?;
         let target = match spec.target {

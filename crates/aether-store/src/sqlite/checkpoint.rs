@@ -45,6 +45,9 @@ impl Checkpointer {
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        // Truncating takes the writer lock: never wait for it, so a reader
+        // that still holds the WAL costs one retry and not a stalled commit.
+        conn.busy_timeout(Duration::ZERO)?;
         let (stop, stopped) = mpsc::channel::<()>();
         let thread = std::thread::Builder::new()
             .name("sqlite-checkpoint".into())
@@ -128,16 +131,16 @@ fn checkpoint(conn: &Connection) -> Result<Wal> {
     Ok(wal)
 }
 
-/// Shrink the fully copied WAL file to nothing. It waits for the writer
-/// for the connection's busy timeout; if that runs out, the WAL stays as long
-/// as it is and the next idle pass tries again.
+/// Shrink the fully copied WAL file to nothing. The connection has no busy
+/// timeout, so it gives up at once when a writer or reader is in the way; the
+/// WAL stays as long as it is and the next pass tries again.
 fn truncate_wal(conn: &Connection) {
     let result = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
         row.get::<_, i64>(0)
     });
     match result {
         Ok(0) => {}
-        Ok(_) => tracing::warn!("WAL truncate found the database busy; retrying next interval"),
+        Ok(_) => tracing::debug!("WAL truncate found the database busy; retrying next interval"),
         Err(error) => tracing::warn!(%error, "WAL truncate failed; retrying next interval"),
     }
 }

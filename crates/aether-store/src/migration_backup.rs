@@ -43,12 +43,16 @@ pub fn backup_database(database: &Path, directory: &Path) -> Result<PathBuf> {
 /// compress, decompress and compare, and only then publish the file under its
 /// final name. An existing file of that name is never overwritten.
 fn write_snapshot(conn: &Connection, directory: &Path, name: &str) -> Result<PathBuf> {
+    // Only a directory made here is made private; an existing one keeps its mode.
+    let created = !directory.exists();
     std::fs::create_dir_all(directory)?;
     #[cfg(unix)]
-    {
+    if created {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
     }
+    #[cfg(not(unix))]
+    let _ = created;
     let destination = directory.join(name);
     let snapshot = tempfile::NamedTempFile::new_in(directory)?;
     // SQLite's backup API includes committed WAL data and preserves row IDs,
@@ -158,6 +162,34 @@ mod tests {
             .query_row("SELECT count(*) FROM t", [], |row| row.get(0))
             .expect("count");
         assert_eq!(rows, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_existing_backup_directory_keeps_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("aether.db");
+        Connection::open(&path)
+            .expect("database")
+            .execute_batch("CREATE TABLE t(x)")
+            .expect("table");
+        let output = directory.path().join("shared");
+        std::fs::create_dir(&output).expect("output");
+        std::fs::set_permissions(&output, std::fs::Permissions::from_mode(0o755)).expect("mode");
+        backup_database(&path, &output).expect("backup");
+        let mode = std::fs::metadata(&output)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+        let fresh = directory.path().join("fresh");
+        backup_database(&path, &fresh).expect("backup");
+        let mode = std::fs::metadata(&fresh)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
     }
 
     #[test]
