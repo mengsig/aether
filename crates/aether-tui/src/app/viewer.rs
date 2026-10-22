@@ -1,10 +1,10 @@
 use super::{App, Effect};
+use crate::ui::layout::BOARD_DOCK_MIN_COLS;
 use crate::{
     keys::KeyAction,
     ui::cells::ChatCell,
     viewer::{Preview, ReadRequest, View, references::Reference},
 };
-use crate::ui::layout::BOARD_DOCK_MIN_COLS;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl App {

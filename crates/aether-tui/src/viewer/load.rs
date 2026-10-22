@@ -128,7 +128,11 @@ pub(super) fn text_rows(text: &str, markdown: bool, request: &ReadRequest) -> Ve
             &request.theme,
         )
     } else {
-        verbatim_rows(&limited, request.theme.code(), usize::from(request.width.max(10)))
+        verbatim_rows(
+            &limited,
+            request.theme.code(),
+            usize::from(request.width.max(10)),
+        )
     };
     if truncated {
         rows.push(Line::from(
@@ -140,7 +144,11 @@ pub(super) fn text_rows(text: &str, markdown: bool, request: &ReadRequest) -> Ve
 
 /// Hard-wrap `text` at `width` columns keeping every leading space: code and
 /// plain text must show as written, so nothing is trimmed at a row's start.
-pub(super) fn verbatim_rows(text: &str, style: ratatui::style::Style, width: usize) -> Vec<Line<'static>> {
+pub(super) fn verbatim_rows(
+    text: &str,
+    style: ratatui::style::Style,
+    width: usize,
+) -> Vec<Line<'static>> {
     use unicode_segmentation::UnicodeSegmentation;
     use unicode_width::UnicodeWidthStr;
     debug_assert!(width > 0);
