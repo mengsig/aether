@@ -74,4 +74,7 @@ test('commands route arguments as encoded data to appropriate screens', () => {
   const outbox=parseCommand('/outbox');
   assert.ok(outbox);
   assert.equal(commandRoute(outbox.command,'agt_test',''),'settings?panel=outbox');
+  const theme=parseCommand('/theme');
+  assert.equal(theme?.command.name,'theme');
+  assert.equal(commandRoute(theme.command,'agt_test',''),'settings?panel=theme');
 });
