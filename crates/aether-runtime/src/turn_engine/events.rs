@@ -26,6 +26,30 @@ pub(super) fn disallowed_native_spawn_tool(
         .find(|name| tools.iter().any(|tool| tool == name))
 }
 
+/// A warning naming harness tools the agent should have been offered but the
+/// engine's inventory lacks. Only Codex reports its inventory, so others yield none.
+pub(super) fn missing_harness_tools_note(
+    kind: EngineKind,
+    agent: &aether_core::agent::Agent,
+    tools: &[String],
+) -> Option<String> {
+    if kind != EngineKind::CODEX || tools.is_empty() {
+        return None;
+    }
+    let missing: Vec<&str> = ["complete_task", "fail_task", "delegate"]
+        .into_iter()
+        .filter(|name| crate::withheld_by_position(agent, name).is_none())
+        .filter(|name| !tools.iter().any(|tool| tool == name))
+        .collect();
+    if missing.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "the engine's tool inventory lacks harness tools {missing:?}; offered: {}",
+        tools.join(", ")
+    ))
+}
+
 pub(super) struct StreamState {
     /// Provider tool-use id → call id and observed start, for matching and timing results.
     pub(super) calls: BTreeMap<String, PendingCall>,

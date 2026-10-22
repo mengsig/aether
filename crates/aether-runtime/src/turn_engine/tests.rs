@@ -418,6 +418,41 @@ fn an_argument_is_taken_from_whatever_field_the_call_is_keyed_on() {
     assert!(permission_argument(&json!({ "unheard_of": 1 })).is_none());
 }
 
+#[tokio::test]
+async fn a_codex_inventory_without_a_harness_tool_is_flagged() {
+    let (runtime, _dir) = test_runtime(|_| {}).await;
+    let mut ctx = started_agent_ctx(&runtime).await;
+    ctx.agent.parent = Some(AgentId::new());
+    ctx.agent.config.leaf = false;
+    let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+
+    let note = missing_harness_tools_note(EngineKind::CODEX, &ctx.agent, &names(&["fail_task"]))
+        .expect("complete_task and delegate are absent");
+    assert!(
+        note.contains("complete_task") && note.contains("delegate"),
+        "{note}"
+    );
+    assert!(!note.contains("\"fail_task\""), "{note}");
+
+    let all = names(&["complete_task", "fail_task", "delegate"]);
+    assert_eq!(
+        missing_harness_tools_note(EngineKind::CODEX, &ctx.agent, &all),
+        None
+    );
+    assert_eq!(
+        missing_harness_tools_note(EngineKind::CODEX, &ctx.agent, &[]),
+        None,
+        "an unreported inventory is not a missing one"
+    );
+
+    ctx.agent.config.leaf = true;
+    let leaf = names(&["complete_task", "fail_task"]);
+    assert_eq!(
+        missing_harness_tools_note(EngineKind::CODEX, &ctx.agent, &leaf),
+        None
+    );
+}
+
 /// A started agent's turn context, as `execute` holds one.
 pub(super) async fn started_agent_ctx(runtime: &Arc<Runtime>) -> TurnCtx {
     let (agent, _task) = runtime

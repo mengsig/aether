@@ -60,6 +60,8 @@ pub(super) struct Driver {
     turn_submitted: bool,
     mcp_poll: bool,
     mcp_cursors: HashSet<String>,
+    /// The model the thread reported, held until the session event can carry the tool list.
+    session_model: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -144,6 +146,7 @@ impl Driver {
             turn_submitted: false,
             mcp_poll: false,
             mcp_cursors: HashSet::new(),
+            session_model: None,
         }
     }
 
@@ -412,29 +415,22 @@ impl Driver {
                     return false;
                 }
                 self.state.thread_id = Some(thread_id.clone());
-                let model = result["model"].as_str().map(str::to_owned);
-                if !self
-                    .emit(EngineEvent::Session {
-                        id: thread_id.clone(),
-                        model,
-                        tools: Vec::new(),
-                    })
-                    .await
-                {
+                self.session_model = result["model"].as_str().map(str::to_owned);
+                if self.state.turn.mcp.is_some() {
+                    return self
+                        .request(
+                            Sent::McpTools,
+                            "mcpServerStatus/list",
+                            json!({"threadId": thread_id}),
+                        )
+                        .await;
+                }
+                if !self.emit_session(&thread_id, Vec::new()).await {
                     return false;
                 }
-                if self.state.turn.mcp.is_some() {
-                    self.request(
-                        Sent::McpTools,
-                        "mcpServerStatus/list",
-                        json!({"threadId": thread_id}),
-                    )
-                    .await
-                } else {
-                    let params =
-                        turn_params(&self.state.turn, &thread_id, self.loopback_note_in_effect);
-                    self.request(Sent::TurnStart, "turn/start", params).await
-                }
+                let params =
+                    turn_params(&self.state.turn, &thread_id, self.loopback_note_in_effect);
+                self.request(Sent::TurnStart, "turn/start", params).await
             }
             Sent::McpTools => {
                 let tools = match mcp_inventory(result) {
@@ -458,10 +454,19 @@ impl Driver {
                             .await;
                     }
                     McpInventory::Unavailable(reason) => {
+                        // Keep the thread resumable even though this turn refuses to run.
+                        let thread_id = self.state.thread_id.clone().unwrap_or_default();
+                        if !self.emit_session(&thread_id, Vec::new()).await {
+                            return false;
+                        }
                         self.finish_error(format!("{reason}; refusing to start without Aether coordination. Check the Aether bridge connection and retry.")).await;
                         return false;
                     }
                 };
+                let thread_id = self.state.thread_id.clone().unwrap_or_default();
+                if !self.emit_session(&thread_id, tools.clone()).await {
+                    return false;
+                }
                 if !self
                     .emit(EngineEvent::Note(format!(
                         "Aether MCP tools ready: {}",
@@ -471,7 +476,6 @@ impl Driver {
                 {
                     return false;
                 }
-                let thread_id = self.state.thread_id.clone().unwrap_or_default();
                 let params =
                     turn_params(&self.state.turn, &thread_id, self.loopback_note_in_effect);
                 self.request(Sent::TurnStart, "turn/start", params).await
@@ -644,6 +648,16 @@ impl Driver {
             return false;
         }
         self.stdin.flush().await.is_ok()
+    }
+
+    async fn emit_session(&mut self, thread_id: &str, tools: Vec<String>) -> bool {
+        let model = self.session_model.take();
+        self.emit(EngineEvent::Session {
+            id: thread_id.to_owned(),
+            model,
+            tools,
+        })
+        .await
     }
 
     async fn emit(&mut self, event: EngineEvent) -> bool {

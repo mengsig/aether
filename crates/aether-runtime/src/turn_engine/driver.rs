@@ -7,9 +7,9 @@ use super::{
     Served, Steering, StreamState, SubtreeUsage, TURN_IS_OVER, ToolContext, ToolEffects, TurnCtx,
     TurnPricing, Uncommitted, Usage, Verdict, answer_question, budget_crossed, budget_outcome,
     clamp, disallowed_native_spawn_tool, flush_accounting, gated_call, handle_event,
-    handle_request, json, mpsc, names_exhaustion, park_grace, permission_verdict, raise_to,
-    record_consumed, record_refused_call, refusal, side_effect_of, start_park, steer,
-    stop_for_crossing, stopping, writes_record,
+    handle_request, json, missing_harness_tools_note, mpsc, names_exhaustion, park_grace,
+    permission_verdict, raise_to, record_consumed, record_refused_call, refusal, side_effect_of,
+    start_park, steer, stop_for_crossing, stopping, writes_record,
 };
 
 /// Legacy per-message streams use turn totals as a fallback. Incremental
@@ -523,6 +523,15 @@ pub(super) async fn drive(
                             )),
                             ..Default::default()
                         };
+                    }
+                    if let Some(note) = missing_harness_tools_note(engine.kind(), &ctx.agent, &tools) {
+                        handle_event(
+                            runtime,
+                            ctx,
+                            snapshot,
+                            EngineEvent::ProtocolNote(note),
+                            &mut state,
+                        )?;
                     }
                     handle_event(
                         runtime,

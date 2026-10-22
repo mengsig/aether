@@ -169,7 +169,7 @@ use steering::{Steering, answer_question, record_consumed, steer};
 mod events;
 use events::{
     PROTOCOL_NOTE_EVENT, PendingCall, SHRUNK_CLOSING_USAGE, StreamState,
-    disallowed_native_spawn_tool, handle_event, writes_record,
+    disallowed_native_spawn_tool, handle_event, missing_harness_tools_note, writes_record,
 };
 mod bridge;
 use bridge::{GateSubject, Served, Verdict, engine_call_class, handle_request, permission_verdict};
