@@ -272,15 +272,16 @@ impl Models {
     }
 
     /// The configured default, or the first usable provider's own default:
-    /// an engine's `default` model (the CLI picks, never the priciest catalog
-    /// entry), else the provider's first model.
+    /// an engine's balanced-tier model (never the priciest catalog entry),
+    /// else the provider's first model. A configured default that does not
+    /// resolve is kept, never replaced, so creation refuses it by name.
     pub async fn default_model(&self) -> Option<ModelRef> {
         if let Some(text) = &self.config.model.default {
             let parsed = ModelRef::parse(text);
             match parsed.as_ref().map(|r| self.registry.resolve(r)) {
                 Some(Ok(_)) => return parsed,
-                // Kept so creation refuses it with the successor; never swapped silently.
-                Some(Err(e)) if e.is_retirement() => return parsed,
+                // Kept so creation refuses it by name; never swapped silently.
+                Some(Err(_)) => return parsed,
                 _ => tracing::warn!(default = %text, "configured default model is not resolvable"),
             }
         }
@@ -527,14 +528,22 @@ pub fn retired_model_settings(registry: &Registry, section: &ModelSection) -> Ve
     .collect()
 }
 
-/// The model a provider is used on when nothing names one. An engine CLI
-/// chooses for itself through its `default` entry; the catalogue order puts
-/// the priciest model first, so it must never decide.
+/// The model a provider is used on when nothing names one. An engine uses its
+/// balanced-tier model: cheap and priced, unlike the CLI's own unpriced
+/// `default`, which can be Opus-class. The catalogue order puts the priciest
+/// model first, so it must never decide.
 fn provider_default(provider: &ProviderDef) -> Option<&ModelDef> {
     let engine_choice = provider
         .models
         .iter()
-        .find(|m| provider.protocol.is_engine() && m.id == "default");
+        .filter(|_| provider.protocol.is_engine())
+        .find(|m| m.tier == Some(ModelTier::Balanced))
+        .or_else(|| {
+            provider
+                .models
+                .iter()
+                .find(|m| provider.protocol.is_engine() && m.id == "default")
+        });
     engine_choice.or(provider.models.first())
 }
 
@@ -807,13 +816,16 @@ mod tests {
     }
 
     #[test]
-    fn engine_providers_default_to_their_own_choice_not_the_priciest_model() {
+    fn engine_providers_default_to_their_balanced_model_not_the_priciest() {
         let registry = Registry::builtin();
-        for id in ["claude-code", "codex"] {
+        for (id, expected) in [
+            ("claude-code", "claude-sonnet-5-5"),
+            ("codex", "gpt-6.1-sol"),
+        ] {
             let provider = registry.provider(id).expect("builtin engine");
             assert_eq!(
                 provider_default(provider).map(|m| m.id.as_str()),
-                Some("default")
+                Some(expected)
             );
         }
         let anthropic = registry.provider("anthropic").expect("builtin");
@@ -841,6 +853,8 @@ mod tests {
         );
         let m = models(vec![], Some("bogus"));
         assert_eq!(m.default_model().await, None);
+        let m = models(vec![("GROQ_API_KEY", "g")], Some("groq/nope"));
+        assert_eq!(m.default_model().await, Some(ModelRef::new("groq", "nope")));
     }
 
     #[tokio::test]
