@@ -91,6 +91,8 @@ mod session_recovery;
 mod snapshots;
 #[path = "engine/spawn_guard.rs"]
 mod spawn_guard;
+#[path = "engine/stall.rs"]
+mod stall;
 #[path = "engine/steering.rs"]
 mod steering;
 #[path = "engine/telemetry.rs"]

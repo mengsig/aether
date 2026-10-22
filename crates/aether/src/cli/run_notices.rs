@@ -57,6 +57,9 @@ fn low_disk_line(low: &LowDisk) -> String {
 
 /// The line for an `engine.transient_retry` event, or `None` for any other.
 pub(super) fn retry_line(name: &str, payload: &serde_json::Value) -> Option<String> {
+    if name == "agent.stalled" {
+        return Some(stalled_line(payload));
+    }
     if name != "engine.transient_retry" {
         return None;
     }
@@ -73,6 +76,15 @@ pub(super) fn retry_line(name: &str, payload: &serde_json::Value) -> Option<Stri
         text("class", "transient"),
         text("waiting_for", "provider"),
     ))
+}
+
+fn stalled_line(payload: &serde_json::Value) -> String {
+    let engine = payload["engine"].as_str().map_or("engine".into(), sane);
+    format!(
+        "stalled: {engine} was silent for {}s, attempt {}; interrupting it and resuming the session",
+        payload["silent_secs"].as_u64().unwrap_or(0),
+        payload["attempt"].as_u64().unwrap_or(0),
+    )
 }
 
 #[cfg(test)]
@@ -101,6 +113,19 @@ mod tests {
         let freed = watch.update(None).expect("release named");
         assert!(freed.contains("resumes"), "{freed}");
         assert_eq!(watch.update(None), None);
+    }
+
+    #[test]
+    fn a_stall_event_is_printed_with_its_silence_and_attempt() {
+        let payload = serde_json::json!({
+            "agent": "agt_1", "engine": "claude-code", "model": "opus",
+            "silent_secs": 900, "attempt": 2,
+        });
+        let said = retry_line("agent.stalled", &payload).expect("printed");
+        assert!(
+            said.contains("claude-code") && said.contains("900s") && said.contains("attempt 2"),
+            "{said}"
+        );
     }
 
     #[test]

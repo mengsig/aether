@@ -23,6 +23,10 @@ pub struct SchedulerSection {
     /// How long an engine turn keeps waiting out network, timeout, capacity
     /// and server failures before the agent fails; unset means two hours.
     pub engine_transient_retry_minutes: Option<u64>,
+    /// How long an engine turn may produce no output, with no tool running,
+    /// before it is treated as stalled and retried; unset means 15 minutes,
+    /// 0 turns the watchdog off.
+    pub engine_stall_minutes: Option<u64>,
     /// Free space, in MiB, the data directory's filesystem keeps before new
     /// turns wait; unset means the smaller of 5 GiB and 2%, 0 never waits.
     pub min_free_disk_mib: Option<u64>,
@@ -39,6 +43,9 @@ pub const MAX_ENGINE_PARK_GRACE_SECS: u64 = 60 * 60;
 /// A week. Past this an agent that can never reach its provider is hung,
 /// not resilient.
 pub const MAX_ENGINE_TRANSIENT_RETRY_MINUTES: u64 = 7 * 24 * 60;
+
+/// A week. A longer silence is a hung agent, not a slow model.
+pub const MAX_ENGINE_STALL_MINUTES: u64 = 7 * 24 * 60;
 
 pub const DEFAULT_MAX_CONCURRENT_TURNS: usize = 32;
 
@@ -120,6 +127,21 @@ impl SchedulerSection {
             return Err(format!(
                 "engine_transient_retry_minutes must be at most \
                  {MAX_ENGINE_TRANSIENT_RETRY_MINUTES}; remove it for the default"
+            ));
+        }
+        Ok(Some(std::time::Duration::from_secs(minutes * 60)))
+    }
+
+    /// The configured stall timeout. `None` means the runtime default
+    /// applies; a zero duration turns the watchdog off.
+    pub fn engine_stall_timeout(&self) -> Result<Option<std::time::Duration>, String> {
+        let Some(minutes) = self.engine_stall_minutes else {
+            return Ok(None);
+        };
+        if minutes > MAX_ENGINE_STALL_MINUTES {
+            return Err(format!(
+                "engine_stall_minutes must be at most {MAX_ENGINE_STALL_MINUTES}; \
+                 remove it for the default"
             ));
         }
         Ok(Some(std::time::Duration::from_secs(minutes * 60)))

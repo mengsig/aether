@@ -146,6 +146,7 @@ use outcome::{
 };
 mod driver;
 mod native_wait;
+mod stall;
 mod transient;
 use driver::{DriveResult, drive};
 mod budget_stop;

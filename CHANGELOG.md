@@ -6,6 +6,15 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- An engine turn whose model request is never answered no longer hangs for
+  hours. After 15 silent minutes with no tool running (`[scheduler]
+  engine_stall_minutes`, `0` turns it off) Aether records an `agent.stalled`
+  event, stops the engine and resumes its session, twice at most, then ends
+  the turn with a visible error and leaves the agent idle. `aether status` and
+  the TUI show the stall. Closes #263.
+
 ## 1.2.2
 
 Released 2026-10-21. A patch release from an end-to-end pass over Aether:

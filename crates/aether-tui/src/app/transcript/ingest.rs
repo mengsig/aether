@@ -1580,6 +1580,20 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             );
             notice(t, at, NoticeKind::Engine, text);
         }
+        EventKind::Custom { name, payload } if name == "agent.stalled" => {
+            let engine = payload["engine"].as_str().unwrap_or("engine");
+            let silent = payload["silent_secs"].as_u64().unwrap_or(0);
+            let attempt = payload["attempt"].as_u64().unwrap_or(0);
+            let text = NoticeText::joined(
+                &[
+                    &format!("{engine} stalled"),
+                    &format!("silent for {silent}s"),
+                    &format!("attempt {attempt}"),
+                ],
+                NoticeSeparator::Dot,
+            );
+            notice(t, at, NoticeKind::Engine, text);
+        }
         EventKind::Custom { name, payload } if name == "engine.kill_switch_bypassed" => {
             let engine = payload["engine"].as_str().unwrap_or("engine");
             let tool = payload["tool"].as_str().unwrap_or("a native tool");
