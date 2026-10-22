@@ -55,17 +55,17 @@ fn configured(
 
 #[tokio::test]
 async fn authenticated_native_harnesses_precede_api_credentials() {
-    for (claude, codex, expected) in [
-        (true, true, "claude-code"),
-        (true, false, "claude-code"),
-        (false, true, "codex"),
+    for (claude, codex, expected, balanced) in [
+        (true, true, "claude-code", "claude-sonnet-5-5"),
+        (true, false, "claude-code", "claude-sonnet-5-5"),
+        (false, true, "codex", "gpt-6.1-sol"),
     ] {
         assert_eq!(
             configured(claude, codex, None, None)
                 .unwrap()
                 .default_model()
                 .await,
-            Some(ModelRef::new(expected, "default",))
+            Some(ModelRef::new(expected, balanced))
         );
     }
 }
@@ -130,19 +130,29 @@ async fn disabled_native_provider_is_not_automatically_selected() {
             .unwrap()
             .default_model()
             .await,
-        Some(ModelRef::new("codex", "default"))
+        Some(ModelRef::new("codex", "gpt-6.1-sol"))
     );
 }
 
 #[tokio::test]
-async fn invalid_explicit_default_falls_back_to_authenticated_native() {
-    assert_eq!(
-        configured(false, true, Some("nonexistent/model"), None)
-            .unwrap()
-            .default_model()
-            .await,
-        Some(ModelRef::new("codex", "default"))
+async fn first_run_engine_default_is_priced() {
+    let models = configured(true, true, None, None).unwrap();
+    let selected = models.default_model().await.expect("a default");
+    let resolved = models.resolve(&selected).unwrap();
+    assert!(
+        resolved.model.capabilities.cost.is_some(),
+        "{selected} must carry a price so the status line can show it"
     );
+}
+
+#[tokio::test]
+async fn unknown_explicit_default_is_kept_and_refused_with_choices() {
+    let models = configured(false, true, Some("claude-code/nope"), None).unwrap();
+    let selected = models.default_model().await.expect("kept, not replaced");
+    assert_eq!(selected.to_string(), "claude-code/nope");
+    let message = models.resolve(&selected).unwrap_err().to_string();
+    assert!(message.contains("unknown model `nope`"), "{message}");
+    assert!(message.contains("claude-sonnet-5-5"), "{message}");
 }
 
 #[tokio::test]

@@ -23,12 +23,9 @@ fn every_retired_id_and_alias_fails_with_a_resolvable_successor() {
                 let model = ModelRef::new(*provider, *id);
                 assert_eq!(successor(provider, id), Some(entry.successor));
                 let error = registry.resolve(&model).expect_err("retired model fails");
-                assert_eq!(
-                    error,
-                    RegistryError::UnknownModel {
-                        provider: provider.to_string(),
-                        model: id.to_string(),
-                    }
+                assert!(
+                    matches!(&error, RegistryError::UnknownModel { provider: p, model: m, .. }
+                        if p == provider && m == id)
                 );
                 assert_eq!(
                     error.to_string(),
@@ -57,9 +54,11 @@ fn retirement_guidance_is_specific_to_the_builtin_route() {
     let error = registry
         .resolve(&ModelRef::new("codex", "unknown-model"))
         .unwrap_err();
-    assert_eq!(
-        error.to_string(),
-        "unknown model `unknown-model` for provider `codex`"
+    assert!(
+        error
+            .to_string()
+            .starts_with("unknown model `unknown-model` for provider `codex`; valid choices: "),
+        "{error}"
     );
     assert!(matches!(
         registry.resolve(&ModelRef::new("custom", "gpt-6-sol")),

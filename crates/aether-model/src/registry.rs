@@ -305,8 +305,12 @@ pub enum RegistryError {
     UnknownProvider(String),
     #[error("provider `{0}` is disabled")]
     DisabledProvider(String),
-    #[error("{}", unknown_model_message(.provider, .model))]
-    UnknownModel { provider: String, model: String },
+    #[error("{}", unknown_model_message(.provider, .model, .choices))]
+    UnknownModel {
+        provider: String,
+        model: String,
+        choices: Vec<String>,
+    },
     #[error("{path}: {reason}")]
     Config { path: String, reason: String },
 }
@@ -314,16 +318,23 @@ pub enum RegistryError {
 impl RegistryError {
     /// A retired built-in id, as opposed to one this registry never knew.
     pub fn is_retirement(&self) -> bool {
-        matches!(self, Self::UnknownModel { provider, model }
+        matches!(self, Self::UnknownModel { provider, model, .. }
             if crate::retired::successor(provider, model).is_some())
     }
 }
 
-fn unknown_model_message(provider: &str, model: &str) -> String {
-    match crate::retired::successor(provider, model) {
-        Some(successor) => format!("{provider}/{model} was retired; use {provider}/{successor}"),
-        None => format!("unknown model `{model}` for provider `{provider}`"),
+fn unknown_model_message(provider: &str, model: &str, choices: &[String]) -> String {
+    if let Some(successor) = crate::retired::successor(provider, model) {
+        return format!("{provider}/{model} was retired; use {provider}/{successor}");
     }
+    if choices.is_empty() {
+        return format!("unknown model `{model}` for provider `{provider}`");
+    }
+    format!(
+        "unknown model `{model}` for provider `{provider}`; valid choices: {}; \
+         run `aether models` to list them all",
+        choices.join(", ")
+    )
 }
 
 /// Overrides for one provider from `providers.toml`. Every field optional;
@@ -466,6 +477,7 @@ impl Registry {
                 .ok_or_else(|| RegistryError::UnknownModel {
                     provider: r.provider.clone(),
                     model: r.model.clone(),
+                    choices: provider.models.iter().map(|m| m.id.clone()).collect(),
                 })?;
         Ok(ResolvedModel {
             provider: provider.clone(),

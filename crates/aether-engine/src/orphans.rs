@@ -5,6 +5,10 @@
 //! daemon start reaps a recorded group only while a live process still has
 //! that pid *and* start time, so a reused pid is never signalled. Only Linux
 //! can read a start time; elsewhere nothing is recorded or reaped.
+//!
+//! Descendants that left the engine's group (`setsid`, a shell tool's own
+//! group) are found by a random token the engine exports in its environment
+//! and the record also holds: any live process of this user carrying it is ours.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,6 +18,18 @@ use nix::sys::signal::{Signal, killpg};
 use nix::unistd::{Pid, getpgid};
 
 static REGISTRY: OnceLock<PathBuf> = OnceLock::new();
+
+/// Environment variable carrying an engine's token to everything it spawns.
+const TOKEN_ENV: &str = "AETHER_ENGINE_RUN";
+
+/// Export a fresh token to `command`'s child, if engines are being recorded.
+/// Pass the result to [`EngineRecord::register`].
+pub(crate) fn tag(command: &mut tokio::process::Command) -> Option<String> {
+    REGISTRY.get()?;
+    let token = aether_core::id::ProcessId::new().to_string();
+    command.env(TOKEN_ENV, &token);
+    Some(token)
+}
 
 /// The fields of `/proc/<pid>/stat` from field 3 (state) on.
 #[cfg(target_os = "linux")]
@@ -92,13 +108,38 @@ pub fn reap(dir: &Path) -> io::Result<Vec<u32>> {
         else {
             continue;
         };
-        let recorded = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|text| text.trim().parse::<u64>().ok());
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            // The engine's own run already dropped its record.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "reading engine record {}: {error}; fix its permissions or remove it, then restart",
+                        path.display()
+                    ),
+                ));
+            }
+        };
+        let mut lines = text.lines();
+        let recorded = lines
+            .next()
+            .and_then(|line| line.trim().parse::<u64>().ok());
+        let token = lines.next().map(str::trim).filter(|t| !t.is_empty());
         if recorded.is_some_and(|started| kill_matching_group(pid, started)) {
             reaped.push(pid);
         }
-        std::fs::remove_file(&path)?;
+        if let Some(token) = token {
+            kill_tagged(token)
+                .map_err(|e| io::Error::new(e.kind(), format!("sweeping engine {pid}: {e}")))?;
+        }
+        // A killed engine's own run may already have dropped its record.
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
     }
     Ok(reaped)
 }
@@ -157,8 +198,69 @@ fn kill_matching_group(_pid: u32, _recorded: u64) -> bool {
     false
 }
 
+/// SIGKILL every live process of this user whose environment carries `token`.
+///
+/// The token is random per engine spawn, so a match proves descent from that
+/// engine. A pidfd is opened before the environment is read, so the pid
+/// cannot be reused between the check and the signal. Unexpected errors are
+/// returned so the caller keeps the record and the next start retries.
+#[cfg(target_os = "linux")]
+fn kill_tagged(token: &str) -> io::Result<()> {
+    use rustix::process::{Pid as RustixPid, PidfdFlags, Signal as RustixSignal};
+
+    assert!(!token.is_empty(), "an empty token would match any process");
+    let entry_token = format!("{TOKEN_ENV}={token}");
+    let own = std::process::id();
+    for entry in std::fs::read_dir("/proc")? {
+        let entry = entry?;
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        if pid <= 1 || pid == own {
+            continue;
+        }
+        let Some(raw) = RustixPid::from_raw(pid as i32) else {
+            continue;
+        };
+        let pidfd = match rustix::process::pidfd_open(raw, PidfdFlags::empty()) {
+            Ok(pidfd) => pidfd,
+            Err(rustix::io::Errno::SRCH) => continue,
+            Err(errno) => return Err(errno.into()),
+        };
+        // Gone, or not ours to inspect (another user, non-dumpable): skip.
+        let environment = match std::fs::read(entry.path().join("environ")) {
+            Ok(environment) => environment,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) || error.raw_os_error() == Some(nix::libc::ESRCH) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if !environment
+            .split(|b| *b == 0)
+            .any(|e| e == entry_token.as_bytes())
+        {
+            continue;
+        }
+        match rustix::process::pidfd_send_signal(&pidfd, RustixSignal::KILL) {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => {}
+            Err(errno) => return Err(errno.into()),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kill_tagged(_token: &str) -> io::Result<()> {
+    Ok(())
+}
+
 /// Write a fresh private record; an existing entry, even a link, is replaced.
-fn write_record(path: &Path, started: u64) -> io::Result<()> {
+fn write_record(path: &Path, started: u64, token: Option<&str>) -> io::Result<()> {
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt as _;
 
@@ -173,7 +275,7 @@ fn write_record(path: &Path, started: u64) -> io::Result<()> {
         .mode(0o600)
         .custom_flags(nix::libc::O_NOFOLLOW)
         .open(path)?;
-    file.write_all(started.to_string().as_bytes())
+    file.write_all(format!("{started}\n{}", token.unwrap_or_default()).as_bytes())
 }
 
 /// A live engine's record; dropping it removes the file.
@@ -181,13 +283,14 @@ fn write_record(path: &Path, started: u64) -> io::Result<()> {
 pub(crate) struct EngineRecord(PathBuf);
 
 impl EngineRecord {
-    /// Record `pid`, if a registry is set and its start time is readable.
-    pub(crate) fn register(pid: Option<u32>) -> Option<Self> {
+    /// Record `pid` and its [`tag`] token, if a registry is set and its start
+    /// time is readable.
+    pub(crate) fn register(pid: Option<u32>, token: Option<&str>) -> Option<Self> {
         let dir = REGISTRY.get()?;
         let pid = pid?;
         let path = dir.join(pid.to_string());
         let started = start_time(pid)?;
-        match write_record(&path, started) {
+        match write_record(&path, started, token) {
             Ok(()) => Some(Self(path)),
             Err(error) => {
                 tracing::warn!(pid, %error, "could not record the engine process");
@@ -241,6 +344,57 @@ mod tests {
         assert_eq!(reap(dir.path()).unwrap(), vec![pid]);
         child.wait().expect("killed child is reaped");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// Poll up to 5s until a `sleep 31` process exists (or not), per `running`.
+    #[allow(clippy::unwrap_used)]
+    fn wait_for_sleep31(running: bool) -> bool {
+        for _ in 0..100 {
+            let found = std::process::Command::new("pgrep")
+                .args(["-f", "^sleep 31$"])
+                .output()
+                .unwrap();
+            if found.stdout.is_empty() != running {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        false
+    }
+
+    #[test]
+    fn reaps_descendants_outside_the_group_by_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = "tok-reaps-descendants-0001";
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "setsid sleep 31 & wait"])
+            .env(TOKEN_ENV, token)
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let started = start_time(pid).unwrap();
+        std::fs::write(
+            dir.path().join(pid.to_string()),
+            format!("{started}\n{token}"),
+        )
+        .unwrap();
+        assert!(
+            wait_for_sleep31(true),
+            "the setsid sleep must be running before the reap"
+        );
+        reap(dir.path()).unwrap();
+        child.wait().unwrap();
+        let gone = wait_for_sleep31(false);
+        assert!(gone, "the setsid descendant must be killed by its token");
+    }
+
+    #[test]
+    fn keeps_a_record_it_cannot_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("4194300"), [0xff, 0xfe]).unwrap();
+        assert!(reap(dir.path()).is_err());
+        assert!(dir.path().join("4194300").exists());
     }
 
     #[test]

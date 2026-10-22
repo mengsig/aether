@@ -888,3 +888,18 @@ fn config_error_does_not_double_the_reasons_full_stop() {
     );
     assert!(!error.contains(".."), "{error}");
 }
+
+#[test]
+fn a_default_model_without_a_provider_is_refused_at_load() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[model]\ndefault = \"nope\"\n",
+    )
+    .expect("write");
+    let error = load_config(dir.path())
+        .expect_err("must refuse")
+        .to_string();
+    assert!(error.contains("model.default `nope`"), "{error}");
+    assert!(error.contains("aether models"), "{error}");
+}

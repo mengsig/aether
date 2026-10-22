@@ -6,7 +6,8 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 
 [model]
 # Model for agents that do not name one. Unset: the first ready provider's
-# first model (after `aether login claude-code`, that is claude-code/default).
+# balanced model (after `aether login claude-code`, that is claude-code/sonnet).
+# A value that names no known model is an error, never a silent fallback.
 # default = "claude-code/opus"
 
 # Compaction automatically uses a sibling model with the same credentials:
