@@ -98,7 +98,7 @@ mod tests {
         reset_signals(&mut command);
         let reset = String::from_utf8(command.output().unwrap().stdout).unwrap();
         assert!(reset.contains("SigBlk:\t0000000000000000"), "{reset}");
-        let ignored = reset.lines().next().unwrap();
+        let ignored = reset.lines().find(|l| l.starts_with("SigIgn:")).unwrap();
         let bits = u64::from_str_radix(ignored.rsplit('\t').next().unwrap(), 16).unwrap();
         assert_eq!(bits & (1 << (Signal::SIGINT as u64 - 1)), 0, "{reset}");
     }
