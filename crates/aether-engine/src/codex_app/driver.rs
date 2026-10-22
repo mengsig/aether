@@ -60,8 +60,8 @@ pub(super) struct Driver {
     turn_submitted: bool,
     mcp_poll: bool,
     mcp_cursors: HashSet<String>,
-    /// The model the thread reported, held until the session event can carry the tool list.
-    session_model: Option<String>,
+    /// The model of a thread whose session event waits for the tool list; `None` once emitted.
+    pending_session_model: Option<Option<String>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -146,7 +146,7 @@ impl Driver {
             turn_submitted: false,
             mcp_poll: false,
             mcp_cursors: HashSet::new(),
-            session_model: None,
+            pending_session_model: None,
         }
     }
 
@@ -415,7 +415,7 @@ impl Driver {
                     return false;
                 }
                 self.state.thread_id = Some(thread_id.clone());
-                self.session_model = result["model"].as_str().map(str::to_owned);
+                self.pending_session_model = Some(result["model"].as_str().map(str::to_owned));
                 if self.state.turn.mcp.is_some() {
                     return self
                         .request(
@@ -454,11 +454,6 @@ impl Driver {
                             .await;
                     }
                     McpInventory::Unavailable(reason) => {
-                        // Keep the thread resumable even though this turn refuses to run.
-                        let thread_id = self.state.thread_id.clone().unwrap_or_default();
-                        if !self.emit_session(&thread_id, Vec::new()).await {
-                            return false;
-                        }
                         self.finish_error(format!("{reason}; refusing to start without Aether coordination. Check the Aether bridge connection and retry.")).await;
                         return false;
                     }
@@ -651,7 +646,7 @@ impl Driver {
     }
 
     async fn emit_session(&mut self, thread_id: &str, tools: Vec<String>) -> bool {
-        let model = self.session_model.take();
+        let model = self.pending_session_model.take().flatten();
         self.emit(EngineEvent::Session {
             id: thread_id.to_owned(),
             model,
@@ -669,6 +664,19 @@ impl Driver {
             return;
         }
         self.state.done = true;
+        // A thread that failed before its tool list arrived must stay resumable.
+        if let Some(model) = self.pending_session_model.take()
+            && let Some(id) = self.state.thread_id.clone()
+        {
+            let _ = self
+                .events
+                .send(EngineEvent::Session {
+                    id,
+                    model,
+                    tools: Vec::new(),
+                })
+                .await;
+        }
         let _ = self
             .events
             .send(EngineEvent::Done(EngineOutcome {

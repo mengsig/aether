@@ -789,3 +789,27 @@ async fn an_unusable_inventory_still_records_the_session_before_refusing() {
             .any(|e| matches!(e, EngineEvent::Done(o) if o.is_error))
     );
 }
+
+#[tokio::test]
+async fn an_inventory_rpc_error_still_records_the_session_before_failing() {
+    let replies = vec![
+        json!({"result": {}}),
+        json!({"result": {"thread": {"id": "th"}}}),
+        json!({"error": {"code": -1, "message": "boom"}}),
+    ];
+    let (_, running, events) = handshake_responses(
+        turn(None, false),
+        None,
+        replies,
+        Some(EngineVersion::new(0, 162, 0)),
+    )
+    .await;
+    assert!(!running);
+    let session = events
+        .iter()
+        .position(|e| matches!(e, EngineEvent::Session { id, .. } if id == "th"));
+    let done = events
+        .iter()
+        .position(|e| matches!(e, EngineEvent::Done(o) if o.is_error));
+    assert!(session.is_some() && session < done, "{events:?}");
+}
