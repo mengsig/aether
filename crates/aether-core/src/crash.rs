@@ -177,15 +177,35 @@ pub fn acknowledge_startup(store: &Path) -> io::Result<Option<CrashRecord>> {
     Ok(Some(record))
 }
 
-/// Diagnostics remain readable even when the marker itself needs repair.
+/// A failure no daemon start has followed yet; unreadable evidence also counts.
 pub fn problem(store: &Path) -> Option<String> {
     match read(store) {
+        Ok(Some(record)) if record.acknowledged => None,
         Ok(record) => record.map(|record| record.summary()),
-        Err(error) => Some(format!(
-            "Cannot read daemon crash evidence for {}: {error}. Run `aether doctor` and `aether diagnose`.",
-            store.display()
-        )),
+        Err(error) => Some(unreadable(store, &error)),
     }
+}
+
+/// Evidence a later daemon start already acknowledged: history, not a problem.
+pub fn past_note(store: &Path) -> Option<String> {
+    let record = read(store).ok().flatten().filter(|r| r.acknowledged)?;
+    let kind = match record.kind {
+        CrashKind::Panic => "panic",
+        CrashKind::FatalError => "fatal error",
+    };
+    Some(format!(
+        "daemon {kind} at {} ({}): {}; the daemon has started since, so no action is needed",
+        record.at.to_rfc3339(),
+        record.location.as_deref().unwrap_or("location unavailable"),
+        record.message,
+    ))
+}
+
+fn unreadable(store: &Path, error: &io::Error) -> String {
+    format!(
+        "Cannot read daemon crash evidence for {}: {error}. Run `aether doctor` and `aether diagnose`.",
+        store.display()
+    )
 }
 
 #[cfg(test)]

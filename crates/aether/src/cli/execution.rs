@@ -256,7 +256,7 @@ pub async fn run(
                     }
                     EventKind::AgentFailed { error } => {
                         outcome = Some("failed");
-                        eprintln!("\nfailed: {}", sane(error));
+                        eprintln!("\nfailed: {}", sane(&with_login_guidance(error)));
                         break;
                     }
                     EventKind::AgentCancelled { .. } => {
@@ -430,9 +430,47 @@ fn subscription_ended_message(command: &str, agent: impl std::fmt::Display) -> S
     )
 }
 
+/// An engine that rejects its credentials names no fix; say which login to renew.
+fn with_login_guidance(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
+    let rejected = lower.contains("401")
+        || lower.contains("failed to authenticate")
+        || lower.contains("unauthorized");
+    let login = if lower.starts_with("claude-code") {
+        "claude login"
+    } else if lower.starts_with("codex") {
+        "codex login"
+    } else {
+        return error.to_owned();
+    };
+    if !rejected {
+        return error.to_owned();
+    }
+    format!(
+        "{error}\nThe {login} credentials were rejected or have expired: run `{login}`, check with `aether auth`, then run again."
+    )
+}
+
 #[cfg(test)]
 mod recovery_hint_tests {
-    use super::subscription_ended_message;
+    use super::{subscription_ended_message, with_login_guidance};
+
+    #[test]
+    fn rejected_engine_login_names_the_login_command() {
+        let claude = with_login_guidance(
+            "claude-code failed: Failed to authenticate. API Error: 401 Invalid bearer token",
+        );
+        assert!(claude.contains("run `claude login`") && claude.contains("aether auth"));
+        let codex = with_login_guidance("codex failed: 401 Unauthorized");
+        assert!(codex.contains("run `codex login`"));
+    }
+
+    #[test]
+    fn unrelated_failures_pass_through() {
+        for error in ["claude-code failed: rate limited", "other failed: 401"] {
+            assert_eq!(with_login_guidance(error), error);
+        }
+    }
 
     #[test]
     fn hint_names_agent_and_commands() {

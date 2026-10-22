@@ -61,7 +61,7 @@ impl Runtime {
             Some(
                 self.storage_gc_lock
                     .try_lock()
-                    .ok_or_else(|| invalid("another storage sweep is running"))?,
+                    .ok_or(RuntimeError::SweepBusy)?,
             )
         };
         let config = &self.models.config().storage;

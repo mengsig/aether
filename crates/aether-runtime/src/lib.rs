@@ -82,6 +82,11 @@ pub enum RuntimeError {
     NotFound(String),
     #[error("{0}")]
     Invalid(String),
+    /// Another storage sweep holds the lock; it will do this sweep's work.
+    #[error(
+        "storage maintenance: another storage sweep is running; wait for it to finish, then retry"
+    )]
+    SweepBusy,
     /// Nothing names a model and the daemon has no default to fall back on.
     #[error("no model configured; sign in from your client")]
     NoModel,

@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::Runtime;
+use crate::{Runtime, RuntimeError};
 
 pub(crate) fn spawn(runtime: Arc<Runtime>) {
     let interval = Duration::from_secs(u64::from(
@@ -44,11 +44,15 @@ pub(super) async fn run(runtime: Arc<Runtime>, interval: Duration) {
     }
 }
 
-fn sweep(runtime: &Runtime, filesystem_only: bool) {
+pub(super) fn sweep(runtime: &Runtime, filesystem_only: bool) {
     if runtime.shutdown.is_cancelled() {
         return;
     }
     match runtime.storage_gc(false) {
+        // The sweep holding the lock does this work; a quiet skip is correct.
+        Err(RuntimeError::SweepBusy) => {
+            tracing::debug!("storage maintenance skipped: another sweep is running");
+        }
         Ok(report) => {
             runtime.clear_problem("retention.storage");
             tracing::info!(%report, "storage maintenance finished");

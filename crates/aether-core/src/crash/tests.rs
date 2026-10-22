@@ -68,12 +68,16 @@ fn startup_acknowledges_once_but_keeps_evidence_for_diagnostics() {
     assert_eq!(first.at, recorded.at);
     assert!(acknowledge_startup(&store).unwrap().is_none());
     assert_eq!(read(&store).unwrap().unwrap(), first);
-    let detail = problem(&store).unwrap();
-    assert!(detail.contains("worker failed"));
-    assert!(detail.contains("aether doctor") && detail.contains("aether diagnose"));
+    assert!(problem(&store).is_none());
+    let note = past_note(&store).unwrap();
+    assert!(note.contains("worker failed") && note.contains("no action is needed"));
     record(&store, CrashKind::FatalError, "second failure", None).unwrap();
+    let detail = problem(&store).unwrap();
+    assert!(detail.contains("second failure"));
+    assert!(detail.contains("aether doctor") && detail.contains("aether diagnose"));
+    assert!(past_note(&store).is_none());
     assert!(acknowledge_startup(&store).unwrap().is_some());
-    assert!(!problem(&store).unwrap().contains("worker failed"));
+    assert!(past_note(&store).unwrap().contains("second failure"));
     assert_eq!(
         std::fs::read_dir(store.parent().unwrap()).unwrap().count(),
         1

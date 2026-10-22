@@ -585,3 +585,16 @@ async fn preview_simulates_cross_run_dependencies_in_sweep_order_without_source_
         runtime.resources.release_quarantine(agents[0].id);
     }
 }
+
+#[tokio::test]
+async fn sweep_skips_quietly_while_another_sweep_holds_the_lock() {
+    let (runtime, _agent, _dir) = fixture().await;
+    let held = runtime.storage_gc_lock.lock();
+    assert!(matches!(
+        runtime.storage_gc(false),
+        Err(crate::RuntimeError::SweepBusy)
+    ));
+    worker::sweep(&runtime, true);
+    assert!(runtime.problems().unwrap().is_empty());
+    drop(held);
+}
