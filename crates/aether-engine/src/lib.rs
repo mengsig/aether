@@ -606,6 +606,7 @@ where
     strip_hidden(&mut command, hidden_env);
     export_temp_dir(&mut command, temp_dir);
     export_build_env(&mut command, build_env);
+    let run_token = orphans::tag(&mut command);
     let mut child = command.spawn().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => EngineError::NotInstalled {
             program: program.to_owned(),
@@ -634,7 +635,7 @@ where
     // Do not hold stdin open after the runtime drops its final input sender.
     let interrupt_input = input_tx.downgrade();
 
-    let engine_record = orphans::EngineRecord::register(pid);
+    let engine_record = orphans::EngineRecord::register(pid, run_token.as_deref());
     let stdin_error = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     let stdin_error_writer = stdin_error.clone();
     let mut stdin_task = tokio::spawn(async move {
