@@ -245,6 +245,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
             }
             Cmd::Serve { allow_remote } => cli::serve(socket, allow_remote).await,
             Cmd::Schema => cli::schema(),
+            Cmd::Version { json } => cli::version(json),
             Cmd::Storage { command, json } => {
                 let (gc, dry_run, prune_build_output, json) = match command {
                     Some(StorageCmd::Gc {
@@ -286,6 +287,9 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 model,
                 role,
                 effort,
+                token_budget,
+                cost_budget,
+                max_turns,
                 yes,
                 yolo,
                 no_yolo,
@@ -307,6 +311,9 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                         model,
                         role,
                         effort,
+                        token_budget,
+                        cost_budget,
+                        max_turns,
                         yes,
                         yolo: yolo_flag(yolo, no_yolo),
                         backend,

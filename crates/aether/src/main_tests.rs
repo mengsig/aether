@@ -552,6 +552,53 @@ fn view_mode_is_a_global_display_flag() {
 }
 
 #[test]
+fn headless_commands_print_help_and_keep_hidden_flags_valued() {
+    for name in ["daemon", "serve"] {
+        let help = crate::args::command()
+            .try_get_matches_from(["aether", name, "--help"])
+            .expect_err("--help ends parsing with the help text");
+        assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp, "{name}");
+        assert!(!help.to_string().contains("--view-mode"), "{name}");
+        let parsed = crate::args::command()
+            .try_get_matches_from(["aether", name, "--view-mode", "focus"])
+            .unwrap_or_else(|e| panic!("{name} --view-mode focus: {e}"));
+        assert_eq!(
+            parsed.get_one::<String>("view_mode").map(String::as_str),
+            Some("focus")
+        );
+    }
+}
+
+#[test]
+fn schedule_target_needs_no_payload_and_run_takes_budgets() {
+    let parsed = Args::try_parse_from([
+        "aether", "schedule", "create", "tick", "--every", "90", "--target", "planner",
+    ])
+    .expect("--payload is optional with --target");
+    assert!(matches!(parsed.command, Some(Cmd::Schedule { .. })));
+    let parsed = Args::try_parse_from([
+        "aether",
+        "run",
+        "go",
+        "--token-budget",
+        "50000",
+        "--cost-budget",
+        "1.5",
+        "--max-turns",
+        "9",
+    ])
+    .expect("run accepts the budget flags");
+    assert!(matches!(
+        parsed.command,
+        Some(Cmd::Run {
+            token_budget: Some(50_000),
+            max_turns: Some(9),
+            ..
+        })
+    ));
+}
+
+#[test]
 fn retention_preview_accepts_json_and_has_no_destructive_mode() {
     use clap::Parser as _;
     assert!(matches!(

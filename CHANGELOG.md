@@ -6,6 +6,14 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+- `aether daemon --help` and `aether serve --help` print their help again.
+- `aether run` takes `--token-budget`, `--cost-budget` and `--max-turns`, and
+  keeps replies of separate turns on separate lines.
+- `aether schedule create --target` no longer needs `--payload`; pause, resume
+  and cancel print one summary line.
+- `aether diagnose` writes `aether-diagnose-<time>` when `--out` is left out.
+- `aether version` prints the version and protocol version.
+
 ## 1.2.2
 
 Released 2026-10-21. A patch release from an end-to-end pass over Aether:

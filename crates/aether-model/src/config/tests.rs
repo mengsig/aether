@@ -847,3 +847,17 @@ fn truncated_security_value_names_the_file_setting_and_next_command() {
     assert!(error.contains("yolo"));
     assert!(error.contains("aether doctor"));
 }
+
+#[test]
+fn config_error_does_not_double_the_reasons_full_stop() {
+    let error = super::ConfigError {
+        path: "config.toml".into(),
+        reason: "bad value. ".into(),
+    }
+    .to_string();
+    assert!(
+        error.starts_with("config.toml: bad value. Fix the named"),
+        "{error}"
+    );
+    assert!(!error.contains(".."), "{error}");
+}

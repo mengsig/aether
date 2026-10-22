@@ -17,10 +17,16 @@ pub(crate) fn command() -> clap::Command {
     let mut command = Args::command();
     command.build();
     for name in HEADLESS_COMMANDS {
+        // `mut_args` keeps each argument in place; removing and re-adding one
+        // with `mut_arg` made the last flag lose its value.
         command = command.mut_subcommand(name, |headless| {
-            TUI_ONLY_FLAGS
-                .iter()
-                .fold(headless, |c, flag| c.mut_arg(*flag, |arg| arg.hide(true)))
+            headless.mut_args(|arg| {
+                if TUI_ONLY_FLAGS.contains(&arg.get_id().as_str()) {
+                    arg.hide(true)
+                } else {
+                    arg
+                }
+            })
         });
     }
     command
@@ -134,6 +140,12 @@ pub(crate) enum Cmd {
     /// Print the protocol as a JSON Schema. The client libraries under
     /// `clients/` are generated from exactly this document.
     Schema,
+    /// Print this binary's version and protocol version (no daemon needed).
+    Version {
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect storage usage, or collect eligible files.
     Storage {
         #[command(subcommand)]
@@ -197,6 +209,17 @@ pub(crate) enum Cmd {
         /// Reasoning effort: low, medium, high, xhigh, max.
         #[arg(long)]
         effort: Option<String>,
+        /// Most tokens the run may spend, cache reads and writes included. An
+        /// engine such as Claude Code spends over 20k on its first turn, so
+        /// a smaller budget fails the run at once.
+        #[arg(long)]
+        token_budget: Option<u64>,
+        /// Most dollars the run may spend.
+        #[arg(long)]
+        cost_budget: Option<f64>,
+        /// Most turns the run may take.
+        #[arg(long)]
+        max_turns: Option<u32>,
         /// Approve every tool call automatically.
         #[arg(long, short = 'y')]
         yes: bool,
@@ -280,8 +303,9 @@ pub(crate) enum Cmd {
     /// Write a private, redacted diagnostic directory (never starts a daemon).
     Diagnose {
         /// New directory to create; existing destinations are refused.
+        /// Default: `aether-diagnose-<UTC time>` in the current directory.
         #[arg(long)]
-        out: PathBuf,
+        out: Option<PathBuf>,
         /// Collect this run instead of the most recent runs.
         #[arg(long, conflicts_with = "last")]
         run: Option<cli::RunRef>,

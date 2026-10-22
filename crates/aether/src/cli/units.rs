@@ -29,7 +29,9 @@ pub(crate) fn parse_duration(value: &str) -> Result<Duration, String> {
 pub(crate) fn parse_every(value: &str) -> Result<std::num::NonZeroU64, String> {
     let seconds = match value.parse::<u64>() {
         Ok(seconds) => seconds,
-        Err(_) => parse_duration(value)?.as_secs(),
+        Err(_) => parse_duration(value)
+            .map_err(|e| format!("{e}; a bare number counts seconds"))?
+            .as_secs(),
     };
     std::num::NonZeroU64::new(seconds).ok_or_else(|| "interval must be positive".to_owned())
 }

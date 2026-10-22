@@ -530,12 +530,13 @@ pub(crate) enum ScheduleCmd {
     /// fresh root run in this directory on each occurrence (--objective).
     #[command(group(clap::ArgGroup::new("recurrence").required(true).args(["every", "cron"])))]
     #[command(
-        after_help = "Example:\n  aether schedule create tick --every 5m --objective \"check the build\""
+        after_help = "Examples:\n  aether schedule create tick --every 5m --objective \"check the build\"\n  aether schedule create ping --every 1h --target planner --payload \"status?\""
     )]
     Create {
         /// Name to refer to the schedule by later, in place of its id.
         name: String,
-        /// Agent whose inbox receives each trigger; requires --payload.
+        /// Agent whose inbox receives each trigger; --payload sets what it
+        /// carries (default: null).
         #[arg(
             long,
             required_unless_present = "objective",
@@ -596,10 +597,9 @@ pub(crate) enum ScheduleCmd {
         /// consumed instead of skipping the occurrence.
         #[arg(long, conflicts_with = "objective")]
         queue_one: bool,
-        /// JSON payload; plain text becomes a string. Required with --target.
-        /// Spawned runs see it at
+        /// JSON payload; plain text becomes a string. Spawned runs see it at
         /// the end of their task, so keep secrets out of it.
-        #[arg(long, required_unless_present = "objective")]
+        #[arg(long)]
         payload: Option<String>,
         /// Stop after this many deliveries or runs. Agent budgets also apply.
         /// Skipped occurrences, such as ticks for a paused target, are dropped,

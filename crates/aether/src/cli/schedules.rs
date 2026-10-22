@@ -132,19 +132,19 @@ pub(crate) async fn run(
             let job = client
                 .update_schedule(id.resolve(&client).await?, ScheduleAction::Pause)
                 .await?;
-            acted(json, &describe(&job), serde_json::json!(job))
+            acted(json, &summary(&job), serde_json::json!(job))
         }
         ScheduleCmd::Resume { id, json } => {
             let job = client
                 .update_schedule(id.resolve(&client).await?, ScheduleAction::Resume)
                 .await?;
-            acted(json, &describe(&job), serde_json::json!(job))
+            acted(json, &summary(&job), serde_json::json!(job))
         }
         ScheduleCmd::Cancel { id, json } => {
             let job = client
                 .update_schedule(id.resolve(&client).await?, ScheduleAction::Cancel)
                 .await?;
-            acted(json, &describe(&job), serde_json::json!(job))
+            acted(json, &summary(&job), serde_json::json!(job))
         }
         ScheduleCmd::History { id, limit, json } => {
             let history = client

@@ -20,6 +20,9 @@ pub async fn run(
         model,
         role,
         effort,
+        token_budget,
+        cost_budget,
+        max_turns,
         yes,
         yolo,
         backend,
@@ -30,6 +33,7 @@ pub async fn run(
     if objective.trim().is_empty() {
         bail!("give an objective, e.g. `{command} run \"add a README\"`");
     }
+    let config = run_config(effort, token_budget, cost_budget, max_turns)?;
     anyhow::ensure!(
         !socket.is_remote() || repository_root.is_none(),
         "--repository-root is local only; a remote run's repository comes from its --workspace"
@@ -66,9 +70,6 @@ pub async fn run(
     // default the TUI last saved, exactly like `cli::tui`:
     // a saved `yolo = false` must gate `run` too, not only the TUI.
     let yolo = yolo.or(prefs.yolo);
-    let effort = effort
-        .map(|e| e.parse::<Effort>().map_err(|e| anyhow!(e)))
-        .transpose()?;
     let backend = parse_backend(&backend)?;
     let network = match network {
         Some(true) => NetworkPolicy::Allowed,
@@ -87,10 +88,7 @@ pub async fn run(
             fallbacks: chain.map(|c| c.fallbacks).unwrap_or_default(),
             scope: Some(scope),
             repository_root,
-            config: effort.map(|effort| AgentConfig {
-                effort: Some(effort),
-                ..Default::default()
-            }),
+            config,
             approval: yolo.map(|on| {
                 if on {
                     ApprovalPolicy::none()
@@ -123,6 +121,7 @@ pub async fn run(
     );
     let mut out = std::io::stdout();
     let mut streaming = false;
+    let mut streaming_invocation = None;
     let mut outcome = None;
     let mut gate = GateWatch::new();
     loop {
@@ -182,11 +181,21 @@ pub async fn run(
                     .await?;
             }
             SubscriptionFrame::Delta {
-                agent: a, delta, ..
+                agent: a,
+                invocation,
+                delta,
             } if a == agent.id => match delta {
                 // Under --json stdout carries one object at the end, so the
                 // reply is not streamed into the middle of it.
+                Delta::TurnStarted { .. } if !json => {
+                    finish_stream(&mut out, &mut streaming)?;
+                }
                 Delta::Text { text } if !json => {
+                    // A reply from a re-invoked turn must not run into the last one.
+                    if streaming_invocation.is_some_and(|last| last != invocation) {
+                        finish_stream(&mut out, &mut streaming)?;
+                    }
+                    streaming_invocation = Some(invocation);
                     if !text.is_empty() {
                         streaming = !text.ends_with('\n');
                     }
@@ -298,11 +307,11 @@ pub async fn run(
         .ok_or_else(|| anyhow!("agent {} is missing from its run tree", agent.id))?;
     let subtree_usage = (!node.children.is_empty()).then_some(node.subtree_usage);
     eprintln!(
-        "usage: {} in · {} cached · {} out · {} turns · {}",
+        "usage: {} in · {} cached · {} out · {} · {}",
         u.input_tokens,
         u.cache_read_tokens,
         u.output_tokens,
-        final_agent.stats.turns,
+        turns_phrase(final_agent.stats.turns),
         u.cost_and_estimate_line()
     );
     if let Some(total) = subtree_usage {
@@ -334,6 +343,38 @@ pub async fn run(
         "cancelled" => 3,
         _ => 0,
     })
+}
+
+fn turns_phrase(turns: u32) -> String {
+    format!("{turns} turn{}", if turns == 1 { "" } else { "s" })
+}
+
+/// The per-run limits from the command line; `None` when none was given.
+fn run_config(
+    effort: Option<String>,
+    token_budget: Option<u64>,
+    cost_budget: Option<f64>,
+    max_turns: Option<u32>,
+) -> anyhow::Result<Option<AgentConfig>> {
+    let effort = effort
+        .map(|e| e.parse::<Effort>().map_err(|e| anyhow!(e)))
+        .transpose()?;
+    anyhow::ensure!(
+        token_budget != Some(0) && max_turns != Some(0),
+        "--token-budget and --max-turns must be at least 1; leave them out for no limit"
+    );
+    anyhow::ensure!(
+        cost_budget.is_none_or(|c| c.is_finite() && c > 0.0),
+        "--cost-budget must be a positive dollar amount; leave it out for no limit"
+    );
+    let config = AgentConfig {
+        effort,
+        token_budget,
+        cost_budget,
+        max_turns,
+        ..Default::default()
+    };
+    Ok((config != AgentConfig::default()).then_some(config))
 }
 
 fn finish_stream(out: &mut impl std::io::Write, streaming: &mut bool) -> std::io::Result<()> {

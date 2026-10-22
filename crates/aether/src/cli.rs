@@ -341,6 +341,17 @@ pub fn schema() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The build's version and the protocol it speaks; `--version` prints only the first.
+pub fn version(json: bool) -> anyhow::Result<()> {
+    let version = env!("CARGO_PKG_VERSION");
+    let protocol = aether_protocol::PROTOCOL_VERSION;
+    acted(
+        json,
+        &format!("aether {version} (protocol {protocol})"),
+        serde_json::json!({"version": version, "protocol_version": protocol}),
+    )
+}
+
 /// What `aether run` was asked for, as the person wrote it.
 #[derive(Debug)]
 pub struct RunOptions {
@@ -350,6 +361,9 @@ pub struct RunOptions {
     pub model: Option<String>,
     pub role: String,
     pub effort: Option<String>,
+    pub token_budget: Option<u64>,
+    pub cost_budget: Option<f64>,
+    pub max_turns: Option<u32>,
     /// Approve every tool call automatically.
     pub yes: bool,
     /// Approvals off (`--yolo`) or on (`--no-yolo`) for this agent. `None`

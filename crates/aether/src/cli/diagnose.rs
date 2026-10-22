@@ -15,10 +15,17 @@ const EVENT_LIMIT: usize = 200;
 const LOG_BYTES: u64 = 64 * 1024;
 const REDACTED: &str = "[REDACTED]";
 
+/// A name no earlier bundle has, so a bare `aether diagnose` never hits the
+/// refusal to reuse a destination.
+fn default_bundle_dir() -> PathBuf {
+    let now = aether_core::time::now();
+    PathBuf::from(format!("aether-diagnose-{}", now.format("%Y%m%dT%H%M%SZ")))
+}
+
 pub async fn diagnose(
     socket: PathBuf,
     explicit_socket: bool,
-    out: PathBuf,
+    out: Option<PathBuf>,
     run: Option<super::RunRef>,
     last: usize,
     json: bool,
@@ -29,7 +36,7 @@ pub async fn diagnose(
         Some(run) => Some(requested_run(&socket, &run).await?),
         None => None,
     };
-    let out = std::path::absolute(out)?;
+    let out = std::path::absolute(out.unwrap_or_else(default_bundle_dir))?;
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {

@@ -251,6 +251,17 @@ or `wait_for` for a one-shot durable wake. The agent-facing scheduling tool
 does not yet expose every CLI scheduling mode. CLI schedule dates show whole
 seconds in UTC; JSON preserves timestamp precision.
 
+```sh
+aether schedule create tick --every 5m --objective "check the build"
+aether schedule create ping --every 1h --target planner --payload "status?"
+```
+
+`--every` takes a number of seconds or a unit (`90`, `30s`, `5m`, `2h`, `1d`).
+`--payload` is optional with `--target`: JSON, or plain text sent as a string.
+`aether run` accepts `--token-budget`, `--cost-budget` and `--max-turns`; cache
+reads and writes count as tokens, so keep a Claude Code budget above 20k.
+`aether version` prints the build's version.
+
 A tick that finds a delivery schedule's target paused is recorded as skipped
 ("target is paused") and dropped. It does not count towards `--max-deliveries`,
 and nothing is replayed after `aether resume`; the same holds for a tick that

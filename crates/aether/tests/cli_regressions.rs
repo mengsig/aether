@@ -62,6 +62,8 @@ struct Stub {
     end: RunEnd,
     delegated: bool,
     stream: bool,
+    /// Two replies from separate invocations with no turn boundary between.
+    reinvoked: bool,
     forgotten: bool,
     proposed: bool,
     memory_provenance: Option<aether_core::memory::MemoryProvenance>,
@@ -87,6 +89,7 @@ impl Default for Stub {
             end: RunEnd::Completed,
             delegated: false,
             stream: false,
+            reinvoked: false,
             forgotten: false,
             proposed: false,
             memory_provenance: None,
@@ -659,6 +662,20 @@ async fn cli_with_socket(
             }
             if matches!(frame.command, Command::Subscribe { ref query, .. } if run_created && query.agent.is_some())
             {
+                if stub.reinvoked {
+                    for text in ["STARTED", "FINISHED"] {
+                        write_frame(
+                            &mut write,
+                            ServerFrame::Delta {
+                                sub: 1,
+                                agent: AGENT.parse().unwrap(),
+                                invocation: InvocationId::new(),
+                                delta: Delta::Text { text: text.into() },
+                            },
+                        )
+                        .await;
+                    }
+                }
                 if stub.stream {
                     write_frame(
                         &mut write,
@@ -1537,6 +1554,25 @@ async fn streaming_tool_notice_starts_on_a_new_line() {
     assert!(stderr(&out).contains("▸ bash"));
 }
 
+#[tokio::test]
+async fn replies_of_separate_invocations_do_not_run_together() {
+    let out = cli(
+        &["run", "hello", "--model", "mock/m1", "--network=false"],
+        Stub {
+            reinvoked: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out).starts_with("STARTED\nFINISHED"),
+        "{:?}",
+        stdout(&out)
+    );
+    assert!(stderr(&out).contains("1 turn ·") || stderr(&out).contains("turns ·"));
+}
+
 /// A daemon that would ignore the checkout is refused before the agent is
 /// created under the wrong repository.
 #[tokio::test]
@@ -1746,10 +1782,10 @@ fn schedule_help_says_triggers_for_a_paused_target_are_dropped() {
 }
 
 #[test]
-fn schedule_help_explains_payload_requirement() {
+fn schedule_help_documents_payload_and_examples() {
     check_help(
         &["schedule", "create", "--help"],
-        &["Required with --target"],
+        &["--payload", "(default: null)", "--target planner --payload"],
     );
 }
 
@@ -1765,17 +1801,6 @@ fn schedule_recurrence_error_requires_one_of_the_two_modes() {
     assert_eq!(out.status.code(), Some(2));
     let text = stderr(&out);
     assert!(text.contains("--every <EVERY>|--cron <CRON>"), "{text}");
-    for mode in [vec!["--every", "5"], vec!["--cron", "* * * * *"]] {
-        let out = isolated_command(
-            root.path(),
-            &["schedule", "create", "timer", "--target", AGENT],
-        )
-        .args(mode)
-        .output()
-        .unwrap();
-        assert_eq!(out.status.code(), Some(2));
-        assert!(stderr(&out).contains("--payload"));
-    }
 }
 
 #[tokio::test]
@@ -2398,4 +2423,65 @@ fn a_bad_config_is_reported_once_by_the_daemon_and_by_doctor() {
             .count();
         assert_eq!(failures, 1, "{report}");
     }
+}
+
+#[test]
+fn version_prints_without_a_daemon_and_run_refuses_empty_budgets_early() {
+    let root = tempfile::tempdir().unwrap();
+    let output = isolated_command(root.path(), &["version", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
+    for args in [
+        ["run", "go", "--token-budget", "0"],
+        ["run", "go", "--max-turns", "0"],
+        ["run", "go", "--cost-budget", "0"],
+    ] {
+        let output = isolated_command(root.path(), &args).output().unwrap();
+        assert!(!output.status.success(), "{args:?}");
+        assert!(stderr(&output).contains("leave"), "{}", stderr(&output));
+    }
+    assert!(!root.path().join("a.sock").exists());
+}
+
+#[test]
+fn every_error_says_a_bare_number_is_seconds() {
+    let root = tempfile::tempdir().unwrap();
+    let output = isolated_command(
+        root.path(),
+        &[
+            "schedule",
+            "create",
+            "t",
+            "--every",
+            "5x",
+            "--objective",
+            "y",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("a bare number counts seconds"));
+}
+
+#[test]
+fn diagnose_without_out_names_its_own_bundle_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let output = isolated_command(root.path(), &["diagnose", "--json"])
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let path = std::path::PathBuf::from(value["path"].as_str().unwrap());
+    assert!(path.join("manifest.json").exists(), "{path:?}");
+    assert!(
+        path.file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("aether-diagnose-")
+    );
 }
