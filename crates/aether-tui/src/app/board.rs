@@ -357,7 +357,7 @@ fn named(tree: &AgentTree, text: &str) -> String {
 struct Subtree {
     agents: usize,
     needs_you: bool,
-    /// The status its row shows; a group header's is rolled up from below.
+    /// The subtree's rolled-up status, which a group header above shows.
     status: BoardStatus,
     /// The latest status change in the subtree: when a finished group ended.
     last_change: Option<Timestamp>,
@@ -546,23 +546,23 @@ impl<'a> Walk<'a> {
             self.rows[index].folded_agents = below.agents;
             self.rows[index].folded_needs_you = below.needs_you;
         }
-        let status = if group.is_some() {
-            rolled_up(status, &child_statuses)
-        } else {
-            status
-        };
+        // An ordinary agent's own state counts too; only a header's does not.
+        if group.is_none() {
+            child_statuses.push(status);
+        }
+        let subtree_status = rolled_up(status, &child_statuses);
         if let (Some(_), Some(index)) = (&group, row) {
-            self.rows[index].status = status;
+            self.rows[index].status = subtree_status;
             self.rows[index].since = Some(agent.created_at);
             self.rows[index].finished_after_ms = None;
-            if let Some(end) = below.last_change.filter(|_| status.is_finished()) {
+            if let Some(end) = below.last_change.filter(|_| subtree_status.is_finished()) {
                 self.rows[index].finished_after_ms = Some(millis_between(agent.created_at, end));
             }
         }
         Subtree {
             agents: 1 + below.agents,
             needs_you: needs_you || below.needs_you,
-            status,
+            status: subtree_status,
             last_change: below.last_change,
         }
     }

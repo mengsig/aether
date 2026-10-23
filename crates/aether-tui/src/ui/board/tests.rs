@@ -1289,3 +1289,20 @@ fn group_rows_keep_two_lines_for_hit_testing_and_height() {
     assert_eq!(tree::agent_at(model, 0, 1), Some(run));
     assert_ne!(tree::agent_at(model, 0, 2), Some(run));
 }
+
+#[test]
+fn a_group_header_sees_running_and_failed_grandchildren_through_a_finished_child() {
+    for (grandchild, glyph) in [
+        (AgentStatus::Running, dark().glyphs().running),
+        (failed(), dark().glyphs().failed),
+    ] {
+        let mut t = TreeBuilder::default();
+        let run = t.add(None, "run", "archon-run:direct", AgentStatus::Ready);
+        t.passive(run);
+        let stage = t.add(Some(run), "stage", "worker", done());
+        t.add(Some(stage), "inner", "worker", grandchild);
+        let app = app_with(t.build());
+        let text = tree_text(&app, 60, &dark());
+        assert!(text[3].starts_with(glyph), "{text:#?}");
+    }
+}
