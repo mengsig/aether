@@ -6,6 +6,37 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.4
+
+Released 2026-10-23. A small TUI patch release: the agents tree draws a
+parent that only coordinates as a header of its pipeline (#287,
+mengsig/archon#247), and the HTML viewer's Chromium screenshot no longer
+times out on a loaded machine (#286). Protocol version 24, unchanged. Store
+schema 26, unchanged.
+
+### Before updating
+
+- Nothing is required. Only the TUI changed, so a daemon still running 1.2.3
+  keeps working with the 1.2.4 TUI; restarting it (`aether stop`, then
+  `aether`) only brings its version in line.
+
+### Changed
+
+- **Passive parent agents are group headers in the agents tree.** A parent
+  that has children and never took a turn of its own shows its pipeline (its
+  role past the last `:`) and short id instead of a model, the subtree's
+  rolled-up status (running if any child runs, else failed, else done) and
+  cost, and the time from its creation until the subtree finished
+  (#287, mengsig/archon#247).
+- Agent names in the tree are cut at the end rather than the middle, so the
+  start of a long name stays readable (#287).
+
+### Fixed
+
+- **HTML screenshots on a loaded machine.** The Chromium screenshot behind
+  the HTML viewer gets 60 seconds instead of 15, since Chromium's start is
+  CPU-bound and took four times longer under load (#286).
+
 ## 1.2.3
 
 Released 2026-10-22. A patch release that fixes what the 2026-10-22
