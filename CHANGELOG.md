@@ -8,7 +8,7 @@ release is also the text of its GitHub release.
 
 ## 1.2.4
 
-Released 2026-10-23. A small TUI patch release: the agents tree draws a
+Released 2026-10-24. A small TUI patch release: the agents tree draws a
 parent that only coordinates as a header of its pipeline (#287,
 mengsig/archon#247), and the HTML viewer's Chromium screenshot no longer
 times out on a loaded machine (#286). Protocol version 24, unchanged. Store
