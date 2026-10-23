@@ -950,14 +950,20 @@ fn long_sibling_names_keep_their_ends_and_the_inspector_shows_them_whole() {
     f.app.rebuild_board();
     for theme in [dark(), ascii()] {
         let text = inner_rows(&draw_docked(&f.app, 48, 40, &theme));
-        // Tree rows: the shared middle goes, the number stays.
+        // Tree rows keep the start of the name and cut its end.
         for n in ["07", "08"] {
             let row = text[3..13]
                 .iter()
-                .find(|row| row.contains(&format!("list-{n} ")))
+                .find(|row| row.contains("backend-migration"))
                 .unwrap_or_else(|| panic!("-{n} lost in the tree:\n{text:#?}"));
-            assert!(row.contains("backend-"), "{row:?}");
+            assert!(!row.contains(&format!("list-{n} ")), "{row:?}");
         }
+        assert!(
+            text[3..13]
+                .iter()
+                .any(|row| row.contains(theme.glyphs().ellipsis)),
+            "{text:#?}"
+        );
         // Inspector head, below the rule and a gap: the whole name wrapped,
         // then role and status.
         let rule = text
@@ -1168,4 +1174,118 @@ fn priced_tree_preserves_header_and_name_at_docked_width() {
     assert!(text[1].starts_with("Agents "), "{text:#?}");
     assert!(text[7].contains("implementer"), "{text:#?}");
     assert!(text[7].ends_with("~$1.84 list"), "{text:#?}");
+}
+
+/// An Archon-style run node that never took a turn, over three stages.
+fn run_node(stages: &[(&str, AgentStatus)]) -> (App, AgentId) {
+    let mut t = TreeBuilder::default();
+    let run = t.add(
+        None,
+        "Foundation ADRs, reports and more",
+        "archon-run:direct",
+        AgentStatus::Waiting {
+            condition: aether_core::agent::WaitCondition::Inbox,
+        },
+    );
+    t.passive(run);
+    for (i, (name, status)) in stages.iter().enumerate() {
+        let id = t.add(Some(run), name, "worker", status.clone());
+        t.cost(id, 1.5);
+        t.since(id, 60 + i as i64);
+    }
+    t.took(run, 600);
+    (app_with(t.build()), run)
+}
+
+fn done() -> AgentStatus {
+    AgentStatus::Completed { summary: None }
+}
+
+fn failed() -> AgentStatus {
+    AgentStatus::Failed {
+        error: "boom".into(),
+    }
+}
+
+/// Title rows of the tree body, past the header and its gap.
+fn tree_text(app: &App, width: u16, theme: &Theme) -> Vec<String> {
+    inner_rows(&draw_docked(app, width, 30, theme))
+}
+
+#[test]
+fn a_passive_parent_rolls_running_up_over_failed_and_finished_children() {
+    let (app, _) = run_node(&[
+        ("plan", done()),
+        ("build", AgentStatus::Running),
+        ("review", failed()),
+    ]);
+    let text = tree_text(&app, 60, &dark());
+    assert!(
+        text[3].starts_with("● Foundation ADRs, reports and more"),
+        "{text:#?}"
+    );
+    assert!(text[3].ends_with("$4.50"), "{:?}", text[3]);
+    let detail = &text[4];
+    assert!(detail.starts_with("│ direct · agt_…"), "{detail:?}");
+    assert!(
+        !detail.contains("sonnet") && !detail.contains("archon-run"),
+        "{detail:?}"
+    );
+    assert!(
+        text[5].contains("plan") && text[7].contains("build"),
+        "{text:#?}"
+    );
+}
+
+#[test]
+fn a_passive_parent_with_a_failed_and_finished_children_reads_failed() {
+    let (app, run) = run_node(&[("plan", done()), ("review", failed())]);
+    let theme = dark();
+    let text = tree_text(&app, 60, &theme);
+    assert!(text[3].starts_with(theme.glyphs().failed), "{text:#?}");
+    assert_eq!(app.board.model.rows[0].id, run);
+}
+
+#[test]
+fn a_passive_parent_of_finished_children_reads_done_with_the_total_runtime() {
+    let (app, _) = run_node(&[("plan", done()), ("build", done())]);
+    let theme = dark();
+    let text = tree_text(&app, 60, &theme);
+    assert!(text[3].starts_with(theme.glyphs().done), "{text:#?}");
+    assert!(text[3].ends_with("59m 00s  $3.00"), "{:?}", text[3]);
+}
+
+#[test]
+fn a_passive_leaf_and_an_ordinary_parent_keep_the_model_line() {
+    let mut t = TreeBuilder::default();
+    let leaf = t.add(None, "lonely", "archon-run:direct", AgentStatus::Ready);
+    t.passive(leaf);
+    let parent = t.add(None, "assistant", "assistant", AgentStatus::Running);
+    t.add(Some(parent), "worker", "worker", AgentStatus::Running);
+    let app = app_with(t.build());
+    let text = tree_text(&app, 60, &dark());
+    assert_eq!(text[4].trim_start(), "sonnet-5.5", "{text:#?}");
+    assert!(text[7].starts_with("│ sonnet-5.5"), "{text:#?}");
+    assert!(!text.iter().any(|r| r.contains("agt_…")), "{text:#?}");
+}
+
+#[test]
+fn a_long_group_name_is_cut_at_its_end_and_keeps_the_cost() {
+    let (app, _) = run_node(&[("build", AgentStatus::Running)]);
+    let theme = dark();
+    let text = tree_text(&app, 30, &theme);
+    let title = &text[3];
+    assert!(title.starts_with("● Foundatio…"), "{title:?}");
+    assert!(title.contains('…') && title.ends_with("$1.50"), "{title:?}");
+    assert!(!title.contains("more"), "{title:?}");
+}
+
+#[test]
+fn group_rows_keep_two_lines_for_hit_testing_and_height() {
+    let (app, run) = run_node(&[("build", AgentStatus::Running)]);
+    let model = &app.board.model;
+    assert_eq!(tree::desired_height(model), 2 + 4);
+    assert_eq!(tree::agent_at(model, 0, 0), Some(run));
+    assert_eq!(tree::agent_at(model, 0, 1), Some(run));
+    assert_ne!(tree::agent_at(model, 0, 2), Some(run));
 }

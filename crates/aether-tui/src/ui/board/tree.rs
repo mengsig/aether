@@ -11,7 +11,7 @@ use aether_core::time::Timestamp;
 
 use super::{
     BoardScroll, elapsed_text, fit_spans, left_room, split_line, status_glyph, status_style,
-    truncate_middle,
+    truncate,
 };
 use crate::app::board::{BoardModel, BoardRow, BoardStatus, Guide};
 use crate::ui::theme::tokens::{Theme, ThemeMode};
@@ -289,16 +289,15 @@ fn title_line(
         status_glyph(row.status, theme, ctx.now),
         Span::raw(" "),
     ];
-    // Siblings often differ only at the end (`…-review-07`): the role goes
-    // first, then the name's middle.
+    // The role goes first, then the name's end; its start is what reads.
     let lead: usize = left.iter().map(|s| s.content.width()).sum();
-    let name = truncate_middle(
+    let name = truncate(
         &row.name,
         left_room(&right, width).saturating_sub(lead),
         theme,
     );
     left.push(Span::styled(name, name_style));
-    if !row.role.is_empty() {
+    if !row.role.is_empty() && row.group.is_none() {
         left.push(Span::raw("  "));
         left.push(Span::styled(row.role.clone(), theme.secondary()));
     }
@@ -334,8 +333,15 @@ fn subtitle_line(row: &BoardRow, width: usize, theme: &Theme) -> Line<'static> {
         Guide::Blank
     };
     let columns = row.guides.iter().map(|g| g.continued()).chain([own]);
-    let mut detail = row.model.clone();
-    if let Some(effort) = row.effort {
+    let mut detail = match &row.group {
+        Some(pipeline) => {
+            let marker = theme.glyphs().ellipsis.chars().next().unwrap_or('~');
+            let id = crate::format::short_id_with_marker(&row.id, marker);
+            format!("{pipeline} {dot} {id}")
+        }
+        None => row.model.clone(),
+    };
+    if let (Some(effort), None) = (row.effort, &row.group) {
         detail.push_str(&format!(" {dot} {effort}"));
     }
     // Before the fold count and objective, so a narrow row cuts those first.

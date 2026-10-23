@@ -60,7 +60,10 @@ impl TreeBuilder {
             restarted_from: None,
             restarted_as: None,
             config: AgentConfig::default(),
-            stats: AgentStats::default(),
+            stats: AgentStats {
+                turns: 1,
+                ..AgentStats::default()
+            },
             run: RunId::new(),
             created_at,
             updated_at: created_at,
@@ -93,6 +96,11 @@ impl TreeBuilder {
             .nodes
             .get_mut(&id)
             .expect("an agent this builder added")
+    }
+
+    /// An agent that never took a turn, like an orchestration run node.
+    pub(crate) fn passive(&mut self, id: AgentId) {
+        self.agent(id).stats.turns = 0;
     }
 
     pub(crate) fn model(&mut self, id: AgentId, model: &str, effort: Effort) {

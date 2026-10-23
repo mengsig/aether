@@ -336,11 +336,5 @@ pub(crate) fn truncate(text: &str, max: usize, theme: &Theme) -> String {
     crate::format::truncate_with_marker(text, max, marker)
 }
 
-/// Cut from the middle, so a name's distinguishing end (`…-review-07`) stays.
-pub(crate) fn truncate_middle(text: &str, max: usize, theme: &Theme) -> String {
-    let marker = theme.glyphs().ellipsis.chars().next().unwrap_or('~');
-    crate::format::truncate_middle_with_marker(text, max, marker)
-}
-
 #[cfg(test)]
 mod tests;

@@ -34,7 +34,10 @@ fn busy_agent(name: &str, parent: Option<AgentId>) -> Agent {
         restarted_from: None,
         restarted_as: None,
         config: AgentConfig::default(),
-        stats: AgentStats::default(),
+        stats: AgentStats {
+            turns: 1,
+            ..AgentStats::default()
+        },
         run: RunId::new(),
         created_at: at,
         updated_at: at,

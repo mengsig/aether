@@ -257,6 +257,9 @@ pub struct BoardRow {
     /// Where it works, after the model: every root's shorthand; a child's
     /// only when it differs from its parent's (`isolated`, or a sub-directory).
     pub workspace: Option<String>,
+    /// A passive parent that never took a turn is drawn as a group header
+    /// of this pipeline: its role without an orchestration prefix.
+    pub group: Option<String>,
 }
 
 impl BoardRow {
@@ -354,6 +357,45 @@ fn named(tree: &AgentTree, text: &str) -> String {
 struct Subtree {
     agents: usize,
     needs_you: bool,
+    /// The status its row shows; a group header's is rolled up from below.
+    status: BoardStatus,
+    /// The latest status change in the subtree: when a finished group ended.
+    last_change: Option<Timestamp>,
+}
+
+/// A parent that has children and never took a turn of its own.
+fn is_passive_parent(agent: &Agent, has_children: bool) -> bool {
+    let stats = &agent.stats;
+    has_children && stats.turns == 0 && stats.tool_calls == 0 && stats.last_turn_at.is_none()
+}
+
+/// The pipeline a passive parent stands for: its role past the last `:`.
+fn pipeline_of(agent: &Agent) -> String {
+    let role = agent.role.as_str();
+    role.rsplit_once(':')
+        .map_or(role, |(_, name)| name)
+        .to_owned()
+}
+
+/// Running if any child runs, else failed if any failed, else done when all
+/// are finished; anything idle or waiting leaves the header's own status.
+fn rolled_up(own: BoardStatus, children: &[BoardStatus]) -> BoardStatus {
+    let active = |s: &BoardStatus| matches!(s, BoardStatus::Running | BoardStatus::NeedsYou);
+    if children.iter().any(active) {
+        return BoardStatus::Running;
+    }
+    if children.contains(&BoardStatus::Failed) {
+        return BoardStatus::Failed;
+    }
+    if !children.is_empty() && children.iter().all(|s| s.is_finished()) {
+        let done = children.contains(&BoardStatus::Completed);
+        return if done {
+            BoardStatus::Completed
+        } else {
+            BoardStatus::Cancelled
+        };
+    }
+    own
 }
 
 /// One depth-first pass over the tree: rows outside folds, plus counts.
@@ -437,6 +479,8 @@ impl<'a> Walk<'a> {
             return Subtree {
                 agents: 0,
                 needs_you: false,
+                status: BoardStatus::Idle,
+                last_change: None,
             };
         }
         let needs_you = self.inputs.needs_you.contains(&agent.id);
@@ -449,6 +493,7 @@ impl<'a> Walk<'a> {
         let folded = !children.is_empty()
             && (self.inputs.collapsed.contains(&agent.id)
                 || (finished_subtree && !self.inputs.expanded.contains(&agent.id)));
+        let group = is_passive_parent(agent, !children.is_empty()).then(|| pipeline_of(agent));
         let row = visible.then(|| {
             let (since, finished_after_ms) = timing(agent);
             self.rows.push(BoardRow {
@@ -462,7 +507,7 @@ impl<'a> Walk<'a> {
                 effort: agent.config.effort,
                 since,
                 finished_after_ms,
-                cost: cost_of(if folded {
+                cost: cost_of(if folded || group.is_some() {
                     &node.subtree_usage
                 } else {
                     &agent.stats.usage
@@ -474,6 +519,7 @@ impl<'a> Walk<'a> {
                 folded_agents: 0,
                 folded_needs_you: false,
                 workspace: self.workspace_label(agent),
+                group: group.clone(),
             });
             self.rows.len() - 1
         });
@@ -483,21 +529,41 @@ impl<'a> Walk<'a> {
         let mut below = Subtree {
             agents: 0,
             needs_you: false,
+            status,
+            last_change: agent.status_since,
         };
+        let mut child_statuses = Vec::with_capacity(children.len());
         for (i, child) in children.into_iter().enumerate() {
             let mut child_guides = inherited.clone();
             child_guides.push(if i == last { Guide::Corner } else { Guide::Tee });
             let sub = self.visit(child, child_guides, visible && !folded, None);
             below.agents += sub.agents;
             below.needs_you |= sub.needs_you;
+            below.last_change = below.last_change.max(sub.last_change);
+            child_statuses.push(sub.status);
         }
         if folded && let Some(index) = row {
             self.rows[index].folded_agents = below.agents;
             self.rows[index].folded_needs_you = below.needs_you;
         }
+        let status = if group.is_some() {
+            rolled_up(status, &child_statuses)
+        } else {
+            status
+        };
+        if let (Some(_), Some(index)) = (&group, row) {
+            self.rows[index].status = status;
+            self.rows[index].since = Some(agent.created_at);
+            self.rows[index].finished_after_ms = None;
+            if let Some(end) = below.last_change.filter(|_| status.is_finished()) {
+                self.rows[index].finished_after_ms = Some(millis_between(agent.created_at, end));
+            }
+        }
         Subtree {
             agents: 1 + below.agents,
             needs_you: needs_you || below.needs_you,
+            status,
+            last_change: below.last_change,
         }
     }
 }
