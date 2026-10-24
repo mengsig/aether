@@ -364,6 +364,7 @@ fn admits_after_park_refuses_effects_and_admits_reads() {
         wait,
         leaf: false,
         host_context: None,
+        idempotency: None,
     };
     let refused = [
         delegate(false),

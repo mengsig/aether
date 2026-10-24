@@ -105,6 +105,14 @@ pub trait ArtifactSink: Send + Sync {
     }
 }
 
+/// A `delegate` caller's key, with the arguments a repeat must match. The
+/// runtime scopes the key to the calling agent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DelegateKey {
+    pub key: String,
+    pub request: Value,
+}
+
 /// A request to change authoritative harness state. The model proposes it
 /// through a tool; the runtime validates, transitions and records it.
 // Built per tool call and consumed at once, like [`ToolExecution`].
@@ -168,6 +176,8 @@ pub enum HarnessAction {
         leaf: bool,
         /// `None` inherits the parent's; not a scope knob, so it may widen.
         host_context: Option<aether_core::agent::HostContext>,
+        /// Present when the caller keyed the call for a safe repeat.
+        idempotency: Option<DelegateKey>,
     },
     IntegrateWorkspace {
         child: AgentId,

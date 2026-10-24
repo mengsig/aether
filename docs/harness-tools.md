@@ -40,6 +40,17 @@ token, cost or deadline limit stops it, or when someone cancels it, for example
 with `aether cancel` on the parent, which still cancels its live descendants
 after the parent has ended. Wait for or cancel every child before settling.
 
+`delegate` takes an optional `idempotency_key` (1-128 bytes of printable
+ASCII, no spaces) for a call that must not run twice. A caller that never saw
+the reply, for example because its client timed out, repeats the call with the
+same key and the same arguments: the reply names the child the first call
+created, with `"replayed": true`, and creates nothing. `wait` is not part of the
+comparison, and a replay waits only on a child that has not finished. The same
+key with any other argument changed is refused. Keys are scoped to the calling
+agent, so two agents may use the same word, and are stored in the daemon's
+database with the other submission keys for seven days, across restarts. The
+reply to a keyed call echoes the key.
+
 Delegation has no depth limit: a child may delegate again, as long as its
 parent is not a leaf, to any number of generations. Only the `leaf` flag, a
 `concurrency` cap on the descendants running at once, the daemon's global

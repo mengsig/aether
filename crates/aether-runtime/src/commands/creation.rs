@@ -28,6 +28,20 @@ impl Runtime {
         self.create_agent_with_preflight(spec, by, Preflight::default(), submission)
     }
 
+    /// The agent a keyed creation already made, if this store has seen the
+    /// key. Checked before any state-dependent validation, so a retry is
+    /// answered even when the world has moved on.
+    pub(crate) fn replay_created_agent(
+        &self,
+        submission: &Submission,
+        by: Actor,
+    ) -> Result<Option<(Agent, Option<Task>)>> {
+        let Some(outcome) = self.recorded_submission(Some(submission))? else {
+            return Ok(None);
+        };
+        self.replayed_agent(outcome, by).map(Some)
+    }
+
     pub(crate) fn create_agent_with_preflight(
         &self,
         spec: CreateAgentSpec,
