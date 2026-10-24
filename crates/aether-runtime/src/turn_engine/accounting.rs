@@ -21,8 +21,14 @@ pub(super) fn recompute_snapshot_accounting(snapshot: &mut InvocationSnapshot) {
 }
 
 /// Longest a streamed usage or context reading waits in memory before it is
-/// committed: what a crash can lose. Budgets read the in-memory figure.
-pub(super) const ACCOUNTING_FLUSH: std::time::Duration = std::time::Duration::from_secs(2);
+/// committed: what a crash can lose. Budgets read the in-memory figure and
+/// clients the published one, so this only bounds durable rows per agent.
+pub(super) const ACCOUNTING_FLUSH: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The window under a token or cost budget in the agent's lineage: ancestor
+/// budgets are enforced from stored rows, so their figures may lag this much.
+/// Unbudgeted readings waited as long before #253.
+pub(super) const BUDGETED_FLUSH: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Usage and context readings not yet on the record. An engine reports them
 /// several times per message; each its own commit was most of a turn's WAL writes.
@@ -31,6 +37,8 @@ pub(super) struct PendingAccounting {
     usage: bool,
     context_tokens: Option<u64>,
     since: Option<tokio::time::Instant>,
+    /// A budget covers the agent: what is pending waits [`BUDGETED_FLUSH`].
+    budgeted: bool,
 }
 
 impl PendingAccounting {
@@ -44,9 +52,41 @@ impl PendingAccounting {
         self.since.get_or_insert_with(tokio::time::Instant::now);
     }
 
+    /// Hold what is pending no longer than a budget's stored view may lag.
+    pub(super) fn budgeted(&mut self) {
+        debug_assert!(self.since.is_some(), "a budget shortens a pending window");
+        self.budgeted = true;
+    }
+
     /// When what is pending must be committed, or `None` when nothing is.
     pub(super) fn deadline(&self) -> Option<tokio::time::Instant> {
-        self.since.map(|since| since + ACCOUNTING_FLUSH)
+        let window = if self.budgeted {
+            BUDGETED_FLUSH
+        } else {
+            ACCOUNTING_FLUSH
+        };
+        self.since.map(|since| since + window)
+    }
+
+    /// Whether what is pending has waited its full window.
+    pub(super) fn is_due(&self) -> bool {
+        self.deadline()
+            .is_some_and(|deadline| deadline <= tokio::time::Instant::now())
+    }
+
+    /// Whether what is pending must be committed ahead of `event`'s record.
+    /// A tool result only carries the turn on, so readings wait out their
+    /// window past it; anything else that writes may wait on someone, or
+    /// order against what follows, and takes them along. A message folds
+    /// them into its own commit once they are due.
+    pub(super) fn flush_before(&self, event: &aether_engine::EngineEvent) -> bool {
+        if self.since.is_none() || !super::events::writes_record(event) {
+            return false;
+        }
+        match event {
+            aether_engine::EngineEvent::ToolResult { .. } => self.is_due(),
+            _ => true,
+        }
     }
 
     /// Move what is pending into `commit` as the agent's current absolute

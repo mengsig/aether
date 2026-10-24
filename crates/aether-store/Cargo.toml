@@ -26,3 +26,4 @@ same-file = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 zstd = { workspace = true }
+fs4 = { workspace = true }

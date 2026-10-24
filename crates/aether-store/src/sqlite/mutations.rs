@@ -1,10 +1,15 @@
+use super::write_tally::WriteTally;
 use super::{SqliteStore, decision_key, schedule_time, scope_key, submission_time};
 use crate::{Mutation, Result, StoreError};
 use aether_core::tool::ApprovalStatus;
 use rusqlite::{Transaction, params};
 
 impl SqliteStore {
-    pub(super) fn apply(tx: &Transaction<'_>, mutation: Mutation) -> Result<()> {
+    pub(super) fn apply(
+        tx: &Transaction<'_>,
+        mutation: Mutation,
+        tally: &mut WriteTally,
+    ) -> Result<()> {
         match mutation {
             Mutation::RecordEngineSessionOwnership(record) => {
                 super::engine_sessions::record(tx, record)?;
@@ -23,7 +28,7 @@ impl SqliteStore {
                         agent.run.to_string(),
                         agent.created_at.to_rfc3339(),
                         agent.updated_at.to_rfc3339(),
-                        serde_json::to_string(&agent)?,
+                        tally.json("agents", &agent)?,
                     ],
                 )?;
             }
@@ -41,7 +46,7 @@ impl SqliteStore {
                         task.run.to_string(),
                         task.created_at.to_rfc3339(),
                         task.updated_at.to_rfc3339(),
-                        serde_json::to_string(&task)?,
+                        tally.json("tasks", &task)?,
                     ],
                 )?;
             }
@@ -73,7 +78,7 @@ impl SqliteStore {
                         item.seq as i64,
                         kind,
                         item.delivered_at.to_rfc3339(),
-                        serde_json::to_string(&item)?,
+                        tally.json("inbox", &item)?,
                     ],
                 )?;
             }
@@ -86,7 +91,7 @@ impl SqliteStore {
                         lease.agent_id.to_string(),
                         lease.holder,
                         lease.expires_at.to_rfc3339(),
-                        serde_json::to_string(&lease)?,
+                        tally.json("leases", &lease)?,
                     ],
                 )?;
             }
@@ -104,7 +109,7 @@ impl SqliteStore {
                         snapshot.agent_id.to_string(),
                         snapshot.turn as i64,
                         snapshot.created_at.to_rfc3339(),
-                        serde_json::to_string(&snapshot)?,
+                        tally.json("snapshots", &snapshot)?,
                     ],
                 )?;
             }
@@ -118,7 +123,7 @@ impl SqliteStore {
                         inv.agent_id.to_string(),
                         inv.turn as i64,
                         inv.started_at.to_rfc3339(),
-                        serde_json::to_string(&inv)?,
+                        tally.json("invocations", &inv)?,
                     ],
                 )?;
             }
@@ -130,7 +135,7 @@ impl SqliteStore {
                         cp.agent_id.to_string(),
                         cp.version as i64,
                         cp.created_at.to_rfc3339(),
-                        serde_json::to_string(&cp)?,
+                        tally.json("checkpoints", &cp)?,
                     ],
                 )?;
             }
@@ -148,7 +153,7 @@ impl SqliteStore {
                         ap.call_id.to_string(),
                         state,
                         ap.requested_at.to_rfc3339(),
-                        serde_json::to_string(&ap)?,
+                        tally.json("approvals", &ap)?,
                     ],
                 )?;
             }
@@ -161,7 +166,7 @@ impl SqliteStore {
                         decision_key(rule.decision),
                         i64::from(rule.revoked.is_some()),
                         rule.created_at.to_rfc3339(),
-                        serde_json::to_string(&rule)?,
+                        tally.json("approval_rules", &rule)?,
                     ],
                 )?;
             }
@@ -177,7 +182,7 @@ impl SqliteStore {
                         rec.key.0.clone(),
                         rec.tool.clone(),
                         rec.at.to_rfc3339(),
-                        serde_json::to_string(&rec)?,
+                        tally.json("tool_outcomes", &rec)?,
                     ],
                 )?;
             }
@@ -196,7 +201,7 @@ impl SqliteStore {
                         rec.key.0.clone(),
                         rec.fingerprint.clone(),
                         submission_time(rec.at),
-                        serde_json::to_string(&rec)?,
+                        tally.json("submissions", &rec)?,
                         ordinal,
                     ],
                 )?;
@@ -205,7 +210,7 @@ impl SqliteStore {
             Mutation::RetractMemoryFeedback { id, at, reason } => {
                 Self::retract_memory_feedback(tx, id, at, &reason)?;
             }
-            Mutation::PutMemory(mem) => put_memory(tx, &mem)?,
+            Mutation::PutMemory(mem) => put_memory(tx, &mem, tally)?,
             Mutation::PutArtifact(art) => {
                 tx.execute(
                     "INSERT OR REPLACE INTO artifacts(id, agent_id, task_id, created_at, digest, evicted, body)
@@ -217,7 +222,7 @@ impl SqliteStore {
                         art.created_at.to_rfc3339(),
                         art.digest.clone(),
                         i64::from(art.evicted_at.is_some()),
-                        serde_json::to_string(&art)?,
+                        tally.json("artifacts", &art)?,
                     ],
                 )?;
             }
@@ -225,7 +230,7 @@ impl SqliteStore {
                 tx.execute(
                     "INSERT INTO schedules(id, target, next_due, body) VALUES (?1, ?2, ?3, ?4)
                      ON CONFLICT(id) DO UPDATE SET target=excluded.target, next_due=excluded.next_due, body=excluded.body",
-                    params![job.id.to_string(), job.target().map(|id| id.to_string()), job.status.next_due().map(schedule_time), serde_json::to_string(&job)?],
+                    params![job.id.to_string(), job.target().map(|id| id.to_string()), job.status.next_due().map(schedule_time), tally.json("schedules", &job)?],
                 )?;
             }
             Mutation::RecordScheduleOccurrence(occurrence) => {
@@ -234,7 +239,7 @@ impl SqliteStore {
                     params![
                         occurrence.schedule.to_string(),
                         schedule_time(occurrence.due),
-                        serde_json::to_string(&occurrence)?
+                        tally.json("schedule_occurrences", &occurrence)?
                     ],
                 )?;
             }
@@ -257,7 +262,11 @@ impl SqliteStore {
     }
 }
 
-fn put_memory(tx: &Transaction<'_>, mem: &aether_core::memory::MemoryRecord) -> Result<()> {
+fn put_memory(
+    tx: &Transaction<'_>,
+    mem: &aether_core::memory::MemoryRecord,
+    tally: &mut WriteTally,
+) -> Result<()> {
     if (mem.accepted_at.is_some() && mem.proposed_at.is_none())
         || (mem.is_proposed() && mem.superseded_by.is_some())
     {
@@ -279,7 +288,7 @@ fn put_memory(tx: &Transaction<'_>, mem: &aether_core::memory::MemoryRecord) -> 
         params![
             mem.id.to_string(), scope_key(&mem.scope), kind, mem.text, mem.tags.join(" "),
             mem.importance as f64, mem.superseded_by.map(|m| m.to_string()),
-            mem.created_at.to_rfc3339(), serde_json::to_string(mem)?, mem.pinned as i64,
+            mem.created_at.to_rfc3339(), tally.json("memories", mem)?, mem.pinned as i64,
             mem.forgotten_at.map(|t| t.to_rfc3339()), mem.is_proposed(),
         ],
     )?;

@@ -174,6 +174,7 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
         run_hard_stop_tokens: s.run_hard_stop_tokens,
         mcp: s.mcp,
         low_disk: s.low_disk,
+        writes: Some(s.writes),
         bridge: rt
             .config()
             .bridge

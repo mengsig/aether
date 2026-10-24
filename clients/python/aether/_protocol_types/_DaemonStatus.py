@@ -38,4 +38,5 @@ class DaemonStatus(TypedDict, total=False):
     tasks_active: int
     usage_total: _protocol.Usage
     version: str
+    writes: _protocol.WriteStats | None  # optional
     yolo: bool  # optional

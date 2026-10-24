@@ -169,11 +169,8 @@ async fn native_request_pricing_bills_late_output_and_each_request_once() {
             );
         }
         let updates = first_turn_totals(&h, id);
-        let mut input_only = requests[0];
-        input_only.output_tokens = 0;
-        assert!((updates[0].cost_usd - rate.cost_of(&input_only)).abs() < 1e-12);
-        let [.., streamed, settled] = updates[..] else {
-            panic!("{updates:?}: a streamed and a settled update");
+        let [streamed, settled] = updates[..] else {
+            panic!("{updates:?}: one coalesced streamed update and a settled one");
         };
         assert!((streamed.cost_usd - expected).abs() < 1e-12, "{streamed:?}");
         assert_eq!(settled, streamed, "reconciliation charges nothing twice");

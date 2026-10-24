@@ -5230,6 +5230,17 @@
         "version": {
           "type": "string"
         },
+        "writes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WriteStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Payload bytes the store committed since the daemon opened it, by\nrecord kind. Absent on older daemons."
+        },
         "yolo": {
           "default": false,
           "description": "Approvals are off daemon-wide.",
@@ -9185,6 +9196,30 @@
         "params",
         "token_estimate",
         "created_at"
+      ],
+      "type": "object"
+    },
+    "KindWrites": {
+      "description": "Rows and payload bytes written for one kind of record: an event type such\nas `agent.usage_updated`, or a table such as `table:agents`.",
+      "properties": {
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "rows": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "rows",
+        "bytes"
       ],
       "type": "object"
     },
@@ -16662,6 +16697,58 @@
       },
       "required": [
         "valid"
+      ],
+      "type": "object"
+    },
+    "WriteStats": {
+      "description": "Payload bytes the store committed since `since`, heaviest kind first.\nCounts JSON bodies, not SQLite pages: indexes and the WAL add on top, so\nthe file sizes are reported next to it.",
+      "properties": {
+        "db_bytes": {
+          "description": "Size of the database file; absent for an in-memory store.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kinds": {
+          "items": {
+            "$ref": "#/$defs/KindWrites"
+          },
+          "type": "array"
+        },
+        "since": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "total_rows": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wal_bytes": {
+          "description": "Size of the write-ahead log beside it.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "total_rows",
+        "total_bytes",
+        "kinds"
       ],
       "type": "object"
     }

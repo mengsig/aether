@@ -141,6 +141,8 @@ pub struct RuntimeStatus {
     pub mcp: Vec<aether_core::mcp::McpServerHealth>,
     /// Set while the store's filesystem is below its floor and new turns wait.
     pub low_disk: Option<aether_core::disk::LowDisk>,
+    /// What the store committed since it opened, heaviest kinds first.
+    pub writes: aether_core::write_stats::WriteStats,
 }
 
 /// What `create_agent_with_preflight` must verify itself, under the hold the

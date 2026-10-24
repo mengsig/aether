@@ -73,7 +73,7 @@ impl SqliteStore {
             )));
         }
         let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let existing = registered(&tx, alias)?;
         let records = filed_under(&tx, &alias.alias)?;
         let counts = tally(&tx, alias, &records)?;
@@ -104,16 +104,19 @@ impl SqliteStore {
             });
         }
         let mut seq = Self::last_seq_in(&tx)?;
+        let mut tally = super::write_tally::WriteTally::default();
         let events = Self::write_events(
             &tx,
             &mut seq,
             std::iter::once((EventId::new(), alias.event(&counts, by), now())),
+            &mut tally,
         )?;
         tx.execute(
             "UPDATE meta SET value = ?1 WHERE key = 'last_seq'",
             [seq.to_string()],
         )?;
         tx.commit()?;
+        self.writes.merge(tally);
         self.commits.fetch_add(1, Ordering::Relaxed);
         Ok(RepositoryAliasMove {
             counts,

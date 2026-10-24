@@ -336,6 +336,7 @@ version = "1.2.4"
 dependencies = [
  "aether-core",
  "chrono",
+ "fs4",
  "hex",
  "parking_lot",
  "rusqlite",

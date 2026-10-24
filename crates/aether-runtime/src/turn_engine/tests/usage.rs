@@ -762,7 +762,7 @@ async fn late_engine_failure_and_root_notice_share_one_commit() {
     runtime.shutdown().await;
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn native_request_pricing_reaches_the_subtree_cost_budget_on_late_output() {
     use aether_engine::{RequestUsage, UsageRequestId};
     let (runtime, _dir) = test_runtime(|_| {}).await;
@@ -803,6 +803,10 @@ async fn native_request_pricing_reaches_the_subtree_cost_budget_on_late_output()
             &mut state,
         )
         .unwrap();
+        // The driver's timer commits a budgeted reading within this window.
+        let due = tokio::time::Instant::now() + super::super::accounting::BUDGETED_FLUSH;
+        assert!(state.accounting.deadline().is_some_and(|at| at <= due));
+        flush_accounting(&runtime, &child, &mut state.accounting).unwrap();
         let crossed = budget_crossed(&runtime, &parent, &mut subtree).unwrap();
         if current.output_tokens == 0 {
             assert!(crossed.is_none(), "the prompt alone is below the grant");
@@ -1256,9 +1260,9 @@ async fn streamed_readings_wait_in_memory_and_a_crash_loses_only_the_window() {
     runtime.shutdown().await;
 }
 
-/// A held reading lands before an event that followed it; one held through an
+/// A held reading lands before an event that followed it; one due by an
 /// assistant message rides in that message's commit, after its invocation.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn held_readings_keep_their_place_in_the_log() {
     let (runtime, _dir) = test_runtime(|_| {}).await;
     let mut ctx = started_agent_ctx(&runtime).await;
@@ -1281,6 +1285,21 @@ async fn held_readings_keep_their_place_in_the_log() {
     )
     .expect("note");
     handle_event(&runtime, &mut ctx, &snapshot, reading, &mut state).expect("reading");
+    let commits = runtime.store.commits();
+    handle_event(
+        &runtime,
+        &mut ctx,
+        &snapshot,
+        assistant_saying("early"),
+        &mut state,
+    )
+    .expect("assistant");
+    assert_eq!(runtime.store.commits(), commits + 1);
+    assert!(
+        state.accounting.deadline().is_some(),
+        "a reading not yet due stays held past a message"
+    );
+    tokio::time::advance(super::super::accounting::ACCOUNTING_FLUSH).await;
     let commits = runtime.store.commits();
     handle_event(
         &runtime,
@@ -1323,8 +1342,9 @@ async fn held_readings_keep_their_place_in_the_log() {
     runtime.shutdown().await;
 }
 
-#[tokio::test]
-async fn a_new_budget_in_the_lineage_makes_usage_immediately_durable() {
+#[tokio::test(start_paused = true)]
+async fn a_new_budget_in_the_lineage_shortens_the_usage_window() {
+    use super::super::accounting::{ACCOUNTING_FLUSH, BUDGETED_FLUSH};
     for depth in [0, 2] {
         let (runtime, _dir) = test_runtime(|_| {}).await;
         let mut ctx = started_agent_ctx(&runtime).await;
@@ -1345,16 +1365,27 @@ async fn a_new_budget_in_the_lineage_makes_usage_immediately_durable() {
         let reading = EngineEvent::UsageDelta {
             usage: one_reading(),
         };
+        let start = tokio::time::Instant::now();
         handle_event(&runtime, &mut ctx, &snapshot, reading.clone(), &mut state).unwrap();
-        assert!(state.accounting.deadline().is_some());
+        assert_eq!(state.accounting.deadline(), Some(start + ACCOUNTING_FLUSH));
         root.config.token_budget = Some(100);
         runtime
             .apply(Commit::new().mutate(Mutation::UpsertAgent(root)))
             .unwrap();
-        handle_event(&runtime, &mut ctx, &snapshot, reading, &mut state).unwrap();
-        assert!(state.accounting.deadline().is_none());
+        handle_event(&runtime, &mut ctx, &snapshot, reading.clone(), &mut state).unwrap();
+        assert_eq!(
+            state.accounting.deadline(),
+            Some(start + BUDGETED_FLUSH),
+            "the open window shrinks to the budgeted one"
+        );
         let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
-        assert_eq!(stored.stats.usage.output_tokens, 2);
+        assert_eq!(stored.stats.usage.output_tokens, 0, "still held");
+
+        tokio::time::advance(BUDGETED_FLUSH).await;
+        handle_event(&runtime, &mut ctx, &snapshot, reading, &mut state).unwrap();
+        assert!(state.accounting.deadline().is_none(), "flushed once due");
+        let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
+        assert_eq!(stored.stats.usage.output_tokens, 3);
         assert_eq!(stored.stats.usage, ctx.agent.stats.usage);
         runtime.shutdown().await;
     }

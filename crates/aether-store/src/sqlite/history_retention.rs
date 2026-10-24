@@ -134,7 +134,8 @@ impl SqliteStore {
             )?;
             // COUNT and summed byte lengths are nonnegative SQLite integers.
             preview.events = events as u64;
-            preview.history_payload_bytes = bytes as u64;
+            preview.history_payload_bytes =
+                bytes as u64 + super::event_blobs::run_blob_bytes(tx, &id)?;
             for table in AGENT_HISTORY_TABLES
                 .iter()
                 .chain(["tasks", "agents"].iter())

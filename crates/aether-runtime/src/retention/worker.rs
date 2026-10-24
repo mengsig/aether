@@ -98,4 +98,21 @@ pub(super) fn sweep(runtime: &Runtime, filesystem_only: bool) {
             );
         }
     }
+    if runtime.shutdown.is_cancelled() {
+        return;
+    }
+    match runtime.store.reclaim_free_pages() {
+        Ok(pages) => {
+            runtime.clear_problem("retention.vacuum");
+            if pages > 0 {
+                tracing::info!(pages, "returned free store pages to the filesystem");
+            }
+        }
+        Err(error) => {
+            runtime.report_problem(
+                "retention.vacuum".into(),
+                format!("Returning free store pages failed: {error}; the next maintenance interval will retry. Run `aether doctor` and `aether diagnose`."),
+            );
+        }
+    }
 }

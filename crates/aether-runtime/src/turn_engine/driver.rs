@@ -9,7 +9,7 @@ use super::{
     clamp, disallowed_native_spawn_tool, flush_accounting, gated_call, handle_event,
     handle_request, json, missing_harness_tools_note, mpsc, names_exhaustion, park_grace,
     permission_verdict, raise_to, record_consumed, record_refused_call, refusal, side_effect_of,
-    start_park, steer, stop_for_crossing, stopping, writes_record,
+    start_park, steer, stop_for_crossing, stopping,
 };
 
 /// Legacy per-message streams use turn totals as a fallback. Incremental
@@ -329,7 +329,7 @@ pub(super) async fn drive(
             }
             ev = run.events.recv() => {
                 touch_pending = true;
-                if ev.as_ref().is_some_and(writes_record) {
+                if ev.as_ref().is_some_and(|event| state.accounting.flush_before(event)) {
                     // Held readings precede what this commits, and are never
                     // left behind a wait on an operator or the engine.
                     let commits_before = runtime.store.commits();

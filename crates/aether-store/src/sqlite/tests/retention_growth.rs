@@ -34,7 +34,8 @@ fn repeated_file_backed_expiry_reuses_payload_pages_and_survives_reopen() {
                     Actor::System,
                     EventKind::Custom {
                         name: "payload".into(),
-                        payload: serde_json::json!({"text": "x".repeat(16 * 1024)}),
+                        // Inline strings: a blob would compress the payload away.
+                        payload: serde_json::json!({"text": vec!["x".repeat(1024); 16]}),
                     },
                 )
                 .agent(finished.id)

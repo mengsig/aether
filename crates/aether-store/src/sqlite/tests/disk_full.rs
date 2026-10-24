@@ -1,12 +1,17 @@
 use super::*;
 use std::time::Duration;
 
+/// `bytes` of payload in strings short enough to stay in the event row, where
+/// they take their full size in pages rather than a compressed blob's.
 fn bulky_event(bytes: usize) -> Commit {
+    let lines: Vec<String> = (0..bytes.div_ceil(1024))
+        .map(|_| "x".repeat(bytes.min(1024)))
+        .collect();
     Commit::new().event(EventDraft::new(
         Actor::System,
         EventKind::Custom {
             name: "test.bulk".into(),
-            payload: serde_json::json!({ "body": "x".repeat(bytes) }),
+            payload: serde_json::json!({ "lines": lines }),
         },
     ))
 }

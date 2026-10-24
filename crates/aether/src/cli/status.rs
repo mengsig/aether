@@ -117,11 +117,45 @@ fn human_status(
             low.since.to_rfc3339()
         ));
     }
+    if let Some(writes) = &s.writes {
+        out.push(writes_line(writes));
+    }
     out.push(limits_line(s));
     out.push(approval_line(s));
     out.extend(activity_lines(s, at));
     debug_assert!(out.iter().all(|line| !line.is_empty()));
     out
+}
+
+/// What the store wrote since the daemon started, and the three kinds of
+/// record that wrote most of it: the first place to look when the disk is busy.
+fn writes_line(writes: &aether_core::write_stats::WriteStats) -> String {
+    let mib = |bytes: u64| bytes as f64 / (1u64 << 20) as f64;
+    let mut line = format!(
+        "writes   {:.1} MiB in {} rows",
+        mib(writes.total_bytes),
+        writes.total_rows
+    );
+    if let Some(db) = writes.db_bytes {
+        line.push_str(&format!(" · db {:.1} MiB", mib(db)));
+    }
+    if let Some(wal) = writes.wal_bytes {
+        line.push_str(&format!(" · wal {:.1} MiB", mib(wal)));
+    }
+    let heaviest: Vec<String> = writes
+        .kinds
+        .iter()
+        .filter(|kind| kind.bytes > 0)
+        .take(3)
+        .map(|kind| {
+            let share = kind.bytes as f64 * 100.0 / writes.total_bytes.max(1) as f64;
+            format!("{} {share:.0}%", sane(&kind.kind))
+        })
+        .collect();
+    if !heaviest.is_empty() {
+        line.push_str(&format!(" · {}", heaviest.join(", ")));
+    }
+    line
 }
 
 fn limits_line(s: &aether_protocol::DaemonStatus) -> String {
@@ -509,5 +543,41 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(value["installed_version"], "2");
         assert_eq!(value["version"], "1");
+    }
+
+    #[test]
+    fn writes_name_the_heaviest_kinds_and_the_file_sizes() {
+        let at = aether_core::time::now();
+        let mut status = fixture(at);
+        let kind = |name: &str, rows: u64, bytes: u64| aether_core::write_stats::KindWrites {
+            kind: name.into(),
+            rows,
+            bytes,
+        };
+        status.writes = Some(aether_core::write_stats::WriteStats {
+            since: Some(at),
+            total_rows: 30,
+            total_bytes: 4 << 20,
+            kinds: vec![
+                kind("table:agents", 10, 3 << 20),
+                kind("agent.usage_updated", 10, 1 << 20),
+                kind("tool.started", 10, 0),
+            ],
+            db_bytes: Some(64 << 20),
+            wal_bytes: Some(1 << 20),
+        });
+        let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
+        let line = text
+            .lines()
+            .find(|line| line.starts_with("writes "))
+            .unwrap_or_else(|| panic!("a writes line: {text}"));
+        assert_eq!(
+            line,
+            "writes   4.0 MiB in 30 rows · db 64.0 MiB · wal 1.0 MiB · table:agents 75%, agent.usage_updated 25%"
+        );
+        let json = status_text(&status, &LocalInstall::default(), true, at).expect("renders");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["writes"]["total_bytes"], 4 << 20);
+        assert_eq!(value["writes"]["kinds"][1]["kind"], "agent.usage_updated");
     }
 }

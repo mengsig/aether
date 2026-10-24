@@ -58,6 +58,7 @@ use aether_core::task::{Priority, Task, TaskStatusKind};
 use aether_core::time::Timestamp;
 use aether_core::tool::{ApprovalDecision, ApprovalRequest, ToolExposure};
 use aether_core::transfer::{ExportSummary, ImportSummary};
+use aether_core::write_stats::WriteStats;
 use serde::{Deserialize, Serialize};
 
 /// Bumped on any incompatible change to frames, commands or replies. The

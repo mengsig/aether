@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 26;
+pub const SCHEMA_VERSION: u32 = 27;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -464,9 +464,34 @@ CREATE UNIQUE INDEX IF NOT EXISTS notifications_key ON notifications(source, key
 CREATE INDEX IF NOT EXISTS notifications_state ON notifications(state);
 "#;
 
+// Large strings inside event bodies (tool output, long messages) move out of
+// the hot events table into compressed, content-addressed blobs: an output
+// recorded twice is stored once. Deleting an event releases its references,
+// and a blob goes with its last one, so history expiry needs no extra step.
+const V27: &str = r#"
+CREATE TABLE IF NOT EXISTS event_blobs (
+    digest TEXT PRIMARY KEY,
+    size   INTEGER NOT NULL,
+    data   BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS event_blob_refs (
+    seq    INTEGER NOT NULL,
+    digest TEXT NOT NULL,
+    PRIMARY KEY (seq, digest)
+);
+CREATE INDEX IF NOT EXISTS event_blob_refs_digest ON event_blob_refs(digest);
+CREATE TRIGGER IF NOT EXISTS events_release_blobs AFTER DELETE ON events BEGIN
+    DELETE FROM event_blob_refs WHERE seq = old.seq;
+END;
+CREATE TRIGGER IF NOT EXISTS event_blob_refs_collect AFTER DELETE ON event_blob_refs BEGIN
+    DELETE FROM event_blobs WHERE digest = old.digest
+        AND NOT EXISTS (SELECT 1 FROM event_blob_refs WHERE digest = old.digest);
+END;
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26,
+    V22, V23, V24, V25, V26, V27,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the
