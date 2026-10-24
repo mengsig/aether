@@ -1076,3 +1076,37 @@ fn images_are_local_image_items_after_the_text() {
         json!([{"type": "text", "text": "plain"}])
     );
 }
+
+#[tokio::test]
+async fn run_reports_a_missing_workspace_not_a_missing_program() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = CodexAppEngine::new(dir.path().join("x").to_str().unwrap(), "0.159.3");
+    let mut t = turn(None, false);
+    t.cwd = dir.path().join("deleted");
+    let error = engine.run(t, CancellationToken::new()).await.unwrap_err();
+    assert!(
+        matches!(&error, crate::EngineError::WorkspaceMissing { path } if path == &dir.path().join("deleted")),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "workspace missing: {}",
+            dir.path().join("deleted").display()
+        )
+    );
+}
+
+#[tokio::test]
+async fn run_reports_a_missing_program_when_the_workspace_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = CodexAppEngine::new(dir.path().join("absent").to_str().unwrap(), "0.159.3");
+    let mut t = turn(None, false);
+    t.cwd = dir.path().into();
+    let error = engine.run(t, CancellationToken::new()).await.unwrap_err();
+    assert!(
+        matches!(&error, crate::EngineError::NotInstalled { .. }),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("not installed or not on PATH"));
+}
