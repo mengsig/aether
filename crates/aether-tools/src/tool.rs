@@ -168,6 +168,8 @@ pub enum HarnessAction {
         leaf: bool,
         /// `None` inherits the parent's; not a scope knob, so it may widen.
         host_context: Option<aether_core::agent::HostContext>,
+        /// The caller's key for a safe repeat; scoped to the calling agent by the runtime.
+        idempotency_key: Option<String>,
     },
     IntegrateWorkspace {
         child: AgentId,

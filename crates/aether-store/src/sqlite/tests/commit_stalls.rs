@@ -116,3 +116,42 @@ fn a_read_does_not_wait_for_a_commit_in_progress() {
         assert_eq!(agents.iter().map(|x| x.id).collect::<Vec<_>>(), [a.id]);
     });
 }
+
+/// The reads behind `list_agents`, `list_tasks`, `read_task` and
+/// `inspect_state` all answer while a commit holds the write connection.
+#[test]
+fn the_read_tools_queries_do_not_wait_for_a_commit_in_progress() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let store = SqliteStore::open(dir.path().join("aether.db")).expect("open");
+    let a = agent();
+    let mut task = Task::new("t", Actor::user(), a.run, now());
+    task.owner = Some(a.id);
+    store
+        .commit(
+            Commit::new()
+                .mutate(Mutation::UpsertAgent(a.clone()))
+                .mutate(Mutation::UpsertTask(task.clone())),
+        )
+        .expect("commit");
+    let writing = store.conn.lock();
+    let (sender, read) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let reads = (|| -> Result<_> {
+                Ok((
+                    store.agent(a.id)?.map(|x| x.id),
+                    store.tasks(&TaskFilter::default())?.len(),
+                    store.task(task.id)?.map(|t| t.id),
+                    store.subtree_ids(a.id)?.len(),
+                ))
+            })();
+            sender.send(reads)
+        });
+        let reads = read.recv_timeout(Duration::from_secs(10));
+        drop(writing);
+        let reads = reads
+            .expect("the reads finished while the write connection was held")
+            .expect("reads");
+        assert_eq!(reads, (Some(a.id), 1, Some(task.id), 1));
+    });
+}

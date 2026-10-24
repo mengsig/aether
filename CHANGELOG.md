@@ -6,6 +6,15 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **`delegate` takes an optional `idempotency_key`.** A caller that lost the
+  reply, for example to a client timeout, repeats the call with the same key
+  and arguments and gets the child the first call created instead of a second
+  one; the same key with different arguments is refused. Keys are scoped to
+  the calling agent and kept with the daemon's other submission keys for seven
+  days (mengsig/archon#252).
+
 ## 1.2.4
 
 Released 2026-10-24. A small TUI patch release: the agents tree draws a

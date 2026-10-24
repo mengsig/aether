@@ -50,6 +50,22 @@ struct DelegateInput {
     // A raw `Value` for the same reason as `effort`.
     #[serde(default)]
     host_context: Option<Value>,
+    #[serde(default)]
+    idempotency_key: Option<String>,
+}
+
+/// Longest caller key: the runtime prefixes it with the calling agent, and
+/// the whole must fit `MAX_SUBMISSION_KEY_BYTES`.
+const MAX_DELEGATE_KEY_BYTES: usize = 128;
+
+fn validate_idempotency_key(key: &str) -> Result<(), ToolError> {
+    let printable = key.bytes().all(|b| (0x21..=0x7E).contains(&b));
+    if key.is_empty() || key.len() > MAX_DELEGATE_KEY_BYTES || !printable {
+        return Err(ToolError::InvalidInput(format!(
+            "idempotency_key must be 1-{MAX_DELEGATE_KEY_BYTES} bytes of printable ASCII with no spaces"
+        )));
+    }
+    Ok(())
 }
 
 fn yes() -> bool {
@@ -66,7 +82,8 @@ impl Tool for Delegate {
              waiting. With wait=false the child runs in the background and you can wait later \
              with wait_for. The child's scope can only narrow yours. Use workspace_mode=isolated \
              for concurrent editing; that creates a managed Git worktree snapshot and requires \
-             deliberate integration later. Omitted workspace_mode keeps the shared workspace.",
+             deliberate integration later. Omitted workspace_mode keeps the shared workspace. \
+             idempotency_key makes a repeat after a lost reply safe.",
             json!({
                 "type": "object",
                 "properties": {
@@ -82,7 +99,8 @@ impl Tool for Delegate {
                     "network": {"type": "boolean", "description": "Omit to inherit your network policy. Read-only work does not require disabling network. Set false when the task requires offline execution; cannot exceed your own policy."},
                     "leaf": {"type": "boolean", "default": false, "description": "Create a child that cannot delegate and receives fewer coordination tools."},
                     "host_context": {"type": "string", "enum": ["full", "lean"], "description": "lean starts a Claude Code child without its native skills and non-Aether MCP servers, for a smaller context; full restores them. Omit to inherit yours."},
-                    "wait": {"type": "boolean", "default": true}
+                    "wait": {"type": "boolean", "default": true},
+                    "idempotency_key": {"type": "string", "maxLength": 128, "description": "Printable ASCII, no spaces. A repeat with the same key and arguments returns the first call's agent_id and task_id, not a second child; other arguments under a used key are refused. `wait` is not compared. Kept seven days."}
                 },
                 "required": ["role", "objective", "model", "effort"],
                 "additionalProperties": false
@@ -112,6 +130,9 @@ impl Tool for Delegate {
         }
         if input.objective.trim().is_empty() {
             return Err(ToolError::InvalidInput("objective is empty".into()));
+        }
+        if let Some(key) = &input.idempotency_key {
+            validate_idempotency_key(key)?;
         }
         let model = ModelRef::parse(&input.model).ok_or_else(|| {
             ToolError::InvalidInput(format!(
@@ -168,6 +189,7 @@ impl Tool for Delegate {
             wait: input.wait,
             leaf: input.leaf,
             host_context,
+            idempotency_key: input.idempotency_key,
         }))
     }
 }

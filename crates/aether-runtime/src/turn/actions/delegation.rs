@@ -1,6 +1,8 @@
 use super::*;
 use crate::workspace::WorkspaceManifest;
 use aether_core::agent::{NetworkPolicy, Scope};
+use aether_core::idempotency::Submission;
+use aether_core::task::Task;
 use std::path::{Path, PathBuf};
 
 struct DelegateRequest {
@@ -15,6 +17,7 @@ struct DelegateRequest {
     wait: bool,
     leaf: bool,
     host_context: Option<aether_core::agent::HostContext>,
+    idempotency_key: Option<String>,
 }
 
 /// A refusal is a normal tool outcome; only infrastructure faults are `Err`.
@@ -109,6 +112,30 @@ async fn delegate(
         Ok(parent) => parent,
         Err(refusal) => return Ok(refusal),
     };
+    let submission = match delegate_submission(&parent, &request) {
+        Ok(submission) => submission,
+        Err(refusal) => return Ok(refusal),
+    };
+    if let (Some(submission), Some(key)) = (&submission, &request.idempotency_key) {
+        match runtime.replay_created_agent(submission, ctx.base_actor.clone()) {
+            Ok(Some((child, created))) => {
+                // The receipt is the task as created; whether to wait needs it as it is now.
+                let task = match created {
+                    Some(task) => runtime.store.task(task.id)?,
+                    None => None,
+                };
+                return Ok(replayed_outcome(effects, &child, task, request.wait, key));
+            }
+            Ok(None) => {}
+            // A key reused for a different request: the caller's mistake.
+            Err(RuntimeError::Invalid(conflict)) => {
+                return Ok(ToolOutcome::error(format!(
+                    "delegation refused: {conflict}"
+                )));
+            }
+            Err(fault) => return Err(fault),
+        }
+    }
     let network = request
         .scope
         .as_ref()
@@ -123,6 +150,7 @@ async fn delegate(
         Err(refusal) => return Ok(refusal),
     };
     let wait = request.wait;
+    let key = request.idempotency_key.clone();
     let requested = request.model.clone();
     let spec = child_spec(ctx, request, child_scope, isolated.is_some());
     let created = runtime.create_agent_with_preflight(
@@ -135,9 +163,7 @@ async fn delegate(
                 .as_ref()
                 .map(|manifest| manifest.workspace.as_path()),
         },
-        // A delegating agent submits once per turn; nothing retries
-        // this for it.
-        None,
+        submission,
     );
     match created {
         Ok((child, task)) => {
@@ -147,14 +173,82 @@ async fn delegate(
             Ok(delegated_outcome(
                 effects,
                 &child,
-                task.as_ref().map(|t| t.id),
-                wait,
+                Delegated {
+                    task_id: task.as_ref().map(|t| t.id),
+                    wait,
+                    key: key.as_deref(),
+                },
                 isolated.as_ref(),
                 &status,
             ))
         }
         Err(e) => Ok(refuse_delegation(runtime, isolated, e)?),
     }
+}
+
+/// The submission a keyed delegate call is recorded under: scoped to the
+/// calling agent, fingerprinted over everything that shapes the child.
+/// `wait` is left out: it changes what the caller does next, not the child.
+fn delegate_submission(
+    parent: &Agent,
+    request: &DelegateRequest,
+) -> std::result::Result<Option<Submission>, ToolOutcome> {
+    let Some(key) = &request.idempotency_key else {
+        return Ok(None);
+    };
+    let fingerprint = serde_json::json!({
+        "role": request.role,
+        "name": request.name,
+        "objective": request.objective,
+        "instructions": request.instructions,
+        "model": request.model,
+        "effort": request.effort,
+        "scope": request.scope,
+        "workspace_mode": format!("{:?}", request.workspace_mode),
+        "leaf": request.leaf,
+        "host_context": request.host_context,
+    });
+    let scoped = format!("delegate:{}:{key}", parent.id);
+    Submission::new(&scoped, &fingerprint)
+        .map(Some)
+        .map_err(|e| ToolOutcome::error(e.to_string()))
+}
+
+/// The reply to a repeat of a delegate call that already created its child.
+fn replayed_outcome(
+    effects: &mut ToolEffects,
+    child: &Agent,
+    task: Option<Task>,
+    wait: bool,
+    key: &str,
+) -> ToolOutcome {
+    let task_id = task.as_ref().map(|t| t.id);
+    // A child that already finished has nothing left to wait for.
+    let waits = wait && task.as_ref().is_some_and(|t| !t.status.is_terminal());
+    if waits && let Some(id) = task_id {
+        merge_wait(effects, WaitCondition::Task { id });
+    }
+    let structured = serde_json::json!({
+        "agent_id": child.id,
+        "task_id": task_id,
+        "replayed": true,
+        "idempotency_key": key,
+        "task_status": task.as_ref().map(|t| t.status.kind()),
+        "wait_for_args": {"tasks": task_id.into_iter().collect::<Vec<_>>()},
+    });
+    let mut outcome = ToolOutcome::ok(format!(
+        "Already delegated under this idempotency_key: agent {} ({}) with task {}; nothing new was created.{}\n{structured}",
+        child.id,
+        child.name,
+        task_id.map(|t| t.to_string()).unwrap_or_default(),
+        if waits {
+            format!(" {TURN_ENDS_HERE} You will be woken when it finishes.")
+        } else {
+            String::new()
+        },
+    ));
+    outcome.structured = Some(structured);
+    outcome
 }
 
 fn load_delegating_parent(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Checked<Agent> {
@@ -450,14 +544,22 @@ fn cap_note(status: &CapStatus) -> (String, serde_json::Value) {
     }
 }
 
+/// What the delegate reply reports about the call itself.
+struct Delegated<'a> {
+    task_id: Option<aether_core::id::TaskId>,
+    wait: bool,
+    /// Echoed so the caller can repeat the call to learn its outcome.
+    key: Option<&'a str>,
+}
+
 fn delegated_outcome(
     effects: &mut ToolEffects,
     child: &Agent,
-    task_id: Option<aether_core::id::TaskId>,
-    wait: bool,
+    delegated: Delegated<'_>,
     isolated: Option<&WorkspaceManifest>,
     status: &CapStatus,
 ) -> ToolOutcome {
+    let Delegated { task_id, wait, key } = delegated;
     if wait && let Some(id) = task_id {
         merge_wait(effects, WaitCondition::Task { id });
     }
@@ -497,6 +599,9 @@ fn delegated_outcome(
                 .map(workspace_path_for_reply)
         );
         s["wait_for_args"] = serde_json::json!({"tasks": task_id.into_iter().collect::<Vec<_>>()});
+        if let Some(key) = key {
+            s["idempotency_key"] = serde_json::json!(key);
+        }
         // Engine replies carry content, not the structured field.
         // Keep the documented IDs and copyable wait arguments visible.
         outcome.content.push('\n');
@@ -600,6 +705,7 @@ pub(super) async fn apply(
             wait,
             leaf,
             host_context,
+            idempotency_key,
         } => {
             let request = DelegateRequest {
                 role,
@@ -613,6 +719,7 @@ pub(super) async fn apply(
                 wait,
                 leaf,
                 host_context,
+                idempotency_key,
             };
             delegate(runtime, ctx, effects, request).await
         }

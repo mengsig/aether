@@ -280,3 +280,9 @@ mod lifecycle;
 
 #[path = "spawn/workspace_integration.rs"]
 mod workspace_integration;
+
+#[path = "spawn/idempotent.rs"]
+mod idempotent;
+
+#[path = "spawn/readers.rs"]
+mod readers;
