@@ -461,20 +461,23 @@ its contents. Inventory bytes describe the tree before cleanup.
 
 Each engine an agent runs starts as the leader of its own process group, with
 `AETHER_ENGINE_AGENT` set to the agent's id in its environment, which its
-descendants inherit. On Linux, when `systemd-run --user --scope` works, the
-engine also runs in a transient systemd user scope named
-`aether-engine-<agent>-<id>.scope`, whose cgroup holds every descendant, even
-one that cleared its environment or started its own session. Without a user
-systemd the engine keeps its process group and tag alone; this never fails the
-spawn. Set `AETHER_ENGINE_SCOPE=0` in the daemon's environment to skip the
-scopes.
+descendants inherit. On Linux, once the engine is running, the daemon asks the
+user systemd manager to move it into a transient scope named
+`aether-engine-<agent>-<id>.scope`, whose cgroup then holds every descendant,
+even one that cleared its environment or started its own session. A process
+the engine forked before the move stays outside the scope and is found by its
+tag. Without a working user systemd the engine keeps its process group and tag
+alone; the engine is already running, so this never delays or fails it. Set
+`AETHER_ENGINE_SCOPE=0` in the daemon's environment to skip the scopes.
 
 When an agent ends - it completes, fails, is cancelled, or runs out of time or
 budget - the daemon sends `SIGTERM` to every live process in the agent's scopes
-or carrying its tag, waits for them to exit, and sends `SIGKILL` to whatever is
-left after the grace. It records what it stopped as an `agent.processes_reaped`
-event, with the pids and how many needed `SIGKILL`. Only processes of the
-daemon's own user are signalled, and never the daemon itself. A daemon
+or carrying its tag, including any forked meanwhile, and sends `SIGKILL` to
+whatever is left after the grace. It records what it stopped as an
+`agent.processes_reaped` event, with the pids, the ones that needed `SIGKILL`,
+and in `survived` any still alive after that. Only processes of the daemon's
+own user are signalled, and never the daemon itself. If the agent is restarted
+during the grace, the reap stops, so its next engine is spared. A daemon
 shutdown does not end its agents, so it leaves these processes running; the
 agents resume after the restart.
 
