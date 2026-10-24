@@ -17,6 +17,8 @@ mod offline;
 pub mod orphans;
 mod output;
 mod process_interrupt;
+pub mod reap;
+mod scope;
 mod usage;
 
 use std::path::{Path, PathBuf};
@@ -530,9 +532,8 @@ impl ProcessRun {
     }
 }
 
-/// Spawn a CLI, feed `first_input` on stdin, and stream stdout lines through
-/// a parser. With `keep_stdin_open`, further raw stdin lines can be sent
-/// through the returned `stdin` until it is dropped. Shared by both engines.
+/// [`run_process_with_env`] with no extra environment and no agent.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_process<P>(
     program: &str,
@@ -559,6 +560,7 @@ where
         temp_dir,
         build_env,
         &[],
+        None,
         redactor,
         first_input,
         keep_stdin_open,
@@ -569,6 +571,9 @@ where
     .await
 }
 
+/// Spawn a CLI for `agent`, feed `first_input` on stdin, and stream stdout
+/// lines through a parser. With `keep_stdin_open`, further raw stdin lines can
+/// be sent through the returned `stdin` until it is dropped. Shared by both engines.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_process_with_env<P>(
     program: &str,
@@ -578,6 +583,7 @@ pub(crate) async fn run_process_with_env<P>(
     temp_dir: Option<&Path>,
     build_env: &[(String, PathBuf)],
     extra_env: &[(std::ffi::OsString, std::ffi::OsString)],
+    agent: Option<aether_core::id::AgentId>,
     redactor: &aether_core::redact::Redactor,
     first_input: String,
     keep_stdin_open: bool,
@@ -591,7 +597,7 @@ where
     use std::os::unix::process::CommandExt as _;
     use tokio::io::AsyncWriteExt as _;
 
-    let mut command = tokio::process::Command::new(program);
+    let mut command = scope::command(program, agent);
     command
         .args(&args)
         .current_dir(&cwd)
@@ -636,6 +642,7 @@ where
     let interrupt_input = input_tx.downgrade();
 
     let engine_record = orphans::EngineRecord::register(pid, run_token.as_deref());
+    scope::adopt(pid, agent).await;
     let stdin_error = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     let stdin_error_writer = stdin_error.clone();
     let mut stdin_task = tokio::spawn(async move {

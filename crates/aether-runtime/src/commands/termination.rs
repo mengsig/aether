@@ -8,6 +8,9 @@ use aether_core::task::{TaskResult, TaskStatus};
 use aether_core::time::now;
 use aether_store::{AgentFilter, Commit, Mutation};
 
+/// The custom event naming what an ended agent's engines left running.
+pub(crate) const PROCESSES_REAPED_EVENT: &str = "agent.processes_reaped";
+
 impl Runtime {
     /// Stop the running turn but keep the agent: it records what it has so
     /// far and waits for the next message. False when no turn was running.
@@ -148,17 +151,19 @@ impl Runtime {
 
     /// Let go of what an ended agent was holding, once its terminal
     /// transition is committed: its quarantine hold, whose release the commit
-    /// just recorded, and the background shell processes it started. Every
-    /// terminal transition goes through `terminate_agent`, so nothing
-    /// outlives its agent whether it completed, failed or was cancelled.
+    /// just recorded, the background shell processes it started and whatever
+    /// its engines left running. Every terminal transition goes through
+    /// `terminate_agent`, so nothing outlives its agent whether it completed,
+    /// failed or was cancelled.
     pub(crate) fn reap_ended_agent(&self, pending: PendingReap) {
         let agent = pending.0;
         self.resources.release_quarantine(agent);
-        let Some(processes) = self.tools.background().cloned() else {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(%agent, "no runtime to stop the agent's processes on");
             return;
         };
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            tracing::warn!(%agent, "no runtime to stop background processes on");
+        self.reap_engine_processes(&handle, agent);
+        let Some(processes) = self.tools.background().cloned() else {
             return;
         };
         handle.spawn(async move {
@@ -167,6 +172,69 @@ impl Runtime {
                 tracing::info!(%agent, stopped, "stopped background processes with the agent");
             }
         });
+    }
+
+    /// Stop what the ended agent's engines left running - a server, a
+    /// detached job - and record it as `agent.processes_reaped`.
+    fn reap_engine_processes(&self, handle: &tokio::runtime::Handle, agent: AgentId) {
+        let grace = self.models.config().agents.reap_grace();
+        let me = self.me.clone();
+        handle.spawn(async move {
+            let ended = || me.upgrade().is_some_and(|runtime| runtime.has_ended(agent));
+            let report = aether_engine::reap::reap_agent(agent, grace, ended).await;
+            if report.is_empty() {
+                return;
+            }
+            let Some(runtime) = me.upgrade() else {
+                tracing::warn!(%agent, ?report, "runtime gone before the reaped processes were recorded");
+                return;
+            };
+            if let Err(error) = runtime.record_processes_reaped(agent, &report) {
+                tracing::error!(%agent, %error, "could not record the agent's reaped processes");
+            }
+        });
+    }
+
+    /// Whether `agent` is still ended; a restart means its processes are its new engine's.
+    fn has_ended(&self, agent: AgentId) -> bool {
+        match self.store.agent(agent) {
+            Ok(Some(row)) => row.status.is_terminal(),
+            Ok(None) => true,
+            Err(error) => {
+                tracing::warn!(%agent, %error, "cannot tell whether the agent is still ended; sparing its processes");
+                false
+            }
+        }
+    }
+
+    fn record_processes_reaped(
+        &self,
+        agent: AgentId,
+        report: &aether_engine::reap::ReapReport,
+    ) -> Result<()> {
+        assert!(!report.is_empty(), "nothing reaped is not recorded");
+        let Some(row) = self.store.agent(agent)? else {
+            return Ok(());
+        };
+        let payload = serde_json::json!({
+            "terminated": report.terminated.len(),
+            "killed": report.killed.len(),
+            "pids": report.terminated,
+            "killed_pids": report.killed,
+            "survived": report.survived,
+        });
+        let kind = EventKind::Custom {
+            name: PROCESSES_REAPED_EVENT.to_owned(),
+            payload,
+        };
+        self.apply(
+            Commit::new().event(
+                EventDraft::new(Actor::System, kind)
+                    .agent(agent)
+                    .run(row.run),
+            ),
+        )?;
+        Ok(())
     }
 
     /// Move an agent to a terminal state, settle its task, notify its parent,

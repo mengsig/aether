@@ -150,6 +150,10 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 #
 # [agents]
 # temp_root = "/var/tmp/aether"
+#
+# When an agent ends, what its engines left running gets SIGTERM, then SIGKILL
+# after this many seconds (10 by default, 300 at most).
+# reap_grace_secs = 10
 
 # Agents in a repository workspace build into a cache outside it, one
 # partition per repository and run, so a run's isolated children share warm

@@ -366,6 +366,7 @@ impl ClaudeCodeEngine {
             turn.temp_dir.as_deref(),
             &turn.build_env,
             &environment,
+            context.map(|context| context.agent_id),
             &turn.redactor,
             user_message_line(&turn.prompt, &turn.images),
             true,

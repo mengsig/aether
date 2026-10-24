@@ -71,6 +71,71 @@ async fn a_background_process_is_polled_and_dies_with_its_agent() {
     .await;
 }
 
+/// A process an engine of the agent detached (`setsid`) outlives every turn
+/// and the engine's group, but not the agent: its end reaps it and says so.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_engine_descendant_that_left_its_group_dies_with_its_agent() {
+    let h = harness(vec![ScriptedClient::text("waiting")]).await;
+    let mut s = spec("wait");
+    s.config = Some(AgentConfig {
+        long_lived: true,
+        ..Default::default()
+    });
+    let (agent, _) = h.runtime.create_agent(s, Actor::user()).expect("create");
+    h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    // What an engine's descendants inherit: the engine's agent tag.
+    let output = std::process::Command::new("sh")
+        .args(["-c", "setsid sleep 43 </dev/null >/dev/null 2>&1 & echo $!"])
+        .env("AETHER_ENGINE_AGENT", agent.id.to_string())
+        .output()
+        .expect("start the detached process");
+    let pid: i32 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .expect("its pid");
+    assert!(process_alive(pid), "the detached process runs");
+
+    h.runtime
+        .cancel_agent(agent.id, Some("done".into()), Actor::user())
+        .expect("cancel");
+    h.wait_until(agent.id, |s| s.is_terminal()).await;
+    let reaped = || {
+        h.store
+            .events(0, 10_000, &EventFilter::for_agent(agent.id))
+            .expect("events")
+            .into_iter()
+            .find_map(|e| match e.kind {
+                EventKind::Custom { name, payload } if name == "agent.processes_reaped" => {
+                    Some(payload)
+                }
+                _ => None,
+            })
+    };
+    let payload = wait_for_with_budget(
+        h.wait_ceiling,
+        h.wait_ceiling,
+        reaped,
+        || (),
+        || format!("no agent.processes_reaped for detached process {pid}"),
+    )
+    .await;
+
+    assert!(!process_alive(pid), "the detached process is gone");
+    assert!(
+        payload["pids"]
+            .as_array()
+            .is_some_and(|pids| pids.contains(&json!(pid))),
+        "{payload}"
+    );
+    assert_eq!(
+        payload["killed"],
+        json!(0),
+        "sleep honours SIGTERM: {payload}"
+    );
+}
+
 /// Whether `pid` is a live (non-zombie) process. `/proc` only exists on
 /// Linux, so elsewhere this reports "not alive" and only the negative
 /// assertions below mean anything.

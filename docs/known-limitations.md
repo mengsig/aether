@@ -255,5 +255,11 @@ isolation depend on the installed engine version and the platform; see
   start time still match a live group leader. This needs Linux (it reads
   `/proc`); on macOS nothing is recorded or reaped, and the orphans must be
   stopped by hand. An engine's descendants that left its process group, or a
-  group whose leader had already exited, are not reaped. A graceful stop
-  leaves none.
+  group whose leader had already exited, are not reaped then; on Linux they
+  are when their agent ends. A graceful stop leaves no engine running.
+- When an agent ends, its engines' leftover processes are found by their
+  environment tag and, with a user systemd, their scope
+  ([agent processes](configuration.md#agent-processes)). This needs Linux. A
+  process that cleared its environment is found only through a scope, so
+  without a user systemd it keeps running. On macOS a process left behind
+  after a turn keeps running.

@@ -16,7 +16,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::detect::{self, DetectError, EngineVersion};
-use crate::{Engine, EngineError, EngineKind, EngineRun, EngineTurn, PermissionDecision};
+use crate::{
+    Engine, EngineError, EngineKind, EngineLaunchContext, EngineRun, EngineTurn, PermissionDecision,
+};
 
 mod driver;
 mod items;
@@ -399,6 +401,26 @@ impl Engine for CodexAppEngine {
         turn: EngineTurn,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
+        self.launch(turn, None, cancel).await
+    }
+
+    async fn run_with_context(
+        &self,
+        turn: EngineTurn,
+        context: EngineLaunchContext,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        self.launch(turn, Some(context.agent_id), cancel).await
+    }
+}
+
+impl CodexAppEngine {
+    async fn launch(
+        &self,
+        turn: EngineTurn,
+        agent: Option<aether_core::id::AgentId>,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
         use std::os::unix::process::CommandExt as _;
 
         let sandbox = if loopback_sandboxed(&turn) {
@@ -419,7 +441,7 @@ impl Engine for CodexAppEngine {
         let environment = sandbox.as_ref().map(|s| s.environment.clone());
         let args = self.args(&turn);
         let cwd: PathBuf = turn.cwd.clone();
-        let mut command = tokio::process::Command::new(&self.program);
+        let mut command = crate::scope::command(&self.program, agent);
         command
             .args(&args)
             .current_dir(&cwd)
@@ -444,6 +466,7 @@ impl Engine for CodexAppEngine {
         })?;
         let engine_record =
             crate::orphans::EngineRecord::register(child.id(), run_token.as_deref());
+        crate::scope::adopt(child.id(), agent).await;
         let stdin = child
             .stdin
             .take()

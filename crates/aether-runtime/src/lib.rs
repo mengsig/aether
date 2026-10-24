@@ -285,6 +285,8 @@ pub(crate) fn withheld_by_position(
 }
 
 pub struct Runtime {
+    /// This runtime, for a task that commits after the call that spawned it returned.
+    pub(crate) me: std::sync::Weak<Runtime>,
     pub(crate) store: Arc<dyn Store>,
     pub(crate) models: Arc<Models>,
     /// Model used for agents created without one; resolved lazily so a login
@@ -414,7 +416,8 @@ impl Runtime {
         // One gate for the whole daemon: memory curation is a read-modify-write
         // against the same store a turn commits to, so both take this.
         let commit_lock = aether_store::WriteGate::new();
-        let runtime = Arc::new(Self {
+        let runtime = Arc::new_cyclic(|me| Self {
+            me: me.clone(),
             memory: match config.memory_index.clone() {
                 Some(index) => {
                     MemoryService::new(store.clone(), commit_lock.clone()).with_index(index)

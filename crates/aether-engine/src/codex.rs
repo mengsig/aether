@@ -20,7 +20,8 @@ use tokio_util::sync::CancellationToken;
 use crate::codex_app::{RawTotals, advanced, consumed_since};
 use crate::detect::{self, DetectError, EngineVersion};
 use crate::{
-    Engine, EngineError, EngineEvent, EngineKind, EngineOutcome, EngineRun, EngineTurn, run_process,
+    Engine, EngineError, EngineEvent, EngineKind, EngineLaunchContext, EngineOutcome, EngineRun,
+    EngineTurn, run_process_with_env,
 };
 
 #[derive(Debug, Clone)]
@@ -226,6 +227,26 @@ impl Engine for CodexEngine {
         turn: EngineTurn,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
+        self.launch(turn, None, cancel).await
+    }
+
+    async fn run_with_context(
+        &self,
+        turn: EngineTurn,
+        context: EngineLaunchContext,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        self.launch(turn, Some(context.agent_id), cancel).await
+    }
+}
+
+impl CodexEngine {
+    async fn launch(
+        &self,
+        turn: EngineTurn,
+        agent: Option<aether_core::id::AgentId>,
+        cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
         use std::io::Write as _;
         if !turn.summary_only {
             self.validate_network_policy(turn.network_access)?;
@@ -269,13 +290,15 @@ impl Engine for CodexEngine {
         let ownership_turn = turn.clone();
         let ownership_cancel = cancel.clone();
         let mut ownership_recorded = false;
-        let run = run_process(
+        let run = run_process_with_env(
             &self.program,
             args,
             cwd,
             &turn.hidden_env,
             turn.temp_dir.as_deref(),
             &turn.build_env,
+            &[],
+            agent,
             &turn.redactor,
             turn.prompt.clone(),
             false,
