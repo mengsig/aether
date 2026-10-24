@@ -61,8 +61,15 @@ referenced by durable state such as artifacts or memory. These protections can
 keep a run beyond the configured window. Requests for expired event history fail
 explicitly rather than returning an apparently complete empty history.
 
-SQLite reuses freed pages; deletion does not necessarily shrink the database
-file. This history policy does not delete backups, native Claude/Codex session
+Large strings in events (tool output, long messages) are stored once,
+compressed, in a side table; expiring the last event that refers to one
+removes it. The store uses SQLite's incremental auto-vacuum, and each
+maintenance sweep returns free pages to the filesystem in short passes, so
+the database file shrinks after expiry. A store created before this is
+converted once when the daemon starts, provided the disk has room for a copy
+of it; until then it keeps its size. `aether status` shows the bytes the store
+wrote since the daemon started, the database and WAL sizes, and the record
+kinds that wrote most (`writes` in `aether status --json`). This history policy does not delete backups, native Claude/Codex session
 files, workspaces, or artifact metadata. Filesystem cleanup has its own
 [storage policy](configuration.md#storage); neither policy is a total disk-space cap.
 
@@ -105,7 +112,7 @@ Artifact metadata protects its run even after payload eviction.
 
 `history_payload_bytes` estimates serialized JSON payload bytes removed from
 SQLite, excluding indexes, page overhead, and the expiry spans retained for
-cursor safety. Freed pages can be reused; the database file may not shrink.
+cursor safety. Freed pages go back to the filesystem at the next sweep.
 `artifact_payload_bytes` is the logical size selected by the same artifact
 policy as eviction, counting shared digests once. It is not a guaranteed disk
 reclamation figure (files can be missing, external, or share other live paths).

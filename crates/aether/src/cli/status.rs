@@ -544,4 +544,40 @@ mod tests {
         assert_eq!(value["installed_version"], "2");
         assert_eq!(value["version"], "1");
     }
+
+    #[test]
+    fn writes_name_the_heaviest_kinds_and_the_file_sizes() {
+        let at = aether_core::time::now();
+        let mut status = fixture(at);
+        let kind = |name: &str, rows: u64, bytes: u64| aether_core::write_stats::KindWrites {
+            kind: name.into(),
+            rows,
+            bytes,
+        };
+        status.writes = Some(aether_core::write_stats::WriteStats {
+            since: Some(at),
+            total_rows: 30,
+            total_bytes: 4 << 20,
+            kinds: vec![
+                kind("table:agents", 10, 3 << 20),
+                kind("agent.usage_updated", 10, 1 << 20),
+                kind("tool.started", 10, 0),
+            ],
+            db_bytes: Some(64 << 20),
+            wal_bytes: Some(1 << 20),
+        });
+        let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
+        let line = text
+            .lines()
+            .find(|line| line.starts_with("writes "))
+            .unwrap_or_else(|| panic!("a writes line: {text}"));
+        assert_eq!(
+            line,
+            "writes   4.0 MiB in 30 rows · db 64.0 MiB · wal 1.0 MiB · table:agents 75%, agent.usage_updated 25%"
+        );
+        let json = status_text(&status, &LocalInstall::default(), true, at).expect("renders");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["writes"]["total_bytes"], 4 << 20);
+        assert_eq!(value["writes"]["kinds"][1]["kind"], "agent.usage_updated");
+    }
 }
