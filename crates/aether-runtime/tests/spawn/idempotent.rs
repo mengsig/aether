@@ -118,3 +118,19 @@ async fn a_malformed_key_is_refused_before_anything_is_created() {
     assert!(children_of(h.store.as_ref(), coordinator).is_empty());
     h.runtime.shutdown().await;
 }
+
+/// A keyed call skips the tool's early scope check so its replay can come
+/// first; creation still refuses a child scope wider than its parent's.
+#[tokio::test]
+async fn a_keyed_call_that_widens_the_scope_is_still_refused() {
+    let mut h = harness(10).await;
+    let coordinator = start_coordinator(&h, None);
+    let bridge = h.ready.recv().await.expect("coordinator started");
+    let mut widening = keyed("look around", "wide");
+    widening["workspace_root"] = json!("/");
+    let (reply, is_error) = call(&h, &bridge, widening).await;
+    assert!(is_error, "a widened scope was accepted: {reply}");
+    assert!(reply.contains("workspace_root"), "{reply}");
+    assert!(children_of(h.store.as_ref(), coordinator).is_empty());
+    h.runtime.shutdown().await;
+}

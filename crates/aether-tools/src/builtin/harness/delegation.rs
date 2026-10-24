@@ -1,6 +1,7 @@
 use super::{harness_descriptor, parse_id};
 use crate::tool::{
-    HarnessAction, Tool, ToolContext, ToolError, ToolExecution, WorkspaceMode, parse_input,
+    DelegateKey, HarnessAction, Tool, ToolContext, ToolError, ToolExecution, WorkspaceMode,
+    parse_input,
 };
 use aether_core::tool::{ResourceKey, SideEffectClass, ToolDescriptor};
 use async_trait::async_trait;
@@ -57,6 +58,18 @@ struct DelegateInput {
 /// Longest caller key: the runtime prefixes it with the calling agent, and
 /// the whole must fit `MAX_SUBMISSION_KEY_BYTES`.
 const MAX_DELEGATE_KEY_BYTES: usize = 128;
+
+/// The caller's arguments as sent, without `wait` or the key: what decides
+/// whether a repeat is the same request. Taken before any inheritance from
+/// the caller's current scope, which may have changed since the first call.
+fn keyed_request(input: &Value) -> Option<DelegateKey> {
+    let key = input.get("idempotency_key")?.as_str()?.to_owned();
+    let mut request = input.clone();
+    let fields = request.as_object_mut()?;
+    fields.remove("idempotency_key");
+    fields.remove("wait");
+    Some(DelegateKey { key, request })
+}
 
 fn validate_idempotency_key(key: &str) -> Result<(), ToolError> {
     let printable = key.bytes().all(|b| (0x21..=0x7E).contains(&b));
@@ -124,6 +137,7 @@ impl Tool for Delegate {
         ctx: &ToolContext,
         _cancel: CancellationToken,
     ) -> Result<ToolExecution, ToolError> {
+        let keyed = keyed_request(&input);
         let input: DelegateInput = parse_input(input)?;
         if input.role.trim().is_empty() {
             return Err(ToolError::InvalidInput("role is empty".into()));
@@ -170,7 +184,10 @@ impl Tool for Delegate {
             }
             s
         });
-        if let Some(s) = &scope
+        // A keyed call may repeat one that already ran under a since-narrowed
+        // scope; its replay comes first, and creation still refuses a widening.
+        if keyed.is_none()
+            && let Some(s) = &scope
             && !s.is_narrowing_of(&ctx.scope)
         {
             return Err(ToolError::Denied(
@@ -189,7 +206,7 @@ impl Tool for Delegate {
             wait: input.wait,
             leaf: input.leaf,
             host_context,
-            idempotency_key: input.idempotency_key,
+            idempotency: keyed,
         }))
     }
 }

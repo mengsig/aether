@@ -32,6 +32,6 @@ pub use output::{BoundedOutput, OutputPolicy, Redactor};
 pub use registry::ToolRegistry;
 pub use runtime::{BatchResult, ExecutionPolicy, ToolRuntime, redact_json, requires_approval};
 pub use tool::{
-    ArtifactSink, HarnessAction, Tool, ToolContext, ToolError, ToolExecution, WorkspaceMode,
-    parse_input,
+    ArtifactSink, DelegateKey, HarnessAction, Tool, ToolContext, ToolError, ToolExecution,
+    WorkspaceMode, parse_input,
 };

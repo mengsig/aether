@@ -17,7 +17,7 @@ struct DelegateRequest {
     wait: bool,
     leaf: bool,
     host_context: Option<aether_core::agent::HostContext>,
-    idempotency_key: Option<String>,
+    idempotency: Option<aether_tools::DelegateKey>,
 }
 
 /// A refusal is a normal tool outcome; only infrastructure faults are `Err`.
@@ -116,7 +116,7 @@ async fn delegate(
         Ok(submission) => submission,
         Err(refusal) => return Ok(refusal),
     };
-    if let (Some(submission), Some(key)) = (&submission, &request.idempotency_key) {
+    if let (Some(submission), Some(keyed)) = (&submission, &request.idempotency) {
         match runtime.replay_created_agent(submission, ctx.base_actor.clone()) {
             Ok(Some((child, created))) => {
                 // The receipt is the task as created; whether to wait needs it as it is now.
@@ -124,7 +124,13 @@ async fn delegate(
                     Some(task) => runtime.store.task(task.id)?,
                     None => None,
                 };
-                return Ok(replayed_outcome(effects, &child, task, request.wait, key));
+                return Ok(replayed_outcome(
+                    effects,
+                    &child,
+                    task,
+                    request.wait,
+                    &keyed.key,
+                ));
             }
             Ok(None) => {}
             // A key reused for a different request: the caller's mistake.
@@ -150,7 +156,7 @@ async fn delegate(
         Err(refusal) => return Ok(refusal),
     };
     let wait = request.wait;
-    let key = request.idempotency_key.clone();
+    let key = request.idempotency.as_ref().map(|keyed| keyed.key.clone());
     let requested = request.model.clone();
     let spec = child_spec(ctx, request, child_scope, isolated.is_some());
     let created = runtime.create_agent_with_preflight(
@@ -187,29 +193,16 @@ async fn delegate(
 }
 
 /// The submission a keyed delegate call is recorded under: scoped to the
-/// calling agent, fingerprinted over everything that shapes the child.
-/// `wait` is left out: it changes what the caller does next, not the child.
+/// calling agent, fingerprinted over the arguments the caller sent.
 fn delegate_submission(
     parent: &Agent,
     request: &DelegateRequest,
 ) -> std::result::Result<Option<Submission>, ToolOutcome> {
-    let Some(key) = &request.idempotency_key else {
+    let Some(keyed) = &request.idempotency else {
         return Ok(None);
     };
-    let fingerprint = serde_json::json!({
-        "role": request.role,
-        "name": request.name,
-        "objective": request.objective,
-        "instructions": request.instructions,
-        "model": request.model,
-        "effort": request.effort,
-        "scope": request.scope,
-        "workspace_mode": format!("{:?}", request.workspace_mode),
-        "leaf": request.leaf,
-        "host_context": request.host_context,
-    });
-    let scoped = format!("delegate:{}:{key}", parent.id);
-    Submission::new(&scoped, &fingerprint)
+    let scoped = format!("delegate:{}:{}", parent.id, keyed.key);
+    Submission::new(&scoped, &keyed.request)
         .map(Some)
         .map_err(|e| ToolOutcome::error(e.to_string()))
 }
@@ -705,7 +698,7 @@ pub(super) async fn apply(
             wait,
             leaf,
             host_context,
-            idempotency_key,
+            idempotency,
         } => {
             let request = DelegateRequest {
                 role,
@@ -719,7 +712,7 @@ pub(super) async fn apply(
                 wait,
                 leaf,
                 host_context,
-                idempotency_key,
+                idempotency,
             };
             delegate(runtime, ctx, effects, request).await
         }

@@ -264,3 +264,42 @@ async fn delegate_rejects_empty_role() {
     };
     assert!(msg.contains("role"), "{msg}");
 }
+
+/// A keyed repeat is compared on the arguments the caller sent, not on a
+/// scope inherited from a parent whose own scope may have narrowed since.
+#[tokio::test]
+async fn a_keyed_delegate_carries_the_callers_arguments_not_the_inherited_scope() {
+    use aether_core::agent::NetworkPolicy;
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    let mut before = ctx_in(dir.path());
+    before.scope.network = NetworkPolicy::Allowed;
+    let mut narrowed = ctx_in(dir.path());
+    narrowed.scope.network = NetworkPolicy::Denied;
+    assert_ne!(before.scope, narrowed.scope);
+    let input = json!({"role":"worker", "objective":"check", "model":"mock/m", "effort":"low",
+                       "workspace_root":"nested", "wait": true, "idempotency_key":"k-1"});
+    let keyed = |action: HarnessAction| match action {
+        HarnessAction::Delegate {
+            idempotency, scope, ..
+        } => (idempotency.expect("keyed"), scope.expect("scoped")),
+        other => panic!("not a delegation: {other:?}"),
+    };
+    let (first, first_scope) = keyed(act(&Delegate, &before, input.clone()).await.unwrap());
+    let (repeat, repeat_scope) = keyed(act(&Delegate, &narrowed, input).await.unwrap());
+    assert_ne!(first_scope.network, repeat_scope.network);
+    assert_eq!(first, repeat);
+    assert_eq!(first.key, "k-1");
+    assert!(first.request.get("wait").is_none());
+    assert!(first.request.get("idempotency_key").is_none());
+
+    let unkeyed = json!({"role":"worker", "objective":"check", "model":"mock/m", "effort":"low"});
+    assert!(matches!(
+        act(&Delegate, &before, unkeyed).await.unwrap(),
+        HarnessAction::Delegate {
+            idempotency: None,
+            ..
+        }
+    ));
+}
