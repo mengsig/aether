@@ -7,9 +7,9 @@ use aether_core::write_stats::WriteStats;
 use aether_store::{Commit, Mutation};
 
 const AGENTS: usize = 6;
-const MESSAGES: u64 = 12;
-const READINGS_PER_MESSAGE: u64 = 20;
-const READING_GAP: Duration = Duration::from_millis(40);
+const MESSAGES: u64 = 3;
+const READINGS_PER_MESSAGE: u64 = 24;
+const READING_GAP: Duration = Duration::from_millis(125);
 const TOOL_OUTPUT_BYTES: usize = 48 * 1024;
 
 /// A turn the way a busy Claude Code session streams one: bursts of usage and

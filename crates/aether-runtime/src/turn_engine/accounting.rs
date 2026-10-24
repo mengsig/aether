@@ -27,7 +27,8 @@ pub(super) const ACCOUNTING_FLUSH: std::time::Duration = std::time::Duration::fr
 
 /// The window under a token or cost budget in the agent's lineage: ancestor
 /// budgets are enforced from stored rows, so their figures may lag this much.
-pub(super) const BUDGETED_FLUSH: std::time::Duration = std::time::Duration::from_secs(1);
+/// Unbudgeted readings waited as long before #253.
+pub(super) const BUDGETED_FLUSH: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Usage and context readings not yet on the record. An engine reports them
 /// several times per message; each its own commit was most of a turn's WAL writes.
