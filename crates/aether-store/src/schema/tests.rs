@@ -1097,6 +1097,23 @@ fn v26_store_with_inline_outputs(path: &std::path::Path) -> Vec<aether_core::eve
             .agent(agent),
         );
     }
+    // Content shaped like a reference to the blob this output becomes once
+    // a v27 store writes it: it must still read back as the text it is.
+    use sha2::Digest;
+    let lookalike = format!(
+        "\u{1}aether-blob:{}",
+        hex::encode(sha2::Sha256::digest(output.as_bytes()))
+    );
+    commit = commit.event(
+        EventDraft::new(
+            Actor::System,
+            EventKind::Custom {
+                name: "legacy.note".into(),
+                payload: serde_json::json!({ "text": lookalike }),
+            },
+        )
+        .agent(agent),
+    );
     let events = crate::Store::commit(&source, commit).expect("events");
     let conn = database_at(path, 26);
     for event in &events {
@@ -1161,8 +1178,14 @@ fn v27_keeps_inline_outputs_readable_and_offloads_new_ones() {
             .kind,
         legacy[0].kind
     );
+    let lookalike = legacy.last().expect("lookalike");
+    assert_eq!(
+        store.event_by_seq(lookalike.seq).expect("read").as_ref(),
+        Some(lookalike),
+        "inline content is never resolved as a reference, even to a blob that exists"
+    );
     let deleted = conn
-        .execute("DELETE FROM events WHERE seq <= 3", [])
+        .execute("DELETE FROM events WHERE seq <= 4", [])
         .expect("legacy rows delete without references");
-    assert_eq!(deleted, 3);
+    assert_eq!(deleted, 4);
 }

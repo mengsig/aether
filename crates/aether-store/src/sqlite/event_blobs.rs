@@ -80,16 +80,25 @@ fn store(tx: &Connection, seq: u64, text: &mut String) -> Result<usize> {
 /// The event a stored body stands for, its blob references resolved. Run it
 /// inside the read that fetched the body, so expiry cannot remove the blobs
 /// in between.
+///
+/// A marker string is a reference only when the event recorded it in
+/// `event_blob_refs`: a body written before v27 may hold such content inline.
 pub(super) fn decode(conn: &Connection, body: &str) -> Result<Event> {
     if !body.contains(MARKER_JSON) {
         return Ok(serde_json::from_str(body)?);
     }
     let mut value: Value = serde_json::from_str(body)?;
+    let seq = value
+        .get("seq")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| StoreError::Corrupt("an event body has no sequence".into()))?;
     let mut stack = vec![&mut value];
     while let Some(node) = stack.pop() {
         match node {
             Value::String(text) => {
-                if let Some(digest) = text.strip_prefix(MARKER) {
+                if let Some(digest) = text.strip_prefix(MARKER)
+                    && references(conn, seq, digest)?
+                {
                     *text = load(conn, digest)?;
                 }
             }
@@ -99,6 +108,16 @@ pub(super) fn decode(conn: &Connection, body: &str) -> Result<Event> {
         }
     }
     Ok(serde_json::from_value(value)?)
+}
+
+/// Whether event `seq` stored a string as blob `digest`.
+fn references(conn: &Connection, seq: i64, digest: &str) -> Result<bool> {
+    debug_assert!(seq > 0, "event sequences start at 1");
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM event_blob_refs WHERE seq = ?1 AND digest = ?2)",
+        params![seq, digest],
+        |row| row.get(0),
+    )?)
 }
 
 /// The text of blob `digest`, checked against its recorded size and digest.

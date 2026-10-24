@@ -101,24 +101,30 @@ impl Engine for StreamingEngine {
     }
 }
 
-/// Bytes this process handed to `write(2)`, on any filesystem.
-fn written() -> u64 {
+/// Bytes this process handed to `write(2)`, on any filesystem. Linux only:
+/// elsewhere the load still runs and only the store's own tally is checked.
+fn written() -> Option<u64> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
     let io = std::fs::read_to_string("/proc/self/io").expect("read /proc/self/io");
-    io.lines()
+    let wchar = io
+        .lines()
         .find_map(|line| line.strip_prefix("wchar: "))
         .and_then(|n| n.parse().ok())
-        .expect("wchar in /proc/self/io")
+        .expect("wchar in /proc/self/io");
+    Some(wchar)
 }
 
-fn report(stats: &WriteStats, elapsed: Duration, os_bytes: u64) {
+fn report(stats: &WriteStats, elapsed: Duration, os_bytes: Option<u64>) {
     let minutes = elapsed.as_secs_f64() / 60.0;
     eprintln!(
-        "load: {AGENTS} agents, {:.1}s; payload {} B in {} rows ({:.0} B/min); process wchar {os_bytes} B ({:.0} B/min); db {:?} wal {:?}",
+        "load: {AGENTS} agents, {:.1}s; payload {} B in {} rows ({:.0} B/min); process wchar {os_bytes:?} B ({:?} B/min); db {:?} wal {:?}",
         elapsed.as_secs_f64(),
         stats.total_bytes,
         stats.total_rows,
         stats.total_bytes as f64 / minutes,
-        os_bytes as f64 / minutes,
+        os_bytes.map(|bytes| (bytes as f64 / minutes).round()),
         stats.db_bytes,
         stats.wal_bytes,
     );
@@ -135,7 +141,7 @@ fn report(stats: &WriteStats, elapsed: Duration, os_bytes: u64) {
 struct Load {
     stats: WriteStats,
     commits: u64,
-    os_bytes: u64,
+    os_bytes: Option<u64>,
     elapsed: Duration,
 }
 
@@ -183,7 +189,7 @@ async fn run_load(token_budget: Option<u64>) -> Load {
     let load = Load {
         stats: store.write_stats(),
         commits: store.commits() - commits,
-        os_bytes: written() - before,
+        os_bytes: written().zip(before).map(|(after, before)| after - before),
         elapsed: started.elapsed(),
     };
     h.runtime.shutdown().await;
