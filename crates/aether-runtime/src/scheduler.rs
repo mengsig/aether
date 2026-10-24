@@ -190,6 +190,9 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
     isolated(runtime, faults, "expire backoff", || {
         expire_backoff(runtime)
     });
+    isolated(runtime, faults, "sweep orphans", || {
+        crate::orphans::sweep_if_due(runtime)
+    });
     let mut blocked = std::collections::HashSet::new();
     let mut record_errors = Vec::new();
     guarded(runtime, faults, "enforce budgets", || {

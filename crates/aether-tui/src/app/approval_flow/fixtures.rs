@@ -116,6 +116,8 @@ pub(crate) fn agent(
         resume_wait: None,
         restarted_from: None,
         restarted_as: None,
+        engine_alive: false,
+        last_event_at: None,
         config: AgentConfig {
             effort: Some(effort),
             ..AgentConfig::default()

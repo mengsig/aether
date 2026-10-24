@@ -192,6 +192,8 @@ fn row(id: AgentId, parent: Option<AgentId>, at: aether_core::time::Timestamp) -
         resume_wait: None,
         restarted_from: None,
         restarted_as: None,
+        engine_alive: false,
+        last_event_at: None,
         config: AgentConfig {
             instructions: Some(
                 "Follow the task scope, inspect the surrounding code, and verify the change. "
