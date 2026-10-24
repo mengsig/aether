@@ -12,7 +12,7 @@ use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 
-/// Requests one pull request costs: its reviews and its inline history.
+/// Fewest requests one pull request costs: its reviews and inline history.
 const PULL_REQUESTS: usize = 2;
 /// Requests kept for dispatch's permission and authorship lookups.
 const DISPATCH_RESERVE: usize = 10;
@@ -25,6 +25,14 @@ struct Reviews {
     submitted: HashMap<u64, Timestamp>,
     /// Whole inline histories of pull requests with a newly submitted review.
     inline: Vec<Value>,
+}
+
+impl Reviews {
+    fn absorb(&mut self, other: Reviews) {
+        self.candidates.extend(other.candidates);
+        self.submitted.extend(other.submitted);
+        self.inline.extend(other.inline);
+    }
 }
 
 /// One pass of the review sweep: read up to the configured number of the
@@ -46,11 +54,8 @@ pub(super) async fn sweep(
         .max(state.baseline)
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
-    let mut pass = Pass {
-        source,
-        repo: &repo.repository,
-        requests: 0,
-    };
+    let mut pass = Pass::new(source, &repo.repository);
+    pass.limit = MAX_REQUESTS - DISPATCH_RESERVE;
     let feed = pass
         .list(&format!(
             "pulls/comments?sort=updated&direction=asc&since={since}"
@@ -63,13 +68,20 @@ pub(super) async fn sweep(
     let mut read = Reviews::default();
     let mut swept = 0;
     for &n in cycle.pending.iter().take(limit) {
-        // Stop short rather than fail every pass on the same pull requests.
-        if swept > 0 && pass.requests + PULL_REQUESTS > MAX_REQUESTS - DISPATCH_RESERVE {
+        if swept > 0 && pass.requests + PULL_REQUESTS > pass.limit {
             break;
         }
-        read_pull(&mut pass, &mention, state, n, &mut read).await?;
+        let mut pull = Reviews::default();
+        match read_pull(&mut pass, &mention, state, n, &mut pull).await {
+            Ok(()) => read.absorb(pull),
+            // Out of budget inside this PR: deliver those read, resume here next pass.
+            Err(_) if swept > 0 && pass.refused => break,
+            Err(error) => return Err(error),
+        }
         swept += 1;
     }
+    debug_assert!(swept <= limit, "a pass reads at most `limit` pull requests");
+    pass.limit = MAX_REQUESTS;
     let chunk: BTreeSet<u64> = cycle.pending[..swept].iter().copied().collect();
     // Comments on pull requests outside this pass wait for their own turn.
     for c in feed {

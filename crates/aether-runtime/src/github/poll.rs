@@ -52,16 +52,35 @@ impl Candidate {
 }
 /// One phase's GitHub requests, each phase with its own budget.
 pub(super) struct Pass<'a, S> {
-    pub source: &'a S,
-    pub repo: &'a str,
+    source: &'a S,
+    repo: &'a str,
     pub requests: usize,
+    /// Requests this pass may make so far; at most [`MAX_REQUESTS`].
+    pub limit: usize,
+    /// Whether `limit` has refused a request.
+    pub refused: bool,
 }
-impl<S: Source> Pass<'_, S> {
+impl<'a, S: Source> Pass<'a, S> {
+    pub fn new(source: &'a S, repo: &'a str) -> Self {
+        Self {
+            source,
+            repo,
+            requests: 0,
+            limit: MAX_REQUESTS,
+            refused: false,
+        }
+    }
     fn spend(&mut self) -> Result<(), Error> {
-        if self.requests >= MAX_REQUESTS {
-            return Err(Error::new(
-                "GitHub request budget exhausted (60); cursor retained, reduce repository activity or poll backlog",
-            ));
+        debug_assert!(
+            self.limit <= MAX_REQUESTS,
+            "a pass never exceeds 60 requests"
+        );
+        if self.requests >= self.limit {
+            self.refused = true;
+            return Err(Error::new(format!(
+                "GitHub request budget exhausted ({}); cursor retained, reduce repository activity or poll backlog",
+                self.limit
+            )));
         }
         self.requests += 1;
         Ok(())
@@ -209,11 +228,7 @@ pub(super) async fn scan(
     let since = (state.cursor - chrono::Duration::minutes(5))
         .max(state.baseline)
         .format("%Y-%m-%dT%H:%M:%SZ");
-    let mut pass = Pass {
-        source,
-        repo: &repo.repository,
-        requests: 0,
-    };
+    let mut pass = Pass::new(source, &repo.repository);
     let mut candidates = Vec::new();
     let issues = pass
         .list(&format!(

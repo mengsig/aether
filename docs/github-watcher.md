@@ -394,9 +394,11 @@ never delivers a mention twice. A PR closed mid-cycle is still read in its
 turn; a later cycle drops it once it is closed and inactive. The position is
 part of the repository's polling state, so it survives a daemon restart.
 
-A pass reads at most 30 PRs. It stops sooner when its 60-request budget would
-not leave room for delivery (each PR costs up to two requests), but always
-reads at least one, so a sweep always makes progress. Change the limit in
+A pass reads at most 30 PRs. Reading keeps 10 of the pass's 60 requests for
+delivery, so a pass stops sooner when its PRs need more pages than fit. A PR
+that runs out of requests partway is read again in full by the next pass,
+after the PRs before it are delivered; the first PR of a pass always fits, so
+a sweep always makes progress. Change the limit in
 `config.toml` and restart the daemon:
 
 ```toml

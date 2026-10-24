@@ -225,3 +225,33 @@ async fn a_failed_pass_keeps_the_position_and_retries_the_same_pull_requests() {
     assert_eq!(pending(&rt), None);
     assert_eq!(delivered(&rt, id).len(), 15 + 3);
 }
+
+#[tokio::test]
+async fn a_pull_request_that_overruns_the_budget_waits_for_the_next_pass() {
+    let (rt, _dir, id) = fixture().await;
+    let mut source = Fake::new();
+    source.route(
+        "pulls",
+        json!([{ "number": 1 }, { "number": 2 }, { "number": 3 }]),
+    );
+    // Ten pages of reviews and ten of inline history: 20 requests a PR.
+    let filler = |item: Value| Value::Array(vec![item; 100]);
+    for n in 1..=3 {
+        let mut reviews = vec![filler(json!({ "state": "PENDING", "submitted_at": null })); 9];
+        reviews.push(json!([review(n)]));
+        source.route_pages(&format!("pulls/{n}/reviews"), reviews);
+        let mut inline = vec![filler(json!({ "body": "" })); 9];
+        inline.push(json!([]));
+        source.route_pages(&format!("pulls/{n}/comments"), inline);
+    }
+    rt.github_poll(&source, at()).await.unwrap();
+    let state = rt.github_repository_state("o/r").unwrap();
+    assert_eq!(state.status.last_error, None);
+    assert_eq!(pending(&rt), Some(vec![3]));
+    assert_eq!(delivered(&rt, id).len(), 2);
+    rt.github_poll(&source, at() + chrono::Duration::minutes(1))
+        .await
+        .unwrap();
+    assert_eq!(pending(&rt), None);
+    assert_eq!(delivered(&rt, id).len(), 3);
+}

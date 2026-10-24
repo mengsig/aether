@@ -30,6 +30,8 @@ pub(super) struct Fake {
     /// The ids each GraphQL request asked about.
     pub(super) lookups: Mutex<Vec<Vec<String>>>,
     pub(super) graphql_fails: bool,
+    /// Listings served a page at a time, by endpoint; past the last page, `[]`.
+    pages: HashMap<String, Vec<Value>>,
 }
 impl Fake {
     pub(super) fn new() -> Self {
@@ -41,10 +43,14 @@ impl Fake {
             nodes: HashMap::new(),
             lookups: Mutex::new(Vec::new()),
             graphql_fails: false,
+            pages: HashMap::new(),
         }
     }
     pub(super) fn route(&mut self, endpoint: &str, value: Value) {
         self.routes.insert(endpoint.into(), value);
+    }
+    pub(super) fn route_pages(&mut self, endpoint: &str, pages: Vec<Value>) {
+        self.pages.insert(endpoint.into(), pages);
     }
 }
 #[async_trait::async_trait]
@@ -72,6 +78,13 @@ impl source::Source for Fake {
                 retry_after: 0,
                 status: Some(404),
             });
+        }
+        if let Some(pages) = self.pages.get(endpoint) {
+            let page: usize = path
+                .rsplit_once("&page=")
+                .and_then(|(_, page)| page.parse().ok())
+                .unwrap();
+            return Ok(pages.get(page - 1).cloned().unwrap_or_else(|| json!([])));
         }
         if let Some(v) = self.routes.get(endpoint) {
             return Ok(v.clone());
