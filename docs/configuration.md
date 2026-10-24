@@ -457,6 +457,36 @@ their ownership and finality. Each leaf is limited to 10,000 entries and 64
 levels for cleanup; exceeding either limit returns an error without deleting
 its contents. Inventory bytes describe the tree before cleanup.
 
+## Agent processes
+
+Each engine an agent runs starts as the leader of its own process group, with
+`AETHER_ENGINE_AGENT` set to the agent's id in its environment, which its
+descendants inherit. On Linux, when `systemd-run --user --scope` works, the
+engine also runs in a transient systemd user scope named
+`aether-engine-<agent>-<id>.scope`, whose cgroup holds every descendant, even
+one that cleared its environment or started its own session. Without a user
+systemd the engine keeps its process group and tag alone; this never fails the
+spawn. Set `AETHER_ENGINE_SCOPE=0` in the daemon's environment to skip the
+scopes.
+
+When an agent ends - it completes, fails, is cancelled, or runs out of time or
+budget - the daemon sends `SIGTERM` to every live process in the agent's scopes
+or carrying its tag, waits for them to exit, and sends `SIGKILL` to whatever is
+left after the grace. It records what it stopped as an `agent.processes_reaped`
+event, with the pids and how many needed `SIGKILL`. Only processes of the
+daemon's own user are signalled, and never the daemon itself. A daemon
+shutdown does not end its agents, so it leaves these processes running; the
+agents resume after the restart.
+
+```toml
+[agents]
+# reap_grace_secs = 10
+```
+
+`reap_grace_secs` is the grace between `SIGTERM` and `SIGKILL`, 10 seconds by
+default and 300 at most. Finding the processes again needs `/proc`, so on
+macOS only the stop of a turn's own process group applies.
+
 ## Build cache
 
 Agents working in a repository workspace build into a cache outside it, so
