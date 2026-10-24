@@ -1,3 +1,4 @@
+use super::write_tally::WriteTally;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -26,7 +27,7 @@ use aether_core::snapshot::{Invocation, InvocationSnapshot, SnapshotMemories};
 use aether_core::task::Task;
 use aether_core::time::{Timestamp, now};
 use aether_core::tool::ApprovalRequest;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
 use crate::{
     AgentFilter, ArtifactFilter, Commit, DeviceRow, EventFilter, ImportedEvent, MemoryQuery,
@@ -85,20 +86,24 @@ impl Store for SqliteStore {
 
     fn commit(&self, commit: Commit) -> Result<Vec<Event>> {
         let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
+        // Immediate: a deferred transaction that reads first gets SQLITE_BUSY,
+        // with no busy wait, when a WAL truncate lands before its first write.
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut seq = Self::last_seq_in(&tx)?;
         let at = now();
+        let mut tally = WriteTally::default();
         let mut committed = Self::write_events(
             &tx,
             &mut seq,
             commit.events.into_iter().map(|d| (EventId::new(), d, at)),
+            &mut tally,
         )?;
         let records_submission = commit
             .mutations
             .iter()
             .any(|m| matches!(m, Mutation::RecordSubmission(_)));
         for mutation in commit.mutations {
-            Self::apply(&tx, mutation)?;
+            Self::apply(&tx, mutation, &mut tally)?;
         }
         // Swept here rather than inside the mutation so the eviction can be
         // written to the ledger in the same transaction as the record that
@@ -110,6 +115,7 @@ impl Store for SqliteStore {
                 &tx,
                 &mut seq,
                 std::iter::once((EventId::new(), draft, at)),
+                &mut tally,
             )?);
         }
         tx.execute(
@@ -117,8 +123,17 @@ impl Store for SqliteStore {
             [seq.to_string()],
         )?;
         tx.commit()?;
+        self.writes.merge(tally);
         self.commits.fetch_add(1, Ordering::Relaxed);
         Ok(committed)
+    }
+
+    fn write_stats(&self) -> aether_core::write_stats::WriteStats {
+        self.write_stats_with_files()
+    }
+
+    fn reclaim_free_pages(&self) -> Result<u64> {
+        SqliteStore::reclaim_free_pages(self)
     }
 
     fn commits(&self) -> u64 {
@@ -127,21 +142,24 @@ impl Store for SqliteStore {
 
     fn import(&self, events: Vec<ImportedEvent>, mutations: Vec<Mutation>) -> Result<Vec<Event>> {
         let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut seq = Self::last_seq_in(&tx)?;
+        let mut tally = WriteTally::default();
         let committed = Self::write_events(
             &tx,
             &mut seq,
             events.into_iter().map(|e| (e.id, e.draft, e.at)),
+            &mut tally,
         )?;
         for mutation in mutations {
-            Self::apply(&tx, mutation)?;
+            Self::apply(&tx, mutation, &mut tally)?;
         }
         tx.execute(
             "UPDATE meta SET value = ?1 WHERE key = 'last_seq'",
             [seq.to_string()],
         )?;
         tx.commit()?;
+        self.writes.merge(tally);
         self.commits.fetch_add(1, Ordering::Relaxed);
         Ok(committed)
     }
@@ -221,11 +239,18 @@ impl Store for SqliteStore {
              (type IN ('tool.succeeded', 'tool.failed', 'tool.cancelled', 'tool.denied') \
               AND json_extract(body, '$.kind.call') IN ({ids}))) ORDER BY seq DESC"
         );
-        Self::read_many(&conn, &sql, &[&agent.to_string(), &parameter, &first])
+        super::event_blobs::read_events(&conn, &sql, &[&agent.to_string(), &parameter, &first])
     }
 
     fn event_by_id(&self, id: EventId) -> Result<Option<Event>> {
-        self.read_one("SELECT body FROM events WHERE id = ?1", &id.to_string())
+        let conn = self.read_conn();
+        let mut events = super::event_blobs::read_events(
+            &conn,
+            "SELECT body FROM events WHERE id = ?1",
+            &[&id.to_string()],
+        )?;
+        debug_assert!(events.len() <= 1, "event ids are unique");
+        Ok(events.pop())
     }
 
     fn latest_exhaustion_incident(
@@ -240,15 +265,13 @@ impl Store for SqliteStore {
                    AND json_extract(body, '$.kind.payload.provider') = ?2 \
                    AND json_extract(body, '$.kind.payload.model') = ?3 \
                    ORDER BY seq DESC LIMIT 1";
-        let body: Option<String> = conn
-            .query_row(
-                sql,
-                params![agent.to_string(), model.provider, model.model],
-                |row| row.get(0),
-            )
-            .optional()?;
-        body.map(|body| serde_json::from_str(&body).map_err(StoreError::from))
-            .transpose()
+        let mut events = super::event_blobs::read_events(
+            &conn,
+            sql,
+            &[&agent.to_string(), &model.provider, &model.model],
+        )?;
+        debug_assert!(events.len() <= 1, "the query is limited to one row");
+        Ok(events.pop())
     }
 
     fn event_by_seq(&self, seq: u64) -> Result<Option<Event>> {
@@ -256,14 +279,14 @@ impl Store for SqliteStore {
             return Ok(None);
         }
         let conn = self.read_conn();
-        let body: Option<String> = conn
-            .query_row(
-                "SELECT body FROM events WHERE seq = ?1",
-                [seq as i64],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if body.is_none() {
+        let mut events = super::event_blobs::read_events(
+            &conn,
+            "SELECT body FROM events WHERE seq = ?1",
+            &[&(seq as i64)],
+        )?;
+        debug_assert!(events.len() <= 1, "seq is the primary key");
+        let event = events.pop();
+        if event.is_none() {
             let expired: Option<(i64, i64)> = conn.query_row(
                 "SELECT first_seq,last_seq FROM expired_event_spans WHERE first_seq <= ?1 AND last_seq >= ?1 LIMIT 1",
                 [seq as i64], |row| Ok((row.get(0)?, row.get(1)?))
@@ -275,8 +298,7 @@ impl Store for SqliteStore {
                 });
             }
         }
-        body.map(|b| serde_json::from_str(&b).map_err(StoreError::from))
-            .transpose()
+        Ok(event)
     }
 
     fn agent(&self, id: AgentId) -> Result<Option<Agent>> {

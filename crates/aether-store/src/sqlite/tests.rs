@@ -132,11 +132,13 @@ mod artifacts;
 
 mod commit_stalls;
 mod disk_full;
+mod event_blobs;
 mod expired_history;
 mod history_retention;
 mod outcomes;
 mod repository_aliases;
 mod retention_growth;
+mod vacuum;
 
 #[test]
 fn final_sync_copies_committed_wal_while_the_store_is_still_held() {

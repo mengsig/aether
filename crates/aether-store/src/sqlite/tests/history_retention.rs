@@ -1138,3 +1138,74 @@ fn feedback_rows_survive_expiring_their_task_history() {
         vec![record]
     );
 }
+
+#[test]
+fn expiry_collects_the_blobs_only_its_run_referenced() {
+    let f = Fixture::new();
+    let old = f.agent.created_at;
+    let output = |seed: &str| -> String {
+        (0..400)
+            .map(|n| format!("{seed} output line {n}\n"))
+            .collect()
+    };
+    let result = |text: String, agent: AgentId, run: RunId| ImportedEvent {
+        id: EventId::new(),
+        at: old,
+        draft: EventDraft::new(
+            Actor::System,
+            EventKind::ToolSucceeded {
+                call: ToolCallId::new(),
+                outcome: ToolOutcome::ok(text),
+            },
+        )
+        .agent(agent)
+        .run(run),
+    };
+    let other_run = RunId::new();
+    f.store
+        .import(
+            vec![
+                result(output("own"), f.agent.id, f.agent.run),
+                result(output("shared"), f.agent.id, f.agent.run),
+                result(output("shared"), AgentId::new(), other_run),
+            ],
+            vec![],
+        )
+        .expect("tool results");
+    let blobs = |store: &SqliteStore| -> i64 {
+        store
+            .conn
+            .lock()
+            .query_row("SELECT COUNT(*) FROM event_blobs", [], |row| row.get(0))
+            .expect("count")
+    };
+    assert_eq!(blobs(&f.store), 2);
+    let preview = f
+        .store
+        .preview_run_history(f.agent.run, f.cutoff)
+        .expect("preview")
+        .expect("eligible");
+    assert_eq!(
+        preview.decision,
+        aether_core::retention::RunRetentionDecision::Eligible,
+        "{preview:?}"
+    );
+    assert_eq!(preview.events, 3);
+
+    let verdict = f
+        .store
+        .expire_run_history(f.agent.run, f.cutoff, &f.gate.hold())
+        .expect("expire");
+    assert!(matches!(verdict, RunExpiry::Expired { events: 3, .. }));
+    assert_eq!(
+        blobs(&f.store),
+        1,
+        "the shared output stays for the other run"
+    );
+    let kept = f
+        .store
+        .events(0, 10, &EventFilter::for_run(other_run))
+        .expect("other run");
+    assert!(matches!(&kept[0].kind,
+        EventKind::ToolSucceeded { outcome, .. } if outcome.content == output("shared")));
+}

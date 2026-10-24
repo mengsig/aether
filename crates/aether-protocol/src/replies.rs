@@ -8,7 +8,7 @@ use super::{
     Invocation, InvocationId, InvocationSnapshot, Lease, LowDisk, McpServerHealth, MemoryRecord,
     Message, MessageId, ModelRef, NetworkPolicy, ProviderHealth, ReplayFrame, ResourceHolding,
     RunId, RunReport, RunSummary, Serialize, Task, TaskId, Timestamp, UnprovenAbsence, Usage,
-    Welcome,
+    Welcome, WriteStats,
 };
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -85,6 +85,10 @@ pub struct DaemonStatus {
     /// Absent otherwise, and on older daemons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub low_disk: Option<LowDisk>,
+    /// Payload bytes the store committed since the daemon opened it, by
+    /// record kind. Absent on older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writes: Option<WriteStats>,
     /// The executable engines launch as the MCP bridge: the daemon's own
     /// build. Absent when engines have no bridge, and on older daemons.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1074,3 +1074,95 @@ fn v25_gives_lease_and_memory_events_the_run_of_their_agent() {
     );
     assert_eq!(row("ev_5").0.as_deref(), Some("run_a"));
 }
+
+/// A v26 store whose events carry large tool outputs inline, as every store
+/// written before blob offload does.
+fn v26_store_with_inline_outputs(path: &std::path::Path) -> Vec<aether_core::event::Event> {
+    use aether_core::event::{Actor, EventDraft, EventKind};
+    use aether_core::id::{AgentId, ToolCallId};
+    use aether_core::tool::ToolOutcome;
+    let source = crate::SqliteStore::open_in_memory().expect("source store");
+    let agent = AgentId::new();
+    let output: String = (0..500).map(|n| format!("legacy output {n}\n")).collect();
+    let mut commit = crate::Commit::new();
+    for _ in 0..3 {
+        commit = commit.event(
+            EventDraft::new(
+                Actor::System,
+                EventKind::ToolSucceeded {
+                    call: ToolCallId::new(),
+                    outcome: ToolOutcome::ok(output.clone()),
+                },
+            )
+            .agent(agent),
+        );
+    }
+    let events = crate::Store::commit(&source, commit).expect("events");
+    let conn = database_at(path, 26);
+    for event in &events {
+        conn.execute(
+            "INSERT INTO events(seq, id, at, type, family, agent_id, run, body)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
+            rusqlite::params![
+                event.seq as i64,
+                event.id.to_string(),
+                event.at.to_rfc3339(),
+                event.kind.type_name(),
+                event.kind.family(),
+                agent.to_string(),
+                serde_json::to_string(event).expect("inline body"),
+            ],
+        )
+        .expect("legacy event");
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES ('last_seq', ?1)",
+        [events.len().to_string()],
+    )
+    .expect("last seq");
+    events
+}
+
+#[test]
+fn v27_keeps_inline_outputs_readable_and_offloads_new_ones() {
+    use crate::Store;
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let legacy = v26_store_with_inline_outputs(&path);
+    let agent = legacy[0].agent_id.expect("agent");
+
+    let store = crate::SqliteStore::open(&path).expect("upgrade");
+    let conn = Connection::open(&path).expect("inspect");
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let read = store
+        .events(0, 10, &crate::EventFilter::for_agent(agent))
+        .expect("legacy history");
+    assert_eq!(read, legacy, "inline bodies read back unchanged");
+
+    let mut fresh = legacy[0].clone();
+    fresh.id = aether_core::id::EventId::new();
+    let committed = store
+        .commit(
+            crate::Commit::new().event(
+                aether_core::event::EventDraft::new(fresh.actor.clone(), fresh.kind.clone())
+                    .agent(agent),
+            ),
+        )
+        .expect("new output");
+    let blobs: i64 = conn
+        .query_row("SELECT COUNT(*) FROM event_blobs", [], |row| row.get(0))
+        .expect("blobs");
+    assert_eq!(blobs, 1, "a new large output is stored as a blob");
+    assert_eq!(
+        store
+            .event_by_seq(committed[0].seq)
+            .expect("read")
+            .expect("event")
+            .kind,
+        legacy[0].kind
+    );
+    let deleted = conn
+        .execute("DELETE FROM events WHERE seq <= 3", [])
+        .expect("legacy rows delete without references");
+    assert_eq!(deleted, 3);
+}

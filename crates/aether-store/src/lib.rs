@@ -614,6 +614,14 @@ pub trait Store: Send + Sync {
     /// reader can tell "nothing has changed" from "no event was written".
     /// Never persisted; comparing values across processes means nothing.
     fn commits(&self) -> u64;
+    /// Payload bytes committed since this process opened the store, by kind.
+    fn write_stats(&self) -> aether_core::write_stats::WriteStats {
+        aether_core::write_stats::WriteStats::default()
+    }
+    /// Return free pages to the filesystem, in short passes; the pages freed.
+    fn reclaim_free_pages(&self) -> Result<u64> {
+        Ok(0)
+    }
     /// Events with `seq > after`, ascending, at most `limit`.
     fn events(&self, after: u64, limit: usize, filter: &EventFilter) -> Result<Vec<Event>>;
     /// When the agent itself last had an event recorded; `None` before its first.

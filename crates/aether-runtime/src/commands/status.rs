@@ -47,6 +47,9 @@ fn timed<T>(section: &'static str, f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Heaviest record kinds `status` names; the rest are folded into `other`.
+const WRITE_KINDS_SHOWN: usize = 8;
+
 /// Receipts read per page while walking a run's recent billing back in time.
 const RECEIPT_PAGE: usize = 256;
 
@@ -73,6 +76,7 @@ impl Runtime {
             resource_leases: timed("resource_leases", || self.resource_holdings()),
             mcp: timed("mcp", || self.mcp_health()),
             low_disk: timed("low_disk", || self.low_disk()),
+            writes: self.store.write_stats().top(WRITE_KINDS_SHOWN),
             ..Default::default()
         };
         let live = timed("live_agents", || {

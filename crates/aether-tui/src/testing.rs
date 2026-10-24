@@ -114,6 +114,7 @@ fn reply_status(app: &mut App, then: Then, agents_suspended: u32) {
             run_hard_stop_tokens: None,
             mcp: Vec::new(),
             low_disk: None,
+            writes: None,
             bridge: None,
         })),
     });
@@ -383,6 +384,7 @@ pub fn populated_app() -> App {
             run_hard_stop_tokens: None,
             mcp: Vec::new(),
             low_disk: None,
+            writes: None,
             bridge: None,
         })),
     });

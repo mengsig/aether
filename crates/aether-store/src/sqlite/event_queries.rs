@@ -83,7 +83,7 @@ fn read_events(
         let id: String = row.get(1)?;
         let owner: Option<String> = row.get(2)?;
         let body: String = row.get(3)?;
-        let event: Event = serde_json::from_str(&body)?;
+        let event: Event = super::event_blobs::decode(conn, &body)?;
         let kind: String = row.get(4)?;
         let parent: Option<String> = row.get(5)?;
         let run: Option<String> = row.get(6)?;

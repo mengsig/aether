@@ -19,6 +19,7 @@ mod blobs;
 mod checkpoint;
 mod devices;
 mod engine_sessions;
+mod event_blobs;
 mod event_queries;
 mod history_retention;
 mod quarantine;
@@ -34,6 +35,8 @@ pub use push_subscriptions::PushSubscriptionRow;
 mod repository_aliases;
 mod retention;
 mod store;
+mod vacuum;
+mod write_tally;
 
 /// Sorts, UNIONs and statement journals otherwise spill to unlinked files in
 /// `/var/tmp`: tens of MB/s of disk churn (#57). Each is bounded by what its query reads.
@@ -56,6 +59,7 @@ pub struct SqliteStore {
     /// string the record carries, so a shared blob resolves the same way.
     mem_artifacts: Mutex<BTreeMap<String, Vec<u8>>>,
     commits: AtomicU64,
+    writes: write_tally::WriteLedger,
     /// Submissions recorded since the last size pass. Finding the overflow
     /// costs a scan of the table, so it is paid every
     /// `SUBMISSION_SIZE_PASS_EVERY` writes rather than on every one.
@@ -108,6 +112,7 @@ impl SqliteStore {
         )?;
         // No automatic checkpoint: it runs inside COMMIT. The checkpointer
         // started below does it, and `open` fails if that cannot start.
+        conn.execute_batch(vacuum::REQUEST_INCREMENTAL)?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
@@ -129,6 +134,11 @@ impl SqliteStore {
             std::fs::create_dir_all(dir)?;
         }
         let mut store = Self::init(conn, artifact_dir)?;
+        // Optional: a store that cannot be converted (a full disk) still
+        // works, it just keeps its size; the next open tries again.
+        if let Err(error) = vacuum::convert_to_incremental(&store.conn.lock(), path) {
+            tracing::warn!(%error, "could not convert the store to incremental vacuum; it will not shrink until it is");
+        }
         // Canonical database identity separates stores sharing an artifact directory.
         use sha2::Digest;
         store.staging_dir = store.artifact_dir.as_ref().map(|dir| {
@@ -220,6 +230,7 @@ impl SqliteStore {
             staging_dir: None,
             mem_artifacts: Mutex::new(BTreeMap::new()),
             commits: AtomicU64::new(0),
+            writes: write_tally::WriteLedger::new(),
             submissions_since_size_pass: AtomicU64::new(0),
             max_submissions: aether_core::idempotency::MAX_SUBMISSIONS,
             size_pass_every: aether_core::idempotency::SUBMISSION_SIZE_PASS_EVERY,
@@ -310,11 +321,17 @@ impl SqliteStore {
         tx: &Transaction<'_>,
         seq: &mut u64,
         drafts: impl IntoIterator<Item = (EventId, EventDraft, Timestamp)>,
+        tally: &mut write_tally::WriteTally,
     ) -> Result<Vec<Event>> {
         let mut committed = Vec::new();
         for (id, draft, at) in drafts {
             *seq += 1;
             let event = Event::from_draft(draft, id, *seq, at);
+            let (body, blob_bytes) = event_blobs::encode(tx, &event)?;
+            tally.add(
+                &write_tally::event_kind(&event.kind),
+                body.len() + blob_bytes,
+            );
             tx.execute(
                 "INSERT INTO events(seq, id, at, type, family, agent_id, task_id, parent_agent_id, run, body)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -328,7 +345,7 @@ impl SqliteStore {
                     event.task_id.map(|t| t.to_string()),
                     event.parent_agent_id.map(|p| p.to_string()),
                     event.run.map(|r| r.to_string()),
-                    serde_json::to_string(&event)?,
+                    body,
                 ],
             )?;
             committed.push(event);

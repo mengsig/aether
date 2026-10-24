@@ -163,6 +163,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
             run_hard_stop_tokens: None,
             mcp: Vec::new(),
             low_disk: None,
+            writes: None,
             bridge: None,
         })),
     });
