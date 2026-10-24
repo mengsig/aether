@@ -6,8 +6,19 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- **Agents no longer stall after "database is locked".** A turn whose end
+  hit a locked database retries it with bounded backoff, and a failure that
+  still cannot be recorded recovers the agent as a restart would. A periodic
+  sweep (`[scheduler] orphan_sweep_seconds`, default 60;
+  `orphan_idle_minutes`, default 10) recovers any agent left running with no
+  turn and records an `agent.recovered` event (mengsig/archon#251).
+
 ### Added
 
+- **Liveness in agent replies.** `get_agent` and `list_agents` replies carry
+  `engine_alive` and `last_event_at`, additively (mengsig/archon#251).
 - **`delegate` takes an optional `idempotency_key`.** A caller that lost the
   reply, for example to a client timeout, repeats the call with the same key
   and arguments and gets the child the first call created instead of a second

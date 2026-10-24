@@ -16,12 +16,14 @@ class Agent(TypedDict, total=False):
     config: _protocol.AgentConfig
     created_at: str
     current_task: _protocol.TaskId | None  # optional
+    engine_alive: bool  # optional
     engine_sent: _protocol.EngineSentLayers | None  # optional
     engine_session: str | None  # optional
     engine_usage: _protocol.EngineSessionUsage | None  # optional
     fallbacks: list[_protocol.ModelRef]  # optional
     id: _protocol.AgentId
     inbox_cursor: int  # optional
+    last_event_at: str | None  # optional
     model: _protocol.ModelRef
     name: str
     parent: _protocol.AgentId | None  # optional

@@ -204,6 +204,8 @@ impl Runtime {
             resume_wait: None,
             restarted_from: Some(old.id),
             restarted_as: None,
+            engine_alive: false,
+            last_event_at: None,
             config: AgentConfig {
                 // The usual reason to restart is the hard stop that fired.
                 // Carrying a deadline that has already passed would fail the

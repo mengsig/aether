@@ -59,6 +59,8 @@ impl TreeBuilder {
             resume_wait: None,
             restarted_from: None,
             restarted_as: None,
+            engine_alive: false,
+            last_event_at: None,
             config: AgentConfig::default(),
             stats: AgentStats {
                 turns: 1,

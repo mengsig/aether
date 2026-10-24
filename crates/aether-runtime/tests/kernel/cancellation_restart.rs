@@ -187,6 +187,8 @@ async fn restart_classifies_interrupted_turns() {
                 resume_wait: None,
                 restarted_from: None,
                 restarted_as: None,
+                engine_alive: false,
+                last_event_at: None,
                 config: AgentConfig::default(),
                 stats: Default::default(),
                 run: Default::default(),

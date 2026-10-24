@@ -85,3 +85,59 @@ fn only_a_disk_that_refuses_writes_reads_as_unwritable() {
         assert!(!writable.is_unwritable(), "{writable}");
     }
 }
+
+/// Another connection holding the write lock past the busy timeout is
+/// contention, not disk trouble, and the commit lands once it lets go.
+#[test]
+fn a_held_write_lock_reads_as_contended_and_not_unwritable() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("aether.db");
+    let store = SqliteStore::open_checkpointing(&path, Duration::from_secs(3600)).expect("open");
+    store.commit(bulky_event(16)).expect("first write");
+    store
+        .conn
+        .lock()
+        .busy_timeout(Duration::ZERO)
+        .expect("no wait");
+    let holder = rusqlite::Connection::open(&path).expect("second connection");
+    holder
+        .execute_batch("BEGIN IMMEDIATE")
+        .expect("take the lock");
+
+    let error = store.commit(bulky_event(16)).expect_err("the lock is held");
+    assert!(error.is_contended(), "{error}");
+    assert!(
+        !error.is_unwritable(),
+        "contention is not a full disk: {error}"
+    );
+
+    holder.execute_batch("ROLLBACK").expect("let go");
+    store
+        .commit(bulky_event(16))
+        .expect("lands once the lock is free");
+}
+
+#[test]
+fn only_a_locked_database_reads_as_contended() {
+    let sqlite = |code| {
+        StoreError::Sqlite(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(code),
+            None,
+        ))
+    };
+    for contended in [
+        sqlite(rusqlite::ffi::SQLITE_BUSY),
+        sqlite(rusqlite::ffi::SQLITE_BUSY_SNAPSHOT),
+        sqlite(rusqlite::ffi::SQLITE_LOCKED),
+    ] {
+        assert!(contended.is_contended(), "{contended}");
+        assert!(!contended.is_unwritable(), "{contended}");
+    }
+    for other in [
+        sqlite(rusqlite::ffi::SQLITE_FULL),
+        sqlite(rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE),
+        StoreError::Corrupt("bad row".into()),
+    ] {
+        assert!(!other.is_contended(), "{other}");
+    }
+}

@@ -674,6 +674,8 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
             config.scheduler.engine_park_grace().map_err(&bad)?;
             config.scheduler.engine_transient_retry().map_err(&bad)?;
             config.scheduler.engine_stall_timeout().map_err(&bad)?;
+            config.scheduler.orphan_sweep_interval().map_err(&bad)?;
+            config.scheduler.orphan_idle().map_err(&bad)?;
             config.scheduler.concurrency().map_err(&bad)?;
             config.scheduler.engine_concurrency().map_err(&bad)?;
             config.scheduler.run_budget().map_err(&bad)?;

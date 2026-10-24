@@ -34,6 +34,8 @@ fn agent() -> Agent {
         resume_wait: None,
         restarted_from: None,
         restarted_as: None,
+        engine_alive: false,
+        last_event_at: None,
         config: AgentConfig {
             effort: Some(aether_core::model::Effort::High),
             ..Default::default()

@@ -28,12 +28,14 @@ export interface Agent {
   "config": AgentConfig;
   "created_at": string;
   "current_task"?: TaskId | null;
+  "engine_alive"?: boolean;
   "engine_sent"?: EngineSentLayers | null;
   "engine_session"?: string | null;
   "engine_usage"?: EngineSessionUsage | null;
   "fallbacks"?: Array<ModelRef>;
   "id": AgentId;
   "inbox_cursor"?: number;
+  "last_event_at"?: string | null;
   "model": ModelRef;
   "name": string;
   "parent"?: AgentId | null;

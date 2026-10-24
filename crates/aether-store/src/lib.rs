@@ -148,6 +148,19 @@ impl StoreError {
             _ => false,
         }
     }
+
+    /// Another connection or process held the database lock past the busy
+    /// timeout (SQLITE_BUSY / SQLITE_LOCKED). Nothing about the data or the
+    /// disk is wrong, and the same commit lands once the holder lets go.
+    pub fn is_contended(&self) -> bool {
+        match self {
+            Self::Sqlite(rusqlite::Error::SqliteFailure(e, _)) => matches!(
+                e.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            ),
+            _ => false,
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -603,6 +616,15 @@ pub trait Store: Send + Sync {
     fn commits(&self) -> u64;
     /// Events with `seq > after`, ascending, at most `limit`.
     fn events(&self, after: u64, limit: usize, filter: &EventFilter) -> Result<Vec<Event>>;
+    /// When the agent itself last had an event recorded; `None` before its first.
+    fn last_event_at(&self, agent: AgentId) -> Result<Option<Timestamp>> {
+        let filter = EventFilter {
+            agent: Some(agent),
+            exclude_children: true,
+            ..Default::default()
+        };
+        Ok(self.latest_events(1, &filter)?.first().map(|e| e.at))
+    }
     fn event_by_id(&self, id: EventId) -> Result<Option<Event>>;
     fn event_by_seq(&self, seq: u64) -> Result<Option<Event>>;
     /// The most recent events matching the filter, newest first.

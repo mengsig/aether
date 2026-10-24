@@ -36,15 +36,25 @@ pub(super) async fn dispatch(
     let store = rt.store().as_ref();
     match command {
         Command::CreateAgent(req) => create_agent(daemon, req, by, submission).await,
-        Command::GetAgent { id } => store
-            .agent(id)
-            .map_err(store_err)?
-            .map(Reply::Agent)
-            .ok_or_else(|| ErrorReply::not_found(id)),
+        Command::GetAgent { id } => {
+            let mut agents = vec![
+                store
+                    .agent(id)
+                    .map_err(store_err)?
+                    .ok_or_else(|| ErrorReply::not_found(id))?,
+            ];
+            rt.annotate_agents(&mut agents).map_err(map_err)?;
+            Ok(Reply::Agent(agents.remove(0)))
+        }
         Command::ListAgents { query } => {
-            let store = rt.store().clone();
-            let agents = blocking(move || store.agents(&query.into())).await?;
-            Ok(Reply::Agents(agents.map_err(store_err)?))
+            let runtime = rt.clone();
+            let agents = blocking(move || {
+                let mut agents = runtime.store().agents(&query.into())?;
+                runtime.annotate_agents(&mut agents)?;
+                Ok::<_, aether_runtime::RuntimeError>(agents)
+            })
+            .await?;
+            Ok(Reply::Agents(agents.map_err(map_err)?))
         }
         Command::Archive {
             target, archived, ..

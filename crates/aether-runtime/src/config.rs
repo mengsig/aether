@@ -27,6 +27,13 @@ pub const DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR: Duration = Duration::from_secs(1
 /// before the stall watchdog interrupts it.
 pub const DEFAULT_ENGINE_STALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
+/// How often the daemon looks for agents marked running that have no turn.
+pub const DEFAULT_ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+
+/// How long a running agent with no turn must have been silent before the
+/// sweep recovers it.
+pub const DEFAULT_ORPHAN_IDLE: Duration = Duration::from_secs(10 * 60);
+
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
     /// Identity recorded on leases; the daemon instance id.
@@ -92,6 +99,11 @@ pub struct RuntimeConfig {
     /// Silence, with no tool running, after which a native engine turn is
     /// interrupted and resumed. Zero turns the watchdog off.
     pub engine_stall_timeout: Duration,
+    /// Interval of the sweep that recovers running agents with no turn.
+    /// Zero turns the sweep off.
+    pub orphan_sweep_interval: Duration,
+    /// Silence after which the sweep recovers a running agent with no turn.
+    pub orphan_idle: Duration,
     /// `host:port` targets probed before relaunching an engine after a
     /// network failure. `None` probes the engine's provider host; empty skips
     /// the probe.
@@ -160,6 +172,8 @@ impl Default for RuntimeConfig {
             engine_transient_retry_window: DEFAULT_ENGINE_TRANSIENT_RETRY_WINDOW,
             engine_transient_retry_floor: DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR,
             engine_stall_timeout: DEFAULT_ENGINE_STALL_TIMEOUT,
+            orphan_sweep_interval: DEFAULT_ORPHAN_SWEEP_INTERVAL,
+            orphan_idle: DEFAULT_ORPHAN_IDLE,
             engine_probe_targets: None,
             yolo: false,
             approval_default: aether_core::agent::ApprovalDefault::default(),
