@@ -334,12 +334,25 @@ then call `wait_for`. Aether gives Codex's MCP bridge a call timeout of one
 year (`mcp_servers.aether.tool_timeout_sec`), the longest `wait_for`, so
 Codex's 300 s default does not fail a held wait.
 
-Anything that ends the turn stops the session's jobs with it: the agent's
-final answer, `ask_user`, and `delegate` with `wait=true`. The reply of
-`ask_user` and `delegate` says so when jobs are running. Every process an
-agent's engine started is reaped when the agent ends
-([agent processes](configuration.md#agent-processes)); a job never outlives
-its agent.
+`ask_user` and `delegate` with `wait=true` behave the same way while a job
+runs. The call's reply waits, with the session attached, for the operator's
+answer or the child's result. It then starts with "Wait ended:", lists the
+jobs that finished meanwhile, carries the answer or result under "Delivered
+with this reply:", and ends with the action's usual reply. If the last job
+finishes first, the reply says so and the turn parks as it would have
+without jobs. During such a wait a second wait and `complete_task` or
+`fail_task` are refused, so the task is settled only after the reply.
+
+A parallel tool batch can run `wait_for` before Codex reports the command
+it started as running. A Codex `wait_for`, `ask_user` or waiting `delegate`
+that sees no running job therefore waits up to 500 ms for one to be
+reported. It goes ahead as soon as a job starts or the window passes, so
+a turn with no command pays at most 500 ms per such call and never hangs.
+
+The agent's final answer still ends the turn and stops the session's jobs
+with it. Every process an agent's engine started is reaped when the agent
+ends ([agent processes](configuration.md#agent-processes)); a job never
+outlives its agent.
 
 ## Native reasoning effort
 

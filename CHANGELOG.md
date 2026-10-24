@@ -13,10 +13,15 @@ release is also the text of its GitHub release.
   agent called `wait_for`, because the wait ended the turn and stopped the
   CLI. Both Codex modes now report such a command as a native background job,
   so `wait_for` keeps the session attached and returns when the process
-  exits. Aether's MCP calls from Codex no longer time out after 300 s. A wait
-  that still ends the turn (`ask_user`, `delegate` with `wait=true`) says the
-  running jobs stop. Jobs are still reaped when the agent ends
-  (mengsig/archon#262).
+  exits. Aether's MCP calls from Codex no longer time out after 300 s. Jobs
+  are still reaped when the agent ends (mengsig/archon#262).
+- **Native background jobs survive `ask_user` and a waiting `delegate`.**
+  While a Claude Code or Codex job runs, these calls hold their reply with
+  the session attached until the operator answers or the child finishes,
+  then hand over the answer or result and the jobs that finished meanwhile.
+  A Codex wait in the same tool batch as the command waits up to 500 ms for
+  it to be reported running. The agent's final answer still stops its jobs,
+  and the reaper still stops every process when the agent ends.
 - **A deleted workspace is no longer reported as a missing engine.** An
   engine spawn checks the working directory first and fails with
   `workspace missing: <path>`; an ENOENT from the spawn names the missing
