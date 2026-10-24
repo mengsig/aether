@@ -135,7 +135,7 @@ impl NativeWait {
         mut self,
         runtime: &Runtime,
         ctx: &mut TurnCtx,
-        steering: &Steering,
+        steering: &mut Steering,
         effects: &mut ToolEffects,
     ) -> Result<Option<Released>> {
         let Some(held) = self.held.take() else {
@@ -147,10 +147,17 @@ impl NativeWait {
         if self.reply.is_closed() {
             return Ok(None);
         }
-        let pending = steering.pending(runtime, ctx)?;
+        // Consuming past a steered item the engine may still refuse would skip
+        // it, so while one is unacknowledged what arrived is steered after it.
+        let follows = !steering.outstanding.is_empty();
+        let pending = if follows {
+            None
+        } else {
+            steering.pending(runtime, ctx)?
+        };
         let delivered = pending.as_ref().map(|p| p.message.text());
         let result = (
-            held_reply(&self.condition, &held, delivered.as_deref()),
+            held_reply(&self.condition, &held, delivered.as_deref(), follows),
             false,
         );
         if self.reply.send(result.clone()).is_err() {
@@ -159,6 +166,7 @@ impl NativeWait {
         if held.asked {
             effects.question_answered();
         }
+        steering.retry |= follows;
         if let Some(pending) = pending {
             record_consumed(runtime, ctx, pending)?;
         }
@@ -203,7 +211,13 @@ impl NativeWait {
 
 /// A held action's reply once its wait ended inside the turn: what ended it,
 /// the jobs that finished meanwhile, what arrived, then the action's own reply.
-fn held_reply(condition: &WaitCondition, held: &Held, delivered: Option<&str>) -> String {
+fn held_reply(
+    condition: &WaitCondition,
+    held: &Held,
+    delivered: Option<&str>,
+    follows: bool,
+) -> String {
+    debug_assert!(!(follows && delivered.is_some()), "delivered twice");
     let what = match condition {
         WaitCondition::Task { .. } => "the delegated task finished",
         _ => "a message arrived",
@@ -220,6 +234,9 @@ fn held_reply(condition: &WaitCondition, held: &Held, delivered: Option<&str>) -
     );
     if let Some(text) = delivered {
         note.push_str(&format!("\n\nDelivered with this reply:\n{text}"));
+    }
+    if follows {
+        note.push_str(" What arrived follows as your next input.");
     }
     // The action's structured payload stays the reply's last line.
     format!("{note}\n\n{}", crate::turn::unparked_reply(&held.content))

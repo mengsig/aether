@@ -318,7 +318,8 @@ pub(super) async fn drive(
             .as_ref()
             .is_some_and(|wait| wait.ready(runtime, ctx))
             && let Some(wait) = native_wait.take()
-            && let Some((tool, input, reply)) = wait.release(runtime, ctx, &steering, effects)?
+            && let Some((tool, input, reply)) =
+                wait.release(runtime, ctx, &mut steering, effects)?
         {
             state.remember_bridge_reply(tool, input, reply);
         }

@@ -227,6 +227,13 @@ type Pending = tokio::task::JoinHandle<aether_runtime::Result<(String, bool)>>;
 async fn held_call(mut h: Harness, name: &str, input: Value) -> (Harness, TurnStarted, Pending) {
     let parent = start_coordinator(&h);
     let turn = turn_of(&mut h, parent).await;
+    let pending = hold(&h, &turn, name, input).await;
+    (h, turn, pending)
+}
+
+/// Send `turn`'s call `name` and check that it is held, not parked.
+async fn hold(h: &Harness, turn: &TurnStarted, name: &str, input: Value) -> Pending {
+    let parent = turn.agent;
     turn.events
         .upgrade()
         .unwrap()
@@ -255,7 +262,20 @@ async fn held_call(mut h: Harness, name: &str, input: Value) -> (Harness, TurnSt
     assert!(!pending.is_finished(), "the wait ended the turn");
     assert!(!turn.observed.stopped() && !turn.observed.cancelled());
     assert!(!turn.observed.stdin_closed());
-    (h, turn, pending)
+    pending
+}
+
+/// The child's id once `parent`'s delegate created it.
+fn only_child(h: &Harness, parent: AgentId) -> AgentId {
+    let mut children = h
+        .store
+        .agents(&AgentFilter {
+            parent: Some(parent),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(children.len(), 1, "{children:?}");
+    children.remove(0).id
 }
 
 async fn job_harness() -> Harness {
@@ -333,15 +353,7 @@ async fn a_waiting_delegate_keeps_running_native_jobs_until_the_child_finishes()
     let request = json!({"model": "claude-code/haiku", "effort": "low", "role": "worker",
                          "objective": "first half", "wait": true});
     let (mut h, turn, pending) = held_call(job_harness().await, "delegate", request).await;
-    let child = h
-        .store
-        .agents(&AgentFilter {
-            parent: Some(turn.agent),
-            ..Default::default()
-        })
-        .unwrap()
-        .remove(0)
-        .id;
+    let child = only_child(&h, turn.agent);
     let child_turn = turn_of(&mut h, child).await;
     let (done, is_error) = call(
         &h,
@@ -361,6 +373,51 @@ async fn a_waiting_delegate_keeps_running_native_jobs_until_the_child_finishes()
     );
     assert!(!reply.contains("Your turn ends here"), "{reply}");
     assert!(!turn.observed.stopped() && !turn.observed.stdin_closed());
+    h.runtime.shutdown().await;
+}
+
+/// A message steered before the hold may still be refused. The held reply
+/// must not consume what arrived after it, or the refusal would skip it.
+#[tokio::test]
+async fn a_held_reply_never_consumes_past_an_unacknowledged_steer() {
+    let mut h = job_harness().await;
+    let parent = start_coordinator(&h);
+    let turn = turn_of(&mut h, parent).await;
+    let steered = vec![ContentBlock::text("use the left half")];
+    h.runtime
+        .send_message(parent, steered, Actor::user())
+        .unwrap();
+    // The fixture takes steered input without acknowledging it.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let request = json!({"model": "claude-code/haiku", "effort": "low", "role": "worker",
+                         "objective": "first half", "wait": true});
+    let pending = hold(&h, &turn, "delegate", request).await;
+    let child = only_child(&h, parent);
+    let child_turn = turn_of(&mut h, child).await;
+    let summary = json!({"summary": "left half sorted"});
+    let (done, is_error) = call(&h, &child_turn, "complete_task", summary).await;
+    assert!(!is_error, "{done}");
+    let reply = reply_of(pending).await;
+    let events = turn.events.upgrade().unwrap();
+    let refused = EngineEvent::InputRejected {
+        reason: "busy".into(),
+    };
+    events.send(refused).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let cursor = h.store.agent(parent).unwrap().unwrap().inbox_cursor;
+    let unread = h.store.inbox(parent, cursor).unwrap();
+    assert!(
+        unread
+            .iter()
+            .any(|item| format!("{:?}", item.kind).contains("use the left half")),
+        "the steered message was skipped: {unread:?}"
+    );
+    assert!(
+        reply.starts_with("Wait ended: the delegated task finished.")
+            && reply.contains("What arrived follows as your next input.")
+            && !reply.contains("Delivered with this reply:"),
+        "{reply}"
+    );
     h.runtime.shutdown().await;
 }
 
