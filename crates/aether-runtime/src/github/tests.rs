@@ -95,11 +95,16 @@ impl source::Source for Fake {
     }
 }
 pub(super) async fn runtime(dir: &tempfile::TempDir) -> Arc<Runtime> {
+    runtime_sweeping(dir, aether_model::config::DEFAULT_REVIEW_SWEEP_PRS).await
+}
+/// A runtime whose review sweep reads at most `prs` pull requests a pass.
+pub(super) async fn runtime_sweeping(dir: &tempfile::TempDir, prs: usize) -> Arc<Runtime> {
     let rt = Runtime::start_with_engines(
         RuntimeConfig {
             default_model: Some(ModelRef::new("anthropic", "claude-sonnet-5-5")),
             workspace_root: Some(dir.path().to_path_buf()),
             github_checkout_root: Some(dir.path().join("github-workspaces")),
+            github_review_sweep_prs: prs,
             delegated_workspace_root: Some(dir.path().join("managed")),
             ..Default::default()
         },
@@ -116,8 +121,12 @@ pub(super) async fn runtime(dir: &tempfile::TempDir) -> Arc<Runtime> {
     rt
 }
 pub(super) async fn fixture() -> (Arc<Runtime>, tempfile::TempDir, AgentId) {
+    fixture_sweeping(aether_model::config::DEFAULT_REVIEW_SWEEP_PRS).await
+}
+/// [`fixture`] with a review sweep of at most `prs` pull requests a pass.
+pub(super) async fn fixture_sweeping(prs: usize) -> (Arc<Runtime>, tempfile::TempDir, AgentId) {
     let dir = tempfile::tempdir().unwrap();
-    let rt = runtime(&dir).await;
+    let rt = runtime_sweeping(&dir, prs).await;
     let id = rt
         .create_agent(
             CreateAgentSpec {
@@ -362,26 +371,6 @@ async fn labels_use_latest_actor_and_event_identity_not_mutable_body() {
     assert_eq!(rt.store.inbox(id, 0).unwrap().len(), 1);
 }
 #[tokio::test]
-async fn oversized_review_sweep_does_not_block_ordinary_stream() {
-    let (rt, _dir, id) = fixture().await;
-    let mut source = Fake::new();
-    source.route(
-        "issues/comments",
-        json!([comment(2, "maintainer", "@aether inspect")]),
-    );
-    source.route(
-        "pulls",
-        Value::Array((1..=31).map(|n| json!({"number":n})).collect()),
-    );
-    let review_cursor = rt.github_repository_state("o/r").unwrap().review_cursor;
-    rt.github_poll(&source, at()).await.unwrap();
-    assert_eq!(rt.store.inbox(id, 0).unwrap().len(), 1);
-    let state = rt.github_repository_state("o/r").unwrap();
-    assert_eq!(state.cursor, at());
-    assert_eq!(state.review_cursor, review_cursor);
-    assert!(state.status.last_error.unwrap().contains("30 PRs"));
-}
-#[tokio::test]
 async fn prebaseline_issue_is_not_reactivated_by_unrelated_activity() {
     let (rt, _dir, id) = fixture().await;
     let mut source = Fake::new();
@@ -518,8 +507,12 @@ async fn oversized_listing_is_visible_and_never_advances_ordinary_cursor() {
     rt.github_poll(&source, at()).await.unwrap();
     let state = rt.github_repository_state("o/r").unwrap();
     assert_eq!(state.cursor, cursor);
-    assert!(state.status.last_error.unwrap().contains("1000 items"));
-    assert_eq!(source.calls.lock().unwrap().len(), 10);
+    assert!(state.error.unwrap().contains("1000 items"));
+    // The review sweep's discovery hits the same listing; comments never run.
+    assert!(state.review.error.unwrap().contains("1000 items"));
+    let calls = source.calls.lock().unwrap();
+    assert_eq!(calls.iter().filter(|c| c.contains("/issues?")).count(), 20);
+    assert!(!calls.iter().any(|c| c.contains("issues/comments")));
 }
 #[tokio::test]
 async fn failure_backoff_never_shortens_long_configured_interval() {

@@ -64,6 +64,8 @@ pub struct RuntimeConfig {
     pub workspace_root: Option<PathBuf>,
     /// Dedicated checkout directory for automatic GitHub thread agents.
     pub github_checkout_root: Option<PathBuf>,
+    /// Most pull requests one pass of the GitHub review sweep reads.
+    pub github_review_sweep_prs: usize,
     /// Private location for detached worktrees made by isolated delegation.
     pub delegated_workspace_root: Option<PathBuf>,
     /// Real path of the per-agent temp dirs' root, already prepared and claimed
@@ -158,6 +160,7 @@ impl Default for RuntimeConfig {
             default_model: None,
             workspace_root: None,
             github_checkout_root: None,
+            github_review_sweep_prs: aether_model::config::DEFAULT_REVIEW_SWEEP_PRS,
             delegated_workspace_root: None,
             agent_temp_root: None,
             build_cache_root: None,

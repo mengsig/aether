@@ -114,7 +114,9 @@ Refresh after a conflict before retrying.
 
 Settings and polling state belong to the daemon's persistent store, not
 `config.toml` or the TUI's preferences. The CLI uses the same daemon API as
-every other client.
+every other client. The one exception is a daemon-wide bound on the review
+sweep, read from `config.toml` when the daemon starts (see
+[Review sweep](#review-sweep)).
 
 ## Trust boundary
 
@@ -364,26 +366,63 @@ unpause agents. Under thread dispatch, a paused or terminal per-thread agent
 is replaced by a freshly spawned one on the next accepted mention instead of
 blocking delivery.
 
-Each repository pass allows at most 60 HTTP requests, 10 pages / 1,000 items per
-listing, 30 PRs in a review sweep, and 100 decisions per stream. The
-authorship lookups for operator logins count against the same 60. These are
-intentional bounded-work limits, not claims of unlimited repository coverage.
-Oversized listings/sweeps fail visibly without advancing that stream's cursor.
-The ordinary and review cursors are independent: an oversized review sweep does
-not prevent issue/comment delivery. A repeatedly oversized ordinary listing
-needs reduced activity or a future resumable-pagination implementation; this
-version never silently skips its unprocessed tail.
+A repository pass has two independent halves: issue/comment polling (issues,
+labels and conversation comments) and the [review sweep](#review-sweep). Each
+half allows at most 60 HTTP requests, 10 pages / 1,000 items per listing, and
+100 decisions. The authorship lookups for operator logins count against the
+60 of the half that needs them. These are intentional bounded-work limits,
+not claims of unlimited repository coverage. An oversized listing fails
+visibly without advancing that half's cursor or position. A repeatedly
+oversized ordinary listing needs reduced activity or a future
+resumable-pagination implementation; this version never silently skips its
+unprocessed tail.
+
+### Review sweep
+
+Review bodies have no edit timestamp, so the watcher cannot ask GitHub for
+"reviews changed since". Instead a review cycle starts by listing every open
+PR, every PR updated since the review cursor, and every PR with an inline
+comment updated since it, and saves that set in ascending number order. Each
+pass then reads the next PRs of the set, oldest first: their submitted reviews,
+and their whole inline history when one review is new. Mentions found there
+and the inline comments of those PRs are dispatched, and only then is the
+position saved, so a failed pass retries the same PRs. When every PR in the set
+has been read, the review cursor moves to the time the cycle started, once per
+cycle; anything that happened during the cycle is found again by the next one.
+Delivery is deduplicated as everywhere else, so reading a PR in two cycles
+never delivers a mention twice. A PR closed mid-cycle is still read in its
+turn; a later cycle drops it once it is closed and inactive. The position is
+part of the repository's polling state, so it survives a daemon restart.
+
+A pass reads at most 30 PRs. It stops sooner when its 60-request budget would
+not leave room for delivery (each PR costs up to two requests), but always
+reads at least one, so a sweep always makes progress. Change the limit in
+`config.toml` and restart the daemon:
+
+```toml
+[github_watcher]
+review_sweep_prs = 30   # between 1 and 50
+```
+
+A repository with more PRs than fit one pass takes several passes, one poll
+interval apart, for each cycle. A review on a PR the current cycle has
+already read waits for the next cycle, so with N passes per cycle a review
+mention can take up to about 2N poll intervals to arrive.
+
+### Errors and backoff
 
 API requests time out after 30 seconds and have bounded captured output (16 MiB
 stdout, 64 KiB stderr). Poll errors exponentially back off up to one hour,
-never polling faster than a longer configured interval. Backoff currently
-applies to the whole repository pass, so persistent review errors can also
-delay otherwise working issue/comment polling.
+never polling faster than a longer configured interval. Issue/comment polling
+and the review sweep back off separately: a failing review sweep never delays
+comment mentions, and a failing comment listing never holds back reviews.
+`status` shows the earlier time either half is next due, and the latest error
+of each, the review sweep's prefixed `review sweep:`.
 GitHub's `Retry-After` and rate-limit reset headers can extend the wait (up to
 one day); low remaining quota also pauses ingestion. That cooldown applies to
 all repositories and survives daemon restarts. Status records last poll,
-last successful whole pass, next poll, counters, and the latest error; logs
-carry failures as well. Managed clones time out after 90 seconds, use
+last pass after which neither half held an error, next poll, counters, and the
+latest errors; logs carry failures as well. Managed clones time out after 90 seconds, use
 command-scoped credentials, and keep authentication failures visible. Polling
 never posts to GitHub on its own.
 

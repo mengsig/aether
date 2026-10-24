@@ -14,7 +14,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 
-const MAX_REQUESTS: usize = 60;
+pub(super) const MAX_REQUESTS: usize = 60;
 const MAX_PAGES: usize = 10;
 const MAX_DECISIONS: usize = 100;
 
@@ -50,10 +50,11 @@ impl Candidate {
         format!("github.watcher.decision:{}", hex::encode(digest))
     }
 }
-struct Pass<'a, S> {
-    source: &'a S,
-    repo: &'a str,
-    requests: usize,
+/// One phase's GitHub requests, each phase with its own budget.
+pub(super) struct Pass<'a, S> {
+    pub source: &'a S,
+    pub repo: &'a str,
+    pub requests: usize,
 }
 impl<S: Source> Pass<'_, S> {
     fn spend(&mut self) -> Result<(), Error> {
@@ -75,7 +76,7 @@ impl<S: Source> Pass<'_, S> {
         self.spend()?;
         self.source.graphql(request).await
     }
-    async fn list(&mut self, endpoint: &str) -> Result<Vec<Value>, Error> {
+    pub async fn list(&mut self, endpoint: &str) -> Result<Vec<Value>, Error> {
         let separator = if endpoint.contains('?') { '&' } else { '?' };
         let mut items = Vec::new();
         for page in 1..=MAX_PAGES {
@@ -95,23 +96,23 @@ impl<S: Source> Pass<'_, S> {
         ))
     }
 }
-fn string<'a>(v: &'a Value, field: &str) -> Result<&'a str, Error> {
+pub(super) fn string<'a>(v: &'a Value, field: &str) -> Result<&'a str, Error> {
     v.get(field)
         .and_then(Value::as_str)
         .ok_or_else(|| Error::new(format!("GitHub item missing string {field}")))
 }
-fn number(v: &Value, field: &str) -> Result<u64, Error> {
+pub(super) fn number(v: &Value, field: &str) -> Result<u64, Error> {
     v.get(field)
         .and_then(Value::as_u64)
         .filter(|n| *n > 0)
         .ok_or_else(|| Error::new(format!("GitHub item missing positive {field}")))
 }
-fn timestamp(v: &Value, field: &str) -> Result<Timestamp, Error> {
+pub(super) fn timestamp(v: &Value, field: &str) -> Result<Timestamp, Error> {
     string(v, field)?
         .parse()
         .map_err(|e| Error::new(format!("invalid GitHub {field}: {e}")))
 }
-fn thread(v: &Value, field: &str) -> Result<u64, Error> {
+pub(super) fn thread(v: &Value, field: &str) -> Result<u64, Error> {
     string(v, field)?
         .rsplit('/')
         .next()
@@ -148,7 +149,7 @@ fn node_id(v: &Value) -> Option<String> {
         })
         .map(str::to_owned)
 }
-fn candidate(
+pub(super) fn candidate(
     v: &Value,
     kind: &'static str,
     n: u64,
@@ -192,6 +193,7 @@ fn label_candidate(
     Ok(c)
 }
 
+/// Issue/comment polling: issues, labels and conversation comments.
 pub(super) async fn scan(
     runtime: &Runtime,
     source: &impl Source,
@@ -213,7 +215,6 @@ pub(super) async fn scan(
         requests: 0,
     };
     let mut candidates = Vec::new();
-    let mut pulls = BTreeSet::new();
     let issues = pass
         .list(&format!(
             "issues?state=all&sort=updated&direction=asc&since={since}"
@@ -221,9 +222,6 @@ pub(super) async fn scan(
         .await?;
     for issue in issues {
         let n = number(&issue, "number")?;
-        if issue.get("pull_request").is_some() {
-            pulls.insert(n);
-        }
         let body = format!(
             "{}\n{}",
             string(&issue, "title")?,
@@ -288,102 +286,7 @@ pub(super) async fn scan(
     dispatch(runtime, &mut pass, settings, repo, state, candidates, at).await?;
     runtime
         .github_advance_cursor(settings.revision, &repo.repository, at)
-        .map_err(|e| Error::new(e.to_string()))?;
-    let mut candidates = Vec::new();
-    let since = (state.review_cursor - chrono::Duration::minutes(5))
-        .max(state.baseline)
-        .format("%Y-%m-%dT%H:%M:%SZ");
-    // Independent discovery window: a failed review sweep never holds back the
-    // ordinary cursor, nor loses closed PRs discovered during that failure.
-    for issue in pass
-        .list(&format!(
-            "issues?state=all&sort=updated&direction=asc&since={since}"
-        ))
-        .await?
-    {
-        if issue.get("pull_request").is_some() {
-            pulls.insert(number(&issue, "number")?);
-        }
-    }
-    let mut inline = pass
-        .list(&format!(
-            "pulls/comments?sort=updated&direction=asc&since={since}"
-        ))
-        .await?;
-    for c in &inline {
-        pulls.insert(thread(c, "pull_request_url")?);
-    }
-    // Review bodies have no edit timestamp. Sweep open PRs independently of
-    // issue updated_at; also cover updated/closed PRs discovered above.
-    for p in pass
-        .list("pulls?state=open&sort=updated&direction=desc")
-        .await?
-    {
-        pulls.insert(number(&p, "number")?);
-    }
-    if pulls.len() > 30 {
-        return Err(Error::new(
-            "GitHub review sweep exceeds 30 PRs; cursor retained (repository too large for this watcher budget)",
-        ));
-    }
-    let mut submitted = HashMap::new();
-    for n in pulls {
-        let mut newly_submitted = false;
-        for review in pass.list(&format!("pulls/{n}/reviews")).await? {
-            if !matches!(
-                review["state"].as_str(),
-                Some("APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED")
-            ) || review["submitted_at"].is_null()
-            {
-                continue;
-            }
-            let date = timestamp(&review, "submitted_at")?;
-            newly_submitted |= date >= state.review_cursor - chrono::Duration::minutes(5);
-            submitted.insert(number(&review, "id")?, date);
-            let body = review["body"].as_str().unwrap_or("");
-            if mention.is_match(body) {
-                candidates.push(candidate(
-                    &review,
-                    "review",
-                    n,
-                    body.into(),
-                    "user",
-                    "submitted_at",
-                )?);
-            }
-        }
-        // Draft comment updated_at may predate submission and the repository
-        // feed window. A newly submitted review requires its PR's full inline
-        // history, regardless of the draft comment's creation/edit timestamp.
-        if newly_submitted {
-            inline.extend(pass.list(&format!("pulls/{n}/comments")).await?);
-        }
-    }
-    for c in inline {
-        let body = c["body"].as_str().unwrap_or("");
-        if !mention.is_match(body) {
-            continue;
-        }
-        let review = number(&c, "pull_request_review_id")?;
-        // Repository-wide feeds should omit drafts, but require submission as
-        // defence in depth rather than authorizing unpublished review text.
-        let Some(submitted_at) = submitted.get(&review) else {
-            return Err(Error::new(
-                "GitHub inline mention has no submitted parent review; review cursor retained for retry",
-            ));
-        };
-        let mut candidate = candidate(
-            &c,
-            "review_comment",
-            thread(&c, "pull_request_url")?,
-            body.into(),
-            "user",
-            "updated_at",
-        )?;
-        candidate.at = candidate.at.max(*submitted_at);
-        candidates.push(candidate);
-    }
-    dispatch(runtime, &mut pass, settings, repo, state, candidates, at).await
+        .map_err(|e| Error::new(e.to_string()))
 }
 
 /// Whether `login` holds admin, maintain or write access (or GitHub's explicit
@@ -572,7 +475,7 @@ async fn standing_of(
     ))
 }
 
-async fn dispatch(
+pub(super) async fn dispatch(
     runtime: &Runtime,
     pass: &mut Pass<'_, impl Source>,
     settings: &Settings,

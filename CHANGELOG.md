@@ -14,6 +14,13 @@ release is also the text of its GitHub release.
   sweep (`[scheduler] orphan_sweep_seconds`, default 60;
   `orphan_idle_minutes`, default 10) recovers any agent left running with no
   turn and records an `agent.recovered` event (mengsig/archon#251).
+- **The GitHub watcher's review sweep handles more than 30 open PRs.** It no
+  longer fails every pass with "review sweep exceeds 30 PRs": each pass reads
+  the next PRs of a saved cycle, oldest first, and resumes where it stopped,
+  also across a daemon restart. The review sweep and issue/comment polling
+  back off separately, so review errors no longer delay comment mentions.
+  `[github_watcher] review_sweep_prs` (default 30) sets the per-pass limit
+  (#290).
 
 ### Added
 

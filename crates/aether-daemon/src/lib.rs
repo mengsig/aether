@@ -372,6 +372,11 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             // Beside the resolved store: an engine opens the file from its agent's workspace.
             attachment_dir: Some(store_path.with_extension("attachments")),
             github_checkout_root: Some(config.store_path.with_extension("github-workspaces")),
+            github_review_sweep_prs: models
+                .config()
+                .github_watcher
+                .review_sweep_prs()
+                .map_err(config_error)?,
             delegated_workspace_root: Some(
                 config.store_path.with_extension("delegated-workspaces"),
             ),

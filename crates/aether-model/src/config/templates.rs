@@ -165,6 +165,13 @@ pub const CONFIG_TEMPLATE: &str = r#"# Aether configuration. Every setting is op
 # name = "CARGO_TARGET_DIR"
 # dir = "cargo-target"
 
+# The GitHub watcher's review sweep reads at most this many pull requests per
+# pass and resumes where it stopped on the next one; a pass's 60-request
+# budget can end it sooner. Between 1 and 50.
+#
+# [github_watcher]
+# review_sweep_prs = 30
+
 # How long artifact bytes are kept. Records are never removed, so an old run
 # still says what it produced even once the payload is gone.
 #

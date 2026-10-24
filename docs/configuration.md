@@ -224,6 +224,10 @@ Optional `[listen]` settings expose the protocol over token-authenticated TCP.
 There is no built-in TLS; use an SSH tunnel. `[serve]` settings configure the
 separate webhook/event bridge. See the [protocol](protocol.md),
 [MCP](mcp-servers.md), and [GitHub watcher](github-watcher.md) guides.
+`[github_watcher] review_sweep_prs` (1 to 50, default 30) bounds how many pull
+requests one pass of the watcher's
+[review sweep](github-watcher.md#review-sweep) reads; the watcher's other
+settings live in the daemon, not in this file.
 
 ### Remote control
 

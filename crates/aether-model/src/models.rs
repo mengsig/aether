@@ -730,6 +730,7 @@ mod tests {
             storage: Default::default(),
             agents: Default::default(),
             build_cache: Default::default(),
+            github_watcher: Default::default(),
             mcp: Default::default(),
             memory: Default::default(),
             listen: Default::default(),

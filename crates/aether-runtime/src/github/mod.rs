@@ -7,7 +7,11 @@ mod notice;
 mod notice_tests;
 #[cfg(test)]
 mod operator_tests;
+mod phases;
 mod poll;
+#[cfg(test)]
+mod review_tests;
+mod reviews;
 mod source;
 mod standing;
 #[cfg(test)]
@@ -47,8 +51,16 @@ struct RepositoryState {
     baseline: Timestamp,
     cursor: Timestamp,
     review_cursor: Timestamp,
+    /// Consecutive failures of issue/comment polling.
     failures: u32,
     status: GithubRepositoryStatus,
+    /// When issue/comment polling is next due, and its latest error.
+    #[serde(default)]
+    next_poll_at: Option<Timestamp>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    review: phases::ReviewState,
 }
 fn state_key(repo: &str) -> String {
     format!("github.watcher.repo:{}", repo.to_ascii_lowercase())
@@ -171,14 +183,15 @@ impl Runtime {
                             repository: repo.repository.clone(),
                             ..Default::default()
                         },
+                        next_poll_at: None,
+                        error: None,
+                        review: phases::ReviewState::default(),
                     }
                 };
                 state.baseline = at;
                 state.cursor = at;
                 state.review_cursor = at;
-                state.failures = 0;
-                state.status.next_poll_at = Some(at);
-                state.status.last_error = None;
+                state.restart_phases(at);
                 commit.push_mutation(encode(state_key(&repo.repository), &state)?);
             }
         }
@@ -263,57 +276,73 @@ impl Runtime {
         }
         for repo in settings.config.repositories.iter().filter(|r| r.enabled) {
             let state = self.github_repository_state(&repo.repository)?;
-            if state.status.next_poll_at.is_some_and(|t| t > at) {
+            let comments_due = phases::due(state.next_poll_at, at);
+            let reviews_due = phases::due(state.review.next_poll_at, at);
+            if !comments_due && !reviews_due {
                 continue;
             }
-            let outcome = poll::scan(self, source, &settings, repo, &state, at).await;
-            let hold = self.hold();
-            if self.github_settings()?.revision != settings.revision {
-                return Ok(());
-            }
-            // Re-read: each successful decision has already committed its counters.
-            let mut state = self.github_repository_state(&repo.repository)?;
-            state.status.last_poll_at = Some(at);
-            let mut rate_until = None;
-            let delay = match outcome {
-                Ok(()) => {
-                    state.review_cursor = at;
-                    state.status.last_success_at = Some(at);
-                    state.status.last_error = None;
-                    state.failures = 0;
-                    settings.config.poll_interval_secs
-                }
-                Err(error) => {
-                    tracing::warn!(repository = %repo.repository, %error, "GitHub repository poll failed");
-                    if error.retry_after > 0 {
-                        rate_until =
-                            Some(now() + chrono::Duration::seconds(error.retry_after as i64));
-                    }
-                    state.status.last_error = Some(error.message);
-                    state.failures = state.failures.saturating_add(1);
-                    settings
-                        .config
-                        .poll_interval_secs
-                        .saturating_mul(1u64 << state.failures.min(5))
-                        .min(3600)
-                        .max(settings.config.poll_interval_secs)
-                        .max(error.retry_after)
-                }
+            let comments = if comments_due {
+                Some(poll::scan(self, source, &settings, repo, &state, at).await)
+            } else {
+                None
             };
-            state.status.next_poll_at = Some(now() + chrono::Duration::seconds(delay as i64));
-            let mut commit = Commit::new().mutate(encode(state_key(&repo.repository), &state)?);
-            if let Some(until) = rate_until {
-                commit.push_mutation(Mutation::SetMeta {
-                    key: "github.watcher.rate_until".into(),
-                    value: until.to_rfc3339(),
-                });
-            }
-            self.apply_held(hold, commit)?;
-            if rate_until.is_some() {
+            let limited = matches!(&comments, Some(Err(error)) if error.retry_after > 0);
+            let reviews = if reviews_due && !limited {
+                Some(reviews::sweep(self, source, &settings, repo, &state, at).await)
+            } else {
+                None
+            };
+            if !self.github_record(&settings, repo, at, comments, reviews)? {
                 break;
             }
         }
         Ok(())
+    }
+
+    /// Persist each phase that ran with its own backoff. Returns `false` when
+    /// polling must stop: the settings changed, or GitHub asked us to wait.
+    fn github_record(
+        &self,
+        settings: &Settings,
+        repo: &GithubRepositoryConfig,
+        at: Timestamp,
+        comments: Option<std::result::Result<(), source::Error>>,
+        reviews: Option<std::result::Result<phases::ReviewCycle, source::Error>>,
+    ) -> Result<bool> {
+        debug_assert!(comments.is_some() || reviews.is_some(), "a phase ran");
+        let hold = self.hold();
+        if self.github_settings()?.revision != settings.revision {
+            return Ok(false);
+        }
+        // Re-read: each successful decision has already committed its counters.
+        let mut state = self.github_repository_state(&repo.repository)?;
+        let interval = settings.config.poll_interval_secs;
+        if let Some(Err(error)) = &comments {
+            tracing::warn!(repository = %repo.repository, %error, "GitHub issue/comment poll failed");
+        }
+        if let Some(Err(error)) = &reviews {
+            tracing::warn!(repository = %repo.repository, %error, "GitHub review sweep failed");
+        }
+        let mut retry_after = 0;
+        if let Some(outcome) = comments {
+            retry_after = retry_after.max(phases::retry_after(&outcome));
+            state.record_comments(outcome, interval);
+        }
+        if let Some(outcome) = reviews {
+            retry_after = retry_after.max(phases::retry_after(&outcome));
+            state.record_reviews(outcome, interval);
+        }
+        state.refresh_status(at);
+        let mut commit = Commit::new().mutate(encode(state_key(&repo.repository), &state)?);
+        if retry_after > 0 {
+            let until = now() + chrono::Duration::seconds(retry_after as i64);
+            commit.push_mutation(Mutation::SetMeta {
+                key: "github.watcher.rate_until".into(),
+                value: until.to_rfc3339(),
+            });
+        }
+        self.apply_held(hold, commit)?;
+        Ok(retry_after == 0)
     }
 
     fn github_advance_cursor(&self, revision: u64, repo: &str, at: Timestamp) -> Result<()> {
