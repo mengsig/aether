@@ -253,6 +253,22 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             reason,
         })?
         .unwrap_or(aether_runtime::DEFAULT_ENGINE_STALL_TIMEOUT);
+    let config_error = |reason| aether_model::config::ConfigError {
+        path: "config.toml".into(),
+        reason,
+    };
+    let orphan_sweep_interval = models
+        .config()
+        .scheduler
+        .orphan_sweep_interval()
+        .map_err(config_error)?
+        .unwrap_or(aether_runtime::DEFAULT_ORPHAN_SWEEP_INTERVAL);
+    let orphan_idle = models
+        .config()
+        .scheduler
+        .orphan_idle()
+        .map_err(config_error)?
+        .unwrap_or(aether_runtime::DEFAULT_ORPHAN_IDLE);
     let max_concurrent_engine_turns =
         models
             .config()
@@ -340,6 +356,8 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             engine_park_grace,
             engine_transient_retry_window,
             engine_stall_timeout,
+            orphan_sweep_interval,
+            orphan_idle,
             yolo,
             approval_default: models.config().approval.default,
             network_default: models.config().network.default,

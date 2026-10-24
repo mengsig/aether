@@ -877,6 +877,24 @@ engine stalled; the agent goes idle and a message resumes its session. While
 an agent is stalled, `aether status` lists it under "Needs attention", and the
 TUI and `aether run` print a notice for each stall.
 
+### Running agents with no turn
+
+A turn that cannot record its own end must not leave its agent marked running
+with nothing driving it. When the database stays locked (SQLITE_BUSY or
+SQLITE_LOCKED), ending the turn is retried up to 8 times with backoff capped
+at 5 seconds; a full disk is still waited out however long it takes. If a
+failure still cannot be recorded, the agent is recovered as a daemon restart
+would recover it.
+
+As a backstop, the daemon sweeps every `[scheduler] orphan_sweep_seconds` (60
+by default; `0` turns the sweep off) for agents marked running that have no
+turn in flight and no event or update for `[scheduler] orphan_idle_minutes`
+(10 by default). Each is recovered the same way and gets an `agent.recovered`
+event whose `reason` says why. Agent replies (`get_agent`, `list_agents`)
+carry `engine_alive`, whether a turn of the agent runs in the daemon now, and
+`last_event_at`, the time of the agent's own last event (null before its
+first).
+
 ### Launch identity and child telemetry
 
 The runtime calls `Engine::run_with_context(turn, context, cancel)` for normal,

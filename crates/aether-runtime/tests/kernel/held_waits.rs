@@ -34,6 +34,8 @@ async fn the_gate_keeps_a_wait_the_owner_chose() {
             resume_wait: None,
             restarted_from: None,
             restarted_as: None,
+            engine_alive: false,
+            last_event_at: None,
             config: AgentConfig::default(),
             stats: Default::default(),
             run: Default::default(),
@@ -229,6 +231,8 @@ async fn answering_a_person_keeps_the_wait_a_blocked_agent_chose() {
                 resume_wait: None,
                 restarted_from: None,
                 restarted_as: None,
+                engine_alive: false,
+                last_event_at: None,
                 config: AgentConfig {
                     approval: ApprovalPolicy::none(),
                     ..Default::default()

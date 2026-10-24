@@ -158,6 +158,13 @@ pub struct Agent {
     pub config: AgentConfig,
     #[serde(default)]
     pub stats: AgentStats,
+    /// Reply-only: whether a turn of this agent is running in the daemon now.
+    /// Filled in when the daemon answers; whatever is stored here is ignored.
+    #[serde(default)]
+    pub engine_alive: bool,
+    /// Reply-only: when this agent itself last had an event recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_event_at: Option<Timestamp>,
     pub run: RunId,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,

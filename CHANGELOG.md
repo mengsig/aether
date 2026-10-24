@@ -6,6 +6,20 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- **Agents no longer stall after "database is locked".** A turn whose end
+  hit a locked database retries it with bounded backoff, and a failure that
+  still cannot be recorded recovers the agent as a restart would. A periodic
+  sweep (`[scheduler] orphan_sweep_seconds`, default 60;
+  `orphan_idle_minutes`, default 10) recovers any agent left running with no
+  turn and records an `agent.recovered` event (mengsig/archon#251).
+
+### Added
+
+- **Liveness in agent replies.** `get_agent` and `list_agents` replies carry
+  `engine_alive` and `last_event_at`, additively (mengsig/archon#251).
+
 ## 1.2.4
 
 Released 2026-10-24. A small TUI patch release: the agents tree draws a

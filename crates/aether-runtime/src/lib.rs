@@ -23,6 +23,7 @@ pub mod memory_curation;
 mod memory_feedback;
 pub mod notes;
 pub mod notifications;
+mod orphans;
 mod peers;
 pub mod recovery;
 mod repository_aliases;
@@ -106,6 +107,17 @@ impl RuntimeError {
     }
 }
 
+impl RuntimeError {
+    /// The database lock was held past the busy timeout; see
+    /// [`StoreError::is_contended`].
+    pub fn is_store_contended(&self) -> bool {
+        match self {
+            Self::Store(e) | Self::Memory(aether_memory::MemoryError::Store(e)) => e.is_contended(),
+            _ => false,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, RuntimeError>;
 
 mod config;
@@ -116,8 +128,8 @@ mod provider_refresh;
 pub use config::{
     BridgeConfig, DEFAULT_ENGINE_PARK_GRACE, DEFAULT_ENGINE_STALL_TIMEOUT,
     DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR, DEFAULT_ENGINE_TRANSIENT_RETRY_WINDOW,
-    DEFAULT_EXHAUSTION_PROBE_FLOOR, DEFAULT_MAX_CONCURRENT_TURNS, DEFAULT_RESOURCE_WAIT_TIMEOUT,
-    DiskGuard, RuntimeConfig,
+    DEFAULT_EXHAUSTION_PROBE_FLOOR, DEFAULT_MAX_CONCURRENT_TURNS, DEFAULT_ORPHAN_IDLE,
+    DEFAULT_ORPHAN_SWEEP_INTERVAL, DEFAULT_RESOURCE_WAIT_TIMEOUT, DiskGuard, RuntimeConfig,
 };
 use engine_access::detect_engines;
 
@@ -196,6 +208,8 @@ pub(crate) struct SchedulerState {
     pub errors: HashMap<String, ErrorWindow>,
     /// Where a turn last went after giving up on each provider.
     pub fallbacks: HashMap<String, FallbackRecord>,
+    /// When the orphan sweep last ran; `None` before the first.
+    pub last_orphan_sweep: Option<Timestamp>,
     /// Scheduler steps that panicked and were contained since startup.
     pub step_panics: u64,
     /// Test hook: steps that must fail or panic when they run.

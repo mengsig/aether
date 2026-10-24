@@ -422,6 +422,8 @@ async fn the_quarantine_walk_reads_only_lease_events_and_only_once_per_agent() {
             resume_wait: None,
             restarted_from: None,
             restarted_as: None,
+            engine_alive: false,
+            last_event_at: None,
             config: AgentConfig::default(),
             stats: Default::default(),
             run: Default::default(),

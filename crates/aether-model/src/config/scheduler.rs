@@ -33,6 +33,12 @@ pub struct SchedulerSection {
     /// before it is treated as stalled and retried; unset means 15 minutes,
     /// 0 turns the watchdog off.
     pub engine_stall_minutes: Option<u64>,
+    /// How often the daemon looks for agents marked running that have no
+    /// turn; unset means 60 seconds, 0 turns the sweep off.
+    pub orphan_sweep_seconds: Option<u64>,
+    /// How long a running agent with no turn must have been silent before
+    /// the sweep recovers it; unset means 10 minutes.
+    pub orphan_idle_minutes: Option<u64>,
     /// Free space, in MiB, the data directory's filesystem keeps before new
     /// turns wait; unset means the smaller of 5 GiB and 2%, 0 never waits.
     pub min_free_disk_mib: Option<u64>,
@@ -52,6 +58,12 @@ pub const MAX_ENGINE_TRANSIENT_RETRY_MINUTES: u64 = 7 * 24 * 60;
 
 /// A week. A longer silence is a hung agent, not a slow model.
 pub const MAX_ENGINE_STALL_MINUTES: u64 = 7 * 24 * 60;
+
+/// A day. A sweep that rarely runs recovers nothing in time to matter.
+pub const MAX_ORPHAN_SWEEP_SECONDS: u64 = 24 * 60 * 60;
+
+/// A week. A longer idle period is a hung agent, not a quiet one.
+pub const MAX_ORPHAN_IDLE_MINUTES: u64 = 7 * 24 * 60;
 
 pub const DEFAULT_MAX_CONCURRENT_TURNS: usize = 32;
 
@@ -170,6 +182,36 @@ impl SchedulerSection {
         if minutes > MAX_ENGINE_STALL_MINUTES {
             return Err(format!(
                 "engine_stall_minutes must be at most {MAX_ENGINE_STALL_MINUTES}; \
+                 remove it for the default"
+            ));
+        }
+        Ok(Some(std::time::Duration::from_secs(minutes * 60)))
+    }
+
+    /// The configured orphan sweep interval. `None` means the runtime default
+    /// applies; a zero duration turns the sweep off.
+    pub fn orphan_sweep_interval(&self) -> Result<Option<std::time::Duration>, String> {
+        let Some(seconds) = self.orphan_sweep_seconds else {
+            return Ok(None);
+        };
+        if seconds > MAX_ORPHAN_SWEEP_SECONDS {
+            return Err(format!(
+                "orphan_sweep_seconds must be at most {MAX_ORPHAN_SWEEP_SECONDS}; \
+                 remove it for the default"
+            ));
+        }
+        Ok(Some(std::time::Duration::from_secs(seconds)))
+    }
+
+    /// The configured idle period before the sweep recovers an agent.
+    /// `None` means the runtime default applies.
+    pub fn orphan_idle(&self) -> Result<Option<std::time::Duration>, String> {
+        let Some(minutes) = self.orphan_idle_minutes else {
+            return Ok(None);
+        };
+        if minutes > MAX_ORPHAN_IDLE_MINUTES {
+            return Err(format!(
+                "orphan_idle_minutes must be at most {MAX_ORPHAN_IDLE_MINUTES}; \
                  remove it for the default"
             ));
         }
