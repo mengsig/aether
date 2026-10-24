@@ -11,6 +11,7 @@ import type {
   ResourceHolding,
   RunSummary,
   Usage,
+  WriteStats,
   providers,
 } from "../../protocol.ts";
 
@@ -46,5 +47,6 @@ export interface DaemonStatus {
   "tasks_active": number;
   "usage_total": Usage;
   "version": string;
+  "writes"?: WriteStats | null;
   "yolo"?: boolean;
 }
