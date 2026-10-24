@@ -207,3 +207,44 @@ async fn replies_report_whether_a_turn_runs_and_the_last_event() {
     let stored = runtime.store.agent(busy.id).expect("read").expect("agent");
     assert!(!stored.engine_alive, "annotation is reply-only");
 }
+
+/// A turn that ends between the sweep's listing and its decision: the listing
+/// still says running, but the decision must see the end the turn recorded.
+#[tokio::test]
+async fn a_turn_that_finishes_after_the_listing_is_not_recovered() {
+    let (runtime, _dir) = quiet_runtime().await;
+    let agent = strand(&runtime, worker(&runtime));
+    hold_turn(&runtime, agent.id);
+    let listed = runtime
+        .store
+        .agents(&AgentFilter {
+            statuses: vec![AgentStatusKind::Running],
+            ..Default::default()
+        })
+        .expect("listing");
+    assert_eq!(
+        listed.iter().map(|a| a.id).collect::<Vec<_>>(),
+        vec![agent.id]
+    );
+
+    let mut finished = agent.clone();
+    finished.status = AgentStatus::Ready;
+    runtime
+        .apply(Commit::new().mutate(Mutation::UpsertAgent(finished)))
+        .expect("the turn records its end");
+    runtime.sched.lock().running.remove(&agent.id);
+
+    let at = now() + minutes(11);
+    for stale in &listed {
+        let decided = confirmed_orphan(&runtime, stale.id, at, Duration::ZERO).expect("decide");
+        assert!(decided.is_none(), "recovered a finished turn: {decided:?}");
+    }
+    assert!(
+        sweep(&runtime, at, Duration::ZERO)
+            .expect("sweep")
+            .is_empty()
+    );
+    let after = runtime.store.agent(agent.id).expect("read").expect("agent");
+    assert_eq!(after.status, AgentStatus::Ready);
+    assert!(recovered_reasons(&runtime, agent.id).is_empty());
+}

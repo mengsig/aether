@@ -99,22 +99,36 @@ pub(crate) fn sweep(runtime: &Arc<Runtime>, at: Timestamp, idle: Duration) -> Re
         ..Default::default()
     })?;
     let mut recovered = Vec::new();
-    for agent in running {
-        let last_event = runtime.store.last_event_at(agent.id)?;
-        if !is_orphan(
-            &agent,
-            runtime.turn_in_flight(agent.id),
-            last_event,
-            at,
-            idle,
-        ) {
+    for candidate in running {
+        let Some(agent) = confirmed_orphan(runtime, candidate.id, at, idle)? else {
             continue;
-        }
+        };
         recover(runtime, &agent)?;
         recovered.push(agent.id);
     }
     debug_assert!(recovered.iter().all(|id| !runtime.turn_in_flight(*id)));
     Ok(recovered)
+}
+
+/// The agent as it stands now, if it is an orphan. A turn records its end
+/// before it leaves `running`, so the agent is read only once no turn is in
+/// flight: a turn that finished since the listing shows its final state.
+/// Dispatch runs in the same scheduler pass, so no turn starts meanwhile.
+pub(crate) fn confirmed_orphan(
+    runtime: &Runtime,
+    id: AgentId,
+    at: Timestamp,
+    idle: Duration,
+) -> Result<Option<Agent>> {
+    if runtime.turn_in_flight(id) {
+        return Ok(None);
+    }
+    let Some(agent) = runtime.store.agent(id)? else {
+        return Ok(None);
+    };
+    debug_assert_eq!(agent.id, id);
+    let last_event = runtime.store.last_event_at(id)?;
+    Ok(is_orphan(&agent, false, last_event, at, idle).then_some(agent))
 }
 
 fn recover(runtime: &Arc<Runtime>, agent: &Agent) -> Result<()> {
