@@ -86,6 +86,8 @@ pub enum EngineError {
     Unsupported(String),
     #[error("{program} is not installed or not on PATH")]
     NotInstalled { program: String },
+    #[error("workspace missing: {}", path.display())]
+    WorkspaceMissing { path: PathBuf },
     #[error("could not start {program}: {source}")]
     Spawn {
         program: String,
@@ -99,7 +101,10 @@ impl EngineError {
     /// These failures occur before any model request can be submitted.
     pub fn proves_no_submission(&self) -> bool {
         match self {
-            Self::Unsupported(_) | Self::NotInstalled { .. } | Self::Spawn { .. } => true,
+            Self::Unsupported(_)
+            | Self::NotInstalled { .. }
+            | Self::WorkspaceMissing { .. }
+            | Self::Spawn { .. } => true,
             Self::Exited(_) | Self::SessionOwnership(_) => false,
         }
     }
@@ -569,6 +574,34 @@ where
     .await
 }
 
+/// Fails before a spawn when the working directory is gone, so the OS's
+/// ENOENT is never mistaken for a missing executable.
+pub(crate) fn ensure_workspace(cwd: &Path) -> Result<(), EngineError> {
+    if cwd.is_dir() {
+        return Ok(());
+    }
+    Err(EngineError::WorkspaceMissing {
+        path: cwd.to_path_buf(),
+    })
+}
+
+/// Names the real cause of a failed spawn: ENOENT means a missing
+/// working directory or a missing executable, and only `cwd` tells them apart.
+pub(crate) fn spawn_error(program: &str, cwd: &Path, error: std::io::Error) -> EngineError {
+    if error.kind() != std::io::ErrorKind::NotFound {
+        return EngineError::Spawn {
+            program: program.to_owned(),
+            source: error,
+        };
+    }
+    match ensure_workspace(cwd) {
+        Err(missing) => missing,
+        Ok(()) => EngineError::NotInstalled {
+            program: program.to_owned(),
+        },
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_process_with_env<P>(
     program: &str,
@@ -591,6 +624,7 @@ where
     use std::os::unix::process::CommandExt as _;
     use tokio::io::AsyncWriteExt as _;
 
+    ensure_workspace(&cwd)?;
     let mut command = tokio::process::Command::new(program);
     command
         .args(&args)
@@ -607,15 +641,7 @@ where
     export_temp_dir(&mut command, temp_dir);
     export_build_env(&mut command, build_env);
     let run_token = orphans::tag(&mut command);
-    let mut child = command.spawn().map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => EngineError::NotInstalled {
-            program: program.to_owned(),
-        },
-        _ => EngineError::Spawn {
-            program: program.to_owned(),
-            source: e,
-        },
-    })?;
+    let mut child = command.spawn().map_err(|e| spawn_error(program, &cwd, e))?;
     let program = program.to_owned();
     let pid = child.id();
     let mut stdin = child

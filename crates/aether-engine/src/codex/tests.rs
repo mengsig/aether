@@ -1073,3 +1073,37 @@ fn failed_turn_counts_as_closing_accounting_only_with_its_own_usage() {
         );
     }
 }
+
+#[tokio::test]
+async fn run_reports_a_missing_workspace_not_a_missing_program() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = CodexEngine::new(dir.path().join("x").to_string_lossy(), "0.162.0");
+    let mut t = turn_with_effort(None);
+    t.cwd = dir.path().join("deleted");
+    let error = engine.run(t, CancellationToken::new()).await.unwrap_err();
+    assert!(
+        matches!(&error, EngineError::WorkspaceMissing { path } if path == &dir.path().join("deleted")),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "workspace missing: {}",
+            dir.path().join("deleted").display()
+        )
+    );
+}
+
+#[tokio::test]
+async fn run_reports_a_missing_program_when_the_workspace_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = CodexEngine::new(dir.path().join("absent").to_string_lossy(), "0.162.0");
+    let mut t = turn_with_effort(None);
+    t.cwd = dir.path().into();
+    let error = engine.run(t, CancellationToken::new()).await.unwrap_err();
+    assert!(
+        matches!(&error, EngineError::NotInstalled { .. }),
+        "{error:?}"
+    );
+    assert!(error.to_string().contains("not installed or not on PATH"));
+}

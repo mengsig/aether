@@ -8,6 +8,10 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **A deleted workspace is no longer reported as a missing engine.** An
+  engine spawn checks the working directory first and fails with
+  `workspace missing: <path>`; an ENOENT from the spawn names the missing
+  program only when the directory exists (mengsig/archon#256).
 - **Agents no longer stall after "database is locked".** A turn whose end
   hit a locked database retries it with bounded backoff, and a failure that
   still cannot be recorded recovers the agent as a restart would. A periodic

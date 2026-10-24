@@ -382,3 +382,41 @@ async fn stderr_masks_the_known_secret_values_of_the_turn() {
         );
     }
 }
+
+async fn spawn_in(program: &str, cwd: PathBuf) -> Result<ProcessRun, EngineError> {
+    run_process(
+        program,
+        Vec::new(),
+        cwd,
+        &[],
+        None,
+        &[],
+        &aether_core::redact::Redactor::default(),
+        String::new(),
+        false,
+        None,
+        CancellationToken::new(),
+        |_| Vec::new(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn run_process_tells_a_missing_workspace_from_a_missing_program() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("deleted");
+    let error = spawn_in("sh", missing.clone()).await.err().unwrap();
+    assert!(matches!(&error, EngineError::WorkspaceMissing { path } if path == &missing));
+    let error = spawn_in("no-such-engine-binary", dir.path().into())
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        matches!(&error, EngineError::NotInstalled { .. }),
+        "{error:?}"
+    );
+    let file = dir.path().join("file");
+    std::fs::write(&file, "").unwrap();
+    let error = spawn_in("sh", file.clone()).await.err().unwrap();
+    assert!(matches!(&error, EngineError::WorkspaceMissing { path } if path == &file));
+}
