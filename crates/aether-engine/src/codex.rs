@@ -121,6 +121,8 @@ impl CodexEngine {
             args.extend([
                 "-c".into(),
                 "mcp_servers.aether.default_tools_approval_mode=\"approve\"".into(),
+                "-c".into(),
+                crate::CODEX_AETHER_TOOL_TIMEOUT.into(),
             ]);
             args.push("-c".into());
             args.push(format!(
@@ -646,16 +648,26 @@ fn item_events(kind: &str, item: &Value) -> Vec<EngineEvent> {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_owned();
+            let status = item.get("status").and_then(Value::as_str);
             if kind == "item.started" {
-                return vec![EngineEvent::Assistant {
-                    content: vec![ContentBlock::ToolUse {
+                // A command outlives its tool call once it yields; reported
+                // live, a `wait_for` keeps the process attached. Ahead of the
+                // tool use, so a recorded command is already live.
+                return vec![
+                    EngineEvent::BackgroundTask {
                         id: id.clone(),
-                        name: "bash".into(),
-                        input: json!({ "command": command }),
-                    }],
-                    usage: None,
-                    model: None,
-                }];
+                        running: true,
+                    },
+                    EngineEvent::Assistant {
+                        content: vec![ContentBlock::ToolUse {
+                            id,
+                            name: "bash".into(),
+                            input: json!({ "command": command }),
+                        }],
+                        usage: None,
+                        model: None,
+                    },
+                ];
             }
             if completed {
                 let output = item
@@ -664,15 +676,20 @@ fn item_events(kind: &str, item: &Value) -> Vec<EngineEvent> {
                     .unwrap_or("")
                     .to_owned();
                 let exit = item.get("exit_code").and_then(Value::as_i64);
-                return vec![EngineEvent::ToolResult {
-                    tool_use_id: id,
+                let mut events = vec![EngineEvent::ToolResult {
+                    tool_use_id: id.clone(),
                     content: format!(
                         "{output}\n[exit code {}]",
                         exit.map(|c| c.to_string()).unwrap_or_else(|| "?".into())
                     ),
-                    is_error: exit.is_some_and(|c| c != 0)
-                        || item.get("status").and_then(Value::as_str) == Some("failed"),
+                    is_error: exit.is_some_and(|c| c != 0) || status == Some("failed"),
                 }];
+                // The turn's end closes still-running items with their status
+                // unchanged: those processes did not exit, the run is ending.
+                if status != Some("in_progress") {
+                    events.push(EngineEvent::BackgroundTask { id, running: false });
+                }
+                return events;
             }
             Vec::new()
         }

@@ -325,12 +325,21 @@ impl TurnState {
         let Some(block) = tool_use_of(item) else {
             return Vec::new();
         };
-        self.started.insert(str_of(item, "id"));
-        vec![EngineEvent::Assistant {
+        let id = str_of(item, "id");
+        self.started.insert(id.clone());
+        let mut out = Vec::new();
+        // A command outlives its tool call once it yields; reported live, a
+        // `wait_for` keeps the session, and with it the process, attached.
+        // Ahead of the tool use, so a recorded command is already live.
+        if item["type"] == "commandExecution" {
+            out.push(EngineEvent::BackgroundTask { id, running: true });
+        }
+        out.push(EngineEvent::Assistant {
             content: vec![block],
             usage: None,
             model: None,
-        }]
+        });
+        out
     }
 
     fn item_completed(&mut self, item: &Value) -> Vec<EngineEvent> {
@@ -375,11 +384,15 @@ impl TurnState {
                         model: None,
                     });
                 }
+                let exited = item["type"] == "commandExecution" && item["status"] != "inProgress";
                 out.push(EngineEvent::ToolResult {
-                    tool_use_id: id,
+                    tool_use_id: id.clone(),
                     content,
                     is_error,
                 });
+                if exited {
+                    out.push(EngineEvent::BackgroundTask { id, running: false });
+                }
                 out
             }
         }

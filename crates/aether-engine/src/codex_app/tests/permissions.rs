@@ -259,7 +259,7 @@ fn native_prompt_rule_requests_route_through_aether_decisions() {
     s.notification("item/started", &json!({"item": {"type": "commandExecution", "id": "exec-1", "command": "/usr/bin/zsh -lc gh pr merge 7", "cwd": "/w", "status": "inProgress"}}));
     let events = s.notification("item/completed", &json!({"item": {"type": "commandExecution", "id": "exec-1", "command": "/usr/bin/zsh -lc gh pr merge 7", "status": "declined", "aggregatedOutput": null, "exitCode": null}}));
     assert!(
-        matches!(&events[..], [EngineEvent::ToolResult { tool_use_id, is_error: true, .. }] if tool_use_id == "exec-1"),
+        matches!(&events[..], [EngineEvent::ToolResult { tool_use_id, is_error: true, .. }, EngineEvent::BackgroundTask { running: false, .. }] if tool_use_id == "exec-1"),
         "{events:?}"
     );
 }

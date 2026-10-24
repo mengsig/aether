@@ -54,19 +54,38 @@ fn notifications_become_events() {
         })]
     );
     let started = json!({"item": {"type": "commandExecution", "id": "c1", "command": "ls", "cwd": "/w", "status": "inProgress"}});
-    assert!(matches!(
-        &s.notification("item/started", &started)[0],
-        EngineEvent::Assistant { content, .. }
-            if matches!(&content[0], ContentBlock::ToolUse { name, .. } if name == "bash")
-    ));
+    match &s.notification("item/started", &started)[..] {
+        [
+            EngineEvent::BackgroundTask { id, running: true },
+            EngineEvent::Assistant { content, .. },
+        ] => {
+            assert_eq!(id, "c1");
+            assert!(matches!(&content[0], ContentBlock::ToolUse { name, .. } if name == "bash"));
+        }
+        other => panic!("a started command is a live job, then a tool use: {other:?}"),
+    }
     let done = json!({"item": {"type": "commandExecution", "id": "c1", "command": "ls", "aggregatedOutput": "a\n", "exitCode": 0, "status": "completed"}});
     assert_eq!(
         s.notification("item/completed", &done),
-        vec![EngineEvent::ToolResult {
-            tool_use_id: "c1".into(),
-            content: "a\n\n[exit code 0]".into(),
-            is_error: false
-        }]
+        vec![
+            EngineEvent::ToolResult {
+                tool_use_id: "c1".into(),
+                content: "a\n\n[exit code 0]".into(),
+                is_error: false
+            },
+            EngineEvent::BackgroundTask {
+                id: "c1".into(),
+                running: false
+            }
+        ]
+    );
+    // A command closed while its process still runs stays a live job.
+    let running = json!({"item": {"type": "commandExecution", "id": "c2", "command": "sleep 99", "status": "inProgress"}});
+    s.notification("item/started", &running);
+    let closed = s.notification("item/completed", &running);
+    assert!(
+        matches!(&closed[..], [EngineEvent::ToolResult { tool_use_id, .. }] if tool_use_id == "c2"),
+        "{closed:?}"
     );
     // A completion never reported as started carries its own tool-use.
     let mcp = json!({"item": {"type": "mcpToolCall", "id": "m1", "server": "aether", "tool": "complete_task", "arguments": {"summary": "ok"}, "result": {"content": [{"type": "text", "text": "done"}]}, "status": "completed"}});

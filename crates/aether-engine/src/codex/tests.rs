@@ -443,6 +443,33 @@ fn both_codex_launchers_carry_aether_s_compaction_threshold() {
     }
 }
 
+/// A `wait_for` held for running exec processes outlasts Codex's 300 s MCP
+/// call timeout, so both launchers give the bridge the longest wait instead.
+#[test]
+fn both_codex_launchers_let_an_aether_call_last_the_longest_wait() {
+    let exec = CodexEngine::new("codex", "test");
+    let app = crate::codex_app::CodexAppEngine::new("codex", "test");
+    let mut turn = turn_with_effort(None);
+    turn.mcp = None;
+    for args in [exec.args(&turn), app.args(&turn)] {
+        assert!(
+            !args.iter().any(|a| a.contains("tool_timeout_sec")),
+            "{args:?}"
+        );
+    }
+    turn.mcp = Some(crate::McpBridge {
+        command: PathBuf::from("/bin/aether"),
+        args: vec!["mcp-bridge".into()],
+    });
+    for args in [exec.args(&turn), app.args(&turn)] {
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["-c", "mcp_servers.aether.tool_timeout_sec=31536000"]),
+            "{args:?}"
+        );
+    }
+}
+
 fn turn_with_effort(effort: Option<Effort>) -> EngineTurn {
     EngineTurn {
         redactor: Default::default(),
@@ -552,6 +579,25 @@ fn web_search_override_matches_network_and_summary_matrix() {
     }
 }
 
+/// The turn's end closes a command still running with its status unchanged:
+/// the process has not exited, so it stays a live job.
+#[test]
+fn a_command_closed_while_still_running_stays_a_live_job() {
+    let mut st = ParseState::default();
+    let closed = r#"{"type":"item.completed","item":{"id":"i3","type":"command_execution","command":"flock gpu.lock job","aggregated_output":"","status":"in_progress"}}"#;
+    let events = parse_line(closed, &mut st);
+    assert!(
+        matches!(&events[..], [EngineEvent::ToolResult { tool_use_id, is_error: false, .. }] if tool_use_id == "i3"),
+        "{events:?}"
+    );
+    let failed = r#"{"type":"item.completed","item":{"id":"i4","type":"command_execution","command":"false","aggregated_output":"","status":"failed"}}"#;
+    let events = parse_line(failed, &mut st);
+    assert!(
+        matches!(&events[..], [EngineEvent::ToolResult { is_error: true, .. }, EngineEvent::BackgroundTask { id, running: false }] if id == "i4"),
+        "{events:?}"
+    );
+}
+
 #[test]
 fn parses_thread_items_and_usage() {
     let mut st = ParseState::default();
@@ -565,17 +611,30 @@ fn parses_thread_items_and_usage() {
     );
     assert!(parse_line(r#"{"type":"turn.started"}"#, &mut st).is_empty());
     let started = r#"{"type":"item.started","item":{"id":"i1","type":"command_execution","command":"ls","status":"in_progress"}}"#;
-    assert!(
-        matches!(&parse_line(started, &mut st)[0], EngineEvent::Assistant { content, .. } if matches!(&content[0], ContentBlock::ToolUse { name, .. } if name == "bash"))
-    );
+    match &parse_line(started, &mut st)[..] {
+        [
+            EngineEvent::BackgroundTask { id, running: true },
+            EngineEvent::Assistant { content, .. },
+        ] => {
+            assert_eq!(id, "i1");
+            assert!(matches!(&content[0], ContentBlock::ToolUse { name, .. } if name == "bash"));
+        }
+        other => panic!("a started command is a live job, then a tool use: {other:?}"),
+    }
     let done = r#"{"type":"item.completed","item":{"id":"i1","type":"command_execution","command":"ls","aggregated_output":"a\nb\n","exit_code":0,"status":"completed"}}"#;
     assert_eq!(
         parse_line(done, &mut st),
-        vec![EngineEvent::ToolResult {
-            tool_use_id: "i1".into(),
-            content: "a\nb\n\n[exit code 0]".into(),
-            is_error: false
-        }]
+        vec![
+            EngineEvent::ToolResult {
+                tool_use_id: "i1".into(),
+                content: "a\nb\n\n[exit code 0]".into(),
+                is_error: false
+            },
+            EngineEvent::BackgroundTask {
+                id: "i1".into(),
+                running: false
+            }
+        ]
     );
     let msg =
         r#"{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"hello"}}"#;

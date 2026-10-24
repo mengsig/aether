@@ -486,6 +486,10 @@ pub(crate) fn codex_compaction_args(turn: &EngineTurn) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// How long Codex waits on one Aether MCP call: the longest `wait_for` (one
+/// year). Its 300 s default would fail a wait held for running exec processes.
+pub(crate) const CODEX_AETHER_TOOL_TIMEOUT: &str = "mcp_servers.aether.tool_timeout_sec=31536000";
+
 pub(crate) fn codex_env_args(turn: &EngineTurn) -> Vec<String> {
     let temp = turn.temp_dir.iter().flat_map(|dir| {
         aether_core::agent_temp::ENV_VARS

@@ -162,6 +162,8 @@ impl CodexAppEngine {
             args.extend([
                 "-c".into(),
                 "mcp_servers.aether.default_tools_approval_mode=\"approve\"".into(),
+                "-c".into(),
+                crate::CODEX_AETHER_TOOL_TIMEOUT.into(),
             ]);
             args.push("-c".into());
             args.push(format!(
