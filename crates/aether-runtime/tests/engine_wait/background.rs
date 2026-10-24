@@ -219,3 +219,34 @@ async fn a_stalled_bridge_call_cannot_postpone_the_park_s_stop() {
     let _ = stalled.await.expect("the stalled call is still answered");
     h.runtime.shutdown().await;
 }
+
+/// `ask_user` ends the turn even while native jobs run, so its reply says the
+/// jobs stop with the session and how to keep them instead.
+#[tokio::test]
+async fn a_turn_ending_wait_warns_that_running_native_jobs_stop() {
+    let mut h = harness_full(
+        Duration::from_millis(100),
+        OnKill::Report(vec![cancelled_with(Usage::default())]),
+        Script {
+            background: Some("build".into()),
+            ..Default::default()
+        },
+    )
+    .await;
+    let agent = start_coordinator(&h);
+    let turn = turn_of(&mut h, agent).await;
+    let (reply, is_error) = call(&h, &turn, "ask_user", json!({"question": "which half?"})).await;
+    assert!(!is_error, "{reply}");
+    let (note, rest) = reply
+        .split_once("\n\n")
+        .expect("the note precedes the reply");
+    assert!(
+        note.starts_with("This wait ends the turn") && note.contains("wait_for"),
+        "{reply}"
+    );
+    assert!(
+        !rest.is_empty(),
+        "the original reply follows the note: {reply}"
+    );
+    h.runtime.shutdown().await;
+}

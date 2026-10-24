@@ -18,6 +18,14 @@ pub(super) enum Served {
     NativeWait(super::native_wait::NativeWait),
 }
 
+/// Said when a wait other than `wait_for` ends a turn whose native jobs still
+/// run: ending the turn stops the engine session, and the jobs with it.
+/// Prepended, like the park's stop, ahead of the reply's structured line.
+const NATIVE_JOBS_STOP: &str = "This wait ends the turn, which stops the background \
+     jobs still running in this engine session (Claude Code background tasks, Codex exec \
+     processes that have not exited). To keep such jobs alive, wait with wait_for instead \
+     (delegate with wait=false first): it keeps the session attached while they run.";
+
 /// Run one harness call for the engine.
 ///
 /// `parked` means a harness action already decided how the turn ends. The
@@ -127,7 +135,13 @@ pub(super) async fn handle_request(
                             return Ok(Served::Refused);
                         }
                         let outcome = apply_action(runtime, ctx, action, effects).await?;
-                        (outcome.content, outcome.is_error)
+                        let content =
+                            if native_jobs && !parked && effects.parked() && !effects.terminal() {
+                                format!("{NATIVE_JOBS_STOP}\n\n{}", outcome.content)
+                            } else {
+                                outcome.content
+                            };
+                        (content, outcome.is_error)
                     }
                     Err(e) => {
                         completed = !matches!(e, aether_tools::ToolError::Cancelled);
