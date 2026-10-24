@@ -290,6 +290,11 @@ pub(super) async fn drive(
     let mut park: Option<Park> = None;
     let mut park_reply: Option<(String, serde_json::Value)> = None;
     let mut native_wait: Option<super::native_wait::NativeWait> = None;
+    // A Codex wait that arrived before any job was reported, held back until
+    // a command its batch started reports in or the settle bound passes;
+    // then released to be served.
+    let mut deferred: Option<(EngineRequest, tokio::time::Instant)> = None;
+    let mut released: Option<EngineRequest> = None;
     // The park's stop runs on its own timer (`Park::arm_stop`); this is only
     // how the loop learns that it fired.
     let (stop_fired_tx, mut stop_fired_rx) = mpsc::channel::<()>(1);
@@ -318,6 +323,7 @@ pub(super) async fn drive(
             state.remember_bridge_reply(tool, input, reply);
         }
         let native_deadline = native_wait.as_ref().and_then(|wait| wait.deadline());
+        let settle_by = deferred.as_ref().map(|(_, by)| *by);
         let accounting_deadline = state.accounting.deadline();
         // Something else owns the clock while a tool runs, the engine owes
         // an answer to background work, or the turn is winding down.
@@ -327,7 +333,8 @@ pub(super) async fn drive(
             || park.is_some()
             || reap_grace.is_some()
             || question.is_some()
-            || native_wait.is_some();
+            || native_wait.is_some()
+            || deferred.is_some();
         let stall_deadline = watchdog.deadline(waiting);
         tokio::select! {
             () = tokio::time::sleep_until(stall_deadline.unwrap_or_else(tokio::time::Instant::now)), if stall_deadline.is_some() => {
@@ -355,6 +362,9 @@ pub(super) async fn drive(
                     && let Some((input, reply)) = wait.finish("the requested deadline was reached") {
                     state.remember_bridge_reply("wait_for".into(), input, reply);
                 }
+            }
+            () = tokio::time::sleep_until(settle_by.unwrap_or_else(tokio::time::Instant::now)), if settle_by.is_some() => {
+                released = deferred.take().map(|(req, _)| req);
             }
             () = tokio::time::sleep_until(accounting_deadline.unwrap_or_else(tokio::time::Instant::now)), if accounting_deadline.is_some() => {
                 let commits_before = runtime.store.commits();
@@ -452,6 +462,10 @@ pub(super) async fn drive(
                             background.insert(id);
                         } else {
                             tracing::warn!(agent = %ctx.agent.id, %id, "engine reported more background tasks than the turn tracks; not waiting on this one");
+                        }
+                        // The command its batch started is live: serve the wait now.
+                        if let Some((req, _)) = deferred.take() {
+                            released = Some(req);
                         }
                     } else if background.remove(&id) && background.is_empty() {
                         // The last result a parked turn was waiting for is
@@ -654,14 +668,32 @@ pub(super) async fn drive(
                     break o;
                 }
             }
-            req = req_rx.recv() => {
+            next = async {
+                match released.take() {
+                    Some(req) => Some((req, true)),
+                    None => req_rx.recv().await.map(|req| (req, false)),
+                }
+            }, if deferred.is_none() => {
                 touch_pending = true;
-                if let Some(req) = req {
+                if let Some((req, settled)) = next {
                     receipt_seen = false;
                     activity_seen = true;
                     // What the engine spent before it asked is on the record
                     // before whatever the request commits.
                     flush_accounting(runtime, ctx, &mut state.accounting)?;
+                    // Codex reports a command only once it started, so a wait
+                    // sent in the same batch can arrive first.
+                    if !settled
+                        && engine.kind() == super::EngineKind::CODEX
+                        && background.is_empty()
+                        && park.is_none()
+                        && native_wait.is_none()
+                        && super::native_wait::parks_turn(&req.name, &req.input)
+                    {
+                        let by = tokio::time::Instant::now() + super::native_wait::JOB_START_SETTLE;
+                        deferred = Some((req, by));
+                        continue;
+                    }
                     if let Some(refusal) = native_wait.as_ref().and_then(|wait| wait.refusal(&req.name, &req.input)) {
                         let _ = req.reply.send((refusal.into(), true));
                         continue;

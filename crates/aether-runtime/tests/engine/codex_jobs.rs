@@ -7,13 +7,18 @@ use serde_json::{Value, json};
 
 /// `codex exec` or `codex app-server` by its first argument. Either way it
 /// starts a real lock waiter, reports it as a running command and reports it
-/// done only once it exits; `release` in its directory frees the lock.
+/// done only once it exits; `release` in its directory frees the lock. With
+/// `gate` in its directory it reports the command only once `announce` is
+/// there too, as a start the bridge's wait call can beat.
 const FAKE_CODEX: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 printf '%s\n' "$@" > "$dir/argv"
 lock_waiter() {
   (while [ ! -e "$dir/release" ]; do sleep 0.05; done) &
   echo $! > "$dir/job.pid.tmp" && mv "$dir/job.pid.tmp" "$dir/job.pid"
+  if [ -e "$dir/gate" ]; then
+    while [ ! -e "$dir/announce" ]; do sleep 0.02; done
+  fi
 }
 if [ "$1" = exec ]; then
   printf '%s\n' '{"type":"thread.started","thread_id":"thread"}'
@@ -287,6 +292,26 @@ async fn pending_exec_survives_delegate(engine: Arc<dyn Engine>, dir: &tempfile:
     release_and_end(h, dir, id).await;
 }
 
+/// The model sends `wait_for` in the batch that starts the command, and the
+/// call reaches the runtime before the command is reported running.
+async fn pending_exec_survives_a_wait_for_in_its_batch(
+    engine: Arc<dyn Engine>,
+    dir: &tempfile::TempDir,
+    job: &str,
+) {
+    std::fs::write(dir.path().join("gate"), "").unwrap();
+    let (h, id, pid, token) = running_job(engine, dir).await;
+    let call = bridge_call(&h, id, &token, "wait_for", json!({"timeout_seconds": 3600}));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!tool_started(&h, id), "the command was reported first");
+    std::fs::write(dir.path().join("announce"), "").unwrap();
+    let call = still_waiting(&h, id, &pid, call).await;
+    std::fs::write(dir.path().join("release"), "").unwrap();
+    let reply = answered(call).await;
+    assert!(reply.contains(&format!("{job} finished")), "{reply}");
+    release_and_end(h, dir, id).await;
+}
+
 fn exec(dir: &tempfile::TempDir) -> Arc<dyn Engine> {
     let program = dir.path().join("codex");
     Arc::new(aether_engine::CodexEngine::new(
@@ -337,4 +362,16 @@ async fn a_codex_exec_turn_keeps_its_pending_exec_process_across_a_waiting_deleg
 async fn a_codex_app_server_turn_keeps_its_pending_exec_process_across_a_waiting_delegate() {
     let dir = fake_codex();
     pending_exec_survives_delegate(app_server(&dir), &dir).await;
+}
+
+#[tokio::test]
+async fn a_codex_exec_wait_for_in_the_command_s_batch_keeps_it_alive() {
+    let dir = fake_codex();
+    pending_exec_survives_a_wait_for_in_its_batch(exec(&dir), &dir, "item_0").await;
+}
+
+#[tokio::test]
+async fn a_codex_app_server_wait_for_in_the_command_s_batch_keeps_it_alive() {
+    let dir = fake_codex();
+    pending_exec_survives_a_wait_for_in_its_batch(app_server(&dir), &dir, "call_job").await;
 }

@@ -5,6 +5,10 @@ use tokio::sync::oneshot;
 
 use super::{Next, Result, Runtime, Steering, ToolEffects, TurnCtx, record_consumed};
 
+/// How long a Codex wait with no job reported yet holds off deciding, so a
+/// command started in the same tool batch can report its start first.
+pub(super) const JOB_START_SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// A bridge call that ends the turn unless native jobs keep it attached.
 pub(super) fn parks_turn(name: &str, input: &Value) -> bool {
     match name {
