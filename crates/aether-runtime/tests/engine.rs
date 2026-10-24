@@ -109,6 +109,8 @@ mod usage;
 mod usage_coalescing;
 #[path = "engine/usage_replay.rs"]
 mod usage_replay;
+#[path = "engine/write_volume.rs"]
+mod write_volume;
 
 struct Harness {
     runtime: Arc<Runtime>,

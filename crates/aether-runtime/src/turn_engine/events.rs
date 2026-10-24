@@ -298,7 +298,7 @@ pub(super) fn handle_event(
     event: EngineEvent,
     state: &mut StreamState,
 ) -> Result<()> {
-    if writes_record(&event) {
+    if state.accounting.flush_before(&event) {
         // Readings land before what followed them, as when each committed alone.
         flush_accounting(runtime, ctx, &mut state.accounting)?;
     }
@@ -559,7 +559,10 @@ pub(super) fn handle_event(
                 runtime, ctx, &hold,
             )?));
             // Last, so their absolute figures include this message's usage.
-            state.accounting.drain_into(ctx, &mut commit);
+            // Held readings not yet due stay held: the agent row carries them.
+            if state.accounting.is_due() {
+                state.accounting.drain_into(ctx, &mut commit);
+            }
             let answered = snapshot.model.clone();
             crate::turn::close_exhaustion_episode(runtime, ctx, &hold, &mut commit, &answered)?;
             runtime.apply_held(hold, commit)?;
@@ -780,6 +783,9 @@ fn record_usage(
     state.accounting.usage();
     publish_accounting(runtime, ctx, state);
     if super::accounting::has_budgeted_lineage(runtime, ctx.agent.id)? {
+        state.accounting.budgeted();
+    }
+    if state.accounting.is_due() {
         flush_accounting(runtime, ctx, &mut state.accounting)?;
     }
     Ok(())

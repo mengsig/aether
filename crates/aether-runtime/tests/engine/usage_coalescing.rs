@@ -625,7 +625,8 @@ async fn process_crash_loses_only_usage_since_the_last_flush() {
         .stdout(std::process::Stdio::null())
         .spawn()
         .expect("spawn fixture");
-    let ready = tokio::time::timeout(Duration::from_secs(10), async {
+    // The first reading lands when the 10 s accounting window closes.
+    let ready = tokio::time::timeout(Duration::from_secs(40), async {
         loop {
             if dir.path().join("ready").exists() {
                 break;
@@ -639,7 +640,7 @@ async fn process_crash_loses_only_usage_since_the_last_flush() {
     .await;
     child.kill().expect("kill fixture");
     child.wait().expect("reap fixture");
-    ready.expect("fixture reaches the unflushed window within 10 seconds");
+    ready.expect("fixture reaches the unflushed window within 40 seconds");
     let id = serde_json::from_slice(&std::fs::read(dir.path().join("ready")).expect("ready"))
         .expect("id");
     let store = SqliteStore::open(dir.path().join("state.db")).expect("recover WAL");
