@@ -2,7 +2,11 @@
 
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+use tokio::io::AsyncWriteExt as _;
 
 use aether_core::id::AgentId;
 
@@ -80,15 +84,21 @@ fn cgroup_members_are_the_live_listed_pids() {
     assert!(cgroup_members(root.path(), &gone, 0).is_empty());
 }
 
-/// Start `script` as an engine of `agent` would be, and return the pid it prints.
+/// Start `script` as an engine of `agent` is - spawned, then moved into its
+/// scope before it forks - and return the pid it prints.
 async fn start_detached(agent: AgentId, script: &str) -> u32 {
-    let mut command = crate::scope::command("sh", Some(agent)).await;
+    let mut command = crate::scope::command("sh", Some(agent));
     command
-        .args(["-c", script])
-        .stdin(std::process::Stdio::null())
+        .args(["-c", &format!("read go; {script}")])
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped());
     command.as_std_mut().process_group(0);
-    let output = tokio::time::timeout(Duration::from_secs(10), command.output())
+    let mut child = command.spawn().unwrap();
+    crate::scope::adopt(child.id(), Some(agent)).await;
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(b"go\n").await.unwrap();
+    drop(stdin);
+    let output = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
         .await
         .unwrap()
         .unwrap();
@@ -110,6 +120,18 @@ async fn wait_gone(pid: u32) -> bool {
     false
 }
 
+fn still_tagged(agent: AgentId) -> Vec<u32> {
+    let tag = format!("AETHER_ENGINE_AGENT={agent}");
+    tagged(Path::new("/proc"), &tag, std::process::id(), own_uid())
+}
+
+fn scopes_available() -> bool {
+    std::process::Command::new("systemd-run")
+        .args(["--user", "--scope", "--quiet", "--collect", "--", "true"])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 #[tokio::test]
 async fn reaps_a_detached_descendant_once_its_agent_ends() {
     let agent = AgentId::new();
@@ -120,7 +142,7 @@ async fn reaps_a_detached_descendant_once_its_agent_ends() {
     .await;
     assert!(is_live(Path::new("/proc"), pid), "the detached child runs");
 
-    let report = reap_agent(agent, Duration::from_secs(5)).await;
+    let report = reap_agent(agent, Duration::from_secs(5), || true).await;
 
     assert!(report.terminated.contains(&pid), "{report:?}");
     assert!(
@@ -142,25 +164,43 @@ async fn kills_a_process_that_outlives_the_grace() {
     // Let the trap take effect before the reap.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let report = reap_agent(agent, Duration::from_millis(300)).await;
+    let report = reap_agent(agent, Duration::from_millis(300), || true).await;
 
     assert!(report.killed.contains(&pid), "{report:?}");
+    assert!(report.survived.is_empty(), "{report:?}");
     assert!(wait_gone(pid).await, "the stubborn child is killed");
 }
 
 #[tokio::test]
+async fn a_child_forked_on_sigterm_is_reaped_too() {
+    let agent = AgentId::new();
+    let pid = start_detached(
+        agent,
+        "setsid sh -c 'trap \"setsid sleep 44 </dev/null >/dev/null 2>&1 & exit 0\" TERM; \
+         while :; do sleep 0.1; done' </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let report = reap_agent(agent, Duration::from_secs(5), || true).await;
+
+    assert!(report.terminated.contains(&pid), "{report:?}");
+    assert!(report.survived.is_empty(), "{report:?}");
+    assert!(
+        still_tagged(agent).is_empty(),
+        "the forked child is gone too: {report:?}"
+    );
+}
+
+#[tokio::test]
 async fn an_agent_without_processes_reaps_nothing() {
-    let report = reap_agent(AgentId::new(), Duration::from_secs(5)).await;
+    let report = reap_agent(AgentId::new(), Duration::from_secs(5), || true).await;
     assert!(report.is_empty(), "{report:?}");
 }
 
 #[tokio::test]
 async fn the_scope_reaps_a_descendant_that_cleared_its_environment() {
-    let scopes = std::process::Command::new("systemd-run")
-        .args(["--user", "--scope", "--quiet", "--collect", "--", "true"])
-        .status()
-        .is_ok_and(|status| status.success());
-    if !scopes {
+    if !scopes_available() {
         eprintln!("skipped: no systemd user scopes here");
         return;
     }
@@ -170,17 +210,16 @@ async fn the_scope_reaps_a_descendant_that_cleared_its_environment() {
         "setsid env -i sleep 39 </dev/null >/dev/null 2>&1 & echo $!",
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(crate::scope::agent_units(agent).await.len(), 1);
 
-    let report = reap_agent(agent, Duration::from_secs(5)).await;
+    let report = reap_agent(agent, Duration::from_secs(5), || true).await;
 
     assert!(report.terminated.contains(&pid), "{report:?}");
     assert!(wait_gone(pid).await, "the untagged child is gone");
 }
 
 #[tokio::test]
-async fn an_engine_started_during_the_grace_is_spared() {
+async fn a_restarted_agent_keeps_its_next_engine() {
     let agent = AgentId::new();
     let stubborn = start_detached(
         agent,
@@ -188,9 +227,14 @@ async fn an_engine_started_during_the_grace_is_spared() {
     )
     .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let reap = tokio::spawn(reap_agent(agent, Duration::from_secs(2)));
+    let ended = Arc::new(AtomicBool::new(true));
+    let still_ended = ended.clone();
+    let reap = tokio::spawn(reap_agent(agent, Duration::from_secs(2), move || {
+        still_ended.load(Ordering::SeqCst)
+    }));
     tokio::time::sleep(Duration::from_millis(500)).await;
-    // The agent is restarted: its next engine carries the same tag.
+    // The agent is restarted, and its next engine carries the same tag.
+    ended.store(false, Ordering::SeqCst);
     let next = start_detached(
         agent,
         "setsid sleep 41 </dev/null >/dev/null 2>&1 & echo $!",
@@ -199,9 +243,10 @@ async fn an_engine_started_during_the_grace_is_spared() {
 
     let report = reap.await.unwrap();
 
-    assert!(report.killed.contains(&stubborn), "{report:?}");
-    assert!(!report.terminated.contains(&next), "{report:?}");
+    assert!(report.terminated.contains(&stubborn), "{report:?}");
+    assert!(report.killed.is_empty(), "{report:?}");
     assert!(is_live(Path::new("/proc"), next), "the next engine runs on");
-    let cleanup = reap_agent(agent, Duration::from_secs(1)).await;
+    let cleanup = reap_agent(agent, Duration::from_millis(300), || true).await;
     assert!(cleanup.terminated.contains(&next), "{cleanup:?}");
+    assert!(cleanup.killed.contains(&stubborn), "{cleanup:?}");
 }

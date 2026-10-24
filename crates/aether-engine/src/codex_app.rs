@@ -441,7 +441,7 @@ impl CodexAppEngine {
         let environment = sandbox.as_ref().map(|s| s.environment.clone());
         let args = self.args(&turn);
         let cwd: PathBuf = turn.cwd.clone();
-        let mut command = crate::scope::command(&self.program, agent).await;
+        let mut command = crate::scope::command(&self.program, agent);
         command
             .args(&args)
             .current_dir(&cwd)
@@ -466,6 +466,7 @@ impl CodexAppEngine {
         })?;
         let engine_record =
             crate::orphans::EngineRecord::register(child.id(), run_token.as_deref());
+        crate::scope::adopt(child.id(), agent).await;
         let stdin = child
             .stdin
             .take()

@@ -1,11 +1,11 @@
 //! Where an engine runs, so its agent's end can find every process it left.
 //!
 //! An engine is tagged with its agent's id in its environment, which its
-//! descendants inherit. On Linux it also runs in a transient systemd user
-//! scope named after the agent when systemd can make one: the scope's cgroup
-//! holds the descendants that cleared their environment or left the process
-//! group. Without systemd the engine keeps its tag and process group alone; a
-//! scope never makes a spawn fail.
+//! descendants inherit. On Linux, once it is running, it is also moved into a
+//! transient systemd user scope named after the agent: the scope's cgroup holds
+//! the descendants that cleared their environment or left the process group.
+//! The engine is spawned before systemd is asked, so a missing or failing user
+//! manager costs the scope, never the spawn.
 
 use aether_core::id::AgentId;
 
@@ -13,17 +13,24 @@ use aether_core::id::AgentId;
 pub(crate) const AGENT_ENV: &str = "AETHER_ENGINE_AGENT";
 
 /// The command to spawn `program` as an engine of `agent`. The caller still
-/// puts it in its own process group.
-pub(crate) async fn command(program: &str, agent: Option<AgentId>) -> tokio::process::Command {
-    let Some(agent) = agent else {
-        return tokio::process::Command::new(program);
-    };
-    #[cfg(target_os = "linux")]
-    let mut command = linux::command(program, agent).await;
-    #[cfg(not(target_os = "linux"))]
+/// puts it in its own process group and passes the child to [`adopt`].
+pub(crate) fn command(program: &str, agent: Option<AgentId>) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(program);
-    command.env(AGENT_ENV, agent.to_string());
+    if let Some(agent) = agent {
+        command.env(AGENT_ENV, agent.to_string());
+    }
     command
+}
+
+/// Move the running engine `pid` of `agent` into a scope of its own, where
+/// systemd can make one. A failure is logged; the engine runs on regardless.
+pub(crate) async fn adopt(pid: Option<u32>, agent: Option<AgentId>) {
+    #[cfg(target_os = "linux")]
+    if let (Some(pid), Some(agent)) = (pid, agent) {
+        linux::adopt(pid, agent).await;
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (pid, agent);
 }
 
 #[cfg(target_os = "linux")]
@@ -33,16 +40,17 @@ pub(crate) use linux::{Unit, agent_units, signal_units};
 mod linux {
     use std::path::{Path, PathBuf};
     use std::process::Stdio;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use aether_core::id::AgentId;
     use nix::sys::signal::Signal;
-    use tokio::sync::OnceCell;
 
     /// Set to `0` to run engines in their process group alone.
     const DISABLE_ENV: &str = "AETHER_ENGINE_SCOPE";
     const CGROUP_ROOT: &str = "/sys/fs/cgroup";
     const SYSTEMD_BUDGET: Duration = Duration::from_secs(5);
+    const MOVE_POLL: Duration = Duration::from_millis(5);
 
     /// A live scope of one agent's engines.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,76 +64,85 @@ mod linux {
         format!("aether-engine-{agent}-")
     }
 
-    /// `program` wrapped in a fresh scope of `agent` when systemd can make one
-    /// and `program` exists, else `program` itself. `systemd-run --scope` execs
-    /// the program in place, so the pid and the process group stay the engine's.
-    pub(super) async fn command(program: &str, agent: AgentId) -> tokio::process::Command {
-        if !scope_usable().await || !resolves(program) {
-            return tokio::process::Command::new(program);
+    fn disabled() -> bool {
+        std::env::var(DISABLE_ENV).is_ok_and(|v| v == "0")
+    }
+
+    /// Ask the user manager for a transient scope holding `pid`, as
+    /// `systemd-run --scope` does for itself; collected once it is empty.
+    pub(super) async fn adopt(pid: u32, agent: AgentId) {
+        assert!(pid > 1, "not an engine pid: {pid}");
+        if disabled() {
+            return;
         }
         let unit = format!(
-            "{}{}",
+            "{}{}.scope",
             unit_prefix(agent),
             aether_core::id::ProcessId::new()
         );
-        let mut command = tokio::process::Command::new("systemd-run");
-        command
-            .args(["--user", "--scope", "--quiet", "--collect"])
-            .arg(format!("--unit={unit}"))
-            .arg("--")
-            .arg(program);
-        command
-    }
-
-    /// Whether `systemd-run --user --scope` works here, probed once.
-    async fn scope_usable() -> bool {
-        static USABLE: OnceCell<bool> = OnceCell::const_new();
-        *USABLE
-            .get_or_init(|| async {
-                if std::env::var(DISABLE_ENV).is_ok_and(|v| v == "0") {
-                    return false;
-                }
-                let mut probe = tokio::process::Command::new("systemd-run");
-                probe
-                    .args(["--user", "--scope", "--quiet", "--collect", "--", "true"])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .kill_on_drop(true);
-                let usable = tokio::time::timeout(SYSTEMD_BUDGET, probe.status())
-                    .await
-                    .is_ok_and(|status| status.is_ok_and(|status| status.success()));
-                tracing::info!(usable, "systemd user scopes for engines");
-                usable
-            })
-            .await
-    }
-
-    /// Whether `program` names an executable file, directly or on `PATH`, so a
-    /// missing engine still fails as not installed rather than inside the wrapper.
-    fn resolves(program: &str) -> bool {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let executable = |path: &Path| {
-            std::fs::metadata(path)
-                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        let pid = pid.to_string();
+        let args = [
+            "--user",
+            "call",
+            "org.freedesktop.systemd1",
+            "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager",
+            "StartTransientUnit",
+            "ssa(sv)a(sa(sv))",
+            &unit,
+            "fail",
+            "2",
+            "PIDs",
+            "au",
+            "1",
+            &pid,
+            "CollectMode",
+            "s",
+            "inactive-or-failed",
+            "0",
+        ];
+        let moved = match run("busctl", &args).await {
+            Ok(_) => wait_moved(&pid, &unit).await,
+            Err(error) => Err(error),
         };
-        if program.contains('/') {
-            return executable(Path::new(program));
+        if let Err(error) = moved {
+            // A machine without a user manager would repeat this for every engine.
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if WARNED.swap(true, Ordering::Relaxed) {
+                tracing::debug!(%agent, %error, "engine runs without a systemd scope");
+            } else {
+                tracing::warn!(%agent, %error, "engine runs without a systemd scope; its process group and tag remain");
+            }
         }
-        std::env::var_os("PATH").is_some_and(|paths| {
-            std::env::split_paths(&paths).any(|dir| executable(&dir.join(program)))
-        })
+    }
+
+    /// Wait for the queued job to move `pid` into `unit`: until it has, the
+    /// engine's children are still born outside the scope.
+    async fn wait_moved(pid: &str, unit: &str) -> Result<(), String> {
+        assert!(unit.ends_with(".scope"), "not a scope: {unit}");
+        let cgroup = Path::new("/proc").join(pid).join("cgroup");
+        let deadline = tokio::time::Instant::now() + SYSTEMD_BUDGET;
+        while tokio::time::Instant::now() < deadline {
+            match std::fs::read_to_string(&cgroup) {
+                Ok(current) if current.contains(&format!("/{unit}")) => return Ok(()),
+                Ok(_) => tokio::time::sleep(MOVE_POLL).await,
+                // The engine already exited: nothing is left to hold.
+                Err(_) => return Ok(()),
+            }
+        }
+        Err(format!(
+            "{unit} did not take the engine in {SYSTEMD_BUDGET:?}"
+        ))
     }
 
     /// The live scopes of `agent`'s engines, but none holding this process:
     /// a daemon started from an agent's shell must not stop itself.
     pub(crate) async fn agent_units(agent: AgentId) -> Vec<Unit> {
-        if !scope_usable().await {
+        if disabled() {
             return Vec::new();
         }
         let pattern = format!("{}*", unit_prefix(agent));
-        let Some(listed) = systemctl(&[
+        let listed = systemctl(&[
             "list-units",
             "--type=scope",
             "--all",
@@ -134,9 +151,14 @@ mod linux {
             "--full",
             &pattern,
         ])
-        .await
-        else {
-            return Vec::new();
+        .await;
+        // Without a user manager there are no scopes to look for.
+        let listed = match listed {
+            Ok(listed) => listed,
+            Err(error) => {
+                tracing::debug!(%agent, %error, "no engine scopes listed");
+                return Vec::new();
+            }
         };
         let names = unit_names(&listed, &unit_prefix(agent));
         if names.is_empty() {
@@ -144,17 +166,29 @@ mod linux {
         }
         let mut args = vec!["show", "--property=Id,ControlGroup"];
         args.extend(names.iter().map(String::as_str));
-        let Some(shown) = systemctl(&args).await else {
-            return Vec::new();
+        let shown = match systemctl(&args).await {
+            Ok(shown) => shown,
+            Err(error) => {
+                tracing::warn!(%agent, %error, "cannot read the agent's engine scopes");
+                return Vec::new();
+            }
         };
-        let own = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+        // Unable to tell which scope holds the daemon, it stops none of them.
+        let own = match std::fs::read_to_string("/proc/self/cgroup") {
+            Ok(own) => own,
+            Err(error) => {
+                tracing::warn!(%agent, %error, "cannot read the daemon's own cgroup; sparing engine scopes");
+                return Vec::new();
+            }
+        };
         units_from_show(&shown, Path::new(CGROUP_ROOT))
             .into_iter()
             .filter(|unit| !holds_own_cgroup(unit, &own))
             .collect()
     }
 
-    /// Signal every process of `units`; a scope that already ended is fine.
+    /// Signal every process of `units`. A scope that ended since it was
+    /// listed fails the call; any process truly left shows as a survivor.
     pub(crate) async fn signal_units(units: &[Unit], signal: Signal) {
         if units.is_empty() {
             return;
@@ -162,7 +196,9 @@ mod linux {
         let flag = format!("--signal={}", signal.as_str());
         let mut args = vec!["kill", "--kill-whom=all", flag.as_str()];
         args.extend(units.iter().map(|unit| unit.name.as_str()));
-        systemctl(&args).await;
+        if let Err(error) = systemctl(&args).await {
+            tracing::debug!(?signal, %error, "systemctl kill of engine scopes");
+        }
     }
 
     /// The scope names of `list-units --plain --no-legend` output that carry `prefix`.
@@ -218,35 +254,28 @@ mod linux {
         own.starts_with(unit_dir)
     }
 
-    async fn systemctl(args: &[&str]) -> Option<String> {
-        let mut command = tokio::process::Command::new("systemctl");
-        command
-            .arg("--user")
-            .args(args)
-            .stdin(Stdio::null())
-            .kill_on_drop(true);
-        match tokio::time::timeout(SYSTEMD_BUDGET, command.output()).await {
-            Ok(Ok(output)) if output.status.success() => {
-                Some(String::from_utf8_lossy(&output.stdout).into_owned())
-            }
-            Ok(Ok(output)) => {
-                tracing::warn!(
-                    ?args,
-                    status = %output.status,
-                    stderr = %String::from_utf8_lossy(&output.stderr).trim(),
-                    "systemctl failed for engine scopes"
-                );
-                None
-            }
-            Ok(Err(error)) => {
-                tracing::warn!(?args, %error, "could not run systemctl for engine scopes");
-                None
-            }
-            Err(_) => {
-                tracing::warn!(?args, "systemctl did not answer for engine scopes");
-                None
-            }
+    async fn systemctl(args: &[&str]) -> Result<String, String> {
+        let mut full = vec!["--user"];
+        full.extend_from_slice(args);
+        run("systemctl", &full).await
+    }
+
+    /// Run a systemd client under a budget; its stdout, or why it failed.
+    async fn run(program: &str, args: &[&str]) -> Result<String, String> {
+        let mut command = tokio::process::Command::new(program);
+        command.args(args).stdin(Stdio::null()).kill_on_drop(true);
+        let output = tokio::time::timeout(SYSTEMD_BUDGET, command.output())
+            .await
+            .map_err(|_| format!("{program} did not answer in {SYSTEMD_BUDGET:?}"))?
+            .map_err(|error| format!("cannot run {program}: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{program} {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
         }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 }
 

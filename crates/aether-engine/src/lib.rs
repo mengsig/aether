@@ -597,7 +597,7 @@ where
     use std::os::unix::process::CommandExt as _;
     use tokio::io::AsyncWriteExt as _;
 
-    let mut command = scope::command(program, agent).await;
+    let mut command = scope::command(program, agent);
     command
         .args(&args)
         .current_dir(&cwd)
@@ -642,6 +642,7 @@ where
     let interrupt_input = input_tx.downgrade();
 
     let engine_record = orphans::EngineRecord::register(pid, run_token.as_deref());
+    scope::adopt(pid, agent).await;
     let stdin_error = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     let stdin_error_writer = stdin_error.clone();
     let mut stdin_task = tokio::spawn(async move {

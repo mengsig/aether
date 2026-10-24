@@ -11,78 +11,96 @@ use std::time::Duration;
 
 use aether_core::id::AgentId;
 
+/// How many SIGKILL rounds catch processes forked while the last one landed.
+#[cfg(target_os = "linux")]
+const KILL_ROUNDS: usize = 5;
+
 /// The processes an agent's end had to stop.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ReapReport {
-    /// Alive when SIGTERM was sent.
+    /// Sent SIGTERM: alive at the start, or forked during the grace.
     pub terminated: Vec<u32>,
     /// Still alive after the grace, then sent SIGKILL.
     pub killed: Vec<u32>,
+    /// Alive even after every SIGKILL round.
+    pub survived: Vec<u32>,
 }
 
 impl ReapReport {
     pub fn is_empty(&self) -> bool {
-        self.terminated.is_empty() && self.killed.is_empty()
+        self.terminated.is_empty() && self.killed.is_empty() && self.survived.is_empty()
     }
 }
 
-/// SIGTERM every live process of `agent`'s engines, then SIGKILL what
-/// outlives `grace`. Returns what it signalled. Only the processes and scopes
-/// found at the start are signalled, so an agent restarted within the grace
-/// keeps its new engine.
+/// SIGTERM every live process of `agent`'s engines, including those forked
+/// meanwhile, then SIGKILL what outlives `grace`. `ended` is asked before
+/// each signal: once it is false - the agent was restarted, and its next
+/// engine carries the same tag - nothing more is signalled.
 #[cfg(target_os = "linux")]
-pub async fn reap_agent(agent: AgentId, grace: Duration) -> ReapReport {
+pub async fn reap_agent(agent: AgentId, grace: Duration, ended: impl Fn() -> bool) -> ReapReport {
     use nix::sys::signal::Signal;
 
-    let units = crate::scope::agent_units(agent).await;
-    let tag = linux::tag_entry(agent);
-    let terminated = linux::members(&units, tag.as_deref());
-    if terminated.is_empty() {
-        return ReapReport::default();
-    }
-    linux::signal(&units, tag.as_deref(), &terminated, Signal::SIGTERM).await;
+    let sweep = linux::Sweep::new(agent).await;
+    let mut report = ReapReport::default();
     let deadline = tokio::time::Instant::now() + grace;
-    let mut survivors = linux::survivors(&units, tag.as_deref(), &terminated);
-    while !survivors.is_empty() && tokio::time::Instant::now() < deadline {
+    let mut alive = sweep.members();
+    while !alive.is_empty() && tokio::time::Instant::now() < deadline {
+        let fresh: Vec<u32> = alive
+            .iter()
+            .copied()
+            .filter(|pid| report.terminated.binary_search(pid).is_err())
+            .collect();
+        if !fresh.is_empty() {
+            if !ended() {
+                return stopped_early(agent, report);
+            }
+            sweep.signal(&fresh, Signal::SIGTERM).await;
+            report.terminated.extend(fresh);
+            report.terminated.sort_unstable();
+        }
         tokio::time::sleep(linux::POLL).await;
-        survivors = linux::survivors(&units, tag.as_deref(), &terminated);
+        alive = sweep.members();
     }
-    if !survivors.is_empty() {
-        linux::signal(&units, tag.as_deref(), &survivors, Signal::SIGKILL).await;
+    for _ in 0..KILL_ROUNDS {
+        if alive.is_empty() {
+            break;
+        }
+        if !ended() {
+            return stopped_early(agent, report);
+        }
+        sweep.signal(&alive, Signal::SIGKILL).await;
+        report.killed.extend(&alive);
+        tokio::time::sleep(linux::POLL).await;
+        alive = sweep.members();
     }
-    let report = ReapReport {
-        terminated,
-        killed: survivors,
-    };
+    report.killed.sort_unstable();
+    report.killed.dedup();
+    report.survived = alive;
     log(agent, &report);
     report
 }
 
+#[cfg(target_os = "linux")]
+fn stopped_early(agent: AgentId, report: ReapReport) -> ReapReport {
+    tracing::info!(%agent, ?report, "agent resumed; stopped reaping its processes");
+    report
+}
+
 #[cfg(not(target_os = "linux"))]
-pub async fn reap_agent(agent: AgentId, _grace: Duration) -> ReapReport {
+pub async fn reap_agent(agent: AgentId, _grace: Duration, _ended: impl Fn() -> bool) -> ReapReport {
     tracing::debug!(%agent, "engine processes cannot be found again on this platform");
     ReapReport::default()
 }
 
 #[cfg(target_os = "linux")]
 fn log(agent: AgentId, report: &ReapReport) {
-    if report.killed.is_empty() {
-        tracing::info!(
-            %agent,
-            terminated = report.terminated.len(),
-            pids = ?report.terminated,
-            "agent processes stopped by SIGTERM"
-        );
-        return;
+    if !report.survived.is_empty() {
+        tracing::error!(%agent, ?report, "agent processes survived SIGKILL");
+    } else if !report.killed.is_empty() {
+        tracing::warn!(%agent, ?report, "agent processes outlived SIGTERM and were killed");
+    } else if !report.terminated.is_empty() {
+        tracing::info!(%agent, ?report, "agent processes stopped by SIGTERM");
     }
-    tracing::warn!(
-        %agent,
-        terminated = report.terminated.len(),
-        killed = report.killed.len(),
-        pids = ?report.terminated,
-        killed_pids = ?report.killed,
-        "agent processes survived SIGTERM and were killed"
-    );
 }
 
 #[cfg(target_os = "linux")]
@@ -111,39 +129,50 @@ mod linux {
         Some(format!("{AGENT_ENV}={tag}"))
     }
 
-    /// Live pids in `units` or carrying `tag`, sorted and without this process.
-    pub(super) fn members(units: &[Unit], tag: Option<&str>) -> Vec<u32> {
-        let proc_root = Path::new(PROC);
-        let own = std::process::id();
-        let uid = nix::unistd::geteuid().as_raw();
-        let mut members = tag.map_or_else(Vec::new, |tag| tagged(proc_root, tag, own, uid));
-        for unit in units {
-            members.extend(cgroup_members(proc_root, &unit.procs, own));
+    /// Where one agent's processes are looked for: the scopes listed at
+    /// its end, and its tag unless the daemon carries that itself.
+    pub(super) struct Sweep {
+        units: Vec<Unit>,
+        tag: Option<String>,
+    }
+
+    impl Sweep {
+        pub(super) async fn new(agent: AgentId) -> Self {
+            Self {
+                units: crate::scope::agent_units(agent).await,
+                tag: tag_entry(agent),
+            }
         }
-        members.sort_unstable();
-        members.dedup();
-        members
-    }
 
-    /// The members of `first` still alive: a process forked since is ended
-    /// with its scope, never by its tag alone.
-    pub(super) fn survivors(units: &[Unit], tag: Option<&str>, first: &[u32]) -> Vec<u32> {
-        debug_assert!(first.is_sorted(), "members are sorted");
-        let mut alive = members(units, tag);
-        alive.retain(|pid| first.binary_search(pid).is_ok());
-        alive
-    }
+        /// Live pids in the scopes or carrying the tag, sorted, without this process.
+        pub(super) fn members(&self) -> Vec<u32> {
+            let proc_root = Path::new(PROC);
+            let own = std::process::id();
+            let uid = nix::unistd::geteuid().as_raw();
+            let mut members = self
+                .tag
+                .as_deref()
+                .map_or_else(Vec::new, |tag| tagged(proc_root, tag, own, uid));
+            for unit in &self.units {
+                members.extend(cgroup_members(proc_root, &unit.procs, own));
+            }
+            members.sort_unstable();
+            members.dedup();
+            members
+        }
 
-    /// Signal `units` whole and each of `pids` that still carries `tag`.
-    pub(super) async fn signal(units: &[Unit], tag: Option<&str>, pids: &[u32], signal: Signal) {
-        crate::scope::signal_units(units, signal).await;
-        let Some(tag) = tag else {
-            return;
-        };
-        let uid = nix::unistd::geteuid().as_raw();
-        for pid in pids {
-            if let Err(error) = signal_pinned(*pid, tag, uid, signal) {
-                tracing::warn!(pid, ?signal, %error, "could not signal an agent process");
+        /// Signal the scopes whole and each of `pids` that still carries the tag.
+        pub(super) async fn signal(&self, pids: &[u32], signal: Signal) {
+            assert!(!pids.is_empty(), "a signal round needs a target");
+            crate::scope::signal_units(&self.units, signal).await;
+            let Some(tag) = self.tag.as_deref() else {
+                return;
+            };
+            let uid = nix::unistd::geteuid().as_raw();
+            for pid in pids {
+                if let Err(error) = signal_pinned(*pid, tag, uid, signal) {
+                    tracing::warn!(pid, ?signal, %error, "could not signal an agent process");
+                }
             }
         }
     }

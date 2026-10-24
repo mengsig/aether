@@ -180,7 +180,8 @@ impl Runtime {
         let grace = self.models.config().agents.reap_grace();
         let me = self.me.clone();
         handle.spawn(async move {
-            let report = aether_engine::reap::reap_agent(agent, grace).await;
+            let ended = || me.upgrade().is_some_and(|runtime| runtime.has_ended(agent));
+            let report = aether_engine::reap::reap_agent(agent, grace, ended).await;
             if report.is_empty() {
                 return;
             }
@@ -192,6 +193,18 @@ impl Runtime {
                 tracing::error!(%agent, %error, "could not record the agent's reaped processes");
             }
         });
+    }
+
+    /// Whether `agent` is still ended; a restart means its processes are its new engine's.
+    fn has_ended(&self, agent: AgentId) -> bool {
+        match self.store.agent(agent) {
+            Ok(Some(row)) => row.status.is_terminal(),
+            Ok(None) => true,
+            Err(error) => {
+                tracing::warn!(%agent, %error, "cannot tell whether the agent is still ended; sparing its processes");
+                false
+            }
+        }
     }
 
     fn record_processes_reaped(
@@ -208,6 +221,7 @@ impl Runtime {
             "killed": report.killed.len(),
             "pids": report.terminated,
             "killed_pids": report.killed,
+            "survived": report.survived,
         });
         let kind = EventKind::Custom {
             name: PROCESSES_REAPED_EVENT.to_owned(),
