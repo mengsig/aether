@@ -338,7 +338,9 @@ Codex's 300 s default does not fail a held wait.
 runs. The call's reply waits, with the session attached, for the operator's
 answer or the child's result. It then starts with "Wait ended:", lists the
 jobs that finished meanwhile, carries the answer or result under "Delivered
-with this reply:", and ends with the action's usual reply. If the last job
+with this reply:", and ends with the action's usual reply. While a message
+steered into the session is still unacknowledged, nothing is consumed past
+it: the reply says what arrived follows as the next input. If the last job
 finishes first, the reply says so and the turn parks as it would have
 without jobs. During such a wait a second wait and `complete_task` or
 `fail_task` are refused, so the task is settled only after the reply.
