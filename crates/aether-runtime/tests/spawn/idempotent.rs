@@ -68,6 +68,48 @@ async fn a_repeated_key_returns_the_first_child_and_a_changed_request_is_refused
     h.runtime.shutdown().await;
 }
 
+/// A child can report its task done while its turn is still landing the
+/// final receipt: a waiting replay must still wait on that task.
+#[tokio::test]
+async fn a_waiting_replay_of_a_reported_child_still_waits_on_its_task() {
+    let mut h = harness(10).await;
+    let coordinator = start_coordinator(&h, None);
+    let bridge = h.ready.recv().await.expect("coordinator started");
+
+    let (first, is_error) = call(&h, &bridge, keyed("read the docs", "docs-1")).await;
+    assert!(!is_error, "{first}");
+    let (agent, task) = ids(&first);
+    let child = h.ready.recv().await.expect("child started");
+    assert_eq!(json!(child.agent), agent);
+    let (reply, is_error) = h
+        .runtime
+        .engine_tool(
+            child.agent,
+            &child.token,
+            "complete_task".into(),
+            json!({"summary": "done"}),
+        )
+        .await
+        .expect("completion reply");
+    assert!(!is_error, "{reply}");
+    let task_id = task.as_str().expect("task id").parse().expect("task id");
+    let row = h.store.task(task_id).expect("task read").expect("task row");
+    assert!(row.status.is_terminal(), "{:?}", row.status);
+
+    // The held engine keeps the child's turn open for the park grace.
+    let mut waiting = keyed("read the docs", "docs-1");
+    waiting["wait"] = json!(true);
+    let (replay, is_error) = call(&h, &bridge, waiting).await;
+    assert!(!is_error, "{replay}");
+    assert!(replay.contains("\"replayed\":true"), "{replay}");
+    assert!(
+        replay.contains("You will be woken when it finishes"),
+        "a replay skipped the wait on a turn still running: {replay}"
+    );
+    assert_eq!(children_of(h.store.as_ref(), coordinator).len(), 1);
+    h.runtime.shutdown().await;
+}
+
 /// The retry arrives while the first call is still pending: both settle on
 /// one child, whichever of them committed it.
 #[tokio::test]

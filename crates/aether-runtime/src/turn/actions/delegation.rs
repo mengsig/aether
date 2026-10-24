@@ -216,8 +216,9 @@ fn replayed_outcome(
     key: &str,
 ) -> ToolOutcome {
     let task_id = task.as_ref().map(|t| t.id);
-    // A child that already finished has nothing left to wait for.
-    let waits = wait && task.as_ref().is_some_and(|t| !t.status.is_terminal());
+    // Waits even on a terminal row: its turn may still be landing its final
+    // receipt, and the wait oracle releases a quiescent task at once.
+    let waits = wait && task_id.is_some();
     if waits && let Some(id) = task_id {
         merge_wait(effects, WaitCondition::Task { id });
     }
