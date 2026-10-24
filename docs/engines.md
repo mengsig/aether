@@ -314,6 +314,33 @@ Related limitation, pre-existing and unchanged: on a *gated* offline turn the
 person answering an escalation or a `permissions` request can lift the
 sandbox for that command; the approval card carries the engine's reason.
 
+## Long-running commands and `wait_for`
+
+A command can outlive the tool call that started it: Codex's exec tool
+yields after a while and leaves the process running (a lock waiter, a
+build, a CI watch), and Claude Code runs a shell in the background. Both are
+native background jobs. Both Codex adapters (`codex exec` and
+`codex app-server`) report a started command as `BackgroundTask { running:
+true }` and its exit as `running: false`, as the Claude Code adapter does
+for its background tasks.
+
+While such a job runs, `wait_for` does not end the turn. It keeps the
+engine session, and the jobs in it, attached and returns when its condition
+is met, a message arrives, its deadline passes, or a job finishes ("native
+background task `<id>` finished"). The agent then collects the output with
+its native tool: Codex's `write_stdin` on the session, or Claude Code's
+`TaskOutput`. The supported pattern is to start the command, let it yield,
+then call `wait_for`. Aether gives Codex's MCP bridge a call timeout of one
+year (`mcp_servers.aether.tool_timeout_sec`), the longest `wait_for`, so
+Codex's 300 s default does not fail a held wait.
+
+Anything that ends the turn stops the session's jobs with it: the agent's
+final answer, `ask_user`, and `delegate` with `wait=true`. The reply of
+`ask_user` and `delegate` says so when jobs are running. Every process an
+agent's engine started is reaped when the agent ends
+([agent processes](configuration.md#agent-processes)); a job never outlives
+its agent.
+
 ## Native reasoning effort
 
 Claude and Codex choose their own effort when the agent has no explicit setting

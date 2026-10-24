@@ -174,9 +174,14 @@ looks like a boundary and is not one.
 
 ## Orchestration and visibility
 
-- `wait_for` keeps reported native background jobs attached, but occupies an
-  engine slot. It does not preserve jobs across daemon shutdown/restart or
-  other turn-ending actions such as `delegate(wait=true)` and `ask_user`.
+- `wait_for` keeps reported native background jobs attached (Claude Code
+  background tasks, Codex exec processes that have not exited), but occupies
+  an engine slot. It does not preserve jobs across daemon shutdown/restart or
+  other turn-ending actions such as `delegate(wait=true)`, `ask_user` or the
+  agent's final answer; the `ask_user` and `delegate` replies say the jobs
+  stop. A `wait_for` issued in the same parallel batch as the Codex command
+  it should wait on can end the turn before the command is reported running.
+  See [long-running commands](engines.md#long-running-commands-and-wait_for).
 - Delivery acknowledgment is not answer/compliance verification. Steering a
   running child across restarts and providers is only partly verified
   (roadmap).
