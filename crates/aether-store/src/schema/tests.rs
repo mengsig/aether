@@ -1189,3 +1189,53 @@ fn v27_keeps_inline_outputs_readable_and_offloads_new_ones() {
         .expect("legacy rows delete without references");
     assert_eq!(deleted, 4);
 }
+
+/// The upgrade lane rewinds a v27 store by its stamp alone (REWINDS in
+/// scripts/upgrade_compat_migration.py): V27 must replay over its own tables.
+#[test]
+fn v27_replays_over_a_store_whose_stamp_was_rewound() {
+    use crate::Store;
+    use aether_core::event::{Actor, EventDraft, EventKind};
+    use aether_core::id::{AgentId, ToolCallId};
+    use aether_core::tool::ToolOutcome;
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let output: String = (0..500)
+        .map(|n| format!("offloaded output {n}\n"))
+        .collect();
+    let committed = {
+        let store = crate::SqliteStore::open(&path).expect("v27 store");
+        let draft = EventDraft::new(
+            Actor::System,
+            EventKind::ToolSucceeded {
+                call: ToolCallId::new(),
+                outcome: ToolOutcome::ok(output),
+            },
+        )
+        .agent(AgentId::new());
+        store
+            .commit(crate::Commit::new().event(draft))
+            .expect("event")
+    };
+    let conn = Connection::open(&path).expect("rewind");
+    conn.execute(
+        "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
+        [(SCHEMA_VERSION - 1).to_string()],
+    )
+    .expect("stamp");
+    drop(conn);
+
+    let store = crate::SqliteStore::open(&path).expect("replayed upgrade");
+    let conn = Connection::open(&path).expect("inspect");
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let blobs: i64 = conn
+        .query_row("SELECT COUNT(*) FROM event_blobs", [], |row| row.get(0))
+        .expect("blobs");
+    assert_eq!(blobs, 1, "the replay keeps the blob the output moved into");
+    let read = store.event_by_seq(committed[0].seq).expect("read");
+    assert_eq!(
+        read.as_ref(),
+        Some(&committed[0]),
+        "the reference still resolves"
+    );
+}

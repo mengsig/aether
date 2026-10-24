@@ -22,6 +22,9 @@ POLL_SECONDS = 0.002
 # What undoes the newest migration block, for when the previous release is
 # already on this build's schema. Add the next block's undo when it lands.
 REWINDS = {
+    # Blob strings are zstd data SQL cannot inline back, and dropping the
+    # tables orphans their references: keep them, V27 replays as a no-op.
+    27: (),
     26: ("DROP TABLE notifications",),
     25: (),  # a data backfill: no schema to drop, only the stamp goes back
     24: ("DROP TABLE engine_session_ownership",),

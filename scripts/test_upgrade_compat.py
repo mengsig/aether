@@ -110,6 +110,14 @@ class SchemaRewind(unittest.TestCase):
             self.assertEqual(migration.stamp(store), 23)
             self.assertNotIn("engine_session_ownership", tables(store))
 
+    def test_a_blob_store_keeps_its_blobs_when_rewound(self):
+        blob_tables = ["event_blobs", "event_blob_refs"]
+        with tempfile.TemporaryDirectory() as directory:
+            store = store_at(directory, 27, tables=blob_tables)
+            self.assertEqual(migration.rewind(store, 27), 26)
+            self.assertEqual(migration.stamp(store), 26)
+            self.assertLessEqual(set(blob_tables), tables(store))
+
     def test_an_older_store_is_left_alone(self):
         with tempfile.TemporaryDirectory() as directory:
             store = store_at(directory, 22)
@@ -118,11 +126,11 @@ class SchemaRewind(unittest.TestCase):
 
     def test_a_newer_or_unknown_store_fails_the_lane(self):
         with tempfile.TemporaryDirectory() as directory:
-            store = store_at(directory, 27)
+            store = store_at(directory, 99)
             with self.assertRaisesRegex(fixture.LaneFailure, "newer than"):
-                migration.rewind(store, 26)
+                migration.rewind(store, 98)
             with self.assertRaisesRegex(fixture.LaneFailure, "no undo"):
-                migration.rewind(store, 27)
+                migration.rewind(store, 99)
 
 
 class FakeSsh(unittest.TestCase):
