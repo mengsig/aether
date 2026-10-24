@@ -116,6 +116,13 @@ pub(crate) struct ToolEffects {
 }
 
 impl ToolEffects {
+    /// This turn's question was answered inside it: it no longer blocks a
+    /// settle or a further question.
+    pub(crate) fn question_answered(&mut self) {
+        debug_assert!(self.asked.is_some(), "no question was asked");
+        self.asked = None;
+    }
+
     pub(crate) fn terminal(&self) -> bool {
         matches!(self.next, Some(Next::Completed(_) | Next::Failed(_)))
     }

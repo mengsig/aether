@@ -3,7 +3,7 @@ use aether_core::shell_network::gated_class;
 
 use super::{
     ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalStatus, Arc, BusMessage,
-    CancellationToken, Commit, EngineRequest, EventKind, Gate, Mutation, ResourceKey, Result,
+    CancellationToken, Commit, EngineRequest, EventKind, Gate, Mutation, Next, ResourceKey, Result,
     Runtime, SideEffectClass, TURN_IS_OVER, ToolCallId, ToolContext, ToolEffects, ToolExecution,
     TurnCtx, Value, apply_action, approval, json, now, side_effect_of, tool_context,
 };
@@ -17,14 +17,6 @@ pub(super) enum Served {
     Refused,
     NativeWait(super::native_wait::NativeWait),
 }
-
-/// Said when a wait other than `wait_for` ends a turn whose native jobs still
-/// run: ending the turn stops the engine session, and the jobs with it.
-/// Prepended, like the park's stop, ahead of the reply's structured line.
-const NATIVE_JOBS_STOP: &str = "This wait ends the turn, which stops the background \
-     jobs still running in this engine session (Claude Code background tasks, Codex exec \
-     processes that have not exited). To keep such jobs alive, wait with wait_for instead \
-     (delegate with wait=false first): it keeps the session attached while they run.";
 
 /// Run one harness call for the engine.
 ///
@@ -134,14 +126,30 @@ pub(super) async fn handle_request(
                             let _ = req.reply.send((refusal, true));
                             return Ok(Served::Refused);
                         }
+                        // Ending the turn would stop the session's running jobs, so
+                        // the reply waits for the answer or the child instead.
+                        let holds =
+                            native_jobs && !parked && effects.next.is_none() && held(&action);
                         let outcome = apply_action(runtime, ctx, action, effects).await?;
-                        let content =
-                            if native_jobs && !parked && effects.parked() && !effects.terminal() {
-                                format!("{NATIVE_JOBS_STOP}\n\n{}", outcome.content)
-                            } else {
-                                outcome.content
-                            };
-                        (content, outcome.is_error)
+                        if holds
+                            && let Some(Next::Waiting(condition)) = effects
+                                .next
+                                .take_if(|next| matches!(next, Next::Waiting(_)))
+                        {
+                            runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
+                                name: "engine.native_wait_started".into(),
+                                payload: json!({"condition": condition, "tool": req.name}),
+                            })))?;
+                            return Ok(Served::NativeWait(super::native_wait::NativeWait::held(
+                                condition,
+                                ctx,
+                                req.reply,
+                                req.input,
+                                req.name,
+                                outcome.content,
+                            )));
+                        }
+                        (outcome.content, outcome.is_error)
                     }
                     Err(e) => {
                         completed = !matches!(e, aether_tools::ToolError::Cancelled);
@@ -162,6 +170,13 @@ pub(super) async fn handle_request(
     // A dropped receiver means the bridge went away; nothing to do.
     let _ = req.reply.send(reply.clone());
     Ok(Served::Ran(completed.then_some(reply)))
+}
+
+/// An action whose park only waits on an answer or a child, so its reply can
+/// wait instead while native jobs keep the session attached.
+fn held(action: &aether_tools::HarnessAction) -> bool {
+    use aether_tools::HarnessAction as A;
+    matches!(action, A::AskUser { .. } | A::Delegate { wait: true, .. })
 }
 
 /// A permission prompt answered "no", in the shape the engine's

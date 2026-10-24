@@ -1,9 +1,9 @@
 //! A Codex command that outlives its tool call (a lock waiter, a CI run) is a
-//! pending exec process. `wait_for` must keep the session, and with it the
-//! process, attached until the process exits, in both Codex modes.
+//! pending exec process. `wait_for`, `ask_user` and a waiting `delegate` must
+//! keep the session, and with it the process, attached, in both Codex modes.
 
 use super::*;
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// `codex exec` or `codex app-server` by its first argument. Either way it
 /// starts a real lock waiter, reports it as a running command and reports it
@@ -111,15 +111,27 @@ fn custom_events(h: &Harness, id: AgentId, name: &str) -> usize {
         .count()
 }
 
-/// `job` is the id the CLI gives the lock waiter's command item.
-async fn pending_exec_survives_wait_for(
+type Pending = tokio::task::JoinHandle<aether_runtime::Result<(String, bool)>>;
+
+/// An agent whose Codex turn runs the fake, its lock waiter's pid and the
+/// bridge token. One turn slot, so a delegated child stays queued.
+async fn running_job(
     engine: Arc<dyn Engine>,
     dir: &tempfile::TempDir,
-    job: &str,
-) {
-    let h = harness_with_engine_config(engine, |config| {
-        config.engine_park_grace = Duration::from_millis(100);
-    })
+) -> (Harness, AgentId, String, String) {
+    let auth = "[providers.claude-code.auth]\nnone = true\n[providers.codex.auth]\nnone = true\n";
+    let h = build_harness(
+        engine,
+        Arc::default(),
+        Arc::default(),
+        Some(auth),
+        None,
+        None,
+        |config| {
+            config.engine_park_grace = Duration::from_millis(100);
+            config.max_concurrent_turns = 1;
+        },
+    )
     .await;
     let (agent, _) = h
         .runtime
@@ -140,9 +152,6 @@ async fn pending_exec_survives_wait_for(
         .unwrap();
     let id = agent.id;
     let pid = written(&dir.path().join("job.pid")).await;
-    // The model calls `wait_for` once the command has yielded, long after
-    // the runtime recorded it.
-    wait_for(h.store.as_ref(), id, |_| tool_started(&h, id)).await;
     let argv = written(&dir.path().join("argv")).await;
     assert!(
         argv.lines()
@@ -151,36 +160,41 @@ async fn pending_exec_survives_wait_for(
     );
     let (bridged, token) = bridge_credentials(&argv);
     assert_eq!(bridged, id);
-    let runtime = h.runtime.clone();
-    let wait = tokio::spawn(async move {
-        runtime
-            .engine_tool(
-                id,
-                &token,
-                "wait_for".into(),
-                json!({"timeout_seconds": 3600}),
-            )
-            .await
-    });
-    // Many park graces: a parked turn would have stopped the CLI, and the
-    // lock waiter in its process group, by now.
-    tokio::time::sleep(Duration::from_millis(1_500)).await;
-    if wait.is_finished() {
-        panic!("wait_for ended the turn: {:?}", wait.await);
-    }
-    assert!(alive(&pid), "the pending exec process died across wait_for");
-    assert_eq!(custom_events(&h, id, "engine.native_wait_started"), 1);
+    (h, id, pid, token)
+}
 
-    std::fs::write(dir.path().join("release"), "").unwrap();
-    let (reply, is_error) = tokio::time::timeout(Duration::from_secs(10), wait)
+/// The engine's call to an Aether tool, answered whenever the runtime replies.
+fn bridge_call(h: &Harness, id: AgentId, token: &str, name: &str, input: Value) -> Pending {
+    let runtime = h.runtime.clone();
+    let (token, name) = (token.to_owned(), name.to_owned());
+    tokio::spawn(async move { runtime.engine_tool(id, &token, name, input).await })
+}
+
+/// Many park graces later: a parked turn would have stopped the CLI, and
+/// the lock waiter in its process group, by now.
+async fn still_waiting(h: &Harness, id: AgentId, pid: &str, call: Pending) -> Pending {
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    if call.is_finished() {
+        panic!("the wait ended the turn: {:?}", call.await);
+    }
+    assert!(alive(pid), "the pending exec process died across the wait");
+    assert_eq!(custom_events(h, id, "engine.native_wait_started"), 1);
+    call
+}
+
+async fn answered(call: Pending) -> String {
+    let (reply, is_error) = tokio::time::timeout(Duration::from_secs(10), call)
         .await
-        .expect("the process's exit ends the wait")
+        .expect("the wait ends")
         .unwrap()
         .unwrap();
-    assert!(
-        !is_error && reply.contains(&format!("{job} finished")),
-        "{reply}"
-    );
+    assert!(!is_error, "{reply}");
+    reply
+}
+
+/// Frees the lock: the job exits, and the turn ends without ever parking.
+async fn release_and_end(h: Harness, dir: &tempfile::TempDir, id: AgentId) {
+    std::fs::write(dir.path().join("release"), "").unwrap();
     let ended = wait_for(h.store.as_ref(), id, |a| a.stats.turns >= 1).await;
     assert!(
         !matches!(ended.status, AgentStatus::Failed { .. }),
@@ -195,24 +209,132 @@ async fn pending_exec_survives_wait_for(
     h.runtime.shutdown().await;
 }
 
+/// `job` is the id the CLI gives the lock waiter's command item.
+async fn pending_exec_survives_wait_for(
+    engine: Arc<dyn Engine>,
+    dir: &tempfile::TempDir,
+    job: &str,
+) {
+    let (h, id, pid, token) = running_job(engine, dir).await;
+    // The model calls `wait_for` once the command has yielded, long after
+    // the runtime recorded it.
+    wait_for(h.store.as_ref(), id, |_| tool_started(&h, id)).await;
+    let call = bridge_call(&h, id, &token, "wait_for", json!({"timeout_seconds": 3600}));
+    let call = still_waiting(&h, id, &pid, call).await;
+    std::fs::write(dir.path().join("release"), "").unwrap();
+    let reply = answered(call).await;
+    assert!(reply.contains(&format!("{job} finished")), "{reply}");
+    release_and_end(h, dir, id).await;
+}
+
+/// The operator answers while the job still runs: the answer is the reply,
+/// and the job outlives both.
+async fn pending_exec_survives_ask_user(engine: Arc<dyn Engine>, dir: &tempfile::TempDir) {
+    let (h, id, pid, token) = running_job(engine, dir).await;
+    wait_for(h.store.as_ref(), id, |_| tool_started(&h, id)).await;
+    let question = json!({"question": "which GPU?"});
+    let call = bridge_call(&h, id, &token, "ask_user", question);
+    let call = still_waiting(&h, id, &pid, call).await;
+    h.runtime
+        .send_message(
+            id,
+            vec![ContentBlock::text("the second one")],
+            Actor::user(),
+        )
+        .unwrap();
+    let reply = answered(call).await;
+    assert!(
+        reply.starts_with("Wait ended: a message arrived.")
+            && reply.contains("the second one")
+            && reply.ends_with("Question recorded for the operator to see."),
+        "{reply}"
+    );
+    assert!(!reply.contains("Your turn ends here"), "{reply}");
+    assert!(alive(&pid), "the job died when the answer arrived");
+    release_and_end(h, dir, id).await;
+}
+
+/// The child finishes while the job still runs: its result is the reply,
+/// and the job outlives both.
+async fn pending_exec_survives_delegate(engine: Arc<dyn Engine>, dir: &tempfile::TempDir) {
+    let (h, id, pid, token) = running_job(engine, dir).await;
+    wait_for(h.store.as_ref(), id, |_| tool_started(&h, id)).await;
+    let request = json!({"model": "claude-code/haiku", "effort": "low", "role": "worker",
+                         "objective": "warm the cache", "wait": true});
+    let call = bridge_call(&h, id, &token, "delegate", request);
+    let call = still_waiting(&h, id, &pid, call).await;
+    let child = h
+        .store
+        .agents(&aether_store::AgentFilter {
+            parent: Some(id),
+            ..Default::default()
+        })
+        .unwrap()
+        .remove(0)
+        .id;
+    h.runtime
+        .cancel_agent(child, Some("not needed".into()), Actor::user())
+        .unwrap();
+    let reply = answered(call).await;
+    assert!(
+        reply.starts_with("Wait ended: the delegated task finished.")
+            && reply.contains(&format!("Delegated to agent {child}"))
+            && reply.contains("not needed"),
+        "{reply}"
+    );
+    assert!(!reply.contains("Your turn ends here"), "{reply}");
+    assert!(alive(&pid), "the job died when the child finished");
+    release_and_end(h, dir, id).await;
+}
+
+fn exec(dir: &tempfile::TempDir) -> Arc<dyn Engine> {
+    let program = dir.path().join("codex");
+    Arc::new(aether_engine::CodexEngine::new(
+        program.to_string_lossy(),
+        "0.164.0",
+    ))
+}
+
+fn app_server(dir: &tempfile::TempDir) -> Arc<dyn Engine> {
+    let program = dir.path().join("codex");
+    Arc::new(aether_engine::codex_app::CodexAppEngine::new(
+        program.to_string_lossy(),
+        "0.164.0",
+    ))
+}
+
 #[tokio::test]
 async fn a_codex_exec_turn_keeps_its_pending_exec_process_across_wait_for() {
     let dir = fake_codex();
-    let program = dir.path().join("codex");
-    let engine = Arc::new(aether_engine::CodexEngine::new(
-        program.to_string_lossy(),
-        "0.164.0",
-    ));
-    pending_exec_survives_wait_for(engine, &dir, "item_0").await;
+    pending_exec_survives_wait_for(exec(&dir), &dir, "item_0").await;
 }
 
 #[tokio::test]
 async fn a_codex_app_server_turn_keeps_its_pending_exec_process_across_wait_for() {
     let dir = fake_codex();
-    let program = dir.path().join("codex");
-    let engine = Arc::new(aether_engine::codex_app::CodexAppEngine::new(
-        program.to_string_lossy(),
-        "0.164.0",
-    ));
-    pending_exec_survives_wait_for(engine, &dir, "call_job").await;
+    pending_exec_survives_wait_for(app_server(&dir), &dir, "call_job").await;
+}
+
+#[tokio::test]
+async fn a_codex_exec_turn_keeps_its_pending_exec_process_across_ask_user() {
+    let dir = fake_codex();
+    pending_exec_survives_ask_user(exec(&dir), &dir).await;
+}
+
+#[tokio::test]
+async fn a_codex_app_server_turn_keeps_its_pending_exec_process_across_ask_user() {
+    let dir = fake_codex();
+    pending_exec_survives_ask_user(app_server(&dir), &dir).await;
+}
+
+#[tokio::test]
+async fn a_codex_exec_turn_keeps_its_pending_exec_process_across_a_waiting_delegate() {
+    let dir = fake_codex();
+    pending_exec_survives_delegate(exec(&dir), &dir).await;
+}
+
+#[tokio::test]
+async fn a_codex_app_server_turn_keeps_its_pending_exec_process_across_a_waiting_delegate() {
+    let dir = fake_codex();
+    pending_exec_survives_delegate(app_server(&dir), &dir).await;
 }

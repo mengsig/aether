@@ -236,7 +236,7 @@ fn replayed_outcome(
         child.name,
         task_id.map(|t| t.to_string()).unwrap_or_default(),
         if waits {
-            format!(" {TURN_ENDS_HERE} You will be woken when it finishes.")
+            format!(" {TURN_ENDS_HERE} {CHILD_WAKES}")
         } else {
             String::new()
         },
@@ -564,7 +564,7 @@ fn delegated_outcome(
         child.name,
         task_id.map(|t| t.to_string()).unwrap_or_default(),
         if wait {
-            format!(" {TURN_ENDS_HERE} You will be woken when it finishes.")
+            format!(" {TURN_ENDS_HERE} {CHILD_WAKES}")
         } else {
             String::new()
         },

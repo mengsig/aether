@@ -267,8 +267,7 @@ fn ask_user(
     // `delegate` it is waiting on) still has to be honoured.
     merge_wait(effects, WaitCondition::Inbox);
     Ok(ToolOutcome::ok(format!(
-        "Question recorded for the operator to see. {TURN_ENDS_HERE} You will be \
-         woken when they reply."
+        "Question recorded for the operator to see. {TURN_ENDS_HERE} {ANSWER_WAKES}"
     )))
 }
 

@@ -75,7 +75,9 @@ pub(crate) mod reply_obligation;
 mod waiting;
 pub(crate) use waiting::has_direct_user_message;
 use waiting::*;
-pub(crate) use waiting::{NO_ACTIVE_TASK_TO_COMPLETE, NO_ACTIVE_TASK_TO_FAIL, TURN_ENDS_HERE};
+pub(crate) use waiting::{
+    NO_ACTIVE_TASK_TO_COMPLETE, NO_ACTIVE_TASK_TO_FAIL, TURN_ENDS_HERE, unparked_reply,
+};
 mod settlement;
 use settlement::*;
 mod outage;

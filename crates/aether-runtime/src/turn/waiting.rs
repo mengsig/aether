@@ -113,6 +113,26 @@ pub(super) fn breaks_a_line(c: char) -> bool {
 pub(crate) const TURN_ENDS_HERE: &str =
     "Your turn ends here - stop now and make no further tool calls.";
 
+/// The wake-ups `ask_user` and a waiting `delegate` promise after
+/// [`TURN_ENDS_HERE`].
+pub(super) const ANSWER_WAKES: &str = "You will be woken when they reply.";
+pub(super) const CHILD_WAKES: &str = "You will be woken when it finishes.";
+
+/// A parking reply served once its wait ended inside the turn: the session
+/// stayed attached, so neither the turn's end nor its wake-up still holds.
+pub(crate) fn unparked_reply(content: &str) -> String {
+    let mut text = content.to_owned();
+    for wake in [ANSWER_WAKES, CHILD_WAKES] {
+        text = text.replace(&format!(" {TURN_ENDS_HERE} {wake}"), "");
+    }
+    debug_assert!(!text.is_empty() || content.is_empty());
+    debug_assert!(
+        !text.contains(TURN_ENDS_HERE),
+        "a parking reply this does not know: {content}"
+    );
+    text
+}
+
 /// Informational, not an error: a root or between-task agent has nothing to
 /// complete. It must read differently from a real failure.
 pub(crate) const NO_ACTIVE_TASK_TO_COMPLETE: &str = "You have no active task to complete right now. There's nothing to mark done: answer the \

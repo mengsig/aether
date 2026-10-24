@@ -120,6 +120,41 @@ fn event_may_start_request(event: &EngineEvent) -> bool {
     )
 }
 
+/// Begin the wind-down for the end a harness action just recorded.
+#[allow(clippy::too_many_arguments)]
+fn begin_park(
+    runtime: &Runtime,
+    agent: aether_core::id::AgentId,
+    effects: &ToolEffects,
+    background: &BTreeSet<String>,
+    input: &mut Option<mpsc::Sender<aether_engine::EngineInput>>,
+    stop: Option<&mpsc::Sender<std::time::Duration>>,
+    engine_cancel: &CancellationToken,
+    fired: mpsc::Sender<()>,
+    await_reply: bool,
+) -> Park {
+    debug_assert!(effects.parked(), "no harness action ended the turn");
+    debug_assert!(!await_reply || !effects.terminal());
+    let grace = park_grace(
+        &effects.next,
+        !background.is_empty(),
+        runtime.config.engine_park_grace,
+    );
+    start_park(
+        agent,
+        grace,
+        background,
+        input,
+        // Preserve the native final response and usage receipt after
+        // terminal task tools. The bounded park timer still stops an
+        // unresponsive engine.
+        stop.filter(|_| !effects.terminal()),
+        engine_cancel,
+        fired,
+        await_reply,
+    )
+}
+
 fn failed_launch(
     error: aether_engine::EngineError,
     pricing: TurnPricing,
@@ -278,10 +313,9 @@ pub(super) async fn drive(
             .as_ref()
             .is_some_and(|wait| wait.ready(runtime, ctx))
             && let Some(wait) = native_wait.take()
-            && let Some((input, reply)) =
-                wait.finish("a message arrived or the requested condition was satisfied")
+            && let Some((tool, input, reply)) = wait.release(runtime, ctx, &steering, effects)?
         {
-            state.remember_bridge_reply("wait_for".into(), input, reply);
+            state.remember_bridge_reply(tool, input, reply);
         }
         let native_deadline = native_wait.as_ref().and_then(|wait| wait.deadline());
         let accounting_deadline = state.accounting.deadline();
@@ -407,6 +441,7 @@ pub(super) async fn drive(
                     // any other input it controls.
                     let id = clamp(&id, MAX_ENGINE_NAME);
                     if !running && background.contains(&id)
+                        && native_wait.as_mut().is_some_and(|wait| wait.job_finished(&id))
                         && let Some(wait) = native_wait.take()
                         && let Some((input, reply)) = wait.finish(&format!("native background task {id} finished"))
                     {
@@ -428,6 +463,21 @@ pub(super) async fn drive(
                         {
                             park.stop_now(&engine_cancel);
                             reap_grace = Some(ReapGrace::start());
+                        } else if park.is_none()
+                            && native_wait.as_ref().is_some_and(|wait| wait.is_held())
+                            && let Some(wait) = native_wait.take()
+                        {
+                            // Nothing is left to keep attached: the held action parks.
+                            let replied = wait.into_park(effects).map(|(tool, input, reply)| {
+                                state.remember_bridge_reply(tool.clone(), input.clone(), reply);
+                                (tool, input)
+                            });
+                            park_reply = replied.filter(|_| engine.kind() == super::EngineKind::CLAUDE_CODE && stop.is_some());
+                            let started = begin_park(runtime, ctx.agent.id, effects, &background, &mut input, stop.as_ref(), &engine_cancel, stop_fired_tx.clone(), park_reply.is_some());
+                            if started.killed() {
+                                reap_grace = Some(ReapGrace::start());
+                            }
+                            park = Some(started);
                         }
                     }
                 }
@@ -612,8 +662,8 @@ pub(super) async fn drive(
                     // What the engine spent before it asked is on the record
                     // before whatever the request commits.
                     flush_accounting(runtime, ctx, &mut state.accounting)?;
-                    if native_wait.is_some() && req.name == "wait_for" {
-                        let _ = req.reply.send(("A native background wait is already pending in this session.".into(), true));
+                    if let Some(refusal) = native_wait.as_ref().and_then(|wait| wait.refusal(&req.name, &req.input)) {
+                        let _ = req.reply.send((refusal.into(), true));
                         continue;
                     }
                     let name = req.name.clone();
@@ -683,19 +733,13 @@ pub(super) async fn drive(
                             // Let Claude acknowledge the MCP reply before interrupting;
                             // otherwise it substitutes a spurious user-rejection result.
                             park_reply = reply.filter(|_| !effects.terminal());
-                            let started = start_park(
+                            let started = begin_park(
+                                runtime,
                                 ctx.agent.id,
-                                park_grace(
-                                    &effects.next,
-                                    !background.is_empty(),
-                                    runtime.config.engine_park_grace,
-                                ),
+                                effects,
                                 &background,
                                 &mut input,
-                                // Preserve the native final response and usage
-                                // receipt after terminal task tools. The bounded
-                                // park timer still stops an unresponsive engine.
-                                stop.as_ref().filter(|_| !effects.terminal()),
+                                stop.as_ref(),
                                 &engine_cancel,
                                 stop_fired_tx.clone(),
                                 park_reply.is_some(),
@@ -710,8 +754,9 @@ pub(super) async fn drive(
             }
             // Nothing a person sends can reach a turn that is over: an answer
             // handed to a process about to be killed would be consumed and
-            // lost, so it stays in the inbox for the next turn.
-            msg = bus.recv(), if park.is_none() && (input.is_some() || question.is_some()) => {
+            // lost, so it stays in the inbox for the next turn. A pending
+            // native wait also wakes on a delivery, which may release it.
+            msg = bus.recv(), if park.is_none() && (input.is_some() || question.is_some() || native_wait.is_some()) => {
                 let delivered = match msg {
                     Ok(BusMessage::Event(ev)) => {
                         ev.agent_id == Some(ctx.agent.id)
@@ -728,6 +773,9 @@ pub(super) async fn drive(
                             Some(pending) => answer_question(runtime, ctx, decisions.as_ref(), request_id, pending, &mut steering, &engine_cancel).await?,
                             None => question = Some(request_id),
                         },
+                        // The engine is blocked on a held call: its reply
+                        // hands over what arrived.
+                        None if native_wait.as_ref().is_some_and(|wait| wait.is_held()) => {}
                         // Steering: what arrived goes to the engine at its next
                         // step instead of waiting for this turn to end.
                         None => steer(runtime, ctx, &mut steering, &mut input).await?,
