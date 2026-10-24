@@ -44,7 +44,8 @@ pub async fn reap_agent(agent: AgentId, grace: Duration, ended: impl Fn() -> boo
     let mut report = ReapReport::default();
     let deadline = tokio::time::Instant::now() + grace;
     let mut alive = sweep.members();
-    while !alive.is_empty() && tokio::time::Instant::now() < deadline {
+    // The first round always runs: even a zero grace sends SIGTERM first.
+    while !alive.is_empty() {
         let fresh: Vec<u32> = alive
             .iter()
             .copied()
@@ -58,10 +59,14 @@ pub async fn reap_agent(agent: AgentId, grace: Duration, ended: impl Fn() -> boo
             report.terminated.extend(fresh);
             report.terminated.sort_unstable();
         }
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
         tokio::time::sleep(linux::POLL).await;
         alive = sweep.members();
     }
     for _ in 0..KILL_ROUNDS {
+        let alive = sweep.members();
         if alive.is_empty() {
             break;
         }
@@ -71,11 +76,10 @@ pub async fn reap_agent(agent: AgentId, grace: Duration, ended: impl Fn() -> boo
         sweep.signal(&alive, Signal::SIGKILL).await;
         report.killed.extend(&alive);
         tokio::time::sleep(linux::POLL).await;
-        alive = sweep.members();
     }
     report.killed.sort_unstable();
     report.killed.dedup();
-    report.survived = alive;
+    report.survived = sweep.members();
     log(agent, &report);
     report
 }

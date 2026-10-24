@@ -172,6 +172,23 @@ async fn kills_a_process_that_outlives_the_grace() {
 }
 
 #[tokio::test]
+async fn a_zero_grace_still_sends_sigterm_first() {
+    let agent = AgentId::new();
+    let pid = start_detached(
+        agent,
+        "setsid sh -c 'trap \"\" TERM; exec sleep 45' </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let report = reap_agent(agent, Duration::ZERO, || true).await;
+
+    assert!(report.terminated.contains(&pid), "{report:?}");
+    assert!(report.killed.contains(&pid), "{report:?}");
+    assert!(wait_gone(pid).await, "the stubborn child is killed");
+}
+
+#[tokio::test]
 async fn a_child_forked_on_sigterm_is_reaped_too() {
     let agent = AgentId::new();
     let pid = start_detached(
