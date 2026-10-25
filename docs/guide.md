@@ -399,9 +399,10 @@ escalation, which `--no-yolo` puts to you.
   edit collisions, but are not a security boundary for native tools.
 - The container backend covers Aether shell execution, not the whole native
   Claude/Codex harness. Native-engine/container combinations are rejected.
-- `wait_for` preserves reported native background jobs in their owning
-  session, with no model polling. That session occupies an engine slot and is
-  not restart-durable. Other turn-ending actions are not covered by this path.
+- `wait_for`, `ask_user` and `delegate(wait=true)` preserve reported native
+  background jobs in their owning session, with no model polling. While it
+  waits, the session hands its concurrency slot to other work and takes one
+  back before it continues. It is not restart-durable.
 - Message delivery/acknowledgment is not proof that the model answered a
   question or followed an instruction. Inspect outcomes, not just status.
 - Context occupancy and cumulative token usage are different measurements.
