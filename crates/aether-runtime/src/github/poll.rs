@@ -347,32 +347,52 @@ fn decided(runtime: &Runtime, repo: &str, candidate: &Candidate) -> Result<bool,
         .map_err(|e| Error::new(e.to_string()))
 }
 
-/// Who last edited each undecided text an operator login asked about: one
-/// GraphQL request per 100 texts, and none when no such request is pending.
-async fn authorship(
+/// Whether `candidate` is an operator request whose authorship is not yet known.
+fn lacks_authorship(
+    settings: &Settings,
+    repo: &GithubRepositoryConfig,
+    candidate: &Candidate,
+    known: &HashMap<String, Authorship>,
+) -> bool {
+    standing::wants_lookup(&settings.config, repo, candidate)
+        && candidate
+            .node_id
+            .as_ref()
+            .is_some_and(|id| !known.contains_key(id))
+}
+
+/// Who last edited the next undecided texts an operator login asked about,
+/// in `pending`'s order: one GraphQL request for up to 100 of them.
+async fn look_up_authorship(
     runtime: &Runtime,
     pass: &mut Pass<'_, impl Source>,
     settings: &Settings,
     repo: &GithubRepositoryConfig,
     pending: &[&Candidate],
-) -> Result<HashMap<String, Authorship>, Error> {
+    known: &mut HashMap<String, Authorship>,
+) -> Result<(), Error> {
     let mut ids = BTreeSet::new();
     for candidate in pending {
-        if standing::wants_lookup(&settings.config, repo, candidate)
+        if ids.len() == standing::LOOKUP_BATCH {
+            break;
+        }
+        if lacks_authorship(settings, repo, candidate, known)
             && !decided(runtime, &repo.repository, candidate)?
             && let Some(id) = &candidate.node_id
         {
             ids.insert(id.clone());
         }
     }
+    debug_assert!(
+        !ids.is_empty(),
+        "called for a candidate that lacks authorship"
+    );
     let ids: Vec<String> = ids.into_iter().collect();
-    let mut facts = HashMap::with_capacity(ids.len());
-    for batch in ids.chunks(standing::LOOKUP_BATCH) {
-        let response = pass.graphql(&standing::lookup_request(batch)).await?;
-        facts.extend(standing::parse_lookup(&response, batch)?);
-    }
+    let response = pass.graphql(&standing::lookup_request(&ids)).await?;
+    let facts = standing::parse_lookup(&response, &ids)?;
     debug_assert_eq!(facts.len(), ids.len(), "one answer per text asked about");
-    Ok(facts)
+    known.extend(facts);
+    Ok(())
 }
 
 /// Why a requester may not dispatch on a repository.
@@ -504,11 +524,11 @@ pub(super) async fn dispatch(
         .iter()
         .filter(|candidate| !out_of_scope(candidate, state, at))
         .collect();
-    let authorship = authorship(runtime, pass, settings, repo, &pending).await?;
+    let mut authorship = HashMap::new();
     let mut permissions = HashMap::new();
     let mut decisions = 0;
     let mut deferred = None;
-    for candidate in pending {
+    for (next, candidate) in pending.iter().copied().enumerate() {
         if decided(runtime, &repo.repository, candidate)? {
             continue;
         }
@@ -516,6 +536,19 @@ pub(super) async fn dispatch(
             return Err(Error::new(
                 "GitHub decision budget exhausted (100); delivered items retained, remaining work retried",
             ));
+        }
+        // Looked up a batch at a time as the pass reaches them, so a long
+        // backlog cannot spend the requests before a decision is saved.
+        if lacks_authorship(settings, repo, candidate, &authorship) {
+            look_up_authorship(
+                runtime,
+                pass,
+                settings,
+                repo,
+                &pending[next..],
+                &mut authorship,
+            )
+            .await?;
         }
         let requester = Author {
             login: candidate.login.clone(),

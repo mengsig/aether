@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Operator standing through a whole poll: what is granted, what is withheld
 //! and why, and what text alone can never obtain.
-use super::tests::{Fake, at, comment, fixture, issue, permission_calls};
+use super::tests::{Fake, at, comment, comment_on, fixture, issue, permission_calls};
 use super::*;
 use aether_core::id::AgentId;
 use serde_json::{Value, json};
@@ -738,4 +738,75 @@ async fn clearing_operator_users_during_a_poll_refuses_the_stale_standing() {
     assert!(stale.to_string().contains("changed during poll"), "{stale}");
     assert!(rt.store.inbox(id, 0).unwrap().is_empty());
     assert!(rt.store.meta(&candidate.key("o/r")).unwrap().is_none());
+}
+
+/// A backlog longer than one pass decides looks up only what the pass can
+/// decide, so the lookups never spend the budget before a decision is saved.
+#[tokio::test]
+async fn a_backlog_looks_up_only_what_one_pass_decides() {
+    let (rt, _dir, id) = fixture_operators(&["mengsig"]).await;
+    let mut source = Fake::new();
+    let mut comments = Vec::new();
+    for n in 1..=150 {
+        let node_id = format!("IC_{n}");
+        // One thread each: a thread takes at most 20 deliveries an hour.
+        let text = comment_on(n, n, "mengsig", "@aether inspect");
+        comments.push(with_node(text, &node_id));
+        add_node(
+            &mut source,
+            node(&node_id, "IssueComment", "mengsig", "@aether inspect"),
+        );
+    }
+    let rest = comments.split_off(100);
+    source.route_pages("issues/comments", vec![json!(comments), json!(rest)]);
+
+    rt.github_poll(&source, at()).await.unwrap();
+    let asked: Vec<usize> = lookups(&source).iter().map(Vec::len).collect();
+    assert_eq!(asked, [100], "one lookup, for the texts decided");
+    assert_eq!(triggers(&rt, id).len(), 100);
+    let error = rt.github_watcher_status().unwrap().repositories[0]
+        .last_error
+        .clone()
+        .unwrap();
+    assert!(error.contains("decision budget"), "{error}");
+
+    rt.github_poll(&source, at()).await.unwrap();
+    let asked: Vec<usize> = lookups(&source).iter().map(Vec::len).collect();
+    assert_eq!(asked, [100, 50], "the rest on the next pass");
+    assert_eq!(triggers(&rt, id).len(), 150);
+}
+
+/// Texts a full thread cannot take yet are retried, not decided, so they
+/// leave the pass's decisions to a later thread's request.
+#[tokio::test]
+async fn a_capped_thread_does_not_starve_a_later_one() {
+    let (rt, _dir, id) = fixture_operators(&["mengsig"]).await;
+    let mut source = Fake::new();
+    let mut comments = Vec::new();
+    for n in 1..=122 {
+        let node_id = format!("IC_{n}");
+        let thread = if n == 122 { 2 } else { 1 };
+        let text = comment_on(n, thread, "mengsig", "@aether inspect");
+        comments.push(with_node(text, &node_id));
+        add_node(
+            &mut source,
+            node(&node_id, "IssueComment", "mengsig", "@aether inspect"),
+        );
+    }
+    let rest = comments.split_off(100);
+    source.route_pages("issues/comments", vec![json!(comments), json!(rest)]);
+
+    rt.github_poll(&source, at()).await.unwrap();
+    let delivered = triggers(&rt, id);
+    assert_eq!(
+        delivered.len(),
+        21,
+        "20 on the first thread, one on the second"
+    );
+    assert!(
+        delivered
+            .iter()
+            .any(|(payload, _)| payload.to_string().contains("issues/2")),
+        "{delivered:?}"
+    );
 }
