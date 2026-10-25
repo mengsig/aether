@@ -66,6 +66,7 @@ pub(crate) use tools::ToolEffects;
 use tools::*;
 mod resources;
 use resources::*;
+pub(crate) use resources::{Retake, retake_turn_slot, set_on_provider};
 mod capacity;
 use capacity::*;
 mod actions;

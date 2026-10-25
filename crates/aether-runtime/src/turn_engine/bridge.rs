@@ -136,6 +136,13 @@ pub(super) async fn handle_request(
                                 .next
                                 .take_if(|next| matches!(next, Next::Waiting(_)))
                         {
+                            // The check-in a parked wait would get still applies.
+                            let condition = match runtime.config.wait_timeout {
+                                Some(timeout) => condition.with_deadline(
+                                    now() + chrono::Duration::from_std(timeout).unwrap_or_default(),
+                                ),
+                                None => condition,
+                            };
                             runtime.apply(Commit::new().event(ctx.draft(EventKind::Custom {
                                 name: "engine.native_wait_started".into(),
                                 payload: json!({"condition": condition, "tool": req.name}),

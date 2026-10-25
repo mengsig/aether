@@ -463,3 +463,157 @@ async fn a_held_wait_parks_once_its_last_native_job_finishes() {
     );
     h.runtime.shutdown().await;
 }
+
+fn one_turn_slot(config: &mut RuntimeConfig) {
+    config.max_concurrent_turns = 1;
+    config.max_concurrent_engine_turns = Some(1);
+}
+
+/// A held delegate waits on its child, so its slot has to go to the child:
+/// at one turn slot, holding it would leave the child queued for good.
+#[tokio::test]
+async fn a_held_delegate_lets_its_child_run_at_a_one_turn_limit() {
+    let script = Script {
+        background: Some("build".into()),
+        ..Default::default()
+    };
+    let h = harness_configured(Duration::from_millis(100), script, one_turn_slot).await;
+    let request = json!({"model": "claude-code/haiku", "effort": "low", "role": "worker",
+                         "objective": "first half", "wait": true});
+    let (mut h, turn, pending) = held_call(h, "delegate", request).await;
+    let child = only_child(&h, turn.agent);
+    let child_turn = turn_of(&mut h, child).await;
+    let summary = json!({"summary": "left half sorted"});
+    let (done, is_error) = call(&h, &child_turn, "complete_task", summary).await;
+    assert!(!is_error, "{done}");
+    let reply = reply_of(pending).await;
+    assert!(
+        reply.starts_with("Wait ended: the delegated task finished.")
+            && reply.contains("left half sorted"),
+        "{reply}"
+    );
+    assert!(!turn.observed.stopped() && !turn.observed.stdin_closed());
+    h.runtime.shutdown().await;
+}
+
+/// A person reaches a waiting agent at once; a held delegate is waiting too.
+#[tokio::test]
+async fn a_user_message_releases_a_held_delegate_while_its_child_runs() {
+    let request = json!({"model": "claude-code/haiku", "effort": "low", "role": "worker",
+                         "objective": "first half", "wait": true});
+    let (mut h, turn, pending) = held_call(job_harness().await, "delegate", request).await;
+    let child = only_child(&h, turn.agent);
+    let _child_turn = turn_of(&mut h, child).await;
+    let change = vec![ContentBlock::text("stop: do the right half instead")];
+    h.runtime
+        .send_message(turn.agent, change, Actor::user())
+        .unwrap();
+    let reply = reply_of(pending).await;
+    assert!(
+        reply.starts_with("Wait ended: message from the user.")
+            && reply.contains("do the right half instead")
+            && reply.contains(&format!("Delegated to agent {child}")),
+        "{reply}"
+    );
+    let running = h.store.agent(child).unwrap().unwrap();
+    assert!(!running.status.is_terminal(), "{:?}", running.status);
+    h.runtime.shutdown().await;
+}
+
+fn short_check_in(config: &mut RuntimeConfig) {
+    config.wait_timeout = Some(Duration::from_millis(1_000));
+}
+
+/// `wait_timeout` gives every waiting agent a check-in; a held delegate too.
+#[tokio::test]
+async fn a_held_delegate_returns_at_the_configured_check_in() {
+    let script = Script {
+        background: Some("build".into()),
+        ..Default::default()
+    };
+    let h = harness_configured(Duration::from_millis(100), script, short_check_in).await;
+    let request = json!({"model": "claude-code/haiku", "effort": "low", "role": "worker",
+                         "objective": "first half", "wait": true});
+    let (h, turn, pending) = held_call(h, "delegate", request).await;
+    let child = only_child(&h, turn.agent);
+    let reply = reply_of(pending).await;
+    assert!(
+        reply.starts_with(
+            "Wait ended: the check-in time came; the delegated task is still running."
+        ) && reply.contains(&format!("Delegated to agent {child}")),
+        "{reply}"
+    );
+    assert!(!turn.observed.stopped() && !turn.observed.stdin_closed());
+    h.runtime.shutdown().await;
+}
+
+fn one_turn_and_short_check_in(config: &mut RuntimeConfig) {
+    config.max_concurrent_turns = 1;
+    config.wait_timeout = Some(Duration::from_millis(1_000));
+}
+
+/// A wait's end takes back a turn slot first, so the reply waits while the
+/// child holds the only one, and says what ended the wait by then.
+#[tokio::test]
+async fn a_held_reply_waits_for_a_free_turn_slot() {
+    let script = Script {
+        background: Some("build".into()),
+        ..Default::default()
+    };
+    let h = harness_configured(
+        Duration::from_millis(100),
+        script,
+        one_turn_and_short_check_in,
+    )
+    .await;
+    let request = json!({"model": "claude-code/haiku", "effort": "low", "role": "worker",
+                         "objective": "first half", "wait": true});
+    let (mut h, turn, pending) = held_call(h, "delegate", request).await;
+    let child = only_child(&h, turn.agent);
+    let child_turn = turn_of(&mut h, child).await;
+    // Past the check-in, while the child's turn holds the only slot.
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    assert!(!pending.is_finished(), "{:?}", pending.await);
+    let summary = json!({"summary": "left half sorted"});
+    let (done, is_error) = call(&h, &child_turn, "complete_task", summary).await;
+    assert!(!is_error, "{done}");
+    let reply = reply_of(pending).await;
+    assert!(
+        reply.starts_with("Wait ended: the delegated task finished.")
+            && reply.contains("left half sorted"),
+        "{reply}"
+    );
+    h.runtime.shutdown().await;
+}
+
+/// A deadline reached while another agent holds the engine slot replies
+/// only once that slot is free again.
+#[tokio::test]
+async fn a_native_wait_deadline_replies_once_its_slot_is_back() {
+    let script = Script {
+        background: Some("build".into()),
+        ..Default::default()
+    };
+    let mut h = harness_configured(Duration::from_millis(100), script, one_turn_slot).await;
+    let parent = start_coordinator(&h);
+    let turn = turn_of(&mut h, parent).await;
+    let runtime = h.runtime.clone();
+    let token = turn.token.clone();
+    let input = json!({"timeout_seconds": 1});
+    let pending = tokio::spawn(async move {
+        runtime
+            .engine_tool(parent, &token, "wait_for".into(), input)
+            .await
+    });
+    let other = start_coordinator(&h);
+    let _other_turn = turn_of(&mut h, other).await;
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    assert!(!pending.is_finished(), "{:?}", pending.await);
+    h.runtime
+        .cancel_agent(other, Some("stop".into()), Actor::user())
+        .unwrap();
+    let reply = reply_of(pending).await;
+    assert!(reply.contains("deadline"), "{reply}");
+    assert!(!turn.observed.stopped() && !turn.observed.cancelled());
+    h.runtime.shutdown().await;
+}

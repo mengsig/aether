@@ -176,8 +176,8 @@ looks like a boundary and is not one.
 
 - `wait_for`, `ask_user` and `delegate(wait=true)` keep reported native
   background jobs attached (Claude Code background tasks, Codex exec
-  processes that have not exited), but occupy an engine slot while they
-  wait. Jobs do not survive a daemon shutdown or restart, or the agent's
+  processes that have not exited) and hand their engine slot to others
+  while they wait. Jobs do not survive a daemon shutdown or restart, or the agent's
   final answer. A Codex command that takes longer than 500 ms to be reported
   running can still miss a wait in its own parallel batch.
   See [long-running commands](engines.md#long-running-commands-and-wait_for).

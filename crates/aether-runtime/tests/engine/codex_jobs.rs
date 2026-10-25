@@ -21,7 +21,7 @@ lock_waiter() {
   fi
 }
 if [ "$1" = exec ]; then
-  printf '%s\n' '{"type":"thread.started","thread_id":"thread"}'
+  printf '{"type":"thread.started","thread_id":"thread-%s"}\n' "$$"
   lock_waiter
   printf '%s\n' '{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"flock -x gpu.lock job","status":"in_progress"}}'
   wait "$(cat "$dir/job.pid")"
@@ -34,7 +34,7 @@ while read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/^{[^{]*"id":\([0-9]*\).*/\1/p')
   case "$line" in
     *'"method":"config/read"'*) result='{"layers":[]}' ;;
-    *'"method":"thread/start"'*) result='{"thread":{"id":"thread"},"model":"gpt-test"}' ;;
+    *'"method":"thread/start"'*) result='{"thread":{"id":"thread-'"$$"'"},"model":"gpt-test"}' ;;
     *'"method":"mcpServerStatus/list"'*) result='{"data":[{"name":"aether","runtimeStatus":"connected","tools":{"wait_for":{}}}]}' ;;
     *'"method":"turn/start"'*) result='{"turn":{"id":"turn"}}' ;;
     *) result='{}' ;;
@@ -119,7 +119,8 @@ fn custom_events(h: &Harness, id: AgentId, name: &str) -> usize {
 type Pending = tokio::task::JoinHandle<aether_runtime::Result<(String, bool)>>;
 
 /// An agent whose Codex turn runs the fake, its lock waiter's pid and the
-/// bridge token. One turn slot, so a delegated child stays queued.
+/// bridge token. One turn slot, which a held delegate hands to its child.
+/// Each run of the fake is its own Codex thread, so a child can run it too.
 async fn running_job(
     engine: Arc<dyn Engine>,
     dir: &tempfile::TempDir,
@@ -310,6 +311,40 @@ async fn pending_exec_survives_a_wait_for_in_its_batch(
     let reply = answered(call).await;
     assert!(reply.contains(&format!("{job} finished")), "{reply}");
     release_and_end(h, dir, id).await;
+}
+
+/// `codex exec` takes no input once started, so a message that ends its
+/// wait must arrive in the reply, once: the next wait waits for news.
+#[tokio::test]
+async fn a_codex_exec_wait_hands_over_the_message_that_ended_it() {
+    let dir = fake_codex();
+    let (h, id, pid, token) = running_job(exec(&dir), &dir).await;
+    wait_for(h.store.as_ref(), id, |_| tool_started(&h, id)).await;
+    let call = bridge_call(&h, id, &token, "wait_for", json!({"timeout_seconds": 3600}));
+    let call = still_waiting(&h, id, &pid, call).await;
+    // Not a person's: a reply owed to one would refuse the next wait anyway.
+    let news = vec![ContentBlock::text("use the second GPU")];
+    h.runtime.send_message(id, news, Actor::System).unwrap();
+    let reply = answered(call).await;
+    assert!(
+        reply.starts_with("Wait ended: a message arrived")
+            && reply.contains("Delivered with this reply:")
+            && reply.contains("use the second GPU"),
+        "{reply}"
+    );
+    let again = bridge_call(&h, id, &token, "wait_for", json!({"timeout_seconds": 3600}));
+    tokio::time::sleep(Duration::from_millis(1_000)).await;
+    if again.is_finished() {
+        panic!(
+            "the delivered message woke the next wait: {:?}",
+            again.await
+        );
+    }
+    assert!(
+        alive(&pid),
+        "the pending exec process died across the waits"
+    );
+    release_and_end(h, &dir, id).await;
 }
 
 fn exec(dir: &tempfile::TempDir) -> Arc<dyn Engine> {

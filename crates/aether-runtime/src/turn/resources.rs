@@ -143,7 +143,7 @@ pub(super) fn stop_resource_block(
 }
 
 /// How the queue for an engine slot ended.
-pub(super) enum Retake {
+pub(crate) enum Retake {
     /// The slot is held again; the note describes the wait, for the resume
     /// reason on the event.
     Taken(&'static str),
@@ -201,12 +201,37 @@ impl Drop for EngineRetaker {
 /// slot first, so no slot holder is ever awaiting a key. It is still a cost
 /// to everyone behind those keys, so the wait is bounded by
 /// [`ENGINE_RETAKE_WAIT`] rather than by `resource_wait_timeout`.
-pub(super) async fn retake_engine_slot(
+pub(crate) async fn retake_engine_slot(
     runtime: &Arc<Runtime>,
     agent: AgentId,
     cancel: &CancellationToken,
 ) -> Retake {
+    retake_slot(runtime, agent, cancel, false).await
+}
+
+/// [`retake_engine_slot`] for a turn that also gave up its place under the
+/// global turn limit, as a native wait does, so both limits must have room.
+pub(crate) async fn retake_turn_slot(
+    runtime: &Arc<Runtime>,
+    agent: AgentId,
+    cancel: &CancellationToken,
+) -> Retake {
+    retake_slot(runtime, agent, cancel, true).await
+}
+
+/// A turn ending frees a global slot without notifying `engine_slot`, so a
+/// retake that needs one looks again this often.
+const GLOBAL_SLOT_RECHECK: Duration = Duration::from_millis(250);
+
+async fn retake_slot(
+    runtime: &Arc<Runtime>,
+    agent: AgentId,
+    cancel: &CancellationToken,
+    global: bool,
+) -> Retake {
     let cap = runtime.config.max_concurrent_engine_turns;
+    let global_cap = runtime.config.max_concurrent_turns;
+    debug_assert!(global_cap > 0, "the global limit is validated as positive");
     let deadline = tokio::time::Instant::now() + engine_retake_wait(runtime);
     let mut queued: Option<EngineRetaker> = None;
     loop {
@@ -217,7 +242,8 @@ pub(super) async fn retake_engine_slot(
         {
             let mut sched = runtime.sched.lock();
             let needs_slot = sched.running.get(&agent).is_some_and(|r| r.engine);
-            if !needs_slot || sched.engine_slot_free(cap) {
+            let global_free = !global || sched.on_provider().count() < global_cap;
+            if global_free && (!needs_slot || sched.engine_slot_free(cap)) {
                 if let Some(turn) = sched.running.get_mut(&agent) {
                     turn.on_provider = true;
                 }
@@ -231,6 +257,7 @@ pub(super) async fn retake_engine_slot(
         queued.get_or_insert_with(|| EngineRetaker::queue(runtime, agent));
         tokio::select! {
             () = freed => {}
+            () = tokio::time::sleep(GLOBAL_SLOT_RECHECK), if global => {}
             () = cancel.cancelled() => return Retake::Cancelled,
             _ = tokio::time::sleep_until(deadline) => return Retake::TimedOut,
         }
@@ -290,7 +317,7 @@ pub(super) fn block_on_resource(
 }
 
 /// Say whether this turn is consuming a provider slot right now.
-pub(super) fn set_on_provider(runtime: &Runtime, agent: AgentId, on: bool) {
+pub(crate) fn set_on_provider(runtime: &Runtime, agent: AgentId, on: bool) {
     let freed_engine = {
         let mut sched = runtime.sched.lock();
         match sched.running.get_mut(&agent) {

@@ -70,7 +70,17 @@ async fn harness_with(park_grace: Duration, on_kill: OnKill) -> Harness {
 }
 
 async fn harness_full(park_grace: Duration, on_kill: OnKill, script: Script) -> Harness {
-    build(park_grace, on_kill, script, None).await
+    build(park_grace, on_kill, script, None, |_| {}).await
+}
+
+/// [`harness_full`] with its runtime configuration adjusted by `configure`.
+async fn harness_configured(
+    park_grace: Duration,
+    script: Script,
+    configure: fn(&mut RuntimeConfig),
+) -> Harness {
+    let on_kill = OnKill::Report(vec![cancelled_with(Usage::default())]);
+    build(park_grace, on_kill, script, None, configure).await
 }
 
 /// A harness whose registry serves `tool` under whatever harness tool name
@@ -81,6 +91,7 @@ async fn harness_with_tool(park_grace: Duration, tool: Arc<dyn Tool>) -> Harness
         OnKill::Report(vec![cancelled_with(Usage::default())]),
         Script::default(),
         Some(tool),
+        |_| {},
     )
     .await
 }
@@ -90,6 +101,7 @@ async fn build(
     on_kill: OnKill,
     script: Script,
     extra_tool: Option<Arc<dyn Tool>>,
+    configure: fn(&mut RuntimeConfig),
 ) -> Harness {
     let workspace = tempfile::tempdir().expect("tempdir");
     let workspace_root = workspace.path().canonicalize().expect("canonical");
@@ -123,20 +135,22 @@ async fn build(
     if let Some(tool) = extra_tool {
         tools.register(tool);
     }
+    let mut config = RuntimeConfig {
+        holder: "test".into(),
+        max_concurrent_turns: 8,
+        lease_ttl: Duration::from_secs(30),
+        default_model: Some(ModelRef::new("claude-code", "haiku")),
+        workspace_root: Some(workspace_root.clone()),
+        engine_park_grace: park_grace,
+        bridge: Some(BridgeConfig {
+            command: "/bin/true".into(),
+            socket: workspace_root.join("aetherd.sock"),
+        }),
+        ..Default::default()
+    };
+    configure(&mut config);
     let runtime = Runtime::start_with_engines(
-        RuntimeConfig {
-            holder: "test".into(),
-            max_concurrent_turns: 8,
-            lease_ttl: Duration::from_secs(30),
-            default_model: Some(ModelRef::new("claude-code", "haiku")),
-            workspace_root: Some(workspace_root.clone()),
-            engine_park_grace: park_grace,
-            bridge: Some(BridgeConfig {
-                command: "/bin/true".into(),
-                socket: workspace_root.join("aetherd.sock"),
-            }),
-            ..Default::default()
-        },
+        config,
         store.clone(),
         models,
         Arc::new(tools),

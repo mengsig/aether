@@ -290,6 +290,8 @@ pub(super) async fn drive(
     let mut park: Option<Park> = None;
     let mut park_reply: Option<(String, serde_json::Value)> = None;
     let mut native_wait: Option<super::native_wait::NativeWait> = None;
+    // The turn's slot went to what its native wait waits on.
+    let mut off_slot = false;
     // A Codex wait that arrived before any job was reported, held back until
     // a command its batch started reports in or the settle bound passes;
     // then released to be served.
@@ -314,15 +316,30 @@ pub(super) async fn drive(
         if std::mem::take(&mut touch_pending) {
             watchdog.touch();
         }
-        if native_wait
-            .as_ref()
-            .is_some_and(|wait| wait.ready(runtime, ctx))
+        let woken = match native_wait.as_ref() {
+            Some(wait) => wait.ready(runtime, ctx, steering.sent_up_to)?,
+            None => None,
+        };
+        if let Some(what) = woken
             && let Some(wait) = native_wait.take()
-            && let Some((tool, input, reply)) =
-                wait.release(runtime, ctx, &mut steering, effects)?
         {
-            state.remember_bridge_reply(tool, input, reply);
+            // Back on a slot before the reply lets the engine call its model.
+            let slot = (false, park.is_some());
+            super::native_wait::follow_slot(runtime, ctx.agent.id, cancel, slot, &mut off_slot)
+                .await;
+            // Queuing for the slot took time: say what holds now.
+            let what = wait
+                .ready(runtime, ctx, steering.sent_up_to)?
+                .unwrap_or(what);
+            let steerable = input.is_some();
+            if let Some((tool, call, reply)) =
+                wait.release(&what, steerable, runtime, ctx, &mut steering, effects)?
+            {
+                state.remember_bridge_reply(tool, call, reply);
+            }
         }
+        let slot = (native_wait.is_some(), park.is_some());
+        super::native_wait::follow_slot(runtime, ctx.agent.id, cancel, slot, &mut off_slot).await;
         let native_deadline = native_wait.as_ref().and_then(|wait| wait.deadline());
         let settle_by = deferred.as_ref().map(|(_, by)| *by);
         let accounting_deadline = state.accounting.deadline();
@@ -359,9 +376,10 @@ pub(super) async fn drive(
                 }
             }
             () = tokio::time::sleep_until(native_deadline.unwrap_or_else(tokio::time::Instant::now)), if native_deadline.is_some() => {
-                if let Some(wait) = native_wait.take()
-                    && let Some((input, reply)) = wait.finish("the requested deadline was reached") {
-                    state.remember_bridge_reply("wait_for".into(), input, reply);
+                // The loop's next pass answers it, back on a slot. A held
+                // wait's check-in time is part of its condition instead.
+                if let Some(wait) = native_wait.as_mut().filter(|wait| !wait.is_held()) {
+                    wait.deadline_reached();
                 }
             }
             () = tokio::time::sleep_until(settle_by.unwrap_or_else(tokio::time::Instant::now)), if settle_by.is_some() => {
@@ -451,12 +469,11 @@ pub(super) async fn drive(
                     // Filled from the engine's own stdout, so bounded like
                     // any other input it controls.
                     let id = clamp(&id, MAX_ENGINE_NAME);
+                    // A `wait_for` ending on it is answered at the loop's next pass.
                     if !running && background.contains(&id)
-                        && native_wait.as_mut().is_some_and(|wait| wait.job_finished(&id))
-                        && let Some(wait) = native_wait.take()
-                        && let Some((input, reply)) = wait.finish(&format!("native background task {id} finished"))
+                        && let Some(wait) = native_wait.as_mut()
                     {
-                        state.remember_bridge_reply("wait_for".into(), input, reply);
+                        wait.job_finished(&id);
                     }
                     if running {
                         if background.len() < MAX_BACKGROUND_IDS {

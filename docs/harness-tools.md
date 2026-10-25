@@ -172,14 +172,18 @@ needed. A native completion can wake it before the requested task condition.
 The deadline ends the wait, not the background job; use native stop tools or
 explicit agent cancellation to stop work.
 
-This attached wait keeps the agent's engine turn/concurrency slot occupied;
-it is not a separately parked, restart-durable native process. Cancelling the
-agent or shutting down the daemon still stops its engine and attached jobs.
-Do not use detached `nohup`/`setsid` processes to evade that ownership. Without
-native jobs, the usual durable Aether wait and bounded engine parking apply.
-This preservation applies to `wait_for`, not other turn-ending actions such
-as `ask_user` or `delegate(wait=true)`. When native work must stay attached,
-delegate without an automatic wait, then use `wait_for`.
+`ask_user` and `delegate(wait=true)` keep the jobs attached the same way. A
+held `delegate` returns when the task finishes, at the
+`[scheduler] wait_timeout_minutes` check-in, or when an urgent message
+arrives (the user, the parent, or a child that failed); its reply says which.
+
+While it waits, the agent hands its engine turn/concurrency slot to others,
+so a delegated child can run under a one-slot limit; it takes a slot back
+before it continues. The wait is not a separately parked, restart-durable
+native process. Cancelling the agent or shutting down the daemon still stops
+its engine and attached jobs. Do not use detached `nohup`/`setsid` processes
+to evade that ownership. Without native jobs, the usual durable Aether wait
+and bounded engine parking apply.
 
 An interrupted `mcp__aether__wait_for` is safe to retry after restart. Mutating
 native calls require inspection on the same host boot; a confirmed Linux host
