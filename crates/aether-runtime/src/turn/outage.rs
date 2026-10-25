@@ -201,7 +201,7 @@ fn recover_turn(runtime: &Arc<Runtime>, agent_id: AgentId) -> Result<()> {
     };
     // Same boot by definition: the turn's own tool processes may still be
     // running, so unsafe calls keep the inspection hold.
-    crate::recovery::recover_leases(runtime, vec![lease], false)?;
+    crate::recovery::recover_leases(runtime, vec![lease], false, None)?;
     Ok(())
 }
 

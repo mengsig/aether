@@ -84,8 +84,8 @@ fn recover_with_boot_id(runtime: &Arc<Runtime>, current_boot: Option<&str>) -> R
             stale.retain(|lease| lease.agent_id != id);
         }
     }
-    let quarantined = recover_leases(runtime, stale, rebooted)?;
-    requarantine_inspected(runtime, &quarantined, rebooted)?;
+    let recovered = recover_leases(runtime, stale, rebooted, None)?;
+    requarantine_inspected(runtime, &recovered.quarantined, rebooted)?;
     validation::validate_live(runtime)?;
     runtime.apply(Commit::new().mutate(Mutation::SetMeta {
         key: BOOT_ID_META.into(),
@@ -96,15 +96,25 @@ fn recover_with_boot_id(runtime: &Arc<Runtime>, current_boot: Option<&str>) -> R
     Ok(())
 }
 
+/// What [`recover_leases`] did with the agents it was given.
+#[derive(Debug, Default)]
+pub(crate) struct Recovered {
+    /// Parked for inspection.
+    pub(crate) quarantined: Vec<AgentId>,
+    /// Left alone: written to while recovery read them, so no longer as read.
+    pub(crate) changed: Vec<AgentId>,
+}
+
 /// Classify each stale lease's turn and put its agent where that leaves it.
 /// `rebooted` only when the host boot changed since the last recovery.
-/// Returns the agents parked for inspection.
+/// `reason`, when given, is recorded with each recovery as `agent.recovered`.
 pub(crate) fn recover_leases(
     runtime: &Arc<Runtime>,
     stale: Vec<aether_core::lease::Lease>,
     rebooted: bool,
-) -> Result<Vec<AgentId>> {
-    let mut quarantined: Vec<AgentId> = Vec::new();
+    reason: Option<&str>,
+) -> Result<Recovered> {
+    let mut done = Recovered::default();
     let cancelling = crate::cancellation::pending_agents(runtime)?;
     for lease in stale {
         if cancelling.contains(&lease.agent_id) {
@@ -112,7 +122,7 @@ pub(crate) fn recover_leases(
         }
         let id = lease.agent_id;
         let recovered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            recover_lease(runtime, lease, rebooted)
+            recover_lease(runtime, lease, rebooted, reason)
         }))
         .unwrap_or_else(|panic| {
             Err(crate::RuntimeError::Invalid(format!(
@@ -121,26 +131,49 @@ pub(crate) fn recover_leases(
             )))
         });
         match recovered {
-            Ok(Some(id)) => quarantined.push(id),
-            Ok(None) => {}
+            Ok(Outcome::Quarantined) => done.quarantined.push(id),
+            Ok(Outcome::Changed) => done.changed.push(id),
+            Ok(Outcome::Done) => {}
             Err(error) => {
                 validation::quarantine_failed_recovery(runtime, id, &error)?;
-                quarantined.push(id);
+                done.quarantined.push(id);
             }
         }
     }
-    Ok(quarantined)
+    Ok(done)
+}
+
+/// How one agent's recovery ended.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Outcome {
+    Done,
+    Quarantined,
+    Changed,
 }
 
 fn recover_lease(
     runtime: &Arc<Runtime>,
     lease: aether_core::lease::Lease,
     rebooted: bool,
-) -> Result<Option<AgentId>> {
-    let Some(mut agent) = runtime.store.agent(lease.agent_id)? else {
+    reason: Option<&str>,
+) -> Result<Outcome> {
+    let Some(agent) = runtime.store.agent(lease.agent_id)? else {
         runtime.apply(Commit::new().mutate(Mutation::ClearLease(lease.agent_id)))?;
-        return Ok(None);
+        return Ok(Outcome::Done);
     };
+    recover_agent(runtime, lease, agent, rebooted, reason)
+}
+
+/// Recover `agent` as read before the commit lock. A live daemon may write it
+/// meanwhile (a cancel, a pause); then the read is stale and it is left alone.
+pub(crate) fn recover_agent(
+    runtime: &Arc<Runtime>,
+    lease: aether_core::lease::Lease,
+    mut agent: aether_core::agent::Agent,
+    rebooted: bool,
+    reason: Option<&str>,
+) -> Result<Outcome> {
+    debug_assert_eq!(lease.agent_id, agent.id, "the lease is the agent's");
     let found = classify_or_inspect(runtime, &agent, rebooted)?;
     let held = if found.class == RecoveryClass::Inspect || rebooted {
         let mut keys = unreleased_keys(runtime, agent.id)?;
@@ -152,7 +185,14 @@ fn recover_lease(
         Vec::new()
     };
     let hold = runtime.hold();
+    if runtime.store.agent(agent.id)?.as_ref() != Some(&agent) {
+        tracing::info!(agent = %agent.id, "agent changed during recovery; leaving it");
+        return Ok(Outcome::Changed);
+    }
     let mut commit = interruption_commit(&agent, &lease, &found, &held);
+    if let Some(reason) = reason {
+        commit.push_event(crate::orphans::recovered_event(&agent, reason));
+    }
     let terminal = agent.status.is_terminal();
     if !terminal {
         resume_recovered(runtime, &hold, &mut commit, &mut agent, &found, &held)?;
@@ -160,14 +200,14 @@ fn recover_lease(
     let id = agent.id;
     commit.push_mutation(Mutation::UpsertAgent(agent));
     runtime.apply_held(hold, commit)?;
-    if terminal {
-        return Ok(None);
+    if terminal || found.class != RecoveryClass::Inspect {
+        return Ok(Outcome::Done);
     }
     // Quarantine only after its event commits: no unexplained in-memory hold.
-    if found.class == RecoveryClass::Inspect && !held.is_empty() {
+    if !held.is_empty() {
         runtime.resources.quarantine(id, held);
     }
-    Ok((found.class == RecoveryClass::Inspect).then_some(id))
+    Ok(Outcome::Quarantined)
 }
 
 fn recovery_event(agent: &aether_core::agent::Agent, kind: EventKind) -> EventDraft {

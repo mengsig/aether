@@ -2,7 +2,7 @@ use super::*;
 use crate::RunningTurn;
 use crate::commands::CreateAgentSpec;
 use aether_core::agent::AgentStatus;
-use aether_store::{EventFilter, Mutation};
+use aether_store::{Commit, EventFilter, Mutation};
 use tokio_util::sync::CancellationToken;
 
 const IDLE: Duration = Duration::from_secs(10 * 60);
@@ -247,4 +247,28 @@ async fn a_turn_that_finishes_after_the_listing_is_not_recovered() {
     let after = runtime.store.agent(agent.id).expect("read").expect("agent");
     assert_eq!(after.status, AgentStatus::Ready);
     assert!(recovered_reasons(&runtime, agent.id).is_empty());
+}
+
+/// A write that lands while recovery reads the agent (a pause, a cancel)
+/// wins: recovery leaves the agent for the next sweep instead of undoing it.
+#[tokio::test]
+async fn recovery_leaves_an_agent_written_to_while_it_read() {
+    let (runtime, _dir) = quiet_runtime().await;
+    let read = strand(&runtime, worker(&runtime));
+    let mut paused = read.clone();
+    paused.paused = true;
+    runtime
+        .apply(Commit::new().mutate(Mutation::UpsertAgent(paused)))
+        .expect("a pause lands meanwhile");
+    let lease = Lease::new(read.id, "unknown", read.stats.turns, now(), Duration::ZERO);
+
+    let outcome =
+        crate::recovery::recover_agent(&runtime, lease, read.clone(), false, Some(REASON_NO_TURN))
+            .expect("recover");
+
+    assert_eq!(outcome, crate::recovery::Outcome::Changed);
+    let after = runtime.store.agent(read.id).expect("read").expect("agent");
+    assert!(after.paused, "recovery undid the pause: {after:?}");
+    assert_eq!(after.status, AgentStatus::Running);
+    assert!(recovered_reasons(&runtime, read.id).is_empty());
 }

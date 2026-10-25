@@ -11,7 +11,7 @@ use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
 use aether_core::lease::Lease;
 use aether_core::time::{Timestamp, now};
-use aether_store::{AgentFilter, Commit};
+use aether_store::AgentFilter;
 
 use crate::{Result, Runtime};
 
@@ -92,7 +92,8 @@ pub(crate) fn sweep_if_due(runtime: &Arc<Runtime>) -> Result<()> {
 }
 
 /// Recover every orphan at `at`, returning the agents it recovered. Each
-/// leaves an `agent.recovered` event naming why.
+/// leaves an `agent.recovered` event naming why; one written to meanwhile is
+/// left for the next sweep.
 pub(crate) fn sweep(runtime: &Arc<Runtime>, at: Timestamp, idle: Duration) -> Result<Vec<AgentId>> {
     let running = runtime.store.agents(&AgentFilter {
         statuses: vec![AgentStatusKind::Running],
@@ -103,8 +104,9 @@ pub(crate) fn sweep(runtime: &Arc<Runtime>, at: Timestamp, idle: Duration) -> Re
         let Some(agent) = confirmed_orphan(runtime, candidate.id, at, idle)? else {
             continue;
         };
-        recover(runtime, &agent)?;
-        recovered.push(agent.id);
+        if recover(runtime, &agent)? {
+            recovered.push(agent.id);
+        }
     }
     debug_assert!(recovered.iter().all(|id| !runtime.turn_in_flight(*id)));
     Ok(recovered)
@@ -131,7 +133,8 @@ pub(crate) fn confirmed_orphan(
     Ok(is_orphan(&agent, false, last_event, at, idle).then_some(agent))
 }
 
-fn recover(runtime: &Arc<Runtime>, agent: &Agent) -> Result<()> {
+/// Recover the orphan; false if it was written to meanwhile.
+fn recover(runtime: &Arc<Runtime>, agent: &Agent) -> Result<bool> {
     tracing::warn!(agent = %agent.id, "running agent has no turn; recovering it");
     // Same stand-in a restart uses for an agent running without a lease.
     let lease = match runtime.store.lease(agent.id)? {
@@ -144,17 +147,19 @@ fn recover(runtime: &Arc<Runtime>, agent: &Agent) -> Result<()> {
             Duration::ZERO,
         ),
     };
-    crate::recovery::recover_leases(runtime, vec![lease], false)?;
-    runtime.apply(Commit::new().event(recovered_event(agent)))?;
-    Ok(())
+    let id = agent.id;
+    let recovered =
+        crate::recovery::recover_leases(runtime, vec![lease], false, Some(REASON_NO_TURN))?;
+    Ok(!recovered.changed.contains(&id))
 }
 
-fn recovered_event(agent: &Agent) -> EventDraft {
+/// The `agent.recovered` event saying why the agent was recovered.
+pub(crate) fn recovered_event(agent: &Agent, reason: &str) -> EventDraft {
     EventDraft::new(
         Actor::System,
         EventKind::Custom {
             name: AGENT_RECOVERED.into(),
-            payload: serde_json::json!({ "reason": REASON_NO_TURN }),
+            payload: serde_json::json!({ "reason": reason }),
         },
     )
     .agent(agent.id)
