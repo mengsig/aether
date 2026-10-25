@@ -113,7 +113,7 @@ impl Tool for Delegate {
                     "leaf": {"type": "boolean", "default": false, "description": "Create a child that cannot delegate and receives fewer coordination tools."},
                     "host_context": {"type": "string", "enum": ["full", "lean"], "description": "lean starts a Claude Code child without its native skills and non-Aether MCP servers, for a smaller context; full restores them. Omit to inherit yours."},
                     "wait": {"type": "boolean", "default": true},
-                    "idempotency_key": {"type": "string", "maxLength": 128, "description": "Printable ASCII, no spaces. A repeat with the same key and arguments returns the first call's agent_id and task_id, not a second child; other arguments under a used key are refused. `wait` is not compared. Kept seven days."}
+                    "idempotency_key": {"type": "string", "maxLength": 128, "description": "Printable ASCII, no spaces. A repeat with the same key and arguments returns the first call's agent_id and task_id, not a second child; other arguments under a used key are refused. `wait` is not compared. Kept up to seven days."}
                 },
                 "required": ["role", "objective", "model", "effort"],
                 "additionalProperties": false

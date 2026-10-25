@@ -48,7 +48,9 @@ created, with `"replayed": true`, and creates nothing. `wait` is not part of the
 comparison, and a replay waits only on a child that has not finished. The same
 key with any other argument changed is refused. Keys are scoped to the calling
 agent, so two agents may use the same word, and are stored in the daemon's
-database with the other submission keys for seven days, across restarts. The
+database with the other submission keys, across restarts, normally for seven
+days. The store prunes submission keys down to 100,000 in all, so a busy
+daemon can evict a key sooner; a repeat after that creates a new child. The
 reply to a keyed call echoes the key.
 
 Delegation has no depth limit: a child may delegate again, as long as its
