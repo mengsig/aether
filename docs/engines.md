@@ -395,7 +395,9 @@ oldest first among equals - and among engine candidates that order is wait
 time, not which engine is the emptier, since they all queue for the one pool.
 A turn that parks on a resource lease gives its slot away and queues for
 another when the key frees, so the cap bounds concurrency rather than only
-admission. Unset means no engine cap.
+admission. A turn whose native jobs keep it attached through `wait_for`,
+`ask_user` or a waiting `delegate` gives its slot away too, and queues for
+one under every cap before it continues. Unset means no engine cap.
 
 `aether status`, the TUI's `/usage` view and `inspect_state` all report the count
 against the cap, and a `delegate` that will queue behind it says so.

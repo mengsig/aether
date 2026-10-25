@@ -49,11 +49,13 @@ Persisted task, message, and deadline conditions wake agents. Unset timed
 check-ins do not cause periodic model calls. Maintenance and external-source
 polling still use timers.
 
-When a native session reports background jobs, `wait_for` holds the MCP reply
-and session open until a tracked completion, inbox message, task condition, or
-deadline. This retains an engine slot and is not restart-durable. Cancellation
-still stops attached work. Other turn-ending actions retain ordinary parking
-semantics. See [harness tools](docs/harness-tools.md).
+When a native session reports background jobs, `wait_for`, `ask_user` and
+`delegate(wait=true)` hold the MCP reply and session open until a tracked
+completion, inbox message, answer, task condition, or deadline. The waiting
+turn hands its concurrency slot to other work and takes one back under the
+global, engine, provider and subtree caps before it continues. This is not
+restart-durable, and cancellation still stops attached work. See
+[harness tools](docs/harness-tools.md).
 
 ## External inputs
 
