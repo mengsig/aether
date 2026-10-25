@@ -59,10 +59,10 @@ status fields are additive. Store schema 27 (was 26).
 
 ### Changed
 
-- **The daemon writes far less and its database shrinks.** Strings of 2 KiB
-  or more in an event (tool output, long messages) are stored once,
-  zstd-compressed, in a side table that the last referring event's expiry
-  removes. Streamed usage readings are committed once per agent every 10 s,
+- **The daemon writes far less and its database shrinks.** In an event of
+  8 KiB or more, each string of 2 KiB or more (tool output, long messages)
+  is stored once, zstd-compressed, in a side table that the last referring
+  event's expiry removes; smaller events stay inline. Streamed usage readings are committed once per agent every 10 s,
   every 2 s under a token or cost budget, instead of every 2 s or at once.
   The store uses incremental auto-vacuum and each maintenance sweep returns
   free pages to the filesystem, so `aether.db` shrinks after expiry (#295,
