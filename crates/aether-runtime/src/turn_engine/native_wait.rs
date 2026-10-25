@@ -60,13 +60,12 @@ pub(super) async fn follow_slot(
         return;
     }
     *off = false;
-    if let crate::turn::Retake::TimedOut =
+    // Stopping the live engine would kill the jobs the wait kept, and going
+    // on would break the caps, so the turn queues until a slot or a cancel.
+    while let crate::turn::Retake::TimedOut =
         crate::turn::retake_turn_slot(runtime, agent, cancel).await
     {
-        // Its engine is live and answered: stopping it now would kill the
-        // jobs the wait kept, so the turn goes on over the engine cap.
-        tracing::warn!(%agent, "no engine slot came free after a native wait; continuing over the cap");
-        crate::turn::set_on_provider(runtime, agent, true);
+        tracing::info!(%agent, "still queued for a turn slot after a native wait");
     }
     debug_assert!(!*off, "the slot is taken back or the turn ends");
 }

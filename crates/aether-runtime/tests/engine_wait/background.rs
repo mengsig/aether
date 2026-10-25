@@ -617,3 +617,46 @@ async fn a_native_wait_deadline_replies_once_its_slot_is_back() {
     assert!(!turn.observed.stopped() && !turn.observed.cancelled());
     h.runtime.shutdown().await;
 }
+
+fn one_turn_slot_short_retake(config: &mut RuntimeConfig) {
+    one_turn_slot(config);
+    config.resource_wait_timeout = Duration::from_millis(300);
+}
+
+/// The slot retake is bounded for a resuming park, but a native wait keeps
+/// queueing past that bound instead of going on over both caps.
+#[tokio::test]
+async fn a_native_wait_keeps_queueing_past_the_retake_bound() {
+    let script = Script {
+        background: Some("build".into()),
+        ..Default::default()
+    };
+    let mut h = harness_configured(
+        Duration::from_millis(100),
+        script,
+        one_turn_slot_short_retake,
+    )
+    .await;
+    let parent = start_coordinator(&h);
+    let turn = turn_of(&mut h, parent).await;
+    let runtime = h.runtime.clone();
+    let token = turn.token.clone();
+    let input = json!({"timeout_seconds": 1});
+    let pending = tokio::spawn(async move {
+        runtime
+            .engine_tool(parent, &token, "wait_for".into(), input)
+            .await
+    });
+    let other = start_coordinator(&h);
+    let _other_turn = turn_of(&mut h, other).await;
+    // The deadline (1 s) plus several retake bounds (0.3 s each) have passed.
+    tokio::time::sleep(Duration::from_millis(2_500)).await;
+    assert!(!pending.is_finished(), "{:?}", pending.await);
+    h.runtime
+        .cancel_agent(other, Some("stop".into()), Actor::user())
+        .unwrap();
+    let reply = reply_of(pending).await;
+    assert!(reply.contains("deadline"), "{reply}");
+    assert!(!turn.observed.stopped() && !turn.observed.cancelled());
+    h.runtime.shutdown().await;
+}
