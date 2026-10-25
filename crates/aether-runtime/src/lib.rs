@@ -715,6 +715,8 @@ impl Runtime {
 
 #[cfg(test)]
 mod model_profile_tests;
+#[cfg(test)]
+mod test_script;
 
 /// A runtime over an in-memory store and an empty config directory, for the
 /// crate's own unit tests. Integration tests use `tests/kernel.rs`'s harness;

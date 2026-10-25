@@ -13,12 +13,10 @@ const FAILING: &str = "#!/bin/sh\necho fixture-exec-server-unavailable >&2\nexit
 
 /// A unique cwd, which every sandbox process inherits, and a fake codex in it.
 fn fixture(script: &str) -> (tempfile::TempDir, PathBuf, String) {
-    use std::os::unix::fs::PermissionsExt as _;
     let dir = tempfile::tempdir().unwrap();
     let cwd = std::fs::canonicalize(dir.path()).unwrap();
     let program = cwd.join("codex");
-    std::fs::write(&program, script).unwrap();
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::test_script::write(&program, script);
     let program = program.to_str().unwrap().to_owned();
     (dir, cwd, program)
 }

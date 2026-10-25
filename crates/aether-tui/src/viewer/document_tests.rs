@@ -8,7 +8,6 @@ use crate::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{
     io::Write,
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 use tools::Tools;
@@ -19,8 +18,7 @@ fn key(app: &mut crate::App, code: KeyCode, modifiers: KeyModifiers) -> Vec<Effe
 
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::voice::test_script::write(&path, &format!("#!/bin/sh\n{body}\n"));
     path
 }
 

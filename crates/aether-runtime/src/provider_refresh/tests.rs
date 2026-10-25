@@ -270,10 +270,11 @@ async fn timeout_cancels_and_waits_for_cleanup_without_setting_backoff() {
 
 #[tokio::test]
 async fn codex_app_server_refresh_records_a_new_reset_observation() {
-    use std::os::unix::fs::PermissionsExt;
     let fixture = tempfile::tempdir().unwrap();
     let program = fixture.path().join("fake-codex");
-    std::fs::write(&program, r##"#!/bin/sh
+    crate::test_script::write(
+        &program,
+        r##"#!/bin/sh
 set -eu
 IFS= read -r init
 printf '%s\n' '{"id":1,"result":{}}'
@@ -281,8 +282,8 @@ IFS= read -r initialized
 IFS= read -r request
 printf '%s\n' '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300,"resetsAt":2000000000}}}}'
 while IFS= read -r message; do :; done
-"##).unwrap();
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+"##,
+    );
     let engine = Arc::new(aether_engine::CodexAppEngine::new(
         program.to_string_lossy(),
         "test",
