@@ -5,6 +5,7 @@ use aether_core::time::Timestamp;
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::SqliteStore;
+use super::write_tally::WriteTally;
 use crate::{DeviceRow, Result, StoreError};
 
 const COLUMNS: &str = "id, created_at, revoked_at, last_seen_at, body";
@@ -41,7 +42,11 @@ fn decode((id, created_at, revoked_at, last_seen_at, body): RawRow) -> Result<De
 }
 
 impl SqliteStore {
-    pub(super) fn put_device(tx: &Transaction<'_>, device: &DeviceRow) -> Result<()> {
+    pub(super) fn put_device(
+        tx: &Transaction<'_>,
+        device: &DeviceRow,
+        tally: &mut WriteTally,
+    ) -> Result<()> {
         tx.execute(
             "INSERT INTO devices(id, created_at, revoked_at, body) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(id) DO UPDATE SET revoked_at = excluded.revoked_at, body = excluded.body",
@@ -49,17 +54,24 @@ impl SqliteStore {
                 device.id.to_string(),
                 device.created_at.to_rfc3339(),
                 device.revoked_at.map(|at| at.to_rfc3339()),
-                serde_json::to_string(&device.record)?,
+                tally.json("devices", &device.record)?,
             ],
         )?;
         Ok(())
     }
 
-    pub(super) fn touch_device(tx: &Transaction<'_>, id: DeviceId, at: Timestamp) -> Result<()> {
+    pub(super) fn touch_device(
+        tx: &Transaction<'_>,
+        id: DeviceId,
+        at: Timestamp,
+        tally: &mut WriteTally,
+    ) -> Result<()> {
+        let seen = at.to_rfc3339();
         let changed = tx.execute(
             "UPDATE devices SET last_seen_at = ?2 WHERE id = ?1",
-            params![id.to_string(), at.to_rfc3339()],
+            params![id.to_string(), seen],
         )?;
+        tally.row("devices", seen.len());
         if changed != 1 {
             return Err(StoreError::Corrupt(format!(
                 "no device {id} to mark as seen"

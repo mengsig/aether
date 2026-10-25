@@ -1,4 +1,5 @@
 use super::SqliteStore;
+use super::write_tally::WriteTally;
 use crate::{Result, StoreError};
 use aether_core::id::{MemoryFeedbackId, MemoryId, TaskId};
 use aether_core::memory_feedback::{
@@ -120,6 +121,7 @@ impl SqliteStore {
     pub(super) fn insert_memory_feedback(
         tx: &Transaction<'_>,
         record: &MemoryFeedback,
+        tally: &mut WriteTally,
     ) -> Result<()> {
         if record.retracted_at.is_some() || record.retraction_reason.is_some() {
             return Err(StoreError::Corrupt(format!(
@@ -138,7 +140,7 @@ impl SqliteStore {
             MemoryEvidence::Review => "review",
             MemoryEvidence::Outcome => "outcome",
         };
-        let body = serde_json::to_string(record)?;
+        let body = tally.json("memory_feedback", record)?;
         #[cfg(debug_assertions)]
         {
             let fields: serde_json::Value = serde_json::from_str(&body)?;

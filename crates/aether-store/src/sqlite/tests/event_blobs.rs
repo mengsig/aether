@@ -227,3 +227,28 @@ fn writes_are_counted_by_kind_and_a_rollback_counts_nothing() {
     assert!(matches!(failed, Err(StoreError::InboxSequence { .. })));
     assert_eq!(store.write_stats().kinds, stats.kinds, "nothing committed");
 }
+
+#[test]
+fn every_written_row_is_counted_once_and_a_repeat_outcome_not_at_all() {
+    let store = SqliteStore::open_in_memory().expect("store");
+    let (agent, invocation, call) = (AgentId::new(), InvocationId::new(), ToolCallId::new());
+    for _ in 0..2 {
+        store
+            .commit(Commit::new().mutate(Mutation::RecordToolOutcome(recorded(
+                agent, invocation, call, "once", "done",
+            ))))
+            .expect("record");
+    }
+    store
+        .commit(Commit::new().mutate(Mutation::SetMeta {
+            key: "boot_id".into(),
+            value: "boot".into(),
+        }))
+        .expect("meta");
+
+    let stats = store.write_stats();
+    let rows = |name: &str| stats.kinds.iter().find(|k| k.kind == name).map(|k| k.rows);
+    assert_eq!(rows("table:tool_outcomes"), Some(1), "{stats:?}");
+    assert_eq!(rows("table:meta"), Some(1), "{stats:?}");
+    assert_eq!(stats.total_rows, 2, "{stats:?}");
+}

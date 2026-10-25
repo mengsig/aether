@@ -6,12 +6,17 @@ use aether_core::notification::Notification;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::SqliteStore;
+use super::write_tally::WriteTally;
 use crate::{NotificationFilter, Result, StoreError};
 
 /// The most rows one read returns, whatever the caller asks for.
 pub(crate) const MAX_NOTIFICATIONS_READ: usize = 1000;
 
-pub(super) fn put(tx: &Transaction<'_>, notification: &Notification) -> Result<()> {
+pub(super) fn put(
+    tx: &Transaction<'_>,
+    notification: &Notification,
+    tally: &mut WriteTally,
+) -> Result<()> {
     if notification.title.trim().is_empty() {
         return Err(StoreError::Corrupt(format!(
             "Notification {} has an empty title; run `aether doctor`",
@@ -29,7 +34,7 @@ pub(super) fn put(tx: &Transaction<'_>, notification: &Notification) -> Result<(
             notification.key,
             notification.state.as_str(),
             notification.updated_at.to_rfc3339(),
-            serde_json::to_string(notification)?,
+            tally.json("notifications", notification)?,
         ],
     )?;
     let stored: (String, Option<String>) = tx.query_row(

@@ -12,7 +12,7 @@ impl SqliteStore {
     ) -> Result<()> {
         match mutation {
             Mutation::RecordEngineSessionOwnership(record) => {
-                super::engine_sessions::record(tx, record)?;
+                super::engine_sessions::record(tx, record, tally)?;
             }
             Mutation::UpsertAgent(agent) => {
                 tx.execute(
@@ -171,7 +171,9 @@ impl SqliteStore {
                 )?;
             }
             Mutation::RecordToolOutcome(rec) => {
-                tx.execute(
+                // A repeat of a recorded outcome writes nothing, so counts nothing.
+                let body = serde_json::to_string(&rec)?;
+                let inserted = tx.execute(
                     "INSERT INTO tool_outcomes(agent_id, invocation_id, call_id, key, tool, at, body)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                      ON CONFLICT(agent_id, invocation_id, call_id, key) DO NOTHING",
@@ -182,9 +184,13 @@ impl SqliteStore {
                         rec.key.0.clone(),
                         rec.tool.clone(),
                         rec.at.to_rfc3339(),
-                        tally.json("tool_outcomes", &rec)?,
+                        body,
                     ],
                 )?;
+                debug_assert!(inserted <= 1, "one outcome per key");
+                if inserted == 1 {
+                    tally.row("tool_outcomes", body.len());
+                }
             }
             Mutation::RecordSubmission(rec) => {
                 // Numbered in this transaction, so a refused insert takes its
@@ -206,9 +212,12 @@ impl SqliteStore {
                     ],
                 )?;
             }
-            Mutation::RecordMemoryFeedback(record) => Self::insert_memory_feedback(tx, &record)?,
+            Mutation::RecordMemoryFeedback(record) => {
+                Self::insert_memory_feedback(tx, &record, tally)?;
+            }
             Mutation::RetractMemoryFeedback { id, at, reason } => {
                 Self::retract_memory_feedback(tx, id, at, &reason)?;
+                tally.row("memory_feedback", reason.len());
             }
             Mutation::PutMemory(mem) => put_memory(tx, &mem, tally)?,
             Mutation::PutArtifact(art) => {
@@ -248,11 +257,12 @@ impl SqliteStore {
                     "INSERT INTO meta(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                     params![key, value],
                 )?;
+                tally.row("meta", key.len() + value.len());
             }
-            Mutation::PutDevice(device) => Self::put_device(tx, &device)?,
-            Mutation::TouchDevice { id, at } => Self::touch_device(tx, id, at)?,
+            Mutation::PutDevice(device) => Self::put_device(tx, &device, tally)?,
+            Mutation::TouchDevice { id, at } => Self::touch_device(tx, id, at, tally)?,
             Mutation::PutNotification(notification) => {
-                super::notifications::put(tx, &notification)?;
+                super::notifications::put(tx, &notification, tally)?;
             }
             Mutation::PruneResolvedNotifications { keep } => {
                 super::notifications::prune_resolved(tx, keep)?;

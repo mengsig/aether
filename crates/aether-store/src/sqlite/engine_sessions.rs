@@ -1,8 +1,13 @@
+use super::write_tally::WriteTally;
 use crate::{EngineSessionOwnership, ExpiredEngineSessionOwner, Result, StoreError};
 use aether_core::agent::Agent;
 use rusqlite::{OptionalExtension, Transaction, params};
 
-pub(super) fn record(tx: &Transaction<'_>, record: EngineSessionOwnership) -> Result<()> {
+pub(super) fn record(
+    tx: &Transaction<'_>,
+    record: EngineSessionOwnership,
+    tally: &mut WriteTally,
+) -> Result<()> {
     if record.expired_owner.is_some()
         || !matches!(record.engine.as_str(), "claude-code" | "codex")
         || record.session_id.trim().is_empty()
@@ -38,7 +43,7 @@ pub(super) fn record(tx: &Transaction<'_>, record: EngineSessionOwnership) -> Re
         params![
             record.engine,
             record.session_id,
-            serde_json::to_string(&record)?
+            tally.json("engine_session_ownership", &record)?
         ],
     )?;
     Ok(())

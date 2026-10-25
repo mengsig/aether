@@ -43,8 +43,17 @@ impl WriteTally {
     /// The JSON body of a row of `table`, counted as written.
     pub(super) fn json<T: Serialize>(&mut self, table: &str, value: &T) -> Result<String> {
         let body = serde_json::to_string(value)?;
-        self.add(&format!("{TABLE_PREFIX}{table}"), body.len());
+        self.row(table, body.len());
         Ok(body)
+    }
+
+    /// One row of `table` written with `bytes` of values.
+    pub(super) fn row(&mut self, table: &str, bytes: usize) {
+        debug_assert!(
+            !table.is_empty() && !table.starts_with(TABLE_PREFIX),
+            "{table}"
+        );
+        self.add(&format!("{TABLE_PREFIX}{table}"), bytes);
     }
 }
 
