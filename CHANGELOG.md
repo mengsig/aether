@@ -6,6 +6,68 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.5
+
+Released 2026-10-25. A patch release for long-running fleets: the daemon
+writes far less and its database shrinks after history expires (#295), an
+agent's leftover processes are stopped when it ends (#293), agents left
+running after "database is locked" are recovered (#292), Codex and Claude
+Code background jobs stay attached across `wait_for`, `ask_user` and a
+waiting `delegate` (#297, #298), and the GitHub review sweep handles any
+number of open PRs (#296). Protocol version 24, unchanged; the new reply and
+status fields are additive. Store schema 27 (was 26).
+
+### Before updating
+
+- Restart the daemon after the update (`aether stop`, then `aether`). Its
+  first start writes a pre-migration backup to `migration-backups/`,
+  migrates the store to schema 27, and converts a store created before 1.2.5
+  to incremental auto-vacuum when the disk has room for a copy of it. On a
+  large store that first start can take a while.
+- Aether 1.2.4 refuses a schema 27 store. To go back, stop the daemon and
+  restore the `schema-26-before-27` backup as described in
+  [Restoring a backup](docs/migration-backups.md#restoring-a-backup); what
+  happened after the upgrade is lost.
+- On Linux, processes an agent's engines leave behind (a model server, a
+  detached job) are now stopped when the agent ends. Start anything meant to
+  outlive its agent outside Aether.
+
+### Added
+
+- **Leftover processes are reaped when an agent ends (Linux).** Each engine
+  carries its agent's id in its environment and, with a user systemd, runs
+  in a scope named after the agent. When the agent completes, fails, is
+  cancelled or runs out of time or budget, the daemon sends `SIGTERM` to
+  every live process in its scopes or carrying its tag, waits
+  `[agents] reap_grace_secs` (default 10), sends `SIGKILL` to the rest and
+  records an `agent.processes_reaped` event. Elsewhere only a turn's own
+  process group is stopped, as before. A daemon shutdown still only stops
+  its running engines' process groups (#293, mengsig/archon#254).
+- **`aether status` reports what the daemon writes.** Rows and bytes written
+  since the daemon started, by event type and by table, with the database
+  and WAL sizes and the heaviest kinds; `aether status --json` carries the
+  full table under `writes` (#295, mengsig/archon#253).
+- **Liveness in agent replies.** `get_agent` and `list_agents` replies carry
+  `engine_alive` and `last_event_at`, additively (mengsig/archon#251).
+- **`delegate` takes an optional `idempotency_key`.** A caller that lost the
+  reply, for example to a client timeout, repeats the call with the same key
+  and arguments and gets the child the first call created instead of a second
+  one; the same key with different arguments is refused. Keys are scoped to
+  the calling agent and kept with the daemon's other submission keys, usually
+  for seven days; pruning the store to 100,000 keys can evict one sooner,
+  and a repeat after that creates a new child (#291, mengsig/archon#252).
+
+### Changed
+
+- **The daemon writes far less and its database shrinks.** Strings of 2 KiB
+  or more in an event (tool output, long messages) are stored once,
+  zstd-compressed, in a side table that the last referring event's expiry
+  removes. Streamed usage readings are committed once per agent every 10 s,
+  every 2 s under a token or cost budget, instead of every 2 s or at once.
+  The store uses incremental auto-vacuum and each maintenance sweep returns
+  free pages to the filesystem, so `aether.db` shrinks after expiry (#295,
+  mengsig/archon#253).
+
 ### Fixed
 
 - **Codex agents keep pending exec processes across `wait_for`.** A Codex
@@ -13,43 +75,41 @@ release is also the text of its GitHub release.
   agent called `wait_for`, because the wait ended the turn and stopped the
   CLI. Both Codex modes now report such a command as a native background job,
   so `wait_for` keeps the session attached and returns when the process
-  exits. Aether's MCP calls from Codex no longer time out after 300 s. Jobs
-  are still reaped when the agent ends (mengsig/archon#262).
+  exits. A message that ends a Codex exec wait is handed over in its reply.
+  Aether's MCP calls from Codex no longer time out after 300 s. Jobs are
+  still reaped when the agent ends (#297, mengsig/archon#262).
 - **Native background jobs survive `ask_user` and a waiting `delegate`.**
   While a Claude Code or Codex job runs, these calls hold their reply with
   the session attached until the operator answers or the child finishes,
   then hand over the answer or result and the jobs that finished meanwhile.
-  A Codex wait in the same tool batch as the command waits up to 500 ms for
-  it to be reported running. The agent's final answer still stops its jobs,
-  and the reaper still stops every process when the agent ends.
+  A held `delegate` also returns at the `[scheduler] wait_timeout_minutes`
+  check-in and on an urgent message (the user, the parent, a failed child),
+  as a parked agent would. A waiting turn hands its engine slot to others,
+  so a delegated child runs even at a one-turn limit. A Codex wait in the
+  same tool batch as the command waits up to 500 ms for it to be reported
+  running. The agent's final answer still stops its jobs, and the reaper
+  still stops every process when the agent ends (#298,
+  mengsig/archon#262).
 - **A deleted workspace is no longer reported as a missing engine.** An
   engine spawn checks the working directory first and fails with
   `workspace missing: <path>`; an ENOENT from the spawn names the missing
-  program only when the directory exists (mengsig/archon#256).
+  program only when the directory exists (#294, mengsig/archon#256).
 - **Agents no longer stall after "database is locked".** A turn whose end
   hit a locked database retries it with bounded backoff, and a failure that
   still cannot be recorded recovers the agent as a restart would. A periodic
   sweep (`[scheduler] orphan_sweep_seconds`, default 60;
   `orphan_idle_minutes`, default 10) recovers any agent left running with no
-  turn and records an `agent.recovered` event (mengsig/archon#251).
+  turn and records an `agent.recovered` event; an agent written to while the
+  sweep reads it (a cancel, a pause) is left for the next sweep
+  (#292, mengsig/archon#251).
 - **The GitHub watcher's review sweep handles more than 30 open PRs.** It no
   longer fails every pass with "review sweep exceeds 30 PRs": each pass reads
   the next PRs of a saved cycle, oldest first, and resumes where it stopped,
   also across a daemon restart. The review sweep and issue/comment polling
   back off separately, so review errors no longer delay comment mentions.
-  `[github_watcher] review_sweep_prs` (default 30) sets the per-pass limit
-  (#290).
-
-### Added
-
-- **Liveness in agent replies.** `get_agent` and `list_agents` replies carry
-  `engine_alive` and `last_event_at`, additively (mengsig/archon#251).
-- **`delegate` takes an optional `idempotency_key`.** A caller that lost the
-  reply, for example to a client timeout, repeats the call with the same key
-  and arguments and gets the child the first call created instead of a second
-  one; the same key with different arguments is refused. Keys are scoped to
-  the calling agent and kept with the daemon's other submission keys for seven
-  days (mengsig/archon#252).
+  `[github_watcher] review_sweep_prs` (default 30) sets the per-pass limit.
+  Operator authorship is looked up only for the mentions a pass can decide,
+  so a long backlog cannot exhaust the pass's requests (#296, #290).
 
 ## 1.2.4
 
