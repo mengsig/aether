@@ -482,8 +482,9 @@ whatever is left after the grace. It records what it stopped as an
 and in `survived` any still alive after that. Only processes of the daemon's
 own user are signalled, and never the daemon itself. If the agent is restarted
 during the grace, the reap stops, so its next engine is spared. A daemon
-shutdown does not end its agents, so it leaves these processes running; the
-agents resume after the restart.
+shutdown does not end its agents, so it skips this reap: it stops each running
+engine's process group, as for any interrupted turn, and only processes that
+left that group keep running until their agent ends after the restart.
 
 ```toml
 [agents]

@@ -2,8 +2,9 @@
 //!
 //! The processes are found by the agent's tag in their environment and, on
 //! Linux with systemd, in the agent's engine scopes ([`crate::scope`]). A
-//! daemon shutdown never calls this: the processes of running agents survive
-//! it, and the next start recovers their engines through [`crate::orphans`].
+//! daemon shutdown never calls this: it stops each running engine's process
+//! group, and only processes that left the group outlive it until their agent
+//! ends after the restart.
 //! Elsewhere than Linux nothing can be found again after a turn, so only the
 //! turn's own process-group stop applies.
 
