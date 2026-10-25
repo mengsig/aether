@@ -70,7 +70,7 @@ async fn harness_with(park_grace: Duration, on_kill: OnKill) -> Harness {
 }
 
 async fn harness_full(park_grace: Duration, on_kill: OnKill, script: Script) -> Harness {
-    build(park_grace, on_kill, script, None, |_| {}).await
+    build(park_grace, on_kill, script, None, ("", |_| {})).await
 }
 
 /// [`harness_full`] with its runtime configuration adjusted by `configure`.
@@ -80,7 +80,18 @@ async fn harness_configured(
     configure: fn(&mut RuntimeConfig),
 ) -> Harness {
     let on_kill = OnKill::Report(vec![cancelled_with(Usage::default())]);
-    build(park_grace, on_kill, script, None, configure).await
+    build(park_grace, on_kill, script, None, ("", configure)).await
+}
+
+/// [`harness_configured`] with `providers` appended to the providers file.
+async fn harness_with_providers(
+    script: Script,
+    providers: &str,
+    configure: fn(&mut RuntimeConfig),
+) -> Harness {
+    let on_kill = OnKill::Report(vec![cancelled_with(Usage::default())]);
+    let park_grace = Duration::from_millis(100);
+    build(park_grace, on_kill, script, None, (providers, configure)).await
 }
 
 /// A harness whose registry serves `tool` under whatever harness tool name
@@ -91,7 +102,7 @@ async fn harness_with_tool(park_grace: Duration, tool: Arc<dyn Tool>) -> Harness
         OnKill::Report(vec![cancelled_with(Usage::default())]),
         Script::default(),
         Some(tool),
-        |_| {},
+        ("", |_| {}),
     )
     .await
 }
@@ -101,15 +112,17 @@ async fn build(
     on_kill: OnKill,
     script: Script,
     extra_tool: Option<Arc<dyn Tool>>,
-    configure: fn(&mut RuntimeConfig),
+    (providers, configure): (&str, fn(&mut RuntimeConfig)),
 ) -> Harness {
     let workspace = tempfile::tempdir().expect("tempdir");
     let workspace_root = workspace.path().canonicalize().expect("canonical");
     let config_dir = tempfile::tempdir().expect("config dir");
     std::fs::write(
         config_dir.path().join("providers.toml"),
-        "[providers.claude-code.auth]\nnone = true\n\
-         [providers.codex.auth]\nnone = true\n",
+        format!(
+            "[providers.claude-code.auth]\nnone = true\n\
+             [providers.codex.auth]\nnone = true\n{providers}"
+        ),
     )
     .expect("fixture provider authentication");
     let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().expect("store"));

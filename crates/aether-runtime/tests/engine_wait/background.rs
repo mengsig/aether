@@ -660,3 +660,74 @@ async fn a_native_wait_keeps_queueing_past_the_retake_bound() {
     assert!(!turn.observed.stopped() && !turn.observed.cancelled());
     h.runtime.shutdown().await;
 }
+
+/// Starts a 1 s native `wait_for` in `first`'s turn, lets the agent that
+/// `second` starts take the slot it gave away, and checks that the reply
+/// waits past the deadline until that agent is cancelled.
+async fn wait_reply_queues_behind(mut h: Harness, first: AgentId, second: fn(&Harness) -> AgentId) {
+    let turn = turn_of(&mut h, first).await;
+    let runtime = h.runtime.clone();
+    let token = turn.token.clone();
+    let input = json!({"timeout_seconds": 1});
+    let pending = tokio::spawn(async move {
+        runtime
+            .engine_tool(first, &token, "wait_for".into(), input)
+            .await
+    });
+    let other = second(&h);
+    let _other_turn = turn_of(&mut h, other).await;
+    tokio::time::sleep(Duration::from_millis(2_000)).await;
+    assert!(!pending.is_finished(), "{:?}", pending.await);
+    h.runtime
+        .cancel_agent(other, Some("stop".into()), Actor::user())
+        .unwrap();
+    let reply = reply_of(pending).await;
+    assert!(reply.contains("deadline"), "{reply}");
+    assert!(!turn.observed.stopped() && !turn.observed.cancelled());
+    h.runtime.shutdown().await;
+}
+
+/// Global and engine limits have room; the provider's own cap does not.
+#[tokio::test]
+async fn a_native_wait_retakes_only_under_its_provider_cap() {
+    let script = Script {
+        background: Some("build".into()),
+        ..Default::default()
+    };
+    let providers = "[providers.claude-code]\nmax_concurrent = 1\n";
+    let h = harness_with_providers(script, providers, |_| {}).await;
+    let first = start_coordinator(&h);
+    wait_reply_queues_behind(h, first, start_coordinator).await;
+}
+
+fn capped_root(h: &Harness) -> AgentId {
+    let mut spec = coordinator_spec();
+    spec.start = false;
+    spec.config.as_mut().expect("config").concurrency = Some(1);
+    start_agent(h, spec)
+}
+
+fn child_of_first_root(h: &Harness) -> AgentId {
+    let roots = h.store.agents(&AgentFilter::default()).expect("agents");
+    let root = roots
+        .iter()
+        .find(|agent| agent.config.concurrency == Some(1))
+        .expect("the capped root");
+    let mut spec = coordinator_spec();
+    spec.parent = Some(root.id);
+    spec.config.as_mut().expect("config").effort = Some(aether_core::model::Effort::Low);
+    start_agent(h, spec)
+}
+
+/// Global and engine limits have room; a supervisor's subtree cap does not.
+#[tokio::test]
+async fn a_native_wait_retakes_only_under_its_supervisor_cap() {
+    let script = Script {
+        background: Some("build".into()),
+        ..Default::default()
+    };
+    let h = harness_configured(Duration::from_millis(100), script, |_| {}).await;
+    capped_root(&h);
+    let first = child_of_first_root(&h);
+    wait_reply_queues_behind(h, first, child_of_first_root).await;
+}

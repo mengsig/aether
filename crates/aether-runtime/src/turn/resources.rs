@@ -210,7 +210,8 @@ pub(crate) async fn retake_engine_slot(
 }
 
 /// [`retake_engine_slot`] for a turn that also gave up its place under the
-/// global turn limit, as a native wait does, so both limits must have room.
+/// global turn limit, as a native wait does, so that limit, its provider's
+/// cap and its supervisors' subtree caps must have room too.
 pub(crate) async fn retake_turn_slot(
     runtime: &Arc<Runtime>,
     agent: AgentId,
@@ -219,8 +220,8 @@ pub(crate) async fn retake_turn_slot(
     retake_slot(runtime, agent, cancel, true).await
 }
 
-/// A turn ending frees a global slot without notifying `engine_slot`, so a
-/// retake that needs one looks again this often.
+/// A turn ending frees a global, provider or subtree slot without notifying
+/// `engine_slot`, so a retake that needs one looks again this often.
 const GLOBAL_SLOT_RECHECK: Duration = Duration::from_millis(250);
 
 async fn retake_slot(
@@ -233,17 +234,31 @@ async fn retake_slot(
     let global_cap = runtime.config.max_concurrent_turns;
     debug_assert!(global_cap > 0, "the global limit is validated as positive");
     let deadline = tokio::time::Instant::now() + engine_retake_wait(runtime);
+    let provider = global
+        .then(|| {
+            runtime
+                .sched
+                .lock()
+                .running
+                .get(&agent)
+                .map(|r| r.provider.clone())
+        })
+        .flatten();
     let mut queued: Option<EngineRetaker> = None;
     loop {
         // Armed before the check: a slot freed between the two still wakes us.
         let freed = runtime.engine_slot.notified();
         tokio::pin!(freed);
         freed.as_mut().enable();
+        let limits = provider
+            .as_deref()
+            .map(|provider| crate::scheduler::ResumeLimits::load(runtime, provider));
         {
             let mut sched = runtime.sched.lock();
             let needs_slot = sched.running.get(&agent).is_some_and(|r| r.engine);
             let global_free = !global || sched.on_provider().count() < global_cap;
-            if global_free && (!needs_slot || sched.engine_slot_free(cap)) {
+            let limits_free = limits.as_ref().is_none_or(|l| !l.held_back(agent, &sched));
+            if global_free && limits_free && (!needs_slot || sched.engine_slot_free(cap)) {
                 if let Some(turn) = sched.running.get_mut(&agent) {
                     turn.on_provider = true;
                 }

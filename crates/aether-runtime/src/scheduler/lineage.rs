@@ -96,6 +96,63 @@ impl Lineage {
     }
 }
 
+/// The limits a turn that gave its slot away for a native wait must fit
+/// again before it resumes, beside the global and engine ones: its
+/// provider's cap and every supervisor's subtree cap, counted as `pick` does.
+pub(crate) struct ResumeLimits {
+    provider: String,
+    provider_cap: Option<usize>,
+    /// `None` when the fleet could not be read: the turn then stays queued.
+    lineage: Option<Lineage>,
+}
+
+impl ResumeLimits {
+    /// Reads the store, so it is loaded outside the scheduler lock.
+    pub(crate) fn load(runtime: &crate::Runtime, provider: &str) -> Self {
+        debug_assert!(!provider.is_empty(), "a running turn has a provider");
+        let provider_cap = runtime
+            .models
+            .registry()
+            .provider(provider)
+            .and_then(|p| p.max_concurrent)
+            .map(|cap| cap as usize);
+        let filter = aether_store::AgentFilter {
+            live_only: true,
+            ..Default::default()
+        };
+        let lineage = match runtime.store.agents(&filter) {
+            Ok(live) => Some(Lineage::from_store(&live, runtime)),
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot read the fleet to check subtree caps; still queued");
+                None
+            }
+        };
+        Self {
+            provider: provider.to_owned(),
+            provider_cap,
+            lineage,
+        }
+    }
+
+    /// Whether one of these limits is spent, so `agent` must keep queueing.
+    pub(crate) fn held_back(&self, agent: AgentId, sched: &SchedulerState) -> bool {
+        debug_assert!(
+            sched.running.get(&agent).is_none_or(|r| !r.on_provider),
+            "a resuming turn holds no slot, so it never counts against itself"
+        );
+        let on_provider = sched
+            .on_provider()
+            .filter(|(_, r)| r.provider == self.provider)
+            .count();
+        if self.provider_cap.is_some_and(|cap| on_provider >= cap) {
+            return true;
+        }
+        self.lineage.as_ref().is_none_or(|lineage| {
+            lineage.has_unreadable_ancestor(agent) || lineage.capped(agent, sched)
+        })
+    }
+}
+
 /// How many of `id`'s descendants, at any depth, are consuming a concurrency
 /// slot right now - exactly what `Lineage::capped` counts against a cap, so a
 /// tool reply or a client projection never disagrees with what the scheduler
