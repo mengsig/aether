@@ -27,7 +27,9 @@ mid-turn (#303). Protocol version 24 and store schema 27, both unchanged.
   answered them, and when the turn ended a new paid turn delivered them
   again. Each steered message now carries its own uuid, and an echo
   acknowledges its message and every older one; a CLI that echoes by text
-  still matches as before (#305, #303).
+  still matches as before. A late echo of a message already acknowledged
+  in a batch acknowledges nothing, so it cannot take a newer message with
+  the same text (#305, #303).
 
 ## 1.2.5
 
