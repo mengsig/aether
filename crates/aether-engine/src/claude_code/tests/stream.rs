@@ -133,8 +133,8 @@ fn background_tasks_are_reported() {
 #[test]
 fn echoed_messages_acknowledge_steering_in_order() {
     let mut st = ParseState::default();
-    st.expect_echo("first steer");
-    st.expect_echo("second steer\n");
+    st.expect_echo("u-first", "first steer");
+    st.expect_echo("u-second", "second steer\n");
     // The prompt's own echo is not a steered message.
     let prompt = r#"{"type":"user","isReplay":true,"uuid":"u0","session_id":"s","message":{"role":"user","content":[{"type":"text","text":"do the task"}]}}"#;
     assert_eq!(parse_line(prompt, &mut st), vec![]);
@@ -154,6 +154,53 @@ fn echoed_messages_acknowledge_steering_in_order() {
         vec![EngineEvent::InputAccepted]
     );
     assert_eq!(parse_line(second, &mut st), vec![]);
+}
+
+/// Two messages sent close together run as one turn. The CLI echoes the
+/// batch as one merged message under the last member's uuid, and the other
+/// members only by the uuid each came with.
+#[test]
+fn a_batch_echoed_under_its_last_uuid_acknowledges_every_member() {
+    let mut st = ParseState::default();
+    st.expect_echo("u-sims", "Are we running any sims?");
+    st.expect_echo("u-drone", "And dronemind, if it runs?");
+    let merged = json!({"type": "user", "isReplay": true, "uuid": "u-drone",
+        "message": {"role": "user", "content": [{"type": "text",
+            "text": "Are we running any sims?\nAnd dronemind, if it runs?"}]}})
+    .to_string();
+    assert_eq!(
+        parse_line(&merged, &mut st),
+        vec![EngineEvent::InputAccepted, EngineEvent::InputAccepted]
+    );
+    assert!(st.outstanding.lock().unwrap().is_empty());
+    // A later echo of a member already covered acknowledges nothing more.
+    let member = json!({"type": "user", "isReplay": true, "uuid": "u-sims",
+        "message": {"role": "user", "content": "Are we running any sims?"}})
+    .to_string();
+    assert_eq!(parse_line(&member, &mut st), vec![]);
+}
+
+#[test]
+fn an_echo_matches_its_own_uuid_whatever_its_text() {
+    let mut st = ParseState::default();
+    st.expect_echo("u-1", "first steer");
+    st.expect_echo("u-2", "second steer");
+    let first = json!({"type": "user", "isReplay": true, "uuid": "u-1",
+        "message": {"role": "user", "content": "first steer, as the CLI stored it"}})
+    .to_string();
+    assert_eq!(
+        parse_line(&first, &mut st),
+        vec![EngineEvent::InputAccepted]
+    );
+    // An echo under a uuid the CLI minted itself still matches the oldest text.
+    let second = json!({"type": "user", "isReplay": true, "uuid": "cli-own",
+        "message": {"role": "user", "content": [{"type": "text", "text": "second steer"}]}})
+    .to_string();
+    assert_eq!(
+        parse_line(&second, &mut st),
+        vec![EngineEvent::InputAccepted]
+    );
+    assert!(st.outstanding.lock().unwrap().is_empty());
 }
 
 fn replay_of(text: &str) -> String {
@@ -238,7 +285,7 @@ fn only_queued_work_before_the_prompt_echo_is_skipped() {
     );
 
     // Once read, the prompt's own empty result is the engine's to judge.
-    st.expect_echo("do it");
+    st.expect_echo("u-do", "do it");
     assert_eq!(parse_line(&replay_of("do it"), &mut st), vec![]);
     assert_eq!(
         done_texts(&parse_line(notice, &mut st)),
@@ -252,6 +299,15 @@ fn only_queued_work_before_the_prompt_echo_is_skipped() {
     // A blank prompt is never echoed, so nothing waits on it.
     let mut st = ParseState::awaiting_prompt("  ");
     assert_eq!(done_texts(&parse_line(empty, &mut st)).len(), 1);
+}
+
+#[test]
+fn a_steered_message_line_carries_its_uuid() {
+    let line = crate::claude_code::steered_message_line("u-1", "hi", &[]);
+    let v: serde_json::Value = serde_json::from_str(line.trim()).expect("json");
+    assert_eq!(v["uuid"], "u-1");
+    assert_eq!(v["type"], "user");
+    assert_eq!(v["message"]["content"][0]["text"], "hi");
 }
 
 #[test]
@@ -338,7 +394,7 @@ fn a_line_with_one_messages_worth_of_images_fits_the_echo_the_reader_accepts() {
 #[test]
 fn an_echo_with_images_acknowledges_its_message() {
     let mut st = ParseState::default();
-    st.expect_echo("look at this");
+    st.expect_echo("u-look", "look at this");
     let echo = json!({"type": "user", "isReplay": true, "message": {"role": "user", "content": [
         {"type": "text", "text": "look at this"},
         {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}},

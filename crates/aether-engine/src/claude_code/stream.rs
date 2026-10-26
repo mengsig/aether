@@ -18,7 +18,7 @@ mod refusal;
 pub struct ParseState {
     session_cost: super::session_cost::SessionCost,
     tool_names: std::collections::BTreeMap<usize, String>,
-    pub(super) outstanding: Arc<Mutex<VecDeque<String>>>,
+    pub(super) outstanding: Arc<Mutex<VecDeque<Steered>>>,
     message_usage: std::collections::BTreeMap<UsageRequestId, Usage>,
     message_models: std::collections::BTreeMap<UsageRequestId, String>,
     streamed_models: std::collections::BTreeMap<String, Usage>,
@@ -39,6 +39,13 @@ pub struct ParseState {
     /// The turn's prompt until the CLI echoes it. Before that echo, a result
     /// that ran no model closes work the CLI queued ahead of the prompt.
     prompt: Option<String>,
+}
+
+/// A message written to the CLI mid-turn and not yet echoed back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Steered {
+    pub(super) uuid: String,
+    pub(super) text: String,
 }
 
 /// Messages one run keeps high-water marks for. The ids are the engine's, so
@@ -116,22 +123,33 @@ impl ParseState {
     }
 
     /// Remember a message handed to the CLI, so its echo is recognised.
-    pub fn expect_echo(&self, text: &str) {
+    pub fn expect_echo(&self, uuid: &str, text: &str) {
+        assert!(!uuid.is_empty(), "a steered message is echoed by its uuid");
         self.outstanding
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push_back(text.to_owned());
+            .push_back(Steered {
+                uuid: uuid.to_owned(),
+                text: text.to_owned(),
+            });
     }
 
-    /// Whether `text` is the oldest message still awaiting its echo; pops it.
-    fn take_echo(&self, text: &str) -> bool {
+    /// How many messages an echo acknowledges; pops them. Matched by uuid,
+    /// else by the oldest one's text, for a CLI that echoes uuids of its own.
+    /// The CLI takes input in order, so an echo also covers older messages.
+    fn take_echoes(&self, uuid: Option<&str>, text: Option<&str>) -> usize {
         let mut queue = self.outstanding.lock().unwrap_or_else(|e| e.into_inner());
-        if queue.front().is_some_and(|t| t.trim() == text.trim()) {
-            queue.pop_front();
-            true
-        } else {
-            false
-        }
+        let by_uuid = uuid.and_then(|uuid| queue.iter().position(|m| m.uuid == uuid));
+        let by_text = || {
+            let oldest = queue.front()?;
+            text.is_some_and(|t| t.trim() == oldest.text.trim())
+                .then_some(0)
+        };
+        let Some(last) = by_uuid.or_else(by_text) else {
+            return 0;
+        };
+        debug_assert!(last < queue.len(), "the echoed message is outstanding");
+        queue.drain(..=last).count()
     }
 }
 
@@ -225,12 +243,8 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
         }
         "user" => {
             let mut out = Vec::new();
-            if v.get("isReplay").and_then(Value::as_bool) == Some(true)
-                && let Some(text) = replayed_text(&v["message"])
-                && !state.take_prompt_echo(&text)
-                && state.take_echo(&text)
-            {
-                out.push(EngineEvent::InputAccepted);
+            if v.get("isReplay").and_then(Value::as_bool) == Some(true) {
+                out.extend(echo_acknowledgements(&v, state));
             }
             if let Some(items) = v["message"].get("content").and_then(Value::as_array) {
                 for item in items {
@@ -382,6 +396,19 @@ fn is_queued_work_result(v: &Value) -> bool {
         && v.get("is_error").and_then(Value::as_bool) != Some(true);
     let notice = v.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification");
     succeeded && notice && v.get("num_turns").and_then(Value::as_u64) == Some(0)
+}
+
+/// One `InputAccepted` per steered message a replayed user message echoes.
+/// The prompt's own echo acknowledges none.
+fn echo_acknowledgements(v: &Value, state: &mut ParseState) -> Vec<EngineEvent> {
+    debug_assert_eq!(v.get("isReplay").and_then(Value::as_bool), Some(true));
+    let uuid = v.get("uuid").and_then(Value::as_str);
+    let text = replayed_text(&v["message"]);
+    if text.as_deref().is_some_and(|t| state.take_prompt_echo(t)) {
+        return Vec::new();
+    }
+    let acknowledged = state.take_echoes(uuid, text.as_deref());
+    vec![EngineEvent::InputAccepted; acknowledged]
 }
 
 /// The text of an echoed user message; `None` for tool-result messages.

@@ -14,7 +14,7 @@ fn archon() -> HostCommands {
     .unwrap()
 }
 
-fn app_with_host() -> (App, AgentId) {
+pub(super) fn app_with_host() -> (App, AgentId) {
     let (mut app, id) = app_with_agent();
     app.options.host_commands = archon();
     app.flash = None;

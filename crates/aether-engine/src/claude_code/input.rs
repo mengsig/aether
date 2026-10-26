@@ -7,6 +7,7 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+use super::stream::Steered;
 use crate::EngineInput;
 
 pub(super) fn interrupt_line() -> String {
@@ -22,7 +23,7 @@ pub(super) fn interrupt_line() -> String {
 
 pub(super) fn spawn(
     stdin: mpsc::Sender<String>,
-    outstanding: Arc<Mutex<VecDeque<String>>>,
+    outstanding: Arc<Mutex<VecDeque<Steered>>>,
 ) -> (mpsc::Sender<EngineInput>, mpsc::Sender<Duration>) {
     let (input_tx, mut input_rx) = mpsc::channel::<EngineInput>(16);
     let (stop_tx, mut stop_rx) = mpsc::channel::<Duration>(1);
@@ -49,8 +50,13 @@ pub(super) fn spawn(
                 }
                 message = input_rx.recv() => {
                     let Some(message) = message else { break; };
-                    let line = super::user_message_line(&message.text, &message.images);
-                    outstanding.lock().unwrap_or_else(|e| e.into_inner()).push_back(message.text);
+                    let uuid = crate::new_session_id();
+                    let line = super::steered_message_line(&uuid, &message.text, &message.images);
+                    // Remembered before it is written, so its echo cannot come first.
+                    outstanding
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push_back(Steered { uuid, text: message.text });
                     if stdin.send(line).await.is_err() {
                         break;
                     }
@@ -116,10 +122,11 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(line, super::super::user_message_line("new direction", &[]));
+        let steered = outstanding.lock().unwrap().front().cloned().unwrap();
+        assert_eq!(steered.text, "new direction");
         assert_eq!(
-            outstanding.lock().unwrap().front().unwrap(),
-            "new direction"
+            line,
+            super::super::steered_message_line(&steered.uuid, "new direction", &[])
         );
         drop(input);
         assert!(

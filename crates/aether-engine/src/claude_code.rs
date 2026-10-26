@@ -266,13 +266,26 @@ fn auto_compact_window(threshold: u32) -> u32 {
 /// A user message in Claude Code's stream-json input format: its text, then
 /// one image block per image. Without images it is the line it always was.
 pub fn user_message_line(text: &str, images: &[EngineImage]) -> String {
+    format!("{}\n", user_message(text, images))
+}
+
+/// A steered message's line, under the `uuid` the CLI echoes it back with.
+/// Messages sent close together run as one turn, and the CLI echoes each
+/// member of that batch only by the uuid it came with.
+pub fn steered_message_line(uuid: &str, text: &str, images: &[EngineImage]) -> String {
+    assert!(!uuid.is_empty(), "a steered message is echoed by its uuid");
+    let mut message = user_message(text, images);
+    message["uuid"] = serde_json::Value::from(uuid);
+    format!("{message}\n")
+}
+
+fn user_message(text: &str, images: &[EngineImage]) -> serde_json::Value {
     let mut content = vec![serde_json::json!({"type": "text", "text": text})];
     content.extend(images.iter().filter_map(image_block));
-    let line = serde_json::json!({
+    serde_json::json!({
         "type": "user",
         "message": {"role": "user", "content": content}
-    });
-    format!("{line}\n")
+    })
 }
 
 /// An image as an Anthropic content block. One whose file cannot be read is
@@ -386,8 +399,8 @@ impl ClaudeCodeEngine {
         let Some(stdin) = process.stdin else {
             return Err(EngineError::Exited("stdin was not kept open".into()));
         };
-        // Messages become stream-json lines; each text is remembered until
-        // the CLI echoes it back, which is when it reached the model.
+        // Messages become stream-json lines; each is remembered until the
+        // CLI echoes it back, which is when it reached the model.
         let (input_tx, stop_tx) = input::spawn(stdin, outstanding);
         Ok(EngineRun {
             events: process.events,
