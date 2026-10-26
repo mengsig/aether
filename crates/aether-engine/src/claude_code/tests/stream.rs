@@ -227,6 +227,28 @@ fn a_late_echo_of_an_acknowledged_member_leaves_a_newer_twin_outstanding() {
     assert_eq!(outstanding[0].uuid, "u-c");
 }
 
+/// However large the batch, its first member's late echo is still known.
+#[test]
+fn a_late_echo_after_a_large_batch_leaves_a_newer_twin_outstanding() {
+    let mut st = ParseState::default();
+    st.expect_echo("u-0", "repeat");
+    for i in 1..100 {
+        st.expect_echo(&format!("u-{i}"), &format!("steer {i}"));
+    }
+    st.expect_echo("u-twin", "repeat");
+    let batch = json!({"type": "user", "isReplay": true, "uuid": "u-99",
+        "message": {"role": "user", "content": [{"type": "text", "text": "the batch"}]}})
+    .to_string();
+    assert_eq!(parse_line(&batch, &mut st).len(), 100);
+    let late = json!({"type": "user", "isReplay": true, "uuid": "u-0",
+        "message": {"role": "user", "content": [{"type": "text", "text": "repeat"}]}})
+    .to_string();
+    assert_eq!(parse_line(&late, &mut st), vec![]);
+    let outstanding = st.outstanding.lock().unwrap();
+    assert_eq!(outstanding.len(), 1);
+    assert_eq!(outstanding[0].uuid, "u-twin");
+}
+
 fn replay_of(text: &str) -> String {
     serde_json::json!({"type":"user","isReplay":true,
         "message":{"role":"user","content":[{"type":"text","text":text}]}})

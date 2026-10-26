@@ -19,9 +19,9 @@ pub struct ParseState {
     session_cost: super::session_cost::SessionCost,
     tool_names: std::collections::BTreeMap<usize, String>,
     pub(super) outstanding: Arc<Mutex<VecDeque<Steered>>>,
-    /// Uuids of steered messages already acknowledged, newest last, so a
-    /// batch member's late echo acknowledges nothing more.
-    acknowledged: VecDeque<String>,
+    /// Uuids of the steered messages this run acknowledged, so a batch
+    /// member's late echo acknowledges nothing more. One per steered message.
+    acknowledged: std::collections::HashSet<String>,
     message_usage: std::collections::BTreeMap<UsageRequestId, Usage>,
     message_models: std::collections::BTreeMap<UsageRequestId, String>,
     streamed_models: std::collections::BTreeMap<String, Usage>,
@@ -55,10 +55,6 @@ pub(super) struct Steered {
 /// this is bounded; evicting the oldest closed message can only bill one
 /// twice, never drop one.
 const MAX_TRACKED_MESSAGES: usize = 256;
-
-/// Acknowledged uuids one run remembers. A late echo follows its batch's
-/// within the same turn, so this only needs to outlast a few batches.
-const MAX_ACKNOWLEDGED: usize = 64;
 
 impl ParseState {
     /// Initialize the prompt acknowledgement and the resumed session's cost baseline.
@@ -146,7 +142,7 @@ impl ParseState {
     /// The CLI takes input in order, so an echo also covers older messages.
     /// An echo under a uuid already acknowledged covers nothing.
     fn take_echoes(&mut self, uuid: Option<&str>, text: Option<&str>) -> usize {
-        if uuid.is_some_and(|uuid| self.acknowledged.iter().any(|a| a == uuid)) {
+        if uuid.is_some_and(|uuid| self.acknowledged.contains(uuid)) {
             return 0;
         }
         let mut queue = self.outstanding.lock().unwrap_or_else(|e| e.into_inner());
@@ -163,12 +159,9 @@ impl ParseState {
         let taken: Vec<Steered> = queue.drain(..=last).collect();
         drop(queue);
         for steered in &taken {
-            if self.acknowledged.len() == MAX_ACKNOWLEDGED {
-                self.acknowledged.pop_front();
-            }
-            self.acknowledged.push_back(steered.uuid.clone());
+            let fresh = self.acknowledged.insert(steered.uuid.clone());
+            debug_assert!(fresh, "a steered message is acknowledged once");
         }
-        debug_assert!(self.acknowledged.len() <= MAX_ACKNOWLEDGED);
         taken.len()
     }
 }
