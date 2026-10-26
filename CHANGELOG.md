@@ -6,6 +6,31 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.6
+
+Released 2026-10-26. A bug-fix release for Claude Code agents steered
+mid-turn (#303). Protocol version 24 and store schema 27, both unchanged.
+
+### Before updating
+
+- Restart the daemon after the update (`aether stop`, then `aether`). There
+  is no migration, and going back to 1.2.5 needs nothing more than its
+  binary.
+
+### Fixed
+
+- **Messages steered into a Claude Code turn are recorded as delivered.**
+  Claude Code 2.1.309 merges user messages sent close together into one turn
+  and echoes the batch only by the uuids its members came with. Steered
+  messages carried no uuid, so Aether never saw them accepted: the TUI kept
+  them as "steering · lands at the next tool call" after the agent had
+  answered them, and when the turn ended a new paid turn delivered them
+  again. Each steered message now carries its own uuid, and an echo
+  acknowledges its message and every older one; a CLI that echoes by text
+  still matches as before. A late echo of a message already acknowledged
+  in a batch acknowledges nothing, so it cannot take a newer message with
+  the same text (#305, #303).
+
 ## 1.2.5
 
 Released 2026-10-25. A patch release for long-running fleets: the daemon
