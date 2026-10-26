@@ -203,6 +203,30 @@ fn an_echo_matches_its_own_uuid_whatever_its_text() {
     assert!(st.outstanding.lock().unwrap().is_empty());
 }
 
+/// A member's late echo, after its batch was acknowledged, must not fall
+/// back to text and take a newer message that happens to read the same.
+#[test]
+fn a_late_echo_of_an_acknowledged_member_leaves_a_newer_twin_outstanding() {
+    let mut st = ParseState::default();
+    st.expect_echo("u-a", "repeat");
+    st.expect_echo("u-b", "second");
+    st.expect_echo("u-c", "repeat");
+    let batch = json!({"type": "user", "isReplay": true, "uuid": "u-b",
+        "message": {"role": "user", "content": "repeat\nsecond"}})
+    .to_string();
+    assert_eq!(
+        parse_line(&batch, &mut st),
+        vec![EngineEvent::InputAccepted, EngineEvent::InputAccepted]
+    );
+    let late = json!({"type": "user", "isReplay": true, "uuid": "u-a",
+        "message": {"role": "user", "content": [{"type": "text", "text": "repeat"}]}})
+    .to_string();
+    assert_eq!(parse_line(&late, &mut st), vec![]);
+    let outstanding = st.outstanding.lock().unwrap();
+    assert_eq!(outstanding.len(), 1);
+    assert_eq!(outstanding[0].uuid, "u-c");
+}
+
 fn replay_of(text: &str) -> String {
     serde_json::json!({"type":"user","isReplay":true,
         "message":{"role":"user","content":[{"type":"text","text":text}]}})

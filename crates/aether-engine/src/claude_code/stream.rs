@@ -19,6 +19,9 @@ pub struct ParseState {
     session_cost: super::session_cost::SessionCost,
     tool_names: std::collections::BTreeMap<usize, String>,
     pub(super) outstanding: Arc<Mutex<VecDeque<Steered>>>,
+    /// Uuids of steered messages already acknowledged, newest last, so a
+    /// batch member's late echo acknowledges nothing more.
+    acknowledged: VecDeque<String>,
     message_usage: std::collections::BTreeMap<UsageRequestId, Usage>,
     message_models: std::collections::BTreeMap<UsageRequestId, String>,
     streamed_models: std::collections::BTreeMap<String, Usage>,
@@ -52,6 +55,10 @@ pub(super) struct Steered {
 /// this is bounded; evicting the oldest closed message can only bill one
 /// twice, never drop one.
 const MAX_TRACKED_MESSAGES: usize = 256;
+
+/// Acknowledged uuids one run remembers. A late echo follows its batch's
+/// within the same turn, so this only needs to outlast a few batches.
+const MAX_ACKNOWLEDGED: usize = 64;
 
 impl ParseState {
     /// Initialize the prompt acknowledgement and the resumed session's cost baseline.
@@ -137,7 +144,11 @@ impl ParseState {
     /// How many messages an echo acknowledges; pops them. Matched by uuid,
     /// else by the oldest one's text, for a CLI that echoes uuids of its own.
     /// The CLI takes input in order, so an echo also covers older messages.
-    fn take_echoes(&self, uuid: Option<&str>, text: Option<&str>) -> usize {
+    /// An echo under a uuid already acknowledged covers nothing.
+    fn take_echoes(&mut self, uuid: Option<&str>, text: Option<&str>) -> usize {
+        if uuid.is_some_and(|uuid| self.acknowledged.iter().any(|a| a == uuid)) {
+            return 0;
+        }
         let mut queue = self.outstanding.lock().unwrap_or_else(|e| e.into_inner());
         let by_uuid = uuid.and_then(|uuid| queue.iter().position(|m| m.uuid == uuid));
         let by_text = || {
@@ -149,7 +160,16 @@ impl ParseState {
             return 0;
         };
         debug_assert!(last < queue.len(), "the echoed message is outstanding");
-        queue.drain(..=last).count()
+        let taken: Vec<Steered> = queue.drain(..=last).collect();
+        drop(queue);
+        for steered in &taken {
+            if self.acknowledged.len() == MAX_ACKNOWLEDGED {
+                self.acknowledged.pop_front();
+            }
+            self.acknowledged.push_back(steered.uuid.clone());
+        }
+        debug_assert!(self.acknowledged.len() <= MAX_ACKNOWLEDGED);
+        taken.len()
     }
 }
 
