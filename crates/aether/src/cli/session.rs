@@ -134,7 +134,9 @@ pub async fn tui(
         .map_err(anyhow::Error::msg)?;
     view_modes.diagnostics.extend(notice);
     let flagged = theme_flag.is_some();
-    let theme_choice = prefs.theme(theme_flag, std::env::var("NO_COLOR").ok().as_deref());
+    let no_color = std::env::var("NO_COLOR").ok();
+    let no_color_theme = aether_tui::prefs::no_color_picked_theme(flagged, no_color.as_deref());
+    let theme_choice = prefs.theme(theme_flag, no_color.as_deref());
     // A typed theme that does not exist stops here; a saved one paints the
     // default and says why, like a broken file does.
     let (scheme, theme_error) = match files::scheme(&theme_choice, Some(&definitions_dir)) {
@@ -215,6 +217,7 @@ pub async fn tui(
         workspace_depth: prefs.workspace_depth,
         theme_spec,
         theme: theme_choice,
+        no_color_theme,
         startup_flash: theme_overrides.ignored_notice(),
         startup_error: theme_error,
         prefs_dir: Some(prefs_dir),

@@ -50,6 +50,8 @@ pub struct TuiOptions {
     pub theme_spec: crate::ui::theme::ThemeSpec,
     /// The named theme `theme_spec` was built from.
     pub theme: crate::ui::theme::ThemeChoice,
+    /// `NO_COLOR` chose `theme`, so `/theme` swatches stay colourless too.
+    pub no_color_theme: bool,
     /// Shown once in the flash row on start (an override file only partly applied).
     pub startup_flash: Option<String>,
     /// Reported once on start, e.g. a theme file that could not be used.
