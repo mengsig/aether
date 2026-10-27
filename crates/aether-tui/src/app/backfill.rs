@@ -143,6 +143,19 @@ impl App {
         Some(page_request(agent, before, self.connection))
     }
 
+    /// A client attached mid-turn saw nothing sent: what a running turn has not
+    /// taken yet is previewed again, whichever of history or tree came last.
+    pub(super) fn restore_steering(&mut self) {
+        for (agent, transcript) in &mut self.transcripts {
+            let running = self.tree.nodes.get(agent).is_some_and(|node| {
+                node.agent.status.kind() == aether_core::agent::AgentStatusKind::Running
+            });
+            if running {
+                transcript::restore_steering(transcript);
+            }
+        }
+    }
+
     /// Keep a live event for replay while any history is in flight.
     pub(super) fn backfill_note(&mut self, event: &Event) {
         if matches!(
@@ -365,14 +378,6 @@ impl App {
         }
         if let Some(mut fresh) = rebuilt.remove(&agent) {
             fresh.retain_client_errors(client_errors);
-            // A client attached mid-turn saw nothing sent: what the running
-            // turn has not taken yet still lands at its next tool call.
-            let running = self.tree.nodes.get(&agent).is_some_and(|node| {
-                node.agent.status.kind() == aether_core::agent::AgentStatusKind::Running
-            });
-            if pending.before.is_none() && running {
-                transcript::restore_steering(&mut fresh);
-            }
             fresh.loaded = true;
             fresh.older_available = pending.older_available;
             if pending.before.is_some() {
@@ -397,6 +402,7 @@ impl App {
             }
         }
         transcript::bound_history(&mut self.transcripts, &ctx);
+        self.restore_steering();
         if pending.before.is_some() {
             self.flash("Reading older history; Ctrl+End returns to latest");
         }

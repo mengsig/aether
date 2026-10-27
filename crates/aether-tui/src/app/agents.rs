@@ -17,6 +17,7 @@ impl App {
         }
         self.tree = tree;
         self.restore_live_accounting();
+        self.restore_steering();
         self.finish_board_removals(effects);
         self.names_version = super::names_version(&self.tree, &self.schedules.jobs);
         self.refresh_branches();

@@ -1872,10 +1872,16 @@ fn consume_inbox(t: &mut AgentTranscript, at: Timestamp, items: &[InboxItemId]) 
 
 /// Steering previews for the operator's delivered messages no preview shows
 /// yet, as a client that sent them would show: a reattached one saw none sent.
+/// Previews stay on the displayed transcript; an older window keeps the inbox
+/// in its live state.
 pub(in crate::app) fn restore_steering(t: &mut AgentTranscript) {
+    let inbox = match t.live.as_deref() {
+        Some(live) => &live.private.inbox,
+        None => &t.private.inbox,
+    };
     let mut shown = vec![false; t.steering.len()];
     let mut restored = Vec::new();
-    for item in &t.private.inbox {
+    for item in inbox {
         if item.from != UserFrom::Operator || item.text.is_empty() {
             continue;
         }
@@ -1892,14 +1898,13 @@ pub(in crate::app) fn restore_steering(t: &mut AgentTranscript) {
             }),
         }
     }
+    let waiting = inbox
+        .iter()
+        .filter(|item| item.from == UserFrom::Operator && !item.text.is_empty())
+        .count();
     t.steering.extend(restored);
     debug_assert!(
-        t.steering.len()
-            >= t.private
-                .inbox
-                .iter()
-                .filter(|item| item.from == UserFrom::Operator && !item.text.is_empty())
-                .count(),
+        t.steering.len() >= waiting,
         "every message the operator is still waiting on has a preview"
     );
 }

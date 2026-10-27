@@ -253,3 +253,37 @@ fn reattaching_to_an_idle_agent_restores_no_steering() {
         pending(&app, agent)
     );
 }
+
+#[test]
+fn a_running_tree_after_the_history_restores_the_steering() {
+    let (mut app, mut daemon) = running_agent();
+    let agent = daemon.agent;
+    let sims = daemon.deliver(&mut app, SIMS);
+    // Reconnected: the retained tree is stale and the history answers first.
+    let mut row = app.tree.nodes[&agent].agent.clone();
+    app.tree.nodes.get_mut(&agent).unwrap().agent.status = AgentStatus::Waiting {
+        condition: WaitCondition::Inbox,
+    };
+    reattach(&mut app, &daemon);
+    assert!(
+        pending(&app, agent).is_empty(),
+        "{:?}",
+        pending(&app, agent)
+    );
+    row.status = AgentStatus::Running;
+    app.reduce(AppEvent::Reply {
+        then: Then::Tree,
+        result: Ok(Reply::Tree(tree(row))),
+    });
+    assert_eq!(
+        pending(&app, agent),
+        [SIMS],
+        "restored once the tree says running"
+    );
+    daemon.consume(&mut app, vec![sims]);
+    assert!(
+        pending(&app, agent).is_empty(),
+        "{:?}",
+        pending(&app, agent)
+    );
+}
