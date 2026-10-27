@@ -48,7 +48,7 @@ fn finished_agent(run: RunId) -> Agent {
 /// A daemon whose first run (seqs 1 and 2) retention has expired; seq 3 is kept.
 async fn daemon_with_expired_run() -> (Arc<Daemon>, tempfile::TempDir, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
-    let store = Arc::new(SqliteStore::open(&directory.path().join("history.db")).unwrap());
+    let store = Arc::new(SqliteStore::open(directory.path().join("history.db")).unwrap());
     let (expired, retained) = (RunId::new(), RunId::new());
     store
         .commit(Commit::new().mutate(Mutation::UpsertAgent(finished_agent(expired))))
