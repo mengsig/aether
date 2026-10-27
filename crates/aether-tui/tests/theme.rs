@@ -23,6 +23,7 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
+use std::collections::HashSet;
 
 const DARK: TerminalPalette = TerminalPalette {
     fg: Rgb(0xe6, 0xed, 0xf3),
@@ -232,7 +233,10 @@ fn auto_follows_the_probed_background() {
 }
 
 /// Mono's claim is that it uses no colour anywhere, on every view over a
-/// populated screen, whatever the terminal reported.
+/// populated screen, whatever the terminal reported. The one exception is
+/// `/theme`: unless `NO_COLOR` chose mono, the swatch dots on its theme rows
+/// preview each theme in its own colours. Only those dots' ink may be
+/// coloured; every other cell, and every background, stays colourless.
 #[test]
 fn mono_paints_no_colour_on_any_screen() {
     for palette in [None, Some(DARK)] {
@@ -242,8 +246,16 @@ fn mono_paints_no_colour_on_any_screen() {
                 &mut app,
                 spec(ThemeMode::Mono, ColorDepth::Truecolor, palette),
             );
+            let swatches = if view == Some(ViewKind::Theme) {
+                swatch_dots(&mono, app.theme.glyphs().running)
+            } else {
+                HashSet::new()
+            };
             let coloured: Vec<Color> = foregrounds(&mono)
                 .into_iter()
+                .enumerate()
+                .filter(|(at, _)| !swatches.contains(at))
+                .map(|(_, fg)| fg)
                 .chain(backgrounds(&mono))
                 .filter(|c| !matches!(c, Color::Reset))
                 .collect();
@@ -255,6 +267,27 @@ fn mono_paints_no_colour_on_any_screen() {
             );
         }
     }
+}
+
+/// Buffer indices of `/theme` swatch dots: runs of seven `dot`s one space
+/// apart, as `views::theme` lays a swatch out. Nothing else on a screen looks so.
+fn swatch_dots(terminal: &Terminal<TestBackend>, dot: &str) -> HashSet<usize> {
+    const DOTS: usize = 7;
+    let buffer = terminal.backend().buffer();
+    let width = usize::from(buffer.area.width);
+    let mut found = HashSet::new();
+    for (y, row) in buffer.content().chunks(width).enumerate() {
+        for x in 0..width.saturating_sub(DOTS * 2 - 2) {
+            let is_swatch = row[x..x + DOTS * 2 - 1]
+                .iter()
+                .enumerate()
+                .all(|(i, cell)| cell.symbol() == if i % 2 == 0 { dot } else { " " });
+            if is_swatch {
+                found.extend((0..DOTS).map(|i| y * width + x + i * 2));
+            }
+        }
+    }
+    found
 }
 
 /// `NO_COLOR` picks mono unless `--theme` says otherwise, and mono is colourless.

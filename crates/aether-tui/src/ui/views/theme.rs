@@ -30,6 +30,8 @@ pub struct ThemeView {
     previews: Vec<Theme>,
     /// Why the themes folder could not be listed, shown in the title.
     problem: Option<String>,
+    /// `NO_COLOR` picked the theme: swatches stay colourless while it is mono.
+    no_color: bool,
 }
 
 impl ThemeView {
@@ -82,6 +84,7 @@ impl ThemeView {
             picker,
             previews,
             problem,
+            no_color: app.options.no_color_theme,
         }
     }
 
@@ -120,8 +123,12 @@ impl ThemeView {
                 let used: usize = line.spans.iter().map(|s| s.content.width()).sum();
                 let pad = (lead + label_width).saturating_sub(used) + 2;
                 line.spans.push(Span::raw(" ".repeat(pad)));
-                line.spans
-                    .extend(swatch(&self.previews[index], row.disabled, theme));
+                line.spans.extend(swatch(
+                    &self.previews[index],
+                    row.disabled,
+                    theme,
+                    self.no_color,
+                ));
                 line.spans.push(Span::raw("  "));
                 line.spans
                     .push(Span::styled(row.detail.clone(), theme.secondary()));
@@ -136,9 +143,9 @@ impl ThemeView {
 /// Dots in a swatch: accent, running, done, failed, needs-you, then the shell and edit verbs.
 const SWATCH: usize = 7;
 
-fn swatch(preview: &Theme, disabled: bool, theme: &Theme) -> Vec<Span<'static>> {
-    // Mono (and so `NO_COLOR`) paints no colour, swatches included.
-    let preview = if theme.spec().mode == ThemeMode::Mono {
+/// `no_color` keeps the swatches as colourless as the theme in use.
+fn swatch(preview: &Theme, disabled: bool, theme: &Theme, no_color: bool) -> Vec<Span<'static>> {
+    let preview = if no_color && theme.spec().mode == ThemeMode::Mono {
         theme
     } else {
         preview

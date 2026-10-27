@@ -1992,3 +1992,48 @@ fn usage_view_shows_remaining_credit_and_reset_time() {
     );
     assert!(text.contains("custom-subscription"), "{text}");
 }
+
+/// Coloured swatch dots on the Nord and Gruvbox rows of `/theme` in `app`.
+fn palette_row_dots(app: &App) -> Vec<usize> {
+    let view = super::theme::ThemeView::new(app);
+    let terminal = draw(&view, app, 120);
+    let buffer = terminal.backend().buffer();
+    let dot = app.theme.glyphs().running;
+    let reset = ratatui::buffer::Cell::default().fg;
+    let width = buffer.area.width;
+    (0..buffer.area.height)
+        .filter_map(|y| {
+            let row: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
+            (row.contains("Nord, follows") || row.contains("Gruvbox, follows")).then(|| {
+                (0..width)
+                    .map(|x| &buffer[(x, y)])
+                    .filter(|cell| cell.symbol() == dot && cell.fg != reset)
+                    .count()
+            })
+        })
+        .collect()
+}
+
+fn mono_app(no_color_theme: bool) -> App {
+    let mut app = viewed_app();
+    app.theme = Theme::resolve(ThemeSpec {
+        mode: ThemeMode::Mono,
+        depth: ColorDepth::Truecolor,
+        ..Default::default()
+    });
+    app.theme_choice = "mono".parse().unwrap();
+    app.options.no_color_theme = no_color_theme;
+    app
+}
+
+#[test]
+fn theme_picker_swatches_keep_their_own_colours_while_mono_is_chosen() {
+    let counts = palette_row_dots(&mono_app(false));
+    assert_eq!(counts.len(), 2, "expected the Nord and Gruvbox rows");
+    assert!(counts.iter().all(|&n| n > 0), "{counts:?}");
+}
+
+#[test]
+fn theme_picker_swatches_stay_colourless_when_no_color_chose_mono() {
+    assert_eq!(palette_row_dots(&mono_app(true)), [0, 0]);
+}

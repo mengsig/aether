@@ -256,13 +256,21 @@ impl UiPrefs {
     /// The theme to paint with: `--theme` beats a non-empty `NO_COLOR`, which
     /// beats the saved theme, then `auto`.
     pub fn theme(&self, flag: Option<ThemeChoice>, no_color: Option<&str>) -> ThemeChoice {
-        let no_color = no_color
-            .is_some_and(|v| !v.is_empty())
-            .then(ThemeChoice::mono);
+        let no_color = no_color_set(no_color).then(ThemeChoice::mono);
         flag.or(no_color)
             .or_else(|| self.theme.clone())
             .unwrap_or_default()
     }
+}
+
+/// Whether `NO_COLOR` is what picked the theme: set and not outranked by `--theme`.
+pub fn no_color_picked_theme(flagged: bool, no_color: Option<&str>) -> bool {
+    !flagged && no_color_set(no_color)
+}
+
+/// An empty `NO_COLOR` is unset (no-color.org).
+fn no_color_set(no_color: Option<&str>) -> bool {
+    no_color.is_some_and(|v| !v.is_empty())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -378,6 +386,14 @@ mod tests {
         // An empty NO_COLOR is unset (no-color.org).
         assert_eq!(name(&saved, None, Some("")), "gruvbox");
         assert_eq!(name(&saved, Some("nord-dark"), Some("1")), "nord-dark");
+    }
+
+    #[test]
+    fn no_color_picks_the_theme_only_when_set_and_not_outranked_by_the_flag() {
+        assert!(no_color_picked_theme(false, Some("1")));
+        assert!(!no_color_picked_theme(false, Some("")));
+        assert!(!no_color_picked_theme(false, None));
+        assert!(!no_color_picked_theme(true, Some("1")));
     }
 
     #[test]

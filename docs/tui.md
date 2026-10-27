@@ -358,10 +358,11 @@ hue; everything else holds still.
 | `auto` | default: Aether's own colours, light or dark from the terminal background |
 | `dark`, `light` | Aether's colours, forced to one background |
 | `nord`, `catppuccin`, `gruvbox`, `tokyo-night` | built-in palettes; add `-dark` or `-light` to pin one (`catppuccin-mocha`, `catppuccin-latte` and `tokyo-night-day` also work) |
-| `mono` | weight, dim and reverse only; also chosen when `NO_COLOR` is set |
+| `mono` | weight, dim and reverse only; also chosen when `NO_COLOR` is set. `/theme` still previews the other themes in colour unless `NO_COLOR` chose `mono` |
 | any other name | a theme file, below |
 
-`/theme` lists every theme with a swatch of its colours on your terminal;
+`/theme` lists every theme with a swatch of its colours on your terminal
+(colourless when `NO_COLOR` chose `mono`);
 Enter uses one and saves it to `ui.toml` as `theme = "<name>"`. `/theme <name>`
 does the same directly, and `/settings` steps through the built-ins. For one
 run use `--theme` (also `AETHER_THEME`). The flag wins over `NO_COLOR`, which
