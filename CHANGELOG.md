@@ -8,6 +8,15 @@ release is also the text of its GitHub release.
 
 ### Added
 
+- **GPT-6.1 Terra is the Codex default.** `gpt-6.1-terra` (alias `terra`) joins
+  `codex`, `openai`, `openai-responses` and `openai-codex` at $1 input, $0.05
+  cached input, $1.25 cache write and $5 output per Mtok, half of GPT-6.1
+  Sol's price. It is listed before Sol, so it is what `codex` picks when
+  nothing names a model and what the `balanced` tier resolves to; it runs at
+  high effort unless asked otherwise, as Sol does. Sol keeps its balanced tier
+  and stays selectable as `gpt-6.1-sol` or `sol`, and a configured
+  `codex/gpt-6.1-sol` is kept. `terra` and `gpt-5.6-terra` now resolve to
+  GPT-6.1 Terra instead of being retired to Luna.
 - **Extending a parent can extend its delegated children too (#323).** A
   delegated child copies its parent's absolute deadline and cost budget, so
   extending the parent alone left the child to be stopped, and its subtree

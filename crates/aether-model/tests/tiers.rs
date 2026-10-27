@@ -37,6 +37,7 @@ fn every_builtin_model_has_its_declared_tier() {
     }
     let expected = [
         ("gpt-6-astra", ModelTier::Strong),
+        ("gpt-6.1-terra", ModelTier::Balanced),
         ("gpt-6.1-sol", ModelTier::Balanced),
         ("gpt-6-luna", ModelTier::Fast),
     ];
@@ -51,6 +52,7 @@ fn every_builtin_model_has_its_declared_tier() {
     }
     // Aliases rank like the model they name; pass-through and `default` stay unranked.
     assert_eq!(tier(&models, "codex", "sol"), Some(ModelTier::Balanced));
+    assert_eq!(tier(&models, "codex", "terra"), Some(ModelTier::Balanced));
     assert_eq!(tier(&models, "claude-code", "default"), None);
     assert_eq!(tier(&models, "codex", "default"), None);
     assert_eq!(tier(&models, "groq", "llama-3.3-70b-versatile"), None);
@@ -224,4 +226,21 @@ id = "new-model"
         tier(&models, "claude-code", "new-model"),
         Some(ModelTier::Strong)
     );
+}
+
+/// Tier routing takes the first listed model of a tier, so Terra must precede
+/// Sol wherever both are balanced.
+#[test]
+fn gpt_6_1_terra_is_the_first_balanced_model_on_every_gpt_provider() {
+    let models = load("", "");
+    let list = models.list();
+    for provider in ["codex", "openai", "openai-responses"] {
+        let balanced: Vec<_> = list
+            .iter()
+            .filter(|info| info.model.provider == provider)
+            .filter(|info| info.tier == Some(ModelTier::Balanced))
+            .map(|info| info.model.model.as_str())
+            .collect();
+        assert_eq!(balanced, ["gpt-6.1-terra", "gpt-6.1-sol"], "{provider}");
+    }
 }

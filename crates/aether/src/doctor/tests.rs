@@ -97,19 +97,19 @@ fn a_retired_model_setting_fails_with_its_successor_unless_providers_define_it()
     std::fs::create_dir_all(&p.config_dir).expect("mkdir");
     std::fs::write(
         p.config_dir.join("config.toml"),
-        "[model]\ndefault = \"codex/gpt-5.6-terra\"\ncompactor = \"anthropic/haiku-4-5\"\n",
+        "[model]\ndefault = \"codex/gpt-5.6-luna\"\ncompactor = \"anthropic/haiku-4-5\"\n",
     )
     .expect("write");
     let check = check_config(&p);
     assert_eq!(check.level, Level::Fail);
     assert_eq!(
         check.detail,
-        "[model] default: codex/gpt-5.6-terra was retired; use codex/gpt-6-luna; \
+        "[model] default: codex/gpt-5.6-luna was retired; use codex/gpt-6-luna; \
          [model] compactor: anthropic/haiku-4-5 was retired; use anthropic/claude-haiku-5-5"
     );
     std::fs::write(
         p.config_dir.join("providers.toml"),
-        "[[providers.codex.add_models]]\nid = \"gpt-5.6-terra\"\n\
+        "[[providers.codex.add_models]]\nid = \"gpt-5.6-luna\"\n\
          [[providers.anthropic.add_models]]\nid = \"claude-haiku-4-5\"\naliases = [\"haiku-4-5\"]\n",
     )
     .expect("write");

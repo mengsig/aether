@@ -370,7 +370,7 @@ pub(crate) enum Cmd {
     },
     /// Create a task, optionally owned and gated on other tasks.
     #[command(
-        after_help = "CLI example (requires jq):\n  owner=$(aether new --name planner --model codex/gpt-6.1-sol --json | jq -r .id)\n  aether task --owner \"$owner\" \"Review the README\"\n\nAn unowned task stays pending until an agent is assigned to it; creating it does not start work or automatically select an owner. An owned task becomes runnable when its dependencies have completed and the owner is ready and unpaused."
+        after_help = "CLI example (requires jq):\n  owner=$(aether new --name planner --model codex/gpt-6.1-terra --json | jq -r .id)\n  aether task --owner \"$owner\" \"Review the README\"\n\nAn unowned task stays pending until an agent is assigned to it; creating it does not start work or automatically select an owner. An owned task becomes runnable when its dependencies have completed and the owner is ready and unpaused."
     )]
     Task {
         /// The objective, as one argument or several words.

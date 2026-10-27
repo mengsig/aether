@@ -53,13 +53,7 @@ const RETIRED: &[RetiredModel] = &[
     },
     RetiredModel {
         providers: GPT,
-        ids: &[
-            "gpt-5.6-terra",
-            "terra",
-            "gpt-5.6-luna",
-            "gpt-5.3-codex-spark",
-            "spark",
-        ],
+        ids: &["gpt-5.6-luna", "gpt-5.3-codex-spark", "spark"],
         successor: "gpt-6-luna",
     },
     RetiredModel {

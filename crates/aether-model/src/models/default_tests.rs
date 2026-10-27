@@ -58,7 +58,7 @@ async fn authenticated_native_harnesses_precede_api_credentials() {
     for (claude, codex, expected, balanced) in [
         (true, true, "claude-code", "claude-sonnet-5-5"),
         (true, false, "claude-code", "claude-sonnet-5-5"),
-        (false, true, "codex", "gpt-6.1-sol"),
+        (false, true, "codex", "gpt-6.1-terra"),
     ] {
         assert_eq!(
             configured(claude, codex, None, None)
@@ -84,7 +84,7 @@ async fn explicit_claude_choices_override_the_new_preference() {
 }
 
 #[tokio::test]
-async fn explicit_codex_defaults_are_not_replaced_by_astra() {
+async fn explicit_codex_defaults_are_kept_over_the_terra_default() {
     for model in ["default", "sol", "luna", "gpt-6.1-sol"] {
         assert_eq!(
             configured(false, true, Some(&format!("codex/{model}")), None)
@@ -93,6 +93,21 @@ async fn explicit_codex_defaults_are_not_replaced_by_astra() {
                 .await,
             Some(ModelRef::new("codex", model))
         );
+    }
+}
+
+#[tokio::test]
+async fn terra_names_select_gpt_6_1_terra_and_sol_stays_selectable() {
+    for (text, canonical) in [
+        ("codex/terra", "gpt-6.1-terra"),
+        ("codex/gpt-5.6-terra", "gpt-6.1-terra"),
+        ("codex/sol", "gpt-6.1-sol"),
+    ] {
+        let models = configured(false, true, Some(text), None).unwrap();
+        let selected = models.default_model().await.expect("a default");
+        assert_eq!(selected.to_string(), text);
+        assert_eq!(models.resolve(&selected).unwrap().model.id, canonical);
+        assert!(models.retired_settings().is_empty(), "{text}");
     }
 }
 
@@ -130,7 +145,7 @@ async fn disabled_native_provider_is_not_automatically_selected() {
             .unwrap()
             .default_model()
             .await,
-        Some(ModelRef::new("codex", "gpt-6.1-sol"))
+        Some(ModelRef::new("codex", "gpt-6.1-terra"))
     );
 }
 
@@ -158,7 +173,7 @@ async fn unknown_explicit_default_is_kept_and_refused_with_choices() {
 #[tokio::test]
 async fn retired_explicit_default_is_kept_for_refusal_not_replaced() {
     for (text, successor) in [
-        ("codex/gpt-5.6-terra", "codex/gpt-6-luna"),
+        ("codex/gpt-5.6-luna", "codex/gpt-6-luna"),
         ("claude-code/claude-opus-5", "claude-code/claude-opus-5-5"),
         ("anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-5-5"),
     ] {
@@ -180,15 +195,15 @@ async fn retired_explicit_default_is_kept_for_refusal_not_replaced() {
 
 #[tokio::test]
 async fn an_override_defining_a_retired_default_still_selects_it() {
-    let mut models = configured(true, true, Some("codex/gpt-5.6-terra"), None).unwrap();
+    let mut models = configured(true, true, Some("codex/gpt-5.6-luna"), None).unwrap();
     models
         .registry
         .apply_overrides(
-            toml::from_str("[[providers.codex.add_models]]\nid = \"gpt-5.6-terra\"").unwrap(),
+            toml::from_str("[[providers.codex.add_models]]\nid = \"gpt-5.6-luna\"").unwrap(),
         )
         .unwrap();
     let selected = models.default_model().await.unwrap();
-    assert_eq!(selected, ModelRef::new("codex", "gpt-5.6-terra"));
+    assert_eq!(selected, ModelRef::new("codex", "gpt-5.6-luna"));
     models.resolve(&selected).expect("the override resolves");
     assert!(models.retired_settings().is_empty());
 }
@@ -196,10 +211,10 @@ async fn an_override_defining_a_retired_default_still_selects_it() {
 #[test]
 fn a_retired_compactor_is_reported_with_its_successor() {
     let mut models = configured(false, false, None, None).unwrap();
-    models.config.model.compactor = Some("codex/terra".into());
+    models.config.model.compactor = Some("codex/spark".into());
     assert_eq!(
         models.retired_settings(),
-        ["[model] compactor: codex/terra was retired; use codex/gpt-6-luna"]
+        ["[model] compactor: codex/spark was retired; use codex/gpt-6-luna"]
     );
     models.config.model.compactor = Some("codex/gpt-6-luna".into());
     assert!(models.retired_settings().is_empty());

@@ -25,7 +25,7 @@ completed_run_days = 10
 
 - **Model tiers:** every model carries a capability band within its provider,
   reported as `tier` by `list_models`: `fast` (Haiku, Luna), `balanced`
-  (Sonnet, Sol), `strong` (Opus, Astra) or `frontier` (Fable; Codex has none
+  (Sonnet, Terra, Sol), `strong` (Opus, Astra) or `frontier` (Fable; Codex has none
   today), or null when it cannot be ranked. A provider may lack a tier. The
   tier comes from, in order: `[models.tiers]` in `config.toml`
   (`"provider/model" = "fast" | "balanced" | "strong" | "frontier"`, aliases
@@ -66,7 +66,7 @@ section and key. Omitted settings use the shipped defaults.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `model.default` | Balanced-tier model of the first ready provider (`claude-code/claude-sonnet-5-5`, `codex/gpt-6.1-sol`), which is priced | Choose the default `provider/model`. A malformed value fails config load; an unknown model is refused when an agent is created, naming the valid choices. It is never replaced silently. |
+| `model.default` | Balanced-tier model of the first ready provider (`claude-code/claude-sonnet-5-5`, `codex/gpt-6.1-terra`), which is priced | Choose the default `provider/model`. A malformed value fails config load; an unknown model is refused when an agent is created, naming the valid choices. It is never replaced silently. |
 | `providers.usage_stale_after` | `900` | Seconds before cached provider usage is stale; zero marks reports stale as soon as time advances. |
 | `providers.usage_refresh_interval` | `600` | Minimum seconds between explicit refresh attempts for one provider; must be positive. |
 | `providers.usage_refresh_timeout` | `15` | Probe deadline in seconds; must be positive. |
