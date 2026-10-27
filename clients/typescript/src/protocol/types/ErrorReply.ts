@@ -7,5 +7,7 @@ import type {
 
 export interface ErrorReply {
   "code": ErrorCode;
+  "first_seq"?: number | null;
+  "last_seq"?: number | null;
   "message": string;
 }

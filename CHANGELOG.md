@@ -16,6 +16,16 @@ release is also the text of its GitHub release.
   lower, in one transaction, and never shortens one. Daemons announce it as
   the `subtree_update` feature, and the Rust client gains
   `update_agent_subtree` and `serves_subtree_update`.
+- **Expired history has its own error code (#324).** A subscription or
+  `get_events` cursor behind history retention was refused with `not_found`
+  and a text message, so a host could not tell it from any other missing
+  record or learn which span was gone, and kept resubscribing from the same
+  cursor. A client that lists the new `history_expired` feature in its hello
+  now gets the `history_expired` code with `first_seq` and `last_seq`. Other
+  clients still get `not_found` with the same message, and a subscription
+  still ends its connection after the notice. The Rust client sends the
+  feature and gains `ClientError::code`, `ClientError::expired_span` and
+  `Client::expired_span`.
 
 ### Fixed
 

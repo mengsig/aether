@@ -929,7 +929,12 @@ fn spawn_subscription(link: Link, tx: mpsc::UnboundedSender<LoopEvent>, after: O
                 ));
             }
             Err(ClientError::Protocol(error))
-                if after.is_some() && error.code == aether_protocol::ErrorCode::NotFound =>
+                if after.is_some()
+                    && matches!(
+                        error.code,
+                        aether_protocol::ErrorCode::HistoryExpired
+                            | aether_protocol::ErrorCode::NotFound
+                    ) =>
             {
                 let _ = tx.send(protocol_event(&link, AppEvent::HistoryExpired));
             }

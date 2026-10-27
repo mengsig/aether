@@ -193,10 +193,10 @@ fn git_summaries_and_unimplemented_services_have_visible_outcomes() {
     assert_eq!(app.branch_at(&path), Some("host-main *"));
     app.reduce(AppEvent::Reply {
         then: Then::Host(host::HostRequest::Workspaces),
-        result: Err(ClientError::Protocol(aether_protocol::ErrorReply {
-            code: aether_protocol::ErrorCode::Unimplemented,
-            message: "host services absent".into(),
-        })),
+        result: Err(ClientError::Protocol(aether_protocol::ErrorReply::new(
+            aether_protocol::ErrorCode::Unimplemented,
+            "host services absent",
+        ))),
     });
     assert!(crate::testing::render_to(&app, 200, 30).contains("host service unavailable"));
     assert!(app.host.workspaces.is_empty());

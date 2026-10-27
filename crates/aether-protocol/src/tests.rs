@@ -408,6 +408,32 @@ fn server_frames_roundtrip() {
     assert_eq!(back, delta);
 }
 
+#[test]
+fn an_expired_history_refusal_carries_its_span_and_others_omit_it() {
+    let expired = ErrorReply::history_expired(2, 10, "event history expired");
+    let wire = serde_json::to_value(&expired).unwrap();
+    assert_eq!(
+        wire,
+        serde_json::json!({"code":"history_expired", "message":"event history expired",
+            "first_seq":2, "last_seq":10})
+    );
+    assert_eq!(serde_json::from_value::<ErrorReply>(wire).unwrap(), expired);
+    assert_eq!(expired.expired_span(), Some(2..=10));
+
+    let plain = ErrorReply::not_found("agent agt_x");
+    let wire = serde_json::to_value(&plain).unwrap();
+    assert_eq!(
+        wire,
+        serde_json::json!({"code":"not_found", "message":"agent agt_x not found"})
+    );
+    assert_eq!(plain.expired_span(), None);
+    // What every daemon so far has sent: no bounds field at all.
+    let older: ErrorReply =
+        serde_json::from_value(serde_json::json!({"code":"not_found", "message":"gone"})).unwrap();
+    assert_eq!((older.first_seq, older.last_seq), (None, None));
+    assert_eq!(features::HISTORY_EXPIRED, "history_expired");
+}
+
 /// The reply shapes the client decodes for pause, resume, fan-out and
 /// `set`. A daemon answering a different variant is the bug this pins.
 #[test]

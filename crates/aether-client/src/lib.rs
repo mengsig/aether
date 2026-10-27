@@ -95,6 +95,23 @@ impl ClientError {
             _ => false,
         }
     }
+
+    /// The daemon's refusal code, when the daemon refused.
+    pub fn code(&self) -> Option<ErrorCode> {
+        match self {
+            Self::Protocol(reply) => Some(reply.code),
+            _ => None,
+        }
+    }
+
+    /// The expired sequence span, when the daemon refused with
+    /// `HistoryExpired`. A daemon without the feature sends `NotFound` and no span.
+    pub fn expired_span(&self) -> Option<std::ops::RangeInclusive<u64>> {
+        match self {
+            Self::Protocol(reply) => reply.expired_span(),
+            _ => None,
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;
@@ -296,10 +313,18 @@ impl Client {
         !self.shared.closed.load(Ordering::SeqCst)
     }
 
-    /// A subscription replay ended because retained history is no longer available.
+    /// A subscription replay ended because retained history is no longer
+    /// available. A daemon without `history_expired` says so with `NotFound`.
     pub fn history_expired(&self) -> bool {
+        self.disconnect_reason().is_some_and(|reason| {
+            matches!(reason.code, ErrorCode::HistoryExpired | ErrorCode::NotFound)
+        })
+    }
+
+    /// The span whose expiry ended this connection, when the daemon named it.
+    pub fn expired_span(&self) -> Option<std::ops::RangeInclusive<u64>> {
         self.disconnect_reason()
-            .is_some_and(|reason| reason.code == ErrorCode::NotFound)
+            .and_then(|reason| reason.expired_span())
     }
 
     /// Why the daemon ended this connection, when it said. A tokened
@@ -312,16 +337,18 @@ impl Client {
             .ok()
             .and_then(|held| held.clone())
             .or_else(|| {
-                self.carrier.as_ref().map(|carrier| ErrorReply {
-                    code: ErrorCode::Unavailable,
-                    message: carrier.diagnostics(),
-                })
+                self.carrier
+                    .as_ref()
+                    .map(|carrier| ErrorReply::new(ErrorCode::Unavailable, carrier.diagnostics()))
             })
     }
 
     async fn handshake_version(&self, token: Option<String>, version: u32) -> Result<Welcome> {
         let mut hello = Hello::new("aether", env!("CARGO_PKG_VERSION"));
         hello.protocol_version = version;
+        hello
+            .features
+            .push(aether_protocol::features::HISTORY_EXPIRED.into());
         let hello = match token {
             Some(token) => hello.with_token(token),
             None => hello,

@@ -120,13 +120,15 @@ impl crate::Client {
         if host >= IMAGES_SINCE {
             return Ok(());
         }
-        Err(crate::ClientError::Protocol(aether_protocol::ErrorReply {
-            code: aether_protocol::ErrorCode::Unimplemented,
-            message: format!(
-                "sending images requires protocol {IMAGES_SINCE} and the host speaks {host}; \
+        Err(crate::ClientError::Protocol(
+            aether_protocol::ErrorReply::new(
+                aether_protocol::ErrorCode::Unimplemented,
+                format!(
+                    "sending images requires protocol {IMAGES_SINCE} and the host speaks {host}; \
                  update Aether on the host. Nothing was sent"
+                ),
             ),
-        }))
+        ))
     }
 
     pub(crate) fn prepare_remote_command(&self, command: &mut Command) -> crate::Result<bool> {

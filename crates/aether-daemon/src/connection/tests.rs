@@ -62,7 +62,8 @@ fn expired_history_is_a_visible_missing_history_error_not_internal_failure() {
         last_seq: 10,
     };
     let reply = store_err(error);
-    assert_eq!(reply.code, ErrorCode::NotFound);
+    assert_eq!(reply.code, ErrorCode::HistoryExpired);
+    assert_eq!(reply.expired_span(), Some(2..=10));
     assert!(reply.message.contains("history expired"));
     assert!(reply.message.contains("2..=10"));
     let runtime = map_err(RuntimeError::Store(

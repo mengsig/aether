@@ -260,7 +260,8 @@ impl App {
             !self.backfill.pages.contains_key(&agent),
             "a failed page is no longer in flight"
         );
-        let expired = matches!(error, ClientError::Protocol(reply)
+        let expired = error.expired_span().is_some()
+            || matches!(error, ClientError::Protocol(reply)
             if reply.code == aether_protocol::ErrorCode::NotFound
                 && reply.message.contains("history expired"));
         if before.is_none() || !expired {

@@ -76,14 +76,14 @@ impl Client {
                 command.name()
             ),
         };
-        Err(ClientError::Protocol(ErrorReply {
-            code: ErrorCode::Unimplemented,
-            message: format!(
+        Err(ClientError::Protocol(ErrorReply::new(
+            ErrorCode::Unimplemented,
+            format!(
                 "{message}: the daemon is older than this client. Restart it from this build \
                  (`aether stop`, then start it again), or update Aether on the host. \
                  Nothing was sent"
             ),
-        }))
+        )))
     }
 }
 

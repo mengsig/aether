@@ -425,6 +425,9 @@ pub enum ErrorCode {
     /// Nothing named a model and the daemon has no default: no provider is
     /// signed in. A model named but not usable is refused with another code.
     NoModel,
+    /// The requested event history was pruned by retention. Sent only to a
+    /// client whose hello lists `features::HISTORY_EXPIRED`; others get `NotFound`.
+    HistoryExpired,
 }
 
 #[derive(
@@ -434,6 +437,12 @@ pub enum ErrorCode {
 pub struct ErrorReply {
     pub code: ErrorCode,
     pub message: String,
+    /// First expired sequence number; set only with `HistoryExpired`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_seq: Option<u64>,
+    /// Last expired sequence number; set only with `HistoryExpired`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seq: Option<u64>,
 }
 
 impl ErrorReply {
@@ -441,6 +450,29 @@ impl ErrorReply {
         Self {
             code,
             message: message.into(),
+            first_seq: None,
+            last_seq: None,
+        }
+    }
+
+    /// Event history in `first_seq..=last_seq` was pruned by retention.
+    pub fn history_expired(first_seq: u64, last_seq: u64, message: impl Into<String>) -> Self {
+        debug_assert!(
+            first_seq <= last_seq,
+            "an expired span runs forwards: {first_seq}..={last_seq}"
+        );
+        Self {
+            first_seq: Some(first_seq),
+            last_seq: Some(last_seq),
+            ..Self::new(ErrorCode::HistoryExpired, message)
+        }
+    }
+
+    /// The expired span this refusal reports, when it is `HistoryExpired`.
+    pub fn expired_span(&self) -> Option<std::ops::RangeInclusive<u64>> {
+        match (self.code, self.first_seq, self.last_seq) {
+            (ErrorCode::HistoryExpired, Some(first), Some(last)) => Some(first..=last),
+            _ => None,
         }
     }
 

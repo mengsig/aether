@@ -8,4 +8,6 @@ from .. import protocol as _protocol
 
 class ErrorReply(TypedDict, total=False):
     code: _protocol.ErrorCode
+    first_seq: int | None  # optional
+    last_seq: int | None  # optional
     message: str

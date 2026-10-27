@@ -11,7 +11,7 @@ use aether_remote::Ended;
 use aether_runtime::RuntimeError;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
@@ -60,11 +60,14 @@ fn map_err(e: RuntimeError) -> ErrorReply {
     }
 }
 
+/// Expired history carries its span; the writer turns it back into today's
+/// `NotFound` for a client whose hello did not list `features::HISTORY_EXPIRED`.
 fn store_err(e: aether_store::StoreError) -> ErrorReply {
     match e {
-        aether_store::StoreError::HistoryExpired { .. } => {
-            ErrorReply::new(ErrorCode::NotFound, e.to_string())
-        }
+        aether_store::StoreError::HistoryExpired {
+            first_seq,
+            last_seq,
+        } => ErrorReply::history_expired(first_seq, last_seq, e.to_string()),
         other => ErrorReply::internal(other),
     }
 }
@@ -140,9 +143,19 @@ where
     // handshake picks it, so it is shared; hello stores it before the
     // welcome is queued, and nothing before the welcome needs translating.
     let version = Arc::new(AtomicU32::new(aether_protocol::PROTOCOL_VERSION));
+    // Whether the hello listed `features::HISTORY_EXPIRED`; shared the same way.
+    let history_expired = Arc::new(AtomicBool::new(false));
 
     let (auth_tx, auth_rx) = tokio::sync::watch::channel::<Option<AuthContext>>(None);
-    let writer = writer::run(write, out_rx, version.clone(), auth_rx);
+    let writer = writer::run(
+        write,
+        out_rx,
+        writer::Speaking {
+            version: version.clone(),
+            history_expired: history_expired.clone(),
+        },
+        auth_rx,
+    );
     tokio::pin!(writer);
 
     let connection_cancel = shutdown.child_token();
@@ -273,6 +286,13 @@ where
                             // cannot decode.
                             Ok(speaking) => {
                                 version.store(speaking, Ordering::SeqCst);
+                                history_expired.store(
+                                    hello
+                                        .features
+                                        .iter()
+                                        .any(|feature| feature == features::HISTORY_EXPIRED),
+                                    Ordering::SeqCst,
+                                );
                                 match policy.admit(hello) {
                                     Err(refusal) => {
                                         tokio::time::sleep(policy.refusal_delay()).await;
@@ -348,6 +368,7 @@ where
                                                     features::NOTES.into(),
                                                     features::NOTIFICATIONS.into(),
                                                     features::SUBTREE_UPDATE.into(),
+                                                    features::HISTORY_EXPIRED.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,

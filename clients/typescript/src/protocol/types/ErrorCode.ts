@@ -2,4 +2,4 @@
 // Do not edit: change the Rust types and regenerate.
 
 
-export type ErrorCode = "not_found" | "invalid_transition" | "invalid_argument" | "internal" | "incompatible" | "unauthorized" | "unavailable" | "forbidden" | "unimplemented" | "no_model";
+export type ErrorCode = "not_found" | "invalid_transition" | "invalid_argument" | "internal" | "incompatible" | "unauthorized" | "unavailable" | "forbidden" | "unimplemented" | "no_model" | "history_expired";

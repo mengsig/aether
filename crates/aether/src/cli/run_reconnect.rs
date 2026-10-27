@@ -66,7 +66,11 @@ async fn resume_monitor(
 ) -> anyhow::Result<Option<RunConnection>> {
     let sub = match client.subscribe(after, query.clone(), true).await {
         Ok(sub) => sub,
-        Err(ClientError::Protocol(error)) if error.code == ErrorCode::NotFound => return Ok(None),
+        Err(ClientError::Protocol(error))
+            if matches!(error.code, ErrorCode::NotFound | ErrorCode::HistoryExpired) =>
+        {
+            return Ok(None);
+        }
         Err(_) if client.history_expired() => return Ok(None),
         Err(error) => return Err(error.into()),
     };

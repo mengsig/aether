@@ -217,6 +217,9 @@ pub mod features {
     /// The daemon applies `UpdateAgent.subtree`: a raised deadline or cost
     /// budget also reaches the live descendants.
     pub const SUBTREE_UPDATE: &str = "subtree_update";
+    /// Both sides of a connection handle `ErrorCode::HistoryExpired`. The
+    /// daemon sends it only to a client whose hello lists this feature.
+    pub const HISTORY_EXPIRED: &str = "history_expired";
 }
 
 mod handshake;

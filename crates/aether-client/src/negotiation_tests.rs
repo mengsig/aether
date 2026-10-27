@@ -14,6 +14,7 @@ const DEADLINE: Duration = Duration::from_secs(5);
 #[derive(Default)]
 struct Seen {
     hellos: Vec<(u32, Option<String>)>,
+    hello_features: Vec<Vec<String>>,
     commands: Vec<String>,
 }
 
@@ -30,7 +31,9 @@ where
         let (result, close) = match frame.command {
             Command::Hello(hello) => {
                 let asked = hello.protocol_version;
-                seen.lock().expect("seen").hellos.push((asked, hello.token));
+                let mut seen = seen.lock().expect("seen");
+                seen.hellos.push((asked, hello.token));
+                seen.hello_features.push(hello.features);
                 if window.contains(&asked) {
                     (Ok(Reply::Welcome(welcome(asked, &window))), false)
                 } else {
@@ -289,4 +292,49 @@ async fn a_command_added_within_a_version_needs_its_feature() {
     assert!(client.check_introduced(&Command::StorageStatus).is_ok());
     assert!(client.check_introduced(&Command::Status).is_ok());
     assert!(client.check_introduced(&Command::GetAttention).is_err());
+}
+
+#[tokio::test]
+async fn the_hello_asks_for_expired_history_with_its_span() {
+    let (_dir, socket, seen) = unix_daemon(MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION);
+    let _client = tokio::time::timeout(DEADLINE, Client::connect(&socket))
+        .await
+        .expect("connect must not hang")
+        .expect("connected");
+    let sent = std::mem::take(&mut seen.lock().expect("seen").hello_features);
+    assert_eq!(sent.len(), 1, "one hello: {sent:?}");
+    assert!(
+        sent[0]
+            .iter()
+            .any(|feature| feature == aether_protocol::features::HISTORY_EXPIRED),
+        "{sent:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_expired_history_notice_exposes_its_code_and_span() {
+    let (client, peer) = connected_at(PROTOCOL_VERSION, vec![]);
+    let notice = ErrorReply::history_expired(4, 9, "event history expired");
+    let refusal = ClientError::Protocol(notice.clone());
+    assert_eq!(refusal.code(), Some(ErrorCode::HistoryExpired));
+    assert_eq!(refusal.expired_span(), Some(4..=9));
+    assert_eq!(ClientError::Disconnected.expired_span(), None);
+
+    peer.outgoing
+        .send(ServerFrame::Reply {
+            id: 0,
+            result: Err(notice),
+        })
+        .await
+        .expect("deliver notice");
+    drop(peer);
+    tokio::time::timeout(DEADLINE, async {
+        while client.is_connected() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the reader sees the close");
+    assert!(client.history_expired());
+    assert_eq!(client.expired_span(), Some(4..=9));
 }

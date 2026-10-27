@@ -79,10 +79,10 @@ impl Host {
                 send_reply(&mut write, frame.id, Ok(welcome(self.version))).await;
                 return (lines, write);
             }
-            let refusal = ErrorReply {
-                code: ErrorCode::Incompatible,
-                message: format!("daemon serves protocols 16..={}", self.version),
-            };
+            let refusal = ErrorReply::new(
+                ErrorCode::Incompatible,
+                format!("daemon serves protocols 16..={}", self.version),
+            );
             send_reply(&mut write, frame.id, Err(refusal)).await;
         }
     }

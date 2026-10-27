@@ -223,10 +223,10 @@ async fn incompatible_versions_report_both_sides_without_remote_restart_advice()
             let frame: ClientFrame = serde_json::from_str(&line).expect("frame");
             let reply = ServerFrame::Reply {
                 id: frame.id,
-                result: Err(ErrorReply {
-                    code: ErrorCode::Incompatible,
-                    message: "daemon serves protocols 15..=16".into(),
-                }),
+                result: Err(ErrorReply::new(
+                    ErrorCode::Incompatible,
+                    "daemon serves protocols 15..=16",
+                )),
             };
             write
                 .write_all(aether_protocol::encode(&reply).expect("reply").as_bytes())
@@ -300,10 +300,10 @@ async fn verify_run_workspace(listener: tokio::net::UnixListener) {
                     Some("/canonical/host/project".into())
                 );
                 assert!(agent.idempotency_key.is_some());
-                Err(ErrorReply {
-                    code: ErrorCode::Unavailable,
-                    message: "fixture verified host scope".into(),
-                })
+                Err(ErrorReply::new(
+                    ErrorCode::Unavailable,
+                    "fixture verified host scope",
+                ))
             }
             command => unreachable!("unexpected command: {command:?}"),
         };
@@ -332,10 +332,10 @@ async fn previous_protocol_is_negotiated_on_a_fresh_carrier() {
             send_reply(
                 &mut write,
                 frame.id,
-                Err(ErrorReply {
-                    code: ErrorCode::Incompatible,
-                    message: "daemon serves protocols 16..=17".into(),
-                }),
+                Err(ErrorReply::new(
+                    ErrorCode::Incompatible,
+                    "daemon serves protocols 16..=17",
+                )),
             )
             .await;
         }

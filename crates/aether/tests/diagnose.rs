@@ -238,7 +238,7 @@ async fn daemon(root: &Path, empty: bool, refuse_events: bool) -> tokio::task::J
                             assert_eq!(query.before, Some(u64::MAX));
                             assert!(query.run.is_none() || query.run == Some(RUN.parse().unwrap()));
                             if refuse_events {
-                                Err(aether_protocol::ErrorReply { code: aether_protocol::ErrorCode::InvalidArgument, message: SECRET.into() })
+                                Err(aether_protocol::ErrorReply::new(aether_protocol::ErrorCode::InvalidArgument, SECRET))
                             } else {
                                 let events = if empty { vec![] } else {
                                     [EventKind::AgentStarted { turn: 1 }, EventKind::AgentFailed { error: SECRET.into() }]

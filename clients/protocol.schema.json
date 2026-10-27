@@ -5734,6 +5734,11 @@
           "const": "no_model",
           "description": "Nothing named a model and the daemon has no default: no provider is\nsigned in. A model named but not usable is refused with another code.",
           "type": "string"
+        },
+        {
+          "const": "history_expired",
+          "description": "The requested event history was pruned by retention. Sent only to a\nclient whose hello lists `features::HISTORY_EXPIRED`; others get `NotFound`.",
+          "type": "string"
         }
       ]
     },
@@ -5741,6 +5746,24 @@
       "properties": {
         "code": {
           "$ref": "#/$defs/ErrorCode"
+        },
+        "first_seq": {
+          "description": "First expired sequence number; set only with `HistoryExpired`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "last_seq": {
+          "description": "Last expired sequence number; set only with `HistoryExpired`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "message": {
           "type": "string"
