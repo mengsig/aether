@@ -91,6 +91,9 @@ pub enum RuntimeError {
     /// Nothing names a model and the daemon has no default to fall back on.
     #[error("no model configured; sign in from your client")]
     NoModel,
+    /// A startup probe this needs has not finished; retrying soon succeeds.
+    #[error("daemon starting: {0}")]
+    Starting(String),
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -131,7 +134,6 @@ pub use config::{
     DEFAULT_EXHAUSTION_PROBE_FLOOR, DEFAULT_MAX_CONCURRENT_TURNS, DEFAULT_ORPHAN_IDLE,
     DEFAULT_ORPHAN_SWEEP_INTERVAL, DEFAULT_RESOURCE_WAIT_TIMEOUT, DiskGuard, RuntimeConfig,
 };
-use engine_access::detect_engines;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CancelRequest {
@@ -294,12 +296,9 @@ pub struct Runtime {
     pub(crate) default_model: parking_lot::RwLock<Option<ModelRef>>,
     /// Test hook: bypass provider resolution and use this client for every turn.
     pub(crate) client_override: Option<Arc<dyn ModelClient>>,
-    /// External engines found on this machine.
-    pub(crate) engines: HashMap<aether_engine::EngineKind, Arc<dyn aether_engine::Engine>>,
-    /// Why an engine absent from `engines` is unusable, when preflight ran
-    /// and found a specific reason - empty for engines supplied
-    /// directly via `start_with_engines`, which have no such history.
-    pub(crate) engine_unavailable: HashMap<aether_engine::EngineKind, String>,
+    /// External engines found on this machine, once detection finishes.
+    /// Engines supplied via `start_with_engines` carry no unavailable reasons.
+    pub(crate) engines: engine_access::EngineCatalog,
     /// Engine turns in flight, keyed by agent, for routing bridge calls.
     pub(crate) engine_turns: parking_lot::Mutex<HashMap<AgentId, turn_engine::EngineTurnHandle>>,
     pub(crate) tools: Arc<ToolRegistry>,
@@ -347,6 +346,8 @@ impl std::fmt::Debug for Runtime {
 
 impl Runtime {
     /// Build the runtime, recover interrupted work, and start the scheduler.
+    /// Engines, and a default model `config` leaves unset, are found in the
+    /// background; see [`Runtime::await_startup_probes`].
     pub async fn start(
         config: RuntimeConfig,
         store: Arc<dyn Store>,
@@ -365,18 +366,18 @@ impl Runtime {
         tools: Arc<ToolRegistry>,
         client_override: Option<Arc<dyn ModelClient>>,
     ) -> Result<Arc<Self>> {
-        let (engines, engine_unavailable) =
-            detect_engines(models.config().model.prompt_cache_ttl).await;
-        Self::start_with_engines_inner(
+        let prompt_cache_ttl = models.config().model.prompt_cache_ttl;
+        let runtime = Self::start_with_engines_inner(
             config,
             store,
             models,
             tools,
             client_override,
-            engines,
-            engine_unavailable,
+            engine_access::EngineCatalog::default(),
         )
-        .await
+        .await?;
+        engine_access::spawn_startup_probes(&runtime, prompt_cache_ttl);
+        Ok(runtime)
     }
 
     /// Like [`Runtime::start_with`], with the engines given instead of
@@ -397,8 +398,10 @@ impl Runtime {
             models,
             tools,
             client_override,
-            engines,
-            HashMap::new(),
+            engine_access::EngineCatalog::detected(engine_access::DetectedEngines {
+                usable: engines,
+                unavailable: HashMap::new(),
+            }),
         )
         .await
     }
@@ -409,8 +412,7 @@ impl Runtime {
         models: Arc<Models>,
         tools: Arc<ToolRegistry>,
         client_override: Option<Arc<dyn ModelClient>>,
-        engines: HashMap<aether_engine::EngineKind, Arc<dyn aether_engine::Engine>>,
-        engine_unavailable: HashMap<aether_engine::EngineKind, String>,
+        engines: engine_access::EngineCatalog,
     ) -> Result<Arc<Self>> {
         attachments::check_attachment_dir(config.attachment_dir.as_deref())?;
         // One gate for the whole daemon: memory curation is a read-modify-write
@@ -427,7 +429,6 @@ impl Runtime {
             default_model: parking_lot::RwLock::new(config.default_model.clone()),
             client_override,
             engines,
-            engine_unavailable,
             engine_turns: parking_lot::Mutex::new(HashMap::new()),
             store,
             models,

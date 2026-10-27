@@ -254,15 +254,13 @@ impl Runtime {
                 }
             )
             && !config.approval.is_yolo()
-            && std::iter::once(&model)
-                .chain(&fallbacks)
-                .any(|model| !self.engine_can_gate(model))
+            && self.any_engine_cannot_gate(std::iter::once(&model).chain(&fallbacks))?
         {
             return Err(RuntimeError::Invalid(
                 "remote creation cannot select an engine that drops required approvals".into(),
             ));
         }
-        if !self.config.yolo && !config.approval.is_yolo() && !self.engine_can_gate(&model) {
+        if !self.config.yolo && !config.approval.is_yolo() && !self.engine_can_gate(&model)? {
             // set_approvals refuses this same end state loudly (an engine
             // that cannot gate); creation dropped it silently. Emit it here
             // too - the daemon-wide yolo case above needs no note, since
@@ -272,7 +270,7 @@ impl Runtime {
                 "agent's approval policy dropped: this model cannot ask before acting"
             );
         }
-        if self.config.yolo || !self.engine_can_gate(&model) {
+        if self.config.yolo || !self.engine_can_gate(&model)? {
             // An engine that cannot ask before acting runs ungated (see
             // ARCHITECTURE on Codex exec mode).
             config.approval = ApprovalPolicy::none();

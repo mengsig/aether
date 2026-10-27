@@ -18,6 +18,8 @@ pub(super) async fn read(
     };
     let engine = runtime
         .engines
+        .ready()
+        .await
         .get(&kind)
         .ok_or_else(|| format!("{kind} engine is unavailable"))?;
     if cancel.is_cancelled() {

@@ -32,13 +32,18 @@ pub(super) async fn delegation_refusal(
                 let protocol = resolved.provider.protocol;
                 let engine_ready = match crate::turn_engine::engine_kind(protocol) {
                     None => true,
-                    Some(kind) => runtime.engines.get(&kind).is_some_and(|engine| {
-                        engine
-                            .validate_network_policy(
-                                network == aether_core::agent::NetworkPolicy::Allowed,
-                            )
-                            .is_ok()
-                    }),
+                    Some(kind) => runtime
+                        .engines
+                        .ready()
+                        .await
+                        .get(&kind)
+                        .is_some_and(|engine| {
+                            engine
+                                .validate_network_policy(
+                                    network == aether_core::agent::NetworkPolicy::Allowed,
+                                )
+                                .is_ok()
+                        }),
                 };
                 let configured = runtime
                     .models

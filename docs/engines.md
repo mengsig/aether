@@ -740,7 +740,11 @@ legacy-fallback reason for Codex; a turn dispatched onto an engine detection
 ruled unusable fails with that same reason rather than a generic
 "not installed" message. Detection never makes the daemon refuse to start: a
 CLI that fails preflight is omitted from the engine table, exactly as an
-absent one always was, and the API providers remain unaffected. `DetectError`
+absent one always was, and the API providers remain unaffected. Nor does it
+delay the socket: the daemon answers first and detects the engines, Claude
+Code and Codex at once, in the background. Until detection finishes,
+`aether status` shows its engines as `starting` and requests that would use
+an engine wait for it ([startup order](../ARCHITECTURE.md)). `DetectError`
 keeps `TooOld` for a future adapter whose floor genuinely is verified across
 everything its `args()` depends on; Claude Code's own floor does not use it.
 

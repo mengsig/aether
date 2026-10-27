@@ -3,7 +3,7 @@ use crate::{CreateAgentSpec, RuntimeConfig, RuntimeError};
 use aether_core::event::EventKind;
 use aether_core::model::ModelRef;
 use aether_model::testing::ScriptedClient;
-use aether_store::{EventFilter, StoreError};
+use aether_store::{EventFilter, Store, StoreError};
 use std::time::Instant;
 
 const FLOOR: u64 = 1000;
@@ -160,12 +160,17 @@ async fn new_turns_wait_out_a_low_disk_and_start_once_it_has_room() {
 }
 
 async fn runtime_in(dir: &Path) -> Arc<Runtime> {
+    let store = aether_store::SqliteStore::open_in_memory().expect("store");
+    runtime_on(dir, store).await
+}
+
+async fn runtime_on(dir: &Path, store: aether_store::SqliteStore) -> Arc<Runtime> {
     Runtime::start_with_engines(
         RuntimeConfig {
             workspace_root: Some(dir.to_path_buf()),
             ..Default::default()
         },
-        Arc::new(aether_store::SqliteStore::open_in_memory().expect("store")),
+        Arc::new(store),
         Arc::new(aether_model::Models::load(Some(dir.to_path_buf())).expect("models")),
         Arc::new(aether_tools::ToolRegistry::with_builtins()),
         None,
@@ -229,27 +234,91 @@ async fn lifting_the_floor_entirely_still_records_the_recovery() {
     runtime.shutdown().await;
 }
 
+fn custom(name: &str, payload: serde_json::Value) -> EventDraft {
+    EventDraft::new(
+        Actor::System,
+        EventKind::Custom {
+            name: name.into(),
+            payload,
+        },
+    )
+}
+
 #[tokio::test]
-async fn a_low_is_found_beneath_many_unrelated_custom_events() {
+async fn each_recorded_change_keeps_the_open_low_beside_the_log() {
     let dir = tempfile::tempdir().expect("tempdir");
     let runtime = runtime_in(dir.path()).await;
     observe(&runtime, dir.path(), FLOOR, FLOOR / 2);
-    for _ in 0..3 {
-        let mut commit = Commit::new();
-        for _ in 0..STARTUP_SCAN_PAGE {
-            commit = commit.event(EventDraft::new(
-                Actor::System,
-                EventKind::Custom {
-                    name: "other.note".into(),
-                    payload: serde_json::json!({}),
-                },
-            ));
-        }
-        runtime.apply(commit).expect("apply");
-    }
+    let open = runtime
+        .store
+        .meta(OPEN_LOW_META)
+        .expect("meta")
+        .expect("kept");
+    let low: LowDisk = serde_json::from_str(&open).expect("a low");
+    assert_eq!(low.available_bytes, FLOOR / 2);
+    assert_eq!(low.floor_bytes, FLOOR);
+    observe(&runtime, dir.path(), FLOOR, FLOOR * 2);
+    assert_eq!(
+        runtime.store.meta(OPEN_LOW_META).expect("meta").as_deref(),
+        Some("")
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_restart_reads_the_kept_state_not_the_log() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let runtime = runtime_in(dir.path()).await;
+    observe(&runtime, dir.path(), FLOOR, FLOOR / 2);
+    observe(&runtime, dir.path(), FLOOR, FLOOR * 2);
+    // Only the log says low now, as a daemon from before the key would leave it.
+    let stale = serde_json::json!({"path": "/x", "available_bytes": 1, "floor_bytes": FLOOR, "since": now()});
+    runtime
+        .apply(Commit::new().event(custom(DISK_LOW, stale)))
+        .expect("apply");
     *runtime.disk.lock() = DiskState::default();
 
     resume_low(&runtime);
-    assert!(runtime.disk_is_low());
+    assert!(!runtime.disk_is_low(), "the kept state wins over the log");
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_store_from_before_the_key_finds_its_low_beneath_unrelated_events_once() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = aether_store::SqliteStore::open_in_memory().expect("store");
+    let payload = serde_json::json!({"path": "/x", "available_bytes": 5, "floor_bytes": FLOOR, "since": now()});
+    store
+        .commit(Commit::new().event(custom(DISK_LOW, payload)))
+        .expect("commit");
+    for _ in 0..3 {
+        let commit = (0..200).fold(Commit::new(), |commit, _| {
+            commit.event(custom("other.note", serde_json::json!({})))
+        });
+        store.commit(commit).expect("commit");
+    }
+    assert_eq!(store.meta(OPEN_LOW_META).expect("meta"), None);
+
+    // No floor is set, so the start closes the low it found in the log.
+    let runtime = runtime_on(dir.path(), store).await;
+    assert_eq!(disk_events(&runtime), [DISK_LOW, DISK_RECOVERED]);
+    assert_eq!(
+        runtime.store.meta(OPEN_LOW_META).expect("meta").as_deref(),
+        Some("")
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_store_from_before_the_key_with_no_disk_events_keeps_an_empty_state() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let runtime = runtime_in(dir.path()).await;
+    assert!(disk_events(&runtime).is_empty());
+    assert_eq!(
+        runtime.store.meta(OPEN_LOW_META).expect("meta").as_deref(),
+        Some("")
+    );
+    resume_low(&runtime);
+    assert!(!runtime.disk_is_low());
     runtime.shutdown().await;
 }

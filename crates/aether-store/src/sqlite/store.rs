@@ -274,6 +274,29 @@ impl Store for SqliteStore {
         Ok(events.pop())
     }
 
+    fn latest_custom_event(&self, names: &[&str]) -> Result<Option<Event>> {
+        if names.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.read_conn();
+        // The `(type, seq)` index walks custom events newest first.
+        let sql = "SELECT body FROM events WHERE type = 'custom' \
+                   AND json_extract(body, '$.kind.name') IN (SELECT value FROM json_each(?1)) \
+                   ORDER BY seq DESC LIMIT 1";
+        let mut events =
+            super::event_blobs::read_events(&conn, sql, &[&serde_json::to_string(names)?])?;
+        debug_assert!(events.len() <= 1, "the query is limited to one row");
+        let event = events.pop();
+        debug_assert!(
+            event.as_ref().is_none_or(|event| matches!(
+                &event.kind,
+                aether_core::event::EventKind::Custom { name, .. } if names.contains(&name.as_str())
+            )),
+            "the query matches only the names asked for"
+        );
+        Ok(event)
+    }
+
     fn event_by_seq(&self, seq: u64) -> Result<Option<Event>> {
         if seq == 0 || seq > i64::MAX as u64 {
             return Ok(None);

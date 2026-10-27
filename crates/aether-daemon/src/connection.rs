@@ -27,6 +27,7 @@ mod providers;
 mod push;
 mod remote_admin;
 mod resolution;
+mod starting;
 mod subscription;
 mod writer;
 #[cfg(test)]
@@ -54,6 +55,9 @@ fn map_err(e: RuntimeError) -> ErrorReply {
         RuntimeError::Memory(aether_memory::MemoryError::NotFound(id)) => ErrorReply::not_found(id),
         RuntimeError::Transition(t) => ErrorReply::new(ErrorCode::InvalidTransition, t.to_string()),
         RuntimeError::Models(m) => ErrorReply::new(ErrorCode::Unavailable, m.to_string()),
+        starting @ RuntimeError::Starting(_) => {
+            ErrorReply::new(ErrorCode::Unavailable, starting.to_string())
+        }
         RuntimeError::Model(m) => ErrorReply::new(ErrorCode::Unavailable, m.to_string()),
         RuntimeError::Store(e) => store_err(e),
         other => ErrorReply::internal(other),
@@ -409,6 +413,19 @@ where
                     }
                     continue;
                 };
+                if let Err(refusal) =
+                    starting::await_startup_probes(&daemon, &frame.command, &connection_cancel)
+                        .await
+                {
+                    let refused = ServerFrame::Reply {
+                        id,
+                        result: Err(refusal),
+                    };
+                    if !send_frame(&out_tx, refused, &connection_cancel).await {
+                        break;
+                    }
+                    continue;
+                }
                 // Before any branch below: subscriptions and shutdown never
                 // reach dispatch, so a check there would not cover them.
                 let allowed = auth

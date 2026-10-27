@@ -38,6 +38,17 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **The daemon answers its socket before probing engines (#326).** `aetherd`
+  used to run the Claude Code and Codex CLIs, resolve the default model, and
+  search the event log for an open low-disk warning before it bound its
+  socket, which took 6 to 9.5 seconds. It now binds as soon as the store is
+  open and recovery has finished, and detects the engines, both at once, and
+  the default model in the background. Until they finish, `aether status`
+  and `aether doctor` show the engines as `starting`, and a request that
+  would use an engine waits for them, or after 20 seconds gets a retryable
+  `unavailable`. The open low-disk state is now kept in store metadata, so a
+  restart reads it instead of scanning the log. The daemon log names each
+  startup phase and how long it took.
 - **An answered engine question no longer loses an earlier steered
   message (#306).** Answering a question recorded the reply consumed even
   while a message steered before it was still unacknowledged; if the engine

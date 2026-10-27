@@ -50,7 +50,9 @@ async fn yolo_and_codex_agents_carry_no_approval_policy() {
     // Codex gates only through its app-server; an exec-only build cannot.
     assert_eq!(
         codex.config.approval.require_for.is_empty(),
-        !h.runtime.engine_can_gate(&codex_model),
+        !h.runtime
+            .engine_can_gate(&codex_model)
+            .expect("engines detected"),
         "policy follows the engine's ability to ask: {:?}",
         codex.config.approval
     );

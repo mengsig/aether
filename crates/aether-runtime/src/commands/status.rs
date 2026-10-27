@@ -55,7 +55,10 @@ const RECEIPT_PAGE: usize = 256;
 
 impl Runtime {
     pub fn status(&self) -> Result<RuntimeStatus> {
-        let mut engines: Vec<String> = self.engines.values().map(|e| e.adapter()).collect();
+        let mut engines: Vec<String> = match self.engines.now() {
+            Ok(detected) => detected.usable.values().map(|e| e.adapter()).collect(),
+            Err(_) => vec![aether_protocol::ENGINES_STARTING.to_owned()],
+        };
         engines.sort();
         // Read before the struct literal: `provider_health` takes the same
         // lock, and a guard living inside the literal would still be held.

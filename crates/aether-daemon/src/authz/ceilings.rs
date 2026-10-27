@@ -1,7 +1,7 @@
 use aether_core::agent::{AgentConfig, ApprovalPolicy, NetworkPolicy, Scope};
 use aether_core::id::AgentId;
 use aether_core::model::ModelRef;
-use aether_protocol::{AgentPatch, ErrorReply};
+use aether_protocol::{AgentPatch, ErrorCode, ErrorReply};
 use aether_runtime::Runtime;
 
 pub(super) fn creation(
@@ -119,7 +119,13 @@ fn check_model(
     model: Option<&ModelRef>,
     policy: &ApprovalPolicy,
 ) -> Result<(), ErrorReply> {
-    if !policy.is_yolo() && model.is_some_and(|model| !rt.engine_can_gate(model)) {
+    let Some(model) = model.filter(|_| !policy.is_yolo()) else {
+        return Ok(());
+    };
+    let can_gate = rt
+        .engine_can_gate(model)
+        .map_err(|error| ErrorReply::new(ErrorCode::Unavailable, error.to_string()))?;
+    if !can_gate {
         return Err(ErrorReply::forbidden(
             "a remote client cannot select an engine that drops required approvals",
         ));

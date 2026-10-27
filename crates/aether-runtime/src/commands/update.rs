@@ -142,7 +142,7 @@ impl Runtime {
                     "the daemon runs in yolo mode; approvals are off for every agent".into(),
                 ));
             }
-            if !self.engine_can_gate(&agent.model) {
+            if !self.engine_can_gate(&agent.model)? {
                 return Err(RuntimeError::Invalid(
                     "this codex build runs unsandboxed and cannot ask for approval in exec mode; \
                      upgrade codex (app-server), or use claude-code or an API model for gated work"
@@ -240,9 +240,7 @@ impl Runtime {
                 ..
             }
         ) && !agent.config.approval.is_yolo()
-            && std::iter::once(&agent.model)
-                .chain(&agent.fallbacks)
-                .any(|model| !self.engine_can_gate(model))
+            && self.any_engine_cannot_gate(std::iter::once(&agent.model).chain(&agent.fallbacks))?
         {
             return Err(RuntimeError::Invalid(
                 "remote update cannot select an engine that drops required approvals".into(),

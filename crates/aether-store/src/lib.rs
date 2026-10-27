@@ -644,6 +644,8 @@ pub trait Store: Send + Sync {
     /// Latest notice or recovery for this exhausted model, regardless of intervening events.
     fn latest_exhaustion_incident(&self, agent: AgentId, model: &ModelRef)
     -> Result<Option<Event>>;
+    /// The newest custom event with any of these names, without a history window.
+    fn latest_custom_event(&self, names: &[&str]) -> Result<Option<Event>>;
 
     fn schedule(&self, id: ScheduleId) -> Result<Option<Schedule>>;
     fn schedules(&self, target: Option<AgentId>) -> Result<Vec<Schedule>>;

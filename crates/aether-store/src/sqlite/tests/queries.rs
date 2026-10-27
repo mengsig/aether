@@ -632,3 +632,41 @@ fn budget_filter_selects_only_live_budgeted_agents_when_requested() {
     assert_eq!(all.len(), 3);
     assert!(all.iter().any(|row| row.id == ended.id));
 }
+
+#[test]
+fn the_latest_custom_event_is_the_newest_with_a_wanted_name() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let custom = |name: &str, step: u64| {
+        let kind = EventKind::Custom {
+            name: name.into(),
+            payload: serde_json::json!({"step": step}),
+        };
+        EventDraft::new(Actor::System, kind)
+    };
+    assert!(
+        store
+            .latest_custom_event(&["disk.low"])
+            .expect("read")
+            .is_none()
+    );
+
+    let commit = Commit::new()
+        .event(custom("disk.low", 1))
+        .event(custom("disk.recovered", 2))
+        .event(custom("disk.low", 3))
+        .event(custom("other.note", 4));
+    store.commit(commit).expect("commit");
+
+    let step = |names: &[&str]| {
+        let event = store.latest_custom_event(names).expect("read")?;
+        match event.kind {
+            EventKind::Custom { payload, .. } => payload["step"].as_u64(),
+            other => panic!("not a custom event: {other:?}"),
+        }
+    };
+    assert_eq!(step(&["disk.low", "disk.recovered"]), Some(3));
+    assert_eq!(step(&["disk.recovered"]), Some(2));
+    assert_eq!(step(&["other.note"]), Some(4));
+    assert_eq!(step(&["never.written"]), None);
+    assert_eq!(step(&[]), None);
+}

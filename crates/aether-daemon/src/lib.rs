@@ -16,6 +16,7 @@ mod projections;
 pub mod push;
 pub mod remote;
 mod secrets;
+mod startup;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -157,6 +158,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         "max_concurrent_turns must be positive"
     );
     std::os::unix::net::SocketAddr::from_pathname(&config.socket)?;
+    let mut clock = startup::StartupClock::start();
     // Both before the store opens and recovery runs, held until `run`
     // returns. The socket lock covers the probe, the unlink and the bind
     // below, which the store lock cannot: a daemon for another store
@@ -169,9 +171,11 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     remove_stale_socket(socket, &socket_address).await?;
     let pid_path = aether_protocol::paths::pid_path_for(socket);
     instance_lock::check_private_file_replacement(&pid_path)?;
+    clock.finished("preflight");
     let store_path = instance.prepare_store()?;
     crash::report_previous(&store_path);
     let store = Arc::new(SqliteStore::open(&store_path)?);
+    clock.finished("store");
     let instance_id = aether_store::Store::instance_id(store.as_ref())?;
     let config_dir = aether_model::config::config_dir(config.config_dir.clone());
     match aether_model::config::ensure_templates(&config_dir) {
@@ -213,10 +217,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     }
     for retired in models.retired_settings() {
         tracing::warn!("{retired}; refused on use until config.toml changes");
-    }
-    let default_model = models.default_model().await;
-    if default_model.is_none() {
-        tracing::warn!("no model is configured; sign in from your client before running agents");
     }
     // Validated when the config loaded; re-read here rather than duplicating
     // the rule.
@@ -336,6 +336,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         tcp.as_ref(),
         |name| std::env::var(name).ok(),
     )?;
+    clock.finished("config");
     let runtime = Runtime::start(
         RuntimeConfig {
             holder: format!("aetherd-{}-{}", instance_id, std::process::id()),
@@ -367,7 +368,8 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 logs: aether_protocol::paths::log_dir(),
             }),
             memory_index: memory_index_of(models.config().memory.index),
-            default_model,
+            // Resolved with the engines, after the socket answers.
+            default_model: None,
             workspace_root: config.workspace_root.clone(),
             // Beside the resolved store: an engine opens the file from its agent's workspace.
             attachment_dir: Some(store_path.with_extension("attachments")),
@@ -401,12 +403,14 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         tools,
     )
     .await?;
+    clock.finished("runtime");
 
     let mut connections = tokio::task::JoinSet::new();
     let mut socket_published = None;
     let mut pid_published = None;
     let result = async {
         aether_tools::exec::sweep_orphan_containers(&instance_id).await;
+        clock.finished("containers");
 
         mcp::spawn_recorder(&runtime, mcp_rx, &mut connections, &shutdown);
         if !mcp.is_empty() {
@@ -422,6 +426,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             &mut pid_published,
         )?;
         tracing::info!(socket = %socket.display(), pid = std::process::id(), "aetherd listening");
+        clock.finished("listening");
 
         let push = push::Push::start(
             push_config,
@@ -454,6 +459,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         }
 
         background::github(&mut connections, &runtime, &shutdown);
+        clock.finished("serving");
         loop {
             tokio::select! {
                 accepted = listener.accept() => match accepted {

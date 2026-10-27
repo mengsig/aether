@@ -558,6 +558,10 @@ pub fn check_engines(
     let Some(daemon) = daemon else {
         return check;
     };
+    if daemon == [aether_protocol::ENGINES_STARTING] {
+        check.detail = format!("{} · the daemon is still detecting engines", check.detail);
+        return check;
+    }
     let gaps = engines_missing_from_daemon(found, daemon);
     if gaps.is_empty() {
         return check;

@@ -89,10 +89,11 @@ fn human_status(
     }
     out.push(format!(
         "model    {}",
-        s.default_model
-            .as_ref()
-            .map(|m| sane(&m.to_string()))
-            .unwrap_or_else(|| "none configured".into())
+        match &s.default_model {
+            Some(model) => sane(&model.to_string()),
+            None if still_probing(s) => "starting (the daemon is still detecting providers)".into(),
+            None => "none configured".into(),
+        }
     ));
     out.push(format!(
         "agents   {} live · {} running · {} waiting · {} blocked ({} suspended) · {} paused",
@@ -129,6 +130,11 @@ fn human_status(
 
 /// What the store wrote since the daemon started, and the three kinds of
 /// record that wrote most of it: the first place to look when the disk is busy.
+/// The daemon has started but not yet found its engines and default model.
+fn still_probing(s: &aether_protocol::DaemonStatus) -> bool {
+    s.engines == [aether_protocol::ENGINES_STARTING]
+}
+
 fn writes_line(writes: &aether_core::write_stats::WriteStats) -> String {
     let mib = |bytes: u64| bytes as f64 / (1u64 << 20) as f64;
     let mut line = format!(
@@ -235,6 +241,8 @@ fn activity_lines(s: &aether_protocol::DaemonStatus, at: Timestamp) -> Vec<Strin
         "engines  {}",
         if s.engines.is_empty() {
             "none (install claude or codex for subscription access)".to_owned()
+        } else if still_probing(s) {
+            "starting (the daemon is still detecting engines)".to_owned()
         } else {
             sane(&s.engines.join(" · "))
         }
@@ -512,6 +520,21 @@ mod tests {
             "an idle run forecasts nothing: {}",
             runs[1]
         );
+    }
+
+    #[test]
+    fn a_daemon_still_probing_reads_as_starting_not_as_missing() {
+        let at = aether_core::time::now();
+        let mut status = fixture(at);
+        status.engines = vec![aether_protocol::ENGINES_STARTING.to_owned()];
+        let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
+        assert!(text.contains("engines  starting"), "{text}");
+        assert!(text.contains("model    starting"), "{text}");
+        assert!(!text.contains("model    none"), "{text}");
+        status.engines.clear();
+        let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
+        assert!(text.contains("engines  none"), "{text}");
+        assert!(text.contains("model    none configured"), "{text}");
     }
 
     #[test]

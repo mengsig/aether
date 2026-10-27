@@ -1,21 +1,153 @@
 use crate::{Result, Runtime, RuntimeError, turn_engine, withheld_by_position};
 use aether_core::id::AgentId;
+use aether_engine::{Engine, EngineKind};
 use std::{collections::HashMap, sync::Arc};
+
+/// What engine detection found: the usable engines, and why each other one
+/// is not, when preflight ran and found a specific reason.
+#[derive(Default)]
+pub(crate) struct DetectedEngines {
+    pub(crate) usable: HashMap<EngineKind, Arc<dyn Engine>>,
+    pub(crate) unavailable: HashMap<EngineKind, String>,
+}
+
+impl DetectedEngines {
+    pub(crate) fn get(&self, kind: &EngineKind) -> Option<&Arc<dyn Engine>> {
+        self.usable.get(kind)
+    }
+
+    /// Every engine unusable for one reason: detection itself failed.
+    fn failed(reason: &str) -> Self {
+        let unavailable = [EngineKind::CLAUDE_CODE, EngineKind::CODEX]
+            .into_iter()
+            .map(|kind| (kind, reason.to_owned()))
+            .collect();
+        Self {
+            usable: HashMap::new(),
+            unavailable,
+        }
+    }
+}
+
+/// The engines, set once. Detection runs after the socket can answer, so a
+/// reader that can wait awaits [`EngineCatalog::ready`]; one that cannot gets
+/// a retryable [`RuntimeError::Starting`] from [`EngineCatalog::now`].
+#[derive(Default)]
+pub(crate) struct EngineCatalog(tokio::sync::SetOnce<DetectedEngines>);
+
+impl EngineCatalog {
+    pub(crate) fn detected(engines: DetectedEngines) -> Self {
+        Self(tokio::sync::SetOnce::new_with(Some(engines)))
+    }
+
+    /// Never waits longer than detection, whose probes are each bounded.
+    pub(crate) async fn ready(&self) -> &DetectedEngines {
+        self.0.wait().await
+    }
+
+    pub(crate) fn now(&self) -> Result<&DetectedEngines> {
+        self.0.get().ok_or_else(|| {
+            RuntimeError::Starting(
+                "engine and default model detection is still running; retry in a moment".into(),
+            )
+        })
+    }
+
+    fn finish(&self, engines: DetectedEngines) {
+        let set = self.0.set(engines);
+        debug_assert!(set.is_ok(), "engine detection finishes once");
+        if set.is_err() {
+            tracing::error!("engine detection finished twice; kept the first result");
+        }
+    }
+}
+
+/// Detect the engines, and the default model when none was configured,
+/// without holding up startup: both run the providers' CLIs. The catalog is
+/// set last and on every path, a panicking probe included, so no reader
+/// waits forever or sees a default model still being resolved.
+pub(super) fn spawn_startup_probes(
+    runtime: &Arc<Runtime>,
+    prompt_cache_ttl: Option<aether_core::model::PromptCacheTtl>,
+) {
+    debug_assert!(
+        runtime.engines.now().is_err(),
+        "detection runs only for a runtime started without engines"
+    );
+    let detecting = runtime.clone();
+    let resolve_default = runtime.default_model().is_none();
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        let models = detecting.models.clone();
+        let (found, default_model) =
+            tokio::join!(tokio::spawn(detect_engines(prompt_cache_ttl)), async move {
+                if resolve_default {
+                    Some(models.default_model().await)
+                } else {
+                    None
+                }
+            });
+        match default_model {
+            Some(None) => tracing::warn!(
+                "no model is configured; sign in from your client before running agents"
+            ),
+            Some(Some(model)) => detecting.set_default_model(Some(model)),
+            None => {}
+        }
+        let found = match found {
+            Ok(found) => found,
+            Err(error) => {
+                let reason = format!("engine detection failed: {error}; restart the daemon");
+                detecting.report_problem("engine detection".into(), reason.clone());
+                DetectedEngines::failed(&reason)
+            }
+        };
+        let mut usable: Vec<&str> = found.usable.keys().map(|kind| kind.as_str()).collect();
+        usable.sort_unstable();
+        tracing::info!(
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            engines = ?usable,
+            "engine detection finished"
+        );
+        detecting.engines.finish(found);
+    });
+}
 
 /// The official CLIs installed on this machine, keyed by engine, plus why
 /// each omitted engine is unusable, keyed the same way. An engine this
 /// machine cannot use is omitted, same as before this preflight; the reason
 /// is logged at `warn` and kept on [`Runtime`] so a turn that reaches it
 /// reports why rather than a generic "not installed".
-pub(super) async fn detect_engines(
+async fn detect_engines(
     prompt_cache_ttl: Option<aether_core::model::PromptCacheTtl>,
-) -> (
-    HashMap<aether_engine::EngineKind, Arc<dyn aether_engine::Engine>>,
-    HashMap<aether_engine::EngineKind, String>,
-) {
-    let mut engines: HashMap<aether_engine::EngineKind, Arc<dyn aether_engine::Engine>> =
-        HashMap::new();
-    let mut unavailable: HashMap<aether_engine::EngineKind, String> = HashMap::new();
+) -> DetectedEngines {
+    // Independent CLIs: probing them together bounds the wait by the slower one.
+    let (claude, codex) = tokio::join!(detect_claude(prompt_cache_ttl), detect_codex());
+    let mut detected = DetectedEngines::default();
+    for (kind, found) in [
+        (EngineKind::CLAUDE_CODE, claude),
+        (EngineKind::CODEX, codex),
+    ] {
+        match found {
+            Ok(engine) => {
+                detected.usable.insert(kind, engine);
+            }
+            Err(reason) => {
+                detected.unavailable.insert(kind, reason);
+            }
+        }
+    }
+    debug_assert_eq!(
+        detected.usable.len() + detected.unavailable.len(),
+        2,
+        "each engine is either usable or has a reason"
+    );
+    detected
+}
+
+async fn detect_claude(
+    prompt_cache_ttl: Option<aether_core::model::PromptCacheTtl>,
+) -> std::result::Result<Arc<dyn Engine>, String> {
     match aether_engine::ClaudeCodeEngine::detect_verbose().await {
         Ok(e) => {
             // Usable-with-a-limitation is not unavailable: it
@@ -27,48 +159,65 @@ pub(super) async fn detect_engines(
                 Some(ttl) => e.with_prompt_cache_ttl(ttl),
                 None => e,
             };
-            engines.insert(aether_engine::EngineKind::CLAUDE_CODE, Arc::new(e));
+            Ok(Arc::new(e))
         }
         Err(reason) => {
             tracing::warn!(engine = "claude-code", %reason, "engine CLI unusable");
-            unavailable.insert(aether_engine::EngineKind::CLAUDE_CODE, reason.to_string());
+            Err(reason.to_string())
         }
     }
-    // The app-server protocol gates, steers and interrupts; exec mode is
-    // the fallback for older Codex builds.
-    match aether_engine::CodexAppEngine::detect_verbose().await {
-        Ok(e) => {
-            engines.insert(aether_engine::EngineKind::CODEX, Arc::new(e));
+}
+
+/// The app-server protocol gates, steers and interrupts; exec mode is the
+/// fallback for older Codex builds.
+async fn detect_codex() -> std::result::Result<Arc<dyn Engine>, String> {
+    let app_reason = match aether_engine::CodexAppEngine::detect_verbose().await {
+        Ok(e) => return Ok(Arc::new(e)),
+        Err(reason) => reason,
+    };
+    match aether_engine::CodexEngine::detect_verbose().await {
+        Ok(e) => Ok(Arc::new(e)),
+        Err(exec_reason) => {
+            tracing::warn!(
+                engine = "codex",
+                app_server_reason = %app_reason,
+                exec_reason = %exec_reason,
+                "engine CLI unusable"
+            );
+            // The common case - codex simply absent - fails both probes
+            // with the identical reason; do not repeat it.
+            if app_reason == exec_reason {
+                Err(app_reason.to_string())
+            } else {
+                Err(format!(
+                    "{app_reason} (legacy exec fallback: {exec_reason})"
+                ))
+            }
         }
-        Err(app_reason) => match aether_engine::CodexEngine::detect_verbose().await {
-            Ok(e) => {
-                engines.insert(aether_engine::EngineKind::CODEX, Arc::new(e));
-            }
-            Err(exec_reason) => {
-                tracing::warn!(
-                    engine = "codex",
-                    app_server_reason = %app_reason,
-                    exec_reason = %exec_reason,
-                    "engine CLI unusable"
-                );
-                // The common case - codex simply absent - fails both probes
-                // with the identical reason; do not repeat it.
-                let reason = if app_reason == exec_reason {
-                    app_reason.to_string()
-                } else {
-                    format!("{app_reason} (legacy exec fallback: {exec_reason})")
-                };
-                unavailable.insert(aether_engine::EngineKind::CODEX, reason);
-            }
-        },
     }
-    (engines, unavailable)
 }
 
 impl Runtime {
-    /// Engines detected on this machine, by provider protocol name.
-    pub fn engines(&self) -> Vec<String> {
-        self.engines.keys().map(|k| k.as_str().to_owned()).collect()
+    /// Whether the startup probes, engine detection and the default model,
+    /// have finished.
+    pub fn startup_probes_finished(&self) -> bool {
+        self.engines.now().is_ok()
+    }
+
+    /// Wait for the startup probes to finish.
+    pub async fn await_startup_probes(&self) {
+        self.engines.ready().await;
+    }
+
+    /// Engines detected on this machine, by provider protocol name, once
+    /// detection has finished.
+    pub async fn engines(&self) -> Vec<String> {
+        let detected = self.engines.ready().await;
+        detected
+            .usable
+            .keys()
+            .map(|k| k.as_str().to_owned())
+            .collect()
     }
 
     /// The channel of the engine turn that issued `token`, or a refusal. The

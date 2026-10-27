@@ -99,7 +99,7 @@ impl Runtime {
                 skipped.insert(agent.id);
                 continue;
             }
-            if !policy.is_yolo() && !self.engine_can_gate(&agent.model) {
+            if !policy.is_yolo() && !self.engine_can_gate(&agent.model)? {
                 return Err(RuntimeError::Invalid(format!(
                     "agent {} runs on {}, which cannot ask before acting; approvals cannot be \
                      turned on for it",
@@ -251,13 +251,33 @@ impl Runtime {
 
     /// Whether an approval policy can be honoured for agents on `model`:
     /// always for API models; for engines, only when the engine asks before
-    /// acting (Codex's exec mode does not).
-    pub fn engine_can_gate(&self, model: &ModelRef) -> bool {
+    /// acting (Codex's exec mode does not). Unknown, so an error, while
+    /// engine detection still runs.
+    pub fn engine_can_gate(&self, model: &ModelRef) -> Result<bool> {
         let Ok(resolved) = self.models.resolve(model) else {
-            return true;
+            return Ok(true);
         };
-        crate::turn_engine::engine_kind(resolved.provider.protocol)
-            .and_then(|kind| self.engines.get(&kind))
-            .is_none_or(|engine| engine.gates_permissions())
+        let Some(kind) = crate::turn_engine::engine_kind(resolved.provider.protocol) else {
+            return Ok(true);
+        };
+        Ok(self
+            .engines
+            .now()?
+            .get(&kind)
+            .is_none_or(|engine| engine.gates_permissions()))
+    }
+
+    /// Whether any of `models` runs on an engine that cannot gate; see
+    /// [`Runtime::engine_can_gate`].
+    pub(crate) fn any_engine_cannot_gate<'a>(
+        &self,
+        models: impl IntoIterator<Item = &'a ModelRef>,
+    ) -> Result<bool> {
+        for model in models {
+            if !self.engine_can_gate(model)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }

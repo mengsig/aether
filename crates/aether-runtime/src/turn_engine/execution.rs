@@ -24,12 +24,13 @@ pub(crate) async fn execute(
     let Some(kind) = engine_kind(resolved.provider.protocol) else {
         return Err(RuntimeError::Internal("not an engine provider".into()));
     };
-    let Some(engine) = runtime.engines.get(&kind).cloned() else {
+    let detected = runtime.engines.ready().await;
+    let Some(engine) = detected.get(&kind).cloned() else {
         // Preflight recorded why, when it ran: too old or missing a
         // capability reads very differently from genuinely not installed,
         // and only the stored reason tells them apart.
-        let reason = runtime
-            .engine_unavailable
+        let reason = detected
+            .unavailable
             .get(&kind)
             .cloned()
             .unwrap_or_else(|| {

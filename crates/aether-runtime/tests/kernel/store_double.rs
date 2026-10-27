@@ -381,6 +381,10 @@ impl Store for CommitsMidPass {
     ) -> Result<Option<Event>> {
         self.inner.latest_exhaustion_incident(agent, model)
     }
+
+    fn latest_custom_event(&self, names: &[&str]) -> aether_store::Result<Option<Event>> {
+        self.inner.latest_custom_event(names)
+    }
     fn agent(&self, id: AgentId) -> Result<Option<Agent>> {
         let agent = self.inner.agent(id)?;
         self.fire(Hook::AgentRead)?;

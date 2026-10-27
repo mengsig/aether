@@ -55,6 +55,11 @@ pub(crate) fn spawn(runtime: Arc<Runtime>) {
 }
 
 async fn run(runtime: Arc<Runtime>) {
+    // A due schedule or a recovered turn may need an engine; wait for them.
+    tokio::select! {
+        _ = runtime.shutdown.cancelled() => return,
+        _ = runtime.engines.ready() => {}
+    }
     loop {
         tokio::select! {
             _ = runtime.notify.notified() => {}

@@ -58,7 +58,8 @@ pub struct RuntimeConfig {
     /// admitted. Unset means nothing changes.
     pub run_hard_stop: aether_core::budget::HardStop,
     pub lease_ttl: Duration,
-    /// Model used when an agent is created without one.
+    /// Model used when an agent is created without one. Unset, `start`
+    /// resolves it from the signed-in providers alongside engine detection.
     pub default_model: Option<ModelRef>,
     /// Workspace root for agents created without a scope.
     pub workspace_root: Option<PathBuf>,

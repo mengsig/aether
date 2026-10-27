@@ -6,7 +6,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 use aether_core::disk::LowDisk;
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::time::now;
-use aether_store::{Commit, EventFilter};
+use aether_store::{Commit, Mutation};
 use parking_lot::Mutex;
 
 use crate::{Runtime, config::DiskGuard};
@@ -15,6 +15,9 @@ const INTERVAL: Duration = Duration::from_secs(30);
 
 const DISK_LOW: &str = "disk.low";
 const DISK_RECOVERED: &str = "disk.recovered";
+/// The open `disk.low` payload, or empty once recovered; written with the
+/// event so startup need not search the log for it.
+const OPEN_LOW_META: &str = "disk.open_low";
 
 /// What the guard has seen, and what the event log has yet to hear of it.
 #[derive(Default)]
@@ -110,51 +113,58 @@ impl Runtime {
     }
 }
 
-/// Custom events read per query while finding the disk's last recorded state.
-const STARTUP_SCAN_PAGE: usize = 200;
-
-/// The newest `disk.low` or `disk.recovered` event, searching back through
-/// every custom event once at startup.
-fn last_disk_event(runtime: &Runtime) -> aether_store::Result<Option<EventKind>> {
-    let filter = EventFilter {
-        types: vec!["custom".into()],
-        ..Default::default()
-    };
-    let mut before = u64::MAX;
-    loop {
-        let page = runtime
-            .store
-            .events_before(before, STARTUP_SCAN_PAGE, &filter)?;
-        let Some(oldest) = page.last() else {
-            return Ok(None);
-        };
-        before = oldest.seq;
-        let found = page.into_iter().find(|event| {
-            matches!(&event.kind, EventKind::Custom { name, .. } if name == DISK_LOW || name == DISK_RECOVERED)
-        });
-        if let Some(event) = found {
-            return Ok(Some(event.kind));
-        }
-    }
-}
-
 /// The low the log last announced without a recovery after it: the daemon
 /// that announced it may have stopped before the disk recovered.
 fn unrecovered_low(runtime: &Runtime) -> Option<LowDisk> {
-    let last = match last_disk_event(runtime) {
+    let recorded = match runtime.store.meta(OPEN_LOW_META) {
+        Ok(Some(recorded)) => recorded,
+        Ok(None) => return unrecovered_low_in_log(runtime),
+        Err(error) => {
+            tracing::warn!(%error, "could not read the disk's last recorded state");
+            return None;
+        }
+    };
+    if recorded.is_empty() {
+        return None;
+    }
+    serde_json::from_str(&recorded)
+        .map_err(|error| tracing::warn!(%error, "ignoring an unreadable open disk low"))
+        .ok()
+}
+
+/// A store from before [`OPEN_LOW_META`]: find the state in the log once,
+/// and keep it there for the next start.
+fn unrecovered_low_in_log(runtime: &Runtime) -> Option<LowDisk> {
+    let last = match runtime
+        .store
+        .latest_custom_event(&[DISK_LOW, DISK_RECOVERED])
+    {
         Ok(last) => last,
         Err(error) => {
             tracing::warn!(%error, "could not read the disk's last recorded state");
             return None;
         }
     };
-    let Some(EventKind::Custom { name, payload }) = last else {
-        return None;
+    let open = match last.map(|event| event.kind) {
+        Some(EventKind::Custom { name, payload }) if name == DISK_LOW => Some(payload),
+        other => {
+            debug_assert!(
+                other.as_ref().is_none_or(
+                    |kind| matches!(kind, EventKind::Custom { name, .. } if name == DISK_RECOVERED)
+                ),
+                "the query asks for disk.low and disk.recovered only"
+            );
+            None
+        }
     };
-    if name != DISK_LOW {
-        return None;
+    let kept = runtime.apply(Commit::new().mutate(Mutation::SetMeta {
+        key: OPEN_LOW_META.into(),
+        value: open.as_ref().map(ToString::to_string).unwrap_or_default(),
+    }));
+    if let Err(error) = kept {
+        tracing::warn!(%error, "could not keep the disk's last recorded state; the next start searches again");
     }
-    serde_json::from_value(payload)
+    serde_json::from_value(open?)
         .map_err(|error| tracing::warn!(%error, "ignoring an unreadable disk.low event"))
         .ok()
 }
@@ -278,8 +288,21 @@ fn record(disk: &Mutex<DiskState>, apply: impl FnOnce(Commit) -> crate::Result<(
     let Some(unrecorded) = disk.lock().unrecorded.clone() else {
         return;
     };
+    let open_low = match &unrecorded.kind {
+        EventKind::Custom { name, payload } if name == DISK_LOW => payload.to_string(),
+        kind => {
+            debug_assert!(
+                matches!(kind, EventKind::Custom { name, .. } if name == DISK_RECOVERED),
+                "the guard records disk.low and disk.recovered only"
+            );
+            String::new()
+        }
+    };
     // Not held across the commit: `status` reads this state.
-    let recorded = apply(Commit::new().event(unrecorded));
+    let recorded = apply(Commit::new().event(unrecorded).mutate(Mutation::SetMeta {
+        key: OPEN_LOW_META.into(),
+        value: open_low,
+    }));
     let mut state = disk.lock();
     match recorded {
         Ok(()) => state.unrecorded = None,

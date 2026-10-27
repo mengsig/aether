@@ -54,6 +54,7 @@ async fn run_isolated(test: &str, engine: &str, docker: &str) -> bool {
     );
     // A stale `--exact` name would run zero tests and still exit 0.
     assert!(stdout.contains("1 passed"), "{stdout}");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
     true
 }
 
@@ -208,4 +209,101 @@ async fn pid_replacement_after_preflight_still_stops_the_runtime_and_cleans_its_
             .count(),
         1
     );
+}
+
+// Records each probe, then answers only once the test releases it.
+const GATED_ENGINE: &str = "printf '%s\\n' \"$0 $*\" >> \"$AETHER_TEST_STARTUP_PROBE_ROOT/probes\"\nwhile [ ! -f \"$AETHER_TEST_STARTUP_PROBE_ROOT/release\" ]; do /bin/sleep 0.01; done\nprintf '%s\\n' '2.1.269'\n";
+
+/// The acceptance bound for a warm start, from process start to an answered hello.
+const HELLO_WITHIN: Duration = Duration::from_millis(1500);
+
+async fn first_hello(socket: &Path) -> aether_client::Client {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Ok(client) = aether_client::Client::connect(socket).await {
+                return client;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the daemon answers a hello")
+}
+
+#[tokio::test]
+async fn hello_is_answered_while_engine_probes_run_and_engine_requests_wait() {
+    if run_isolated(
+        "hello_is_answered_while_engine_probes_run_and_engine_requests_wait",
+        GATED_ENGINE,
+        "exit 1\n",
+    )
+    .await
+    {
+        return;
+    }
+    let probes = std::env::var_os(PROBE_ROOT).unwrap();
+    let probes = Path::new(&probes);
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    std::fs::create_dir_all(root.path().join("workspace")).unwrap();
+    drop(SqliteStore::open(&config.store_path).unwrap());
+    let shutdown = CancellationToken::new();
+    let started = std::time::Instant::now();
+    let serving = tokio::spawn(aether_daemon::run(config.clone(), shutdown.clone()));
+    let client = first_hello(&config.socket).await;
+    let answered = started.elapsed();
+    eprintln!("start to first answered hello: {} ms", answered.as_millis());
+    assert!(answered < HELLO_WITHIN, "hello took {answered:?}");
+    assert!(!probes.join("release").exists());
+    let status = client.status().await.unwrap();
+    assert_eq!(status.engines, [aether_protocol::ENGINES_STARTING]);
+
+    let creating = tokio::spawn(async move {
+        client
+            .create_agent(aether_protocol::CreateAgent {
+                objective: Some("wait for the engines".into()),
+                start: false,
+                model: Some(aether_core::model::ModelRef::new("claude-code", "haiku")),
+                ..Default::default()
+            })
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !creating.is_finished(),
+        "an engine request must wait for detection"
+    );
+    let probed = std::fs::read_to_string(probes.join("probes")).unwrap();
+    assert!(probed.contains("claude"), "{probed}");
+    assert!(
+        probed.contains("codex"),
+        "both engines probe at once: {probed}"
+    );
+
+    std::fs::write(probes.join("release"), b"release").unwrap();
+    let created = tokio::time::timeout(Duration::from_secs(30), creating)
+        .await
+        .expect("the waiting request finishes once detection does")
+        .unwrap()
+        .unwrap();
+    assert_eq!(created.model.provider, "claude-code");
+    let client = aether_client::Client::connect(&config.socket)
+        .await
+        .unwrap();
+    let engines = client.status().await.unwrap().engines;
+    assert!(
+        engines.iter().any(|label| label.starts_with("claude-code")),
+        "{engines:?}"
+    );
+    assert!(
+        !engines
+            .iter()
+            .any(|label| label == aether_protocol::ENGINES_STARTING)
+    );
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(30), serving)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 }

@@ -11,6 +11,10 @@ use super::{
     Welcome, WriteStats,
 };
 
+/// The only entry of [`DaemonStatus::engines`] while the daemon is still
+/// detecting its engines after start; the real labels replace it.
+pub const ENGINES_STARTING: &str = "starting";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DaemonStatus {
     /// Recoverable daemon failures and quarantined records needing attention.

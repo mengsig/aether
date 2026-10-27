@@ -107,8 +107,9 @@ async fn list_models(
         if !statuses.contains_key(&info.model.provider) {
             let status = runtime.models.auth_status(&info.model.provider).await;
             let resolved = runtime.models.resolve(&info.model)?;
+            let engines = runtime.engines.ready().await;
             let engine_error = crate::turn_engine::engine_kind(resolved.provider.protocol)
-                .and_then(|kind| match runtime.engines.get(&kind) {
+                .and_then(|kind| match engines.get(&kind) {
                     None => Some("Provider engine is not available in this daemon".to_owned()),
                     Some(engine) => engine
                         .validate_network_policy(

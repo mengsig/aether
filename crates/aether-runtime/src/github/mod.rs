@@ -243,6 +243,11 @@ impl Runtime {
     /// One supervised daemon worker. No process, network or model call while disabled.
     pub async fn run_github_watcher(self: Arc<Self>, shutdown: CancellationToken) {
         let source = source::Gh;
+        // A pull request it acts on may start an agent on an engine.
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = self.engines.ready() => {}
+        }
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,

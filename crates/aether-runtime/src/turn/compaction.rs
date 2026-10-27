@@ -204,6 +204,8 @@ pub(super) async fn compaction_client(
     }
     let engine = runtime
         .engines
+        .ready()
+        .await
         .get(&kind)
         .cloned()
         .ok_or_else(|| RuntimeError::Invalid(format!("{} is not installed", kind.as_str())))?;

@@ -599,6 +599,32 @@ fn an_engine_that_is_present_but_not_signed_in_is_called_out() {
     assert!(all.fix.is_none());
 }
 
+#[test]
+fn a_daemon_still_detecting_engines_is_not_told_to_restart() {
+    let found = [(
+        "claude-code".into(),
+        EngineStatus::Ready("claude-code/2.1.0".into()),
+    )];
+    let starting = check_engines(
+        &found,
+        Some(&[aether_protocol::ENGINES_STARTING.to_owned()]),
+        "aether",
+    );
+    assert_eq!(starting.level, Level::Ok, "{}", starting.detail);
+    assert!(starting.fix.is_none());
+    assert!(
+        starting.detail.contains("still detecting engines"),
+        "{}",
+        starting.detail
+    );
+    let missing = check_engines(&found, Some(&[]), "aether");
+    assert_eq!(
+        missing.level,
+        Level::Warn,
+        "a finished empty list still warns"
+    );
+}
+
 /// A version too old to speak a flag a future adapter's `args()`
 /// genuinely depends on must name the detected version, the requirement
 /// and the remedy, not just say the engine is missing. (Claude Code's own

@@ -107,6 +107,17 @@ already sent to external services may still take effect. Operator pauses stay
 in force. Legacy stores without a boot id, an unreadable boot id, and other
 operating systems retain conservative inspection behavior.
 
+`aetherd` takes the single-instance lock, opens the store, and finishes
+recovery before it binds its socket, so no request can act on runs that are
+still being recovered. Engine detection and default-model resolution run the
+engine CLIs and can take seconds, so they run in the background after the
+socket answers. Until they finish, `ping`, `status` and `shutdown` are
+answered at once and `status` lists its engines as `starting`; every other
+request waits for them for up to 20 seconds and then gets a retryable
+`unavailable`. The scheduler and the GitHub watcher start no work until they
+finish. The daemon log has a `startup phase finished` line per phase, with
+`phase_ms` and `since_start_ms`, and an `engine detection finished` line.
+
 Recovery does not preserve child OS processes or guarantee exact private native
 context. Completed-run retention,
 artifact-byte retention, backups, and workspace/native-session files have
