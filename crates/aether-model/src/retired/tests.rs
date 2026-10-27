@@ -40,7 +40,9 @@ fn every_retired_id_and_alias_fails_with_a_resolvable_successor() {
 fn retirement_guidance_is_specific_to_the_builtin_route() {
     for (provider, id) in [
         ("custom", "gpt-6-sol"),
-        ("openrouter", "gpt-5.6-terra"),
+        ("openrouter", "gpt-5.6-luna"),
+        ("codex", "terra"),
+        ("openai", "gpt-5.6-terra"),
         ("anthropic", "gpt-6-sol"),
         ("codex", "claude-opus-5"),
         ("codex", "gpt-5.4"),
@@ -72,8 +74,8 @@ fn provider_overrides_resolve_retired_ids_and_aliases_before_guidance() {
     let overrides: ProvidersFile = toml::from_str(
         r#"
 [[providers.codex.add_models]]
-id = "gpt-5.6-terra"
-aliases = ["terra"]
+id = "gpt-5.6-luna"
+aliases = ["spark"]
 [[providers.anthropic.models]]
 id = "claude-haiku-4-5"
 aliases = ["haiku-4-5", "claude-haiku-4-5-20251001"]
@@ -85,8 +87,8 @@ aliases = ["gpt-6-sol"]
     .unwrap();
     registry.apply_overrides(overrides).unwrap();
     for (provider, id, canonical) in [
-        ("codex", "gpt-5.6-terra", "gpt-5.6-terra"),
-        ("codex", "terra", "gpt-5.6-terra"),
+        ("codex", "gpt-5.6-luna", "gpt-5.6-luna"),
+        ("codex", "spark", "gpt-5.6-luna"),
         ("anthropic", "claude-haiku-4-5", "claude-haiku-4-5"),
         ("anthropic", "haiku-4-5", "claude-haiku-4-5"),
         ("anthropic", "claude-haiku-4-5-20251001", "claude-haiku-4-5"),
@@ -143,8 +145,6 @@ const CODEX_REMOVED: &[&str] = &[
     "gpt-6-sol",
     "gpt-5.6-sol",
     "gpt-5.6",
-    "gpt-5.6-terra",
-    "terra",
     "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.3-codex-spark",
@@ -156,8 +156,6 @@ const OPENAI_API_REMOVED: &[&str] = &[
     "gpt-5.6",
     "gpt-5.5",
     "gpt-5.4",
-    "gpt-5.6-terra",
-    "terra",
     "gpt-5.6-luna",
     "gpt-5.4-mini",
 ];

@@ -362,8 +362,8 @@ Claude and Codex choose their own effort when the agent has no explicit setting
 and the model declares no `default_effort`. Codex adapters omit both the
 command-line effort override and the app-server turn effort field in that case.
 Explicit agent effort still passes through, independently of registry
-capability flags, and always beats a model default. GPT-6.1 Sol declares
-`default_effort = "high"` (Codex's own default is low), so `codex/sol` launches
+capability flags, and always beats a model default. GPT-6.1 Terra and Sol declare
+`default_effort = "high"` (Codex's own default is low), so `codex/terra` launches
 at high unless asked otherwise; the default is applied per turn, never written
 to the agent's config.
 

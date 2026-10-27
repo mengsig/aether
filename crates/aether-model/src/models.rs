@@ -606,6 +606,7 @@ mod tests {
             ("claude-code", "default", Some(256_000)),
             ("anthropic", "sonnet", Some(256_000)),
             ("codex", "gpt-6.1-sol", Some(272_000)),
+            ("codex", "gpt-6.1-terra", Some(272_000)),
             ("groq", "openai/gpt-oss-120b", None),
         ] {
             let (window, resolved) = resolved_compaction(&models, provider, model);
@@ -770,6 +771,7 @@ mod tests {
                 ("anthropic", "opus", "claude-sonnet-5-5"),
                 ("openai", "gpt-6-astra", "gpt-6-luna"),
                 ("openai-responses", "gpt-6.1-sol", "gpt-6-luna"),
+                ("codex", "gpt-6.1-terra", "gpt-6-luna"),
             ] {
                 assert_eq!(
                     models.compactor_for(&ModelRef::new(provider, active)),
@@ -821,7 +823,7 @@ mod tests {
         let registry = Registry::builtin();
         for (id, expected) in [
             ("claude-code", "claude-sonnet-5-5"),
-            ("codex", "gpt-6.1-sol"),
+            ("codex", "gpt-6.1-terra"),
         ] {
             let provider = registry.provider(id).expect("builtin engine");
             assert_eq!(

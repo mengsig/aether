@@ -105,7 +105,7 @@ fn codex_engine_models_are_estimated_from_the_api_models_behind_them() {
     for model in &engine.models {
         assert_eq!(model.capabilities.cost, None, "codex/{}", model.id);
     }
-    for id in ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"] {
+    for id in ["gpt-6-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna"] {
         let resolved = registry
             .resolve(&aether_core::model::ModelRef::new("codex", id))
             .unwrap_or_else(|_| panic!("codex/{id}"));
@@ -127,7 +127,7 @@ fn codex_engine_models_are_estimated_from_the_api_models_behind_them() {
         .iter()
         .find(|p| p.id == "openai-codex")
         .expect("dialect");
-    for id in ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"] {
+    for id in ["gpt-6-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna"] {
         let priced = dialect.model(id).expect(id).capabilities.cost;
         assert!(priced.is_some(), "openai-codex/{id} must be priced");
         assert_eq!(priced, api.model(id).expect(id).capabilities.cost, "{id}");
@@ -232,6 +232,8 @@ fn current_openai_and_engine_models_resolve_by_alias() {
     assert_eq!(astra.capabilities.context_window, 1_050_000);
     for (alias, id) in [
         ("astra", "gpt-6-astra"),
+        ("terra", "gpt-6.1-terra"),
+        ("gpt-5.6-terra", "gpt-6.1-terra"),
         ("sol", "gpt-6.1-sol"),
         ("luna", "gpt-6-luna"),
     ] {
@@ -299,8 +301,6 @@ fn superseded_models_and_their_aliases_are_not_in_the_catalogue() {
                 "gpt-6-sol",
                 "gpt-5.6-sol",
                 "gpt-5.6",
-                "gpt-5.6-terra",
-                "terra",
                 "gpt-5.6-luna",
                 "gpt-5.5",
                 "gpt-5.3-codex-spark",
@@ -320,8 +320,6 @@ fn superseded_models_and_their_aliases_are_not_in_the_catalogue() {
             "gpt-6-sol",
             "gpt-5.6-sol",
             "gpt-5.6",
-            "gpt-5.6-terra",
-            "terra",
             "gpt-5.6-luna",
             "gpt-5.5",
             "gpt-5.4",
@@ -366,12 +364,18 @@ fn first_party_providers_ship_only_the_current_lineup() {
     );
     assert_eq!(
         ids("codex"),
-        ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "default"]
+        [
+            "gpt-6-astra",
+            "gpt-6.1-terra",
+            "gpt-6.1-sol",
+            "gpt-6-luna",
+            "default"
+        ]
     );
     for id in ["openai", "openai-responses", "openai-codex"] {
         assert_eq!(
             ids(id),
-            ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"],
+            ["gpt-6-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna"],
             "{id}"
         );
     }
@@ -386,14 +390,15 @@ fn gpt6_preference_order_and_prices_are_consistent() {
             provider
                 .models
                 .iter()
-                .take(3)
+                .take(4)
                 .map(|m| m.id.as_str())
                 .collect::<Vec<_>>(),
-            ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"]
+            ["gpt-6-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna"]
         );
-        // Cache reads are 10% of input, except GPT-6.1 Sol's 5%.
+        // Cache reads are 10% of input, except GPT-6.1's 5%.
         for (alias, expected, input, output, write, read) in [
             ("astra", "gpt-6-astra", 10.0, 50.0, 12.5, 1.0),
+            ("terra", "gpt-6.1-terra", 1.0, 5.0, 1.25, 0.05),
             ("sol", "gpt-6.1-sol", 2.0, 10.0, 2.5, 0.10),
             ("luna", "gpt-6-luna", 0.10, 0.50, 0.125, 0.01),
         ] {
@@ -534,7 +539,7 @@ fn gpt_family_version(id: &str) -> Option<(&str, Vec<u32>)> {
 fn openai_family_short_names_alias_the_newest_version_on_every_provider() {
     let all = providers();
     for provider_id in ["codex", "openai-codex", "openai", "openai-responses"] {
-        let families = ["astra", "luna", "sol"];
+        let families = ["astra", "luna", "sol", "terra"];
         let provider = all.iter().find(|p| p.id == provider_id).expect(provider_id);
         let mut newest: BTreeMap<&str, (Vec<u32>, &str)> = BTreeMap::new();
         for model in &provider.models {
@@ -572,14 +577,15 @@ fn ordering_helper_ranks_point_releases_above_their_major() {
     assert_eq!(gpt_family_version("default"), None);
 }
 
-/// GPT-6.1 Sol runs at high effort unless asked otherwise, on every route that
-/// serves it; no other model gains a default.
+/// GPT-6.1 Sol and Terra run at high effort unless asked otherwise, on every
+/// route that serves them; no other model gains a default.
 #[test]
-fn gpt_6_1_sol_defaults_to_high_effort_and_an_explicit_effort_wins() {
+fn gpt_6_1_defaults_to_high_effort_and_an_explicit_effort_wins() {
     use aether_core::model::Effort;
     for provider in providers() {
         for model in &provider.models {
-            let expected = (model.id == "gpt-6.1-sol").then_some(Effort::High);
+            let gpt_6_1 = matches!(model.id.as_str(), "gpt-6.1-sol" | "gpt-6.1-terra");
+            let expected = gpt_6_1.then_some(Effort::High);
             assert_eq!(
                 model.default_effort, expected,
                 "{}/{}",
@@ -588,10 +594,12 @@ fn gpt_6_1_sol_defaults_to_high_effort_and_an_explicit_effort_wins() {
         }
     }
     let codex = providers().into_iter().find(|p| p.id == "codex").unwrap();
-    let sol = codex.model("sol").unwrap();
-    assert_eq!(sol.effort_for(None), Some(Effort::High));
-    for explicit in [Effort::Low, Effort::Medium, Effort::XHigh, Effort::Max] {
-        assert_eq!(sol.effort_for(Some(explicit)), Some(explicit));
+    for alias in ["sol", "terra"] {
+        let model = codex.model(alias).unwrap();
+        assert_eq!(model.effort_for(None), Some(Effort::High), "{alias}");
+        for explicit in [Effort::Low, Effort::Medium, Effort::XHigh, Effort::Max] {
+            assert_eq!(model.effort_for(Some(explicit)), Some(explicit));
+        }
     }
     assert_eq!(codex.model("luna").unwrap().effort_for(None), None);
 }

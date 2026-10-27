@@ -187,9 +187,9 @@ fn openai_priced(
     }
 }
 
-/// Operator's choice: GPT-6.1 Sol is strong and well priced at high effort,
-/// but Codex defaults it to low. Shared by every provider that serves it.
-const GPT_6_1_SOL_EFFORT: Effort = Effort::High;
+/// Operator's choice: GPT-6.1 Sol and Terra are strong and well priced at high
+/// effort, but Codex defaults them to low. Shared by every provider serving them.
+const GPT_6_1_EFFORT: Effort = Effort::High;
 
 /// Current OpenAI API models. Context and output limits are the API's;
 /// prices are per million tokens from the model pages (September 2026).
@@ -197,23 +197,26 @@ const GPT_6_1_SOL_EFFORT: Effort = Effort::High;
 fn openai_current_models() -> Vec<ModelDef> {
     // GPT-6 has explicit cache-write billing at 1.25x input.
     let gpt6 = |input, output| openai_priced(1_050_000, 128_000, true, Some(cost(input, output)));
-    // GPT-6.1 Sol's cache reads are 5% of input, not GPT-6's 10%.
-    let gpt61_sol = openai_priced(
-        1_050_000,
-        128_000,
-        true,
-        Some(ModelCost {
-            cache_read_per_mtok: 0.10,
-            ..cost(2.0, 10.0)
-        }),
-    );
+    // GPT-6.1's cache reads are 5% of input, not GPT-6's 10%.
+    let gpt61 = |input: f64, output| {
+        let cost = ModelCost {
+            cache_read_per_mtok: input * 0.05,
+            ..cost(input, output)
+        };
+        openai_priced(1_050_000, 128_000, true, Some(cost))
+    };
     vec![
         ModelDef::new("gpt-6-astra", "GPT-6 Astra", gpt6(10.0, 50.0))
             .with_aliases(["astra"])
             .with_tier(ModelTier::Strong),
-        ModelDef::new("gpt-6.1-sol", "GPT-6.1 Sol", gpt61_sol)
+        // Listed before Sol so it is the balanced choice and the default.
+        ModelDef::new("gpt-6.1-terra", "GPT-6.1 Terra", gpt61(1.0, 5.0))
+            .with_aliases(["terra", "gpt-5.6-terra"])
+            .with_default_effort(GPT_6_1_EFFORT)
+            .with_tier(ModelTier::Balanced),
+        ModelDef::new("gpt-6.1-sol", "GPT-6.1 Sol", gpt61(2.0, 10.0))
             .with_aliases(["sol"])
-            .with_default_effort(GPT_6_1_SOL_EFFORT)
+            .with_default_effort(GPT_6_1_EFFORT)
             .with_tier(ModelTier::Balanced),
         ModelDef::new("gpt-6-luna", "GPT-6 Luna", gpt6(0.10, 0.50))
             .with_aliases(["luna"])
@@ -400,9 +403,14 @@ fn codex_models() -> Vec<ModelDef> {
         engine_model("gpt-6-astra", "GPT-6 Astra", CODEX_CONTEXT, 128_000)
             .with_aliases(["astra"])
             .with_tier(ModelTier::Strong),
+        // Listed before Sol so it is the balanced choice and the default.
+        engine_model("gpt-6.1-terra", "GPT-6.1 Terra", CODEX_CONTEXT, 128_000)
+            .with_aliases(["terra", "gpt-5.6-terra"])
+            .with_default_effort(GPT_6_1_EFFORT)
+            .with_tier(ModelTier::Balanced),
         engine_model("gpt-6.1-sol", "GPT-6.1 Sol", CODEX_CONTEXT, 128_000)
             .with_aliases(["sol"])
-            .with_default_effort(GPT_6_1_SOL_EFFORT)
+            .with_default_effort(GPT_6_1_EFFORT)
             .with_tier(ModelTier::Balanced),
         engine_model("gpt-6-luna", "GPT-6 Luna", CODEX_CONTEXT, 128_000)
             .with_aliases(["luna"])
