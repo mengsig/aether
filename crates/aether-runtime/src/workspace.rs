@@ -1083,6 +1083,18 @@ fn load_timeout(
     workspace: &Path,
     timeout: Duration,
 ) -> crate::Result<WorkspaceManifest> {
+    load_repository(managed_root, workspace, timeout, false).map(|(manifest, _)| manifest)
+}
+
+/// Validate the manifest against Git and return it with the directory that
+/// source-side Git runs in: the source checkout or, when `source_gone`, the
+/// common Git directory the worktree still belongs to.
+fn load_repository(
+    managed_root: &Path,
+    workspace: &Path,
+    timeout: Duration,
+    source_gone: bool,
+) -> crate::Result<(WorkspaceManifest, PathBuf)> {
     let directory = workspace_directory(managed_root, workspace)?;
     let manifest: WorkspaceManifest = read_json(&directory.join(MANIFEST))?;
     let actual_workspace = fs::canonicalize(workspace)
@@ -1093,10 +1105,6 @@ fn load_timeout(
     oid(&manifest.baseline_tree)?;
     if let Some(integrated) = &manifest.integrated_tree {
         oid(integrated)?;
-    }
-    let source = source_root_timeout(&manifest.source, timeout)?;
-    if source != manifest.source {
-        return Err(invalid("workspace manifest source is not canonical"));
     }
     let top = git_string_timeout(
         git(&actual_workspace).args(["rev-parse", "--show-toplevel"]),
@@ -1109,33 +1117,41 @@ fn load_timeout(
     {
         return Err(invalid("workspace path is not the Git worktree root"));
     }
-    let source_common = git_string_timeout(
-        git(&source).args(["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+    let common = common_directory(&actual_workspace, timeout, "worktree Git directory")?;
+    let repository = if source_gone {
+        common
+    } else {
+        let source = source_root_timeout(&manifest.source, timeout)?;
+        if source != manifest.source {
+            return Err(invalid("workspace manifest source is not canonical"));
+        }
+        if common_directory(&source, timeout, "source Git directory")? != common {
+            return Err(invalid("workspace belongs to a different Git repository"));
+        }
+        source
+    };
+    tree_entries_timeout(&repository, &manifest.baseline_tree, timeout)?;
+    Ok((manifest, repository))
+}
+
+fn common_directory(repo: &Path, timeout: Duration, description: &str) -> crate::Result<PathBuf> {
+    let common = git_string_timeout(
+        git(repo).args(["rev-parse", "--path-format=absolute", "--git-common-dir"]),
         timeout,
-        "source Git directory",
+        description,
     )?;
-    let workspace_common = git_string_timeout(
-        git(&actual_workspace).args(["rev-parse", "--path-format=absolute", "--git-common-dir"]),
-        timeout,
-        "worktree Git directory",
-    )?;
-    if fs::canonicalize(&source_common).map_err(|error| {
-        io_error(
-            "cannot resolve Git directory",
-            Path::new(&source_common),
-            error,
-        )
-    })? != fs::canonicalize(&workspace_common).map_err(|error| {
-        io_error(
-            "cannot resolve Git directory",
-            Path::new(&workspace_common),
-            error,
-        )
-    })? {
-        return Err(invalid("workspace belongs to a different Git repository"));
+    fs::canonicalize(&common)
+        .map_err(|error| io_error("cannot resolve Git directory", Path::new(&common), error))
+}
+
+/// Only a source path that no longer exists counts as gone; any other
+/// failure to inspect it stays an error.
+pub(crate) fn source_missing(source: &Path) -> crate::Result<bool> {
+    match fs::symlink_metadata(source) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(io_error("inspect workspace source", source, error)),
     }
-    tree_entries_timeout(&source, &manifest.baseline_tree, timeout)?;
-    Ok(manifest)
 }
 
 /// Abandon a freshly created workspace if durable child creation failed.

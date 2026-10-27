@@ -38,6 +38,18 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Storage GC collects the workspaces of stopped delegated children
+  (#325).** A delegated child stopped at its deadline left its isolated
+  workspace registered as a worktree of the source repository indefinitely:
+  GC kept it while any ancestor of its parent was live, while the child was
+  Failed or Cancelled, and whenever the source checkout had been removed.
+  `aether storage gc` and the background sweep now remove such a workspace
+  once the child is stopped and its parent has ended or its source checkout
+  is gone, then run `git worktree prune` in the source repository. Every
+  preservation check still applies, so a workspace with unsaved files or
+  commits found nowhere else is kept and its report entry says why, and
+  `--dry-run` lists it as eligible without removing it. A stopped agent whose
+  workspace was collected can no longer be woken or restarted into it.
 - **The daemon answers its socket before probing engines (#326).** `aetherd`
   used to run the Claude Code and Codex CLIs, resolve the default model, and
   search the event log for an open low-disk warning before it bound its

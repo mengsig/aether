@@ -103,6 +103,15 @@ impl Fixture {
         }
     }
 
+    /// The manifest's delegator, working in the source checkout.
+    fn parent(&self, status: AgentStatus) -> Agent {
+        let mut parent = self.owner(status);
+        parent.id = self.manifest.parent;
+        parent.parent = None;
+        parent.scope.workspace_root = Some(self.source.clone());
+        parent
+    }
+
     fn store(&self, agent: Agent) {
         self.runtime
             .apply(Commit::new().mutate(Mutation::UpsertAgent(agent)))
@@ -286,6 +295,8 @@ async fn recheck_preserves_edits_hidden_by_new_index_flags() {
 #[tokio::test]
 async fn live_paused_waiting_and_restartable_owners_are_preserved() {
     let f = fixture().await;
+    // A live parent could still wake or restart a stopped child.
+    f.store(f.parent(AgentStatus::Ready));
     let mut agent = f.owner(AgentStatus::Created);
     f.store(agent.clone());
     f.assert_kept("live or resumable");
@@ -817,12 +828,9 @@ async fn live_agent_inside_workspace_protects_it_without_delegation_relation() {
 }
 
 #[tokio::test]
-async fn manifest_parent_and_delegation_chain_protect_workspace() {
+async fn manifest_parent_and_descendants_protect_workspace_but_ancestors_do_not() {
     let f = fixture().await;
-    let mut parent = f.owner(AgentStatus::Created);
-    parent.id = f.manifest.parent;
-    parent.parent = None;
-    parent.scope.workspace_root = Some(f.source.clone());
+    let mut parent = f.parent(AgentStatus::Created);
     f.store(parent.clone());
     f.assert_kept("live or resumable");
     parent.status = AgentStatus::Completed { summary: None };
@@ -839,7 +847,11 @@ async fn manifest_parent_and_delegation_chain_protect_workspace() {
     parent.parent = Some(ancestor.id);
     f.store(parent);
     f.store(ancestor);
-    f.assert_kept("live or resumable");
+    // Only the direct parent integrates; a long-lived ancestor cannot.
+    assert_eq!(
+        f.collect(false).workspaces[0].action,
+        WorkspaceGcAction::Removed
+    );
 }
 
 #[tokio::test]
@@ -907,4 +919,5 @@ async fn preview_reports_each_workspace_protection_reason() {
     assert!(f.manifest.workspace.exists());
 }
 
+mod abandoned;
 mod build_output;

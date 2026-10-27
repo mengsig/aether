@@ -56,9 +56,15 @@ pub(crate) struct Candidate {
     pub modified: SystemTime,
     /// Wholly ignored build output, sized apart and skipped by the checks.
     pub build_output: Vec<BuildOutput>,
+    /// The source checkout was missing when the manifest was last read.
+    pub source_gone: bool,
+    /// Set when `git worktree prune` failed after a removal.
+    pub prune_error: Option<String>,
     permissions: Vec<(File, fs::Permissions)>,
     git_state: Option<GitState>,
     snapshot: Option<snapshot::Snapshot>,
+    /// Where source-side Git runs; see `load_repository`.
+    repository: Option<PathBuf>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -76,9 +82,12 @@ impl Candidate {
             bytes_complete: false,
             modified: SystemTime::UNIX_EPOCH,
             build_output: vec![],
+            source_gone: false,
+            prune_error: None,
             permissions: vec![],
             git_state: None,
             snapshot: None,
+            repository: None,
         }
     }
 
@@ -296,11 +305,13 @@ impl Candidate {
     }
 
     /// The manifest, validated against Git, without the preservation checks.
-    pub fn manifest(&self, root: &Path) -> crate::Result<WorkspaceManifest> {
+    pub fn manifest(&mut self, root: &Path) -> crate::Result<WorkspaceManifest> {
         self.check_metadata()?;
         let expected: WorkspaceManifest = read_json(&self.directory.join(MANIFEST))?;
+        self.source_gone = source_missing(&expected.source)?;
         let workspace = self.directory.join(WORKSPACE);
-        let manifest = load_timeout(root, &workspace, Duration::from_secs(2))?;
+        let (manifest, _) =
+            load_repository(root, &workspace, Duration::from_secs(2), self.source_gone)?;
         if manifest != expected || manifest.workspace != workspace {
             return Err(invalid("workspace manifest names a different GC candidate"));
         }
@@ -331,26 +342,37 @@ impl Candidate {
     pub fn inspect(&mut self, root: &Path) -> crate::Result<WorkspaceManifest> {
         self.snapshot = None;
         self.git_state = None;
+        self.repository = None;
         self.check_metadata()?;
         let expected: WorkspaceManifest = read_json(&self.directory.join(MANIFEST))?;
+        // Decided once: the snapshot then fails the sweep if the source reappears.
+        self.source_gone = source_missing(&expected.source)?;
         let skipped = self.build_output_paths();
-        let snapshot = snapshot::Snapshot::capture(&self.directory, &expected, &skipped)?;
-        snapshot::check_configuration(&expected)?;
-        let manifest = load_timeout(
+        let snapshot =
+            snapshot::Snapshot::capture(&self.directory, &expected, &skipped, self.source_gone)?;
+        snapshot::check_configuration(&expected, self.source_gone)?;
+        let (manifest, repository) = load_repository(
             root,
             &self.directory.join(WORKSPACE),
             Duration::from_secs(2),
+            self.source_gone,
         )?;
         if manifest != expected || manifest.workspace != self.directory.join(WORKSPACE) {
             return Err(invalid("workspace manifest names a different GC candidate"));
         }
         verify_saved_files(&manifest.workspace)?;
         check_status(&manifest.workspace, &skipped)?;
-        let state = git_state(&manifest)?;
-        check_commits(&manifest, &self.directory, &state)?;
+        let state = git_state(&manifest, &repository)?;
+        check_commits(
+            &repository,
+            &self.directory,
+            &state,
+            &manifest.baseline_tree,
+        )?;
         snapshot.recheck(&manifest)?;
         self.git_state = Some(state);
         self.snapshot = Some(snapshot);
+        self.repository = Some(repository);
         Ok(manifest)
     }
 
@@ -390,7 +412,9 @@ impl Candidate {
         self.recheck_unchanged(manifest)?;
         self.check_metadata()?;
         let current: WorkspaceManifest = read_json(&self.directory.join(MANIFEST))?;
-        if &current != manifest || self.git_state.as_ref() != Some(&git_state(manifest)?) {
+        if &current != manifest
+            || self.git_state.as_ref() != Some(&git_state(manifest, self.repository()?)?)
+        {
             return Err(invalid(
                 "workspace manifest, HEAD, or source refs changed during GC",
             ));
@@ -409,12 +433,25 @@ impl Candidate {
         snapshot.recheck(manifest)
     }
 
+    fn repository(&self) -> crate::Result<&Path> {
+        self.repository
+            .as_deref()
+            .ok_or_else(|| invalid("workspace GC has no inspected source repository"))
+    }
+
+    /// Remove the worktree, then prune the repository's worktree list. A
+    /// failed prune leaves the removal standing and is kept in `prune_error`.
     pub fn remove(&mut self, manifest: &WorkspaceManifest) -> crate::Result<()> {
+        let repository = self.repository()?.to_path_buf();
+        debug_assert!(
+            self.git_state.is_some() && self.snapshot.is_some(),
+            "only an inspected candidate is removed"
+        );
         // Git performs its own final dirty-worktree check. Never use --force:
         // an edit made after our inspection must still prevent removal.
         successful(
             run_reader_timeout(
-                git(&manifest.source)
+                git(&repository)
                     .args(["worktree", "remove", "--"])
                     .arg(&manifest.workspace),
                 None,
@@ -441,6 +478,13 @@ impl Candidate {
             )
         })?;
         self.permissions.clear();
+        if let Err(error) = run(
+            git(&repository).args(["worktree", "prune"]),
+            "prune source worktree list",
+        ) {
+            tracing::warn!(%error, repository = %repository.display(), "worktree prune failed after workspace GC");
+            self.prune_error = Some(error.to_string());
+        }
         Ok(())
     }
 }
@@ -569,7 +613,7 @@ fn check_status(workspace: &Path, build_output: &BTreeSet<PathBuf>) -> crate::Re
     Ok(())
 }
 
-fn git_state(manifest: &WorkspaceManifest) -> crate::Result<GitState> {
+fn git_state(manifest: &WorkspaceManifest, repository: &Path) -> crate::Result<GitState> {
     let symbolic = run_reader_timeout(
         git(&manifest.workspace).args(["symbolic-ref", "-q", "HEAD"]),
         None,
@@ -587,11 +631,11 @@ fn git_state(manifest: &WorkspaceManifest) -> crate::Result<GitState> {
     }
     Ok(GitState {
         references: git_string(
-            git(&manifest.source).args(["for-each-ref", "--format=%(refname) %(objectname)"]),
+            git(repository).args(["for-each-ref", "--format=%(refname) %(objectname)"]),
             "list GC source refs",
         )?,
         source_head: git_string(
-            git(&manifest.source).args(["rev-parse", "--verify", "HEAD^{commit}"]),
+            git(repository).args(["rev-parse", "--verify", "HEAD^{commit}"]),
             "read GC source HEAD",
         )?,
         head: git_string(
@@ -602,9 +646,10 @@ fn git_state(manifest: &WorkspaceManifest) -> crate::Result<GitState> {
 }
 
 fn check_commits(
-    manifest: &WorkspaceManifest,
+    repository: &Path,
     directory: &Path,
     state: &GitState,
+    baseline_tree: &str,
 ) -> crate::Result<()> {
     let id = directory
         .file_name()
@@ -634,7 +679,7 @@ fn check_commits(
             .collect::<String>()
     );
     let missing = git_input(
-        git(&manifest.source).args(["rev-list", "--max-count=2", "--stdin"]),
+        git(repository).args(["rev-list", "--max-count=2", "--stdin"]),
         input,
         "check GC unique commits",
     )?;
@@ -642,7 +687,7 @@ fn check_commits(
         return Ok(());
     }
     let snapshot = git_string(
-        git(&manifest.source).args(["rev-parse", "--verify", &snapshot_ref]),
+        git(repository).args(["rev-parse", "--verify", &snapshot_ref]),
         "read GC snapshot commit",
     )?;
     if missing != snapshot {
@@ -651,10 +696,10 @@ fn check_commits(
         ));
     }
     let snapshot_tree = git_string(
-        git(&manifest.source).args(["show", "-s", "--format=%T", &snapshot]),
+        git(repository).args(["show", "-s", "--format=%T", &snapshot]),
         "read GC snapshot tree",
     )?;
-    if snapshot_tree != manifest.baseline_tree {
+    if snapshot_tree != baseline_tree {
         return Err(invalid("workspace snapshot ref differs from its baseline"));
     }
     // The synthetic snapshot commit is expected to be private. Its contents
@@ -663,7 +708,7 @@ fn check_commits(
         return Err(invalid("workspace baseline has no other source ref"));
     }
     let saved_trees = git_input(
-        git(&manifest.source).args(["log", "--stdin", "--max-count=1024", "--format=%T"]),
+        git(repository).args(["log", "--stdin", "--max-count=1024", "--format=%T"]),
         saved.iter().map(|object| format!("{object}\n")).collect(),
         "check GC saved baseline",
     )?;

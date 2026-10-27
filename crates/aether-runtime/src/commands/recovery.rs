@@ -123,6 +123,7 @@ impl Runtime {
                 "agent {id} was already restarted as {successor}"
             )));
         }
+        self.refuse_collected_workspace(&old)?;
         self.models.resolve(&old.model)?;
         // §16: the successor is a new agent under the same parent, and the
         // parent may have been confined while this one sat Failed - a state
@@ -405,6 +406,7 @@ impl Runtime {
         // Its own pending cancellation, or an ancestor's, would cancel it
         // again as soon as the subtree walk repeats.
         crate::cancellation::check_parent(self, hold, id)?;
+        self.refuse_collected_workspace(agent)?;
         self.models.resolve(&agent.model)?;
         // §16: the parent may have been confined while this agent sat Failed,
         // a state `widest_live_descendant` cannot see (as for a restart).

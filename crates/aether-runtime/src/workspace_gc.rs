@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use aether_core::agent::{Agent, AgentStatusKind, Scope};
+use aether_core::agent::{Agent, Scope};
 use aether_core::id::AgentId;
 use aether_store::AgentFilter;
 use serde::{Deserialize, Serialize};
@@ -148,9 +148,12 @@ impl WorkspaceGcReport {
 /// Drop snapshot refs left behind by failed creations in the candidate's
 /// source repository. A failure is logged and never blocks the sweep.
 fn sweep_candidate_source(root: &Path, candidate: &workspace::gc::Candidate) {
-    let result = candidate
-        .source()
-        .and_then(|source| workspace::sweep_orphan_refs(root, &source));
+    let result = candidate.source().and_then(|source| {
+        if workspace::source_missing(&source)? {
+            return Ok(vec![]);
+        }
+        workspace::sweep_orphan_refs(root, &source)
+    });
     match result {
         Ok(removed) => {
             for reference in removed {
@@ -276,10 +279,7 @@ impl Runtime {
             // refusal. Drop only provides a second cleanup attempt.
             candidate.restore_permissions()?;
             let (action, reason) = match outcome {
-                Ok(action) => (
-                    action,
-                    "clean workspace with saved commits; grace elapsed".into(),
-                ),
+                Ok(action) => (action, eligible_reason(&candidate)),
                 Err(RuntimeError::Store(error)) => return Err(error.into()),
                 Err(error @ RuntimeError::Internal(_)) => return Err(error),
                 Err(error) => (WorkspaceGcAction::Kept, error.to_string()),
@@ -319,7 +319,7 @@ impl Runtime {
         } else {
             let _hold = self.hold();
             let agents = self.store.agents(&AgentFilter::default())?;
-            self.gc_agent_blocker(&agents, &workspace_path, None, &self.sched.lock())?;
+            self.gc_agent_blocker(&agents, &workspace_path, None, false, &self.sched.lock())?;
             *self.workspace_gc_active.lock() = Some(workspace_path.clone());
             // Keep creation out until permission restoration, including on errors.
             Some(Reservation(self))
@@ -360,7 +360,7 @@ impl Runtime {
             Err(error) => return Err(error),
         };
         candidate.recheck(&manifest)?;
-        let gate = self.gc_gate(&manifest, workspace_path, sweep, candidate.modified)?;
+        let gate = self.gc_gate(&manifest, workspace_path, sweep, candidate)?;
         candidate.recheck_unchanged(&manifest)?;
         if sweep.dry_run {
             candidate.mark_build_output(BuildOutputAction::WouldPrune);
@@ -406,11 +406,14 @@ impl Runtime {
             strict.measure(false, &[])?;
             let manifest = strict.inspect(root)?;
             strict.recheck(&manifest)?;
-            let _gate = self.gc_gate(&manifest, workspace_path, sweep, pruned.modified)?;
+            strict.modified = pruned.modified;
+            let _gate = self.gc_gate(&manifest, workspace_path, sweep, &strict)?;
             strict.recheck_unchanged(&manifest)?;
             remove_candidate(&mut strict, &manifest)?;
             Ok(WorkspaceGcAction::Removed)
         })();
+        pruned.source_gone = strict.source_gone;
+        pruned.prune_error = strict.prune_error.take();
         if let Err(error) = strict.restore_permissions() {
             return Err(RuntimeError::Internal(format!(
                 "workspace GC permission restoration failed: {error}; candidate result: {result:?}"
@@ -431,7 +434,7 @@ impl Runtime {
     ) -> RuntimeError {
         let outcome = (|| {
             let manifest = candidate.manifest(root)?;
-            drop(self.gc_gate(&manifest, workspace_path, sweep, candidate.modified)?);
+            drop(self.gc_gate(&manifest, workspace_path, sweep, candidate)?);
             candidate.confirm_build_output()?;
             if sweep.dry_run {
                 candidate.mark_build_output(BuildOutputAction::WouldPrune);
@@ -455,12 +458,18 @@ impl Runtime {
         manifest: &workspace::WorkspaceManifest,
         workspace_path: &Path,
         sweep: Sweep,
-        modified: SystemTime,
+        candidate: &workspace::gc::Candidate,
     ) -> Result<Gate<'_>> {
         let hold = (!sweep.dry_run).then(|| self.hold());
         let agents = self.store.agents(&AgentFilter::default())?;
         let sched = self.sched.lock();
-        self.gc_agent_blocker(&agents, workspace_path, Some(manifest.parent), &sched)?;
+        self.gc_agent_blocker(
+            &agents,
+            workspace_path,
+            Some(manifest.parent),
+            candidate.source_gone,
+            &sched,
+        )?;
         let sched = if sweep.dry_run {
             drop(sched);
             None
@@ -474,7 +483,7 @@ impl Runtime {
                 owners.contains(&agent.id) || scope_owns_workspace(&agent.scope, workspace_path)
             })
             .map(|agent| SystemTime::from(agent.updated_at))
-            .fold(modified, SystemTime::max);
+            .fold(candidate.modified, SystemTime::max);
         if !grace_elapsed(sweep.now, latest, sweep.grace) {
             return Err(invalid("workspace is within the grace period"));
         }
@@ -484,11 +493,14 @@ impl Runtime {
         })
     }
 
+    /// Every owner must be stopped and terminal. The manifest parent may stay
+    /// live only once its source checkout is gone: it has nowhere to integrate.
     fn gc_agent_blocker(
         &self,
         agents: &[Agent],
         workspace: &Path,
         parent: Option<aether_core::id::AgentId>,
+        source_gone: bool,
         sched: &SchedulerState,
     ) -> Result<()> {
         let engine_turns: std::collections::HashSet<_> =
@@ -525,12 +537,8 @@ impl Runtime {
             let in_flight =
                 sched.running.contains_key(&agent.id) || engine_turns.contains(&agent.id);
             let held_resources = resources.iter().any(|holding| holding.agent == agent.id);
-            if using
-                && (in_flight
-                    || held_resources
-                    || leases.contains(&agent.id)
-                    || !final_status(agent.status.kind()))
-            {
+            let settled = agent.status.is_terminal() || (source_gone && parent == Some(agent.id));
+            if using && (in_flight || held_resources || leases.contains(&agent.id) || !settled) {
                 return Err(invalid(format!(
                     "workspace has live or resumable agent {}",
                     agent.id
@@ -560,19 +568,40 @@ impl Runtime {
                 "managed workspace is being inspected for collection; retry",
             ));
         }
-        let (Some(managed), Some(path)) =
-            (&self.config.delegated_workspace_root, &scope.workspace_root)
-        else {
-            return Ok(());
-        };
-        let managed = normalized_path(managed);
-        let path = normalized_path(path);
-        if path.starts_with(&managed) && !path.is_dir() {
+        if self.managed_workspace_missing(scope) {
             return Err(invalid(
                 "managed workspace disappeared before agent admission; retry",
             ));
         }
         Ok(())
+    }
+
+    /// A stopped agent cannot wake or restart into a managed workspace that
+    /// collection removed. Called under the commit hold.
+    pub(crate) fn refuse_collected_workspace(&self, agent: &Agent) -> Result<()> {
+        if self.workspace_gc_reserves(&agent.scope) {
+            return Err(invalid(
+                "managed workspace is being inspected for collection; retry",
+            ));
+        }
+        if self.managed_workspace_missing(&agent.scope) {
+            return Err(invalid(format!(
+                "agent {}'s managed workspace was collected; delegate a new child instead",
+                agent.id
+            )));
+        }
+        Ok(())
+    }
+
+    fn managed_workspace_missing(&self, scope: &Scope) -> bool {
+        let (Some(managed), Some(path)) =
+            (&self.config.delegated_workspace_root, &scope.workspace_root)
+        else {
+            return false;
+        };
+        let managed = normalized_path(managed);
+        let path = normalized_path(path);
+        path.starts_with(&managed) && !path.is_dir()
     }
 }
 
@@ -587,11 +616,15 @@ fn remove_candidate(
     })
 }
 
-fn final_status(status: AgentStatusKind) -> bool {
-    matches!(
-        status,
-        AgentStatusKind::Completed | AgentStatusKind::Imported
-    )
+fn eligible_reason(candidate: &workspace::gc::Candidate) -> String {
+    let mut reason = String::from("clean workspace with saved commits; grace elapsed");
+    if candidate.source_gone {
+        reason.push_str("; source checkout is gone");
+    }
+    if let Some(error) = &candidate.prune_error {
+        reason.push_str(&format!("; git worktree prune failed: {error}"));
+    }
+    reason
 }
 
 fn scope_owns_workspace(scope: &Scope, workspace: &Path) -> bool {
@@ -606,14 +639,13 @@ fn paths_overlap(path: &Path, workspace: &Path) -> bool {
     path.starts_with(workspace) || workspace.starts_with(path)
 }
 
-/// The manifest's delegator and its direct ancestry/descendancy own the
-/// workspace even when their current scopes no longer name it. Missing
-/// intermediate rows must not sever a recorded parent-child edge.
+/// The manifest's delegator and its descendants own the workspace even when
+/// their current scopes no longer name it. Ancestors do not: only the direct
+/// parent integrates, and a long-lived ancestor must not pin the workspace.
 fn manifest_owners(agents: &[Agent], parent: Option<AgentId>) -> HashSet<AgentId> {
     let Some(parent) = parent else {
         return HashSet::new();
     };
-    let by_id: HashMap<_, _> = agents.iter().map(|agent| (agent.id, agent)).collect();
     let mut children: HashMap<_, Vec<_>> = HashMap::new();
     for agent in agents {
         if let Some(parent) = agent.parent {
@@ -628,13 +660,6 @@ fn manifest_owners(agents: &[Agent], parent: Option<AgentId>) -> HashSet<AgentId
                 pending.push_back(*child);
             }
         }
-    }
-    let mut ancestor = by_id.get(&parent).and_then(|agent| agent.parent);
-    while let Some(id) = ancestor {
-        if !owners.insert(id) {
-            break;
-        }
-        ancestor = by_id.get(&id).and_then(|agent| agent.parent);
     }
     owners
 }

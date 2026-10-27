@@ -109,7 +109,9 @@ looks like a boundary and is not one.
 - Delegated workspace cleanup preserves Git layouts it cannot safely prove,
   including reftable, config includes, alternate object databases, symlinked
   metadata, cross-worktree symbolic refs and parent-traversal `gitdir` pointers.
-  Ordinary linked source worktrees are supported. Broad ancestor scopes and
+  Ordinary linked source worktrees are supported, including one that has since
+  been removed, as long as its repository's common Git directory remains.
+  Broad ancestor scopes and
   `allowed_paths` permission alone do not establish workspace ownership;
   explicit workspace roots, manifest relationships and resource leases do.
 - Build output pruning deletes a declared directory outside the commit hold,

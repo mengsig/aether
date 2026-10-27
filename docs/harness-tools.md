@@ -156,7 +156,10 @@ After preserving the result and making the child worktree clean, use
 dirty worktrees without `--force`. The matching private metadata directory and
 `refs/aether/workspaces/<id>` (and `refs/aether/integrations/<id>` after an
 integration) also remain until explicitly removed. Keep them while you may
-need to inspect or retry integration.
+need to inspect or retry integration. Storage GC removes a clean, saved child
+worktree on its own once the child has stopped and its parent has ended or its
+source checkout is gone, and prunes the source repository's worktree list; see
+[storage](configuration.md#storage).
 
 Worktrees prevent ordinary concurrent edits from landing in the same working
 directory. They are not a filesystem sandbox: native CLI tools can access

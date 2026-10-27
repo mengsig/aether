@@ -35,6 +35,8 @@ pub(super) struct Snapshot {
     entries: BTreeMap<PathBuf, Stamp>,
     /// Build output directories: their own stamp is kept, their contents not.
     skipped: BTreeSet<PathBuf>,
+    /// The source checkout was missing at capture and must stay missing.
+    source_gone: bool,
 }
 
 impl Snapshot {
@@ -42,6 +44,7 @@ impl Snapshot {
         directory: &Path,
         manifest: &WorkspaceManifest,
         skipped: &BTreeSet<PathBuf>,
+        source_gone: bool,
     ) -> crate::Result<Self> {
         if manifest.workspace != directory.join(WORKSPACE) || !manifest.source.is_absolute() {
             return Err(invalid("workspace manifest names a different GC candidate"));
@@ -57,15 +60,22 @@ impl Snapshot {
             manifest: manifest.clone(),
             entries: BTreeMap::new(),
             skipped: skipped.clone(),
+            source_gone,
         };
         snapshot.walk(directory, 0, false)?;
-        snapshot.record(&manifest.source)?;
-        let source = snapshot.git_directory(&manifest.source)?;
         let workspace = snapshot.git_directory(&manifest.workspace)?;
-        let common = snapshot.common_directory(&source)?;
-        if common != snapshot.common_directory(&workspace)? {
-            return Err(invalid("workspace belongs to a different Git repository"));
-        }
+        let common = snapshot.common_directory(&workspace)?;
+        // Without its checkout, the source's Git state is the common directory.
+        let source = if source_gone {
+            common.clone()
+        } else {
+            snapshot.record(&manifest.source)?;
+            let source = snapshot.git_directory(&manifest.source)?;
+            if common != snapshot.common_directory(&source)? {
+                return Err(invalid("workspace belongs to a different Git repository"));
+            }
+            source
+        };
         snapshot.walk(&common, 0, true)?;
         for git_directory in [&source, &workspace] {
             if git_directory != &common {
@@ -100,6 +110,9 @@ impl Snapshot {
     pub fn recheck(&self, manifest: &WorkspaceManifest) -> crate::Result<()> {
         if manifest != &self.manifest {
             return Err(invalid("workspace manifest differs from the GC snapshot"));
+        }
+        if self.source_gone && !source_missing(&manifest.source)? {
+            return Err(invalid("workspace source reappeared during GC"));
         }
         let external = self
             .entries
@@ -326,8 +339,14 @@ fn resolve_directory(path: &Path) -> crate::Result<PathBuf> {
     Ok(resolved)
 }
 
-pub(super) fn check_configuration(manifest: &WorkspaceManifest) -> crate::Result<()> {
-    for workspace in [&manifest.source, &manifest.workspace] {
+/// A missing source is not read: the worktree's own view includes the
+/// repository's common configuration.
+pub(super) fn check_configuration(
+    manifest: &WorkspaceManifest,
+    source_gone: bool,
+) -> crate::Result<()> {
+    let source = (!source_gone).then_some(&manifest.source);
+    for workspace in source.into_iter().chain([&manifest.workspace]) {
         let config = run(
             git(workspace).args(["config", "--no-includes", "--null", "--list"]),
             "check GC Git configuration",

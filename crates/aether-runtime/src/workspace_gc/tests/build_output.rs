@@ -128,11 +128,16 @@ async fn live_or_resumable_owners_keep_their_build_output() {
             agent.paused = true;
             f.store(agent);
         },
-        |f| f.store(f.owner(AgentStatus::Cancelled { reason: None })),
+        // A stopped child stays resumable while its parent lives.
         |f| {
+            f.store(f.parent(AgentStatus::Ready));
+            f.store(f.owner(AgentStatus::Cancelled { reason: None }));
+        },
+        |f| {
+            f.store(f.parent(AgentStatus::Ready));
             f.store(f.owner(AgentStatus::Failed {
                 error: "restartable".into(),
-            }))
+            }));
         },
         |f| {
             let agent = f.owner(AgentStatus::Completed { summary: None });

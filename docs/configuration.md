@@ -302,13 +302,21 @@ lists these under `bridge_copies`. No setting changes this.
 
 Eligible clean delegated workspaces are removed after the grace period, without
 waiting fourteen days. Ownership comes from an agent's workspace root at or
-inside that workspace, the manifest delegator's ancestor/descendant chain,
-or an explicit resource lease or integration. A broad ancestor scope or
-`allowed_paths` permission alone does not establish ownership. A live,
-Failed or Cancelled workspace owner, integration journal, dirty files, or
-commits not saved on another source-repository ref protect the workspace
-regardless of age. Read-only Git probes run before the runtime gate; GC
-rechecks filesystem identity and admission under the runtime locks.
+inside that workspace, the manifest delegator and its descendants, or an
+explicit resource lease or integration. The delegator's ancestors and a broad
+scope or `allowed_paths` permission alone do not establish ownership. Every
+owner must be stopped: a live or paused owner, one with a turn, lease or
+resource in flight, an integration journal, dirty files, or commits not saved
+on another source-repository ref protect the workspace regardless of age. A
+Failed or Cancelled child counts as stopped once its delegator has ended too,
+since nothing can then wake, restart or integrate it. When the source checkout
+the workspace was made from is gone, the delegator no longer protects it
+either: GC then runs Git in the repository's common Git directory. After a
+removal GC runs `git worktree prune` in the source repository, and a failed
+prune is named in that workspace's report entry. Waking or restarting an agent
+whose workspace was collected is refused. Read-only Git probes run before the
+runtime gate; GC rechecks filesystem identity and admission under the runtime
+locks.
 Ignored files and paths it cannot safely inspect may also protect a workspace;
 retention never overrides the work-preservation checks. Inventory and cleanup
 are bounded per pass, so large directories may take several sweeps and byte
