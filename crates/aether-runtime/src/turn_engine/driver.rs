@@ -514,7 +514,11 @@ pub(super) async fn drive(
                     }
                 }
                 Some(EngineEvent::InputAccepted) => {
-                    if let Some(pending) = steering.outstanding.pop_front() {
+                    if park.is_some() {
+                        // Taken in after the turn's end was decided, only to be stopped:
+                        // the model never acts on it, so it stays queued and wakes the next turn.
+                        steering.rewind(ctx.agent.inbox_cursor);
+                    } else if let Some(pending) = steering.outstanding.pop_front() {
                         record_consumed(runtime, ctx, pending)?;
                     }
                     // The engine is answering it; its next result decides.
@@ -558,6 +562,17 @@ pub(super) async fn drive(
                             request_id,
                             allow: verdict.allow,
                             message: verdict.message,
+                            answer: None,
+                        }).await;
+                    }
+                }
+                Some(EngineEvent::Question { request_id, .. }) if park.is_some() => {
+                    // An inbox answer would be consumed by a process being stopped; it waits instead.
+                    if let Some(tx) = decisions.as_ref() {
+                        let _ = tx.send(PermissionDecision {
+                            request_id,
+                            allow: false,
+                            message: Some(TURN_IS_OVER.to_owned()),
                             answer: None,
                         }).await;
                     }

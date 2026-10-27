@@ -15,6 +15,14 @@ release is also the text of its GitHub release.
   steered message is outstanding, the question is now told the reply follows,
   and the reply is steered right after it, so a refusal keeps both queued for
   the next turn.
+- **A message taken in after a turn ended now wakes the agent (#329).** A
+  message steered into a Claude Code turn just before the model called a
+  turn-ending tool (`wait_for`, `ask_user`, a waiting `delegate`) was folded
+  in only after that call, and was then recorded consumed even though the
+  engine was being stopped. Nothing new was left to wake the agent, so it
+  waited forever. Such a message now stays queued and starts the next turn,
+  and a question the stopping engine asks is refused instead of being
+  answered from the inbox.
 - **Reopening the TUI mid-turn shows pending steering again (#306).** The
   "steering · lands at the next tool call" lines are rebuilt on attach from
   the operator messages the running turn has not taken yet, and clear once it

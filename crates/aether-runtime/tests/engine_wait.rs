@@ -546,6 +546,8 @@ mod wait_sources;
 mod parking;
 #[path = "engine_wait/reply_boundary.rs"]
 mod reply_boundary;
+#[path = "engine_wait/steered_park.rs"]
+mod steered_park;
 
 #[path = "engine_wait/settlement.rs"]
 mod settlement;
