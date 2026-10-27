@@ -265,6 +265,8 @@ mod store_outage;
 mod subtree_cancellation;
 #[path = "kernel/subtree_policy.rs"]
 mod subtree_policy;
+#[path = "kernel/subtree_update.rs"]
+mod subtree_update;
 #[path = "kernel/supervisor_dispatch.rs"]
 mod supervisor_dispatch;
 #[path = "kernel/suspension.rs"]

@@ -720,7 +720,7 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `get_agent` | observe | |
 | `list_agents` | observe | |
 | `get_tree` | observe | |
-| `update_agent` | operate | `host_only` when `patch.backend` or `patch.tools` is supplied. |
+| `update_agent` | operate | `host_only` when `patch.backend` or `patch.tools` is supplied; `subtree` needs nothing more. |
 | `reply_to_question` | operate | |
 | `send_message` | operate | The same with `attachments` (images). |
 | `append_note` | operate | Starts no turn. |

@@ -214,6 +214,9 @@ pub mod features {
     /// `list_notifications`, `get_notification`, `mark_notification_read`,
     /// `resolve_notification` and `answer_notification`.
     pub const NOTIFICATIONS: &str = "notifications";
+    /// The daemon applies `UpdateAgent.subtree`: a raised deadline or cost
+    /// budget also reaches the live descendants.
+    pub const SUBTREE_UPDATE: &str = "subtree_update";
 }
 
 mod handshake;

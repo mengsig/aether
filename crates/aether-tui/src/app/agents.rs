@@ -136,6 +136,7 @@ impl App {
                     fallbacks: Some(chain.fallbacks),
                     ..Default::default()
                 },
+                subtree: false,
                 idempotency_key: None,
             },
             then: Then::ModelPatched(id),
@@ -200,6 +201,7 @@ impl App {
                         effort: Some(effort),
                         ..Default::default()
                     },
+                    subtree: false,
                     idempotency_key: None,
                 },
                 then: Then::AgentPatched,

@@ -11,6 +11,7 @@ impl App {
                     command: Command::UpdateAgent {
                         id,
                         patch,
+                        subtree: false,
                         idempotency_key: None,
                     },
                     then: Then::AgentPatched,

@@ -41,7 +41,7 @@ fn operator_commands_wait_for_replies_and_keep_unicode_in_ascii_mode() {
     let original_name = app.selected_agent().unwrap().name.clone();
     let effects = app.run_command(SlashCommand::Rename("名前 café".into()));
     assert!(
-        matches!(&effects[..], [Effect::Request { command: Command::UpdateAgent { id: target, patch , idempotency_key: None, }, then: Then::AgentRenamed(reply_id) }] if *target == id && *reply_id == id && patch.name.as_deref() == Some("名前 café"))
+        matches!(&effects[..], [Effect::Request { command: Command::UpdateAgent { id: target, patch, subtree: false, idempotency_key: None, }, then: Then::AgentRenamed(reply_id) }] if *target == id && *reply_id == id && patch.name.as_deref() == Some("名前 café"))
     );
     assert_eq!(app.selected_agent().unwrap().name, original_name);
     let mut renamed = app.selected_agent().unwrap().clone();

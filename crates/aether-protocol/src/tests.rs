@@ -174,6 +174,7 @@ fn every_command_survives_the_frame_roundtrip() {
         Command::UpdateAgent {
             id: agent,
             patch: AgentPatch::default(),
+            subtree: false,
             idempotency_key: None,
         },
         Command::ResolveApproval {
@@ -306,6 +307,7 @@ fn every_command_survives_the_frame_roundtrip() {
                 deadline: Some(DeadlineUpdate::Clear),
                 ..Default::default()
             },
+            subtree: false,
             idempotency_key: None,
         },
         Command::UpdateAgent {
@@ -314,7 +316,18 @@ fn every_command_survives_the_frame_roundtrip() {
                 deadline: Some(DeadlineUpdate::Set(aether_core::time::now())),
                 ..Default::default()
             },
+            subtree: false,
             idempotency_key: None,
+        },
+        Command::UpdateAgent {
+            id: agent,
+            patch: AgentPatch {
+                deadline: Some(DeadlineUpdate::Set(aether_core::time::now())),
+                cost_budget: Some(4.5),
+                ..Default::default()
+            },
+            subtree: true,
+            idempotency_key: Some("extend-1".into()),
         },
         // These four shapes are non-trivial encodings that were once
         // missing from this roundtrip.
@@ -525,6 +538,32 @@ fn create_agent_defaults_to_start() {
     assert!(
         CreateAgent::default().start,
         "Rust default must match the wire default"
+    );
+}
+
+/// `subtree` is left off the wire when false, so an update reads exactly as
+/// it did to a daemon that predates it, and an absent field decodes as false.
+#[test]
+fn update_agent_carries_subtree_only_when_set() {
+    let id = AgentId::new();
+    let update = |subtree| Command::UpdateAgent {
+        id,
+        patch: AgentPatch::default(),
+        subtree,
+        idempotency_key: None,
+    };
+    let plain = serde_json::to_value(update(false)).expect("ser");
+    assert_eq!(
+        plain,
+        serde_json::json!({"cmd": "update_agent", "id": id, "patch": {}})
+    );
+    let wide = serde_json::to_value(update(true)).expect("ser");
+    assert_eq!(wide["subtree"], true);
+    let decoded: Command = serde_json::from_value(plain).expect("de");
+    assert_eq!(decoded, update(false));
+    assert_eq!(
+        serde_json::from_value::<Command>(wide).expect("de"),
+        update(true)
     );
 }
 

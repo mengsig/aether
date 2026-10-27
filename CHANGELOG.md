@@ -6,6 +6,17 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **Extending a parent can extend its delegated children too (#323).** A
+  delegated child copies its parent's absolute deadline and cost budget, so
+  extending the parent alone left the child to be stopped, and its subtree
+  cancelled, at the old deadline. `update_agent` takes `subtree`: a patched
+  deadline or cost budget then also raises every live descendant whose own is
+  lower, in one transaction, and never shortens one. Daemons announce it as
+  the `subtree_update` feature, and the Rust client gains
+  `update_agent_subtree` and `serves_subtree_update`.
+
 ### Fixed
 
 - **An answered engine question no longer loses an earlier steered

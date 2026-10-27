@@ -16,6 +16,7 @@ export interface UpdateAgentCommand {
   "id": AgentId;
   "idempotency_key"?: string | null;
   "patch": AgentPatch;
+  "subtree"?: boolean;
 }
 
 export function updateAgent(args: Omit<UpdateAgentCommand, "cmd">): UpdateAgentCommand {

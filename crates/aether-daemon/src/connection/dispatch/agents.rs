@@ -62,7 +62,9 @@ pub(super) async fn dispatch(
             rt.archive_agents_keyed(target, archived, by, submission)
                 .map_err(map_err)?,
         )),
-        Command::UpdateAgent { id, patch, .. } => update_agent(daemon, id, patch, by, submission),
+        Command::UpdateAgent {
+            id, patch, subtree, ..
+        } => update_agent(daemon, id, patch, subtree, by, submission),
         Command::WorkspaceDiff { agent } => workspace_diff(daemon, agent).await,
         Command::WorkspaceIntegrate { agent } => workspace_integrate(daemon, agent, by).await,
         Command::WorkspaceDiscard { agent, force } => {
@@ -115,6 +117,7 @@ fn update_agent(
     daemon: &Daemon,
     id: aether_core::id::AgentId,
     patch: aether_protocol::AgentPatch,
+    subtree: bool,
     by: Actor,
     submission: Option<Submission>,
 ) -> Result<Reply, ErrorReply> {
@@ -138,7 +141,7 @@ fn update_agent(
         backend: patch.backend,
     };
     Ok(Reply::Agent(
-        rt.update_agent_keyed(id, update, by, submission)
+        rt.update_agent_keyed(id, update, subtree, by, submission)
             .map_err(map_err)?,
     ))
 }

@@ -36,6 +36,7 @@ impl Command {
             Self::StorageStatus | Self::StorageGc { .. } => Introduced::Feature(features::STORAGE),
             Self::WorkspaceDiff { .. } | Self::WorkspaceIntegrate { .. }
             | Self::WorkspaceDiscard { .. } => Introduced::Feature(features::WORKSPACE_REVIEW),
+            Self::UpdateAgent { subtree: true, .. } => Introduced::Feature(features::SUBTREE_UPDATE),
             Self::AppendNote { level, .. } if !level.is_info() => Introduced::Version(24),
             Self::AppendNote { .. } => Introduced::Feature(features::NOTES),
             Self::PostNotification { .. } | Self::ListNotifications { .. }
@@ -156,6 +157,23 @@ mod tests {
                 command.name()
             );
         }
+    }
+
+    /// Only the subtree form is new: a daemon that ignored the field would
+    /// raise the named agent alone and leave its children on the old limit.
+    #[test]
+    fn a_subtree_update_needs_the_subtree_update_feature() {
+        let id = aether_core::id::AgentId::new();
+        let wide = json!({"cmd": "update_agent", "id": id, "patch": {}, "subtree": true});
+        assert_eq!(
+            command(wide).introduced(),
+            Introduced::Feature(features::SUBTREE_UPDATE)
+        );
+        let plain = json!({"cmd": "update_agent", "id": id, "patch": {}});
+        assert_eq!(
+            command(plain).introduced(),
+            Introduced::Version(FIRST_VERSION)
+        );
     }
 
     #[test]

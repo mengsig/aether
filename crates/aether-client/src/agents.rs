@@ -80,15 +80,42 @@ impl Client {
     }
 
     pub async fn update_agent(&self, id: AgentId, patch: AgentPatch) -> Result<Agent> {
+        self.patch_agent(id, patch, false).await
+    }
+
+    /// Whether the daemon serves [`Self::update_agent_subtree`]. Without it a
+    /// caller raises each live descendant with [`Self::update_agent`].
+    pub fn serves_subtree_update(&self) -> bool {
+        self.welcome().is_some_and(|welcome| {
+            welcome
+                .features
+                .iter()
+                .any(|feature| feature == aether_protocol::features::SUBTREE_UPDATE)
+        })
+    }
+
+    /// [`Self::update_agent`], and a patched deadline or cost budget also
+    /// raises every live descendant whose own is lower. Returns the named
+    /// agent. A daemon that does not announce `subtree_update` is refused
+    /// before anything is sent.
+    pub async fn update_agent_subtree(&self, id: AgentId, patch: AgentPatch) -> Result<Agent> {
+        self.patch_agent(id, patch, true).await
+    }
+
+    async fn patch_agent(&self, id: AgentId, patch: AgentPatch, subtree: bool) -> Result<Agent> {
         match self
             .request(Command::UpdateAgent {
                 id,
                 patch,
+                subtree,
                 idempotency_key: None,
             })
             .await?
         {
-            Reply::Agent(a) => Ok(a),
+            Reply::Agent(a) if a.id == id => Ok(a),
+            Reply::Agent(_) => Err(ClientError::Malformed(
+                "daemon returned another agent than the one updated".into(),
+            )),
             other => Err(unexpected("agent", &other)),
         }
     }

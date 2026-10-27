@@ -60,6 +60,11 @@ pub enum Command {
     UpdateAgent {
         id: AgentId,
         patch: AgentPatch,
+        /// Also raise every live descendant's `deadline` and `cost_budget` to
+        /// the patched value where theirs is lower; nothing else propagates.
+        /// Needs `features::SUBTREE_UPDATE`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        subtree: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         idempotency_key: Option<String>,
     },
@@ -862,11 +867,18 @@ impl Command {
             Self::UpdateAgent {
                 id,
                 patch,
+                subtree,
                 idempotency_key,
-            } => (
-                idempotency_key.as_deref()?,
-                serde_json::json!({"cmd": "update_agent", "id": id, "patch": patch}),
-            ),
+            } => {
+                // Only when set, so a key recorded before the field existed
+                // still matches its retry.
+                let mut fields =
+                    serde_json::json!({"cmd": "update_agent", "id": id, "patch": patch});
+                if *subtree {
+                    fields["subtree"] = serde_json::Value::Bool(true);
+                }
+                (idempotency_key.as_deref()?, fields)
+            }
             Self::SetApprovals {
                 agent,
                 policy,

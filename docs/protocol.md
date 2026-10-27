@@ -46,6 +46,11 @@ the Rust client refuses it to an older one before sending. The level rides in
 the note event's payload, which older clients decode without it, so they show
 the note as a plain one.
 
+Within version 24, `update_agent` takes `subtree`, announced by the
+`subtree_update` feature (see [raising a subtree's limits](#raising-a-subtrees-limits)).
+It is left off the wire when false, so a plain update is unchanged; the Rust
+client refuses `subtree` to a daemon that does not announce the feature.
+
 Version 23 adds `append_note`, advertised by the `notes` feature, and the
 `not_started` turn outcome: `replay` of an agent that has taken no turn
 returns one turn-0 frame holding its notes. Clients on versions 17 through 22
@@ -214,6 +219,32 @@ it to one.
 (see [notification center](#notification-center)). An older daemon refuses
 them as unknown; the Rust client refuses to send them to one, and
 `Client::serves_notifications` lets a client skip the center instead.
+
+`subtree_update` means `update_agent` applies `subtree` (see
+[raising a subtree's limits](#raising-a-subtrees-limits)). An older daemon
+ignores the field and updates the named agent alone, leaving its children on
+the old deadline; the Rust client refuses such an update itself, and
+`Client::serves_subtree_update` lets a host fall back to updating each live
+descendant instead.
+
+## Raising a subtree's limits
+
+A delegated child starts with a copy of its parent's absolute `deadline` and
+`cost_budget`, so extending only the parent leaves the child to be stopped at
+the old deadline. `update_agent` with `"subtree": true` applies the patch to
+the named agent as usual and, in the same transaction, raises every live
+descendant's limits to the named agent's new ones:
+
+- A patched `deadline` or `cost_budget` reaches a descendant only where it
+  raises that descendant's own value. A later deadline, a larger budget or no
+  limit at all is kept, so nothing is ever shortened. Clearing a limit
+  (`"clear"`, or a `cost_budget` of 0) is the highest raise and removes it.
+- No other field of the patch propagates: a name, instructions, model,
+  effort, turn cap or token budget changes the named agent alone.
+- Finished descendants are not touched. Each descendant that changes gets one
+  `agent.config_updated` event; one left as it was gets none.
+- The reply is the named agent, as for a plain update. The command needs the
+  same access as updating the named agent.
 
 ## Naming a checkout
 

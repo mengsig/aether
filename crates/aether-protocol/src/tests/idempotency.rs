@@ -220,3 +220,33 @@ fn a_create_fingerprints_its_repository_root_only_when_set() {
     assert_ne!(plain, named);
     assert_ne!(named, view(Some("/src/gadget")));
 }
+
+/// A plain update keeps the digest it had before `subtree` existed, and one
+/// key cannot name both an update of one agent and of its subtree.
+#[test]
+fn an_update_fingerprints_its_subtree_reach_only_when_set() {
+    let agent = AgentId::new();
+    let view = |subtree: bool| {
+        Command::UpdateAgent {
+            id: agent,
+            patch: AgentPatch {
+                cost_budget: Some(3.0),
+                ..Default::default()
+            },
+            subtree,
+            idempotency_key: Some("k-1".into()),
+        }
+        .keyed_request()
+        .expect("keyed")
+        .expect("view")
+        .fields
+    };
+    let plain = view(false);
+    assert_eq!(
+        plain,
+        serde_json::json!({"cmd": "update_agent", "id": agent, "patch": {"cost_budget": 3.0}})
+    );
+    let subtree = view(true);
+    assert_eq!(subtree["subtree"], true);
+    assert_ne!(plain, subtree);
+}

@@ -231,6 +231,35 @@ async fn a_note_is_refused_by_a_daemon_without_the_feature() {
     assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
 
+/// A daemon that ignored `subtree` would extend the named agent alone, so
+/// the subtree form is refused before it is written; a host checks first.
+#[tokio::test]
+async fn a_subtree_update_is_refused_by_a_daemon_without_the_feature() {
+    let (transport, peer) = Transport::memory(16);
+    let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = sent.clone();
+    let _daemon = fake_daemon(peer, move |_, _| {
+        seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { true })
+    });
+    let client = Client::open(transport).await.expect("open");
+    assert!(!client.serves_subtree_update());
+    let error = client
+        .update_agent_subtree(aether_core::id::AgentId::new(), Default::default())
+        .await
+        .expect_err("old daemon must be refused before submission");
+    let ClientError::Protocol(refusal) = error else {
+        panic!("expected a protocol refusal: {error:?}");
+    };
+    assert_eq!(refusal.code, aether_protocol::ErrorCode::Unimplemented);
+    assert!(
+        refusal.message.contains("`subtree_update`"),
+        "{}",
+        refusal.message
+    );
+    assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
 #[tokio::test]
 async fn a_daemon_without_notifications_is_skipped_and_never_sent_one() {
     let (transport, peer) = Transport::memory(16);

@@ -257,20 +257,28 @@ mod tests {
 
     #[test]
     fn switching_tools_is_host_only_and_renaming_is_not() {
-        let update = |patch| Command::UpdateAgent {
+        let update = |patch, subtree| Command::UpdateAgent {
             id: AgentId::new(),
             patch,
+            subtree,
             idempotency_key: None,
         };
         let rename = AgentPatch {
             name: Some("worker".into()),
             ..Default::default()
         };
-        assert_eq!(update(rename).access(), Access::Operate);
+        assert_eq!(update(rename, false).access(), Access::Operate);
         let tools = AgentPatch {
             tools: Some(Default::default()),
             ..Default::default()
         };
-        assert_eq!(update(tools).access(), Access::HostOnly);
+        assert_eq!(update(tools.clone(), false).access(), Access::HostOnly);
+        // The subtree reach needs what updating the named agent needs.
+        let extend = AgentPatch {
+            deadline: Some(aether_core::agent::DeadlineUpdate::Clear),
+            ..Default::default()
+        };
+        assert_eq!(update(extend, true).access(), Access::Operate);
+        assert_eq!(update(tools, true).access(), Access::HostOnly);
     }
 }

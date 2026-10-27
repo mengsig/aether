@@ -2343,6 +2343,10 @@
             },
             "patch": {
               "$ref": "#/$defs/AgentPatch"
+            },
+            "subtree": {
+              "description": "Also raise every live descendant's `deadline` and `cost_budget` to\nthe patched value where theirs is lower; nothing else propagates.\nNeeds `features::SUBTREE_UPDATE`.",
+              "type": "boolean"
             }
           },
           "required": [

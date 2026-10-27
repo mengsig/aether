@@ -12,13 +12,15 @@ from ..protocol import (
     ScheduleId,
 )
 
-def update_agent(*, id: AgentId, patch: AgentPatch, idempotency_key: str | None = None) -> dict[str, Any]:
+def update_agent(*, id: AgentId, patch: AgentPatch, idempotency_key: str | None = None, subtree: bool | None = None) -> dict[str, Any]:
     """The `update_agent` command."""
     frame: dict[str, Any] = {"cmd": "update_agent"}
     frame["id"] = id
     if idempotency_key is not None:
         frame["idempotency_key"] = idempotency_key
     frame["patch"] = patch
+    if subtree is not None:
+        frame["subtree"] = subtree
     return frame
 
 def update_device(*, id: DeviceId, name: str | None = None, role: DeviceRole | None = None) -> dict[str, Any]:

@@ -294,6 +294,7 @@ async fn pause_resume_and_set_answer_the_shapes_the_client_expects() {
                 deadline: Some(DeadlineUpdate::Clear),
                 ..Default::default()
             },
+            subtree: false,
             idempotency_key: None,
         },
         Actor::user(),

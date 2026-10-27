@@ -9,7 +9,7 @@ fn slash_commands_produce_requests_and_panels() {
     }
     let effects = app.reduce(key(KeyCode::Enter));
     assert!(
-        matches!(&effects[0], Effect::Request { command: Command::UpdateAgent { id: a, patch , idempotency_key: None, }, then: Then::AgentPatched } if *a == id && patch.effort == Some(aether_core::model::Effort::Max))
+        matches!(&effects[0], Effect::Request { command: Command::UpdateAgent { id: a, patch, subtree: false, idempotency_key: None, }, then: Then::AgentPatched } if *a == id && patch.effort == Some(aether_core::model::Effort::Max))
     );
     for c in "/help".chars() {
         app.reduce(key(KeyCode::Char(c)));

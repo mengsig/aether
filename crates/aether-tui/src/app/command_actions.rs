@@ -73,6 +73,7 @@ impl App {
                             name: Some(name),
                             ..Default::default()
                         },
+                        subtree: false,
                         idempotency_key: None,
                     },
                     then: Then::AgentRenamed(id),

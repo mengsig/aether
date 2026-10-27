@@ -385,6 +385,7 @@ impl App {
                     fallbacks: Some(chain.fallbacks),
                     ..Default::default()
                 },
+                subtree: false,
                 idempotency_key: None,
             },
             then: Then::PendingRootModelPatched(id),

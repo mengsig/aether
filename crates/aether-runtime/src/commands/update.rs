@@ -3,8 +3,28 @@ use crate::{Result, Runtime, RuntimeError};
 use aether_core::agent::{Agent, AgentStatusKind};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
-use aether_core::time::now;
-use aether_store::{Commit, Mutation};
+use aether_core::time::{Timestamp, now};
+use aether_store::{AgentFilter, Commit, Mutation};
+use std::collections::HashMap;
+
+/// The limits a subtree update lifts, each present only when the patch set
+/// it: the named agent's new value, where `Some(None)` means no limit.
+#[derive(Debug, Clone, Copy)]
+struct SubtreeRaise {
+    deadline: Option<Option<Timestamp>>,
+    cost_budget: Option<Option<f64>>,
+}
+
+/// The new value when `target` lifts `current`, `None` when it would not.
+/// No limit is the highest value, so a descendant without one keeps it.
+fn raised<T: PartialOrd + Copy>(current: Option<T>, target: Option<T>) -> Option<Option<T>> {
+    let current = current?;
+    match target {
+        None => Some(None),
+        Some(target) if target > current => Some(Some(target)),
+        Some(_) => None,
+    }
+}
 
 impl Runtime {
     /// Change a live agent's knobs. Read, decide and write happen under one
@@ -12,13 +32,16 @@ impl Runtime {
     /// response, so a model change read outside it is silently reverted - and
     /// the handoff it committed then names a model the agent is not running.
     pub fn update_agent(&self, id: AgentId, update: AgentUpdate, by: Actor) -> Result<Agent> {
-        self.update_agent_keyed(id, update, by, None)
+        self.update_agent_keyed(id, update, false, by, None)
     }
 
+    /// With `subtree`, a patched deadline or cost budget also raises every
+    /// live descendant whose own is lower, in the same commit.
     pub fn update_agent_keyed(
         &self,
         id: AgentId,
         update: AgentUpdate,
+        subtree: bool,
         by: Actor,
         submission: Option<aether_core::idempotency::Submission>,
     ) -> Result<Agent> {
@@ -44,6 +67,8 @@ impl Runtime {
                 "agent {id} was restarted as {successor}; update that agent instead"
             )));
         }
+        let (deadline_patched, budget_patched) =
+            (update.deadline.is_some(), update.cost_budget.is_some());
         if let Some(name) = &update.name {
             agent.name = super::validation::checked_agent_name(name)?;
         }
@@ -248,7 +273,77 @@ impl Runtime {
                     .run(agent.run),
             );
         }
+        if subtree {
+            let raise = SubtreeRaise {
+                deadline: deadline_patched.then_some(agent.config.deadline),
+                cost_budget: budget_patched.then_some(agent.config.cost_budget),
+            };
+            self.raise_live_descendants(&mut commit, id, raise, &by)?;
+        }
         self.commit_receipt(hold, commit, submission.as_ref(), &agent)?;
         Ok(agent)
+    }
+
+    /// Lift each live descendant of `root` to `raise` where its own limit is
+    /// lower, adding its row and one event to `commit`. Never lowers one.
+    fn raise_live_descendants(
+        &self,
+        commit: &mut Commit,
+        root: AgentId,
+        raise: SubtreeRaise,
+        by: &Actor,
+    ) -> Result<()> {
+        if raise.deadline.is_none() && raise.cost_budget.is_none() {
+            return Ok(());
+        }
+        let agents = self.store.agents(&AgentFilter::default())?;
+        let by_id: HashMap<AgentId, &Agent> = agents.iter().map(|a| (a.id, a)).collect();
+        let order = aether_core::agent::subtree_of(&agents, root);
+        debug_assert_eq!(order.first(), Some(&root), "the subtree starts at its root");
+        let at = now();
+        for current in order.iter().skip(1).filter_map(|id| by_id.get(id).copied()) {
+            if current.status.is_terminal() || current.restarted_as.is_some() {
+                continue;
+            }
+            let deadline = raise
+                .deadline
+                .and_then(|t| raised(current.config.deadline, t));
+            let budget = raise
+                .cost_budget
+                .and_then(|b| raised(current.config.cost_budget, b));
+            if deadline.is_none() && budget.is_none() {
+                continue;
+            }
+            let mut agent = current.clone();
+            if let Some(deadline) = deadline {
+                agent.config.deadline = deadline;
+            }
+            if let Some(budget) = budget {
+                agent.config.cost_budget = budget;
+            }
+            debug_assert!(
+                agent
+                    .config
+                    .deadline
+                    .is_none_or(|new| current.config.deadline <= Some(new)),
+                "a subtree update never moves a deadline earlier"
+            );
+            agent.updated_at = at;
+            commit.push_event(
+                EventDraft::new(
+                    by.clone(),
+                    EventKind::AgentConfigUpdated {
+                        name: None,
+                        model: None,
+                        config: agent.config.clone(),
+                        scope: None,
+                    },
+                )
+                .agent(agent.id)
+                .run(agent.run),
+            );
+            commit.push_mutation(Mutation::UpsertAgent(agent));
+        }
+        Ok(())
     }
 }

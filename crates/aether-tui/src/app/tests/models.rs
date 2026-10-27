@@ -65,7 +65,7 @@ fn model_switches_the_current_agent_and_default_moves_only_the_session() {
     assert!(matches!(
         &effects[..],
         [Effect::Request {
-            command: Command::UpdateAgent { id: patched, patch , idempotency_key: None, },
+            command: Command::UpdateAgent { id: patched, patch, subtree: false, idempotency_key: None, },
             ..
         }] if *patched == id && patch.model == Some(ModelRef::new("anthropic", "opus"))
     ));
@@ -168,7 +168,7 @@ fn choosing_a_model_for_a_new_root_before_tree_refresh_updates_that_root() {
     assert!(effects.iter().any(|effect| matches!(
         effect,
         Effect::Request {
-            command: Command::UpdateAgent { id: target, patch , idempotency_key: None, },
+            command: Command::UpdateAgent { id: target, patch, subtree: false, idempotency_key: None, },
             then: Then::ModelPatched(reply_id),
         } if *target == id && *reply_id == id && patch.model.as_ref() == Some(&model)
     )));
@@ -273,7 +273,7 @@ fn choosing_a_model_on_a_restarted_agent_updates_its_live_successor() {
     assert!(effects.iter().any(|effect| matches!(
         effect,
         Effect::Request {
-            command: Command::UpdateAgent { id, patch , idempotency_key: None, },
+            command: Command::UpdateAgent { id, patch, subtree: false, idempotency_key: None, },
             then: Then::ModelPatched(reply_id),
         } if *id == successor && *reply_id == successor && patch.model.as_ref() == Some(&model)
     )));
@@ -406,7 +406,7 @@ fn rapid_model_choices_apply_the_latest_after_the_first_reply() {
     assert!(effects.iter().any(|effect| matches!(
         effect,
         Effect::Request {
-            command: Command::UpdateAgent { id: target, patch , idempotency_key: None, },
+            command: Command::UpdateAgent { id: target, patch, subtree: false, idempotency_key: None, },
             then: Then::ModelPatched(reply_id),
         } if *target == id && *reply_id == id && patch.model.as_ref() == Some(&last)
     )));
@@ -444,7 +444,7 @@ fn latest_model_choice_is_tried_after_an_earlier_choice_fails() {
     assert!(effects.iter().any(|effect| matches!(
         effect,
         Effect::Request {
-            command: Command::UpdateAgent { id: target, patch , idempotency_key: None, },
+            command: Command::UpdateAgent { id: target, patch, subtree: false, idempotency_key: None, },
             then: Then::ModelPatched(reply_id),
         } if *target == id && *reply_id == id && patch.model.as_ref() == Some(&latest)
     )));
@@ -496,7 +496,7 @@ fn model_chosen_during_root_creation_patches_it_before_queued_messages() {
     assert!(effects.iter().any(|effect| matches!(
         effect,
         Effect::Request {
-            command: Command::UpdateAgent { id, patch , idempotency_key: None, },
+            command: Command::UpdateAgent { id, patch, subtree: false, idempotency_key: None, },
             then: Then::PendingRootModelPatched(reply_id),
         } if *id == fresh && *reply_id == fresh && patch.model.as_ref() == Some(&model)
     )));
@@ -628,7 +628,7 @@ fn repeated_model_choice_during_pending_patch_waits_for_the_last_model() {
     assert!(effects.iter().any(|effect| matches!(
         effect,
         Effect::Request {
-            command: Command::UpdateAgent { id, patch , idempotency_key: None, },
+            command: Command::UpdateAgent { id, patch, subtree: false, idempotency_key: None, },
             then: Then::PendingRootModelPatched(reply_id),
         } if *id == fresh && *reply_id == fresh && patch.model.as_ref() == Some(&last)
     )));
