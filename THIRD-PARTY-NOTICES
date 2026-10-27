@@ -55,7 +55,7 @@ core_detect 1.0.0: MIT/Apache-2.0 (https://github.com/thomcc/core_detect)
 cpufeatures 0.3.1: MIT OR Apache-2.0 (https://github.com/RustCrypto/utils)
 crc32fast 1.5.2: MIT OR Apache-2.0 (https://github.com/srijs/rust-crc32fast)
 critical-section 1.2.0: MIT OR Apache-2.0 (https://github.com/rust-embedded/critical-section)
-croner 4.0.1: MIT (https://github.com/hexagon/croner-rust)
+croner 4.0.2: MIT (https://github.com/hexagon/croner-rust)
 crossbeam-channel 0.5.17: MIT OR Apache-2.0 (https://github.com/crossbeam-rs/crossbeam)
 crossbeam-deque 0.8.8: MIT OR Apache-2.0 (https://github.com/crossbeam-rs/crossbeam)
 crossbeam-epoch 0.9.21: MIT OR Apache-2.0 (https://github.com/crossbeam-rs/crossbeam)
@@ -181,7 +181,7 @@ num-conv 0.2.2: MIT OR Apache-2.0 (https://github.com/jhpratt/num-conv)
 num-traits 0.2.19: MIT OR Apache-2.0 (https://github.com/rust-num/num-traits)
 num_threads 0.1.7: MIT OR Apache-2.0 (https://github.com/jhpratt/num_threads)
 once_cell 1.21.4: MIT OR Apache-2.0 (https://github.com/matklad/once_cell)
-open 5.4.4: MIT (https://github.com/Byron/open-rs)
+open 5.4.5: MIT (https://github.com/Byron/open-rs)
 openssl-probe 0.2.1: MIT OR Apache-2.0 (https://github.com/rustls/openssl-probe)
 option-ext 0.2.0: MPL-2.0 (https://github.com/soc/option-ext.git)
 parking_lot 0.12.5: MIT OR Apache-2.0 (https://github.com/Amanieu/parking_lot)
@@ -197,8 +197,8 @@ potential_utf 0.1.6: Unicode-3.0 (https://github.com/unicode-org/icu4x)
 powerfmt 0.2.0: MIT OR Apache-2.0 (https://github.com/jhpratt/powerfmt)
 precomputed-hash 0.1.1: MIT (https://github.com/emilio/precomputed-hash)
 proc-macro2 1.0.107: MIT OR Apache-2.0 (https://github.com/dtolnay/proc-macro2)
-pty-process 0.5.3: MIT (https://git.tozt.net/pty-process)
-pulldown-cmark 0.13.4: MIT (https://github.com/raphlinus/pulldown-cmark)
+pty-process 0.5.4: MIT (https://git.tozt.net/pty-process)
+pulldown-cmark 0.13.5: MIT (https://github.com/raphlinus/pulldown-cmark)
 pxfm 0.1.30: BSD-3-Clause OR Apache-2.0 (https://github.com/awxkee/pxfm)
 qrcode 0.14.1: MIT OR Apache-2.0 (https://github.com/kennytm/qrcode-rust)
 quick-error 2.0.1: MIT/Apache-2.0 (http://github.com/tailhook/quick-error)
@@ -276,7 +276,7 @@ thread_local 1.1.10: MIT OR Apache-2.0 (https://github.com/Amanieu/thread_local-
 time 0.3.55: MIT OR Apache-2.0 (https://github.com/time-rs/time)
 time-core 0.1.9: MIT OR Apache-2.0 (https://github.com/time-rs/time)
 tinystr 0.8.4: Unicode-3.0 (https://github.com/unicode-org/icu4x)
-tokio 1.53.3: MIT (https://github.com/tokio-rs/tokio)
+tokio 1.54.1: MIT (https://github.com/tokio-rs/tokio)
 tokio-macros 2.7.2: MIT (https://github.com/tokio-rs/tokio)
 tokio-rustls 0.26.5: MIT OR Apache-2.0 (https://github.com/rustls/tokio-rustls)
 tokio-tungstenite 0.30.0: MIT (https://github.com/snapview/tokio-tungstenite)
@@ -3280,7 +3280,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-croner 4.0.1 (LICENSE.md)
+croner 4.0.2 (LICENSE.md)
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -8519,7 +8519,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-open 5.4.4 (LICENSE.md)
+open 5.4.5 (LICENSE.md)
 ------------------------------------------------------------------------------
 
 The MIT License (MIT)
@@ -9241,7 +9241,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-pty-process 0.5.3 (LICENSE)
+pty-process 0.5.4 (LICENSE)
 ------------------------------------------------------------------------------
 
 This software is Copyright (c) 2021 by Jesse Luehrs.
@@ -9278,7 +9278,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-pulldown-cmark 0.13.4 (LICENSE)
+pulldown-cmark 0.13.5 (LICENSE)
 ------------------------------------------------------------------------------
 
 The MIT License
@@ -11070,7 +11070,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-tokio 1.53.3 (LICENSE)
+tokio 1.54.1 (LICENSE)
 tokio-util 0.7.20 (LICENSE)
 ------------------------------------------------------------------------------
 
