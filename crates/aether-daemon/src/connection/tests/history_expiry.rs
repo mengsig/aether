@@ -1,18 +1,58 @@
 use super::*;
 use aether_core::{
+    agent::{Agent, AgentConfig, AgentStats, AgentStatus, Role, Scope},
     event::{EventDraft, EventKind},
-    id::RunId,
+    id::{AgentId, RunId},
+    model::ModelRef,
+    time::now,
 };
-use aether_store::{Commit, SqliteStore, Store};
+use aether_store::{Commit, Mutation, RunExpiry, SqliteStore, Store};
 use futures::SinkExt as _;
 use tokio_util::codec::FramedWrite;
 
-/// A daemon whose first run (seqs 1 and 2) has expired; seq 3 is retained.
+/// An agent that finished long ago in `run`, so retention may expire the run.
+fn finished_agent(run: RunId) -> Agent {
+    let at = now() - chrono::Duration::days(14);
+    Agent {
+        id: AgentId::new(),
+        parent: None,
+        role: Role::new("worker"),
+        name: "finished".into(),
+        scope: Scope::default(),
+        model: ModelRef::new("mock", "test"),
+        fallbacks: vec![],
+        status: AgentStatus::Completed { summary: None },
+        current_task: None,
+        inbox_cursor: 0,
+        checkpoint: None,
+        engine_session: None,
+        engine_usage: None,
+        engine_sent: None,
+        status_since: None,
+        archived: false,
+        paused: false,
+        paused_via: None,
+        resume_wait: None,
+        restarted_from: None,
+        restarted_as: None,
+        engine_alive: false,
+        last_event_at: None,
+        config: AgentConfig::default(),
+        stats: AgentStats::default(),
+        run,
+        created_at: at,
+        updated_at: at,
+    }
+}
+
+/// A daemon whose first run (seqs 1 and 2) retention has expired; seq 3 is kept.
 async fn daemon_with_expired_run() -> (Arc<Daemon>, tempfile::TempDir, tempfile::TempDir) {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("history.db");
-    let store = Arc::new(SqliteStore::open(&path).unwrap());
+    let store = Arc::new(SqliteStore::open(&directory.path().join("history.db")).unwrap());
     let (expired, retained) = (RunId::new(), RunId::new());
+    store
+        .commit(Commit::new().mutate(Mutation::UpsertAgent(finished_agent(expired))))
+        .unwrap();
     for run in [expired, expired, retained] {
         let event = EventDraft::new(
             Actor::System,
@@ -24,15 +64,14 @@ async fn daemon_with_expired_run() -> (Arc<Daemon>, tempfile::TempDir, tempfile:
         store.commit(Commit::new().event(event.run(run))).unwrap();
     }
     let (daemon, config) = daemon_with_store(store).await;
-    // Only this disposable fixture is expired; the production sweep is not enabled.
-    let mut sql = rusqlite::Connection::open(&path).unwrap();
-    let tx = sql.transaction().unwrap();
-    tx.execute("INSERT INTO expired_event_spans SELECT run,COALESCE(agent_id,''),COALESCE(parent_agent_id,''),COALESCE(task_id,''),type,family,MIN(seq),MAX(seq) FROM events WHERE run=?1 GROUP BY run,agent_id,parent_agent_id,task_id,type,family", [expired.to_string()]).unwrap();
-    let deleted = tx
-        .execute("DELETE FROM events WHERE run=?1", [expired.to_string()])
-        .unwrap();
-    assert_eq!(deleted, 2, "the expired run held two events");
-    tx.commit().unwrap();
+    // Retention 0: everything finished before now is old enough. Events are
+    // judged to the second, so the cutoff sits just past this one.
+    let cutoff = now() + chrono::Duration::seconds(2);
+    let expiry = daemon.runtime.expire_run_history(expired, cutoff).unwrap();
+    assert!(
+        matches!(expiry, RunExpiry::Expired { events: 2, .. }),
+        "the expired run held two events: {expiry:?}"
+    );
     (Arc::new(daemon), config, directory)
 }
 
