@@ -114,7 +114,10 @@ engine CLIs and can take seconds, so they run in the background after the
 socket answers. Until they finish, `ping`, `status` and `shutdown` are
 answered at once and `status` lists its engines as `starting`; every other
 request waits for them for up to 20 seconds and then gets a retryable
-`unavailable`. The scheduler and the GitHub watcher start no work until they
+`unavailable`. A connection still handles its requests in order, so one
+waiting there holds the requests after it on that connection; ask from a
+second connection, as `aether status` does, to see the daemon meanwhile. A
+daemon shutdown ends the wait at once. The scheduler and the GitHub watcher start no work until they
 finish. The daemon log has a `startup phase finished` line per phase, with
 `phase_ms` and `since_start_ms`, and an `engine detection finished` line.
 

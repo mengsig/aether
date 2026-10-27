@@ -19,6 +19,7 @@ fn answers_while_starting(command: &Command) -> bool {
 
 /// Hold `command` until the startup probes have finished, so no request acts
 /// on a half-initialised daemon; a wait that runs out is a retryable refusal.
+/// Like any slow request, the wait holds the later frames on its connection.
 pub(super) async fn await_startup_probes(
     daemon: &Daemon,
     command: &Command,
