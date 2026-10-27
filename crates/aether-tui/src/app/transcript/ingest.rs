@@ -35,7 +35,7 @@ pub(super) struct Private {
     /// What events said about this agent; the tree can lag behind them.
     who: Identity,
     /// Delivered messages awaiting `InboxConsumed`, oldest first.
-    inbox: Vec<(InboxItemId, UserFrom, String, Option<CellId>)>,
+    inbox: Vec<Unconsumed>,
     /// Approvals this agent asked for: what they would run, and the call.
     approvals: HashMap<ApprovalId, (String, ToolCallId)>,
     /// Turns since the agent last went idle; the separator sums them.
@@ -65,6 +65,17 @@ pub(super) struct Private {
     /// What a stop drew from a stream it cut short, until a message for that
     /// invocation lands: one adding nothing to it is not drawn again.
     cut: Option<CutStream>,
+}
+
+/// A delivered message awaiting `InboxConsumed`: who sent it, its text, its
+/// pending cell (an agent's message), and when it was delivered.
+#[derive(Debug, Clone, PartialEq)]
+struct Unconsumed {
+    id: InboxItemId,
+    from: UserFrom,
+    text: String,
+    pending: Option<CellId>,
+    at: Timestamp,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1284,7 +1295,13 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 } else {
                     None
                 };
-                t.private.inbox.push((item.id, sender, text, pending));
+                t.private.inbox.push(Unconsumed {
+                    id: item.id,
+                    from: sender,
+                    text,
+                    pending,
+                    at,
+                });
             }
             InboxKind::ExternalTrigger {
                 source, payload, ..
@@ -1827,10 +1844,15 @@ fn config_notice(
 /// retire their steering preview and answer open questions.
 fn consume_inbox(t: &mut AgentTranscript, at: Timestamp, items: &[InboxItemId]) {
     for id in items {
-        let Some(pos) = t.private.inbox.iter().position(|(i, _, _, _)| i == id) else {
+        let Some(pos) = t.private.inbox.iter().position(|item| item.id == *id) else {
             continue;
         };
-        let (_, from, text, pending) = t.private.inbox.remove(pos);
+        let Unconsumed {
+            from,
+            text,
+            pending,
+            ..
+        } = t.private.inbox.remove(pos);
         if from == UserFrom::Operator {
             retire_steer(t, &text, at);
             t.close_questions(super::QuestionState::Answered);
@@ -1846,6 +1868,40 @@ fn consume_inbox(t: &mut AgentTranscript, at: Timestamp, items: &[InboxItemId]) 
             t.push(at, CellModel::User { from, text });
         }
     }
+}
+
+/// Steering previews for the operator's delivered messages no preview shows
+/// yet, as a client that sent them would show: a reattached one saw none sent.
+pub(in crate::app) fn restore_steering(t: &mut AgentTranscript) {
+    let mut shown = vec![false; t.steering.len()];
+    let mut restored = Vec::new();
+    for item in &t.private.inbox {
+        if item.from != UserFrom::Operator || item.text.is_empty() {
+            continue;
+        }
+        let preview = t
+            .steering
+            .iter()
+            .zip(shown.iter_mut())
+            .find(|(steer, taken)| !**taken && steer.text.trim() == item.text.trim());
+        match preview {
+            Some((_, taken)) => *taken = true,
+            None => restored.push(super::Steer {
+                text: item.text.clone(),
+                sent_at: item.at,
+            }),
+        }
+    }
+    t.steering.extend(restored);
+    debug_assert!(
+        t.steering.len()
+            >= t.private
+                .inbox
+                .iter()
+                .filter(|item| item.from == UserFrom::Operator && !item.text.is_empty())
+                .count(),
+        "every message the operator is still waiting on has a preview"
+    );
 }
 
 /// The preview with the same text, else the oldest one sent before `at`.

@@ -365,6 +365,14 @@ impl App {
         }
         if let Some(mut fresh) = rebuilt.remove(&agent) {
             fresh.retain_client_errors(client_errors);
+            // A client attached mid-turn saw nothing sent: what the running
+            // turn has not taken yet still lands at its next tool call.
+            let running = self.tree.nodes.get(&agent).is_some_and(|node| {
+                node.agent.status.kind() == aether_core::agent::AgentStatusKind::Running
+            });
+            if pending.before.is_none() && running {
+                transcript::restore_steering(&mut fresh);
+            }
             fresh.loaded = true;
             fresh.older_available = pending.older_available;
             if pending.before.is_some() {

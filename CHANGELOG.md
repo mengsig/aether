@@ -6,6 +6,20 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- **An answered engine question no longer loses an earlier steered
+  message (#306).** Answering a question recorded the reply consumed even
+  while a message steered before it was still unacknowledged; if the engine
+  then refused that message, it was skipped and never delivered. While a
+  steered message is outstanding, the question is now told the reply follows,
+  and the reply is steered right after it, so a refusal keeps both queued for
+  the next turn.
+- **Reopening the TUI mid-turn shows pending steering again (#306).** The
+  "steering · lands at the next tool call" lines are rebuilt on attach from
+  the operator messages the running turn has not taken yet, and clear once it
+  takes them.
+
 ## 1.2.6
 
 Released 2026-10-26. A bug-fix release for Claude Code agents steered

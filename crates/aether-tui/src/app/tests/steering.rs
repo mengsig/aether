@@ -196,3 +196,60 @@ fn a_history_reload_keeps_steering_retirable_and_never_brings_it_back() {
     reload_history(&mut app, &daemon);
     assert_nothing_pending(&app, daemon.agent);
 }
+
+/// A client attached mid-turn: no transcript, no previews, only the history.
+fn reattach(app: &mut App, daemon: &Daemon) {
+    let agent = daemon.agent;
+    app.transcripts.remove(&agent);
+    assert!(app.backfill_request(agent).is_some(), "history requested");
+    app.reduce(AppEvent::Reply {
+        then: crate::testing::backfill_then(app, agent),
+        result: Ok(Reply::Events(daemon.log.clone())),
+    });
+    assert!(app.transcripts[&agent].loaded);
+}
+
+#[test]
+fn reattaching_mid_turn_shows_the_steering_the_turn_has_not_taken() {
+    let (mut app, mut daemon) = running_agent();
+    let agent = daemon.agent;
+    daemon.emit(&mut app, EventKind::AgentStarted { turn: 1 });
+    steer(&mut app, agent, SIMS);
+    steer(&mut app, agent, DRONEMIND);
+    let sims = daemon.deliver(&mut app, SIMS);
+    let dronemind = daemon.deliver(&mut app, DRONEMIND);
+    reattach(&mut app, &daemon);
+    assert_eq!(
+        pending(&app, agent),
+        [SIMS, DRONEMIND],
+        "rebuilt from the inbox"
+    );
+    assert!(crate::testing::render_to(&app, 120, 40).contains(CAPTION));
+    daemon.consume(&mut app, vec![sims]);
+    assert_eq!(pending(&app, agent), [DRONEMIND]);
+    daemon.consume(&mut app, vec![dronemind]);
+    daemon.answer_and_wait(&mut app, "Your two requests are now one standing rule");
+    assert!(
+        pending(&app, agent).is_empty(),
+        "{:?}",
+        pending(&app, agent)
+    );
+    assert!(!crate::testing::render_to(&app, 120, 40).contains(CAPTION));
+    assert_eq!(operator_cells(&app, agent), [SIMS, DRONEMIND]);
+}
+
+#[test]
+fn reattaching_to_an_idle_agent_restores_no_steering() {
+    let (mut app, mut daemon) = running_agent();
+    let agent = daemon.agent;
+    daemon.deliver(&mut app, SIMS);
+    app.tree.nodes.get_mut(&agent).unwrap().agent.status = AgentStatus::Waiting {
+        condition: WaitCondition::Inbox,
+    };
+    reattach(&mut app, &daemon);
+    assert!(
+        pending(&app, agent).is_empty(),
+        "{:?}",
+        pending(&app, agent)
+    );
+}

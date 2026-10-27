@@ -86,7 +86,14 @@ pub(super) async fn steer(
     Ok(())
 }
 
+/// What an engine question is answered with while a steered message is still
+/// unacknowledged: the person's reply is steered right after that message.
+const REPLY_FOLLOWS: &str =
+    "The person replied. Their reply follows as your next input; read it there.";
+
 /// The person's reply to an engine question, consumed like any message.
+/// Consuming it past a steered item the engine may still refuse would skip
+/// that item, so while one is outstanding the reply follows it as input.
 pub(super) async fn answer_question(
     runtime: &Arc<Runtime>,
     ctx: &mut TurnCtx,
@@ -102,12 +109,22 @@ pub(super) async fn answer_question(
             "engine asked a question without a reply channel; answer remains queued".into(),
         ));
     };
+    debug_assert!(
+        pending.up_to > ctx.agent.inbox_cursor.max(steering.sent_up_to),
+        "a reply is an item neither consumed nor handed over"
+    );
+    let follows = !steering.outstanding.is_empty();
+    let answer = if follows {
+        REPLY_FOLLOWS.to_owned()
+    } else {
+        pending.message.text()
+    };
     if tx
         .send(PermissionDecision {
             request_id,
             allow: true,
             message: None,
-            answer: Some(pending.message.text()),
+            answer: Some(answer),
         })
         .await
         .is_err()
@@ -116,6 +133,12 @@ pub(super) async fn answer_question(
         return Err(crate::RuntimeError::Internal(
             "engine question reply channel closed; answer remains queued".into(),
         ));
+    }
+    if follows {
+        // Left unconsumed and unhanded: steering takes it at the next pass,
+        // and a refused earlier item rewinds both into the next turn.
+        steering.retry = true;
+        return Ok(());
     }
     steering.sent_up_to = steering.sent_up_to.max(pending.up_to);
     steering.retry = pending.more_queued;

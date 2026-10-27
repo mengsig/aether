@@ -20,6 +20,7 @@ use aether_protocol::{AgentTree, Delta};
 use ingest::Private;
 pub(super) use ingest::{
     PARENT_VISIBLE_CHILD_TYPES, bound_history, ingest_replay_event, replace_transcript,
+    restore_steering,
 };
 pub use ingest::{ingest_event, schedule_of};
 pub use notice_text::{NoticeSeparator, NoticeText};
