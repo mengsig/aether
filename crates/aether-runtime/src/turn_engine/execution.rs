@@ -731,7 +731,7 @@ pub(super) fn settle_usage(
             turn_usage: ctx.turn_usage,
         }));
     }
-    runtime.apply_held(hold, commit)?;
+    runtime.apply_held_through_lock(hold, commit, ctx.agent.id, "the turn's closing usage")?;
 
     Ok(())
 }

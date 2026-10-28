@@ -22,8 +22,9 @@ fn new_agent() -> Value {
     })
 }
 
-/// One worker, so a write that blocks it while the lock is held would stall
-/// every other connection: this is what `aether agents` hanging looked like.
+/// One worker, so a write that blocks it while the lock is held, or one
+/// waiting behind it for the commit gate, would stall every other
+/// connection: this is what `aether agents` hanging looked like.
 #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn a_held_database_lock_refuses_a_write_as_busy_and_stalls_no_read() {
     let daemon = TestDaemon::start().await;
@@ -41,7 +42,12 @@ async fn a_held_database_lock_refuses_a_write_as_busy_and_stalls_no_read() {
         .unwrap();
     let started = Instant::now();
     let write = writer.request(new_agent()).await;
-    // Long enough for the daemon to be inside the write's busy wait.
+    // Long enough for the daemon to be inside the write's busy wait; the
+    // second write then waits for the first to let go of the commit gate.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let mut queued = RawConn::connect(&daemon.socket).await.unwrap();
+    queued.hello(PROTOCOL_VERSION).await.unwrap();
+    let behind = queued.request(new_agent()).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     // What `aether agents` does: connect, greet, list.
@@ -60,15 +66,19 @@ async fn a_held_database_lock_refuses_a_write_as_busy_and_stalls_no_read() {
         started.elapsed()
     );
 
-    let refused = writer.await_reply(write).await;
-    let error = &refused["result"]["Err"];
-    assert_eq!(error["code"], "unavailable", "{refused}");
-    assert!(
-        error["message"]
-            .as_str()
-            .is_some_and(|m| m.starts_with("store busy:")),
-        "{refused}"
-    );
+    for refused in [
+        writer.await_reply(write).await,
+        queued.await_reply(behind).await,
+    ] {
+        let error = &refused["result"]["Err"];
+        assert_eq!(error["code"], "unavailable", "{refused}");
+        assert!(
+            error["message"]
+                .as_str()
+                .is_some_and(|m| m.starts_with("store busy:")),
+            "{refused}"
+        );
+    }
     drop(holder);
     let landed = writer.call(new_agent()).await;
     assert!(landed["result"]["Ok"]["data"]["id"].is_string(), "{landed}");

@@ -82,6 +82,7 @@ pub(crate) use waiting::{
 mod settlement;
 use settlement::*;
 mod contention;
+pub(crate) use contention::commit_through_lock;
 mod outage;
 use outage::{Ending, StoreOutage};
 mod heartbeat;

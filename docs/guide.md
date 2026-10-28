@@ -346,10 +346,11 @@ object. Argument parsing errors retain Clap's stderr usage output and exit code 
 
 When another process holds the store's database lock (a backup or a `sqlite3`
 shell in a transaction, say), reads such as `aether agents` keep answering. A
-write waits SQLite's five-second busy timeout and is then refused with
-`unavailable` and "store busy: another process holds the database lock";
-retry it once the lock clears. A running turn waits the lock out instead
-(up to two minutes per write), so the reply it already has is kept.
+write waits SQLite's five-second busy timeout, after any write ahead of it,
+and is then refused with `unavailable` and "store busy: another process
+holds the database lock"; retry it once the lock clears. A running turn
+waits the lock out instead (up to two minutes per write), so the reply and
+usage it already has are kept.
 
 `aether wake AGENT_ID` restarts a failed agent. The failure the operator reads
 ends with what to run (`aether doctor`, `aether diagnose`); the agent is told

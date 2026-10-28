@@ -127,7 +127,7 @@ pub(super) fn flush_accounting(
     commit.push_mutation(Mutation::UpsertAgent(crate::turn::agent_row(
         runtime, ctx, &hold,
     )?));
-    runtime.apply_held(hold, commit)?;
+    runtime.apply_held_through_lock(hold, commit, ctx.agent.id, "the turn's usage")?;
     Ok(())
 }
 

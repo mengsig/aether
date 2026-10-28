@@ -396,6 +396,8 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
                 floor,
             }),
             redactor,
+            // The daemon runs on a multi-threaded runtime and no `LocalSet`.
+            store_writes_off_worker: true,
             ..Default::default()
         },
         store.clone(),

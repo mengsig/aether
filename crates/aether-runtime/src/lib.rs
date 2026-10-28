@@ -123,20 +123,6 @@ impl RuntimeError {
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;
 
-/// Run a store write, which can wait out SQLite's busy timeout while another
-/// process holds the database lock. On a multi-threaded runtime's worker the
-/// worker first hands its queued tasks to another thread, so a locked
-/// database does not also stall every socket the daemon answers.
-fn off_the_async_worker<T>(write: impl FnOnce() -> T) -> T {
-    let multi_threaded = tokio::runtime::Handle::try_current()
-        .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
-    if multi_threaded {
-        tokio::task::block_in_place(write)
-    } else {
-        write()
-    }
-}
-
 mod config;
 mod engine_access;
 mod provider_health;
@@ -565,7 +551,27 @@ impl Runtime {
     /// same seq first and the store rejects the whole commit. `push_inbox`
     /// asks for one, so the compiler carries the requirement to its callers.
     pub(crate) fn hold(&self) -> CommitHold<'_> {
-        self.commit_lock.hold()
+        // The writer ahead may be waiting out a locked database.
+        match self.commit_lock.try_hold() {
+            Some(hold) => hold,
+            None => self.off_the_async_worker(|| self.commit_lock.hold()),
+        }
+    }
+
+    /// Run `block`, which can wait out SQLite's busy timeout while another
+    /// process holds the database lock. With `store_writes_off_worker` the
+    /// worker first hands its queued tasks to another thread, so a locked
+    /// database does not also stall every socket the daemon answers.
+    fn off_the_async_worker<T>(&self, block: impl FnOnce() -> T) -> T {
+        // `block_in_place` panics on a current-thread runtime.
+        let multi_threaded = tokio::runtime::Handle::try_current().is_ok_and(|handle| {
+            handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
+        });
+        if self.config.store_writes_off_worker && multi_threaded {
+            tokio::task::block_in_place(block)
+        } else {
+            block()
+        }
     }
 
     /// Whether a commit is being built right now; stale once read. Race tests
@@ -577,6 +583,30 @@ impl Runtime {
 
     /// Apply a commit built under `hold`, then publish.
     pub(crate) fn apply_held(&self, hold: CommitHold<'_>, commit: Commit) -> Result<Vec<Event>> {
+        self.apply_held_by(hold, commit, |store, commit| Ok(store.commit(commit)?))
+    }
+
+    /// `apply_held` for a turn's record that exists only in memory until it
+    /// lands: a locked database is waited out with the hold kept, so the same
+    /// commit lands in order (`turn::commit_through_lock`).
+    pub(crate) fn apply_held_through_lock(
+        &self,
+        hold: CommitHold<'_>,
+        commit: Commit,
+        agent_id: AgentId,
+        what: &'static str,
+    ) -> Result<Vec<Event>> {
+        self.apply_held_by(hold, commit, |store, commit| {
+            turn::commit_through_lock(store, &self.shutdown, commit, agent_id, what)
+        })
+    }
+
+    fn apply_held_by(
+        &self,
+        hold: CommitHold<'_>,
+        commit: Commit,
+        write: impl FnOnce(&dyn Store, Commit) -> Result<Vec<Event>>,
+    ) -> Result<Vec<Event>> {
         if commit.is_empty() {
             return Ok(Vec::new());
         }
@@ -591,7 +621,7 @@ impl Runtime {
                 .iter()
                 .find(|e| e.agent_id.is_some() && e.run.is_none())
         );
-        let events = off_the_async_worker(|| self.store.commit(commit))?;
+        let events = self.off_the_async_worker(|| write(self.store.as_ref(), commit))?;
         // Published before the next commit can land, so subscribers see the
         // log in seq order; the send never blocks, so the hold stays short.
         for event in &events {
@@ -730,6 +760,8 @@ impl Runtime {
 
 #[cfg(test)]
 mod model_profile_tests;
+#[cfg(test)]
+mod store_writes_tests;
 #[cfg(test)]
 mod test_script;
 

@@ -565,7 +565,7 @@ pub(super) fn handle_event(
             }
             let answered = snapshot.model.clone();
             crate::turn::close_exhaustion_episode(runtime, ctx, &hold, &mut commit, &answered)?;
-            runtime.apply_held(hold, commit)?;
+            runtime.apply_held_through_lock(hold, commit, ctx.agent.id, "the engine's message")?;
             publish_accounting(runtime, ctx, state);
         }
         EngineEvent::UsageDelta { mut usage } => {

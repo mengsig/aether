@@ -69,6 +69,11 @@ impl WriteGate {
         Hold(self.0.lock())
     }
 
+    /// The gate if nothing else holds it right now, without waiting.
+    pub fn try_hold(&self) -> Option<Hold<'_>> {
+        self.0.try_lock().map(Hold)
+    }
+
     /// Whether anyone holds the gate right now; stale once read. For race
     /// tests that must know which side of the gate a read ran on.
     #[doc(hidden)]
