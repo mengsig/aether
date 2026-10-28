@@ -48,7 +48,14 @@ pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
         Some(pid) => {
             #[cfg(test)]
             tests::pause_before_watch(pid);
-            GroupWatch::start(pid)
+            // Unwatched, a wrapper's child would outlive this process: the
+            // early return drops the gate unopened, so the engine never runs.
+            GroupWatch::start(pid).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("starting the engine group's watchdog: {error}"),
+                )
+            })?
         }
         None => GroupWatch(None),
     };
@@ -111,7 +118,7 @@ const WATCHDOG: &str = r#"read -r _; kill -s KILL -- -"$1""#;
 impl GroupWatch {
     /// Join the group led by engine `pid` with a watchdog. Its membership keeps
     /// the group id from being reused, so its kill cannot reach another group.
-    fn start(pid: u32) -> Self {
+    fn start(pid: u32) -> io::Result<Self> {
         use std::os::unix::process::CommandExt as _;
 
         assert!(
@@ -130,17 +137,11 @@ impl GroupWatch {
         aether_spawn::reset_signals(command.as_std_mut());
         // A group stop's TERM must not end it before the stop's KILL lands.
         aether_spawn::ignore_stop_signals(command.as_std_mut());
-        match command.spawn() {
-            Ok(watchdog) => {
-                assert!(watchdog.stdin.is_some(), "the watchdog reads a pipe");
-                Self(Some(watchdog))
-            }
-            Err(error) => {
-                // The next daemon start still reaps the group from its record.
-                tracing::warn!(pid, %error, "could not start the engine group's watchdog");
-                Self(None)
-            }
-        }
+        #[cfg(test)]
+        tests::fail_watchdog_if_asked()?;
+        let watchdog = command.spawn()?;
+        assert!(watchdog.stdin.is_some(), "the watchdog reads a pipe");
+        Ok(Self(Some(watchdog)))
     }
 
     /// Kill what is left of the group now, as this process's death would:
@@ -212,6 +213,19 @@ pub(crate) mod tests {
     /// before its watchdog joins, as a slow daemon might.
     static PAUSE_BEFORE_WATCH_MS: std::sync::atomic::AtomicU64 =
         std::sync::atomic::AtomicU64::new(0);
+
+    std::thread_local! {
+        /// When set, [`super::GroupWatch::start`] fails on this thread, as a
+        /// spawn out of file descriptors or processes would.
+        static FAIL_WATCHDOG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    pub(super) fn fail_watchdog_if_asked() -> std::io::Result<()> {
+        if FAIL_WATCHDOG.get() {
+            return Err(std::io::Error::from_raw_os_error(nix::libc::EAGAIN));
+        }
+        Ok(())
+    }
 
     pub(super) fn pause_before_watch(pid: u32) {
         let pause = PAUSE_BEFORE_WATCH_MS.load(std::sync::atomic::Ordering::SeqCst);
@@ -448,6 +462,24 @@ pub(crate) mod tests {
         );
         assert!(alive(pid), "a dropped watch leaves the engine running");
         child.kill().await.unwrap();
+    }
+
+    /// A watchdog that cannot start fails the spawn: the engine never runs.
+    #[tokio::test]
+    async fn an_engine_whose_watchdog_cannot_start_never_runs() {
+        let marker = tempfile::tempdir().unwrap();
+        let ran = marker.path().join("ran");
+        let touch = engine(
+            "/bin/sh",
+            &["-c", r#": > "$1""#, "sh", ran.to_str().unwrap()],
+        );
+        FAIL_WATCHDOG.set(true);
+        let spawned = super::spawn(touch);
+        FAIL_WATCHDOG.set(false);
+        let error = spawned.expect_err("an unwatched engine is not started");
+        assert!(error.to_string().contains("watchdog"), "{error}");
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!ran.exists(), "the engine never ran");
     }
 
     /// The spawning thread outlives the caller's: an engine spawned from a
