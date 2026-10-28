@@ -2488,3 +2488,6 @@ fn diagnose_without_out_names_its_own_bundle_directory() {
             .starts_with("aether-diagnose-")
     );
 }
+
+#[path = "cli_regressions/command_polish.rs"]
+mod command_polish;

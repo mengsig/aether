@@ -604,6 +604,10 @@ fn a_running_daemon_is_named_with_the_commands_that_restart_it() {
     );
     assert!(said.contains(&format!("run `{aether} stop`")), "{said}");
     assert!(
+        said.contains(&format!("{aether} stop && {aether} daemon")),
+        "{said}"
+    );
+    assert!(
         said.contains(&format!("then `{aether}` to start 99.0.0")),
         "{said}"
     );

@@ -314,7 +314,7 @@ fn the_restart_notice_names_the_commands_for_the_selected_daemon() {
         let idle = restart_notice(&before, &Daemon::Absent, "aether", pid_file, old, new);
         assert_eq!(
             idle,
-            "No daemon is running: the next `aether` starts 1.1.0."
+            "No daemon is running: the next `aether` starts 1.1.0; on a headless host (no TUI), run `aether daemon`."
         );
     }
     let started = restart_notice(&Daemon::Absent, &stoppable, aether, pid_file, old, new);
@@ -322,6 +322,7 @@ fn the_restart_notice_names_the_commands_for_the_selected_daemon() {
         started, running,
         "a daemon that can be signalled is told the same either way"
     );
+    assert!(running.contains(&format!("{aether} stop && {aether} daemon")));
     assert!(!running.contains('\n'));
 }
 
@@ -354,6 +355,7 @@ fn a_daemon_that_cannot_be_signalled_is_never_told_that_stop_is_enough() {
             notice.contains("run `aether stop`, then `aether`."),
             "{notice}"
         );
+        assert!(notice.contains("aether stop && aether daemon"), "{notice}");
         assert!(notice.contains("If `stop` cannot signal it"), "{notice}");
         assert!(notice.contains("/run/aether/aetherd.pid"), "{notice}");
         assert!(!notice.contains('\n'), "{notice}");

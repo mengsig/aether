@@ -117,6 +117,16 @@ fn main() -> std::process::ExitCode {
     }
     let mut args = Args::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     let json = json && !matches!(args.command, Some(Cmd::Bridge { .. }));
+    if let Some(Cmd::Daemon {
+        action: Some(action),
+        ..
+    }) = &args.command
+    {
+        eprintln!(
+            "`aether daemon {action}` is not a command: `aether daemon` starts the daemon in the background (`--foreground` keeps it attached), `aether stop` stops it and `aether status` shows it."
+        );
+        return std::process::ExitCode::from(2);
+    }
     if let Err(error) = cli::remote::check_selectors(&matches) {
         eprintln!("Error: {error}");
         return std::process::ExitCode::from(2);
@@ -132,28 +142,41 @@ fn main() -> std::process::ExitCode {
         .unwrap_or_else(aether_protocol::paths::socket_path);
     match execute(args, socket.clone()) {
         Ok(code) => u8::try_from(code).map_or(std::process::ExitCode::FAILURE, Into::into),
-        Err(error) => {
-            if json {
-                use std::io::Write;
-                if let Err(write_error) = writeln!(
-                    std::io::stdout().lock(),
-                    "{}",
-                    cli::error_json(&error, &socket)
-                ) && write_error.kind() != std::io::ErrorKind::BrokenPipe
-                {
-                    eprintln!("writing JSON error: {write_error}");
-                }
-            }
-            // The JSON object already says it; a network failure is not repeated on stderr.
-            if !(json && cli::is_network_error(&error)) {
-                eprintln!("Error: {}", cli::error_message(&error));
-            }
-            let backtrace = error.backtrace();
-            if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
-                eprintln!("\nStack backtrace:\n{backtrace}");
-            }
-            std::process::ExitCode::FAILURE
+        Err(error) => report_command_failure(&error, &socket, json),
+    }
+}
+
+fn report_command_failure(
+    error: &anyhow::Error,
+    socket: &std::path::Path,
+    json: bool,
+) -> std::process::ExitCode {
+    if json {
+        use std::io::Write;
+        if let Err(write_error) = writeln!(
+            std::io::stdout().lock(),
+            "{}",
+            cli::error_json(error, socket)
+        ) && write_error.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            eprintln!("writing JSON error: {write_error}");
         }
+    }
+    // The JSON object already says it; a network failure is not repeated on stderr.
+    if !(json && cli::is_network_error(error)) {
+        eprintln!("Error: {}", cli::error_message(error));
+    }
+    let backtrace = error.backtrace();
+    if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
+        eprintln!("\nStack backtrace:\n{backtrace}");
+    }
+    if error
+        .chain()
+        .any(|cause| cause.is::<aether_daemon::LockBusy>())
+    {
+        std::process::ExitCode::from(aether_client::DAEMON_LOCK_BUSY_EXIT)
+    } else {
+        std::process::ExitCode::FAILURE
     }
 }
 
@@ -225,6 +248,7 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 .await
             }
             Cmd::Daemon {
+                action: _,
                 foreground,
                 detached,
                 workspace,

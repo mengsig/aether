@@ -477,15 +477,18 @@ fn restart_notice(
     new: Version,
 ) -> String {
     let by_hand = format!(
-        "run `{aether} stop`, then `{aether}`. If `stop` cannot signal it, end the process \
-         whose ID is in {} first.",
+        "run `{aether} stop`, then `{aether}`. On a headless host (no TUI), use \
+         `{aether} stop && {aether} daemon`. If `stop` cannot signal it, end the process whose ID is in {} first.",
         pid_file.display()
     );
     match (before, now) {
-        (_, Daemon::Absent) => format!("No daemon is running: the next `{aether}` starts {new}."),
+        (_, Daemon::Absent) => format!(
+            "No daemon is running: the next `{aether}` starts {new}; on a headless host (no TUI), run `{aether} daemon`."
+        ),
         (_, Daemon::Signallable) => format!(
             "The running daemon is still aether {old}: run `{aether} stop`, then `{aether}` to \
-             start {new} (agents resume when it starts again)."
+             start {new} (agents resume when it starts again). On a headless host (no TUI), \
+             use `{aether} stop && {aether} daemon`."
         ),
         (Daemon::Absent, Daemon::AskOnly(_)) => {
             format!("A daemon started during the update and is not aether {new}: {by_hand}")

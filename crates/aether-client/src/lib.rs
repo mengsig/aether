@@ -45,7 +45,7 @@ pub use subscription::{Subscription, SubscriptionFrame};
 
 pub use endpoint::{Endpoint, SshRemote};
 pub use sink::{CommandSink, DaemonSink, DaemonUnavailable, ReconnectingSink};
-pub use start::{StartingDaemon, ensure_daemon, watch_startup};
+pub use start::{DAEMON_LOCK_BUSY_EXIT, StartingDaemon, ensure_daemon, watch_startup};
 pub use transport::{MemoryPeer, Transport};
 
 #[derive(Debug, thiserror::Error)]
