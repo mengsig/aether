@@ -748,7 +748,7 @@ fn every_owned_config_section_rejects_unknown_keys() {
         .unwrap();
         let error = load_config(dir.path()).expect_err(section);
         assert!(
-            error.reason.contains("unknown field `defualt`"),
+            error.reason.contains(&format!("`{section}.defualt`")),
             "{section}: {error}"
         );
         assert!(error.reason.contains(section), "{section}: {error}");
@@ -784,37 +784,24 @@ fn nested_config_entries_reject_unknown_keys() {
         .unwrap();
         let error = load_config(dir.path()).unwrap_err();
         assert!(
-            error.reason.contains("unknown field `defualt`"),
+            error.reason.contains(&format!("`{section}.defualt`")),
             "{section}: {error}"
         );
     }
 }
 
 #[test]
-fn root_typos_name_the_key_and_valid_sections_while_theme_is_allowed() {
+fn root_typos_name_the_key_and_documentation_while_theme_is_allowed() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
     for key in ["netwrok", "aproval"] {
         std::fs::write(&path, format!("[{key}]\ndefault = 'allowed'\n")).unwrap();
         let error = super::load_config(dir.path()).unwrap_err().to_string();
-        for expected in [
-            key,
-            "theme",
-            "model",
-            "approval",
-            "network",
-            "scheduler",
-            "web",
-            "artifacts",
-            "retention",
-            "mcp",
-            "memory",
-            "listen",
-            "remote",
-            "serve",
-        ] {
-            assert!(error.contains(expected), "{error}");
-        }
+        assert!(
+            error.contains(&format!("unknown settings `{key}`")),
+            "{error}"
+        );
+        assert!(error.contains("docs/configuration.md"), "{error}");
     }
     std::fs::write(&path, "[theme.text]\nfg = '#ffffff'\n").unwrap();
     assert!(super::load_config(dir.path()).is_ok());
@@ -863,7 +850,7 @@ fn config_directory_umask_child() {
 }
 
 #[test]
-fn truncated_security_value_names_the_file_setting_and_next_command() {
+fn truncated_security_value_names_the_file_location_and_next_command() {
     let dir = tempfile::tempdir().expect("private config");
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "[approval]\nyolo = tru").expect("truncated value");
@@ -871,7 +858,8 @@ fn truncated_security_value_names_the_file_setting_and_next_command() {
         .expect_err("never default security settings after a parse failure")
         .to_string();
     assert!(error.contains(&path.display().to_string()));
-    assert!(error.contains("yolo"));
+    assert!(error.contains("TOML parse error at line 2, column"));
+    assert!(error.contains("Fix the syntax"));
     assert!(error.contains("aether doctor"));
 }
 
@@ -902,4 +890,61 @@ fn a_default_model_without_a_provider_is_refused_at_load() {
         .to_string();
     assert!(error.contains("model.default `nope`"), "{error}");
     assert!(error.contains("aether models"), "{error}");
+}
+
+#[test]
+fn unknown_settings_are_collected_in_source_order() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.toml"),
+        "[scheduler]\nmax_concurrent_turns = 0\nz_typo = 1\na_typo = 2\n[nonsense]\ncolour = 1\n",
+    )
+    .unwrap();
+    let error = load_config(dir.path()).unwrap_err().to_string();
+    assert!(error.contains("unknown settings `scheduler.z_typo`, `scheduler.a_typo`, `nonsense`. Remove or rename them"), "{error}");
+    assert_eq!(error.matches("`nonsense`").count(), 1);
+    assert!(!error.contains("..") && !error.contains("; ."), "{error}");
+}
+
+#[test]
+fn syntax_errors_name_the_location_and_syntax_repair() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("config.toml"), "[scheduler\n").unwrap();
+    let error = load_config(dir.path()).unwrap_err().to_string();
+    assert!(
+        error.contains("TOML parse error at line 1, column"),
+        "{error}"
+    );
+    assert!(error.contains("Fix the syntax in this file"), "{error}");
+    assert_eq!(error.matches("TOML parse error").count(), 1);
+    assert!(
+        !error.contains('\n') && !error.contains("..") && !error.contains("; ."),
+        "{error}"
+    );
+}
+
+#[test]
+fn value_error_punctuation_is_clean() {
+    let error = ConfigError {
+        path: "config.toml".into(),
+        reason: "bad value; . \n".into(),
+    }
+    .to_string();
+    assert!(
+        error.contains("bad value. Fix the named setting"),
+        "{error}"
+    );
+    assert!(!error.contains("..") && !error.contains("; ."), "{error}");
+}
+
+#[test]
+fn quoted_unknown_keys_keep_distinct_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("config.toml"), "\"\" = 1\n\"a.b\" = 2\n").unwrap();
+    let error = load_config(dir.path()).unwrap_err().to_string();
+    assert!(
+        error.contains("unknown settings `\"\"`, `\"a.b\"`"),
+        "{error}"
+    );
+    assert!(error.contains("Remove or rename them"), "{error}");
 }

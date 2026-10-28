@@ -39,7 +39,7 @@ impl CrashRecord {
             "Last daemon {kind} at {} ({}): {}. Run `aether doctor` and `aether diagnose`.",
             self.at.to_rfc3339(),
             self.location.as_deref().unwrap_or("location unavailable"),
-            self.message,
+            self.message.trim_end_matches(['.', ' ']),
         )
     }
 
@@ -210,3 +210,24 @@ fn unreadable(store: &Path, error: &io::Error) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn summary_ends_the_message_with_one_period() {
+    for message in ["try again", "try again.", "try again.. "] {
+        let record = CrashRecord {
+            version: 1,
+            kind: CrashKind::FatalError,
+            at: now(),
+            message: message.into(),
+            location: None,
+            acknowledged: false,
+        };
+        let summary = record.summary();
+        assert!(
+            summary.contains("try again. Run `aether doctor`"),
+            "{summary}"
+        );
+        assert!(!summary.contains(".."), "{summary}");
+    }
+}

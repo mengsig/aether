@@ -13,6 +13,7 @@ use crate::profile::ProfileSetting;
 mod agents;
 mod build_cache;
 mod github_watcher;
+mod parsing;
 mod providers;
 mod remote;
 mod retention;
@@ -634,13 +635,26 @@ impl ModelsSection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "{path}: {}. Fix the named setting in this file, then run `aether doctor` before starting the daemon again.",
-    .reason.trim_end_matches(['.', ' '])
-)]
+#[error("{path}: {}", self.diagnostic())]
 pub struct ConfigError {
     pub path: String,
     pub reason: String,
+}
+
+impl ConfigError {
+    fn diagnostic(&self) -> String {
+        let reason = self
+            .reason
+            .trim_end_matches(|c: char| c.is_whitespace() || matches!(c, '.' | ';'));
+        let advice = if reason.starts_with("TOML parse error") {
+            "Fix the syntax in this file"
+        } else if reason.starts_with("unknown settings") {
+            "Remove or rename them (docs/configuration.md lists every setting)"
+        } else {
+            "Fix the named setting in this file"
+        };
+        format!("{reason}. {advice}, then run `aether doctor` before starting the daemon again.")
+    }
 }
 
 pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
@@ -651,49 +665,8 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
     };
     match std::fs::read_to_string(&path) {
         Ok(text) => {
-            let config: AetherConfig =
-                toml::from_str(&text).map_err(|mut e: toml::de::Error| {
-                    // Source excerpts hide the section path on unknown-field errors.
-                    if e.message().starts_with("unknown field `") {
-                        e.set_input(None);
-                    }
-                    bad(e.to_string())
-                })?;
-            for (key, setting) in [
-                ("default", &config.model.default),
-                ("compactor", &config.model.compactor),
-            ] {
-                if let Some(model) = setting
-                    && aether_core::model::ModelRef::parse(model).is_none()
-                {
-                    return Err(bad(format!(
-                        "model.{key} `{model}` must be provider/model; run `aether models` to list the valid choices"
-                    )));
-                }
-            }
-            config.models.validate().map_err(&bad)?;
-            config.providers.validate().map_err(&bad)?;
-            config.scheduler.wait_timeout().map_err(&bad)?;
-            config.scheduler.engine_park_grace().map_err(&bad)?;
-            config.scheduler.engine_transient_retry().map_err(&bad)?;
-            config.scheduler.engine_stall_timeout().map_err(&bad)?;
-            config.scheduler.orphan_sweep_interval().map_err(&bad)?;
-            config.scheduler.orphan_idle().map_err(&bad)?;
-            config.scheduler.concurrency().map_err(&bad)?;
-            config.scheduler.engine_concurrency().map_err(&bad)?;
-            config.scheduler.run_budget().map_err(&bad)?;
-            config.scheduler.disk_floor().map_err(&bad)?;
-            config.listen.address().map_err(&bad)?;
-            config.remote.address().map_err(&bad)?;
-            config.serve.address().map_err(&bad)?;
-            config.agents.validate().map_err(&bad)?;
-            config.storage.validate().map_err(&bad)?;
-            config.build_cache.validate().map_err(&bad)?;
-            config.github_watcher.review_sweep_prs().map_err(&bad)?;
-            for server in &config.mcp.servers {
-                server.validate().map_err(&bad)?;
-            }
-            config.mcp.check_names_are_distinct().map_err(&bad)?;
+            let config = parsing::parse_config(&text).map_err(&bad)?;
+            validate_config(&config).map_err(&bad)?;
             Ok(config)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AetherConfig::default()),
@@ -702,6 +675,45 @@ pub fn load_config(dir: &Path) -> Result<AetherConfig, ConfigError> {
             reason: e.to_string(),
         }),
     }
+}
+
+fn validate_config(config: &AetherConfig) -> Result<(), String> {
+    for (key, setting) in [
+        ("default", &config.model.default),
+        ("compactor", &config.model.compactor),
+    ] {
+        if let Some(model) = setting
+            && aether_core::model::ModelRef::parse(model).is_none()
+        {
+            return Err(format!(
+                "model.{key} `{model}` must be provider/model; run `aether models` to list the valid choices"
+            ));
+        }
+    }
+    config.models.validate()?;
+    config.providers.validate()?;
+    config.scheduler.wait_timeout()?;
+    config.scheduler.engine_park_grace()?;
+    config.scheduler.engine_transient_retry()?;
+    config.scheduler.engine_stall_timeout()?;
+    config.scheduler.orphan_sweep_interval()?;
+    config.scheduler.orphan_idle()?;
+    config.scheduler.concurrency()?;
+    config.scheduler.engine_concurrency()?;
+    config.scheduler.run_budget()?;
+    config.scheduler.disk_floor()?;
+    config.listen.address()?;
+    config.remote.address()?;
+    config.serve.address()?;
+    config.agents.validate()?;
+    config.storage.validate()?;
+    config.build_cache.validate()?;
+    config.github_watcher.review_sweep_prs()?;
+    for server in &config.mcp.servers {
+        server.validate()?;
+    }
+    config.mcp.check_names_are_distinct()?;
+    Ok(())
 }
 
 #[cfg(test)]
