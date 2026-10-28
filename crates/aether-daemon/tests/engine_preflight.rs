@@ -231,3 +231,44 @@ async fn a_spawn_schedule_is_not_refused_on_a_stale_preflight_failure() {
     assert_eq!(schedule.name, "hourly-hello");
     daemon.stop().await;
 }
+
+/// A keyed creation that succeeded is answered on retry even after a restart
+/// finds its engine broken: the engine check is for new work only.
+#[tokio::test]
+async fn a_retried_creation_is_answered_after_its_engine_breaks() {
+    if run_isolated(
+        "a_retried_creation_is_answered_after_its_engine_breaks",
+        &[("claude", FAILS_UNTIL_FIXED)],
+    )
+    .await
+    {
+        return;
+    }
+    let fixed = Path::new(&std::env::var_os(ROOT_ENV).unwrap()).join("fixed");
+    std::fs::write(&fixed, b"").unwrap();
+    let keyed = CreateAgent {
+        idempotency_key: Some("started-once".into()),
+        ..started_claude_agent()
+    };
+    let daemon = support::TestDaemon::start().await;
+    let client = aether_client::Client::connect(&daemon.socket)
+        .await
+        .unwrap();
+    detected(&client).await;
+    let created = client.create_agent(keyed.clone()).await.unwrap();
+    std::fs::remove_file(&fixed).unwrap();
+    drop(client);
+    let daemon = daemon.restart().await;
+    let client = aether_client::Client::connect(&daemon.socket)
+        .await
+        .unwrap();
+    detected(&client).await;
+    let retried = client
+        .create_agent(keyed)
+        .await
+        .expect("the retry is answered with the agent already created");
+    assert_eq!(retried.id, created.id);
+    let agents = client.list_agents(AgentQuery::default()).await.unwrap();
+    assert_eq!(agents.len(), 1, "no second agent: {agents:?}");
+    daemon.stop().await;
+}

@@ -31,7 +31,7 @@ impl Runtime {
     /// The agent a keyed creation already made, if this store has seen the
     /// key. Checked before any state-dependent validation, so a retry is
     /// answered even when the world has moved on.
-    pub(crate) fn replay_created_agent(
+    pub fn replay_created_agent(
         &self,
         submission: &Submission,
         by: Actor,

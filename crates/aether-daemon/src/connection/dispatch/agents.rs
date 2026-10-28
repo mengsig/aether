@@ -95,6 +95,14 @@ async fn create_agent(
     }
     // A parked agent may wait for its CLI to be installed; one started now cannot.
     if req.start {
+        // A retry of a creation that succeeded is answered, not checked again.
+        if let Some(submission) = &submission
+            && let Some((agent, _)) = rt
+                .replay_created_agent(submission, by.clone())
+                .map_err(map_err)?
+        {
+            return Ok(Reply::Agent(agent));
+        }
         rt.check_engine_for(req.model.as_ref(), req.parent)
             .await
             .map_err(map_err)?;
