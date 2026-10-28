@@ -334,14 +334,28 @@ impl Runtime {
         )))
     }
 
-    /// Probe the engine `model` (or the default model) runs on again when
-    /// detection found it unusable, so a creation sees a CLI fixed since.
+    /// Probe the engine a creation's model runs on again when detection found
+    /// it unusable, so the creation sees a CLI fixed since. The model is picked
+    /// as creation picks it: `model`, else `parent`'s, else the default.
     /// Returns at once while startup detection is still running.
-    pub async fn recheck_engine_for(&self, model: Option<&ModelRef>) {
+    pub async fn recheck_engine_for(&self, model: Option<&ModelRef>, parent: Option<AgentId>) {
         if self.engines.now().is_err() {
             return;
         }
-        let Some(model) = model.cloned().or_else(|| self.default_model()) else {
+        // Creation reads the parent again and reports a missing one or a store error.
+        let inherited = || {
+            let parent = parent?;
+            self.store
+                .agent(parent)
+                .ok()
+                .flatten()
+                .map(|agent| agent.model)
+        };
+        let Some(model) = model
+            .cloned()
+            .or_else(inherited)
+            .or_else(|| self.default_model())
+        else {
             return;
         };
         // An unknown model is refused by creation itself, with its own error.

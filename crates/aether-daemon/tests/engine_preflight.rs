@@ -10,13 +10,17 @@ mod support;
 use std::path::Path;
 use std::time::Duration;
 
-use aether_core::model::ModelRef;
+use aether_core::agent::AgentConfig;
+use aether_core::model::{Effort, ModelRef};
 use aether_protocol::{AgentQuery, CreateAgent};
 
 const ROOT_ENV: &str = "AETHER_TEST_ENGINE_PREFLIGHT_ROOT";
 
 /// `claude --version` fails the first time, as a CLI mid-update would, then answers.
 const FAILS_ONCE: &str = "if [ \"$1\" != --version ]; then exit 1; fi\nif [ ! -f \"$AETHER_TEST_ENGINE_PREFLIGHT_ROOT/failed-once\" ]; then\n  : > \"$AETHER_TEST_ENGINE_PREFLIGHT_ROOT/failed-once\"\n  printf '%s\\n' 'claude is being updated' >&2\n  exit 1\nfi\nprintf '%s\\n' '2.1.269'\n";
+
+/// `claude --version` fails until the test writes `fixed`, as a CLI repaired by hand.
+const FAILS_UNTIL_FIXED: &str = "if [ \"$1\" != --version ]; then exit 1; fi\nif [ ! -f \"$AETHER_TEST_ENGINE_PREFLIGHT_ROOT/fixed\" ]; then\n  printf '%s\\n' 'claude is broken' >&2\n  exit 1\nfi\nprintf '%s\\n' '2.1.269'\n";
 
 /// Re-run `test` alone with `PATH` holding only `programs`, so the daemon's
 /// probes find exactly them. Returns false inside that run.
@@ -126,5 +130,55 @@ async fn an_engine_fixed_after_startup_is_found_again_without_a_restart() {
         .await
         .expect("the fixed CLI is probed again and accepted");
     assert_eq!(agent.model, ModelRef::new("claude-code", "haiku"));
+    daemon.stop().await;
+}
+
+/// A child that inherits its parent's model is rechecked on that model's
+/// engine, not on the daemon default's.
+#[tokio::test]
+async fn a_fixed_engine_is_found_again_for_a_child_inheriting_its_model() {
+    if run_isolated(
+        "a_fixed_engine_is_found_again_for_a_child_inheriting_its_model",
+        &[("claude", FAILS_UNTIL_FIXED)],
+    )
+    .await
+    {
+        return;
+    }
+    let root = std::env::var_os(ROOT_ENV).unwrap();
+    // The default runs on another engine, so only the parent names claude-code.
+    let daemon =
+        support::TestDaemon::start_with_config("[model]\ndefault = \"codex/gpt-6.1-sol\"\n").await;
+    let client = aether_client::Client::connect(&daemon.socket)
+        .await
+        .unwrap();
+    detected(&client).await;
+    let parent = client
+        .create_agent(CreateAgent {
+            start: false,
+            ..started_claude_agent()
+        })
+        .await
+        .expect("a parked agent does not need its engine yet");
+    std::fs::write(Path::new(&root).join("fixed"), b"").unwrap();
+    // Creating the parent probed the broken CLI; outlast the 2s recheck interval.
+    tokio::time::sleep(Duration::from_millis(2_200)).await;
+    let child = CreateAgent {
+        role: "worker".into(),
+        objective: Some("say hello".into()),
+        start: true,
+        parent: Some(parent.id),
+        config: Some(AgentConfig {
+            effort: Some(Effort::Low),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let child = client
+        .create_agent(child)
+        .await
+        .expect("the inherited engine is probed again and accepted");
+    assert_eq!(child.model, ModelRef::new("claude-code", "haiku"));
+    assert_eq!(child.parent, Some(parent.id));
     daemon.stop().await;
 }
