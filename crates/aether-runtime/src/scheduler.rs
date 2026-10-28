@@ -7,7 +7,7 @@
 //! agent a person has just spoken to is never held back by the limit: the
 //! children it is supervising cannot make it deaf.
 
-use crate::{Result, Runtime, RuntimeError, wait::RuntimeOracle};
+use crate::{Result, Runtime, RuntimeError, problems::Subject, wait::RuntimeOracle};
 use aether_core::{
     agent::{Agent, AgentStatus, BlockReason},
     time::now,
@@ -204,6 +204,7 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
         enforce_budgets(runtime, &mut blocked, &mut record_errors)
     });
     let live = live_after_enforcement(runtime, faults, &mut blocked, &mut record_errors)?;
+    forget_ended_agents(runtime, &live, &cancelling);
     let lineage = Lineage::from_store(&live, runtime);
     let mut ready: Vec<Runnable> = Vec::new();
     let at = now();
@@ -224,7 +225,7 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
                 runtime.clear_problem(&format!("scheduler.agent.{id}"));
                 ready.extend(candidate);
             }
-            Err(error) => runtime.report_problem(format!("scheduler.agent.{id}"), format!(
+            Err(error) => runtime.report_problem_about(Subject::Agent(id), format!("scheduler.agent.{id}"), format!(
                 "Agent {id} could not be scheduled: {error}; it is withheld and will retry. Run `aether doctor` and `aether diagnose`.")),
         }
     }
@@ -239,6 +240,25 @@ fn pass(runtime: &Arc<Runtime>, faults: &mut Faults) -> Result<()> {
     }
     reserve.finish(runtime);
     Ok(())
+}
+
+/// An agent's problems end with it: a cancelled agent's stall or a failed
+/// budget check would otherwise stay in `aether status` until a restart. A
+/// pending cancellation keeps its own problem until it is carried out.
+fn forget_ended_agents(
+    runtime: &Runtime,
+    live: &[Agent],
+    cancelling: &std::collections::HashSet<aether_core::id::AgentId>,
+) {
+    debug_assert!(live.iter().all(Agent::is_live));
+    let live: std::collections::HashSet<_> = live.iter().map(|a| a.id).collect();
+    let dropped = runtime.retain_problems(|subject| match subject {
+        Subject::Agent(id) => live.contains(&id) || cancelling.contains(&id),
+        Subject::Task(_) => true,
+    });
+    if dropped > 0 {
+        tracing::debug!(dropped, "cleared problems of ended agents");
+    }
 }
 
 fn record_work<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {

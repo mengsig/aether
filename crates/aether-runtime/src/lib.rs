@@ -25,6 +25,7 @@ pub mod notes;
 pub mod notifications;
 mod orphans;
 mod peers;
+mod problems;
 pub mod recovery;
 mod repository_aliases;
 pub mod resources;
@@ -330,7 +331,7 @@ pub struct Runtime {
     pub(crate) seeded_repositories: parking_lot::Mutex<std::collections::HashSet<AgentId>>,
     /// Free space on the store's filesystem, as the disk guard last saw it.
     pub(crate) disk: parking_lot::Mutex<disk::DiskState>,
-    problems: parking_lot::RwLock<std::collections::BTreeMap<String, String>>,
+    problems: problems::Problems,
     recovery_failed: std::sync::atomic::AtomicBool,
     workspace_gc_cursor: parking_lot::Mutex<workspace_gc::WorkspaceGcCursor>,
     workspace_gc_active: parking_lot::Mutex<Option<std::path::PathBuf>>,
@@ -418,13 +419,18 @@ impl Runtime {
         // One gate for the whole daemon: memory curation is a read-modify-write
         // against the same store a turn commits to, so both take this.
         let commit_lock = aether_store::WriteGate::new();
+        let bus = EventBus::new();
+        // Curation commits on its own, so it publishes as `apply` does.
+        let memory = {
+            let bus = bus.clone();
+            MemoryService::new(store.clone(), commit_lock.clone())
+                .with_publisher(Arc::new(move |event| bus.publish_event(event.clone())))
+        };
         let runtime = Arc::new_cyclic(|me| Self {
             me: me.clone(),
             memory: match config.memory_index.clone() {
-                Some(index) => {
-                    MemoryService::new(store.clone(), commit_lock.clone()).with_index(index)
-                }
-                None => MemoryService::new(store.clone(), commit_lock.clone()),
+                Some(index) => memory.with_index(index),
+                None => memory,
             },
             default_model: parking_lot::RwLock::new(config.default_model.clone()),
             client_override,
@@ -436,7 +442,7 @@ impl Runtime {
             resources: Arc::new(resources::ResourceLeases::new()),
             tool_runtime: ToolRuntime::with_redactor(config.redactor.clone()),
             context: ContextManager::new(),
-            bus: EventBus::new(),
+            bus,
             config,
             sched: parking_lot::Mutex::new(SchedulerState::default()),
             notify: Notify::new(),
@@ -501,19 +507,31 @@ impl Runtime {
     }
 
     pub fn report_problem(&self, key: String, detail: String) {
-        let mut problems = self.problems.write();
-        if problems.get(&key) != Some(&detail) {
-            tracing::error!(%key, %detail);
-            problems.insert(key, detail);
-        }
+        self.problems.report(key, detail, None);
+    }
+
+    /// A problem that ends with its agent or task: the scheduler drops it
+    /// once the subject can no longer act, even when nothing cleared it.
+    pub(crate) fn report_problem_about(
+        &self,
+        subject: problems::Subject,
+        key: String,
+        detail: String,
+    ) {
+        self.problems.report(key, detail, Some(subject));
     }
 
     pub fn clear_problem(&self, key: &str) {
-        self.problems.write().remove(key);
+        self.problems.clear(key);
+    }
+
+    /// Drop the problems about subjects `keep` rejects. Returns how many.
+    pub(crate) fn retain_problems(&self, keep: impl Fn(problems::Subject) -> bool) -> usize {
+        self.problems.retain(keep)
     }
 
     pub fn problems(&self) -> Result<Vec<String>> {
-        let mut problems: Vec<_> = self.problems.read().values().cloned().collect();
+        let mut problems = self.problems.details();
         problems.extend(self.store.quarantines()?.into_iter().map(|q| q.reason));
         Ok(problems)
     }

@@ -278,6 +278,12 @@ isolation depend on the installed engine version and the platform; see
   diagnostic details. Clean shutdown does not erase it. `SIGKILL`, power
   loss and failures that abort before the panic hook runs cannot be recorded.
   An unwinding task panic may be recorded even if the daemon keeps running.
+- What a crash record cannot hold, the run mark can tell: the daemon writes
+  `aether.db.running.json` (its pid and start time) when it starts and removes
+  it when it stops cleanly. A start that finds it left behind writes
+  `aether.db.unclean.json`, and the doctor's `shutdown` check warns until the
+  next clean stop; with no daemon answering, a mark left behind is a warning
+  too. It says the run ended badly, not why.
 - After a hard kill of the daemon (`kill -9`, power loss) its engine
   processes keep running until the next daemon start, which kills the process
   group of every engine it recorded, but only while the recorded pid and

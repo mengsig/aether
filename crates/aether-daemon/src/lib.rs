@@ -174,6 +174,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     clock.finished("preflight");
     let store_path = instance.prepare_store()?;
     crash::report_previous(&store_path);
+    crash::begin_run(&store_path);
     let store = Arc::new(SqliteStore::open(&store_path)?);
     clock.finished("store");
     let instance_id = aether_store::Store::instance_id(store.as_ref())?;
@@ -519,6 +520,9 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         Ok(())
     };
     let bridge_cleanup = bridge.map_or(Ok(()), bridge::Bridge::remove);
+    if result.is_ok() && store_sync.is_ok() {
+        crash::end_run(&store_path);
+    }
     result
         .and(store_sync)
         .and(socket_cleanup)

@@ -327,3 +327,48 @@ async fn the_query_takes_exactly_one_scope_from_an_operator() {
     ));
     h.runtime.shutdown().await;
 }
+
+/// Curation commits beside the runtime's own write path; a client following
+/// events must still see it, or a resumed subscription skips it for good.
+#[tokio::test]
+async fn memory_curation_reaches_live_subscribers() {
+    let h = harness(scripted_task()).await;
+    let mut events = h.runtime.subscribe();
+    let id = h
+        .runtime
+        .create_memory(
+            fact(
+                "Release builds are tagged from the main branch",
+                None,
+                false,
+            ),
+            Actor::user(),
+        )
+        .expect("memory")
+        .id;
+    h.runtime.pin_memory(id, true, Actor::user()).expect("pin");
+    h.runtime
+        .forget_memory(id, Some("retired".into()), Actor::user())
+        .expect("forget");
+    let mut published = Vec::new();
+    while let Ok(message) = events.try_recv() {
+        if let aether_runtime::BusMessage::Event(event) = message {
+            published.push(event);
+        }
+    }
+    let forgotten = published
+        .iter()
+        .find(|e| matches!(e.kind, EventKind::MemoryForgotten { memory, .. } if memory == id))
+        .expect("memory.forgotten reaches the bus");
+    assert!(
+        published
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::MemoryPinned { memory, .. } if memory == id)),
+        "memory.pinned reaches the bus"
+    );
+    let stored = h
+        .store
+        .events(forgotten.seq - 1, 1, &Default::default())
+        .expect("events");
+    assert_eq!(stored.first().map(|e| e.id), Some(forgotten.id));
+}

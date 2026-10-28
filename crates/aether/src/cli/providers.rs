@@ -1,4 +1,7 @@
+use super::table::{Glyphs, cell, column_width};
 use super::{CancellationToken, ProviderHealth, acted, connect_or_start, sane};
+use crate::doctor::NotServing;
+use aether_protocol::AuthInfo;
 
 pub async fn login(
     provider: Option<String>,
@@ -119,33 +122,106 @@ pub async fn auth(socket: impl Into<aether_client::Endpoint>, json: bool) -> any
         println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
-    println!(
-        "{:<16} {:<22} {:<12} {:<28} methods",
-        "provider", "name", "status", "source"
-    );
-    for r in rows {
-        println!(
-            "{:<16} {:<22} {:<12} {:<28} {}{}",
-            sane(&r.provider),
-            sane(&r.provider_name),
-            if r.configured { "ready" } else { "not set" },
-            sane(r.source.as_deref().unwrap_or_default()),
-            sane(&r.methods.join(",")),
-            if r.subscription {
-                " (subscription)"
-            } else {
-                ""
-            }
-        );
-        if let Some(detail) = auth_detail(&r) {
-            println!("  {}", sane(detail));
-        }
+    // Probed as `aether providers` probes, so the two never disagree.
+    let providers = client.providers().await?;
+    let not_serving = not_serving_among(&rows, &providers).await?;
+    let glyphs = Glyphs::new(super::display_ascii(false)?);
+    for line in auth_table(&rows, &not_serving, glyphs) {
+        println!("{line}");
     }
     Ok(())
 }
 
-fn auth_detail(info: &aether_protocol::AuthInfo) -> Option<&str> {
-    info.detail.as_deref().filter(|_| !info.configured)
+/// Widest a column grows: a longer value is cut rather than shifting the rest.
+const MAX_AUTH_COLUMN: usize = 40;
+
+/// `aether auth` for a person: each column as wide as its longest entry, and
+/// under a provider that is not ready, what to do about it.
+fn auth_table(rows: &[AuthInfo], not_serving: &[NotServing], glyphs: Glyphs) -> Vec<String> {
+    let statuses: Vec<&str> = rows
+        .iter()
+        .map(|r| auth_status_label(r, not_serving))
+        .collect();
+    let source = |r: &AuthInfo| r.source.clone().unwrap_or_default();
+    let widths = [
+        column_width(
+            "provider",
+            rows.iter().map(|r| r.provider.as_str()),
+            MAX_AUTH_COLUMN,
+        ),
+        column_width(
+            "name",
+            rows.iter().map(|r| r.provider_name.as_str()),
+            MAX_AUTH_COLUMN,
+        ),
+        column_width("status", statuses.iter().copied(), MAX_AUTH_COLUMN),
+        column_width(
+            "source",
+            rows.iter().filter_map(|r| r.source.as_deref()),
+            MAX_AUTH_COLUMN,
+        ),
+    ];
+    let line = |cells: [&str; 4], methods: &str| {
+        let mut parts: Vec<String> = cells
+            .iter()
+            .zip(widths)
+            .map(|(text, width)| cell(text, width, glyphs, false))
+            .collect();
+        parts.push(sane(methods));
+        parts.join(" ")
+    };
+    let mut out = vec![line(["provider", "name", "status", "source"], "methods")];
+    for (r, status) in rows.iter().zip(&statuses) {
+        let subscription = if r.subscription {
+            " (subscription)"
+        } else {
+            ""
+        };
+        let methods = format!("{}{subscription}", r.methods.join(","));
+        out.push(line(
+            [&r.provider, &r.provider_name, status, &source(r)],
+            &methods,
+        ));
+        if let Some(detail) = auth_detail(r) {
+            out.push(format!("  {}", sane(&detail)));
+        }
+    }
+    debug_assert!(out.len() > rows.len());
+    out
+}
+
+/// `ready` only for a provider with credentials. One that needs none says
+/// so, unless its server cannot take a turn: then what `aether providers`
+/// says of it.
+fn auth_status_label(info: &AuthInfo, not_serving: &[NotServing]) -> &'static str {
+    if !info.configured {
+        return "not set";
+    }
+    if info.source.as_deref() != Some(aether_model::auth::NO_AUTH_SOURCE) {
+        return "ready";
+    }
+    match not_serving.iter().find(|s| s.provider == info.provider) {
+        Some(server) => server.label(),
+        None => "no auth needed",
+    }
+}
+
+/// Why a provider is not ready, worded as what to do. A sign-in a CLI owns
+/// (`claude`, `codex`) is made with `aether login`, unless the CLI is missing.
+fn auth_detail(info: &AuthInfo) -> Option<String> {
+    let detail = info.detail.as_deref().filter(|_| !info.configured)?;
+    let cli_missing = detail.contains("not found") || detail.contains("could not run");
+    if info.program.is_none() || cli_missing {
+        return Some(detail.to_owned());
+    }
+    let login = format!("run `aether login {}`", info.provider);
+    Some(if detail.contains("login expired") {
+        format!("login expired, {login}")
+    } else if detail.ends_with("not logged in") {
+        format!("not signed in, {login}")
+    } else {
+        format!("not signed in ({detail}), {login}")
+    })
 }
 
 pub async fn models(socket: impl Into<aether_client::Endpoint>, json: bool) -> anyhow::Result<()> {
@@ -254,7 +330,7 @@ pub async fn providers(
         println!("{}", serde_json::to_string(&rows)?);
         return Ok(());
     }
-    let unreachable = unreachable_local_servers(&client, &rows).await?;
+    let not_serving = not_serving_among(&client.auth_status().await?, &rows).await?;
     println!(
         "{:<18} {:<24} {:<7} {:<11} {:<20} {:>6}  health",
         "provider", "protocol", "family", "status", "auth", "models"
@@ -265,7 +341,7 @@ pub async fn providers(
             sane(&p.provider),
             sane(&p.protocol),
             sane(p.family.as_deref().unwrap_or("-")),
-            probed_status_label(p, &unreachable),
+            probed_status_label(p, &not_serving),
             sane(p.auth_source.as_deref().unwrap_or("-")),
             p.model_count(),
             health_segments(&p.health).join(" · ")
@@ -279,34 +355,34 @@ pub async fn providers(
     Ok(())
 }
 
-/// The keyless local servers among `rows` that nothing answers at, found
-/// with the probe `aether doctor` uses so the two commands agree.
-async fn unreachable_local_servers(
-    client: &aether_client::Client,
-    rows: &[aether_protocol::ProviderInfo],
-) -> anyhow::Result<Vec<crate::doctor::Unreachable>> {
-    let auth = client.auth_status().await?;
-    let servers = crate::doctor::local_servers(&auth, rows);
-    Ok(crate::doctor::unreachable_servers(&servers, crate::doctor::PROBE_TIMEOUT).await)
+/// The keyless local servers that cannot take a turn, found with the probe
+/// `aether doctor` uses, so `auth`, `providers` and the doctor agree.
+async fn not_serving_among(
+    auth: &[AuthInfo],
+    providers: &[aether_protocol::ProviderInfo],
+) -> anyhow::Result<Vec<NotServing>> {
+    let servers = crate::doctor::local_servers(auth, providers);
+    crate::doctor::servers_not_serving(&servers, crate::doctor::PROBE_TIMEOUT).await
 }
 
 /// [`aether_protocol::ProviderInfo::status_label`], except that a provider
-/// whose server refused the probe is not `ready`, however configured.
+/// whose server cannot take a turn is not `ready`, however configured.
 fn probed_status_label(
     info: &aether_protocol::ProviderInfo,
-    unreachable: &[crate::doctor::Unreachable],
+    not_serving: &[NotServing],
 ) -> &'static str {
     let label = info.status_label();
-    if label == "ready" && unreachable.iter().any(|u| u.provider == info.provider) {
-        "unreachable"
-    } else {
-        label
+    match not_serving.iter().find(|s| s.provider == info.provider) {
+        Some(server) if label == "ready" => server.label(),
+        _ => label,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{auth_detail, model_cost_label, probed_status_label};
+    use super::{
+        auth_detail, auth_status_label, auth_table, model_cost_label, probed_status_label,
+    };
     use aether_core::model::{ModelCost, ModelCostTier};
 
     #[test]
@@ -357,19 +433,108 @@ mod tests {
             detail: Some("credential store: unsafe directory; run chmod 700 config".into()),
             program: None,
         };
-        assert_eq!(auth_detail(&info), info.detail.as_deref());
+        assert_eq!(auth_detail(&info).as_deref(), info.detail.as_deref());
         let json = serde_json::to_value(&info).expect("JSON");
         assert_eq!(json["detail"], info.detail.as_ref().unwrap().as_str());
         info.configured = true;
         assert!(auth_detail(&info).is_none());
     }
 
+    fn cli_login(detail: &str) -> aether_protocol::AuthInfo {
+        aether_protocol::AuthInfo {
+            provider: "claude-code".into(),
+            provider_name: "Claude Code (subscription)".into(),
+            configured: false,
+            source: None,
+            methods: vec!["cli".into()],
+            subscription: true,
+            detail: Some(detail.into()),
+            program: Some("claude".into()),
+        }
+    }
+
     #[test]
-    fn a_keyless_provider_nothing_answers_at_is_not_ready() {
-        use crate::doctor::Unreachable;
-        let mut info = aether_protocol::ProviderInfo {
+    fn a_cli_sign_in_says_how_to_sign_in_through_aether() {
+        let hint = |detail: &str| auth_detail(&cli_login(detail)).expect("a reason");
+        assert_eq!(
+            hint("claude: not logged in"),
+            "not signed in, run `aether login claude-code`"
+        );
+        assert_eq!(
+            hint("claude: login expired, run `claude login`"),
+            "login expired, run `aether login claude-code`"
+        );
+        assert_eq!(
+            hint("claude: status returned non-zero exit (exit status: 1)"),
+            "not signed in (claude: status returned non-zero exit (exit status: 1)), run `aether login claude-code`"
+        );
+        let missing = "claude not found (No such file or directory (os error 2))";
+        assert_eq!(hint(missing), missing, "signing in cannot install the CLI");
+    }
+
+    fn keyless(provider: &str) -> aether_protocol::AuthInfo {
+        aether_protocol::AuthInfo {
+            provider: provider.into(),
+            provider_name: provider.into(),
+            configured: true,
+            source: Some(aether_model::auth::NO_AUTH_SOURCE.into()),
+            methods: vec!["none".into()],
+            subscription: false,
+            detail: None,
+            program: None,
+        }
+    }
+
+    #[test]
+    fn auth_calls_a_keyless_provider_what_providers_calls_it() {
+        use crate::doctor::{Fault, NotServing};
+        let down = [NotServing {
             provider: "vllm".into(),
-            name: "vLLM".into(),
+            address: "localhost:8000".into(),
+            fault: Fault::Unreachable,
+        }];
+        assert_eq!(auth_status_label(&keyless("vllm"), &down), "unreachable");
+        assert_eq!(
+            auth_status_label(&keyless("ollama"), &down),
+            "no auth needed"
+        );
+        let mut info = provider_info("vllm");
+        assert_eq!(
+            probed_status_label(&info, &down),
+            auth_status_label(&keyless("vllm"), &down)
+        );
+        let mut keyed = keyless("anthropic");
+        keyed.source = Some("ANTHROPIC_API_KEY".into());
+        assert_eq!(auth_status_label(&keyed, &down), "ready");
+        keyed.configured = false;
+        assert_eq!(auth_status_label(&keyed, &down), "not set");
+        info.enabled = false;
+        assert_eq!(probed_status_label(&info, &down), "off");
+    }
+
+    #[test]
+    fn the_auth_table_lines_up_however_long_a_name() {
+        let mut long = keyless("openai-responses-compatible");
+        long.provider_name = "A provider with a long display name".into();
+        let rows = [cli_login("claude: not logged in"), long, keyless("vllm")];
+        let lines = auth_table(&rows, &[], super::Glyphs::new(false));
+        let table: Vec<&String> = lines.iter().filter(|l| !l.starts_with("  ")).collect();
+        assert_eq!(table.len(), 4, "{lines:#?}");
+        let status_at = table[0].find("status").expect("header");
+        for line in &table[1..] {
+            let status = &line[status_at..];
+            assert!(
+                status.starts_with("not set") || status.starts_with("no auth needed"),
+                "{lines:#?}"
+            );
+        }
+        assert!(lines.contains(&"  not signed in, run `aether login claude-code`".to_owned()));
+    }
+
+    fn provider_info(provider: &str) -> aether_protocol::ProviderInfo {
+        aether_protocol::ProviderInfo {
+            provider: provider.into(),
+            name: provider.into(),
             protocol: "openai-chat".into(),
             family: None,
             base_url: "http://127.0.0.1:8000/v1".into(),
@@ -379,17 +544,33 @@ mod tests {
             enabled: true,
             configured: true,
             auth_source: Some("no auth required".into()),
-            health: aether_core::provider::ProviderHealth::idle("vllm"),
+            health: aether_core::provider::ProviderHealth::idle(provider),
             headroom: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_keyless_provider_nothing_answers_at_is_not_ready() {
+        use crate::doctor::{Fault, NotServing};
+        let mut info = provider_info("vllm");
+        let down = |fault| {
+            [NotServing {
+                provider: "vllm".into(),
+                address: "127.0.0.1:8000".into(),
+                fault,
+            }]
         };
-        let down = [Unreachable {
-            provider: "vllm".into(),
-            address: "127.0.0.1:8000".into(),
-        }];
         assert_eq!(probed_status_label(&info, &[]), "ready");
-        assert_eq!(probed_status_label(&info, &down), "unreachable");
+        assert_eq!(
+            probed_status_label(&info, &down(Fault::Unreachable)),
+            "unreachable"
+        );
+        assert_eq!(
+            probed_status_label(&info, &down(Fault::NoModels)),
+            "no models"
+        );
         info.enabled = false;
-        assert_eq!(probed_status_label(&info, &down), "off");
+        assert_eq!(probed_status_label(&info, &down(Fault::Unreachable)), "off");
     }
 }
 

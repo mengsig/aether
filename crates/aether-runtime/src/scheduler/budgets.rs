@@ -1,3 +1,4 @@
+use crate::problems::Subject;
 use crate::{Result, Runtime};
 use aether_core::{
     agent::{Agent, AgentStatus},
@@ -50,7 +51,7 @@ fn check_budgets(
             Err(error) => {
                 blocked.insert(agent.id);
                 blocked.extend(runtime.store.subtree_ids(agent.id)?);
-                runtime.report_problem(key, format!("Budget for agent {} cannot be checked: {error}; its subtree is withheld. Run `aether doctor` and `aether diagnose`.", agent.id));
+                runtime.report_problem_about(Subject::Agent(agent.id), key, format!("Budget for agent {} cannot be checked: {error}; its subtree is withheld. Run `aether doctor` and `aether diagnose`.", agent.id));
                 errors.push(error);
             }
         }
@@ -141,7 +142,7 @@ pub(super) fn enforce_deadlines(
             Err(error) => {
                 blocked.insert(agent.id);
                 blocked.extend(runtime.store.subtree_ids(agent.id)?);
-                runtime.report_problem(key, format!("Deadline for agent {} could not be enforced: {error}; its subtree is withheld. Run `aether doctor` and `aether diagnose`.", agent.id));
+                runtime.report_problem_about(Subject::Agent(agent.id), key, format!("Deadline for agent {} could not be enforced: {error}; its subtree is withheld. Run `aether doctor` and `aether diagnose`.", agent.id));
                 errors.push(error);
             }
         }

@@ -130,7 +130,7 @@ pub(crate) fn drain(runtime: &Runtime) -> Result<()> {
         match process(runtime, id) {
             Ok(()) => runtime.clear_problem(&format!("cancellation.{id}")),
             Err(error) => {
-                runtime.report_problem(format!("cancellation.{id}"), format!(
+                runtime.report_problem_about(crate::problems::Subject::Agent(id), format!("cancellation.{id}"), format!(
                     "Cancellation of {id} is still pending: {error}. Its subtree cannot run. Run `aether doctor` and `aether diagnose`."
                 ));
                 first_error.get_or_insert(error);

@@ -1,4 +1,5 @@
 use super::wake::person_message_pending;
+use crate::problems::Subject;
 use crate::{CommitHold, Result, Runtime};
 use aether_core::{
     agent::WaitCondition,
@@ -28,16 +29,23 @@ pub(super) fn gate_dependencies(
         statuses: vec![TaskStatusKind::Queued],
         ..Default::default()
     })?;
-    for task in queued
+    let gated: Vec<_> = queued
         .into_iter()
         .filter(|t| t.owner.is_some() && !t.dependencies.is_empty())
-    {
+        .collect();
+    // A task that left the queue no longer withholds its owner.
+    let ids: std::collections::HashSet<_> = gated.iter().map(|t| t.id).collect();
+    runtime.retain_problems(|subject| match subject {
+        Subject::Task(id) => ids.contains(&id),
+        Subject::Agent(_) => true,
+    });
+    for task in gated {
         let key = format!("dependency.{}", task.id);
         match super::record_work(|| gate_task(runtime, &task)) {
             Ok(()) => runtime.clear_problem(&key),
             Err(error) => {
                 blocked.extend(task.owner);
-                runtime.report_problem(key, format!("Dependencies for task {} cannot be checked: {error}; its owner is withheld. Run `aether doctor` and `aether diagnose`.", task.id));
+                runtime.report_problem_about(Subject::Task(task.id), key, format!("Dependencies for task {} cannot be checked: {error}; its owner is withheld. Run `aether doctor` and `aether diagnose`.", task.id));
                 errors.push(error);
             }
         }

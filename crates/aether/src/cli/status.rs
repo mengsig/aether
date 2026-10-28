@@ -254,7 +254,7 @@ fn activity_lines(s: &aether_protocol::DaemonStatus, at: Timestamp) -> Vec<Strin
             .collect();
         out.push(format!("providers {}", rows.join("\n          ")));
     }
-    out.extend(s.runs.iter().map(|r| run_line(r, at)));
+    out.extend(run_lines(&s.runs, at));
     for holding in &s.resource_leases {
         out.push(format!(
             "holding  {} · {}{}",
@@ -275,6 +275,33 @@ fn activity_lines(s: &aether_protocol::DaemonStatus, at: Timestamp) -> Vec<Strin
         ));
     }
     out.push(format!("events   {}", s.last_seq));
+    out
+}
+
+/// Runs `aether status` lists one per line; the rest are summed up in one.
+const RUN_LINES: usize = 10;
+
+/// The runs spending now first, then the dearest so far, at most
+/// [`RUN_LINES`] of them; `--json` keeps every run.
+fn run_lines(runs: &[aether_core::budget::RunSummary], at: Timestamp) -> Vec<String> {
+    let mut ranked: Vec<_> = runs.iter().collect();
+    ranked.sort_by(|a, b| {
+        b.rate_usd_per_hour
+            .total_cmp(&a.rate_usd_per_hour)
+            .then(b.usage.cost_usd.total_cmp(&a.usage.cost_usd))
+    });
+    let shown = ranked.len().min(RUN_LINES);
+    let mut out: Vec<String> = ranked[..shown].iter().map(|r| run_line(r, at)).collect();
+    let rest = &ranked[shown..];
+    if !rest.is_empty() {
+        let idle = rest.iter().filter(|r| r.rate_usd_per_hour <= 0.0).count();
+        out.push(format!(
+            "runs     +{} more, {idle} of them idle · `aether status --json` lists every run",
+            rest.len()
+        ));
+    }
+    debug_assert!(out.len() <= RUN_LINES + 1);
+    debug_assert_eq!(out.len(), runs.len().min(RUN_LINES + 1));
     out
 }
 
@@ -531,6 +558,29 @@ mod tests {
             "an idle run forecasts nothing: {}",
             runs[1]
         );
+    }
+
+    #[test]
+    fn fifty_runs_print_the_busiest_and_sum_up_the_rest() {
+        let at = aether_core::time::now();
+        let mut status = fixture(at);
+        let (busy, idle) = (status.runs[0].clone(), status.runs[1].clone());
+        status.runs = std::iter::repeat_n(idle, 49).collect();
+        status.runs.insert(30, busy);
+        let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
+        let runs: Vec<&str> = text.lines().filter(|l| l.starts_with("run")).collect();
+        assert_eq!(runs.len(), RUN_LINES + 1, "{text}");
+        assert!(
+            runs[0].contains("$12.00/h now"),
+            "the spending run leads: {text}"
+        );
+        assert_eq!(
+            runs[RUN_LINES],
+            "runs     +40 more, 40 of them idle · `aether status --json` lists every run"
+        );
+        let json = status_text(&status, &LocalInstall::default(), true, at).expect("renders");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value["runs"].as_array().map(Vec::len), Some(50));
     }
 
     #[test]

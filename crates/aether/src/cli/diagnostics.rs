@@ -67,15 +67,16 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
     // daemon's; without one, say so rather than guessing.
     let providers = if let Some(c) = &client {
         let default_model = status.as_ref().and_then(|s| s.default_model.as_ref());
-        match unreachable_local_servers(c, &auth).await {
-            Ok(unreachable) => {
-                doctor::check_providers(&auth, &unreachable, default_model, &command)
+        match local_servers_not_serving(c, &auth).await {
+            Ok(not_serving) => {
+                doctor::check_providers(&auth, &not_serving, default_model, &command)
             }
             Err(e) => Check::unprobed_providers(&e.to_string(), &command),
         }
     } else {
         Check::no_daemon_providers(&command)
     };
+    let answering = status.is_some() || refusal.is_some();
     let daemon = match (status.as_ref(), refusal.as_deref()) {
         (Some(status), _) => SocketState::Answering(status),
         (None, Some(why)) => SocketState::Refused(why),
@@ -91,6 +92,7 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
         doctor::check_store(&paths),
         doctor::check_recovery(status.as_ref()),
         doctor::check_crash(&paths, &command),
+        doctor::check_shutdown(&paths, answering, &command),
         doctor::check_disk(
             &paths,
             disk_floor,
@@ -113,14 +115,14 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
     ])
 }
 
-/// The no-auth providers the daemon counts as ready that nothing answers at.
-async fn unreachable_local_servers(
+/// The no-auth providers the daemon counts as ready that cannot take a turn.
+async fn local_servers_not_serving(
     client: &Client,
     auth: &[aether_protocol::AuthInfo],
-) -> Result<Vec<crate::doctor::Unreachable>, ClientError> {
+) -> anyhow::Result<Vec<crate::doctor::NotServing>> {
     let providers = client.providers().await?;
     let servers = crate::doctor::local_servers(auth, &providers);
-    Ok(crate::doctor::unreachable_servers(&servers, crate::doctor::PROBE_TIMEOUT).await)
+    crate::doctor::servers_not_serving(&servers, crate::doctor::PROBE_TIMEOUT).await
 }
 
 /// The daemon's remote access status, or `None` from a daemon that predates

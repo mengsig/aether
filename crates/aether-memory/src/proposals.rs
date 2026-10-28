@@ -5,7 +5,7 @@ use aether_core::{
     memory::MemoryRecord,
     time::now,
 };
-use aether_store::{Commit, Mutation};
+use aether_store::{Commit, Hold, Mutation};
 
 impl MemoryService {
     /// Accept and replace under the same gate; retries never write another event.
@@ -13,7 +13,7 @@ impl MemoryService {
         require_operator(&by)?;
         validate_reason(reason.as_deref())?;
         let record = {
-            let _hold = self.gate.hold();
+            let hold = self.gate.hold();
             let mut record = self.proposal(id)?;
             if record.forgotten_at.is_some() || record.superseded_by.is_some() {
                 return Err(MemoryError::Invalid(format!(
@@ -21,7 +21,7 @@ impl MemoryService {
                 )));
             }
             if record.accepted_at.is_none() {
-                self.commit_acceptance(&mut record, reason, by)?;
+                self.commit_acceptance(&hold, &mut record, reason, by)?;
             }
             debug_assert!(record.is_current());
             debug_assert!(record.accepted_at.is_some());
@@ -33,6 +33,7 @@ impl MemoryService {
 
     fn commit_acceptance(
         &self,
+        hold: &Hold<'_>,
         record: &mut MemoryRecord,
         reason: Option<String>,
         by: Actor,
@@ -57,7 +58,7 @@ impl MemoryService {
                 reason,
             },
         ));
-        self.store.commit(commit)?;
+        self.commit(hold, commit)?;
         Ok(())
     }
 
@@ -96,7 +97,7 @@ impl MemoryService {
     pub fn reject(&self, id: MemoryId, reason: String, by: Actor) -> Result<MemoryRecord> {
         require_operator(&by)?;
         validate_reason(Some(&reason))?;
-        let _hold = self.gate.hold();
+        let hold = self.gate.hold();
         let mut record = self.proposal(id)?;
         if !record.is_proposed() {
             return Err(MemoryError::Invalid(format!(
@@ -109,7 +110,8 @@ impl MemoryService {
         debug_assert!(record.accepted_at.is_none());
         debug_assert!(record.superseded_by.is_none());
         record.forgotten_at = Some(now());
-        self.store.commit(
+        self.commit(
+            &hold,
             Commit::new()
                 .mutate(Mutation::PutMemory(record.clone()))
                 .event(EventDraft::new(

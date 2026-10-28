@@ -63,6 +63,21 @@ pub(super) fn cell(text: &str, width: usize, glyphs: Glyphs, align_right: bool) 
     }
 }
 
+/// Columns a [`cell`] needs to show `header` and every value uncut, but no
+/// more than `max`, so one long value cannot push the rest off screen.
+pub(super) fn column_width<'a>(
+    header: &str,
+    values: impl IntoIterator<Item = &'a str>,
+    max: usize,
+) -> usize {
+    let widest = values
+        .into_iter()
+        .map(|value| super::sane(value).replace('\n', " ").width())
+        .fold(header.width(), usize::max);
+    assert!(header.width() <= max, "a header is never cut");
+    widest.min(max)
+}
+
 /// A count right-aligned to `width`; never cut, so a large total stays exact.
 pub(super) fn number(value: u64, width: usize) -> String {
     format!("{value:>width$}")
@@ -132,6 +147,25 @@ mod tests {
     fn a_large_count_keeps_every_digit() {
         assert_eq!(number(123_456_789, 8), "123456789");
         assert_eq!(number(42, 5), "   42");
+    }
+
+    #[test]
+    fn a_column_fits_its_longest_value_up_to_its_cap() {
+        assert_eq!(
+            column_width("provider", ["vllm", "openai-responses"], 40),
+            16
+        );
+        assert_eq!(
+            column_width("status", ["ok"], 40),
+            6,
+            "never narrower than its header"
+        );
+        assert_eq!(
+            column_width("name", ["日本語"], 40),
+            6,
+            "measured in columns"
+        );
+        assert_eq!(column_width("name", ["x".repeat(99).as_str()], 40), 40);
     }
 
     #[test]

@@ -59,7 +59,7 @@ impl MemoryService {
                 continue;
             }
             let (admission, commit) = self.evaluate(&hold, candidate, actor.clone(), None, None)?;
-            self.store.commit(commit)?;
+            self.commit(&hold, commit)?;
             drop(hold);
             match &admission {
                 Admission::Accepted { .. } => report.admitted += 1,

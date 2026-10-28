@@ -14,7 +14,7 @@ pub use index::{LocalEmbeddingIndex, MemoryIndex};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use aether_core::event::{Actor, EventDraft, EventKind};
+use aether_core::event::{Actor, Event, EventDraft, EventKind};
 use aether_core::id::{AgentId, MemoryId, TaskId};
 use aether_core::memory::{MemoryCandidate, MemoryKind, MemoryRecord, MemoryScope};
 use aether_core::time::now;
@@ -120,8 +120,13 @@ pub struct RetrievalRequest {
     pub limit: usize,
 }
 
+/// Hands each committed memory event to live subscribers: the daemon's
+/// event bus. Called under the commit gate, so it must not block.
+pub type Publisher = Arc<dyn Fn(&Event) + Send + Sync>;
+
 /// The memory service. Decides; the runtime commits (single writer), except
-/// for [`MemoryService::admit`], a convenience that commits directly.
+/// for admission and curation, which commit directly and publish what they
+/// committed.
 #[derive(Clone)]
 pub struct MemoryService {
     store: Arc<dyn Store>,
@@ -131,6 +136,7 @@ pub struct MemoryService {
     gate: WriteGate,
     policy: AdmissionPolicy,
     index: Option<Arc<dyn MemoryIndex>>,
+    publisher: Option<Publisher>,
 }
 
 impl std::fmt::Debug for MemoryService {
@@ -138,6 +144,7 @@ impl std::fmt::Debug for MemoryService {
         f.debug_struct("MemoryService")
             .field("policy", &self.policy)
             .field("index", &self.index.as_ref().map(|i| i.name()))
+            .field("publishes", &self.publisher.is_some())
             .finish()
     }
 }
@@ -149,7 +156,28 @@ impl MemoryService {
             gate,
             policy: AdmissionPolicy::default(),
             index: None,
+            publisher: None,
         }
+    }
+
+    /// Publish every event this service commits itself, as the runtime
+    /// publishes its own commits.
+    pub fn with_publisher(mut self, publisher: Publisher) -> Self {
+        self.publisher = Some(publisher);
+        self
+    }
+
+    /// Commit under `_hold`, then publish before it is released, so
+    /// subscribers see the events in the order the log has them.
+    fn commit(&self, _hold: &Hold<'_>, commit: Commit) -> Result<Vec<Event>> {
+        let expected = commit.events.len();
+        let events = self.store.commit(commit)?;
+        debug_assert!(events.len() >= expected, "every drafted event landed");
+        debug_assert!(events.windows(2).all(|w| w[0].seq < w[1].seq));
+        if let Some(publish) = &self.publisher {
+            events.iter().for_each(|event| publish(event));
+        }
+        Ok(events)
     }
 
     pub fn with_policy(mut self, policy: AdmissionPolicy) -> Self {
@@ -218,7 +246,7 @@ impl MemoryService {
         let admission = {
             let hold = self.gate.hold();
             let (admission, commit) = self.evaluate(&hold, candidate, actor, agent, task)?;
-            self.store.commit(commit)?;
+            self.commit(&hold, commit)?;
             admission
         };
         if let Some(record) = admission.record() {
@@ -421,13 +449,14 @@ impl MemoryService {
         by: Actor,
         change: impl FnOnce(&mut MemoryRecord) -> (bool, EventKind),
     ) -> Result<(MemoryRecord, bool)> {
-        let _hold = self.gate.hold();
+        let hold = self.gate.hold();
         let mut record = self.store.memory(id)?.ok_or(MemoryError::NotFound(id))?;
         let (changed, event) = change(&mut record);
         if !changed {
             return Ok((record, false));
         }
-        self.store.commit(
+        self.commit(
+            &hold,
             Commit::new()
                 .event(EventDraft::new(by, event))
                 .mutate(Mutation::PutMemory(record.clone())),

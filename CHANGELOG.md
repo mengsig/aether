@@ -46,6 +46,28 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Status, doctor and auth report current and correct state (#311).**
+  Problems about one agent (a stall, a failed budget, deadline or
+  scheduling check, a pending cancellation, a lease heartbeat) and about one
+  queued task (a dependency check) stayed in `aether status` and the doctor
+  after the agent ended or the task left the queue, until a restart; the
+  scheduler now drops them then. Memory curation (admit, accept, reject,
+  pin, forget, restore, retract) committed straight to the store and never
+  reached the event bus, so a client following events missed every
+  `memory.*` event; they are now published as they commit. `aether agents`
+  shows a ready agent as "waiting: disk low" while the disk is below its
+  floor, instead of "ready". `aether status` lists at most ten runs, the
+  ones spending now first, and sums up the rest in one line; `--json` still
+  lists every run. The daemon now marks its store while it runs and clears
+  the mark when it stops cleanly, and `aether doctor` has a `shutdown` check
+  that warns when the last run was killed, crashed or lost power, until the
+  next clean stop. `aether auth` probes keyless local servers as
+  `aether providers` and the doctor do: one nothing answers at is
+  "unreachable", one that answers with an empty model list is "no models"
+  (in all three), and one that serves models is "no auth needed" rather
+  than "ready". Its columns fit their longest entry, and a CLI sign-in that
+  is missing or expired reads "not signed in, run `aether login
+  claude-code`" instead of the CLI's raw output. No `--json` field changed.
 - **A detached daemon honours `--workspace`, remote spawn schedules run in a
   host workspace, and `--every` has a one-minute minimum (#310).**
   `aether daemon --workspace PATH` only worked with `--foreground`: the

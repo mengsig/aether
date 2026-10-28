@@ -1,5 +1,5 @@
 //! Which providers can take a turn: those with credentials, and local
-//! servers that need none but only count once something listens there.
+//! servers that need none but only count once they answer with a model.
 
 use std::time::Duration;
 
@@ -9,9 +9,12 @@ use aether_protocol::{AuthInfo, ProviderInfo};
 
 use super::Check;
 
-/// How long a local server gets to accept a connection. They are probed
+/// How long a local server gets to list its models. They are probed
 /// together, so this bounds the whole probe.
 pub const PROBE_TIMEOUT: Duration = Duration::from_millis(800);
+
+/// The most of a model list read; a local server's is a few kilobytes.
+const MAX_MODEL_LIST_BYTES: usize = 1 << 20;
 
 /// A provider that needs no credentials, and the base URL it serves on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,11 +23,38 @@ pub struct LocalServer {
     pub base_url: String,
 }
 
-/// A local server that did not accept a connection, by `host:port`.
+/// Why a local server cannot take a turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fault {
+    /// Nothing answered within the probe's time.
+    Unreachable,
+    /// It answered with an empty model list: nothing is loaded or pulled.
+    NoModels,
+}
+
+/// A local server that cannot take a turn, by `host:port`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Unreachable {
+pub struct NotServing {
     pub provider: String,
     pub address: String,
+    pub fault: Fault,
+}
+
+impl NotServing {
+    /// The status `aether auth` and `aether providers` both show.
+    pub fn label(&self) -> &'static str {
+        match self.fault {
+            Fault::Unreachable => "unreachable",
+            Fault::NoModels => "no models",
+        }
+    }
+
+    fn describe(&self) -> String {
+        match self.fault {
+            Fault::Unreachable => format!("{} not reachable at {}", self.provider, self.address),
+            Fault::NoModels => format!("{} at {} serves no models", self.provider, self.address),
+        }
+    }
 }
 
 /// The providers in `auth` that are ready only because they need no
@@ -42,34 +72,73 @@ pub fn local_servers(auth: &[AuthInfo], providers: &[ProviderInfo]) -> Vec<Local
         .collect()
 }
 
-/// Connect to every server at once, and name those that refused or did not
-/// answer within `timeout`.
-pub async fn unreachable_servers(servers: &[LocalServer], timeout: Duration) -> Vec<Unreachable> {
+/// Ask every server for its models at once, and name those that did not
+/// answer within `timeout` or listed none.
+pub async fn servers_not_serving(
+    servers: &[LocalServer],
+    timeout: Duration,
+) -> anyhow::Result<Vec<NotServing>> {
     assert!(
         !timeout.is_zero(),
         "a zero timeout reports every server down"
     );
-    let probes = servers.iter().map(|server| async move {
-        let Some(address) = server_address(&server.base_url) else {
-            return Some(Unreachable {
-                provider: server.provider.clone(),
-                address: server.base_url.clone(),
-            });
-        };
-        let connect = tokio::net::TcpStream::connect(address.as_str());
-        let answered = matches!(tokio::time::timeout(timeout, connect).await, Ok(Ok(_)));
-        (!answered).then(|| Unreachable {
-            provider: server.provider.clone(),
-            address,
-        })
-    });
-    let found: Vec<Unreachable> = futures::future::join_all(probes)
+    // Local servers: a configured HTTP proxy would answer for them.
+    let client = reqwest::Client::builder().no_proxy().build()?;
+    let probes = servers.iter().map(|server| probe(&client, server, timeout));
+    let found: Vec<NotServing> = futures::future::join_all(probes)
         .await
         .into_iter()
         .flatten()
         .collect();
     debug_assert!(found.len() <= servers.len());
-    found
+    Ok(found)
+}
+
+async fn probe(
+    client: &reqwest::Client,
+    server: &LocalServer,
+    timeout: Duration,
+) -> Option<NotServing> {
+    let not_serving = |address: String, fault| NotServing {
+        provider: server.provider.clone(),
+        address,
+        fault,
+    };
+    let Some(address) = server_address(&server.base_url) else {
+        return Some(not_serving(server.base_url.clone(), Fault::Unreachable));
+    };
+    let url = format!("{}/models", server.base_url.trim_end_matches('/'));
+    match tokio::time::timeout(timeout, models_listed(client, &url)).await {
+        Ok(Ok(Some(0))) => Some(not_serving(address, Fault::NoModels)),
+        // A list it could not give or that did not parse may still mean a
+        // server taking named models: only an empty one proves it idle.
+        Ok(Ok(_)) => None,
+        Ok(Err(_)) | Err(_) => Some(not_serving(address, Fault::Unreachable)),
+    }
+}
+
+/// How many models an OpenAI-compatible `/models` lists; `None` when the
+/// server answered with something else. Errs when nothing answered.
+async fn models_listed(client: &reqwest::Client, url: &str) -> reqwest::Result<Option<usize>> {
+    let mut response = client.get(url).send().await?;
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        body.extend_from_slice(&chunk);
+        if body.len() > MAX_MODEL_LIST_BYTES {
+            return Ok(None);
+        }
+    }
+    let list: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(list) => list,
+        Err(_) => return Ok(None),
+    };
+    Ok(list
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len))
 }
 
 /// `host:port` of a base URL, the port defaulted from its scheme; `None`
@@ -83,10 +152,10 @@ fn server_address(base_url: &str) -> Option<String> {
 
 /// At least one provider can take a turn, and the daemon's default model is
 /// on one of them. `default_model` is the daemon's pick, `None` when it has
-/// none; `unreachable` are local servers nothing answered at.
+/// none; `not_serving` are local servers that cannot take a turn.
 pub fn check_providers(
     auth: &[AuthInfo],
-    unreachable: &[Unreachable],
+    not_serving: &[NotServing],
     default_model: Option<&ModelRef>,
     command: &str,
 ) -> Check {
@@ -97,15 +166,15 @@ pub fn check_providers(
             format!("run `{command} auth` against a running daemon to see them"),
         );
     }
-    let is_down = |provider: &str| unreachable.iter().any(|u| u.provider == provider);
+    let is_down = |provider: &str| not_serving.iter().any(|u| u.provider == provider);
     let ready: Vec<&str> = auth
         .iter()
         .filter(|a| a.configured && !is_down(&a.provider))
         .map(|a| a.provider.as_str())
         .collect();
-    let down = unreachable
+    let down = not_serving
         .iter()
-        .map(|u| format!("{} not reachable at {}", u.provider, u.address))
+        .map(NotServing::describe)
         .collect::<Vec<_>>()
         .join(", ");
     let with_down = |detail: String| {

@@ -1,5 +1,7 @@
 //! Bounded evidence of the latest daemon panic or fatal return, beside its store.
 
+pub mod shutdown;
+
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
@@ -67,16 +69,26 @@ impl CrashRecord {
 
 /// Marker name for a resolved database path; I/O resolves existing store aliases.
 pub fn path_for(store: &Path) -> PathBuf {
+    beside(store, ".crash.json")
+}
+
+/// `store` with `suffix` appended to its whole file name.
+fn beside(store: &Path, suffix: &str) -> PathBuf {
     let mut path = store.as_os_str().to_owned();
-    path.push(".crash.json");
+    path.push(suffix);
     PathBuf::from(path)
 }
 
 fn marker_path(store: &Path) -> io::Result<PathBuf> {
+    resolved_beside(store, ".crash.json")
+}
+
+/// [`beside`] the database an alias names, so every alias shares one marker.
+fn resolved_beside(store: &Path, suffix: &str) -> io::Result<PathBuf> {
     match std::fs::canonicalize(store) {
-        Ok(resolved) => Ok(path_for(&resolved)),
+        Ok(resolved) => Ok(beside(&resolved, suffix)),
         // A fatal start may happen before the database exists.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(path_for(store)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(beside(store, suffix)),
         Err(error) => Err(error),
     }
 }
@@ -130,6 +142,17 @@ fn write(path: &Path, record: &CrashRecord) -> io::Result<()> {
 
 /// Refuse links and special files, and never allocate from an untrusted file size.
 pub fn read(store: &Path) -> io::Result<Option<CrashRecord>> {
+    let Some(bytes) = read_bounded(&marker_path(store)?)? else {
+        return Ok(None);
+    };
+    let record: CrashRecord = serde_json::from_slice(&bytes)?;
+    record.validate()?;
+    Ok(Some(record))
+}
+
+/// A marker's bytes, `None` when there is none; links, special files and
+/// anything over [`MAX_RECORD_BYTES`] are refused.
+fn read_bounded(path: &Path) -> io::Result<Option<Vec<u8>>> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -139,7 +162,7 @@ pub fn read(store: &Path) -> io::Result<Option<CrashRecord>> {
             (rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as i32,
         );
     }
-    let file = match options.open(marker_path(store)?) {
+    let file = match options.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -147,7 +170,7 @@ pub fn read(store: &Path) -> io::Result<Option<CrashRecord>> {
     if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "crash evidence is not a regular file",
+            "daemon evidence is not a regular file",
         ));
     }
     let mut bytes = Vec::new();
@@ -156,12 +179,11 @@ pub fn read(store: &Path) -> io::Result<Option<CrashRecord>> {
     if bytes.len() > MAX_RECORD_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "crash evidence exceeds its size limit",
+            "daemon evidence exceeds its size limit",
         ));
     }
-    let record: CrashRecord = serde_json::from_slice(&bytes)?;
-    record.validate()?;
-    Ok(Some(record))
+    debug_assert!(bytes.len() <= MAX_RECORD_BYTES);
+    Ok(Some(bytes))
 }
 
 /// Called under the daemon's store lock, before starting its background tasks.

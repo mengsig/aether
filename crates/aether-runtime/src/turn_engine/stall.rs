@@ -96,7 +96,8 @@ pub(super) fn record(
     attempt: u32,
 ) -> Result<()> {
     assert!(attempt >= 1, "attempts count from 1");
-    runtime.report_problem(
+    runtime.report_problem_about(
+        crate::problems::Subject::Agent(ctx.agent.id),
         problem_key(ctx.agent.id),
         format!(
             "Agent {} stalled on {} ({model}): no output for {}s, attempt {attempt}; \

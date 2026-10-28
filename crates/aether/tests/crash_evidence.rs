@@ -139,7 +139,8 @@ fn doctor_reports_malformed_evidence_without_replacing_it() {
     assert_eq!(std::fs::read(crash::path_for(&store)).unwrap(), b"{");
 }
 
-async fn clean_daemon_run(root: &Path) -> Output {
+/// A foreground daemon under `root`, once it answers.
+async fn started_daemon(root: &Path) -> (tokio::process::Child, aether_client::Client) {
     use std::process::Stdio;
     use std::time::Duration;
     let mut command = isolated_command(root);
@@ -165,6 +166,12 @@ async fn clean_daemon_run(root: &Path) -> Output {
     })
     .await
     .unwrap();
+    (child, client)
+}
+
+async fn clean_daemon_run(root: &Path) -> Output {
+    use std::time::Duration;
+    let (child, client) = started_daemon(root).await;
     // The start acknowledged the evidence, so it is history rather than a problem (#267).
     let status = client.status().await.unwrap();
     assert!(
@@ -226,4 +233,54 @@ async fn startup_prints_evidence_once_and_clean_shutdown_keeps_it() {
     let second = clean_daemon_run(root.path()).await;
     assert!(!String::from_utf8_lossy(&second.stderr).contains("once-only regression"));
     assert_eq!(crash::read(&store).unwrap().unwrap(), evidence);
+}
+
+fn doctor_check(root: &Path, name: &str) -> Value {
+    let doctor = command(root, &["doctor", "--json"]);
+    let report: Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == name)
+        .cloned()
+        .expect("doctor reports the check")
+}
+
+#[tokio::test]
+async fn doctor_warns_after_a_killed_daemon_and_not_after_a_clean_stop() {
+    use std::time::Duration;
+    let root = tempfile::tempdir().unwrap();
+    assert_eq!(doctor_check(root.path(), "shutdown")["level"], "ok");
+    let (mut killed, _client) = started_daemon(root.path()).await;
+    killed.start_kill().unwrap();
+    tokio::time::timeout(Duration::from_secs(20), killed.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    let gone = doctor_check(root.path(), "shutdown");
+    assert_eq!(gone["level"], "warn", "{gone}");
+    assert!(
+        gone["detail"].as_str().unwrap().contains("does not answer"),
+        "{gone}"
+    );
+
+    let (restarted, client) = started_daemon(root.path()).await;
+    let found = doctor_check(root.path(), "shutdown");
+    assert_eq!(found["level"], "warn", "{found}");
+    assert!(
+        found["detail"]
+            .as_str()
+            .unwrap()
+            .contains("stopped without a clean shutdown"),
+        "{found}"
+    );
+    client.shutdown().await.unwrap();
+    let stopped = tokio::time::timeout(Duration::from_secs(20), restarted.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stopped.status.success());
+    let clean = doctor_check(root.path(), "shutdown");
+    assert_eq!(clean["level"], "ok", "{clean}");
 }

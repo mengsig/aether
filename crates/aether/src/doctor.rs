@@ -10,8 +10,10 @@ use std::path::{Path, PathBuf};
 mod agent_temp;
 mod providers;
 pub use agent_temp::check_agent_temp;
+#[cfg(test)]
+pub use providers::Fault;
 pub use providers::{
-    PROBE_TIMEOUT, Unreachable, check_providers, local_servers, unreachable_servers,
+    NotServing, PROBE_TIMEOUT, check_providers, local_servers, servers_not_serving,
 };
 
 use aether_core::disk::{DiskFloor, LowDisk};
@@ -912,5 +914,49 @@ pub fn check_crash(paths: &Paths, command: &str) -> Check {
             Some(note) => Check::ok("crash", note),
             None => Check::ok("crash", "no recorded daemon panic or fatal error"),
         },
+    }
+}
+
+/// Whether the daemon's last run stopped cleanly. `answering` is whether a
+/// daemon answered on the socket just now, whatever its version.
+pub fn check_shutdown(paths: &Paths, answering: bool, command: &str) -> Check {
+    use aether_core::crash::shutdown;
+    let store = paths.store_path();
+    let unreadable = |error: std::io::Error| {
+        Check::warn(
+            "shutdown",
+            format!(
+                "cannot read the daemon run marks beside {}: {error}",
+                store.display()
+            ),
+            format!("{command} diagnose"),
+        )
+    };
+    match shutdown::unclean(&store) {
+        Err(error) => return unreadable(error),
+        Ok(Some(found)) => {
+            return Check::warn(
+                "shutdown",
+                found.summary(),
+                format!(
+                    "`{command} stop` stops the daemon cleanly; if it recurs, `{command} diagnose`"
+                ),
+            );
+        }
+        Ok(None) => {}
+    }
+    match shutdown::running(&store) {
+        Err(error) => unreadable(error),
+        Ok(Some(run)) if !answering => Check::warn(
+            "shutdown",
+            format!(
+                "The daemon started at {} (pid {}) does not answer and has not stopped cleanly: \
+                 it was killed, crashed or lost power, or is still starting or stopping.",
+                run.started_at.to_rfc3339(),
+                run.pid
+            ),
+            format!("`{command} daemon` starts it again and recovers its work"),
+        ),
+        Ok(_) => Check::ok("shutdown", "no unclean daemon stop recorded"),
     }
 }

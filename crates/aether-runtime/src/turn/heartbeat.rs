@@ -104,7 +104,13 @@ pub(super) fn spawn_heartbeat(runtime: Arc<Runtime>, mut lease: Lease, agent: &A
                 &name,
                 reporting.shutdown.clone(),
                 true,
-                |detail| reporting.report_problem(format!("heartbeat.{id}"), detail),
+                |detail| {
+                    reporting.report_problem_about(
+                        crate::problems::Subject::Agent(id),
+                        format!("heartbeat.{id}"),
+                        detail,
+                    )
+                },
                 renewing,
             )
             .await;

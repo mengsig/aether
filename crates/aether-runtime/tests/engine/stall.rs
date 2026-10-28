@@ -183,6 +183,42 @@ async fn an_engine_that_keeps_stalling_ends_the_turn_with_an_actionable_error() 
 }
 
 #[tokio::test]
+async fn a_stalled_agent_leaves_no_problem_once_cancelled() {
+    let runs = (0..10)
+        .map(|_| (vec![session("kept")], Ending::Silent))
+        .collect();
+    let (h, _engine, id) = stalling(runs).await;
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("do the work")], Actor::user())
+        .unwrap();
+    wait_for(h.store.as_ref(), id, |a| {
+        a.stats.turns > 0 && a.status.kind() != AgentStatusKind::Running
+    })
+    .await;
+    let mentions = |h: &Harness| {
+        let problems = h.runtime.problems().unwrap();
+        problems.iter().any(|p| p.contains(&id.to_string()))
+    };
+    assert!(
+        mentions(&h),
+        "the gave-up stall is reported while the agent lives"
+    );
+    h.runtime
+        .cancel_agent(id, Some("gave up".into()), Actor::user())
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while mentions(&h) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a cancelled agent's stall outlived it: {:?}",
+            h.runtime.problems()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_tool_that_runs_longer_than_the_timeout_is_not_a_stall() {
     let mut finish = vec![EngineEvent::ToolResult {
         tool_use_id: "slow".into(),

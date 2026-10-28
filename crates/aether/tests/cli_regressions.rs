@@ -331,6 +331,8 @@ async fn cli_with_socket(
                     source: Some(HOSTILE.into()), methods: vec![HOSTILE.into()], subscription: false,
                     detail: None, program: None,
                 }])),
+                // `auth` asks which keyless servers to probe; none here.
+                Command::Providers => Ok(Reply::Providers(Vec::new())),
                 Command::ListApprovalRules { .. } => Ok(Reply::ApprovalRules(vec![
                     aether_core::approval::ApprovalRule {
                         id: aether_core::id::ApprovalRuleId::new(),
