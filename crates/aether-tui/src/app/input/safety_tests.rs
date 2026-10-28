@@ -401,6 +401,64 @@ fn late_palette_reply_keys_never_answer_a_visible_approval_or_change_the_draft()
     }
 }
 
+fn dcs_reply_keys() -> Vec<crossterm::event::KeyEvent> {
+    use crossterm::event::{KeyEvent, KeyModifiers};
+    let mut keys = Vec::new();
+    // Crossterm turns ESC P into Alt+Shift+P and ESC \ into Alt+\.
+    for payload in ["1$r0;48;2;1;2;3m", "1+r524742=31", "0+r524742"] {
+        keys.push(KeyEvent::new(
+            KeyCode::Char('P'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+        ));
+        keys.extend(payload.chars().map(|c| key(KeyCode::Char(c))));
+        keys.push(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::ALT));
+    }
+    keys
+}
+
+#[test]
+fn late_truecolor_dcs_replies_never_reach_the_draft() {
+    let mut f = fleet();
+    f.app.board.open = false;
+    for c in "draft".chars() {
+        f.app.dispatch_key(key(KeyCode::Char(c)));
+    }
+    for event in dcs_reply_keys() {
+        assert!(
+            f.app.dispatch_key(event).is_empty(),
+            "reply key {event:?} had an effect"
+        );
+    }
+    assert_eq!(f.app.input.text, "draft");
+    f.app.dispatch_key(key(KeyCode::Char('!')));
+    assert_eq!(f.app.input.text, "draft!");
+}
+
+#[test]
+fn late_truecolor_dcs_replies_never_answer_a_visible_approval() {
+    let mut f = fleet();
+    f.app.size = (120, 40);
+    f.app.board.open = false;
+    f.app
+        .approvals
+        .push(shell_approval(f.tester, "rm -rf build", at(-5000)));
+    read_card(&mut f.app);
+    f.app.now += Duration::seconds(5);
+    assert!(f.app.shown_approval().is_some());
+    for event in dcs_reply_keys() {
+        assert!(
+            f.app.dispatch_key(event).is_empty(),
+            "reply key {event:?} had an effect"
+        );
+    }
+    assert!(f.app.input.text.is_empty());
+    assert!(f.app.resolving.is_empty());
+    assert_eq!(
+        resolved(&f.app.dispatch_key(key(KeyCode::Char('y')))),
+        Some(ApprovalDecision::Approved)
+    );
+}
+
 #[test]
 fn an_approval_must_fit_and_resizing_restarts_the_visible_timer() {
     for height in 3..=12 {

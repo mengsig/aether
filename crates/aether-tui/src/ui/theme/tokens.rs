@@ -235,8 +235,8 @@ impl Default for Theme {
 }
 
 impl Theme {
-    /// The §5.2 table for `spec`. The band needs a probed palette; animated
-    /// blends also need a depth above ANSI-16.
+    /// The §5.2 table for `spec`. Blends need the probed palette and a depth
+    /// above ANSI-16; without them tint and pulse drop out.
     pub fn resolve(spec: ThemeSpec) -> Theme {
         let background = match spec.mode {
             ThemeMode::Dark => Background::Dark,
@@ -523,7 +523,7 @@ fn color_tokens(spec: ThemeSpec, background: Background) -> Tokens {
     });
     let blendable = spec.palette.filter(|_| spec.depth != ColorDepth::Basic16);
     let fg = |rgb| Style::new().fg(best_color(rgb, spec.depth));
-    let mut base = Tokens {
+    let base = Tokens {
         text: Style::new(),
         secondary: dim,
         title: Style::new().add_modifier(Modifier::BOLD),
@@ -537,9 +537,6 @@ fn color_tokens(spec: ThemeSpec, background: Background) -> Tokens {
         shimmer: None,
     };
     let Some(p) = blendable else {
-        if let Some(palette) = spec.palette {
-            base.tint = Some(band_color(palette.bg, spec.depth, background));
-        }
         return base;
     };
     let quiet = blend(p.fg, p.bg, 0.55);
@@ -567,6 +564,7 @@ fn color_tokens(spec: ThemeSpec, background: Background) -> Tokens {
 const MIN_BAND_CONTRAST: f64 = 1.15;
 
 fn band_color(bg: Rgb, depth: ColorDepth, background: Background) -> Color {
+    debug_assert!(depth != ColorDepth::Basic16, "ANSI-16 shows no band");
     let tint = match background {
         Background::Dark => blend(WHITE, bg, 0.07),
         Background::Light => blend(BLACK, bg, 0.06),
@@ -774,19 +772,19 @@ mod tests {
             Rgb(0, 0x2b, 0x36),
         ] {
             let palette = Some(TerminalPalette { fg: WHITE, bg });
-            for depth in [ColorDepth::Indexed256, ColorDepth::Basic16] {
-                let theme = Theme::resolve(spec(ThemeMode::Auto, depth, palette));
-                let Color::Indexed(index) = theme.tint().bg.unwrap() else {
-                    panic!("indexed tint")
-                };
-                let rgb = xterm_rgb(index);
-                assert_ne!(index, nearest_index(bg));
-                assert!(contrast_ratio(rgb, bg) >= MIN_BAND_CONTRAST);
-                assert_eq!(
-                    super::super::probe::luminance(rgb) > super::super::probe::luminance(bg),
-                    theme.background() == Background::Dark
-                );
-            }
+            let theme = Theme::resolve(spec(ThemeMode::Auto, ColorDepth::Indexed256, palette));
+            let Color::Indexed(index) = theme.tint().bg.unwrap() else {
+                panic!("indexed tint")
+            };
+            let rgb = xterm_rgb(index);
+            assert_ne!(index, nearest_index(bg));
+            assert!(contrast_ratio(rgb, bg) >= MIN_BAND_CONTRAST);
+            assert_eq!(
+                super::super::probe::luminance(rgb) > super::super::probe::luminance(bg),
+                theme.background() == Background::Dark
+            );
+            let basic = Theme::resolve(spec(ThemeMode::Auto, ColorDepth::Basic16, palette));
+            assert_eq!(basic.tint().bg, None, "ANSI-16 cannot show index {index}");
             let theme = Theme::resolve(spec(ThemeMode::Auto, ColorDepth::Truecolor, palette));
             let tint = match theme.background() {
                 Background::Dark => blend(WHITE, bg, 0.07),
@@ -1002,14 +1000,17 @@ mod tests {
             assert_eq!(theme.shimmer(0.7), dim);
             assert_eq!(theme.command(), Style::new());
         }
-        // The band stays distinct at ANSI-16, while animated blends stay off.
+        // ANSI-16 cannot show a blend even when the palette is known.
         let basic = Theme::resolve(spec(
             ThemeMode::Auto,
             ColorDepth::Basic16,
             Some(GITHUB_DARK),
         ));
-        assert_eq!(basic.selected(), basic.tint());
-        assert!(basic.tint().bg.is_some());
+        assert_eq!(
+            basic.selected(),
+            Style::new().add_modifier(Modifier::UNDERLINED)
+        );
+        assert_eq!(basic.tint().bg, None);
         assert_eq!(basic.pulse(1.0), basic.running());
         assert_eq!(basic.shimmer(1.0), basic.secondary());
     }

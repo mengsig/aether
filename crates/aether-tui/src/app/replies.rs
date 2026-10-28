@@ -259,11 +259,14 @@ impl App {
 
     fn reply_failed(&mut self, e: ClientError, then: Then) -> Vec<Effect> {
         if let Then::MessageSent { agent, message } = then {
+            let had_images = !message.images.is_empty();
             self.restore_agent_message(agent, message);
-            let recovery = if matches!(e, ClientError::Protocol(_)) {
+            let recovery = if !matches!(e, ClientError::Protocol(_)) {
+                "your message is back in the draft; delivery uncertain: check the transcript before sending it again"
+            } else if had_images {
                 "your message is back in the draft - remove the images (Backspace at the start of the draft or /image --clear) to send the text"
             } else {
-                "your message is back in the draft; delivery uncertain: check the transcript before sending it again"
+                "your message is back in the draft"
             };
             self.flash_error(format!("{e}; {recovery}"));
             return Vec::new();

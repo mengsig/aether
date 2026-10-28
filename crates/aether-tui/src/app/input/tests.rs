@@ -1198,3 +1198,18 @@ fn ctrl_c_restores_the_theme_before_closing_its_picker() {
     assert_eq!(app.theme.spec(), original);
     assert!(app.bottom.view_stack.is_empty());
 }
+
+#[test]
+fn a_theme_picker_closed_by_a_click_does_not_keep_its_preview() {
+    let mut app = app();
+    let original = app.theme.spec();
+    app.run_slash(SlashCommand::Theme);
+    app.reduce(AppEvent::Key(key(KeyCode::Down)));
+    assert!(app.committed_theme.is_some());
+    assert_ne!(app.theme.spec(), original);
+    // A click on the transcript or composer clears the view stack like this.
+    app.bottom.view_stack.clear();
+    app.reduce(AppEvent::Focus(true));
+    assert_eq!(app.theme.spec(), original);
+    assert!(app.committed_theme.is_none());
+}

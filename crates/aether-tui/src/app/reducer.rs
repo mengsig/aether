@@ -21,6 +21,7 @@ impl App {
         let track_find = !matches!(event, AppEvent::Tick { .. } | AppEvent::Focus(_));
         let selection = self.selected;
         let mut effects = self.reduce_inner(event);
+        self.end_orphaned_theme_preview();
         if track_find {
             self.track_find();
         }

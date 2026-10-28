@@ -190,6 +190,14 @@ impl App {
         self.refresh_ui_theme(spec);
     }
 
+    /// A picker closed without Enter or Esc (a click, a disconnect) ends its preview.
+    pub(crate) fn end_orphaned_theme_preview(&mut self) {
+        if self.committed_theme.is_some() && !self.bottom.showing(ViewKind::Theme) {
+            self.preview_theme(None);
+            debug_assert!(self.committed_theme.is_none());
+        }
+    }
+
     pub fn apply_terminal_probe(&mut self, probe: crate::ui::theme::probe::TerminalProbe) {
         use crate::ui::theme::ColorDepth;
         let before = self.theme.spec();

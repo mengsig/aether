@@ -38,6 +38,27 @@ fn rejected_image_only_message_returns_to_the_composer() {
 }
 
 #[test]
+fn refused_text_message_returns_without_an_image_hint() {
+    let (mut app, _) = app_viewing(AgentStatus::Ready);
+    app.input.set_text("hello");
+    let (_, then) = message_request(app.reduce(key(KeyCode::Enter)));
+    assert!(app.input.text.is_empty());
+    let refusal = aether_client::ClientError::Protocol(aether_protocol::ErrorReply::new(
+        aether_protocol::ErrorCode::InvalidTransition,
+        "that agent has finished",
+    ));
+    let effects = app.reduce(AppEvent::Reply {
+        then,
+        result: Err(refusal),
+    });
+    assert!(sent_none(&effects));
+    assert_eq!(app.input.text, "hello");
+    let flash = app.live_flash().expect("refusal");
+    assert!(flash.contains("back in the draft"), "{flash}");
+    assert!(!flash.contains("image"), "{flash}");
+}
+
+#[test]
 fn rejected_message_restores_the_original_agents_parked_draft() {
     let (mut app, first) = app_viewing(AgentStatus::Ready);
     attach(&mut app, png("shot.png"));
