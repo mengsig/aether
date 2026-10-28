@@ -35,6 +35,7 @@ pub(super) async fn handle_request(
     cancel: &CancellationToken,
     parked: bool,
     native_jobs: bool,
+    engine_left: impl std::future::Future<Output = ()>,
 ) -> Result<Served> {
     let mut completed = req.name != "permission";
     if parked && req.name == "permission" {
@@ -50,7 +51,14 @@ pub(super) async fn handle_request(
         return Ok(Served::Refused);
     }
     let reply = if req.name == "permission" {
-        decide_permission(runtime, ctx, &req.input, cancel, req.reply.closed()).await?
+        decide_permission(
+            runtime,
+            ctx,
+            &req.input,
+            cancel,
+            asker_gone(&mut req.reply, engine_left),
+        )
+        .await?
     } else {
         // Resolve through exactly the list the bridge advertised, so a tool
         // the bridge never offered cannot be reached by naming it.
@@ -79,9 +87,15 @@ pub(super) async fn handle_request(
                     resources: tool.resources(&req.input, tool_ctx),
                     resources_known: tool.resources_known(&req.input),
                 };
-                let verdict =
-                    permission_verdict(runtime, ctx, gate, cancel, !parked, req.reply.closed())
-                        .await?;
+                let verdict = permission_verdict(
+                    runtime,
+                    ctx,
+                    gate,
+                    cancel,
+                    !parked,
+                    asker_gone(&mut req.reply, engine_left),
+                )
+                .await?;
                 if !verdict.allow {
                     let message = verdict
                         .message
@@ -187,6 +201,18 @@ pub(super) async fn handle_request(
     // A dropped receiver means the bridge went away; nothing to do.
     let _ = req.reply.send(reply.clone());
     Ok(Served::Ran(completed.then_some(reply)))
+}
+
+/// Completes once no answer can reach the asker: the bridge dropped the
+/// request, or the engine itself left the turn while its bridge still waits.
+async fn asker_gone(
+    reply: &mut tokio::sync::oneshot::Sender<(String, bool)>,
+    engine_left: impl std::future::Future<Output = ()>,
+) {
+    tokio::select! {
+        () = reply.closed() => {}
+        () = engine_left => {}
+    }
 }
 
 /// An action whose park only waits on an answer or a child, so its reply can

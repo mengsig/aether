@@ -1,6 +1,6 @@
 //! An approval an engine turn waits on ends with that turn: interrupted,
-//! cancelled or left by an engine that exited, the turn leaves it denied by
-//! the system, never pending.
+//! cancelled or left by an engine that exited, whether it asked natively or
+//! through its bridge, the turn leaves it denied by the system, never pending.
 use super::*;
 use aether_core::tool::{ApprovalDecision, ApprovalStatus, SideEffectClass};
 
@@ -71,18 +71,79 @@ impl Engine for AskThenHoldEngine {
     }
 }
 
+/// Asks nothing itself: on its first turn it hands out its bridge
+/// credentials, then exits without a word once told to, while a permission
+/// prompt its bridge sent still waits. Later turns answer at once.
+struct BridgeAskThenExitEngine {
+    credentials: Mutex<Option<tokio::sync::oneshot::Sender<(AgentId, String)>>>,
+    exit: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl Engine for BridgeAskThenExitEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::CLAUDE_CODE
+    }
+    fn adapter(&self) -> String {
+        "bridge-ask-then-exit/1".into()
+    }
+    async fn run(
+        &self,
+        turn: EngineTurn,
+        _cancel: CancellationToken,
+    ) -> Result<EngineRun, EngineError> {
+        let (tx, rx) = mpsc::channel(4);
+        match self.credentials.lock().unwrap().take() {
+            Some(hand_out) => {
+                let args = &turn.mcp.as_ref().expect("a bridge for the turn").args;
+                let after = |flag: &str| {
+                    let at = args.iter().position(|arg| arg == flag).unwrap();
+                    args[at + 1].clone()
+                };
+                hand_out
+                    .send((after("--agent").parse().unwrap(), after("--token")))
+                    .unwrap();
+                let exit = self.exit.clone();
+                tokio::spawn(async move {
+                    exit.notified().await;
+                    drop(tx);
+                });
+            }
+            None => {
+                tokio::spawn(async move {
+                    let _ = tx
+                        .send(EngineEvent::Done(EngineOutcome {
+                            text: Some("done".into()),
+                            ..Default::default()
+                        }))
+                        .await;
+                });
+            }
+        }
+        Ok(EngineRun {
+            events: rx,
+            input: None,
+            decisions: None,
+            stop: None,
+        })
+    }
+}
+
 async fn gated_agent_waiting_on_approval(
     exits: bool,
 ) -> (Harness, AgentId, aether_core::id::ApprovalId) {
-    let h = harness_with_engine(
-        Arc::new(AskThenHoldEngine {
-            first: std::sync::atomic::AtomicBool::new(true),
-            exits,
-        }),
-        Arc::default(),
-        Arc::default(),
-    )
-    .await;
+    let engine = Arc::new(AskThenHoldEngine {
+        first: std::sync::atomic::AtomicBool::new(true),
+        exits,
+    });
+    let (h, agent) = gated_agent(engine).await;
+    let approval = raised_approval(&h, agent).await;
+    (h, agent, approval)
+}
+
+/// A started agent whose policy gates the engine's `make deploy`.
+async fn gated_agent(engine: Arc<dyn Engine>) -> (Harness, AgentId) {
+    let h = harness_with_engine(engine, Arc::default(), Arc::default()).await;
     let (agent, _) = h
         .runtime
         .create_agent(
@@ -107,10 +168,14 @@ async fn gated_agent_waiting_on_approval(
     h.runtime
         .send_message(agent.id, vec![ContentBlock::text("deploy")], Actor::user())
         .unwrap();
+    (h, agent.id)
+}
+
+async fn raised_approval(h: &Harness, agent: AgentId) -> aether_core::id::ApprovalId {
     // Read from the log: an engine that exits may see it expired at once.
     let raised = || {
         h.store
-            .events(0, 10_000, &EventFilter::for_agent(agent.id))
+            .events(0, 10_000, &EventFilter::for_agent(agent))
             .unwrap()
             .into_iter()
             .find_map(|event| match event.kind {
@@ -129,8 +194,8 @@ async fn gated_agent_waiting_on_approval(
     .await
     .expect("approval raised within seconds");
     let stored = h.store.approval(approval).unwrap().expect("stored");
-    assert_eq!(stored.agent_id, agent.id);
-    (h, agent.id, approval)
+    assert_eq!(stored.agent_id, agent);
+    approval
 }
 
 /// The approval left the lists, was denied by the system with a reason, and
@@ -208,5 +273,51 @@ async fn cancelling_the_agent_expires_the_engine_approval_its_turn_waited_on() {
 async fn an_engine_that_exits_mid_wait_expires_the_approval_it_asked_for() {
     let (h, agent, approval) = gated_agent_waiting_on_approval(true).await;
     assert_expired(&h, agent, approval).await;
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_engine_that_exits_while_its_bridge_waits_expires_the_approval() {
+    let (credentials, handed_out) = tokio::sync::oneshot::channel();
+    let exit = Arc::new(tokio::sync::Notify::new());
+    let engine = Arc::new(BridgeAskThenExitEngine {
+        credentials: Mutex::new(Some(credentials)),
+        exit: exit.clone(),
+    });
+    let (h, agent) = gated_agent(engine).await;
+    let (bridged, token) = tokio::time::timeout(Duration::from_secs(5), handed_out)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(bridged, agent);
+    // Like the daemon's dispatch, this keeps waiting for the reply after the
+    // engine is gone, so only the engine leaving can end the approval.
+    let runtime = h.runtime.clone();
+    let prompt = tokio::spawn(async move {
+        runtime
+            .engine_tool(
+                bridged,
+                &token,
+                "permission".into(),
+                serde_json::json!({
+                    "tool_name": "Bash",
+                    "tool_use_id": "deploy-call",
+                    "input": {"command": "make deploy"}
+                }),
+            )
+            .await
+    });
+    let approval = raised_approval(&h, agent).await;
+    exit.notify_one();
+    assert_expired(&h, agent, approval).await;
+    let (reply, _) = tokio::time::timeout(Duration::from_secs(5), prompt)
+        .await
+        .expect("the waiting bridge call is answered")
+        .unwrap()
+        .expect("answered, not dropped");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&reply).unwrap()["behavior"],
+        "deny"
+    );
     h.runtime.shutdown().await;
 }
