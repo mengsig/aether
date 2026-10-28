@@ -16,6 +16,9 @@ pub struct Redactor {
     patterns: Vec<(Regex, &'static str)>,
     /// Known secret values that span lines, which a stream must not split.
     multiline_known: Arc<[boundary::MultilineSecret]>,
+    /// The known-secret rule over bytes, kept while a secret spans lines: a
+    /// stream held at its size cap must not cut through one of its matches.
+    known_bytes: Option<regex::bytes::Regex>,
     /// Fewest bytes any rule matches; a shorter text run needs no masking.
     shortest_match: usize,
 }
@@ -116,6 +119,7 @@ impl Redactor {
         Self {
             patterns,
             multiline_known: Arc::from([]),
+            known_bytes: None,
             shortest_match: MIN_KNOWN_SECRET_CHARS,
         }
     }
@@ -169,6 +173,12 @@ impl Redactor {
         let rule = Regex::new(&alternation).map_err(|_| KnownSecretsError {
             values: known.len(),
         })?;
+        if known.iter().any(|value| value.contains('\n')) {
+            let bytes = regex::bytes::Regex::new(&alternation).map_err(|_| KnownSecretsError {
+                values: known.len(),
+            })?;
+            redactor.known_bytes = Some(bytes);
+        }
         // First, before a shape rule rewrites part of a value and hides the rest from it.
         redactor
             .patterns
@@ -274,31 +284,39 @@ impl Redactor {
         let mut in_key = false;
         let mut written = 0u64;
         loop {
-            chunk.clear();
-            self.read_chunk(&mut input, &mut chunk)?;
+            let ready = self.read_chunk(&mut input, &mut chunk)?;
             if chunk.is_empty() {
                 break;
             }
-            let clean = self.redact_piece(&chunk, &mut in_key);
+            assert!(
+                ready > 0 && ready <= chunk.len(),
+                "every chunk moves the stream on"
+            );
+            let clean = self.redact_piece(&chunk[..ready], &mut in_key);
             output.write_all(&clean)?;
             written += clean.len() as u64;
+            drop(clean);
+            // What is held back starts the next chunk.
+            chunk.drain(..ready);
         }
         output.flush()?;
         Ok(written)
     }
 
-    /// Reads about [`STREAM_CHUNK_BYTES`] on to a line end, and on again
-    /// while the chunk ends partway through a known secret.
+    /// Reads about [`STREAM_CHUNK_BYTES`] more on to a line end, and on again
+    /// while the chunk ends partway through a known secret. Returns how much
+    /// of the chunk is ready to mask; the rest is held back for the next one.
     fn read_chunk(
         &self,
         input: &mut impl std::io::BufRead,
         chunk: &mut Vec<u8>,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<usize> {
         use std::io::{BufRead as _, Read as _};
         const MAX: usize = STREAM_CHUNK_BYTES + STREAM_LINE_LIMIT_BYTES;
-        debug_assert!(chunk.is_empty(), "a chunk starts empty");
+        debug_assert!(chunk.len() < MAX, "a held-back tail leaves room to read");
         let mut want = STREAM_CHUNK_BYTES;
         let mut scan = boundary::BoundaryScan::new(&self.multiline_known);
+        let mut ended = false;
         while want > 0 && chunk.len() < MAX {
             let before = chunk.len();
             let room = |chunk: &Vec<u8>| (MAX - chunk.len()) as u64;
@@ -310,12 +328,21 @@ impl Redactor {
                 input.by_ref().take(room(chunk)).read_until(b'\n', chunk)?;
             }
             if chunk.len() == before {
+                ended = true;
                 break;
             }
             want = scan.unfinished(&self.multiline_known, chunk);
         }
         debug_assert!(chunk.len() <= MAX);
-        Ok(())
+        if ended || chunk.len() < MAX {
+            return Ok(chunk.len());
+        }
+        let partial = scan.partial();
+        Ok(boundary::cut_at_cap(
+            chunk,
+            partial,
+            self.known_bytes.as_ref(),
+        ))
     }
 }
 
@@ -640,6 +667,52 @@ mod tests {
             "{}",
             &text[text.len() - 64..]
         );
+    }
+
+    /// A run of a secret's own first lines grows a chunk to its cap; the
+    /// tail is held for the next chunk, so the stream masks what masking the
+    /// whole input would.
+    #[test]
+    fn a_stream_held_at_its_cap_masks_as_the_whole_input_would() {
+        let lines = (STREAM_CHUNK_BYTES + STREAM_LINE_LIMIT_BYTES) / 9 + 1;
+        let token = format!("ghp_{}secret01\n", "A".repeat(28));
+        let cases = [
+            // The secret itself completes after the cap.
+            (
+                vec!["alpha123\nalpha123\nZ"],
+                "alpha123\n".repeat(lines) + "Z\n",
+            ),
+            // A shorter secret on the short line the cap falls in.
+            (
+                vec!["alpha123\nalpha123\nZ", "alpha123"],
+                "alpha123\n".repeat(lines) + "Z\n",
+            ),
+            // The secret starts inside a token, which must stay whole.
+            (
+                vec!["secret01\nghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAsecret01\nZ"],
+                token.repeat(lines / 4) + "Z\n",
+            ),
+            // Back-to-back matches: one of them straddles the held-back tail,
+            // whichever line the cap falls in.
+            (vec!["aaaaaaaa\naaaaaaaa\n"], "aaaaaaaa\n".repeat(lines)),
+            (vec!["aaaaaaaa\naaaaaaaa\n"], "aaaaaaaa\n".repeat(lines + 1)),
+        ];
+        for (known, input) in cases {
+            let redactor = Redactor::with_known_secrets(known.clone()).expect("compiles");
+            let whole = redactor.redact_bytes(input.as_bytes());
+            assert!(
+                String::from_utf8_lossy(&whole).contains("[REDACTED:known_secret]"),
+                "{known:?}: the case masks something"
+            );
+            let mut out = Vec::new();
+            redactor
+                .redact_stream(input.as_bytes(), &mut out)
+                .expect("streams");
+            assert!(
+                out == whole.as_ref(),
+                "{known:?}: the stream differs from masking the whole input"
+            );
+        }
     }
 
     #[test]

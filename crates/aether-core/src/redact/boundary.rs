@@ -76,6 +76,11 @@ impl BoundaryScan {
         }
     }
 
+    /// The longest prefix of any of the secrets that ends the chunk so far.
+    pub(super) fn partial(&self) -> usize {
+        self.states.iter().copied().max().unwrap_or(0)
+    }
+
     /// How many more bytes a secret needs when `chunk` ends with its first
     /// lines, else 0. Only the bytes added since the last call are read.
     pub(super) fn unfinished(&mut self, secrets: &[MultilineSecret], chunk: &[u8]) -> usize {
@@ -93,6 +98,35 @@ impl BoundaryScan {
         }
         need
     }
+}
+
+/// Where to cut a chunk stopped at its size cap, holding the rest for the
+/// next chunk: at the start of the line where the `partial` secret prefix
+/// ending the chunk begins, or past a complete `known` match across that
+/// point, so the stream masks what masking the whole input would. A line
+/// that fills the chunk is cut where the prefix begins.
+pub(super) fn cut_at_cap(
+    chunk: &[u8],
+    partial: usize,
+    known: Option<&regex::bytes::Regex>,
+) -> usize {
+    assert!(partial <= chunk.len(), "the prefix lies inside the chunk");
+    let begins = chunk.len() - partial;
+    let line = chunk[..begins]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |at| at + 1);
+    let mut cut = if line > 0 { line } else { begins };
+    if let Some(known) = known
+        && let Some(across) = known
+            .find_iter(chunk)
+            .take_while(|found| found.start() < cut)
+            .find(|found| found.end() > cut)
+    {
+        cut = across.end();
+    }
+    debug_assert!(cut <= chunk.len());
+    if cut == 0 { chunk.len() } else { cut }
 }
 
 #[cfg(test)]

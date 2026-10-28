@@ -9,6 +9,7 @@ mod blocking_reads;
 #[cfg(unix)]
 mod credential_directory;
 mod device_gate;
+mod export_run;
 mod history_expiry;
 mod pipelined;
 mod provider_usage;
