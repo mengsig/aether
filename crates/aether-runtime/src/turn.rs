@@ -447,8 +447,8 @@ fn turn_refused(runtime: &Runtime, agent: &Agent, turn: u32) -> Result<Option<St
     if agent.config.token_budget.is_none() && agent.config.cost_budget.is_none() {
         return Ok(None);
     }
-    let all = runtime.store.agents(&AgentFilter::default())?;
-    let usage = aether_core::budget::subtree_usage(&all)
+    let subtree = runtime.store.subtree_agents(agent.id)?;
+    let usage = aether_core::budget::subtree_usage(&subtree)
         .get(&agent.id)
         .copied()
         .unwrap_or_default();

@@ -13,29 +13,35 @@ fn lease_event_types() -> Vec<String> {
 }
 
 #[derive(Default)]
-struct StoreReads {
+pub(super) struct StoreReads {
     /// Event rows deserialized by every `events()` call.
     rows: usize,
-    agent_filters: Vec<AgentFilter>,
+    pub(super) agent_filters: Vec<AgentFilter>,
     agent_reads: usize,
     /// Calls narrowed to the two lease kinds: one quarantine walk each.
     lease_walks: usize,
+    /// Roots of the `subtree_agents` calls.
+    pub(super) subtree_roots: Vec<AgentId>,
+    /// Calls to `ancestry`.
+    pub(super) ancestry_calls: usize,
+    /// Agents decoded by `agents`, `subtree_agents` and `ancestry` together.
+    pub(super) agents_decoded: usize,
 }
 
-struct CountingStore {
+pub(super) struct CountingStore {
     inner: Arc<dyn Store>,
     reads: std::sync::Mutex<StoreReads>,
 }
 
 impl CountingStore {
-    fn new(inner: Arc<dyn Store>) -> Arc<Self> {
+    pub(super) fn new(inner: Arc<dyn Store>) -> Arc<Self> {
         Arc::new(Self {
             inner,
             reads: Default::default(),
         })
     }
 
-    fn take(&self) -> StoreReads {
+    pub(super) fn take(&self) -> StoreReads {
         std::mem::take(&mut self.reads.lock().expect("reads"))
     }
 }
@@ -164,6 +170,20 @@ impl Store for CountingStore {
     fn subtree_ids(&self, root: AgentId) -> StoreResult<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
     }
+    fn subtree_agents(&self, root: AgentId) -> StoreResult<Vec<Agent>> {
+        let agents = self.inner.subtree_agents(root)?;
+        let mut reads = self.reads.lock().expect("reads");
+        reads.subtree_roots.push(root);
+        reads.agents_decoded += agents.len();
+        Ok(agents)
+    }
+    fn ancestry(&self, ids: &[AgentId]) -> StoreResult<Vec<Agent>> {
+        let agents = self.inner.ancestry(ids)?;
+        let mut reads = self.reads.lock().expect("reads");
+        reads.ancestry_calls += 1;
+        reads.agents_decoded += agents.len();
+        Ok(agents)
+    }
     fn any_agent_in_repository(&self, repository: &str) -> StoreResult<bool> {
         self.inner.any_agent_in_repository(repository)
     }
@@ -188,12 +208,11 @@ impl Store for CountingStore {
         self.inner.alias_repository(alias, by, hold)
     }
     fn agents(&self, filter: &AgentFilter) -> StoreResult<Vec<Agent>> {
-        self.reads
-            .lock()
-            .expect("reads")
-            .agent_filters
-            .push(filter.clone());
-        self.inner.agents(filter)
+        let agents = self.inner.agents(filter)?;
+        let mut reads = self.reads.lock().expect("reads");
+        reads.agent_filters.push(filter.clone());
+        reads.agents_decoded += agents.len();
+        Ok(agents)
     }
     fn task(&self, id: TaskId) -> StoreResult<Option<Task>> {
         self.inner.task(id)

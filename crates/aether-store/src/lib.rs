@@ -670,6 +670,12 @@ pub trait Store: Send + Sync {
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool>;
     /// `root` and every descendant of it; empty when `root` is unknown.
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>>;
+    /// `root` and every descendant of it, decoded, in the order `agents` lists the
+    /// whole fleet (`created_at`, then insertion); empty when `root` is unknown.
+    fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>>;
+    /// The stored agents among `ids` plus every stored ancestor of them, in no
+    /// particular order. Unknown ids and missing parents are skipped.
+    fn ancestry(&self, ids: &[AgentId]) -> Result<Vec<Agent>>;
     /// Usage summed over every agent that is not an imported archive, decoding
     /// each row's usage alone rather than the whole agent.
     fn fleet_usage(&self) -> Result<aether_core::model::Usage>;

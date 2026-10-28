@@ -4,14 +4,14 @@ use aether_core::agent::{Agent, subtree_of};
 use aether_core::id::{AgentId, ArtifactId, TaskId};
 use aether_core::task::Task;
 use aether_core::tool::ToolOutcome;
-use aether_store::{AgentFilter, TaskFilter};
+use aether_store::TaskFilter;
 use aether_tools::builtin::inspection::{MAX_LIST_ITEMS, MAX_TASK_CHARS};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 fn scope(runtime: &Runtime, caller: AgentId) -> Result<(Vec<Agent>, BTreeSet<AgentId>)> {
-    let agents = runtime.store.agents(&AgentFilter::default())?;
+    let agents = runtime.store.subtree_agents(caller)?;
     let ids = subtree_of(&agents, caller).into_iter().collect();
     Ok((agents, ids))
 }

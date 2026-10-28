@@ -1,4 +1,5 @@
 use super::*;
+use crate::SchedulerState;
 
 /// The effective cap over an agent's whole subtree (VISION §3.6 limit 3):
 /// its own `concurrency` if it set one, else the daemon's global limit,
@@ -56,6 +57,9 @@ pub(super) fn store_error_class(e: &StoreError) -> &'static str {
     }
 }
 
+/// How many times the advisory reloads ancestry because a turn started while it read.
+const ANCESTRY_ROUNDS: usize = 4;
+
 /// The advisory told to whoever calls `delegate`: which cap, if any, the
 /// scheduler will actually hold the new child against. Derived from
 /// `scheduler::cap_holder`, the same ancestor-and-global-limit predicate
@@ -69,63 +73,97 @@ pub(super) fn cap_status(runtime: &Runtime, agent: &Agent, child_on_engine: bool
         .config
         .max_concurrent_engine_turns
         .filter(|_| child_on_engine);
-    match runtime.store.agents(&AgentFilter::default()) {
-        Ok(live) => {
-            let sched = runtime.sched.lock();
-            match crate::scheduler::cap_holder(
-                agent.id,
-                &live,
-                &sched,
-                runtime.config.max_concurrent_turns,
-                engine_cap,
-            ) {
-                crate::scheduler::CapHolder::Spent {
-                    agent: holder,
-                    running,
-                    cap,
-                } => {
-                    let source = match holder {
-                        Some(id) if id == agent.id => "your concurrency cap",
-                        Some(_) => "an ancestor's concurrency cap",
-                        None => "the daemon's global concurrency limit",
-                    };
-                    CapStatus::Counted {
-                        running,
-                        cap,
-                        source,
-                        queued: true,
-                    }
-                }
-                crate::scheduler::CapHolder::EngineCap { running, cap } => CapStatus::Counted {
-                    running,
-                    cap,
-                    source: "the daemon's engine-turn cap",
-                    queued: true,
-                },
-                crate::scheduler::CapHolder::Clear => {
-                    let (cap, source) = effective_cap(runtime, agent);
-                    let running =
-                        crate::scheduler::on_provider_descendants(agent.id, &live, &sched);
-                    CapStatus::Counted {
-                        running,
-                        cap,
-                        source,
-                        queued: false,
-                    }
-                }
+    let mut wanted = BTreeSet::from([agent.id]);
+    wanted.extend(runtime.sched.lock().on_provider().map(|(id, _)| *id));
+    for _ in 0..ANCESTRY_ROUNDS {
+        let ids: Vec<AgentId> = wanted.iter().copied().collect();
+        let chains = match runtime.store.ancestry(&ids) {
+            Ok(chains) => chains,
+            Err(e) => {
+                return unknown_status(runtime, agent, store_error_class(&e), &e.to_string());
             }
+        };
+        let sched = runtime.sched.lock();
+        let started: Vec<AgentId> = sched
+            .on_provider()
+            .map(|(id, _)| *id)
+            .filter(|id| !wanted.contains(id))
+            .collect();
+        if started.is_empty() {
+            return counted_status(runtime, agent, &chains, &sched, engine_cap);
         }
-        Err(e) => {
-            let (cap, source) = effective_cap(runtime, agent);
-            // The full error (a sqlite path, routinely) is logged for an
-            // operator, never sent to the model or the event log: the
-            // redactor masks secrets, not private paths.
-            tracing::warn!(agent = %agent.id, error = %e, "cap advisory: could not read the fleet");
-            CapStatus::Unknown {
+        drop(sched);
+        wanted.extend(started);
+    }
+    unknown_status(
+        runtime,
+        agent,
+        "a scheduler that kept changing",
+        "turns kept starting while ancestry was read",
+    )
+}
+
+/// `chains` holds `agent` and the ancestors of every running turn, which is
+/// all `cap_holder` and `on_provider_descendants` read of the fleet.
+fn counted_status(
+    runtime: &Runtime,
+    agent: &Agent,
+    chains: &[Agent],
+    sched: &SchedulerState,
+    engine_cap: Option<usize>,
+) -> CapStatus {
+    match crate::scheduler::cap_holder(
+        agent.id,
+        chains,
+        sched,
+        runtime.config.max_concurrent_turns,
+        engine_cap,
+    ) {
+        crate::scheduler::CapHolder::Spent {
+            agent: holder,
+            running,
+            cap,
+        } => {
+            let source = match holder {
+                Some(id) if id == agent.id => "your concurrency cap",
+                Some(_) => "an ancestor's concurrency cap",
+                None => "the daemon's global concurrency limit",
+            };
+            CapStatus::Counted {
+                running,
                 cap,
                 source,
-                error: store_error_class(&e).to_owned(),
+                queued: true,
             }
         }
+        crate::scheduler::CapHolder::EngineCap { running, cap } => CapStatus::Counted {
+            running,
+            cap,
+            source: "the daemon's engine-turn cap",
+            queued: true,
+        },
+        crate::scheduler::CapHolder::Clear => {
+            let (cap, source) = effective_cap(runtime, agent);
+            let running = crate::scheduler::on_provider_descendants(agent.id, chains, sched);
+            CapStatus::Counted {
+                running,
+                cap,
+                source,
+                queued: false,
+            }
+        }
+    }
+}
+
+fn unknown_status(runtime: &Runtime, agent: &Agent, class: &str, detail: &str) -> CapStatus {
+    let (cap, source) = effective_cap(runtime, agent);
+    // The full error (a sqlite path, routinely) is logged for an
+    // operator, never sent to the model or the event log: the
+    // redactor masks secrets, not private paths.
+    tracing::warn!(agent = %agent.id, error = detail, "cap advisory: could not read the fleet");
+    CapStatus::Unknown {
+        cap,
+        source,
+        error: class.to_owned(),
     }
 }

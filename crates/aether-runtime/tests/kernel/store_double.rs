@@ -42,10 +42,10 @@ pub enum Hook {
     ChildCreatedCommit,
     ArtifactPublicationCommit,
     ArtifactPromotion,
-    /// The cap advisory's own fleet read (`turn::cap_status`), made just
+    /// The cap advisory's own ancestry read (`turn::cap_status`), made just
     /// after `create_agent` returns: self-arming (no `arm` call needed) -
     /// a child-creation commit sets `fail_next_read`, so the very next
-    /// matching read fails instead of an unrelated scheduler tick's,
+    /// `ancestry` call fails instead of an unrelated scheduler tick's,
     /// proving the advisory can never fail the turn.
     CapAdvisoryFleetRead,
     CancelDescendantRead,
@@ -55,7 +55,7 @@ pub enum Hook {
     AgentRead,
     /// The dependency gate's first owner read, after scanning queued tasks.
     DependencyOwnerRead,
-    /// The whole agent table, the same moment for a subtree's rows.
+    /// The whole agent table, or a subtree's rows: the same moment for both.
     FleetRead,
     /// One task row, fired after the read returns.
     TaskRead,
@@ -210,6 +210,25 @@ impl Store for CommitsMidPass {
     fn subtree_ids(&self, root: AgentId) -> Result<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
     }
+    fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>> {
+        let agents = self.inner.subtree_agents(root)?;
+        self.fire(Hook::FleetRead)?;
+        Ok(agents)
+    }
+    fn ancestry(&self, ids: &[AgentId]) -> Result<Vec<Agent>> {
+        if self.hook == Hook::CapAdvisoryFleetRead
+            && self
+                .fail_next_read
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.read_failed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            return Err(aether_store::StoreError::Corrupt(
+                "simulated fleet read failure".into(),
+            ));
+        }
+        self.inner.ancestry(ids)
+    }
     fn any_agent_in_repository(&self, repository: &str) -> Result<bool> {
         self.inner.any_agent_in_repository(repository)
     }
@@ -246,18 +265,6 @@ impl Store for CommitsMidPass {
                 .store(true, std::sync::atomic::Ordering::SeqCst);
             return Err(aether_store::StoreError::Corrupt(
                 "simulated cancellation walk failure".into(),
-            ));
-        }
-        if self.hook == Hook::CapAdvisoryFleetRead
-            && *filter == AgentFilter::default()
-            && self
-                .fail_next_read
-                .swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
-            self.read_failed
-                .store(true, std::sync::atomic::Ordering::SeqCst);
-            return Err(aether_store::StoreError::Corrupt(
-                "simulated fleet read failure".into(),
             ));
         }
         let agents = self.inner.agents(filter)?;
@@ -320,7 +327,7 @@ impl Store for CommitsMidPass {
         }
         if self.hook == Hook::CapAdvisoryFleetRead && creates_child {
             // Arm right as the child commits, synchronously, so the very
-            // next fleet read - `turn::cap_status`'s own, made right
+            // next ancestry read - `turn::cap_status`'s own, made right
             // after `create_agent` returns in the same call stack - is
             // the one that fails, not an unrelated scheduler tick.
             self.fail_next_read

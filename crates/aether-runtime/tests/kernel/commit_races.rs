@@ -109,7 +109,7 @@ async fn race_dependency_gate(finished: bool, cancel: bool) {
     }
 }
 
-/// The cap advisory's fleet read
+/// The cap advisory's ancestry read
 /// runs after `create_agent` already committed the child, so its failure
 /// must never fail the turn - the delegation already happened and must be
 /// reported as a success, with the read failure named in the tool result
