@@ -326,6 +326,14 @@ fn write_record(
     }
     let mut value = serde_json::to_value(record).map_err(StoreError::Serde)?;
     aether_tools::redact_json(redactor, &mut value);
+    if let Record::Artifact(artifact) = record
+        && let Some(digest) = &artifact.digest
+    {
+        // Hashed from the masked payload, so it holds no secret; a known
+        // secret that happens to be hex must not break the import's check.
+        debug_assert!(value.get("digest").is_some(), "a set digest is serialized");
+        value["digest"] = serde_json::Value::String(digest.clone());
+    }
     write_line(out, &value)
 }
 

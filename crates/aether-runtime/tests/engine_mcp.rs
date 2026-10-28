@@ -161,13 +161,14 @@ struct Harness {
 }
 
 async fn harness() -> Harness {
-    harness_with(None).await
+    harness_with(None, aether_tools::Redactor::default()).await
 }
 
 /// The same harness, optionally with an engine that panics as soon as the
-/// turn hands out its bridge credentials.
+/// turn hands out its bridge credentials, and masking with `redactor`.
 async fn harness_with(
     panic_credentials: Option<mpsc::UnboundedSender<BridgeCredentials>>,
+    redactor: aether_tools::Redactor,
 ) -> Harness {
     let manager = McpManager::new(
         vec![McpServerSpec {
@@ -224,6 +225,7 @@ async fn harness_with(
                 command: "/bin/true".into(),
                 socket: workspace_root.join("aetherd.sock"),
             }),
+            redactor,
             ..Default::default()
         },
         store.clone(),
@@ -541,6 +543,35 @@ async fn a_bridged_call_reaches_the_server_as_the_engines_own_agent() {
     }
 }
 
+/// The engine hands a bridged reply straight to its provider, so a server
+/// that quotes a known secret is masked before the reply leaves.
+#[tokio::test]
+async fn a_bridged_reply_quoting_a_known_secret_reaches_the_engine_masked() {
+    const KNOWN: &str = "fleet-token-0123456789abcdef";
+    let redactor = aether_tools::Redactor::with_known_secrets([KNOWN]).expect("compiles");
+    let mut h = harness_with(None, redactor).await;
+    start_agent(&h);
+    let bridge = h.ready.recv().await.expect("the turn started");
+
+    let (reply, is_error) = h
+        .runtime
+        .engine_tool(
+            bridge.agent,
+            &bridge.token,
+            "mcp__mock__echo_request".into(),
+            json!({"note": KNOWN}),
+        )
+        .await
+        .expect("answered");
+    assert!(!is_error, "{reply}");
+    assert!(!reply.contains(KNOWN), "{reply}");
+    assert!(reply.contains("[REDACTED:known_secret]"), "{reply}");
+
+    if let Some(finish) = h.finish.take() {
+        let _ = finish.send(());
+    }
+}
+
 #[tokio::test]
 async fn a_call_the_engine_ran_itself_is_recorded_with_the_tools_own_class() {
     let mut h = harness().await;
@@ -605,7 +636,7 @@ async fn a_panicking_turn_leaves_no_live_per_turn_token() {
     // a panic keeps working until the agent's next turn overwrites it.
     // Removal is a drop guard, not a line on each exit path.
     let (ready_tx, mut ready) = mpsc::unbounded_channel();
-    let h = harness_with(Some(ready_tx)).await;
+    let h = harness_with(Some(ready_tx), aether_tools::Redactor::default()).await;
     let _agent = start_agent(&h);
     let bridge = ready.recv().await.expect("the turn started");
 

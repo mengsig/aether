@@ -292,9 +292,9 @@ pub fn redact_outcome(redactor: &Redactor, outcome: &mut ToolOutcome) {
     }
 }
 
-/// Redact every string *value* in a JSON value, in place, at any depth;
-/// serde_json's own parse depth limit bounds the recursion. Keys are names a
-/// server chose, not content, so they are left as they are.
+/// Redact every string and object key in a JSON value, in place, at any
+/// depth; serde_json's own parse depth limit bounds the recursion. A key is
+/// whatever a server chose to put there, so it can carry a secret too.
 pub fn redact_json(redactor: &Redactor, value: &mut serde_json::Value) {
     match value {
         serde_json::Value::String(text) => {
@@ -308,12 +308,37 @@ pub fn redact_json(redactor: &Redactor, value: &mut serde_json::Value) {
             }
         }
         serde_json::Value::Object(fields) => {
+            redact_keys(redactor, fields);
             for field in fields.values_mut() {
                 redact_json(redactor, field);
             }
         }
         _ => {}
     }
+}
+
+/// Masks the keys of one object. Two keys can mask to the same text, so a
+/// repeat gets a numbered suffix rather than replacing the other's value.
+fn redact_keys(redactor: &Redactor, fields: &mut serde_json::Map<String, serde_json::Value>) {
+    use std::borrow::Cow;
+    if !fields
+        .keys()
+        .any(|key| matches!(redactor.redact(key), Cow::Owned(_)))
+    {
+        return;
+    }
+    let count = fields.len();
+    let mut suffix = 1usize;
+    for (key, value) in std::mem::take(fields) {
+        let masked = redactor.redact(&key).into_owned();
+        let mut unique = masked.clone();
+        while fields.contains_key(&unique) {
+            suffix += 1;
+            unique = format!("{masked} ({suffix})");
+        }
+        fields.insert(unique, value);
+    }
+    debug_assert_eq!(fields.len(), count, "no field is lost to a masked key");
 }
 
 #[cfg(test)]

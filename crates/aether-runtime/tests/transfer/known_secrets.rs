@@ -17,6 +17,13 @@ struct Seeded {
 }
 
 async fn seeded(responses: Vec<aether_model::testing::ScriptedResponse>) -> Seeded {
+    seeded_knowing(responses, &[KNOWN]).await
+}
+
+async fn seeded_knowing(
+    responses: Vec<aether_model::testing::ScriptedResponse>,
+    known: &[&str],
+) -> Seeded {
     let workspace = tempfile::tempdir().expect("workspace");
     let config_dir = tempfile::tempdir().expect("config dir");
     let store: Arc<dyn Store> = Arc::new(SqliteStore::open_in_memory().expect("store"));
@@ -30,7 +37,8 @@ async fn seeded(responses: Vec<aether_model::testing::ScriptedResponse>) -> Seed
             lease_ttl: Duration::from_secs(30),
             default_model: Some(ModelRef::new("anthropic", "claude-sonnet-5-5")),
             workspace_root: Some(workspace.path().canonicalize().expect("canonical")),
-            redactor: aether_tools::Redactor::with_known_secrets([KNOWN]).expect("compiles"),
+            redactor: aether_tools::Redactor::with_known_secrets(known.iter().copied())
+                .expect("compiles"),
             ..Default::default()
         },
         store.clone(),
@@ -325,5 +333,102 @@ async fn a_tool_error_quoting_a_known_secret_is_committed_masked() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(!errors[0].contains(KNOWN), "{}", errors[0]);
     assert!(errors[0].contains(MASK), "{}", errors[0]);
+    source.daemon.runtime.shutdown().await;
+}
+
+fn exported(daemon: &Daemon, agent: AgentId, file: &Path) -> String {
+    let run = daemon
+        .store
+        .agent(agent)
+        .expect("agent")
+        .expect("exists")
+        .run;
+    transfer::export_run(
+        daemon.store.as_ref(),
+        run,
+        file,
+        &daemon.runtime.config().redactor,
+    )
+    .expect("export");
+    std::fs::read_to_string(file).expect("read export")
+}
+
+/// A tool argument is kept as typed in the log, keys included, so the export
+/// masks a secret used as a key as it does one used as a value.
+#[tokio::test]
+async fn an_export_masks_a_known_secret_used_as_a_json_key() {
+    let source = seeded(vec![
+        ScriptedClient::tool_call("list_agents", json!({ KNOWN: true })),
+        ScriptedClient::tool_call("complete_task", json!({"summary": "listed"})),
+    ])
+    .await;
+    let agent = start_worker(&source.daemon, "list");
+    wait_terminal(source.daemon.store.as_ref(), agent).await;
+    assert!(
+        event_log(source.daemon.store.as_ref()).contains(KNOWN),
+        "the argument is kept as typed; the test proves nothing otherwise"
+    );
+
+    let dir = tempfile::tempdir().expect("dir");
+    let text = exported(&source.daemon, agent, &dir.path().join("run.aether"));
+    assert!(!text.contains(KNOWN), "the export carries the secret");
+    assert!(
+        text.contains(&format!("\"{MASK}\":true")),
+        "nothing was masked"
+    );
+    source.daemon.runtime.shutdown().await;
+}
+
+/// A digest is hashed from the masked payload, so it is never masked itself:
+/// a known secret that happens to be hex would otherwise fail the import.
+#[tokio::test]
+async fn an_artifact_digest_holding_a_known_secret_still_imports() {
+    use sha2::Digest as _;
+    let bytes = b"plain evidence\n".to_vec();
+    let digest = hex::encode(sha2::Sha256::digest(&bytes));
+    let source = seeded_knowing(
+        vec![ScriptedClient::tool_call(
+            "complete_task",
+            json!({"summary": "published"}),
+        )],
+        &[KNOWN, &digest[8..24]],
+    )
+    .await;
+    let agent = start_worker(&source.daemon, "publish");
+    source
+        .daemon
+        .runtime
+        .publish_artifact(
+            ArtifactPublication {
+                kind: ArtifactKind::File,
+                name: "evidence.txt".into(),
+                summary: "evidence".into(),
+                content_type: Some("text/plain".into()),
+                bytes: bytes.clone(),
+                agent,
+                task: None,
+            },
+            Actor::user(),
+        )
+        .await
+        .expect("publish");
+    wait_terminal(source.daemon.store.as_ref(), agent).await;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("run.aether");
+    let text = exported(&source.daemon, agent, &file);
+    assert!(text.contains(&format!("\"digest\":\"{digest}\"")), "{text}");
+    let target = daemon(Vec::new()).await;
+    let imported = transfer::import_run(&target.runtime, &file).expect("the archive verifies");
+    assert_eq!(imported.artifact_payloads, 1);
+    let stored = target.store.live_artifacts().expect("artifacts");
+    assert_eq!(stored.len(), 1);
+    assert_eq!(
+        target
+            .store
+            .read_artifact_bytes(stored[0].id)
+            .expect("read"),
+        Some(bytes)
+    );
     source.daemon.runtime.shutdown().await;
 }

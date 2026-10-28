@@ -166,6 +166,12 @@ pub(super) async fn handle_request(
             }
         }
     };
+    // The engine forwards the reply to its provider, so an MCP server's
+    // output or error is masked here, before it leaves.
+    let reply = match runtime.tool_runtime.redactor().redact(&reply.0) {
+        std::borrow::Cow::Borrowed(_) => reply,
+        std::borrow::Cow::Owned(clean) => (clean, reply.1),
+    };
     // Served during the wind-down: the result stands, and the stop leads it
     // so the engine does not read it as an invitation to continue. Prepended,
     // because a tool's structured payload is the reply's last line.
