@@ -8,7 +8,8 @@ use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::{AgentId, ScheduleId};
 use aether_core::idempotency::{Submission, SubmissionOutcome};
 use aether_core::schedule::{
-    BusyPolicy, Recurrence, Schedule, ScheduleMode, ScheduleStatus, ScheduleTarget, SpawnSpec,
+    BusyPolicy, MIN_INTERVAL_SECONDS, Recurrence, Schedule, ScheduleMode, ScheduleStatus,
+    ScheduleTarget, SpawnSpec,
 };
 use aether_core::time::{Timestamp, now};
 use aether_store::{Commit, Mutation};
@@ -77,6 +78,7 @@ impl Runtime {
                 "schedule name must not contain control characters".into(),
             ));
         }
+        check_interval(&spec.recurrence)?;
         crate::commands::check_payload_size("schedule payload", &spec.payload)?;
         if let ScheduleTarget::Spawn(template) = &spec.target {
             // Each run's objective is the template plus the payload and a
@@ -182,6 +184,13 @@ impl Runtime {
         }
         if template.role.trim().is_empty() || template.objective.trim().is_empty() {
             return refuse("a spawn template needs a role and an objective");
+        }
+        if let Some(root) = template
+            .scope
+            .as_ref()
+            .and_then(|s| s.workspace_root.as_deref())
+        {
+            check_template_workspace(root)?;
         }
         if let Some(config) = &template.config {
             if config.deadline.is_some() {
@@ -348,6 +357,39 @@ impl Runtime {
             "agents may schedule only themselves or their descendants".into(),
         ))
     }
+}
+
+/// Every occurrence starts in `root` on this host, so a path that only exists
+/// on a remote client's machine is refused now rather than at each run.
+fn check_template_workspace(root: &std::path::Path) -> Result<()> {
+    let refuse = |why: String| {
+        Err(RuntimeError::Invalid(format!(
+            "spawn schedule workspace {}: {why}; give a directory on the daemon's host",
+            root.display()
+        )))
+    };
+    if !root.is_absolute() {
+        return refuse("not an absolute path".into());
+    }
+    match std::fs::metadata(root) {
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => refuse("not a directory".into()),
+        Err(error) => refuse(error.to_string()),
+    }
+}
+
+/// Refuse a new interval below the minimum. Schedules stored before the
+/// minimum existed keep their cadence: only creation is checked.
+fn check_interval(recurrence: &Recurrence) -> Result<()> {
+    let Recurrence::Interval { seconds } = recurrence else {
+        return Ok(());
+    };
+    if seconds.get() < MIN_INTERVAL_SECONDS {
+        return Err(RuntimeError::Invalid(format!(
+            "schedule interval must be at least {MIN_INTERVAL_SECONDS} seconds; got {seconds}"
+        )));
+    }
+    Ok(())
 }
 
 fn next_occurrence(recurrence: &Recurrence, at: Timestamp) -> Result<Timestamp> {

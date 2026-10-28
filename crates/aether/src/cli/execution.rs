@@ -395,7 +395,7 @@ fn agent_is_idle(condition: &aether_core::agent::WaitCondition) -> bool {
     matches!(condition, aether_core::agent::WaitCondition::Inbox)
 }
 
-async fn run_scope(
+pub(super) async fn run_scope(
     client: &aether_client::Client,
     endpoint: &aether_client::Endpoint,
     workspace: Option<PathBuf>,

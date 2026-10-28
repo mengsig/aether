@@ -1893,8 +1893,8 @@ socket = "/run/user/1000/aether/aetherd.sock" # optional; host default otherwise
 - The TUI displays `box · connected` and the SSH host identity. Workspace
   choice, directory and `@` completion, and git summaries use the host-service
   protocol. Unsupported services display an explanation instead of examining
-  laptop paths. Remote `run` requires an explicit `--workspace`, validated on
-  the host; the remote TUI requires choosing a workspace before starting an
+  laptop paths. Remote `run` and `schedule create --objective` require an
+  explicit `--workspace`, validated on the host; the remote TUI requires choosing a workspace before starting an
   agent and does not create an automatic root.
 - Preferences, drafts, queued sends, cursors and the keyed outbox use
   `<configuration directory>/endpoints/<endpoint-and-instance digest>/`.

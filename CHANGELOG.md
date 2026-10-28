@@ -46,6 +46,24 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **A detached daemon honours `--workspace`, remote spawn schedules run in a
+  host workspace, and `--every` has a one-minute minimum (#310).**
+  `aether daemon --workspace PATH` only worked with `--foreground`: the
+  detached daemon (the default) was started without the flag, so new root
+  agents were scoped to the directory it was started from, and a path that
+  did not exist was accepted. The path is now resolved where the command
+  runs, refused there when it is not an existing directory, and passed to
+  the detached daemon as an absolute path. `aether schedule create
+  --objective` recorded the client's current directory as each run's
+  workspace, a laptop path on a remote host. It now takes `--workspace`,
+  which `--remote` requires and which the host validates and canonicalizes
+  as it does for remote `run`; the daemon also refuses a spawn template
+  whose workspace is not an absolute directory on its host. `--every 1s`
+  was accepted, and every occurrence of a spawn schedule can be a paid turn:
+  the CLI, the `create_schedule` tool and the daemon now refuse an interval
+  under 60 seconds with a message that names the minimum. Schedules created
+  before this keep their interval.
+
 - **An approval ends with its turn, `aether run --yes` answers delegated
   agents, and `--approval` names its classes (#309).** A Claude Code or
   Codex agent waits on an approval inside its turn, but when that turn was

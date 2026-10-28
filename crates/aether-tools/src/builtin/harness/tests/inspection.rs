@@ -137,6 +137,7 @@ async fn recurring_schedule_inputs_preserve_target_and_timer_policy() {
     assert!(matches!(spec.recurrence, Recurrence::Interval { seconds } if seconds.get() == 60));
     for patch in [
         json!({"every_seconds":0}),
+        json!({"every_seconds":59}),
         json!({"cron":"* * * * *"}),
         json!({"timezone":"UTC"}),
         json!({"max_deliveries":0}),

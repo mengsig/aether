@@ -6,8 +6,10 @@ use aether_core::schedule::{
     ScheduleMode, ScheduleOccurrence, ScheduleOutcome, ScheduleStatus, ScheduleTarget, SpawnSpec,
 };
 use anyhow::{anyhow, bail};
+use std::path::PathBuf;
 
-use super::{acted, connect, here, parse_backend, sane, short};
+use super::execution::run_scope;
+use super::{acted, connect, parse_backend, sane, short};
 use crate::ScheduleCmd;
 
 /// Newest history entries `schedule list` reads per schedule; the daemon
@@ -25,6 +27,7 @@ struct Template {
     max_turns: Option<u32>,
     backend: Option<String>,
     network: Option<bool>,
+    workspace: Option<PathBuf>,
 }
 
 pub(crate) async fn run(
@@ -32,12 +35,25 @@ pub(crate) async fn run(
     command: ScheduleCmd,
 ) -> anyhow::Result<()> {
     let socket = socket.into();
+    // Before connecting: the client's own directory means nothing on the host.
+    if let ScheduleCmd::Create {
+        objective: Some(_),
+        workspace: None,
+        ..
+    } = &command
+    {
+        anyhow::ensure!(
+            !socket.is_remote(),
+            "a remote spawn schedule requires --workspace /path/on/host"
+        );
+    }
     let client = connect(&socket).await?;
     match command {
         ScheduleCmd::Create {
             name,
             target,
             objective,
+            workspace,
             role,
             model,
             effort,
@@ -78,8 +94,9 @@ pub(crate) async fn run(
                         max_turns,
                         backend,
                         network,
+                        workspace,
                     };
-                    ScheduleTarget::Spawn(spawn_spec(&client, template).await?)
+                    ScheduleTarget::Spawn(spawn_spec(&client, &socket, template).await?)
                 }
                 _ => bail!("choose exactly one of --target or --objective"),
             };
@@ -174,8 +191,13 @@ pub(crate) async fn run(
     }
 }
 
-/// Same defaults as `aether run`, rooted in the directory the person is in.
-async fn spawn_spec(client: &Client, template: Template) -> anyhow::Result<SpawnSpec> {
+/// Same defaults and workspace rules as `aether run`: rooted in the directory
+/// the person is in, or in `--workspace` as the host resolves it.
+async fn spawn_spec(
+    client: &Client,
+    endpoint: &aether_client::Endpoint,
+    template: Template,
+) -> anyhow::Result<SpawnSpec> {
     let chain = template
         .model
         .map(|m| ModelChain::parse(&m).ok_or_else(super::model_format_error))
@@ -203,7 +225,7 @@ async fn spawn_spec(client: &Client, template: Template) -> anyhow::Result<Spawn
         objective: template.objective,
         model: chain.as_ref().map(|c| c.primary.clone()),
         fallbacks: chain.map(|c| c.fallbacks).unwrap_or_default(),
-        scope: Some(here(backend, network)?),
+        scope: Some(run_scope(client, endpoint, template.workspace, backend, network).await?),
         config: (config != AgentConfig::default()).then_some(config),
         approval: None,
     })

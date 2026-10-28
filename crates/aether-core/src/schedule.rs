@@ -12,6 +12,10 @@ use crate::id::{AgentId, InboxItemId, RunId, ScheduleId, TaskId};
 use crate::model::ModelRef;
 use crate::time::Timestamp;
 
+/// The shortest interval a new schedule may recur at: each occurrence can be
+/// a paid turn, and cron recurs no faster than once a minute either.
+pub const MIN_INTERVAL_SECONDS: u64 = 60;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Recurrence {

@@ -210,6 +210,27 @@ async fn failed_delivery_commit_keeps_due_time_and_inbox_for_retry() {
     }
 }
 
+#[tokio::test]
+async fn intervals_below_the_minimum_are_refused() {
+    let (runtime, _dir) = fixture().await;
+    let target = agent(&runtime, None);
+    let mut short = spec(target.id);
+    short.recurrence = Recurrence::Interval {
+        seconds: NonZeroU64::new(MIN_INTERVAL_SECONDS - 1).unwrap(),
+    };
+    let error = runtime
+        .create_schedule(short, Actor::user())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("at least 60 seconds"), "{error}");
+    assert!(runtime.store.schedules(None).unwrap().is_empty());
+    let mut minimum = spec(target.id);
+    minimum.recurrence = Recurrence::Interval {
+        seconds: NonZeroU64::new(MIN_INTERVAL_SECONDS).unwrap(),
+    };
+    runtime.create_schedule(minimum, Actor::user()).unwrap();
+}
+
 mod spawning;
 
 fn template() -> SpawnSpec {

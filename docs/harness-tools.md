@@ -72,7 +72,7 @@ restart and wake preserve the existing agent’s recorded effort.
 
 `wait_for(wake_at=...)` schedules one timezone-qualified wake within one year;
 messages may wake the agent sooner. Recurrence uses `create_schedule` with
-`every_seconds` or a five-field `cron` expression and optional IANA `timezone`.
+`every_seconds` (at least 60) or a five-field `cron` expression and optional IANA `timezone`.
 Use `max_deliveries` to bound recurrence. A busy target skips the occurrence
 by default; `busy="queue_one"` delivers anyway but never stacks a second unread
 trigger. Trigger delivery does not imply task completion; inspect results and

@@ -551,7 +551,8 @@ pub(crate) enum GithubWatcherCmd {
 #[derive(Debug, Subcommand)]
 pub(crate) enum ScheduleCmd {
     /// Create a timer that triggers an existing agent (--target), or starts a
-    /// fresh root run in this directory on each occurrence (--objective).
+    /// fresh root run in this directory or --workspace on each occurrence
+    /// (--objective).
     #[command(group(clap::ArgGroup::new("recurrence").required(true).args(["every", "cron"])))]
     #[command(
         after_help = "Examples:\n  aether schedule create tick --every 5m --objective \"check the build\"\n  aether schedule create ping --every 1h --target planner --payload \"status?\""
@@ -566,13 +567,17 @@ pub(crate) enum ScheduleCmd {
             required_unless_present = "objective",
             conflicts_with_all = [
                 "objective", "role", "model", "effort", "token_budget",
-                "cost_budget", "max_turns", "backend", "network",
+                "cost_budget", "max_turns", "backend", "network", "workspace",
             ]
         )]
         target: Option<cli::AgentRef>,
         /// Start a new root run with this task on each occurrence.
         #[arg(long)]
         objective: Option<String>,
+        /// Spawned runs: workspace on the selected host (default: this
+        /// directory); required for --remote, and validated on the host.
+        #[arg(long, requires = "objective")]
+        workspace: Option<std::path::PathBuf>,
         /// Spawned runs: role label (default: assistant).
         #[arg(long, requires = "objective")]
         role: Option<String>,
@@ -604,8 +609,8 @@ pub(crate) enum ScheduleCmd {
             require_equals = true
         )]
         network: Option<bool>,
-        /// Interval such as 30s, 5m, 1h or 1d (a bare number is seconds),
-        /// preserving its cadence across restarts.
+        /// Interval of at least 1m, such as 90s, 5m, 1h or 1d (a bare number
+        /// is seconds), preserving its cadence across restarts.
         #[arg(long, value_parser = cli::parse_every)]
         every: Option<std::num::NonZeroU64>,
         /// Five-field cron expression: minute hour day month weekday.

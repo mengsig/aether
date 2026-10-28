@@ -360,3 +360,54 @@ async fn prepared_schedule_spawn_rechecks_workspace_gc_admission() {
         assert!(roots(&runtime).is_empty());
     }
 }
+
+#[tokio::test]
+async fn spawn_template_workspace_must_be_a_directory_on_this_host() {
+    let (runtime, dir) = fixture().await;
+    let file = dir.path().join("plain-file");
+    std::fs::write(&file, b"").unwrap();
+    let missing = dir.path().join("only-on-the-client");
+    for (root, why) in [
+        (missing, "No such file"),
+        (file, "not a directory"),
+        ("relative/project".into(), "not an absolute path"),
+    ] {
+        let mut spec = spawn_spec(MissedRunPolicy::Coalesce);
+        let ScheduleTarget::Spawn(template) = &mut spec.target else {
+            panic!("spawn");
+        };
+        template.scope = Some(aether_core::agent::Scope {
+            workspace_root: Some(root.clone()),
+            ..Default::default()
+        });
+        let error = runtime
+            .create_schedule(spec, Actor::user())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(why) && error.contains("daemon's host"),
+            "{error}"
+        );
+    }
+    assert!(runtime.store.schedules(None).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn spawn_occurrence_runs_in_the_template_workspace() {
+    let (runtime, dir) = fixture().await;
+    let workspace = dir.path().join("host-project");
+    std::fs::create_dir(&workspace).unwrap();
+    let mut spec = spawn_spec(MissedRunPolicy::Coalesce);
+    let ScheduleTarget::Spawn(template) = &mut spec.target else {
+        panic!("spawn");
+    };
+    template.scope = Some(aether_core::agent::Scope {
+        workspace_root: Some(workspace.clone()),
+        ..Default::default()
+    });
+    let job = runtime.create_schedule(spec, Actor::user()).unwrap();
+    tick(&runtime, job.status.next_due().unwrap()).unwrap();
+    let agents = roots(&runtime);
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].scope.workspace_root, Some(workspace));
+}

@@ -155,8 +155,11 @@ use tokio_util::sync::CancellationToken;
 
 /// `aether daemon --foreground`, as this executable. The client detaches it
 /// and watches it, so its startup output is not lost with its terminal.
+/// `workspace` must already be absolute: the child may not share our view of
+/// a relative path, and must not fall back to its own directory.
 fn daemon_command(
     socket: &PathBuf,
+    workspace: Option<&Path>,
     yolo: bool,
     max_concurrent: Option<usize>,
     allow_remote: bool,
@@ -169,6 +172,13 @@ fn daemon_command(
         .arg("daemon")
         .arg("--foreground")
         .arg("--detached");
+    if let Some(workspace) = workspace {
+        assert!(
+            workspace.is_absolute(),
+            "resolve --workspace before forwarding it"
+        );
+        command.arg("--workspace").arg(workspace);
+    }
     if yolo {
         command.arg("--yolo");
     }
@@ -193,7 +203,7 @@ async fn connect_or_start(endpoint: impl Into<aether_client::Endpoint>) -> anyho
         .local_path()
         .ok_or_else(|| anyhow!("missing local socket"))?
         .to_path_buf();
-    let command = daemon_command(&socket, false, None, false)?;
+    let command = daemon_command(&socket, None, false, None, false)?;
     ensure_daemon(&socket, command).await.map_err(|e| {
         failed_connection(
             &socket,

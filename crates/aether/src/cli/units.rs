@@ -33,6 +33,12 @@ pub(crate) fn parse_every(value: &str) -> Result<std::num::NonZeroU64, String> {
             .map_err(|e| format!("{e}; a bare number counts seconds"))?
             .as_secs(),
     };
+    let minimum = aether_core::schedule::MIN_INTERVAL_SECONDS;
+    if seconds < minimum {
+        return Err(format!(
+            "interval must be at least {minimum} seconds (1m); got {seconds}"
+        ));
+    }
     std::num::NonZeroU64::new(seconds).ok_or_else(|| "interval must be positive".to_owned())
 }
 
@@ -118,7 +124,11 @@ mod tests {
     #[test]
     fn intervals_take_seconds_or_a_unit() {
         assert_eq!(parse_every("90").unwrap().get(), 90);
-        assert_eq!(parse_every("30s").unwrap().get(), 30);
+        assert_eq!(parse_every("60s").unwrap().get(), 60);
+        for short in ["1s", "30s", "59"] {
+            let error = parse_every(short).unwrap_err();
+            assert!(error.contains("at least 60 seconds"), "{error}");
+        }
         assert_eq!(parse_every("5m").unwrap().get(), 300);
         assert_eq!(parse_every("1h").unwrap().get(), 3600);
         assert!(parse_every("0").is_err());

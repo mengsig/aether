@@ -156,7 +156,16 @@ pub async fn daemon(
             max_concurrent != Some(0),
             "--max-concurrent must be positive"
         );
-        let command = daemon_command(&socket, yolo, max_concurrent, allow_remote)?;
+        // Resolved here, against the directory the person ran this in, so a
+        // bad path fails now and the detached child gets an absolute one.
+        let workspace = workspace.as_deref().map(resolve_workspace).transpose()?;
+        let command = daemon_command(
+            &socket,
+            workspace.as_deref(),
+            yolo,
+            max_concurrent,
+            allow_remote,
+        )?;
         let starting = StartingDaemon::spawn(command, &socket)?;
         // Watched the same way auto-start watches its own child: a detached
         // daemon that dies before it listens must not be reported as started.
@@ -261,9 +270,7 @@ async fn run_daemon(
     config.yolo = yolo;
     config.allow_remote = allow_remote;
     if let Some(ws) = workspace {
-        config.workspace_root = Some(
-            std::fs::canonicalize(&ws).with_context(|| format!("workspace {}", ws.display()))?,
-        );
+        config.workspace_root = Some(resolve_workspace(&ws)?);
     }
     let shutdown = CancellationToken::new();
     let signal_token = shutdown.clone();
@@ -283,6 +290,19 @@ async fn run_daemon(
         );
     }
     aether_daemon::run(config, shutdown).await
+}
+
+/// `--workspace` as the daemon uses it: an existing directory, made absolute
+/// against the current directory.
+pub(super) fn resolve_workspace(path: &Path) -> anyhow::Result<PathBuf> {
+    let resolved =
+        std::fs::canonicalize(path).with_context(|| format!("workspace {}", path.display()))?;
+    anyhow::ensure!(
+        resolved.is_dir(),
+        "workspace {} is not a directory",
+        path.display()
+    );
+    Ok(resolved)
 }
 
 /// Ask a compatible daemon to stop; only a confirmed refusal allows a safe signal.

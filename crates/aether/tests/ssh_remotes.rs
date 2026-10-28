@@ -77,6 +77,9 @@ impl Fixture {
 #[path = "ssh_remotes/lost_acknowledgement.rs"]
 mod lost_acknowledgement;
 
+#[path = "ssh_remotes/spawn_schedules.rs"]
+mod spawn_schedules;
+
 /// The receipt horizon the fake host greets protocol 18 clients with.
 const HORIZON: &str = "fixture-epoch:0";
 

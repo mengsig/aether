@@ -4,7 +4,8 @@ use std::num::NonZeroU64;
 
 use aether_core::id::{AgentId, ScheduleId};
 use aether_core::schedule::{
-    BusyPolicy, CreateScheduleSpec, MissedRunPolicy, Recurrence, ScheduleAction, ScheduleTarget,
+    BusyPolicy, CreateScheduleSpec, MIN_INTERVAL_SECONDS, MissedRunPolicy, Recurrence,
+    ScheduleAction, ScheduleTarget,
 };
 use aether_core::tool::{ResourceKey, SideEffectClass, ToolDescriptor};
 use async_trait::async_trait;
@@ -37,11 +38,11 @@ impl Tool for ScheduleTool {
         let (name, description, schema) = match self {
             Self::Create => (
                 "create_schedule",
-                "Create a durable recurring Aether timer that delivers to an existing agent. Use every_seconds OR a five-field cron expression with an IANA timezone (UTC by default). Target defaults to yourself; only yourself or your descendants are allowed. Payload is the future task instruction. Timers deliver inbox triggers under existing budgets and authority. Paused targets skip occurrences. When the target is busy, busy=skip (default) skips the occurrence; busy=queue_one delivers it while the target runs, once the previous trigger was consumed. Never more than one pending trigger per timer. Use max_deliveries for a finite timer, and list_schedules for history. This is distinct from one-shot wait_for(wake_at). This tool cannot create a spawn schedule (one that spawns a fresh agent per occurrence): that requires operator authority and is only available through the `aether schedule create --objective` CLI.",
+                "Create a durable recurring Aether timer that delivers to an existing agent. Use every_seconds (at least 60) OR a five-field cron expression with an IANA timezone (UTC by default). Target defaults to yourself; only yourself or your descendants are allowed. Payload is the future task instruction. Timers deliver inbox triggers under existing budgets and authority. Paused targets skip occurrences. When the target is busy, busy=skip (default) skips the occurrence; busy=queue_one delivers it while the target runs, once the previous trigger was consumed. Never more than one pending trigger per timer. Use max_deliveries for a finite timer, and list_schedules for history. This is distinct from one-shot wait_for(wake_at). This tool cannot create a spawn schedule (one that spawns a fresh agent per occurrence): that requires operator authority and is only available through the `aether schedule create --objective` CLI.",
                 json!({
                     "type":"object", "properties": {
                         "name":{"type":"string"}, "target":{"type":"string"},
-                        "every_seconds":{"type":"integer","minimum":1}, "cron":{"type":"string"},
+                        "every_seconds":{"type":"integer","minimum":MIN_INTERVAL_SECONDS}, "cron":{"type":"string"},
                         "timezone":{"type":"string"}, "payload":{},
                         "missed":{"type":"string","enum":["coalesce","skip"]},
                         "busy":{"type":"string","enum":["skip","queue_one"]},
@@ -121,6 +122,11 @@ impl Tool for ScheduleTool {
                     .transpose()?
                     .unwrap_or_default();
                 let recurrence = match (input.every_seconds, input.cron, input.timezone) {
+                    (Some(seconds), None, None) if seconds.get() < MIN_INTERVAL_SECONDS => {
+                        return Err(ToolError::InvalidInput(format!(
+                            "every_seconds must be at least {MIN_INTERVAL_SECONDS}; got {seconds}"
+                        )));
+                    }
                     (Some(seconds), None, None) => Recurrence::Interval { seconds },
                     (None, Some(expression), timezone) => Recurrence::Cron {
                         expression,

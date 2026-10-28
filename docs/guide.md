@@ -266,7 +266,10 @@ aether schedule create tick --every 5m --objective "check the build"
 aether schedule create ping --every 1h --target planner --payload "status?"
 ```
 
-`--every` takes a number of seconds or a unit (`90`, `30s`, `5m`, `2h`, `1d`).
+`--every` takes a number of seconds or a unit (`90`, `5m`, `2h`, `1d`) of at
+least one minute. A `--objective` schedule starts each run in the current
+directory, or in `--workspace PATH`; with `--remote` that flag is required and
+names a path on the host.
 `--payload` is optional with `--target`: JSON, or plain text sent as a string.
 `aether run` accepts `--token-budget`, `--cost-budget` and `--max-turns`; cache
 reads and writes count as tokens, so keep a Claude Code budget above 20k.
