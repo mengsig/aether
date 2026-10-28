@@ -4,12 +4,23 @@
 use super::*;
 use aether_core::tool::{ApprovalDecision, ApprovalStatus, SideEffectClass};
 
-/// Asks for one gated call on its first turn and holds it until cancelled,
-/// or with `exits` stops taking answers and closes its stream at once;
+/// How the engine that asked leaves its first turn.
+#[derive(Clone, Copy, PartialEq)]
+enum Leaves {
+    /// Only once cancelled.
+    WhenCancelled,
+    /// At once, dropping its answer channel with its stream.
+    DroppingAnswers,
+    /// At once, reporting its result, while another task of it still reads
+    /// answers, as an adapter that writes them to its process's stdin does.
+    KeepingAnswers,
+}
+
+/// Asks for one gated call on its first turn, then leaves as `leaves` says;
 /// later turns answer at once.
 struct AskThenHoldEngine {
     first: std::sync::atomic::AtomicBool,
-    exits: bool,
+    leaves: Leaves,
 }
 
 #[async_trait::async_trait]
@@ -28,7 +39,7 @@ impl Engine for AskThenHoldEngine {
         let (tx, rx) = mpsc::channel(4);
         let (decisions, mut answers) = mpsc::channel::<aether_engine::PermissionDecision>(1);
         let first = self.first.swap(false, std::sync::atomic::Ordering::SeqCst);
-        let exits = self.exits;
+        let leaves = self.leaves;
         tokio::spawn(async move {
             if first {
                 tx.send(EngineEvent::Permission {
@@ -39,9 +50,21 @@ impl Engine for AskThenHoldEngine {
                 })
                 .await
                 .unwrap();
-                if exits {
+                match leaves {
                     // Gone without a word: no answer can reach it now.
-                    return;
+                    Leaves::DroppingAnswers => return,
+                    Leaves::KeepingAnswers => {
+                        tokio::spawn(async move { while answers.recv().await.is_some() {} });
+                        let _ = tx
+                            .send(EngineEvent::Done(EngineOutcome {
+                                is_error: true,
+                                error: Some("exited".into()),
+                                ..Default::default()
+                            }))
+                            .await;
+                        return;
+                    }
+                    Leaves::WhenCancelled => {}
                 }
                 tokio::select! {
                     answer = answers.recv() => assert!(answer.is_none_or(|a| !a.allow), "no answer may allow the call"),
@@ -130,11 +153,11 @@ impl Engine for BridgeAskThenExitEngine {
 }
 
 async fn gated_agent_waiting_on_approval(
-    exits: bool,
+    leaves: Leaves,
 ) -> (Harness, AgentId, aether_core::id::ApprovalId) {
     let engine = Arc::new(AskThenHoldEngine {
         first: std::sync::atomic::AtomicBool::new(true),
-        exits,
+        leaves,
     });
     let (h, agent) = gated_agent(engine).await;
     let approval = raised_approval(&h, agent).await;
@@ -245,7 +268,7 @@ async fn assert_expired(h: &Harness, agent: AgentId, approval: aether_core::id::
 
 #[tokio::test]
 async fn an_interrupt_expires_the_engine_approval_its_turn_waited_on() {
-    let (h, agent, approval) = gated_agent_waiting_on_approval(false).await;
+    let (h, agent, approval) = gated_agent_waiting_on_approval(Leaves::WhenCancelled).await;
     assert!(h.runtime.interrupt_agent(agent, Actor::user()).unwrap());
     assert_expired(&h, agent, approval).await;
     wait_for(h.store.as_ref(), agent, |a| {
@@ -257,7 +280,7 @@ async fn an_interrupt_expires_the_engine_approval_its_turn_waited_on() {
 
 #[tokio::test]
 async fn cancelling_the_agent_expires_the_engine_approval_its_turn_waited_on() {
-    let (h, agent, approval) = gated_agent_waiting_on_approval(false).await;
+    let (h, agent, approval) = gated_agent_waiting_on_approval(Leaves::WhenCancelled).await;
     h.runtime
         .cancel_agent(agent, Some("stop".into()), Actor::user())
         .unwrap();
@@ -271,7 +294,14 @@ async fn cancelling_the_agent_expires_the_engine_approval_its_turn_waited_on() {
 
 #[tokio::test]
 async fn an_engine_that_exits_mid_wait_expires_the_approval_it_asked_for() {
-    let (h, agent, approval) = gated_agent_waiting_on_approval(true).await;
+    let (h, agent, approval) = gated_agent_waiting_on_approval(Leaves::DroppingAnswers).await;
+    assert_expired(&h, agent, approval).await;
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_engine_that_leaves_but_keeps_reading_answers_expires_the_approval() {
+    let (h, agent, approval) = gated_agent_waiting_on_approval(Leaves::KeepingAnswers).await;
     assert_expired(&h, agent, approval).await;
     h.runtime.shutdown().await;
 }

@@ -557,7 +557,7 @@ pub(super) async fn drive(
                                 GateSubject::from_prompt(runtime, ctx, &tool, &tool_input, declared, tool_input["tool_use_id"].as_str())?,
                                 cancel,
                                 true,
-                                answers_dropped(decisions.as_ref()),
+                                native_asker_gone(decisions.as_ref(), &mut run.events, &mut kept),
                             )
                             .await?
                         }
@@ -1052,6 +1052,19 @@ async fn engine_left(events: &mut mpsc::Receiver<EngineEvent>, kept: &mut VecDeq
         if finished {
             return;
         }
+    }
+}
+
+/// Completes once a native prompt's answer can no longer reach the engine:
+/// it dropped its answer channel, or it left the turn while keeping that open.
+async fn native_asker_gone(
+    decisions: Option<&mpsc::Sender<PermissionDecision>>,
+    events: &mut mpsc::Receiver<EngineEvent>,
+    kept: &mut VecDeque<EngineEvent>,
+) {
+    tokio::select! {
+        () = answers_dropped(decisions) => {}
+        () = engine_left(events, kept) => {}
     }
 }
 
