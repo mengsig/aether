@@ -55,8 +55,8 @@ release is also the text of its GitHub release.
   kills them with the daemon, and the next start still reaps what they left.
   macOS has no such signal; [agent processes](docs/configuration.md#agent-processes)
   says what applies there. An engine that failed preflight at startup is no
-  longer unusable until a restart: a turn, a delegation or a started agent
-  that needs it probes the CLI again, at most every two seconds. A failure
+  longer unusable until a restart: a turn, a compaction, a delegation or a
+  started agent that needs it probes the CLI again, at most every two seconds. A failure
   names the fresh reason and says that no restart is needed. `aether run`
   with a missing or unusable engine now exits non-zero and creates no agent;
   spawn schedules are still accepted, and each run's first turn probes again.

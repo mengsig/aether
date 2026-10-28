@@ -132,6 +132,12 @@ impl EngineCatalog {
         detected.clone()
     }
 
+    /// Record `kind` as unusable for `reason`, as a failed probe would.
+    #[cfg(test)]
+    pub(crate) fn mark_unavailable(&self, kind: EngineKind, reason: &str) {
+        self.detected.write().record(kind, Err(reason.to_owned()));
+    }
+
     fn finish(&self, engines: DetectedEngines) {
         *self.detected.write() = engines;
         let set = self.finished.set(());

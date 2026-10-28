@@ -213,3 +213,27 @@ async fn compaction_without_usage_reports_a_live_gap() {
     );
     h.runtime.shutdown().await;
 }
+
+/// A CLI compactor that failed preflight is refused with that failure's
+/// reason, not a generic "not installed".
+#[tokio::test]
+async fn an_unusable_engine_compactor_is_refused_with_its_probe_reason() {
+    let (h, _dir) = ComposeHarness::new().await;
+    assert_eq!(
+        h.ctx.agent.scope.backend,
+        aether_core::agent::ExecutionBackend::Host,
+        "only a host agent can compact on an engine"
+    );
+    let kind = aether_engine::EngineKind::CLAUDE_CODE;
+    h.runtime
+        .engines
+        .mark_unavailable(kind, "claude --version exited 1: claude is broken");
+    let engine_model = ModelRef::new("claude-code", "haiku");
+    let refused = match compaction_client(&h.runtime, &h.ctx, &engine_model).await {
+        Ok(_) => panic!("an unusable engine cannot compact"),
+        Err(error) => error.to_string(),
+    };
+    assert!(refused.contains("claude is broken"), "{refused}");
+    assert!(!refused.contains("not installed"), "{refused}");
+    h.runtime.shutdown().await;
+}

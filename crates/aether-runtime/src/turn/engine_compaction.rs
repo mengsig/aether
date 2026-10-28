@@ -38,9 +38,14 @@ pub(super) async fn try_engine_compaction(
         return Ok(false);
     }
     let resolved = runtime.models.resolve(&ctx.agent.model)?;
-    let engines = runtime.engines.ready().await;
-    let Some(engine) = crate::turn_engine::engine_kind(resolved.provider.protocol)
-        .and_then(|kind| engines.get(&kind))
+    let Some(kind) = crate::turn_engine::engine_kind(resolved.provider.protocol) else {
+        return Ok(false);
+    };
+    let Some(engine) = runtime
+        .engines
+        .recheck(kind)
+        .await
+        .get(&kind)
         .filter(|engine| engine.compacts_natively())
     else {
         return Ok(false);

@@ -202,12 +202,15 @@ pub(super) async fn compaction_client(
                 .into(),
         ));
     }
-    let engine = runtime
-        .engines
-        .ready()
-        .await
-        .get(&kind)
-        .ok_or_else(|| RuntimeError::Invalid(format!("{} is not installed", kind.as_str())))?;
+    // Probed again when unusable, so a CLI fixed since startup compacts.
+    let detected = runtime.engines.recheck(kind).await;
+    let engine = detected.get(&kind).ok_or_else(|| {
+        RuntimeError::Invalid(crate::engine_access::unavailable_text(
+            kind,
+            &resolved.provider.id,
+            detected.unavailable.get(&kind).map(String::as_str),
+        ))
+    })?;
     let tool_ctx = tool_context(runtime, ctx);
     Ok(Arc::new(crate::compaction_client::CompactionClient {
         engine,

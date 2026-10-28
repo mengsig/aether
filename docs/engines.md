@@ -722,7 +722,7 @@ these probes, so in an empty `HOME` it creates nothing outside Aether's own
 directories.
 
 An engine that fails preflight is not ruled out for the daemon's life. When
-a turn, a delegation or the creation of a started agent needs an engine that
+a turn, a compaction, a delegation or the creation of a started agent needs an engine that
 detection found unusable, the daemon probes that CLI again first. A
 CLI installed, upgraded or fixed since startup is then used without a
 restart. Probes of one engine run at most once every two seconds, and
