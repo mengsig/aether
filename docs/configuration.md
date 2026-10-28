@@ -59,6 +59,20 @@ completed_run_days = 10
 Daemon configuration changes generally require a restart. GitHub watcher
 settings are stored in the daemon database and can be changed live.
 
+## Model aliases
+
+`aether models` shows full model IDs. Either a full ID or an alias works in
+`provider/model` settings and `--model`. Aliases follow the registry's current
+family version; use a full ID to pin a version.
+
+- `anthropic` and `claude-code`: `opus`, `opus-5-5`, `opus-5.5` →
+  `claude-opus-5-5`; `sonnet`, `sonnet-5-5`, `sonnet-5.5` →
+  `claude-sonnet-5-5`; `haiku`, `haiku-5-5`, `haiku-5.5` →
+  `claude-haiku-5-5`; `fable`, `fable-5-1` → `claude-fable-5-1`.
+- `openai`, `openai-responses`, `openai-codex` and `codex`: `astra` →
+  `gpt-6-astra`; `terra`, `gpt-5.6-terra` → `gpt-6.1-terra`; `sol` →
+  `gpt-6.1-sol`; `luna` → `gpt-6-luna`.
+
 ## Common settings
 
 These settings live in `config.toml`; dotted names identify the TOML

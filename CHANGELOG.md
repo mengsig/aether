@@ -46,6 +46,37 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Rejected messages return to the draft, and TUI shortcuts behave consistently
+  (#312).** Images refused by a host older than protocol 19 and a first request
+  sent without a model return to the agent's draft with their images. Uncertain
+  delivery also restores the draft and never resends automatically; the no-model
+  hint stays until the next key. Alt+O searches back through up to 64 messages
+  for file references, the viewer hint reads `Alt+- / Alt+=`, and `/theme`
+  previews the theme under the cursor, with Esc restoring the original.
+- **Theme swatches keep their own colours after mono (#316).** Choosing mono
+  no longer strips colours from the `/theme` picker; only `NO_COLOR` keeps
+  swatches colourless.
+- **SSH terminals can confirm truecolor support (#318).** When `TERM` claims
+  256 colours and `COLORTERM` is missing, the startup probe asks the terminal
+  with DECRQSS and XTGETTCAP RGB and uses truecolor when confirmed. At 256
+  colours, the user-message band picks the nearest colour that still stands
+  out from the background.
+- **Usage, times, CLI errors and configuration guidance are clearer (#315).**
+  Usage lines read `N in · N cache-write · N cached · N out`, and cost bases
+  consistently read `list price`, `provider-reported` or `mixed basis`.
+  Replay, artifact, resolve and provider backoff times are marked UTC.
+  Auto-start reports a daemon startup error as soon as it exits, rather than
+  waiting ten seconds. Config errors list every unknown setting together;
+  syntax errors say to fix the syntax, and error punctuation stays clean.
+  TUI-only flags appear only in `aether --help` and `aether tui --help`.
+  `aether daemon start` explains `aether daemon`; `aether stop` with no daemon
+  exits 0 with `aetherd not running`. `aether login` without a provider lists
+  them, and `aether login claude-code` without a terminal refuses with a hint.
+  The docs and update hint give `aether stop && aether daemon` for headless
+  hosts. The config template uses full model IDs, and the configuration docs
+  list the aliases.
+
+
 - **A held database lock no longer loses a turn's reply or hangs the CLI
   (#307).** When another process held the store locked past SQLite's
   five-second busy timeout, a turn that already had its answer failed with

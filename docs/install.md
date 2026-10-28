@@ -186,11 +186,17 @@ changes nothing and prints the command to use instead, and `aether update
 
 Replacing the binary does not replace a daemon that is already running: it stays
 the old build until it is stopped. After an update, `aether update` says whether
-one is running and prints the commands:
+one is running and prints the restart commands. On a desktop, start the TUI:
 
 ```sh
 aether stop
 aether
+```
+
+On a server or headless host, start only the daemon (no TUI):
+
+```sh
+aether stop && aether daemon
 ```
 
 Agents resume when the daemon starts again.
