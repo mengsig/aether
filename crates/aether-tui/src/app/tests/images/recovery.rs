@@ -102,6 +102,32 @@ fn uncertain_send_restores_the_draft_without_resending() {
 }
 
 #[test]
+fn no_model_for_an_abandoned_start_leaves_the_current_draft_alone() {
+    let mut app = app_with_status(TuiOptions::default());
+    attach(&mut app, png("shot.png"));
+    app.input.set_text("first request");
+    let then = start_then(&app.reduce(key(KeyCode::Enter)));
+    let other = AgentId::new();
+    app.select(other);
+    assert!(app.awaited_start().is_none());
+    app.input.set_text("other draft");
+    app.reduce(AppEvent::Reply {
+        then,
+        result: Err(aether_client::ClientError::Protocol(
+            aether_protocol::ErrorReply::new(
+                aether_protocol::ErrorCode::NoModel,
+                "no model configured",
+            ),
+        )),
+    });
+    assert_eq!(app.input.text, "other draft");
+    assert!(app.input.images.is_empty());
+    assert!(app.root_starts.is_empty());
+    let flash = app.live_flash().expect("refusal");
+    assert!(flash.contains("/login to sign in"), "{flash}");
+}
+
+#[test]
 fn no_model_restores_queued_text_and_images_and_keeps_the_hint_until_a_key() {
     for defaults in [false, true] {
         let mut app = app_with_status(TuiOptions::default());

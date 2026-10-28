@@ -284,7 +284,9 @@ impl App {
         // workspace instead of queueing behind an agent that will never arrive.
         if let Then::AgentCreated(start) | Then::RootDefaults { start, .. } = then {
             let message = explain(&self.theme, &e, then, &self.options.command_hint());
+            // Only the start still on screen owns the composer; an abandoned one is reported unsent.
             if matches!(&e, ClientError::Protocol(reply) if reply.code == aether_protocol::ErrorCode::NoModel)
+                && self.awaited_start() == Some(start)
             {
                 self.restore_root_start(start);
                 self.flash_error(message);

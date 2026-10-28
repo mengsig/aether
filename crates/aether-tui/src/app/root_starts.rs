@@ -260,7 +260,13 @@ impl App {
         effects
     }
 
+    /// The awaited start `id` was refused: its messages go back into the composer it owns.
     pub(super) fn restore_root_start(&mut self, id: StartId) {
+        debug_assert_eq!(
+            self.awaited_start(),
+            Some(id),
+            "the composer is not this start's"
+        );
         self.root_create_attempted = false;
         let Some(start) = self.root_starts.get_mut(&id) else {
             return;

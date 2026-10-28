@@ -29,17 +29,21 @@ const TRUECOLOR_QUERY: &[u8] =
     b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b[48;2;1;2;3m\x1bP$qm\x1b\\\x1b[0m\x1bP+q524742\x1b\\\x1b[c";
 
 pub fn probe_terminal(deadline: Duration, depth: ColorDepth) -> TerminalProbe {
-    let query = if depth == ColorDepth::Indexed256 {
-        TRUECOLOR_QUERY
-    } else {
-        QUERY
-    };
-    match query_tty(deadline, query) {
+    match query_tty(deadline, query_for(depth)) {
         Ok(reply) => parse_probe_reply(&reply),
         Err(error) => {
             tracing::debug!(%error, "terminal probe failed; using fallbacks");
             TerminalProbe::default()
         }
+    }
+}
+
+/// Only a terminal claiming 256 colours is asked whether it does truecolor.
+fn query_for(depth: ColorDepth) -> &'static [u8] {
+    if depth == ColorDepth::Indexed256 {
+        TRUECOLOR_QUERY
+    } else {
+        QUERY
     }
 }
 
@@ -268,6 +272,26 @@ pub fn background_of(palette: Option<TerminalPalette>, colorfgbg: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_256_colour_terminal_is_asked_about_truecolor() {
+        let asks = |query: &[u8]| {
+            let window = |needle: &[u8]| query.windows(needle.len()).any(|w| w == needle);
+            (window(b"\x1bP$qm\x1b\\"), window(b"\x1bP+q524742\x1b\\"))
+        };
+        assert_eq!(asks(query_for(ColorDepth::Indexed256)), (true, true));
+        for depth in [ColorDepth::Truecolor, ColorDepth::Basic16] {
+            assert_eq!(query_for(depth), QUERY, "{depth:?}");
+            assert_eq!(asks(query_for(depth)), (false, false), "{depth:?}");
+        }
+        for depth in [
+            ColorDepth::Indexed256,
+            ColorDepth::Truecolor,
+            ColorDepth::Basic16,
+        ] {
+            assert!(query_for(depth).ends_with(b"\x1b[c"), "DA1 stays last");
+        }
+    }
 
     #[test]
     fn truecolor_needs_a_positive_complete_capability_reply() {
