@@ -44,7 +44,7 @@ async fn host(listener: tokio::net::UnixListener, connected: Arc<AtomicBool>) {
             }
             WireCommand::CreateSchedule { spec, .. } => {
                 let ScheduleTarget::Spawn(template) = spec.target else {
-                    panic!("a spawn schedule");
+                    unreachable!("the client sent a delivery schedule");
                 };
                 assert_eq!(
                     template.scope.expect("host scope").workspace_root,
