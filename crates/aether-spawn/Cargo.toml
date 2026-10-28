@@ -28,4 +28,5 @@ pty-process = { version = "0.5.3", features = ["async"] }
 test-support = []
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tokio = { workspace = true }

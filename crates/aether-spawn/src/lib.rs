@@ -75,6 +75,81 @@ mod unix {
     #[cfg(not(target_os = "linux"))]
     pub fn die_with_parent(_command: &mut std::process::Command) {}
 
+    /// The parent's side of [`gate_start`]: the waiting child's pid, and the
+    /// gate that lets it exec. Dropped unopened, it makes the child fail.
+    #[cfg(target_os = "linux")]
+    #[derive(Debug)]
+    pub struct StartGate {
+        pid_read: io::PipeReader,
+        gate_write: io::PipeWriter,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl StartGate {
+        /// Block until the child waits at the gate and return its pid; `None`
+        /// when it never got there, as when the fork or an earlier hook failed.
+        pub fn child_pid(&mut self) -> io::Result<Option<u32>> {
+            use std::io::Read as _;
+
+            let mut pid = [0u8; 4];
+            match self.pid_read.read_exact(&mut pid) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+                Err(error) => return Err(error),
+            }
+            let pid = u32::from_ne_bytes(pid);
+            assert!(pid > 1, "a forked child's pid: {pid}");
+            Ok(Some(pid))
+        }
+
+        /// Let the child go on to exec.
+        pub fn open(mut self) -> io::Result<()> {
+            use std::io::Write as _;
+
+            self.gate_write.write_all(b"g")
+        }
+    }
+
+    /// Hold `command`'s child after its fork, before it execs, until the
+    /// returned gate is opened. Register after the hooks that must run first.
+    #[cfg(target_os = "linux")]
+    pub fn gate_start(command: &mut std::process::Command) -> io::Result<StartGate> {
+        use std::os::fd::AsRawFd as _;
+
+        use nix::errno::Errno;
+
+        let (pid_read, pid_write) = io::pipe()?;
+        let (gate_read, gate_write) = io::pipe()?;
+        let parent_ends = [pid_read.as_raw_fd(), gate_write.as_raw_fd()];
+        // SAFETY: close, getpid, write and read are async-signal-safe syscalls
+        // on fds and stack data; the closure allocates nothing.
+        unsafe {
+            command.pre_exec(move || {
+                // Without the parent's copies here, its death or drop reads as EOF.
+                for fd in parent_ends {
+                    nix::libc::close(fd);
+                }
+                let pid = nix::unistd::getpid().as_raw().to_ne_bytes();
+                if nix::unistd::write(&pid_write, &pid)? != pid.len() {
+                    return Err(io::Error::from(Errno::EIO));
+                }
+                let mut byte = [0u8; 1];
+                loop {
+                    match nix::unistd::read(&gate_read, &mut byte) {
+                        Ok(1) => return Ok(()),
+                        Ok(_) => return Err(io::Error::from(Errno::ECANCELED)),
+                        Err(Errno::EINTR) => {}
+                        Err(errno) => return Err(io::Error::from(errno)),
+                    }
+                }
+            })
+        };
+        Ok(StartGate {
+            pid_read,
+            gate_write,
+        })
+    }
+
     /// Signals a process group is stopped with before its SIGKILL.
     const STOP: [Signal; 3] = [Signal::SIGHUP, Signal::SIGINT, Signal::SIGTERM];
 
@@ -104,6 +179,8 @@ pub fn ignore_sigint() -> std::io::Result<()> {
         .map_err(std::io::Error::from)
 }
 
+#[cfg(target_os = "linux")]
+pub use unix::{StartGate, gate_start};
 #[cfg(unix)]
 pub use unix::{
     die_with_parent, ignore_stop_signals, reset_child_signals, reset_pty_signals, reset_signals,
@@ -116,7 +193,7 @@ pub fn reset_signals(_command: &mut std::process::Command) {}
 pub fn die_with_parent(_command: &mut std::process::Command) {}
 
 #[cfg(all(test, unix))]
-#[allow(unsafe_code, clippy::unwrap_used)]
+#[allow(unsafe_code, clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::process::Command;
 
@@ -176,6 +253,59 @@ mod tests {
             );
         }
         assert_eq!(bits & (1 << (Signal::SIGQUIT as u64 - 1)), 0, "{status}");
+    }
+
+    /// Spawn `command` through a gate on another thread, as spawning blocks
+    /// until the child execs; returns the gate and the pending spawn.
+    #[cfg(target_os = "linux")]
+    fn gated(
+        mut command: Command,
+    ) -> (
+        StartGate,
+        std::thread::JoinHandle<std::io::Result<std::process::Child>>,
+    ) {
+        let gate = gate_start(&mut command).unwrap();
+        (gate, std::thread::spawn(move || command.spawn()))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_gated_child_runs_only_once_its_gate_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", r#": > "$1""#, "sh", ran.to_str().unwrap()]);
+        let (mut gate, spawning) = gated(command);
+        let pid = gate
+            .child_pid()
+            .unwrap()
+            .expect("the child waits at the gate");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!ran.exists(), "the child ran before its gate opened");
+        assert!(!spawning.is_finished(), "spawn waits for the exec");
+        gate.open().unwrap();
+        let mut child = spawning.join().unwrap().unwrap();
+        assert_eq!(child.id(), pid, "the gate reported the spawned child");
+        assert!(child.wait().unwrap().success());
+        assert!(ran.exists(), "the child ran once its gate opened");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_dropped_gate_fails_the_spawn_without_running_the_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", r#": > "$1""#, "sh", ran.to_str().unwrap()]);
+        let (mut gate, spawning) = gated(command);
+        assert!(gate.child_pid().unwrap().is_some());
+        drop(gate);
+        let error = spawning
+            .join()
+            .unwrap()
+            .expect_err("an unopened gate fails the spawn");
+        assert_eq!(error.raw_os_error(), Some(nix::libc::ECANCELED), "{error}");
+        assert!(!ran.exists(), "the child never ran");
     }
 
     /// Spawn `sleep 30` from a thread that ends at once; `die` marks it.

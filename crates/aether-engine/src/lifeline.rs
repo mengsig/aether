@@ -8,7 +8,9 @@
 //! as the process. That signal reaches only the process spawned, not a CLI
 //! wrapper's own child, so each engine's process group also gets a watchdog:
 //! a shell in that group that kills the group once its pipe from this process
-//! closes. The next daemon start reaps what left the group ([`crate::orphans`]).
+//! closes. The engine is held between fork and exec until that watchdog has
+//! joined, so it cannot start a child first. The next daemon start reaps what
+//! left the group ([`crate::orphans`]).
 //! Elsewhere nothing is marked and no watchdog runs.
 
 use std::io;
@@ -25,6 +27,7 @@ pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
     let runtime = tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
     command.as_std_mut().process_group(0);
     aether_spawn::die_with_parent(command.as_std_mut());
+    let mut gate = aether_spawn::gate_start(command.as_std_mut())?;
     let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
     let job: Job = Box::new(move || {
         // tokio registers the child with the caller's runtime for reaping.
@@ -34,8 +37,25 @@ pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
         let _ = reply_tx.send(spawned);
     });
     spawner()?.send(job).map_err(|_| spawner_gone())?;
+    // An early return drops the gate unopened, which fails the spawn.
+    let pid = gate.child_pid().map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("reading the engine's pid at its start gate: {error}"),
+        )
+    })?;
+    let watch = match pid {
+        Some(pid) => {
+            #[cfg(test)]
+            tests::pause_before_watch(pid);
+            GroupWatch::start(pid)
+        }
+        None => GroupWatch(None),
+    };
+    let opened = gate.open();
     let child = reply_rx.recv().map_err(|_| spawner_gone())??;
-    let watch = GroupWatch::start(&child);
+    debug_assert!(opened.is_ok(), "a child execs only through an opened gate");
+    opened?;
     Ok((child, watch))
 }
 
@@ -89,14 +109,11 @@ const WATCHDOG: &str = r#"read -r _; kill -s KILL -- -"$1""#;
 
 #[cfg(target_os = "linux")]
 impl GroupWatch {
-    /// Join `engine`'s process group with a watchdog. Its membership keeps the
-    /// group id from being reused, so its kill cannot reach another group.
-    fn start(engine: &Child) -> Self {
+    /// Join the group led by engine `pid` with a watchdog. Its membership keeps
+    /// the group id from being reused, so its kill cannot reach another group.
+    fn start(pid: u32) -> Self {
         use std::os::unix::process::CommandExt as _;
 
-        let Some(pid) = engine.id() else {
-            return Self(None);
-        };
         assert!(
             (2..=i32::MAX as u32).contains(&pid),
             "not an engine pid: {pid}"
@@ -191,6 +208,23 @@ pub(crate) mod tests {
     const HELPER_ENV: &str = "AETHER_TEST_LIFELINE_PARENT";
     const HELPER: &str = "lifeline::tests::lifeline_helper_parent";
 
+    /// When set, [`super::spawn`] reports the gated engine and pauses this long
+    /// before its watchdog joins, as a slow daemon might.
+    static PAUSE_BEFORE_WATCH_MS: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
+    pub(super) fn pause_before_watch(pid: u32) {
+        let pause = PAUSE_BEFORE_WATCH_MS.load(std::sync::atomic::Ordering::SeqCst);
+        if pause == 0 {
+            return;
+        }
+        println!("pid={pid}");
+        // Time for an engine that was let run too early to start its child.
+        std::thread::sleep(Duration::from_millis(300));
+        println!("ready");
+        std::thread::sleep(Duration::from_millis(pause));
+    }
+
     /// An engine stand-in leading its own group, as every engine does.
     fn engine(program: &str, args: &[&str]) -> tokio::process::Command {
         use std::os::unix::process::CommandExt as _;
@@ -254,13 +288,19 @@ pub(crate) mod tests {
 
     /// The helper side: spawn an engine stand-in, print the pids to watch,
     /// wait to be killed. `HELPER_ENV` is `direct`, or a file for a wrapper's
-    /// child pid; prefixed `term:`, the group is sent SIGTERM before `ready`.
+    /// child pid; prefixed `term:`, the group is sent SIGTERM before `ready`,
+    /// and prefixed `gated:` the spawn pauses before its watchdog joins.
     #[tokio::test]
     async fn lifeline_helper_parent() {
         let Some(mode) = std::env::var_os(HELPER_ENV) else {
             return;
         };
         let mode = mode.into_string().unwrap();
+        if let Some(child_pid_file) = mode.strip_prefix("gated:") {
+            PAUSE_BEFORE_WATCH_MS.store(60_000, std::sync::atomic::Ordering::SeqCst);
+            let _ = super::spawn(wrapper(child_pid_file, false));
+            panic!("the spawn pauses until this helper is killed");
+        }
         let (stopping, child_pid_file) = match mode.strip_prefix("term:") {
             Some(file) => (true, file),
             None => (false, mode.as_str()),
@@ -367,6 +407,22 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mode = format!("term:{}", dir.path().join("child.pid").display());
         kill_parent_and_expect_gone(HELPER, HELPER_ENV, mode.as_ref());
+    }
+
+    /// A daemon killed after its engine forked but before the watchdog joined
+    /// leaves nothing: the engine has not run, so it started no child.
+    #[test]
+    fn a_parent_killed_before_the_watchdog_joins_leaves_no_wrapped_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let child_pid_file = dir.path().join("child.pid");
+        let mode = format!("gated:{}", child_pid_file.display());
+        kill_parent_and_expect_gone(HELPER, HELPER_ENV, mode.as_ref());
+        // Only an engine let run before its watchdog joined writes this.
+        if let Ok(pid) = std::fs::read_to_string(&child_pid_file) {
+            let pid: u32 = pid.trim().parse().unwrap();
+            let _guard = KillOnDrop(pid);
+            panic!("the engine ran before its watchdog joined; started {pid}");
+        }
     }
 
     /// A clean end drops the watch: that stops the watchdog, not the group.

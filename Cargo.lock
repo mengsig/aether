@@ -327,6 +327,7 @@ version = "1.2.6"
 dependencies = [
  "nix 0.31.3",
  "pty-process",
+ "tempfile",
  "tokio",
 ]
 
