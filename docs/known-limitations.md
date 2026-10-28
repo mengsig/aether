@@ -74,17 +74,18 @@ looks like a boundary and is not one.
   when read or exported. A `read_artifact` page, a capped `ReadArtifact`
   reply and a shell log line cut at its size cap move their cut off any
   secret seen whole around it: a private key block, a token of any length
-  from where it starts, a bearer or AWS key name across any blank space
-  before its value, and any other match within 16 KiB of the cut (or the
-  longest known secret, if longer). A `read_artifact` page looks back up to
-  1 MiB for where a token or key block began. Still open: a token or private
-  key block that began more than 1 MiB before a page, a single token longer
-  than the shell log's 5 MiB cap, more than 4 MiB of blank lines between a
-  bearer or AWS key name and its value in a shell log, and a known secret
-  repeated back to back many times over, whose matches can fall either way
-  of a cut. Each can be split so that neither part is recognized.
-  Tool arguments are kept in the
-  event log as typed, because an approval answered later re-runs the call from
+  from where it starts, a bearer or AWS key name across blank space before
+  its value, and any other match within 16 KiB of the cut (or the longest
+  known secret, if longer). A `read_artifact` page looks back up to 1 MiB
+  for where a token, key block or key name began. Still open: a token,
+  private key block, or bearer or AWS key name that began more than 1 MiB
+  before a page (a name with over 1 MiB of blank space before its value
+  included), a single token longer than the shell log's 5 MiB cap, more
+  than 4 MiB of blank lines between a bearer or AWS key name and its value
+  in a shell log, and a known secret repeated back to back many times over,
+  whose matches can fall either way of a cut. Each can be split so that
+  neither part is recognized. Tool arguments are kept in the event log as
+  typed, because an approval answered later re-runs the call from
   them; a run export masks them. For the same reason a native engine's
   approved permission prompt gets its tool input back unmasked. A known secret
   that matches part of the export format (a field name, tag or id) makes
