@@ -402,3 +402,5 @@ fn unprintable_socket_error_hints_do_not_offer_a_default_daemon_command() {
         assert!(!message.contains(['\n', '\u{1b}']), "{message}");
     }
 }
+
+mod draft_viewer;

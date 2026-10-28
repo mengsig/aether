@@ -105,7 +105,7 @@ fn hints(viewer: &Viewer) -> &'static str {
     match kind.as_deref() {
         Some("pdf") => "PgUp/PgDn page · Alt+T text/image · Alt+E open · Esc close",
         Some("html" | "htm") => "Alt+T screenshot/text · Alt+E browser · Esc close",
-        _ => "Esc close · Alt+E external · Alt+Z full · Alt+-/= resize",
+        _ => "Esc close · Alt+E external · Alt+Z full · Alt+- / Alt+= resize",
     }
 }
 

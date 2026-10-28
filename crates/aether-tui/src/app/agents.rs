@@ -332,6 +332,8 @@ impl App {
     }
 
     pub(super) fn send_message(&mut self, to: AgentId, message: Outgoing) -> Vec<Effect> {
+        debug_assert!(!message.text.is_empty() || !message.images.is_empty());
+        debug_assert!(message.images.len() <= aether_core::attachment::MAX_IMAGES_PER_MESSAGE);
         if let Some(held) = self.held_messages(to) {
             held.push(message);
             self.flash("message queued until the new agent's model change succeeds");
@@ -341,13 +343,13 @@ impl App {
         vec![Effect::Request {
             command: Command::SendMessage {
                 to,
-                content: message.text,
+                content: message.text.clone(),
                 subtree: false,
-                attachments: message.images,
+                attachments: message.images.clone(),
                 // A person retrying is a new message, not a resubmission.
                 idempotency_key: None,
             },
-            then: Then::Ignore,
+            then: Then::MessageSent { agent: to, message },
         }]
     }
 

@@ -20,7 +20,9 @@ impl App {
         result: Result<Reply, ClientError>,
     ) -> Vec<Effect> {
         let then = self.settle_remote_ack(then, &result);
-        if matches!(result, Err(ClientError::DeliveryUnconfirmed(_))) {
+        if matches!(result, Err(ClientError::DeliveryUnconfirmed(_)))
+            && !matches!(then, Then::MessageSent { .. })
+        {
             self.delivery_unconfirmed(&then, &result);
             return Vec::new();
         }
@@ -197,7 +199,11 @@ impl App {
     }
 
     fn reply_disconnected(&mut self, then: Then) -> Vec<Effect> {
-        // One notice: the generic one or the runner's would replace it.
+        if matches!(then, Then::MessageSent { .. }) {
+            self.disconnect_reply_noticed = true;
+            self.disconnect_notice_shown = true;
+            return self.reply_failed(ClientError::Disconnected, then);
+        }
         if let Then::AgentCreated(start) | Then::RootDefaults { start, .. } = then
             && let Some(unsent) = self.root_start_failed(start)
         {
@@ -230,8 +236,7 @@ impl App {
             );
             return Vec::new();
         }
-        // These already surface the disconnect through a dedicated
-        // error field above; a second general notice would duplicate it.
+        // These already surface the disconnect through a dedicated error field.
         if !matches!(
             then,
             Then::Usage
@@ -253,6 +258,16 @@ impl App {
     }
 
     fn reply_failed(&mut self, e: ClientError, then: Then) -> Vec<Effect> {
+        if let Then::MessageSent { agent, message } = then {
+            self.restore_agent_message(agent, message);
+            let recovery = if matches!(e, ClientError::Protocol(_)) {
+                "your message is back in the draft - remove the images (Backspace at the start of the draft or /image --clear) to send the text"
+            } else {
+                "your message is back in the draft; delivery uncertain: check the transcript before sending it again"
+            };
+            self.flash_error(format!("{e}; {recovery}"));
+            return Vec::new();
+        }
         let mut effects = Vec::new();
         if then == Then::Tree {
             self.tree_in_flight = false;
@@ -266,6 +281,13 @@ impl App {
         // workspace instead of queueing behind an agent that will never arrive.
         if let Then::AgentCreated(start) | Then::RootDefaults { start, .. } = then {
             let message = explain(&self.theme, &e, then, &self.options.command_hint());
+            if matches!(&e, ClientError::Protocol(reply) if reply.code == aether_protocol::ErrorCode::NoModel)
+            {
+                self.restore_root_start(start);
+                self.flash_error(message);
+                self.keep_flash_until_key();
+                return effects;
+            }
             match self.root_start_failed(start) {
                 Some(kept) => self.flash_error(format!("{message}; {kept}")),
                 None => self.flash_error(message),

@@ -260,6 +260,29 @@ impl App {
         effects
     }
 
+    pub(super) fn restore_root_start(&mut self, id: StartId) {
+        self.root_create_attempted = false;
+        let Some(start) = self.root_starts.get_mut(&id) else {
+            return;
+        };
+        debug_assert!(!start.failed, "only an outstanding start can be rejected");
+        start.failed = true;
+        start.model = None;
+        let messages = std::mem::take(&mut start.messages);
+        let text = messages
+            .iter()
+            .map(|message| message.text.as_str())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let images = messages
+            .into_iter()
+            .flat_map(|message| message.images)
+            .collect();
+        self.input.restore_message(Outgoing { text, images });
+        debug_assert!(self.input.cursor <= self.input.text.len());
+    }
+
     /// Start `id` failed. While the operator waits on it, it keeps its
     /// workspace and messages for the next message to retry; otherwise it is
     /// dropped, and what it leaves unsent is returned to be said.

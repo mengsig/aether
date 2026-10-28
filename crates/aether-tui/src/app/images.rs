@@ -49,6 +49,21 @@ pub(crate) fn with_image_lines(text: &str, labels: impl Iterator<Item = String>)
 }
 
 impl App {
+    pub(super) fn restore_agent_message(&mut self, agent: super::AgentId, message: Outgoing) {
+        if self.draft_owner == Some(agent) {
+            debug_assert!(!self.drafts.contains_key(&agent));
+            self.input.restore_message(message);
+        } else {
+            let mut parked = super::InputState::default();
+            parked.swap_draft(self.drafts.remove(&agent).unwrap_or_default());
+            parked.restore_message(message);
+            self.drafts
+                .insert(agent, parked.swap_draft(Default::default()));
+            debug_assert!(self.drafts.contains_key(&agent));
+        }
+        self.dirty = true;
+    }
+
     pub(crate) fn terminal_image_paste(&mut self) -> Vec<Effect> {
         if self.paste_reaches_composer() {
             return self.paste_clipboard_image();
