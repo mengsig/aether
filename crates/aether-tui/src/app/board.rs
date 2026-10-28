@@ -631,6 +631,7 @@ pub struct InspectorModel {
     pub effort: Option<Effort>,
     pub tokens_in: u64,
     pub tokens_out: u64,
+    pub tokens_cache_write: u64,
     pub tokens_cached: u64,
     pub cost: Option<Cost>,
     /// Subtree spend; `None` for an agent without children.
@@ -708,6 +709,7 @@ impl InspectorModel {
             effort: a.config.effort,
             tokens_in: usage.input_tokens,
             tokens_out: usage.output_tokens,
+            tokens_cache_write: usage.cache_write_tokens,
             tokens_cached: usage.cache_read_tokens,
             cost: cost_of(usage),
             cost_with_children: (!node.children.is_empty())

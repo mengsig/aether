@@ -331,7 +331,7 @@ fn run_candidates(agents: &[Agent]) -> Vec<Candidate<'_, RunId>> {
             summary: format!(
                 "{} · started {}",
                 super::short(&root.name, 24),
-                root.created_at.format("%Y-%m-%d %H:%M")
+                root.created_at.format("%Y-%m-%d %H:%M UTC")
             ),
             value: run,
         })

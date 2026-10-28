@@ -829,9 +829,9 @@ mod tests {
     fn cost_figures_name_their_basis() {
         use aether_core::model::CostBasis;
         for (basis, expected) in [
-            (CostBasis::ListPrice, "~$1.50 list-price estimate"),
+            (CostBasis::ListPrice, "~$1.50 list price"),
             (CostBasis::ProviderReported, "$1.50 provider-reported"),
-            (CostBasis::Mixed, "$1.50 mixed cost basis"),
+            (CostBasis::Mixed, "$1.50 mixed basis"),
         ] {
             let usage = Usage {
                 cost_usd: 1.5,

@@ -20,9 +20,9 @@ impl CostBasis {
     pub fn label(self) -> Option<&'static str> {
         match self {
             Self::Unknown => None,
-            Self::ListPrice => Some("list-price estimate"),
+            Self::ListPrice => Some("list price"),
             Self::ProviderReported => Some("provider-reported"),
-            Self::Mixed => Some("mixed cost basis"),
+            Self::Mixed => Some("mixed basis"),
         }
     }
 
@@ -350,6 +350,18 @@ impl Usage {
         let mut usage = Self::default();
         usage.set_cost(cost);
         usage
+    }
+
+    /// All token categories, rendered with the caller's count format.
+    pub fn tokens_line(&self, count: impl Fn(u64) -> String) -> String {
+        debug_assert!(self.cache_write_1h_tokens <= self.cache_write_tokens);
+        format!(
+            "{} in · {} cache-write · {} cached · {} out",
+            count(self.input_tokens),
+            count(self.cache_write_tokens),
+            count(self.cache_read_tokens),
+            count(self.output_tokens),
+        )
     }
 
     /// Prompt occupancy, including cached input but excluding generated output.

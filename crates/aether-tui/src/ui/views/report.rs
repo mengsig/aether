@@ -155,6 +155,30 @@ fn body(report: &RunReport, app: &App, theme: &Theme) -> Vec<Line<'static>> {
     lines
 }
 
+fn token_facts(usage: &Usage) -> Vec<String> {
+    debug_assert!(usage.cache_write_1h_tokens <= usage.cache_write_tokens);
+    let mut facts = Vec::new();
+    if usage.total_tokens() > 0 {
+        facts.push(format!("{} in", format::tokens(usage.input_tokens)));
+    }
+    if usage.cache_write_tokens > 0 {
+        facts.push(format!(
+            "{} cache-write",
+            format::tokens(usage.cache_write_tokens)
+        ));
+    }
+    if usage.cache_read_tokens > 0 {
+        facts.push(format!(
+            "{} cached",
+            format::tokens(usage.cache_read_tokens)
+        ));
+    }
+    if usage.total_tokens() > 0 {
+        facts.push(format!("{} out", format::tokens(usage.output_tokens)));
+    }
+    facts
+}
+
 /// `worker · reviewer · 3 turns · 2 tools · 17.3k in · 644 out · $0.02 · completed`;
 /// the role only where it says more than the name, zero counts left out.
 fn agent_line(agent: &AgentLine, app: &App, theme: &Theme) -> Line<'static> {
@@ -179,18 +203,7 @@ fn agent_line(agent: &AgentLine, app: &App, theme: &Theme) -> Line<'static> {
         facts.push(plural(u64::from(agent.tool_calls), "tool"));
     }
     let usage = &agent.usage;
-    if usage.total_tokens() > 0 {
-        facts.push(format!("{} in", format::tokens(usage.input_tokens)));
-    }
-    if usage.cache_read_tokens > 0 {
-        facts.push(format!(
-            "{} cached",
-            format::tokens(usage.cache_read_tokens)
-        ));
-    }
-    if usage.total_tokens() > 0 {
-        facts.push(format!("{} out", format::tokens(usage.output_tokens)));
-    }
+    facts.extend(token_facts(usage));
     facts.extend(cost(usage, theme));
     spans.push(Span::styled(
         format!("{dot}{}{dot}", facts.join(&dot)),
@@ -276,5 +289,48 @@ fn plural(n: u64, noun: &str) -> String {
         format!("1 {noun}")
     } else {
         format!("{n} {noun}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_agent_shows_cache_writes_only_when_present() {
+        let app = crate::testing::populated_app();
+        let mut agent = AgentLine {
+            id: aether_core::id::AgentId::new(),
+            parent: None,
+            name: "worker".into(),
+            role: aether_core::agent::Role("worker".into()),
+            model: aether_core::model::ModelRef::new("mock", "model"),
+            depth: 0,
+            turns: 1,
+            tool_calls: 0,
+            usage: Usage {
+                input_tokens: 12,
+                cache_write_tokens: 34,
+                cache_read_tokens: 56,
+                output_tokens: 78,
+                ..Default::default()
+            },
+            subtree_usage: Usage::default(),
+            outcome: Ended::Running,
+            created_at: aether_core::time::now(),
+            ended_at: None,
+            workspace: None,
+        };
+        let text = agent_line(&agent, &app, &app.theme).to_string();
+        assert!(
+            text.contains("12 in · 34 cache-write · 56 cached · 78 out"),
+            "{text}"
+        );
+        agent.usage.cache_write_tokens = 0;
+        assert!(
+            !agent_line(&agent, &app, &app.theme)
+                .to_string()
+                .contains("cache-write")
+        );
     }
 }

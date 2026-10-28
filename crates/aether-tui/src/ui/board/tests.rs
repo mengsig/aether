@@ -994,7 +994,11 @@ fn input_excludes_cache_reads_and_context_stays_unchanged() {
         .usage
         .cache_write_tokens = 700;
     let text = inner_rows(&draw_docked(&f.app, 56, 44, &dark())).join("\n");
-    assert!(text.contains("32k in · 380k cached · 18.2k out"), "{text}");
+    assert!(
+        text.contains("32k in · 700 cache-write · 380k cached"),
+        "{text}"
+    );
+    assert!(text.contains("18.2k out"), "{text}");
     assert!(text.contains("82k of 256k until compaction"), "{text}");
 }
 
@@ -1173,7 +1177,7 @@ fn priced_tree_preserves_header_and_name_at_docked_width() {
     let text = inner_rows(&draw_docked(&f.app, board_width(160), 44, &dark()));
     assert!(text[1].starts_with("Agents "), "{text:#?}");
     assert!(text[7].contains("implementer"), "{text:#?}");
-    assert!(text[7].ends_with("~$1.84 list"), "{text:#?}");
+    assert!(text[7].ends_with("~$1.84 list price"), "{text:#?}");
 }
 
 /// An Archon-style run node that never took a turn, over three stages.
@@ -1305,4 +1309,26 @@ fn a_group_header_sees_running_and_failed_grandchildren_through_a_finished_child
         let text = tree_text(&app, 60, &dark());
         assert!(text[3].starts_with(glyph), "{text:#?}");
     }
+}
+
+#[test]
+fn inspector_shows_cache_writes_between_input_and_cached_tokens() {
+    let mut f = mock_app(|f| f.implementer);
+    f.app
+        .tree
+        .nodes
+        .get_mut(&f.implementer)
+        .unwrap()
+        .agent
+        .stats
+        .usage
+        .cache_write_tokens = 42;
+    f.app.rebuild_board();
+    let model = InspectorModel::build(&f.app, f.implementer).unwrap();
+    assert_eq!(model.tokens_cache_write, 42);
+    let text = inner_rows(&draw_docked(&f.app, 160, 55, &dark())).join("\n");
+    assert!(
+        text.contains("32k in · 42 cache-write · 380k cached"),
+        "{text}"
+    );
 }

@@ -293,3 +293,15 @@ fn an_unknown_reference_is_not_found_and_an_ambiguous_one_an_invalid_argument() 
     let ambiguous = resolve_agent("01J5", &fleet()).unwrap_err();
     assert!(ambiguous.downcast_ref::<UsageError>().is_some());
 }
+
+#[test]
+fn run_candidates_mark_root_creation_times_as_utc() {
+    let agents = fleet();
+    let candidates = run_candidates(&agents);
+    assert_eq!(candidates.len(), 2);
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.summary.ends_with("started 2026-10-16 10:00 UTC"))
+    );
+}

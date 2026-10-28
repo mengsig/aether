@@ -306,22 +306,9 @@ pub async fn run(
         .get(&agent.id)
         .ok_or_else(|| anyhow!("agent {} is missing from its run tree", agent.id))?;
     let subtree_usage = (!node.children.is_empty()).then_some(node.subtree_usage);
-    eprintln!(
-        "usage: {} in · {} cached · {} out · {} · {}",
-        u.input_tokens,
-        u.cache_read_tokens,
-        u.output_tokens,
-        turns_phrase(final_agent.stats.turns),
-        u.cost_and_estimate_line()
-    );
+    eprintln!("{}", usage_line(&u, Some(final_agent.stats.turns)));
     if let Some(total) = subtree_usage {
-        eprintln!(
-            "subtree usage: {} in · {} cached · {} out · {}",
-            total.input_tokens,
-            total.cache_read_tokens,
-            total.output_tokens,
-            total.cost_and_estimate_line()
-        );
+        eprintln!("{}", usage_line(&total, None));
     }
     if json {
         let mut result = serde_json::json!({
@@ -343,6 +330,15 @@ pub async fn run(
         "cancelled" => 3,
         _ => 0,
     })
+}
+
+fn usage_line(usage: &aether_core::model::Usage, turns: Option<u32>) -> String {
+    let tokens = usage.tokens_line(|n| n.to_string());
+    let cost = usage.cost_and_estimate_line();
+    match turns {
+        Some(turns) => format!("usage: {tokens} · {} · {cost}", turns_phrase(turns)),
+        None => format!("subtree usage: {tokens} · {cost}"),
+    }
 }
 
 fn turns_phrase(turns: u32) -> String {
@@ -493,8 +489,26 @@ fn with_login_guidance(error: &str) -> String {
 }
 
 #[cfg(test)]
-mod recovery_hint_tests {
+mod tests {
     use super::{subscription_ended_message, with_login_guidance};
+    #[test]
+    fn run_and_subtree_usage_include_cache_writes() {
+        let usage = aether_core::model::Usage {
+            input_tokens: 12,
+            cache_write_tokens: 34,
+            cache_read_tokens: 56,
+            output_tokens: 78,
+            ..Default::default()
+        };
+        let tokens = "12 in · 34 cache-write · 56 cached · 78 out";
+        assert!(
+            super::usage_line(&usage, Some(2))
+                .starts_with(&format!("usage: {tokens} · 2 turns · "))
+        );
+        assert!(
+            super::usage_line(&usage, None).starts_with(&format!("subtree usage: {tokens} · "))
+        );
+    }
 
     #[test]
     fn rejected_engine_login_names_the_login_command() {

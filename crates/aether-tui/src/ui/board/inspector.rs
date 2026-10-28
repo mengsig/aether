@@ -354,6 +354,12 @@ fn context_detail(
 /// `32k in`, `380k cached`, `18.2k out`
 fn tokens(model: &InspectorModel) -> Vec<String> {
     let mut parts = vec![format!("{} in", tokens_short(model.tokens_in))];
+    if model.tokens_cache_write > 0 {
+        parts.push(format!(
+            "{} cache-write",
+            tokens_short(model.tokens_cache_write)
+        ));
+    }
     if model.tokens_cached > 0 {
         parts.push(format!("{} cached", tokens_short(model.tokens_cached)));
     }

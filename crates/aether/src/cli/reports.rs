@@ -202,21 +202,24 @@ pub async fn replay(
     Ok(())
 }
 
+fn frame_header(frame: &aether_core::replay::ReplayFrame) -> String {
+    if frame.outcome == aether_core::replay::TurnOutcome::NotStarted {
+        "\n─── before the first turn".to_owned()
+    } else {
+        format!(
+            "\n─── turn {} · {} · {} · {} · {}",
+            frame.turn,
+            frame.started_at.format("%H:%M:%S UTC"),
+            frame.outcome.as_str(),
+            frame.usage.tokens_line(|n| n.to_string()),
+            frame.usage.cost_line(),
+        )
+    }
+}
+
 /// One frame of `aether replay`, for a terminal.
 fn print_frame(frame: &aether_core::replay::ReplayFrame) {
-    if frame.outcome == aether_core::replay::TurnOutcome::NotStarted {
-        println!("\n─── before the first turn");
-    } else {
-        println!(
-            "\n─── turn {} · {} · {} · {} in / {} out · {}",
-            frame.turn,
-            frame.started_at.format("%H:%M:%S"),
-            frame.outcome.as_str(),
-            frame.usage.input_tokens,
-            frame.usage.output_tokens,
-            frame.usage.cost_line(),
-        );
-    }
+    println!("{}", frame_header(frame));
     if let Some(context) = &frame.context {
         let layers: Vec<String> = context
             .layers
@@ -303,5 +306,45 @@ fn tool_result(result: &aether_core::replay::ToolResult) -> String {
         T::Denied { reason } => format!("denied: {reason}"),
         T::Cancelled => "cancelled".into(),
         T::Replayed { original } => format!("replayed from {original}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replay_header_names_cache_writes_and_utc() {
+        let frame = aether_core::replay::ReplayFrame {
+            agent: aether_core::id::AgentId::new(),
+            turn: 1,
+            started_at: "2026-01-02T03:04:05Z".parse().unwrap(),
+            ended_at: None,
+            from_seq: 1,
+            to_seq: 2,
+            context: None,
+            messages: vec![],
+            notes: vec![],
+            tools: vec![],
+            approvals: vec![],
+            duration_ms: 0,
+            outcome: aether_core::replay::TurnOutcome::Running,
+            usage: aether_core::model::Usage {
+                input_tokens: 12,
+                cache_write_tokens: 34,
+                cache_read_tokens: 56,
+                output_tokens: 78,
+                ..Default::default()
+            },
+        };
+        let header = frame_header(&frame);
+        assert!(
+            header.contains("turn 1 · 03:04:05 UTC · running"),
+            "{header}"
+        );
+        assert!(
+            header.contains("12 in · 34 cache-write · 56 cached · 78 out"),
+            "{header}"
+        );
     }
 }
