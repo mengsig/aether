@@ -2,8 +2,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 //! Engine preflight as a running daemon sees it: a missing CLI refuses a
-//! started agent up front, and a CLI fixed after startup is found again
-//! without a daemon restart.
+//! started agent up front, a CLI fixed after startup is found again without
+//! a daemon restart, and paths that do not probe again never refuse on a
+//! stale outcome.
 
 mod support;
 
@@ -12,6 +13,9 @@ use std::time::Duration;
 
 use aether_core::agent::AgentConfig;
 use aether_core::model::{Effort, ModelRef};
+use aether_core::schedule::{
+    BusyPolicy, CreateScheduleSpec, MissedRunPolicy, Recurrence, ScheduleTarget, SpawnSpec,
+};
 use aether_protocol::{AgentQuery, CreateAgent};
 
 const ROOT_ENV: &str = "AETHER_TEST_ENGINE_PREFLIGHT_ROOT";
@@ -161,8 +165,6 @@ async fn a_fixed_engine_is_found_again_for_a_child_inheriting_its_model() {
         .await
         .expect("a parked agent does not need its engine yet");
     std::fs::write(Path::new(&root).join("fixed"), b"").unwrap();
-    // Creating the parent probed the broken CLI; outlast the 2s recheck interval.
-    tokio::time::sleep(Duration::from_millis(2_200)).await;
     let child = CreateAgent {
         role: "worker".into(),
         objective: Some("say hello".into()),
@@ -180,5 +182,52 @@ async fn a_fixed_engine_is_found_again_for_a_child_inheriting_its_model() {
         .expect("the inherited engine is probed again and accepted");
     assert_eq!(child.model, ModelRef::new("claude-code", "haiku"));
     assert_eq!(child.parent, Some(parent.id));
+    daemon.stop().await;
+}
+
+/// Schedules do not probe again, so a startup failure must not refuse one:
+/// with the CLI fixed since, the schedule is accepted with no restart.
+#[tokio::test]
+async fn a_spawn_schedule_is_not_refused_on_a_stale_preflight_failure() {
+    if run_isolated(
+        "a_spawn_schedule_is_not_refused_on_a_stale_preflight_failure",
+        &[("claude", FAILS_UNTIL_FIXED)],
+    )
+    .await
+    {
+        return;
+    }
+    let root = std::env::var_os(ROOT_ENV).unwrap();
+    let daemon = support::TestDaemon::start().await;
+    let client = aether_client::Client::connect(&daemon.socket)
+        .await
+        .unwrap();
+    detected(&client).await;
+    std::fs::write(Path::new(&root).join("fixed"), b"").unwrap();
+    let template = SpawnSpec {
+        role: "worker".into(),
+        name: None,
+        objective: "say hello".into(),
+        model: Some(ModelRef::new("claude-code", "haiku")),
+        fallbacks: Vec::new(),
+        scope: None,
+        config: None,
+        approval: None,
+    };
+    let schedule = client
+        .create_schedule(CreateScheduleSpec {
+            name: "hourly-hello".into(),
+            target: ScheduleTarget::Spawn(template),
+            recurrence: Recurrence::Interval {
+                seconds: std::num::NonZeroU64::new(3_600).unwrap(),
+            },
+            missed: MissedRunPolicy::default(),
+            busy: BusyPolicy::default(),
+            payload: serde_json::Value::Null,
+            max_deliveries: None,
+        })
+        .await
+        .expect("a spawn schedule is accepted once its CLI is fixed");
+    assert_eq!(schedule.name, "hourly-hello");
     daemon.stop().await;
 }

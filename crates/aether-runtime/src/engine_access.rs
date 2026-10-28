@@ -309,38 +309,18 @@ pub(crate) fn unavailable_text(kind: EngineKind, provider: &str, reason: Option<
 }
 
 impl Runtime {
-    /// Refuse `model` when detection found its engine unusable, so no agent
-    /// is created only to fail its first turn. Only a known reason refuses:
-    /// not an engine nobody probed (one a test supplied), nor detection
+    /// Refuse to start an agent whose engine is unusable after a fresh probe,
+    /// so none is created only to fail its first turn. The model is picked as
+    /// creation picks it: `model`, else `parent`'s, else the default. Only a
+    /// probe's reason refuses: not an engine a test supplied, nor detection
     /// still running, which the first turn waits for.
-    pub(crate) fn check_engine_usable(&self, model: &ModelRef) -> Result<()> {
-        let resolved = self.models.resolve(model)?;
-        let Some(kind) = turn_engine::engine_kind(resolved.provider.protocol) else {
-            return Ok(());
-        };
-        let Ok(detected) = self.engines.now() else {
-            return Ok(());
-        };
-        let Some(reason) = detected.unavailable.get(&kind) else {
-            return Ok(());
-        };
-        debug_assert!(
-            detected.get(&kind).is_none(),
-            "an unusable engine has no adapter"
-        );
-        Err(RuntimeError::Invalid(format!(
-            "model {model} runs on the {kind} engine, which this daemon cannot use: {}",
-            unavailable_text(kind, &resolved.provider.id, Some(reason))
-        )))
-    }
-
-    /// Probe the engine a creation's model runs on again when detection found
-    /// it unusable, so the creation sees a CLI fixed since. The model is picked
-    /// as creation picks it: `model`, else `parent`'s, else the default.
-    /// Returns at once while startup detection is still running.
-    pub async fn recheck_engine_for(&self, model: Option<&ModelRef>, parent: Option<AgentId>) {
+    pub async fn check_engine_for(
+        &self,
+        model: Option<&ModelRef>,
+        parent: Option<AgentId>,
+    ) -> Result<()> {
         if self.engines.now().is_err() {
-            return;
+            return Ok(());
         }
         // Creation reads the parent again and reports a missing one or a store error.
         let inherited = || {
@@ -356,15 +336,27 @@ impl Runtime {
             .or_else(inherited)
             .or_else(|| self.default_model())
         else {
-            return;
+            return Ok(());
         };
         // An unknown model is refused by creation itself, with its own error.
         let Ok(resolved) = self.models.resolve(&model) else {
-            return;
+            return Ok(());
         };
-        if let Some(kind) = turn_engine::engine_kind(resolved.provider.protocol) {
-            self.engines.recheck(kind).await;
-        }
+        let Some(kind) = turn_engine::engine_kind(resolved.provider.protocol) else {
+            return Ok(());
+        };
+        let detected = self.engines.recheck(kind).await;
+        let Some(reason) = detected.unavailable.get(&kind) else {
+            return Ok(());
+        };
+        debug_assert!(
+            detected.get(&kind).is_none(),
+            "an unusable engine has no adapter"
+        );
+        Err(RuntimeError::Invalid(format!(
+            "model {model} runs on the {kind} engine, which this daemon cannot use: {}",
+            unavailable_text(kind, &resolved.provider.id, Some(reason))
+        )))
     }
 
     /// Whether the startup probes, engine detection and the default model,

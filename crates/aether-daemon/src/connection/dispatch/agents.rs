@@ -93,7 +93,12 @@ async fn create_agent(
     if rt.default_model().is_none() && req.model.is_none() {
         rt.set_default_model(daemon.models.default_model().await);
     }
-    rt.recheck_engine_for(req.model.as_ref(), req.parent).await;
+    // A parked agent may wait for its CLI to be installed; one started now cannot.
+    if req.start {
+        rt.check_engine_for(req.model.as_ref(), req.parent)
+            .await
+            .map_err(map_err)?;
+    }
     let spec = CreateAgentSpec {
         role: req.role,
         name: req.name,

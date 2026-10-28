@@ -715,6 +715,8 @@ The probes leave the user's home as they found it. Codex creates files
 under its state directory on any start, `--version` included (for example
 `~/.codex/tmp`). Its probes therefore run with `CODEX_HOME` pointing at a fresh
 private directory under the system temp dir, removed when the probe ends.
+When that directory cannot be created, Codex is not run, and the reason
+names `TMPDIR` rather than advising an install.
 `claude --version` writes nothing and runs as is. `aether doctor` runs only
 these probes, so in an empty `HOME` it creates nothing outside Aether's own
 directories.
@@ -727,7 +729,8 @@ restart. Probes of one engine run at most once every two seconds, and
 callers arriving meanwhile share the latest outcome. A started agent
 (`aether run`) whose engine is still unusable is refused before it exists,
 with the probe's reason. A parked agent (`aether new`) is still created: its
-CLI may be installed before it runs.
+CLI may be installed before it runs. Spawn schedules and their runs are not
+refused either: each run's first turn probes the CLI again.
 
 A version floor is only ever a registration gate (`DetectError::TooOld`) once
 it is independently verified for everything that adapter's `args()` sends on

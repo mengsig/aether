@@ -58,12 +58,14 @@ release is also the text of its GitHub release.
   longer unusable until a restart: a turn, a delegation or a started agent
   that needs it probes the CLI again, at most every two seconds. A failure
   names the fresh reason and says that no restart is needed. `aether run`
-  with a missing or unusable engine now exits non-zero and creates no agent.
+  with a missing or unusable engine now exits non-zero and creates no agent;
+  spawn schedules are still accepted, and each run's first turn probes again.
   Messaging a failed agent names `aether wake <agent>` and
   `aether restart <agent>`, and an engine killed by a signal with nothing on
   stderr no longer ends its error with a dangling colon. `aether doctor` in
   an empty `HOME` no longer creates `~/.codex/tmp`: the Codex probes run with
-  a scratch `CODEX_HOME` that is removed afterwards.
+  a scratch `CODEX_HOME` that is removed afterwards. When that directory
+  cannot be created, the reason names `TMPDIR` instead of advising an install.
 - **Status, doctor and auth report current and correct state (#311).**
   Problems about one agent (a stall, a failed budget, deadline or
   scheduling check, a pending cancellation, a lease heartbeat) and about one

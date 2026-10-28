@@ -186,10 +186,6 @@ impl Runtime {
             ));
         }
         self.models.resolve(&model)?;
-        // A parked agent may wait for its CLI to be installed; one started now cannot.
-        if spec.start {
-            self.check_engine_usable(&model)?;
-        }
         // Inherited only alongside an inherited primary: a child given its own
         // model must not silently keep its parent's fallbacks.
         let fallbacks = match (asked_for_model, spec.fallbacks.is_empty()) {

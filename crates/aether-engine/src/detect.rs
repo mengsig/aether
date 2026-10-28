@@ -92,6 +92,9 @@ pub enum DetectError {
     TimedOut { program: String, probe: String },
     /// The OS could not start it - not on `PATH`, or another spawn failure.
     NotInstalled { program: String, os_error: String },
+    /// The probe's scratch state directory could not be created, so the CLI
+    /// was not run: a temp-storage problem, not the CLI's.
+    ScratchUnavailable { program: String, os_error: String },
     /// It started but exited non-zero.
     ExitFailure {
         program: String,
@@ -126,6 +129,10 @@ impl std::fmt::Display for DetectError {
             Self::NotInstalled { program, os_error } => write!(
                 f,
                 "{program} is not installed or not on PATH ({os_error}); install {program}"
+            ),
+            Self::ScratchUnavailable { program, os_error } => write!(
+                f,
+                "could not create a scratch directory to probe {program} in ({os_error}); point TMPDIR at a writable directory with free space"
             ),
             Self::ExitFailure {
                 program,
@@ -184,7 +191,7 @@ async fn probe_version_with_args(
     state_env: Option<&str>,
 ) -> Result<EngineVersion, DetectError> {
     let output = run_probe(program, args, path, state_env)
-        .await
+        .await?
         .ok_or_else(|| DetectError::TimedOut {
             program: program.to_owned(),
             probe: "--version".into(),
@@ -218,7 +225,7 @@ pub(crate) async fn probe_capability(
     state_env: Option<&str>,
 ) -> Result<(), DetectError> {
     let output = run_probe(program, capability_args, path, state_env)
-        .await
+        .await?
         .ok_or_else(|| DetectError::TimedOut {
             program: program.to_owned(),
             probe: capability_args.join(" "),
@@ -246,7 +253,7 @@ async fn run_probe(
     args: &[&str],
     path: Option<&Path>,
     state_env: Option<&str>,
-) -> Option<std::io::Result<std::process::Output>> {
+) -> Result<Option<std::io::Result<std::process::Output>>, DetectError> {
     use std::process::Stdio;
 
     let mut command = tokio::process::Command::new(program);
@@ -259,15 +266,18 @@ async fn run_probe(
     if let Some(path) = path {
         command.env("PATH", path);
     }
-    let run = async {
-        // Removed when the probe ends, whatever it wrote there.
-        let _scratch = match state_env {
-            Some(name) => Some(scratch_state_dir(&mut command, name)?),
-            None => None,
-        };
-        crate::lifeline::spawn(command)?.wait_with_output().await
+    // Removed when the probe ends, whatever it wrote there.
+    let _scratch = match state_env {
+        Some(name) => Some(scratch_state_dir(&mut command, name).map_err(|e| {
+            DetectError::ScratchUnavailable {
+                program: program.to_owned(),
+                os_error: e.to_string(),
+            }
+        })?),
+        None => None,
     };
-    tokio::time::timeout(PROBE_TIMEOUT, run).await.ok()
+    let run = async { crate::lifeline::spawn(command)?.wait_with_output().await };
+    Ok(tokio::time::timeout(PROBE_TIMEOUT, run).await.ok())
 }
 
 /// Point `name` at a fresh private directory for `command`'s run.
