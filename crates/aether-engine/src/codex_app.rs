@@ -86,12 +86,13 @@ impl CodexAppEngine {
     /// `detect_verbose`, optionally searching `path` instead of the process's
     /// own `PATH` - the seam a test drives with a fake `codex` on a temp dir.
     async fn detect_verbose_on(path: Option<&std::path::Path>) -> Result<Self, DetectError> {
-        let version = detect::probe_version("codex", path).await?;
+        let version = detect::probe_version("codex", path, Some(detect::CODEX_STATE_ENV)).await?;
         detect::probe_capability(
             "codex",
             &["app-server", "--help"],
             CAPABILITY_APP_SERVER,
             path,
+            Some(detect::CODEX_STATE_ENV),
         )
         .await?;
         Ok(Self::new("codex", version.to_string()))
@@ -458,8 +459,7 @@ impl CodexAppEngine {
         crate::export_temp_dir(&mut command, turn.temp_dir.as_deref());
         crate::export_build_env(&mut command, &turn.build_env);
         let run_token = crate::orphans::tag(&mut command);
-        let mut child = command
-            .spawn()
+        let mut child = crate::lifeline::spawn(command)
             .map_err(|e| crate::spawn_error(&self.program, &cwd, e))?;
         let engine_record =
             crate::orphans::EngineRecord::register(child.id(), run_token.as_deref());

@@ -508,6 +508,19 @@ shutdown does not end its agents, so it skips this reap: it stops each running
 engine's process group, as for any interrupted turn, and only processes that
 left that group keep running until their agent ends after the restart.
 
+A daemon that dies without a clean shutdown (killed with `SIGKILL`, out of
+memory, crashed) takes its engines with it on Linux. Each engine process, and
+each engine version probe, starts with a parent-death signal, so the kernel
+sends it `SIGKILL` when the daemon dies. Processes the engine started itself
+are not marked. The MCP bridge exits when its engine's pipe closes. The next
+daemon start kills the rest: every recorded engine process group whose
+leader still has the recorded pid and kernel start time, and every process of
+the daemon's user carrying a recorded engine's random token. It never
+signals a process it cannot tie to an engine it started. macOS has neither a
+parent-death signal nor a readable start time. There, an engine left by a
+killed daemon runs until it exits on its own, and the next start reaps
+nothing. Stop the daemon with `aether stop` rather than killing it.
+
 ```toml
 [agents]
 # reap_grace_secs = 10

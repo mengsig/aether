@@ -13,6 +13,7 @@ pub mod codex;
 pub mod codex_app;
 pub mod contract;
 pub mod detect;
+mod lifeline;
 mod offline;
 pub mod orphans;
 mod output;
@@ -651,7 +652,7 @@ where
     export_temp_dir(&mut command, temp_dir);
     export_build_env(&mut command, build_env);
     let run_token = orphans::tag(&mut command);
-    let mut child = command.spawn().map_err(|e| spawn_error(program, &cwd, e))?;
+    let mut child = lifeline::spawn(command).map_err(|e| spawn_error(program, &cwd, e))?;
     let program = program.to_owned();
     let pid = child.id();
     let mut stdin = child
@@ -829,15 +830,21 @@ where
                 .as_ref()
                 .map(|error| format!("; {error}"))
                 .unwrap_or_default();
+            let stdout_error = stdout_error
+                .as_ref()
+                .map(|error| format!("; {error}"))
+                .unwrap_or_default();
+            // A killed engine often says nothing: then no dangling separator.
+            let tail = if tail.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {tail}")
+            };
             let _ = tx
                 .send(EngineEvent::Done(EngineOutcome {
                     is_error: true,
                     error: Some(format!(
-                        "{program} exited ({status_text}) without a result{stdin_error}{}: {tail}",
-                        stdout_error
-                            .as_ref()
-                            .map(|error| format!("; {error}"))
-                            .unwrap_or_default()
+                        "{program} exited ({status_text}) without a result{stdin_error}{stdout_error}{tail}"
                     )),
                     session_lost,
                     ..Default::default()

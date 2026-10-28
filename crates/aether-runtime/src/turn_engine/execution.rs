@@ -24,22 +24,14 @@ pub(crate) async fn execute(
     let Some(kind) = engine_kind(resolved.provider.protocol) else {
         return Err(RuntimeError::Internal("not an engine provider".into()));
     };
-    let detected = runtime.engines.ready().await;
-    let Some(engine) = detected.get(&kind).cloned() else {
-        // Preflight recorded why, when it ran: too old or missing a
-        // capability reads very differently from genuinely not installed,
-        // and only the stored reason tells them apart.
-        let reason = detected
-            .unavailable
-            .get(&kind)
-            .cloned()
-            .unwrap_or_else(|| {
-                format!(
-                    "{} is not installed on this machine; install it, sign in to {} from your client, and retry",
-                    kind.as_str(),
-                    resolved.provider.id
-                )
-            });
+    // An engine found unusable is probed again here, so the reason is current.
+    let detected = runtime.engines.recheck(kind).await;
+    let Some(engine) = detected.get(&kind) else {
+        let reason = crate::engine_access::unavailable_text(
+            kind,
+            &resolved.provider.id,
+            detected.unavailable.get(&kind).map(String::as_str),
+        );
         return Ok(EngineLink::Done(Next::Failed(reason)));
     };
     let Some(bridge) = runtime.config.bridge.clone() else {

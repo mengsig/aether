@@ -276,7 +276,7 @@ async fn check_delegation_target(
     };
     let engine_kind = crate::turn_engine::engine_kind(resolved.provider.protocol);
     if let Some(kind) = engine_kind {
-        let Some(engine) = runtime.engines.ready().await.get(&kind) else {
+        let Some(engine) = runtime.engines.recheck(kind).await.get(&kind) else {
             return delegation_refusal(
                 runtime,
                 requested,

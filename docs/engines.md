@@ -711,6 +711,24 @@ A timeout reports which probe failed; timeout or caller cancellation kills the
 direct child instead of leaving the probe running. These are local CLI checks,
 not model calls. The bound is per probe, not a deadline for total daemon startup.
 
+The probes leave the user's home as they found it. Codex creates files
+under its state directory on any start, `--version` included (for example
+`~/.codex/tmp`). Its probes therefore run with `CODEX_HOME` pointing at a fresh
+private directory under the system temp dir, removed when the probe ends.
+`claude --version` writes nothing and runs as is. `aether doctor` runs only
+these probes, so in an empty `HOME` it creates nothing outside Aether's own
+directories.
+
+An engine that fails preflight is not ruled out for the daemon's life. When
+a turn, a delegation or the creation of a started agent needs an engine that
+detection found unusable, the daemon probes that CLI again first. A
+CLI installed, upgraded or fixed since startup is then used without a
+restart. Probes of one engine run at most once every two seconds, and
+callers arriving meanwhile share the latest outcome. A started agent
+(`aether run`) whose engine is still unusable is refused before it exists,
+with the probe's reason. A parked agent (`aether new`) is still created: its
+CLI may be installed before it runs.
+
 A version floor is only ever a registration gate (`DetectError::TooOld`) once
 it is independently verified for everything that adapter's `args()` sends on
 every turn - not just one turn kind. Claude Code's 2.1.219 floor is verified
@@ -736,9 +754,9 @@ back to `CodexEngine` only on its failure, logging both reasons together when
 neither works (collapsed to one when they are identical, the common
 CLI-simply-absent case). `aether doctor`'s engines check reports the same
 per-adapter reason instead of a bare "not found", including the
-legacy-fallback reason for Codex; a turn dispatched onto an engine detection
-ruled unusable fails with that same reason rather than a generic
-"not installed" message. Detection never makes the daemon refuse to start: a
+legacy-fallback reason for Codex; a turn dispatched onto an engine still
+unusable after its fresh probe fails with that probe's reason rather than a
+generic "not installed" message. Detection never makes the daemon refuse to start: a
 CLI that fails preflight is omitted from the engine table, exactly as an
 absent one always was, and the API providers remain unaffected. Nor does it
 delay the socket: the daemon answers first and detects the engines, Claude

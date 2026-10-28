@@ -1,19 +1,43 @@
 use crate::{Result, Runtime, RuntimeError, turn_engine, withheld_by_position};
 use aether_core::id::AgentId;
+use aether_core::model::{ModelRef, PromptCacheTtl};
 use aether_engine::{Engine, EngineKind};
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, sync::Arc};
+
+/// The shortest gap between two probes of one unusable engine, so a burst
+/// of turns and creations shares one probe rather than each running the CLI.
+const RECHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 /// What engine detection found: the usable engines, and why each other one
 /// is not, when preflight ran and found a specific reason.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct DetectedEngines {
     pub(crate) usable: HashMap<EngineKind, Arc<dyn Engine>>,
     pub(crate) unavailable: HashMap<EngineKind, String>,
 }
 
 impl DetectedEngines {
-    pub(crate) fn get(&self, kind: &EngineKind) -> Option<&Arc<dyn Engine>> {
-        self.usable.get(kind)
+    pub(crate) fn get(&self, kind: &EngineKind) -> Option<Arc<dyn Engine>> {
+        self.usable.get(kind).cloned()
+    }
+
+    /// Keep one engine's latest detection outcome, replacing the older one.
+    fn record(&mut self, kind: EngineKind, found: std::result::Result<Arc<dyn Engine>, String>) {
+        match found {
+            Ok(engine) => {
+                self.unavailable.remove(&kind);
+                self.usable.insert(kind, engine);
+            }
+            Err(reason) => {
+                self.usable.remove(&kind);
+                self.unavailable.insert(kind, reason);
+            }
+        }
+        debug_assert!(
+            self.usable.contains_key(&kind) != self.unavailable.contains_key(&kind),
+            "an engine is either usable or has a reason"
+        );
     }
 
     /// Every engine unusable for one reason: detection itself failed.
@@ -29,35 +53,91 @@ impl DetectedEngines {
     }
 }
 
-/// The engines, set once. Detection runs after the socket can answer, so a
-/// reader that can wait awaits [`EngineCatalog::ready`]; one that cannot gets
-/// a retryable [`RuntimeError::Starting`] from [`EngineCatalog::now`].
+/// The engines. Detection runs after the socket can answer, so a reader
+/// that can wait awaits [`EngineCatalog::ready`]; one that cannot gets a
+/// retryable [`RuntimeError::Starting`] from [`EngineCatalog::now`]. An
+/// unusable engine is probed again by [`EngineCatalog::recheck`], so a CLI
+/// fixed after startup needs no daemon restart.
 #[derive(Default)]
-pub(crate) struct EngineCatalog(tokio::sync::SetOnce<DetectedEngines>);
+pub(crate) struct EngineCatalog {
+    finished: tokio::sync::SetOnce<()>,
+    detected: parking_lot::RwLock<DetectedEngines>,
+    /// `None` for engines a test supplied: there is nothing to probe.
+    probing: Option<Probing>,
+    /// When each engine was last probed again; held across that probe.
+    rechecked: tokio::sync::Mutex<HashMap<EngineKind, Instant>>,
+}
+
+/// What probing an engine again needs.
+#[derive(Clone, Copy)]
+struct Probing {
+    prompt_cache_ttl: Option<PromptCacheTtl>,
+}
 
 impl EngineCatalog {
     pub(crate) fn detected(engines: DetectedEngines) -> Self {
-        Self(tokio::sync::SetOnce::new_with(Some(engines)))
+        Self {
+            finished: tokio::sync::SetOnce::new_with(Some(())),
+            detected: parking_lot::RwLock::new(engines),
+            ..Self::default()
+        }
+    }
+
+    /// A catalog that [`spawn_startup_probes`] fills by probing this machine.
+    pub(crate) fn probing(prompt_cache_ttl: Option<PromptCacheTtl>) -> Self {
+        Self {
+            probing: Some(Probing { prompt_cache_ttl }),
+            ..Self::default()
+        }
     }
 
     /// Never waits longer than detection, whose probes are each bounded.
-    pub(crate) async fn ready(&self) -> &DetectedEngines {
-        self.0.wait().await
+    pub(crate) async fn ready(&self) -> DetectedEngines {
+        self.finished.wait().await;
+        self.detected.read().clone()
     }
 
-    pub(crate) fn now(&self) -> Result<&DetectedEngines> {
-        self.0.get().ok_or_else(|| {
-            RuntimeError::Starting(
+    pub(crate) fn now(&self) -> Result<DetectedEngines> {
+        if self.finished.get().is_none() {
+            return Err(RuntimeError::Starting(
                 "engine and default model detection is still running; retry in a moment".into(),
-            )
-        })
+            ));
+        }
+        Ok(self.detected.read().clone())
+    }
+
+    /// [`EngineCatalog::ready`], after probing `kind` again when it was
+    /// unusable. Probes of one engine are at least [`RECHECK_INTERVAL`]
+    /// apart; a caller arriving meanwhile gets the latest outcome.
+    pub(crate) async fn recheck(&self, kind: EngineKind) -> DetectedEngines {
+        let detected = self.ready().await;
+        let Some(probing) = self.probing else {
+            return detected;
+        };
+        if detected.usable.contains_key(&kind) {
+            return detected;
+        }
+        let mut rechecked = self.rechecked.lock().await;
+        let recent = rechecked
+            .get(&kind)
+            .is_some_and(|at| at.elapsed() < RECHECK_INTERVAL);
+        // Another caller may have found it while this one waited for the lock.
+        if recent || self.detected.read().usable.contains_key(&kind) {
+            return self.detected.read().clone();
+        }
+        let found = detect_engine(kind, probing.prompt_cache_ttl).await;
+        rechecked.insert(kind, Instant::now());
+        let mut detected = self.detected.write();
+        detected.record(kind, found);
+        detected.clone()
     }
 
     fn finish(&self, engines: DetectedEngines) {
-        let set = self.0.set(engines);
+        *self.detected.write() = engines;
+        let set = self.finished.set(());
         debug_assert!(set.is_ok(), "engine detection finishes once");
         if set.is_err() {
-            tracing::error!("engine detection finished twice; kept the first result");
+            tracing::error!("engine detection finished twice; kept the latest result");
         }
     }
 }
@@ -68,7 +148,7 @@ impl EngineCatalog {
 /// waits forever or sees a default model still being resolved.
 pub(super) fn spawn_startup_probes(
     runtime: &Arc<Runtime>,
-    prompt_cache_ttl: Option<aether_core::model::PromptCacheTtl>,
+    prompt_cache_ttl: Option<PromptCacheTtl>,
 ) {
     debug_assert!(
         runtime.engines.now().is_err(),
@@ -118,11 +198,12 @@ pub(super) fn spawn_startup_probes(
 /// machine cannot use is omitted, same as before this preflight; the reason
 /// is logged at `warn` and kept on [`Runtime`] so a turn that reaches it
 /// reports why rather than a generic "not installed".
-async fn detect_engines(
-    prompt_cache_ttl: Option<aether_core::model::PromptCacheTtl>,
-) -> DetectedEngines {
+async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEngines {
     // Independent CLIs: probing them together bounds the wait by the slower one.
-    let (claude, codex) = tokio::join!(detect_claude(prompt_cache_ttl), detect_codex());
+    let (claude, codex) = tokio::join!(
+        detect_engine(EngineKind::CLAUDE_CODE, prompt_cache_ttl),
+        detect_engine(EngineKind::CODEX, prompt_cache_ttl)
+    );
     let mut detected = DetectedEngines::default();
     for (kind, found) in [
         (EngineKind::CLAUDE_CODE, claude),
@@ -145,8 +226,24 @@ async fn detect_engines(
     detected
 }
 
+/// Probe one engine's CLI: usable, or why not.
+async fn detect_engine(
+    kind: EngineKind,
+    prompt_cache_ttl: Option<PromptCacheTtl>,
+) -> std::result::Result<Arc<dyn Engine>, String> {
+    if kind == EngineKind::CLAUDE_CODE {
+        return detect_claude(prompt_cache_ttl).await;
+    }
+    if kind == EngineKind::CODEX {
+        return detect_codex().await;
+    }
+    Err(format!(
+        "{kind} has no installed-CLI detection in this daemon"
+    ))
+}
+
 async fn detect_claude(
-    prompt_cache_ttl: Option<aether_core::model::PromptCacheTtl>,
+    prompt_cache_ttl: Option<PromptCacheTtl>,
 ) -> std::result::Result<Arc<dyn Engine>, String> {
     match aether_engine::ClaudeCodeEngine::detect_verbose().await {
         Ok(e) => {
@@ -197,7 +294,65 @@ async fn detect_codex() -> std::result::Result<Arc<dyn Engine>, String> {
     }
 }
 
+/// Why `kind` cannot be used and what to do. Preflight's reason, when it
+/// found one, tells too old or missing a capability from not installed.
+pub(crate) fn unavailable_text(kind: EngineKind, provider: &str, reason: Option<&str>) -> String {
+    assert!(!provider.is_empty(), "an engine runs for a named provider");
+    match reason {
+        Some(reason) => format!(
+            "{reason}. Aether checks the {kind} CLI again on the next attempt, so retry once it is fixed; no daemon restart is needed"
+        ),
+        None => format!(
+            "{kind} is not installed on this machine; install it, sign in to {provider} from your client, and retry"
+        ),
+    }
+}
+
 impl Runtime {
+    /// Refuse `model` when detection found its engine unusable, so no agent
+    /// is created only to fail its first turn. Only a known reason refuses:
+    /// not an engine nobody probed (one a test supplied), nor detection
+    /// still running, which the first turn waits for.
+    pub(crate) fn check_engine_usable(&self, model: &ModelRef) -> Result<()> {
+        let resolved = self.models.resolve(model)?;
+        let Some(kind) = turn_engine::engine_kind(resolved.provider.protocol) else {
+            return Ok(());
+        };
+        let Ok(detected) = self.engines.now() else {
+            return Ok(());
+        };
+        let Some(reason) = detected.unavailable.get(&kind) else {
+            return Ok(());
+        };
+        debug_assert!(
+            detected.get(&kind).is_none(),
+            "an unusable engine has no adapter"
+        );
+        Err(RuntimeError::Invalid(format!(
+            "model {model} runs on the {kind} engine, which this daemon cannot use: {}",
+            unavailable_text(kind, &resolved.provider.id, Some(reason))
+        )))
+    }
+
+    /// Probe the engine `model` (or the default model) runs on again when
+    /// detection found it unusable, so a creation sees a CLI fixed since.
+    /// Returns at once while startup detection is still running.
+    pub async fn recheck_engine_for(&self, model: Option<&ModelRef>) {
+        if self.engines.now().is_err() {
+            return;
+        }
+        let Some(model) = model.cloned().or_else(|| self.default_model()) else {
+            return;
+        };
+        // An unknown model is refused by creation itself, with its own error.
+        let Ok(resolved) = self.models.resolve(&model) else {
+            return;
+        };
+        if let Some(kind) = turn_engine::engine_kind(resolved.provider.protocol) {
+            self.engines.recheck(kind).await;
+        }
+    }
+
     /// Whether the startup probes, engine detection and the default model,
     /// have finished.
     pub fn startup_probes_finished(&self) -> bool {

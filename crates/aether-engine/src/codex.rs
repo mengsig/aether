@@ -52,7 +52,7 @@ impl CodexEngine {
     /// `detect_verbose`, optionally searching `path` instead of the process's
     /// own `PATH` - the seam a test drives with a fake `codex` on a temp dir.
     async fn detect_verbose_on(path: Option<&std::path::Path>) -> Result<Self, DetectError> {
-        let version = detect::probe_version("codex", path).await?;
+        let version = detect::probe_version("codex", path, Some(detect::CODEX_STATE_ENV)).await?;
         Ok(Self::new("codex", version.to_string()))
     }
 

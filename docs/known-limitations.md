@@ -284,14 +284,16 @@ isolation depend on the installed engine version and the platform; see
   `aether.db.unclean.json`, and the doctor's `shutdown` check warns until the
   next clean stop; with no daemon answering, a mark left behind is a warning
   too. It says the run ended badly, not why.
-- After a hard kill of the daemon (`kill -9`, power loss) its engine
-  processes keep running until the next daemon start, which kills the process
-  group of every engine it recorded, but only while the recorded pid and
-  start time still match a live group leader. This needs Linux (it reads
-  `/proc`); on macOS nothing is recorded or reaped, and the orphans must be
-  stopped by hand. An engine's descendants that left its process group, or a
-  group whose leader had already exited, are not reaped then; on Linux they
-  are when their agent ends. A graceful stop leaves no engine running.
+- After a hard kill of the daemon (`kill -9`, a crash) on Linux, its engine
+  processes die with it, but processes an engine started (its shell
+  commands) keep running until the next daemon start. That start kills the
+  process group of every engine it recorded, but only while the recorded pid
+  and start time still match a live group leader, plus every process carrying
+  a recorded engine's token. A descendant that cleared its environment and
+  left the group is reaped only when its agent ends. On macOS there is no
+  parent-death signal and nothing is recorded or reaped, so the engines of a
+  killed daemon keep running and must be stopped by hand. A graceful stop
+  leaves no engine running.
 - When an agent ends, its engines' leftover processes are found by their
   environment tag and, with a user systemd, their scope
   ([agent processes](configuration.md#agent-processes)). This needs Linux. A

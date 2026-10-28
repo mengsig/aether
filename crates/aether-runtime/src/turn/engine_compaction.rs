@@ -40,7 +40,7 @@ pub(super) async fn try_engine_compaction(
     let resolved = runtime.models.resolve(&ctx.agent.model)?;
     let engines = runtime.engines.ready().await;
     let Some(engine) = crate::turn_engine::engine_kind(resolved.provider.protocol)
-        .and_then(|kind| engines.get(&kind).cloned())
+        .and_then(|kind| engines.get(&kind))
         .filter(|engine| engine.compacts_natively())
     else {
         return Ok(false);

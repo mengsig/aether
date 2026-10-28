@@ -54,3 +54,41 @@ async fn a_woken_turn_after_an_internal_failure_is_told_only_the_cause_and_numbe
         .expect("a woken turn");
     assert_eq!(woken.turn, 2);
 }
+
+/// Messaging a failed agent is refused with the commands that revive it.
+#[tokio::test]
+async fn a_message_to_a_failed_agent_names_wake_and_restart() {
+    let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown().await;
+    let (agent, _) = runtime
+        .create_agent(
+            CreateAgentSpec {
+                objective: Some("reply".into()),
+                start: true,
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("agent");
+    begin_turn(&runtime, agent.id, &CancellationToken::new())
+        .expect("begin turn")
+        .expect("a turn");
+    fail_agent(&runtime, agent.id, "engine killed".into()).expect("fail");
+    let refused = runtime
+        .send_message(
+            agent.id,
+            vec![aether_core::model::ContentBlock::text("are you there?")],
+            Actor::user(),
+        )
+        .expect_err("a failed agent takes no message")
+        .to_string();
+    assert!(refused.contains("is failed"), "{refused}");
+    assert!(
+        refused.contains(&format!("`aether wake {}`", agent.id)),
+        "{refused}"
+    );
+    assert!(
+        refused.contains(&format!("`aether restart {}`", agent.id)),
+        "{refused}"
+    );
+}

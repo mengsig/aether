@@ -71,7 +71,7 @@ impl ClaudeCodeEngine {
     /// `detect_verbose`, optionally searching `path` instead of the process's
     /// own `PATH` - the seam a test drives with a fake `claude` on a temp dir.
     async fn detect_verbose_on(path: Option<&std::path::Path>) -> Result<Self, DetectError> {
-        let version = detect::probe_version("claude", path).await?;
+        let version = detect::probe_version("claude", path, None).await?;
         Ok(Self::new("claude", version.to_string()))
     }
 

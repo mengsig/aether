@@ -259,6 +259,32 @@ async fn process_crash_without_a_result_has_no_closing_accounting() {
     assert_eq!(outcome.usage, Usage::default());
 }
 
+#[tokio::test]
+async fn a_silently_killed_engine_has_no_dangling_separator() {
+    let mut run = run_process(
+        "sh",
+        vec!["-c".into(), "kill -9 $$".into()],
+        PathBuf::from("/"),
+        &[],
+        None,
+        &[],
+        &aether_core::redact::Redactor::default(),
+        String::new(),
+        false,
+        None,
+        CancellationToken::new(),
+        |_| Vec::new(),
+    )
+    .await
+    .expect("spawn sh");
+    let Some(EngineEvent::Done(outcome)) = run.events.recv().await else {
+        panic!("expected crash outcome");
+    };
+    let error = outcome.error.unwrap();
+    assert!(error.contains("signal: 9"), "{error}");
+    assert!(error.ends_with("without a result"), "{error}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_first_write_to_an_engine_that_already_exited_is_reported() {
     let mut run = run_process(

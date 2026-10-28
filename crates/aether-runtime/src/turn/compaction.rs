@@ -207,7 +207,6 @@ pub(super) async fn compaction_client(
         .ready()
         .await
         .get(&kind)
-        .cloned()
         .ok_or_else(|| RuntimeError::Invalid(format!("{} is not installed", kind.as_str())))?;
     let tool_ctx = tool_context(runtime, ctx);
     Ok(Arc::new(crate::compaction_client::CompactionClient {

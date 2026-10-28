@@ -93,6 +93,7 @@ async fn create_agent(
     if rt.default_model().is_none() && req.model.is_none() {
         rt.set_default_model(daemon.models.default_model().await);
     }
+    rt.recheck_engine_for(req.model.as_ref()).await;
     let spec = CreateAgentSpec {
         role: req.role,
         name: req.name,

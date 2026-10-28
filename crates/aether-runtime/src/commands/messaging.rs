@@ -2,7 +2,7 @@ use super::MessageDelivery;
 use crate::attachments::{CheckedImage, message_content};
 use crate::submission::wrong_shape;
 use crate::{CommitHold, Result, Runtime, RuntimeError};
-use aether_core::agent::Agent;
+use aether_core::agent::{Agent, AgentStatusKind};
 use aether_core::attachment::{AttachmentRef, ImageAttachment};
 use aether_core::event::{Actor, Event, EventDraft, EventKind};
 use aether_core::id::{AgentId, InboxItemId, MessageId};
@@ -11,6 +11,20 @@ use aether_core::inbox::{InboxItem, InboxKind};
 use aether_core::model::ContentBlock;
 use aether_core::time::now;
 use aether_store::{Commit, EventFilter, Mutation, Store};
+
+/// Why an ended agent takes no input, with the command that revives it.
+fn ended_refusal(id: AgentId, status: AgentStatusKind) -> RuntimeError {
+    let revive = match status {
+        AgentStatusKind::Failed => format!(
+            "; revive it with `aether wake {id}` (same conversation) or `aether restart {id}` (a fresh copy from its checkpoint)"
+        ),
+        AgentStatusKind::Cancelled => {
+            format!("; start a fresh copy from its checkpoint with `aether restart {id}`")
+        }
+        _ => String::new(),
+    };
+    RuntimeError::Invalid(format!("agent {id} is {status}{revive}"))
+}
 
 /// The question `agent` asked last, unless an operator has answered it since.
 /// Delivery of the answer closes it, so two replies cannot both queue.
@@ -166,10 +180,7 @@ impl Runtime {
             .agent(to)?
             .ok_or_else(|| RuntimeError::NotFound(to.to_string()))?;
         if agent.status.is_terminal() {
-            return Err(RuntimeError::Invalid(format!(
-                "agent {to} is {}",
-                agent.status.kind()
-            )));
+            return Err(ended_refusal(to, agent.status.kind()));
         }
         self.deliver_message_held(hold, &agent, content, images, from, submission)
     }
@@ -345,10 +356,7 @@ impl Runtime {
             .agent(root)?
             .ok_or_else(|| RuntimeError::NotFound(root.to_string()))?;
         if agent.status.is_terminal() {
-            return Err(RuntimeError::Invalid(format!(
-                "agent {root} is {}",
-                agent.status.kind()
-            )));
+            return Err(ended_refusal(root, agent.status.kind()));
         }
         // Completed intermediates still connect live descendants to the root.
         let targets = self.live_targets(root, true, "message recipient")?;
@@ -458,10 +466,7 @@ impl Runtime {
             .agent(id)?
             .ok_or_else(|| RuntimeError::NotFound(id.to_string()))?;
         if agent.status.is_terminal() {
-            return Err(RuntimeError::Invalid(format!(
-                "agent {id} is {}",
-                agent.status.kind()
-            )));
+            return Err(ended_refusal(id, agent.status.kind()));
         }
         let mut commit = Commit::new();
         let item = self.push_inbox(

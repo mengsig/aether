@@ -161,31 +161,31 @@ impl std::fmt::Display for DetectError {
 
 impl std::error::Error for DetectError {}
 
+/// The variable naming the directory Codex keeps its state in. Codex
+/// creates files there on any start, `--version` included.
+pub(crate) const CODEX_STATE_ENV: &str = "CODEX_HOME";
+
 /// Run `<program> --version` (optionally searching `path` instead of the
 /// process's own `PATH`, for deterministic tests) and parse its version.
+/// `state_env` names the variable of a CLI that writes state on every start;
+/// the probe points it at a scratch directory removed afterwards.
 pub(crate) async fn probe_version(
     program: &str,
     path: Option<&Path>,
+    state_env: Option<&str>,
 ) -> Result<EngineVersion, DetectError> {
-    probe_version_with_args(program, &["--version"], path).await
+    probe_version_with_args(program, &["--version"], path, state_env).await
 }
 
 async fn probe_version_with_args(
     program: &str,
     args: &[&str],
     path: Option<&Path>,
+    state_env: Option<&str>,
 ) -> Result<EngineVersion, DetectError> {
-    let mut command = tokio::process::Command::new(program);
-    command
-        .args(args)
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true);
-    if let Some(path) = path {
-        command.env("PATH", path);
-    }
-    let output = tokio::time::timeout(PROBE_TIMEOUT, command.output())
+    let output = run_probe(program, args, path, state_env)
         .await
-        .map_err(|_| DetectError::TimedOut {
+        .ok_or_else(|| DetectError::TimedOut {
             program: program.to_owned(),
             probe: "--version".into(),
         })?
@@ -215,18 +215,11 @@ pub(crate) async fn probe_capability(
     capability_args: &[&str],
     capability: &str,
     path: Option<&Path>,
+    state_env: Option<&str>,
 ) -> Result<(), DetectError> {
-    let mut command = tokio::process::Command::new(program);
-    command
-        .args(capability_args)
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true);
-    if let Some(path) = path {
-        command.env("PATH", path);
-    }
-    let output = tokio::time::timeout(PROBE_TIMEOUT, command.output())
+    let output = run_probe(program, capability_args, path, state_env)
         .await
-        .map_err(|_| DetectError::TimedOut {
+        .ok_or_else(|| DetectError::TimedOut {
             program: program.to_owned(),
             probe: capability_args.join(" "),
         })?
@@ -243,6 +236,55 @@ pub(crate) async fn probe_capability(
         });
     }
     Ok(())
+}
+
+/// Run one probe with no stdin, its output captured; `None` once it outlives
+/// [`PROBE_TIMEOUT`], when it is killed. Spawned like an engine, so a daemon
+/// killed mid-probe does not leave it behind.
+async fn run_probe(
+    program: &str,
+    args: &[&str],
+    path: Option<&Path>,
+    state_env: Option<&str>,
+) -> Option<std::io::Result<std::process::Output>> {
+    use std::process::Stdio;
+
+    let mut command = tokio::process::Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    let run = async {
+        // Removed when the probe ends, whatever it wrote there.
+        let _scratch = match state_env {
+            Some(name) => Some(scratch_state_dir(&mut command, name)?),
+            None => None,
+        };
+        crate::lifeline::spawn(command)?.wait_with_output().await
+    };
+    tokio::time::timeout(PROBE_TIMEOUT, run).await.ok()
+}
+
+/// Point `name` at a fresh private directory for `command`'s run.
+fn scratch_state_dir(
+    command: &mut tokio::process::Command,
+    name: &str,
+) -> std::io::Result<tempfile::TempDir> {
+    assert!(!name.is_empty(), "a state variable needs a name");
+    let dir = tempfile::Builder::new()
+        .prefix("aether-engine-probe-")
+        .tempdir()?;
+    debug_assert!(
+        dir.path().is_dir(),
+        "the CLI requires the directory to exist"
+    );
+    command.env(name, dir.path());
+    Ok(dir)
 }
 
 #[cfg(test)]

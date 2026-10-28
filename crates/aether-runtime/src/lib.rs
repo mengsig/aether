@@ -374,7 +374,7 @@ impl Runtime {
             models,
             tools,
             client_override,
-            engine_access::EngineCatalog::default(),
+            engine_access::EngineCatalog::probing(prompt_cache_ttl),
         )
         .await?;
         engine_access::spawn_startup_probes(&runtime, prompt_cache_ttl);

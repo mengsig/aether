@@ -46,6 +46,24 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Engines die with the daemon, and preflight is current (#313).** A daemon
+  killed with `SIGKILL` left its engine processes running, reparented to
+  init, until the next start reaped them. This also happened to the test
+  suites' own daemons. On Linux every engine process and version probe now
+  starts with a parent-death signal, sent from one long-lived spawner thread
+  so that tokio retiring a worker thread cannot fire it early. The kernel
+  kills them with the daemon, and the next start still reaps what they left.
+  macOS has no such signal; [agent processes](docs/configuration.md#agent-processes)
+  says what applies there. An engine that failed preflight at startup is no
+  longer unusable until a restart: a turn, a delegation or a started agent
+  that needs it probes the CLI again, at most every two seconds. A failure
+  names the fresh reason and says that no restart is needed. `aether run`
+  with a missing or unusable engine now exits non-zero and creates no agent.
+  Messaging a failed agent names `aether wake <agent>` and
+  `aether restart <agent>`, and an engine killed by a signal with nothing on
+  stderr no longer ends its error with a dangling colon. `aether doctor` in
+  an empty `HOME` no longer creates `~/.codex/tmp`: the Codex probes run with
+  a scratch `CODEX_HOME` that is removed afterwards.
 - **Status, doctor and auth report current and correct state (#311).**
   Problems about one agent (a stall, a failed budget, deadline or
   scheduling check, a pending cancellation, a lease heartbeat) and about one
