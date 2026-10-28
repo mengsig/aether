@@ -49,7 +49,26 @@ pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
 
 #[cfg(not(target_os = "linux"))]
 impl GroupWatch {
-    pub(crate) fn end_group(self) {}
+    fn end_group(self) {}
+}
+
+/// A [`GroupWatch`] that ends its group once dropped, cancellation included,
+/// for a process whose leftovers must not outlive it.
+#[derive(Debug)]
+pub(crate) struct GroupEnd(Option<GroupWatch>);
+
+impl GroupWatch {
+    pub(crate) fn ending_on_drop(self) -> GroupEnd {
+        GroupEnd(Some(self))
+    }
+}
+
+impl Drop for GroupEnd {
+    fn drop(&mut self) {
+        if let Some(watch) = self.0.take() {
+            watch.end_group();
+        }
+    }
 }
 
 /// Kills its engine's process group if this process dies first. Dropping it
@@ -109,7 +128,7 @@ impl GroupWatch {
 
     /// Kill what is left of the group now, as this process's death would:
     /// closing the pipe without stopping the watchdog lets it fire.
-    pub(crate) fn end_group(mut self) {
+    fn end_group(mut self) {
         let Some(mut watchdog) = self.0.take() else {
             return;
         };

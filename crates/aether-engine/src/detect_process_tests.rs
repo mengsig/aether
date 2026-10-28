@@ -164,3 +164,44 @@ fn a_killed_parent_takes_a_wrapped_probe_with_it() {
         dir.path().join("pids").as_os_str(),
     );
 }
+
+/// A probe dropped mid-run, as a cancelled caller drops it, still takes the
+/// CLI a wrapper started.
+#[tokio::test]
+async fn a_cancelled_probe_takes_a_wrapped_cli_with_it() {
+    use crate::lifeline::tests::{KillOnDrop, wait_until_gone};
+
+    let dir = tempfile::tempdir().unwrap();
+    let pids_file = dir.path().join("pids");
+    let target = pids_file.to_str().unwrap().to_owned();
+    let probe = tokio::spawn(async move {
+        let script = r#"sleep 30 & echo "$$ $!" > "$1.tmp" && mv "$1.tmp" "$1"; wait"#;
+        probe_version_with_args("/bin/sh", &["-c", script, "sh", &target], None, None).await
+    });
+    let pids = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(pids) = std::fs::read_to_string(&pids_file) {
+                return pids;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the probed wrapper reports itself and its child");
+    let guards: Vec<KillOnDrop> = pids
+        .split_whitespace()
+        .map(|pid| KillOnDrop(pid.parse().unwrap()))
+        .collect();
+    assert_eq!(guards.len(), 2, "the wrapper and its child: {pids}");
+    probe.abort();
+    assert!(probe.await.unwrap_err().is_cancelled());
+    for guard in &guards {
+        let pid = guard.0;
+        assert!(
+            tokio::task::spawn_blocking(move || wait_until_gone(pid, Duration::from_secs(5)))
+                .await
+                .unwrap(),
+            "{pid} outlived its cancelled probe"
+        );
+    }
+}

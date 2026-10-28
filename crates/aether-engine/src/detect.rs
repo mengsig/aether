@@ -300,11 +300,12 @@ async fn run_probe(
         Ok(spawned) => spawned,
         Err(error) => return Ok(Some(Err(error))),
     };
+    // Whatever the probe started, a wrapper's own CLI included, goes with it,
+    // also when this future is dropped mid-probe.
+    let _group_end = watch.ending_on_drop();
     let output = tokio::time::timeout(PROBE_TIMEOUT, child.wait_with_output())
         .await
         .ok();
-    // Whatever the probe started, a wrapper's own CLI included, goes with it.
-    watch.end_group();
     Ok(output)
 }
 
