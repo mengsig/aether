@@ -87,6 +87,9 @@ struct Stub {
     run_family: bool,
     /// The agent is mid-turn on an approval nobody has answered.
     awaiting_approval: bool,
+    /// Every approval the CLI answers had already ended, as one whose turn
+    /// ended expires before an answer lands.
+    expired_approvals: bool,
 }
 impl Default for Stub {
     fn default() -> Self {
@@ -112,6 +115,7 @@ impl Default for Stub {
             compaction_cursor: 0,
             run_family: false,
             awaiting_approval: false,
+            expired_approvals: false,
         }
     }
 }
@@ -390,7 +394,11 @@ async fn cli_with_socket(
                 }
                 Command::ResolveApproval { id, decision, .. } => {
                     run_asks::check_resolution(*id, *decision);
-                    Ok(Reply::Ok)
+                    if stub.expired_approvals {
+                        Err(ErrorReply::invalid(format!("approval {id} already resolved")))
+                    } else {
+                        Ok(Reply::Ok)
+                    }
                 }
                 Command::ListApprovals => Ok(Reply::Approvals(
                     stub.awaiting_approval

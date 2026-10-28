@@ -53,7 +53,8 @@ requests and questions from those agents (children, grandchildren and so on)
 are printed too, labelled with the agent that asked, with the command that
 answers them. `--yes` approves every request the root and its delegated agents
 make, and only theirs: a request from an agent another client placed in the
-same run is printed, never approved.
+same run is printed, never approved. A request that expired before `--yes`
+reached it is printed as already resolved, and the run goes on.
 
 When the run delegates, it also prints the subtree usage including descendants;
 the JSON result adds `subtree_usage` alongside the root's own `usage`.

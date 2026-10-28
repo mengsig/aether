@@ -160,6 +160,41 @@ async fn yes_approves_the_root_descendants_and_no_other_agent_of_the_run() {
 }
 
 #[tokio::test]
+async fn yes_watches_on_when_a_descendant_approval_already_expired() {
+    let out = cli(
+        &[
+            "run",
+            "hello",
+            "--model",
+            "mock/m1",
+            "--network=false",
+            "--yes",
+        ],
+        Stub {
+            expired_approvals: true,
+            ..family_run()
+        },
+    )
+    .await;
+    let text = stderr(&out);
+    assert!(out.status.success(), "{text}");
+    assert!(
+        !text.lines().any(|line| line.starts_with("approved ")),
+        "{text}"
+    );
+    for (member, tool) in [(CHILD, "web_fetch"), (GRANDCHILD, "bash")] {
+        let line = format!("already resolved, not approved: {tool} for agent {member}");
+        assert!(text.contains(&line), "{text}");
+    }
+    // The stranger was never answered, so it still gets its command.
+    assert!(
+        text.contains(&format!("approve {STRANGER_APPROVAL}")),
+        "{text}"
+    );
+    assert!(text.contains("done: done"), "{text}");
+}
+
+#[tokio::test]
 async fn without_yes_every_descendant_approval_prints_its_command() {
     let out = cli(
         &["run", "hello", "--model", "mock/m1", "--network=false"],

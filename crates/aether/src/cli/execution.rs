@@ -236,14 +236,12 @@ pub async fn run(
                         ..
                     } => {
                         if yes {
-                            client
-                                .resolve_approval(
-                                    *approval,
-                                    aether_core::tool::ApprovalDecision::Approved,
-                                    Some("auto".into()),
-                                )
-                                .await?;
-                            eprintln!("approved {}: {}", short(tool, 40), short(description, 120));
+                            let verb = if run_asks::auto_approve(&client, *approval).await? {
+                                "approved"
+                            } else {
+                                "already resolved, not approved:"
+                            };
+                            eprintln!("{verb} {}: {}", short(tool, 40), short(description, 120));
                         } else {
                             eprintln!(
                                 "approval needed for {}: {}\n  run: {command} approve {approval}",

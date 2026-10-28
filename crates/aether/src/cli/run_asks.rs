@@ -4,7 +4,7 @@
 use super::{sane, short};
 use aether_client::{Client, ClientError};
 use aether_core::event::{Event, EventKind};
-use aether_core::id::{AgentId, RunId};
+use aether_core::id::{AgentId, ApprovalId, RunId};
 use aether_protocol::ErrorCode;
 use std::collections::HashMap;
 
@@ -63,6 +63,25 @@ impl Lineage {
     }
 }
 
+/// Approve for `--yes`; false when the approval had already ended, as one
+/// whose turn ended expires, so watching the run goes on. Other errors stop it.
+pub(super) async fn auto_approve(client: &Client, approval: ApprovalId) -> anyhow::Result<bool> {
+    match client
+        .resolve_approval(
+            approval,
+            aether_core::tool::ApprovalDecision::Approved,
+            Some("auto".into()),
+        )
+        .await
+    {
+        Ok(()) => Ok(true),
+        Err(error) if super::super::pending_approvals::is_already_resolved(&error, approval) => {
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// Answer or describe an approval or question that another agent of the run
 /// raised; the line to print, if any. Only the root's descendants are
 /// approved under `yes`; others get the command that would answer them.
@@ -88,15 +107,13 @@ pub(super) async fn other_agent_ask(
         } => {
             let ours = lineage.descends(client, from).await?;
             if yes && ours {
-                client
-                    .resolve_approval(
-                        *approval,
-                        aether_core::tool::ApprovalDecision::Approved,
-                        Some("auto".into()),
-                    )
-                    .await?;
+                let verb = if auto_approve(client, *approval).await? {
+                    "approved"
+                } else {
+                    "already resolved, not approved:"
+                };
                 return Ok(Some(format!(
-                    "approved {} for agent {from}: {}",
+                    "{verb} {} for agent {from}: {}",
                     short(tool, 40),
                     short(description, 120)
                 )));

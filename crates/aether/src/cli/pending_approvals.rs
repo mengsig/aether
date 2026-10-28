@@ -198,7 +198,7 @@ fn confirm(count: usize, approve: bool) -> anyhow::Result<bool> {
     ))
 }
 
-fn is_already_resolved(error: &ClientError, id: ApprovalId) -> bool {
+pub(super) fn is_already_resolved(error: &ClientError, id: ApprovalId) -> bool {
     matches!(error, ClientError::Protocol(reply)
         if reply.code == ErrorCode::InvalidArgument
         && reply.message == format!("approval {id} already resolved"))
