@@ -3,6 +3,7 @@ use aether_core::agent::{Agent, ApprovalPolicy, ExecutionBackend, Scope};
 use aether_core::id::AgentId;
 use aether_core::model::ModelRef;
 use aether_store::AgentFilter;
+use std::collections::HashMap;
 
 /// A child may gate more than its parent, never less. One rule,
 /// one message, whether it fires at creation or on a live agent.
@@ -470,16 +471,13 @@ impl Runtime {
         if !subtree {
             return Ok(vec![agent]);
         }
-        let agents = self.store.agents(&AgentFilter::default())?;
-        let order = aether_core::agent::subtree_of(&agents, root);
-        Ok(order
-            .into_iter()
-            .filter_map(|id| {
-                agents
-                    .iter()
-                    .find(|a| a.id == id && !a.status.is_terminal())
-                    .cloned()
-            })
+        let agents = self.store.subtree_agents(root)?;
+        let by_id: HashMap<AgentId, &Agent> = agents.iter().map(|a| (a.id, a)).collect();
+        Ok(aether_core::agent::subtree_of(&agents, root)
+            .iter()
+            .filter_map(|id| by_id.get(id).copied())
+            .filter(|a| !a.status.is_terminal())
+            .cloned()
             .collect())
     }
 
@@ -489,16 +487,17 @@ impl Runtime {
         root: AgentId,
         scope: &Scope,
     ) -> Result<Option<AgentId>> {
-        let agents = self.store.agents(&AgentFilter::default())?;
-        let ancestor = agents
-            .iter()
-            .find(|a| a.id == root)
+        let agents = self.store.subtree_agents(root)?;
+        let by_id: HashMap<AgentId, &Agent> = agents.iter().map(|a| (a.id, a)).collect();
+        let ancestor = by_id
+            .get(&root)
+            .copied()
             .ok_or_else(|| RuntimeError::NotFound(root.to_string()))?;
         for id in aether_core::agent::subtree_of(&agents, root) {
             if id == root {
                 continue;
             }
-            if let Some(agent) = agents.iter().find(|a| a.id == id)
+            if let Some(agent) = by_id.get(&id).copied()
                 && !agent.status.is_terminal()
                 && !self.scope_within_ancestor(agent, ancestor, scope)?
             {
@@ -516,12 +515,13 @@ impl Runtime {
         root: AgentId,
         policy: &ApprovalPolicy,
     ) -> Result<Option<AgentId>> {
-        let agents = self.store.agents(&AgentFilter::default())?;
+        let agents = self.store.subtree_agents(root)?;
+        let by_id: HashMap<AgentId, &Agent> = agents.iter().map(|a| (a.id, a)).collect();
         Ok(aether_core::agent::subtree_of(&agents, root)
             .into_iter()
             .filter(|id| *id != root)
             .find(|id| {
-                agents.iter().find(|a| a.id == *id).is_some_and(|a| {
+                by_id.get(id).is_some_and(|a| {
                     !a.status.is_terminal() && !a.config.approval.is_narrowing_of(policy)
                 })
             }))

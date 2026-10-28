@@ -80,8 +80,16 @@ impl Store for SqliteStore {
         &self,
         run: aether_core::id::RunId,
         before: Timestamp,
-    ) -> Result<Option<crate::RunExpiry>> {
+    ) -> Result<crate::HistoryScreen> {
         SqliteStore::screen_run_expiry(self, run, before)
+    }
+
+    fn expire_screened_run(
+        &self,
+        screen: &crate::HistoryScreen,
+        hold: &crate::Hold<'_>,
+    ) -> Result<crate::RunExpiry> {
+        SqliteStore::expire_screened_run(self, screen, hold)
     }
 
     fn commit(&self, commit: Commit) -> Result<Vec<Event>> {
@@ -426,6 +434,44 @@ impl Store for SqliteStore {
             );
         }
         Ok(ids)
+    }
+
+    fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>> {
+        // CROSS JOIN pins the walk as the outer loop; left to itself the
+        // planner scans every agent through `agents_created` instead.
+        self.record_list(
+            "agents",
+            "WITH RECURSIVE down(id) AS (
+                 SELECT id FROM agents WHERE id = ?1
+                 UNION
+                 SELECT a.id FROM agents a JOIN down ON a.parent = down.id
+             )
+             SELECT a.id, a.body FROM down CROSS JOIN agents a ON a.id = down.id
+             ORDER BY a.created_at ASC, a.rowid ASC",
+            &[&root.to_string()],
+            |agent: &Agent| agent.id.to_string(),
+        )
+    }
+
+    fn ancestry(&self, ids: &[AgentId]) -> Result<Vec<Agent>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let args: Vec<String> = ids.iter().map(ToString::to_string).collect();
+        let refs: Vec<&dyn rusqlite::ToSql> =
+            args.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+        let placeholders = vec!["?"; args.len()].join(",");
+        // UNION drops repeated rows, so a corrupt parent cycle ends the walk.
+        let sql = format!(
+            "WITH RECURSIVE up(id, parent) AS (
+                 SELECT id, parent FROM agents WHERE id IN ({placeholders})
+                 UNION
+                 SELECT a.id, a.parent FROM agents a JOIN up ON a.id = up.parent
+             )
+             SELECT a.id, a.body FROM up CROSS JOIN agents a ON a.id = up.id
+             ORDER BY a.created_at ASC, a.rowid ASC"
+        );
+        self.record_list("agents", &sql, &refs, |agent: &Agent| agent.id.to_string())
     }
 
     fn task(&self, id: TaskId) -> Result<Option<Task>> {

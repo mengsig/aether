@@ -46,6 +46,28 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **History expiry no longer judges whole tables under the commit gate
+  (#314).** Expiring one finished run re-ran every retention guard, whole-table
+  scans of the inbox, agents, events and more, while holding the runtime's
+  commit gate and scheduler lock: about 165 ms per run with 100k inbox rows,
+  during which every commit and `status` waited. The run is still judged in
+  full beforehand, under no lock. Under the gate expiry now re-reads only the
+  run's own agents and tasks and the rows written since that judgement, and
+  judges in full again only when the run itself gained members or another
+  connection wrote to the store. Held time for that run drops to about 1 ms;
+  which runs expire and why the others are kept is unchanged. Schema version
+  28 adds an `approvals(agent_id)` index for those checks; stores upgrade in
+  place on first open.
+- **Turn, delegation and command checks read only the agents they need
+  (#314).** The per-turn budget check, the wake budget check, pause, resume,
+  `update_agent` with `subtree`, delegation validation and the inspection
+  scope decoded every agent the store had ever held, up to 230 ms per check
+  with 20k archived agents, and validation searched that list once per
+  subtree member. They now load the agent's subtree through one indexed
+  query, and the delegation cap advisory loads only the ancestry of the
+  delegating agent and of running turns: under 1 ms each at that scale.
+  Results are unchanged, including the completed, cancelled, paused and
+  archived descendants they count.
 - **Engines die with the daemon, and preflight is current (#313).** A daemon
   killed with `SIGKILL` left its engine processes running, reparented to
   init, until the next start reaped them. This also happened to the test

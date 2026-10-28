@@ -45,7 +45,7 @@ use aether_core::memory_feedback::{FeedbackTally, MemoryFeedback};
 
 pub use migration_backup::backup_database;
 pub use schema::SCHEMA_VERSION;
-pub use sqlite::{PushSubscriptionRow, RunExpiry, SqliteStore};
+pub use sqlite::{HistoryScreen, PushSubscriptionRow, RunExpiry, SqliteStore};
 
 /// The single write path, shared by everything that commits to one store.
 ///
@@ -587,8 +587,12 @@ pub trait Store: Send + Sync {
     ) -> Result<RunExpiry>;
 
     /// The checks of [`Store::expire_run_history`] without the write gate or
-    /// a write transaction: why `run` cannot expire yet, or `None` when it may.
-    fn screen_run_expiry(&self, run: RunId, before: Timestamp) -> Result<Option<RunExpiry>>;
+    /// a write transaction: why `run` cannot expire yet, or that it may.
+    fn screen_run_expiry(&self, run: RunId, before: Timestamp) -> Result<HistoryScreen>;
+
+    /// [`Store::expire_run_history`] for a run `screen` found eligible, judging
+    /// again only what was written since the screen.
+    fn expire_screened_run(&self, screen: &HistoryScreen, hold: &Hold<'_>) -> Result<RunExpiry>;
 
     /// Copy durable state into an isolated ephemeral store for ordered expiry simulation.
     /// Mutating the returned store must never change source rows or payload files.
@@ -666,6 +670,12 @@ pub trait Store: Send + Sync {
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool>;
     /// `root` and every descendant of it; empty when `root` is unknown.
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>>;
+    /// `root` and every descendant of it, decoded, in the order `agents` lists the
+    /// whole fleet (`created_at`, then insertion); empty when `root` is unknown.
+    fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>>;
+    /// The stored agents among `ids` plus every stored ancestor of them, in no
+    /// particular order. Unknown ids and missing parents are skipped.
+    fn ancestry(&self, ids: &[AgentId]) -> Result<Vec<Agent>>;
     /// Usage summed over every agent that is not an imported archive, decoding
     /// each row's usage alone rather than the whole agent.
     fn fleet_usage(&self) -> Result<aether_core::model::Usage>;

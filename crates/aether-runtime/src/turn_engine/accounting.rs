@@ -396,8 +396,8 @@ pub(super) fn budget_crossed(
 }
 
 /// Everything this agent's descendants have spent. Terminal descendants count:
-/// their spend already happened. Read over every agent rather than this run's,
-/// because a child may legally have been created under another run id.
+/// their spend already happened. Read over the whole subtree rather than this
+/// run's, because a child may legally have been created under another run id.
 fn descendant_usage(runtime: &Arc<Runtime>, agent: AgentId) -> Result<Usage> {
     // A leaf has no roll-up to read. Indexed on `parent`, so this costs one
     // lookup instead of deserializing every agent the store has ever held.
@@ -411,7 +411,7 @@ fn descendant_usage(runtime: &Arc<Runtime>, agent: AgentId) -> Result<Usage> {
     {
         return Ok(Usage::default());
     }
-    let mut agents = runtime.store.agents(&AgentFilter::default())?;
+    let mut agents = runtime.store.subtree_agents(agent)?;
     let Some(row) = agents.iter_mut().find(|a| a.id == agent) else {
         // Fails closed. Enforcement without the agent's own row would quietly
         // stop counting its children, which is how a grant stops binding.

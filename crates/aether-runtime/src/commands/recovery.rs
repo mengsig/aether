@@ -7,7 +7,7 @@ use aether_core::id::{AgentId, CheckpointId};
 use aether_core::inbox::InboxKind;
 use aether_core::task::{Task, TaskStatus};
 use aether_core::time::now;
-use aether_store::{AgentFilter, Commit, Mutation};
+use aether_store::{Commit, Mutation};
 
 pub(crate) const COMPACTION_WAKE: &str = "compaction requested";
 
@@ -441,8 +441,8 @@ impl Runtime {
             )));
         }
         if agent.config.token_budget.is_some() || agent.config.cost_budget.is_some() {
-            let all = self.store.agents(&AgentFilter::default())?;
-            let usage = aether_core::budget::subtree_usage(&all)
+            let subtree = self.store.subtree_agents(id)?;
+            let usage = aether_core::budget::subtree_usage(&subtree)
                 .get(&id)
                 .copied()
                 .unwrap_or_default();

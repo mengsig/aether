@@ -159,10 +159,11 @@ impl Runtime {
     /// Expire one old finished run without racing a state change or a turn
     /// still reporting its final usage. This is not an automatic sweep.
     pub fn expire_run_history(&self, run: RunId, before: Timestamp) -> Result<RunExpiry> {
-        // Judging a run scans whole tables (minutes per sweep on a large store), and most
-        // old runs stay protected; doing it under the gate and `sched` stalled every commit and `status`.
-        if let Some(kept) = self.store.screen_run_expiry(run, before)? {
-            return Ok(kept);
+        // Judging a run scans whole tables (minutes per sweep on a large store). Under
+        // the gate and `sched` only the rows written since the screen are judged again.
+        let screen = self.store.screen_run_expiry(run, before)?;
+        if let Some(kept) = screen.blocker() {
+            return Ok(kept.clone());
         }
         let hold = self.hold();
         let agents = self.store.agents(&AgentFilter {
@@ -174,7 +175,7 @@ impl Runtime {
         if let Some(reason) = self.runtime_expiry_blocker(&agents, &sched) {
             return Ok(RunExpiry::Protected(reason));
         }
-        let result = self.store.expire_run_history(run, before, &hold)?;
+        let result = self.store.expire_screened_run(&screen, &hold)?;
         if matches!(result, RunExpiry::Expired { .. }) {
             sched.ready_since.retain(|id, _| !agents.contains(id));
             sched

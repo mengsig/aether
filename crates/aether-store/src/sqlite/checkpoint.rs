@@ -7,9 +7,11 @@
 //! blocks neither the writer nor readers, so the store turns the automatic
 //! one off and runs this instead.
 
+use super::change_watch::ChangeLog;
 use crate::Result;
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -28,7 +30,8 @@ const LONG_WAL_FRAMES: i64 = 16_384;
 
 /// A fully copied WAL above this many frames (8 MiB at 4 KiB pages) is
 /// truncated: a passive pass reuses the file but never shrinks it, so one
-/// large write would leave its peak size on disk for good.
+/// large write would leave its peak size on disk for good. Not while a history
+/// screen is open: to it a truncation looks like another connection's commit.
 const TRUNCATE_FRAMES: i64 = 2_048;
 
 /// Stops and joins the checkpoint thread on drop.
@@ -40,7 +43,7 @@ pub(super) struct Checkpointer {
 impl Checkpointer {
     /// Start checkpointing the WAL database at `path` every `interval`. The
     /// database must already exist and be in WAL mode.
-    pub(super) fn start(path: &Path, interval: Duration) -> Result<Self> {
+    pub(super) fn start(path: &Path, interval: Duration, screens: Arc<ChangeLog>) -> Result<Self> {
         let conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -51,7 +54,7 @@ impl Checkpointer {
         let (stop, stopped) = mpsc::channel::<()>();
         let thread = std::thread::Builder::new()
             .name("sqlite-checkpoint".into())
-            .spawn(move || run(&conn, &stopped, interval))?;
+            .spawn(move || run(&conn, &stopped, interval, &screens))?;
         Ok(Self {
             stop: Some(stop),
             thread: Some(thread),
@@ -71,7 +74,7 @@ impl Drop for Checkpointer {
 }
 
 /// Pass every `interval`, chasing commits that overlap a pass, until stopped.
-fn run(conn: &Connection, stopped: &mpsc::Receiver<()>, interval: Duration) {
+fn run(conn: &Connection, stopped: &mpsc::Receiver<()>, interval: Duration, screens: &ChangeLog) {
     let mut wait = interval;
     let mut chases = 0;
     let mut last_frames = -1;
@@ -98,7 +101,9 @@ fn run(conn: &Connection, stopped: &mpsc::Receiver<()>, interval: Duration) {
         }
         chases = 0;
         if wal.copied >= wal.frames && wal.frames > TRUNCATE_FRAMES {
-            truncate_wal(conn);
+            if !screens.watching() {
+                truncate_wal(conn);
+            }
             continue;
         }
         let behind = overlapped || wal.copied < wal.frames;

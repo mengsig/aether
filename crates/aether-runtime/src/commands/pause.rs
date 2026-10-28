@@ -4,8 +4,8 @@ use aether_core::agent::{Agent, AgentStatus, BlockReason};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
 use aether_core::time::now;
-use aether_store::{AgentFilter, Commit, Mutation};
-use std::collections::BTreeSet;
+use aether_store::{Commit, Mutation};
+use std::collections::{BTreeSet, HashMap};
 
 impl Runtime {
     /// VISION §3.1/§3.8: pause is a durable flag, not a status. It applies
@@ -271,19 +271,17 @@ impl Runtime {
     /// The root and its live descendants. The root may have ended since its
     /// subtree was paused: the pause it stamped below it is still its to lift.
     fn resume_targets(&self, root: AgentId) -> Result<Vec<Agent>> {
-        let agents = self.store.agents(&AgentFilter::default())?;
+        let agents = self.store.subtree_agents(root)?;
         let order = aether_core::agent::subtree_of(&agents, root);
         if order.is_empty() {
             return Err(RuntimeError::NotFound(root.to_string()));
         }
+        let by_id: HashMap<AgentId, &Agent> = agents.iter().map(|a| (a.id, a)).collect();
         Ok(order
-            .into_iter()
-            .filter_map(|id| {
-                agents
-                    .iter()
-                    .find(|a| a.id == id && (id == root || !a.status.is_terminal()))
-                    .cloned()
-            })
+            .iter()
+            .filter_map(|id| by_id.get(id).copied())
+            .filter(|a| a.id == root || !a.status.is_terminal())
+            .cloned()
             .collect())
     }
 }

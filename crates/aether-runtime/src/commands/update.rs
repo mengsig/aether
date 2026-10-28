@@ -4,7 +4,7 @@ use aether_core::agent::{Agent, AgentStatusKind};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
 use aether_core::time::{Timestamp, now};
-use aether_store::{AgentFilter, Commit, Mutation};
+use aether_store::{Commit, Mutation};
 use std::collections::HashMap;
 
 /// The limits a subtree update lifts, each present only when the patch set
@@ -294,7 +294,7 @@ impl Runtime {
         if raise.deadline.is_none() && raise.cost_budget.is_none() {
             return Ok(());
         }
-        let agents = self.store.agents(&AgentFilter::default())?;
+        let agents = self.store.subtree_agents(root)?;
         let by_id: HashMap<AgentId, &Agent> = agents.iter().map(|a| (a.id, a)).collect();
         let order = aether_core::agent::subtree_of(&agents, root);
         debug_assert_eq!(order.first(), Some(&root), "the subtree starts at its root");

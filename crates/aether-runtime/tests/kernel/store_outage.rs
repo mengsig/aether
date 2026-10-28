@@ -101,8 +101,17 @@ impl Store for FullDisk {
         &self,
         run: aether_core::id::RunId,
         before: aether_core::time::Timestamp,
-    ) -> StoreResult<Option<aether_store::RunExpiry>> {
+    ) -> StoreResult<aether_store::HistoryScreen> {
         self.inner.screen_run_expiry(run, before)
+    }
+
+    fn expire_screened_run(
+        &self,
+        screen: &aether_store::HistoryScreen,
+        hold: &aether_store::Hold<'_>,
+    ) -> StoreResult<aether_store::RunExpiry> {
+        self.disk.refuse()?;
+        self.inner.expire_screened_run(screen, hold)
     }
 
     fn commit(&self, commit: Commit) -> StoreResult<Vec<Event>> {
@@ -173,6 +182,12 @@ impl Store for FullDisk {
     }
     fn subtree_ids(&self, root: AgentId) -> StoreResult<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
+    }
+    fn subtree_agents(&self, root: AgentId) -> StoreResult<Vec<Agent>> {
+        self.inner.subtree_agents(root)
+    }
+    fn ancestry(&self, ids: &[AgentId]) -> StoreResult<Vec<Agent>> {
+        self.inner.ancestry(ids)
     }
     fn any_agent_in_repository(&self, repository: &str) -> StoreResult<bool> {
         self.inner.any_agent_in_repository(repository)

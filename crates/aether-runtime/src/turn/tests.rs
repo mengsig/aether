@@ -6,6 +6,7 @@ mod heartbeat;
 mod lifecycle;
 mod resources;
 mod stale_completion;
+mod subtree_reads;
 mod tool_results;
 mod woken;
 

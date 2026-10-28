@@ -2,6 +2,11 @@ use super::*;
 use crate::Hold;
 use aether_core::retention::{RunRetentionDecision, RunRetentionPreview};
 use aether_core::{agent::Agent, id::RunId, task::Task};
+use std::sync::atomic::Ordering;
+
+mod guards;
+mod screen;
+pub use screen::HistoryScreen;
 
 const MAX_RETENTION_SNAPSHOT_BYTES: u64 = 256 * 1024 * 1024;
 
@@ -74,29 +79,41 @@ impl SqliteStore {
         let mut conn = self.conn.lock();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let id = run.to_string();
-        if let Some(kept) = expiry_blocker(&tx, &id, before)? {
+        if let Some(kept) = expiry_blocker(&tx, &id, before, &self.guard_passes)? {
             return Ok(kept);
         }
+        self.delete_run(tx, &id)
+    }
+
+    /// Delete `run`'s history in `tx` and commit, once its guards have passed.
+    fn delete_run(&self, tx: Transaction<'_>, id: &str) -> Result<RunExpiry> {
         tx.execute("INSERT INTO expired_event_spans SELECT run,COALESCE(agent_id,''),COALESCE(parent_agent_id,''),COALESCE(task_id,''),type,family,MIN(seq),MAX(seq) FROM events WHERE run=?1 GROUP BY run,agent_id,parent_agent_id,task_id,type,family
-            ON CONFLICT(run,agent_id,parent_agent_id,task_id,type) DO UPDATE SET first_seq=MIN(first_seq,excluded.first_seq),last_seq=MAX(last_seq,excluded.last_seq)", [&id])?;
-        let events = tx.execute("DELETE FROM events WHERE run=?1", [&id])?;
+            ON CONFLICT(run,agent_id,parent_agent_id,task_id,type) DO UPDATE SET first_seq=MIN(first_seq,excluded.first_seq),last_seq=MAX(last_seq,excluded.last_seq)", [id])?;
+        let events = tx.execute("DELETE FROM events WHERE run=?1", [id])?;
         let mut rows = 0;
         for table in AGENT_HISTORY_TABLES {
             rows += tx.execute(
                 &format!(
                     "DELETE FROM {table} WHERE agent_id IN (SELECT id FROM agents WHERE run=?1)"
                 ),
-                [&id],
+                [id],
             )?;
         }
-        rows += tx.execute("DELETE FROM tasks WHERE run=?1", [&id])?;
-        engine_sessions::preserve_expired_owners(&tx, &id)?;
-        rows += tx.execute("DELETE FROM agents WHERE run=?1", [&id])?;
+        rows += tx.execute("DELETE FROM tasks WHERE run=?1", [id])?;
+        engine_sessions::preserve_expired_owners(&tx, id)?;
+        rows += tx.execute("DELETE FROM agents WHERE run=?1", [id])?;
+        debug_assert!(rows > 0, "an expired run had at least its agents");
         // last_seq is deliberately unchanged: expiry can never recycle an event cursor.
         tx.commit()?;
-        self.commits
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.commits.fetch_add(1, Ordering::Relaxed);
         Ok(RunExpiry::Expired { events, rows })
+    }
+
+    /// Whole-table guard passes made for one run at a time, screens and
+    /// expiry alike. A sweep's own screen judges every run in one pass.
+    #[doc(hidden)]
+    pub fn history_guard_passes(&self) -> u64 {
+        self.guard_passes.load(Ordering::Relaxed)
     }
 
     /// Inspect the exact durable expiry guards and payloads in one read transaction.
@@ -108,7 +125,7 @@ impl SqliteStore {
     ) -> Result<Option<RunRetentionPreview>> {
         self.read_history(|tx| {
             let id = run.to_string();
-            let decision = match expiry_blocker(tx, &id, before)? {
+            let decision = match expiry_blocker(tx, &id, before, &self.guard_passes)? {
                 Some(RunExpiry::Missing) => return Ok(None),
                 Some(RunExpiry::Protected(reason)) => RunRetentionDecision::Protected {
                     reason: reason.into(),
@@ -160,13 +177,6 @@ impl SqliteStore {
         })
     }
 
-    /// [`Self::expire_run_history`]'s checks on a connection of its own, under
-    /// no lock, so a run that cannot expire is passed over without stalling
-    /// writers or readers. `None` promises nothing: expiry checks again.
-    pub fn screen_run_expiry(&self, run: RunId, before: Timestamp) -> Result<Option<RunExpiry>> {
-        self.read_history(|tx| expiry_blocker(tx, &run.to_string(), before))
-    }
-
     // Guard scans must not queue normal readers or commits behind whole-table reads.
     fn read_history<T>(&self, read: impl FnOnce(&Transaction<'_>) -> Result<T>) -> Result<T> {
         let Some(path) = &self.path else {
@@ -184,115 +194,62 @@ impl SqliteStore {
 }
 
 /// Why `run` cannot expire before `before`, or `None` when it can.
-fn expiry_blocker(tx: &Transaction<'_>, run: &str, before: Timestamp) -> Result<Option<RunExpiry>> {
-    let agents: Vec<Agent> =
-        SqliteStore::read_many(tx, "SELECT body FROM agents WHERE run=?1", &[&run])?;
-    if agents.is_empty() {
-        return Ok(Some(RunExpiry::Missing));
+fn expiry_blocker(
+    tx: &Transaction<'_>,
+    run: &str,
+    before: Timestamp,
+    passes: &AtomicU64,
+) -> Result<Option<RunExpiry>> {
+    let (agents, tasks) = run_members(tx, run)?;
+    if let Some(kept) = state_blocker(&agents, &tasks, before) {
+        return Ok(Some(kept));
     }
-    let tasks: Vec<Task> =
-        SqliteStore::read_many(tx, "SELECT body FROM tasks WHERE run=?1", &[&run])?;
+    Ok(protection(tx, run, before, passes)?.map(RunExpiry::Protected))
+}
+
+fn run_members(tx: &Transaction<'_>, run: &str) -> Result<(Vec<Agent>, Vec<Task>)> {
+    let agents = SqliteStore::read_many(tx, "SELECT body FROM agents WHERE run=?1", &[&run])?;
+    let tasks = SqliteStore::read_many(tx, "SELECT body FROM tasks WHERE run=?1", &[&run])?;
+    Ok((agents, tasks))
+}
+
+/// What the run's own agents and tasks say: missing, unfinished or recent.
+fn state_blocker(agents: &[Agent], tasks: &[Task], before: Timestamp) -> Option<RunExpiry> {
+    if agents.is_empty() {
+        return Some(RunExpiry::Missing);
+    }
     if agents.iter().any(|agent| !agent.status.is_terminal())
         || tasks.iter().any(|task| !task.status.is_terminal())
     {
-        return Ok(Some(RunExpiry::Protected("unfinished work")));
+        return Some(RunExpiry::Protected("unfinished work"));
     }
     if agents.iter().any(|agent| agent.updated_at >= before)
         || tasks.iter().any(|task| task.updated_at >= before)
     {
-        return Ok(Some(RunExpiry::Protected("recent state change")));
+        return Some(RunExpiry::Protected("recent state change"));
     }
-    Ok(protection(tx, run, before)?.map(RunExpiry::Protected))
+    None
 }
 
-fn protection(tx: &Transaction<'_>, run: &str, before: Timestamp) -> Result<Option<&'static str>> {
-    let recent_events: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM events WHERE run=?1 AND (unixepoch(at) IS NULL OR unixepoch(at)>=unixepoch(?2)))",
-        params![run, before.to_rfc3339()], |row| row.get(0))?;
-    if recent_events {
+fn recent_events(tx: &Transaction<'_>, run: &str, before: Timestamp) -> Result<bool> {
+    Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM events WHERE run=?1 AND (unixepoch(at) IS NULL OR unixepoch(at)>=unixepoch(?2)))",
+        params![run, before.to_rfc3339()], |row| row.get(0))?)
+}
+
+fn protection(
+    tx: &Transaction<'_>,
+    run: &str,
+    before: Timestamp,
+    passes: &AtomicU64,
+) -> Result<Option<&'static str>> {
+    if recent_events(tx, run, before)? {
         return Ok(Some("recent event or invalid event timestamp"));
     }
-    for (reason, sql) in GUARDS {
-        if tx.query_row(sql, [run], |row| row.get::<_, bool>(0))? {
-            return Ok(Some(reason));
+    passes.fetch_add(1, Ordering::Relaxed);
+    for guard in guards::GUARDS {
+        if tx.query_row(&guards::whole(guard), [run], |row| row.get::<_, bool>(0))? {
+            return Ok(Some(guard.reason));
         }
     }
     Ok(None)
 }
-
-// Protect references before removing their target rows. Even resolved external
-// references are retained here; batched dependency-closed expiry can relax this
-// later without making one-run deletion leave dangling state.
-const GUARDS: &[(&str, &str)] = &[
-    (
-        "memory scope or provenance",
-        "SELECT EXISTS(SELECT 1 FROM memories WHERE json_extract(body,'$.scope.id') IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.scope.root') IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.provenance.agent') IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.provenance.task') IN (SELECT id FROM tasks WHERE run=?1) OR json_extract(body,'$.provenance.event') IN (SELECT id FROM events WHERE run=?1))",
-    ),
-    (
-        "approval rule",
-        "SELECT EXISTS(SELECT 1 FROM approval_rules WHERE json_extract(body,'$.scope.id')=?1 OR json_extract(body,'$.scope.id') IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.scope.root') IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.created_by.id') IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.revoked.by.id') IN (SELECT id FROM agents WHERE run=?1))",
-    ),
-    (
-        "lease",
-        "SELECT EXISTS(SELECT 1 FROM leases WHERE agent_id IN (SELECT id FROM agents WHERE run=?1))",
-    ),
-    (
-        "pending approval",
-        "SELECT EXISTS(SELECT 1 FROM approvals WHERE state='pending' AND agent_id IN (SELECT id FROM agents WHERE run=?1))",
-    ),
-    (
-        "schedule",
-        "SELECT EXISTS(SELECT 1 FROM schedules WHERE target IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.run')=?1 OR json_extract(body,'$.owner.id') IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.last_spawned') IN (SELECT id FROM agents WHERE run=?1))",
-    ),
-    (
-        "schedule occurrence",
-        "SELECT EXISTS(SELECT 1 FROM schedule_occurrences WHERE json_extract(body,'$.outcome.run')=?1)",
-    ),
-    (
-        "artifact",
-        "SELECT EXISTS(SELECT 1 FROM artifacts WHERE agent_id IN (SELECT id FROM agents WHERE run=?1) OR task_id IN (SELECT id FROM tasks WHERE run=?1) OR json_extract(body,'$.created_by.id') IN (SELECT id FROM agents WHERE run=?1))",
-    ),
-    (
-        "external snapshot task reference",
-        "SELECT EXISTS(SELECT 1 FROM snapshots WHERE agent_id NOT IN (SELECT id FROM agents WHERE run=?1) AND json_extract(body,'$.task_id') IN (SELECT id FROM tasks WHERE run=?1))",
-    ),
-    (
-        "external invocation snapshot reference",
-        "SELECT EXISTS(SELECT 1 FROM invocations WHERE agent_id NOT IN (SELECT id FROM agents WHERE run=?1) AND snapshot_id IN (SELECT id FROM snapshots WHERE agent_id IN (SELECT id FROM agents WHERE run=?1)))",
-    ),
-    (
-        "external checkpoint provenance",
-        "SELECT EXISTS(SELECT 1 FROM checkpoints WHERE agent_id NOT IN (SELECT id FROM agents WHERE run=?1) AND (json_extract(body,'$.provenance.source_snapshot') IN (SELECT id FROM snapshots WHERE agent_id IN (SELECT id FROM agents WHERE run=?1)) OR json_extract(body,'$.provenance.previous') IN (SELECT id FROM checkpoints WHERE agent_id IN (SELECT id FROM agents WHERE run=?1))))",
-    ),
-    (
-        "external agent checkpoint reference",
-        "SELECT EXISTS(SELECT 1 FROM agents WHERE run<>?1 AND json_extract(body,'$.checkpoint') IN (SELECT id FROM checkpoints WHERE agent_id IN (SELECT id FROM agents WHERE run=?1)))",
-    ),
-    (
-        "external or unscoped event reference",
-        "SELECT EXISTS(SELECT 1 FROM events WHERE (run IS NULL OR run<>?1) AND (agent_id IN (SELECT id FROM agents WHERE run=?1) OR parent_agent_id IN (SELECT id FROM agents WHERE run=?1) OR task_id IN (SELECT id FROM tasks WHERE run=?1)))",
-    ),
-    (
-        "external agent reference",
-        "SELECT EXISTS(SELECT 1 FROM agents AS other, json_tree(other.body) WHERE other.run<>?1 AND json_tree.type='text' AND (json_tree.value IN (SELECT id FROM agents WHERE run=?1) OR json_tree.value IN (SELECT id FROM tasks WHERE run=?1)))",
-    ),
-    (
-        "external task reference",
-        "SELECT EXISTS(SELECT 1 FROM tasks AS other WHERE run<>?1 AND (owner IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.creator.id') IN (SELECT id FROM agents WHERE run=?1) OR json_extract(body,'$.parent_task') IN (SELECT id FROM tasks WHERE run=?1) OR EXISTS(SELECT 1 FROM json_each(other.body,'$.dependencies') WHERE value IN (SELECT id FROM tasks WHERE run=?1))))",
-    ),
-    (
-        "external inbox reference",
-        "SELECT EXISTS(SELECT 1 FROM inbox AS other, json_tree(other.body) WHERE other.agent_id NOT IN (SELECT id FROM agents WHERE run=?1) AND json_tree.type='text' AND (json_tree.value IN (SELECT id FROM agents WHERE run=?1) OR json_tree.value IN (SELECT id FROM tasks WHERE run=?1) OR json_tree.value IN (SELECT id FROM approvals WHERE agent_id IN (SELECT id FROM agents WHERE run=?1))))",
-    ),
-    (
-        "external approval reference",
-        "SELECT EXISTS(SELECT 1 FROM approvals WHERE agent_id NOT IN (SELECT id FROM agents WHERE run=?1) AND json_extract(body,'$.task_id') IN (SELECT id FROM tasks WHERE run=?1))",
-    ),
-    (
-        "submission replay record",
-        "SELECT EXISTS(SELECT 1 FROM submissions, json_tree(submissions.body) WHERE json_tree.type='text' AND (json_tree.value IN (SELECT id FROM agents WHERE run=?1) OR json_tree.value IN (SELECT id FROM tasks WHERE run=?1)))",
-    ),
-    (
-        "pending cancellation",
-        "SELECT EXISTS(SELECT 1 FROM meta, json_each(meta.value) WHERE meta.key='runtime.pending_cancellations' AND json_each.key IN (SELECT id FROM agents WHERE run=?1))",
-    ),
-];
