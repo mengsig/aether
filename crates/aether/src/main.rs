@@ -418,6 +418,12 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                     json,
                 } => cli::artifact_show(endpoint, id, max_bytes, json).await,
             },
+            Cmd::Notify { command } => match command {
+                NotifyCmd::List { all, json } => cli::notify_list(endpoint, all, json).await,
+                NotifyCmd::Resolve { id, all, json } => {
+                    cli::notify_resolve(endpoint, id, all, json).await
+                }
+            },
             Cmd::Mcp { command } => match command {
                 McpCmd::List { json } => cli::mcp_list(endpoint, false, None, json).await,
                 McpCmd::Refresh { server, json } => {

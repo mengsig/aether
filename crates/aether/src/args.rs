@@ -459,6 +459,12 @@ pub(crate) enum Cmd {
         #[command(subcommand)]
         command: ArtifactsCmd,
     },
+    /// The notification center: list and resolve what agents and services
+    /// posted.
+    Notify {
+        #[command(subcommand)]
+        command: NotifyCmd,
+    },
     /// Remembered approval decisions: list, add, revoke.
     Rules {
         #[command(subcommand)]

@@ -8,6 +8,14 @@ release is also the text of its GitHub release.
 
 ### Added
 
+- **`aether notify list` and `aether notify resolve` (#327).** The notification
+  center had protocol commands but no CLI, so nobody could see what "200
+  unread" held or clear it without Archon. `aether notify list [--all]
+  [--json]` prints the open notifications, newest first: id, kind, age and
+  title; `--all` adds resolved ones and `--json` prints the protocol records.
+  `aether notify resolve <id>` resolves one (an unknown id exits non-zero) and
+  `aether notify resolve --all` resolves every open one and prints the count.
+  No protocol change; it needs a daemon that announces `notifications`.
 - **GPT-6.1 Terra is the Codex default.** `gpt-6.1-terra` (alias `terra`) joins
   `codex`, `openai`, `openai-responses` and `openai-codex` at $1 input, $0.05
   cached input, $1.25 cache write and $5 output per Mtok, half of GPT-6.1

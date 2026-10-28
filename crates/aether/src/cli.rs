@@ -100,6 +100,9 @@ pub use pending_approvals::{answer_pending, pending_approvals};
 mod approvals;
 pub use approvals::{approve, rules_add, rules_list, rules_revoke};
 
+mod notify;
+pub use notify::{notify_list, notify_resolve};
+
 mod artifacts;
 #[cfg(test)]
 use artifacts::write_artifact_output;

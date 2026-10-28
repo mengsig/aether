@@ -337,6 +337,13 @@ attached to it sees the same center, updated live. A daemon from before the
 center shows no indicator, and Alt+N says the daemon has none. See
 [the protocol](protocol.md#notification-center) for posting from a service.
 
+From a shell or a script, `aether notify list` prints the open notifications,
+newest first, one line each: id, kind, age and title. `--all` adds the
+resolved ones and `--json` prints the records as the protocol returns them.
+`aether notify resolve <id>` resolves one, and `aether notify resolve --all`
+resolves every open one and prints how many. An id the daemon does not know
+exits non-zero.
+
 ## Views
 
 Commands that need more than a line open a view in the bottom pane:
@@ -486,6 +493,7 @@ These removals are intentional. The daemon capabilities remain available:
 | Event timeline and timeline search | `aether events` (including follow/filter options) |
 | `/approve`, `/deny`, including batch answers | `aether approvals` lists pending IDs; `aether approve <approval>` / `aether deny <approval>`, or `--all-pending --run <run>` for a scoped batch |
 | `/always`, `/never`, tool-wide rules and remembered refusals | `aether rules list\|allow\|deny\|revoke`; TUI `y/a/p/n` answer one prompt |
+| Notification panel (`/notifications`, Alt+N) listing and resolving | `aether notify list [--all] [--json]`; `aether notify resolve <id>\|--all` |
 | GitHub-watcher view | `aether github-watcher` |
 | Notice history | Client failures persist as error cells in the current transcript; daemon events are available through `aether events` |
 | Memory curation Activity tab | `aether events`; `/memory` Enter opens full record details |

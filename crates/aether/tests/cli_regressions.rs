@@ -2329,6 +2329,9 @@ mod proposal_lookup_tests;
 #[path = "cli_regressions/memory_feedback.rs"]
 mod feedback_cli_tests;
 
+#[path = "cli_regressions/notify.rs"]
+mod notify_cli_tests;
+
 #[path = "cli_regressions/events.rs"]
 mod events;
 

@@ -284,6 +284,30 @@ pub(crate) enum RunsCmd {
 }
 
 #[derive(Debug, Subcommand)]
+pub(crate) enum NotifyCmd {
+    /// List open notifications, newest first: id, kind, age, title.
+    List {
+        /// Resolved notifications too.
+        #[arg(long)]
+        all: bool,
+        /// Print the notifications as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resolve one notification, or every open one with `--all`.
+    Resolve {
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        id: Option<aether_core::id::NotificationId>,
+        /// Resolve every open notification and print how many.
+        #[arg(long)]
+        all: bool,
+        /// Print the resolved notifications as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub(crate) enum ArtifactsCmd {
     /// List artifacts, newest first.
     List {
