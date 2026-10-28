@@ -123,6 +123,20 @@ impl RuntimeError {
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;
 
+/// Run a store write, which can wait out SQLite's busy timeout while another
+/// process holds the database lock. On a multi-threaded runtime's worker the
+/// worker first hands its queued tasks to another thread, so a locked
+/// database does not also stall every socket the daemon answers.
+fn off_the_async_worker<T>(write: impl FnOnce() -> T) -> T {
+    let multi_threaded = tokio::runtime::Handle::try_current()
+        .is_ok_and(|handle| handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+    if multi_threaded {
+        tokio::task::block_in_place(write)
+    } else {
+        write()
+    }
+}
+
 mod config;
 mod engine_access;
 mod provider_health;
@@ -577,7 +591,7 @@ impl Runtime {
                 .iter()
                 .find(|e| e.agent_id.is_some() && e.run.is_none())
         );
-        let events = self.store.commit(commit)?;
+        let events = off_the_async_worker(|| self.store.commit(commit))?;
         // Published before the next commit can land, so subscribers see the
         // log in seq order; the send never blocks, so the hold stays short.
         for event in &events {

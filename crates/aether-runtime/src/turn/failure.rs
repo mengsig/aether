@@ -26,7 +26,7 @@ pub(super) fn exhaustion_detail(error: &ModelError) -> Option<String> {
 /// Write the failed invocation, then decide what the turn does next: fall
 /// back to the next link, retry this one after a backoff, or fail.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn record_failure(
+pub(super) async fn record_failure(
     runtime: &Runtime,
     ctx: &mut TurnCtx,
     invocation_id: InvocationId,
@@ -96,9 +96,14 @@ pub(super) fn record_failure(
         partial: partial.content,
     }));
     commit.push_mutation(Mutation::PutInvocation(invocation));
-    let hold = runtime.hold();
-    commit.push_mutation(Mutation::UpsertAgent(agent_row(runtime, ctx, &hold)?));
-    runtime.apply_held(hold, commit)?;
+    // The partial usage is spent either way; a locked database is waited out.
+    super::contention::write_through_lock(runtime, ctx.agent.id, "the failed invocation", || {
+        let hold = runtime.hold();
+        let mut commit = commit.clone();
+        commit.push_mutation(Mutation::UpsertAgent(agent_row(runtime, ctx, &hold)?));
+        runtime.apply_held(hold, commit)
+    })
+    .await?;
     if cancelled {
         return Ok(LinkOutcome::Done(Next::Cancelled(Some("cancelled".into()))));
     }

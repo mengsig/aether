@@ -7,6 +7,7 @@ mod lifecycle;
 mod resources;
 mod stale_completion;
 mod tool_results;
+mod woken;
 
 /// A live runtime and agent, plus small builders for the `tool.requested`
 /// / `tool.succeeded` / `agent.message` events that `compose_tool_results`

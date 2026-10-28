@@ -46,6 +46,22 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **A held database lock no longer loses a turn's reply or hangs the CLI
+  (#307).** When another process held the store locked past SQLite's
+  five-second busy timeout, a turn that already had its answer failed with
+  "database is locked", dropping the reply and its usage. The turn now writes
+  its reply, a failed invocation and its end again with bounded backoff, in
+  order, until the lock clears (up to two minutes per write; past that the
+  agent is recovered as after a restart, not failed). A write the daemon
+  serves while the lock is held no longer stalls every other connection: it
+  is refused within the busy timeout as `unavailable` "store busy", and
+  `aether agents` and other reads keep answering; a request the daemon still
+  leaves unanswered times out after 60 seconds with a message that names a
+  locked database as a likely cause. `aether wake` now tells the
+  agent only the cause of its failure and to retry its work; the advice to
+  run `aether doctor` and `aether diagnose` stays in the failure the operator
+  reads. A turn that failed before recording an invocation keeps its number,
+  so replay labels the woken turn "turn 2" instead of a second "turn 1".
 - **Storage GC collects the workspaces of stopped delegated children
   (#325).** A delegated child stopped at its deadline left its isolated
   workspace registered as a worktree of the source repository indefinitely:

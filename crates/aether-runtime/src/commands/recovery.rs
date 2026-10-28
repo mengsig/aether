@@ -376,10 +376,7 @@ impl Runtime {
             &mut commit,
             &agent,
             InboxKind::Wake {
-                reason: format!(
-                    "You failed with: {error}. The operator woke you. Any task you had ended \
-                     with that failure; continue from your history and any newer messages."
-                ),
+                reason: wake_note(&error),
             },
             by.clone(),
         )?;
@@ -456,5 +453,56 @@ impl Runtime {
             }
         }
         Ok(())
+    }
+}
+
+/// Where advice addressed to the operator starts in a failure: every such
+/// clause trails the cause and names an `aether` command for them to run.
+const OPERATOR_ADVICE: [&str; 2] = ["; run `aether ", ". Run `aether "];
+
+/// What a woken agent is told about its failure: the cause without the
+/// operator's advice, which is not for it to act on, and to retry its work.
+pub(crate) fn wake_note(error: &str) -> String {
+    let cut = OPERATOR_ADVICE
+        .iter()
+        .filter_map(|advice| error.find(advice))
+        .min()
+        .unwrap_or(error.len());
+    let cause = error[..cut].trim_end_matches(['.', ' ']);
+    format!(
+        "Your previous turn failed: {cause}. The operator woke you to try again: retry the \
+         work you were doing, from your history and any newer messages. Any task you had \
+         ended with that failure."
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wake_note;
+
+    #[test]
+    fn a_wake_note_drops_the_advice_meant_for_the_operator() {
+        let failures = [
+            "Agent a turn failed: sqlite: database is locked; run `aether doctor` and `aether diagnose` before retrying with `aether wake a`",
+            "Agent a recovery is quarantined: bad row. Run `aether doctor` and `aether diagnose`; inspect surviving tool processes before `aether resume a`.",
+        ];
+        for failure in failures {
+            let note = wake_note(failure);
+            assert!(!note.contains("`aether "), "{note}");
+            assert!(
+                note.starts_with("Your previous turn failed: Agent a "),
+                "{note}"
+            );
+            assert!(note.contains("retry the work"), "{note}");
+        }
+    }
+
+    #[test]
+    fn a_wake_note_keeps_a_failure_with_no_advice_whole() {
+        let note = wake_note("model error: the provider refused the request.");
+        assert!(
+            note.contains("failed: model error: the provider refused the request. The operator"),
+            "{note}"
+        );
     }
 }

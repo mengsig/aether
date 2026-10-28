@@ -236,7 +236,7 @@ async fn a_failed_agent_is_woken_in_place_and_answers_again() {
     assert!(
         texts
             .iter()
-            .any(|m| m.contains("You failed with: the index is corrupt")),
+            .any(|m| m.contains("Your previous turn failed: the index is corrupt")),
         "the wake and its reason are part of the history it works from: {texts:?}"
     );
     let after = h.store.transcript(agent.id, 0).expect("transcript");

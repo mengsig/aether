@@ -81,6 +81,7 @@ pub(crate) use waiting::{
 };
 mod settlement;
 use settlement::*;
+mod contention;
 mod outage;
 use outage::{Ending, StoreOutage};
 mod heartbeat;
@@ -146,25 +147,37 @@ pub(crate) async fn run(
             );
             (Ending::Recover, Some(StoreOutage::began(&e, "the turn")))
         }
+        // A lock that outlasted the turn's patience is not the agent's fault
+        // either: recovered as after a crash, the turn runs again.
+        Ok(Err(e)) if e.is_store_contended() => {
+            tracing::error!(
+                agent = %agent_id,
+                error = %e,
+                "the database stayed locked through the turn's write; recovering the turn"
+            );
+            (Ending::Recover, Some(StoreOutage::began(&e, "the turn")))
+        }
         Ok(Err(e)) => {
             tracing::error!(agent = %agent_id, error = %e, "turn failed internally");
-            (
-                Ending::Fail(format!(
-                    "Agent {agent_id} turn failed: {e}; run `aether doctor` and `aether diagnose` before retrying with `aether wake {agent_id}`"
-                )),
-                None,
-            )
+            let error = format!("Agent {agent_id} turn failed: {e}");
+            (Ending::Fail(with_operator_advice(agent_id, error)), None)
         }
         Err(panic) => {
             let detail = panic_message(panic.as_ref());
             tracing::error!(agent = %agent_id, panic = %detail, "turn panicked");
-            let error = format!(
-                "Agent {agent_id} turn panicked: {detail}; run `aether doctor` and `aether diagnose` before retrying with `aether wake {agent_id}`"
-            );
-            (Ending::Fail(error), None)
+            let error = format!("Agent {agent_id} turn panicked: {detail}");
+            (Ending::Fail(with_operator_advice(agent_id, error)), None)
         }
     };
     outage::settle(&runtime, agent_id, ending, outage).await;
+}
+
+/// An internal failure as the operator reads it: the cause, then what to do.
+/// The advice is theirs; a woken agent is told the cause without it.
+fn with_operator_advice(agent_id: AgentId, cause: String) -> String {
+    format!(
+        "{cause}; run `aether doctor` and `aether diagnose` before retrying with `aether wake {agent_id}`"
+    )
 }
 
 /// What a caught unwind carried, for the failure the agent is given.
@@ -177,13 +190,19 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 }
 
 fn fail_agent(runtime: &Runtime, agent_id: AgentId, error: String) -> Result<()> {
-    let Some(agent) = runtime.store.agent(agent_id)? else {
+    let hold = runtime.hold();
+    let Some(mut agent) = runtime.store.agent(agent_id)? else {
         return Ok(());
     };
     if agent.status.is_terminal() {
         return Ok(());
     }
-    let hold = runtime.hold();
+    // A turn that failed before it recorded an invocation still took its
+    // number, so the next one (after a wake) does not repeat it.
+    if let Some(lease) = runtime.store.lease(agent_id)? {
+        debug_assert_eq!(lease.agent_id, agent_id);
+        agent.stats.turns = agent.stats.turns.max(lease.turn);
+    }
     let mut commit = Commit::new();
     let reap = runtime.terminate_agent(
         &hold,
@@ -311,7 +330,14 @@ async fn execute(
         )
         .await?;
     }
-    finish(runtime, &ctx, next)
+    let ended = contention::write_through_lock(runtime, agent_id, "the turn's end", || {
+        record_end(runtime, &ctx, next.clone())
+    })
+    .await?;
+    match ended {
+        Some(ended) => after_end(runtime, &ctx, ended),
+        None => Ok(()),
+    }
 }
 
 /// Start the turn: Running, the lease, and an assigned task Active. `None` when

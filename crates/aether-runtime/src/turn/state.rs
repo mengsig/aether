@@ -67,7 +67,27 @@ pub(crate) fn agent_row_with_session(
     Ok(agent)
 }
 
+/// Record the turn's end and act on it, in one go; the turn itself waits out
+/// a locked database between the two (`execute`).
+#[cfg(test)]
 pub(super) fn finish(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result<()> {
+    match record_end(runtime, ctx, next)? {
+        Some(ended) => after_end(runtime, ctx, ended),
+        None => Ok(()),
+    }
+}
+
+/// What a recorded end leaves to do once it is durable.
+pub(super) struct Ended {
+    reap: Option<crate::commands::PendingReap>,
+    bench: Option<(String, BlockReason)>,
+    cancelled: bool,
+}
+
+/// Commit the turn's end: the agent's next status, the lease released. One
+/// atomic commit with no effect until it lands, so a refused one can simply
+/// be recorded again. `None` when the turn's end is not this turn's to write.
+pub(super) fn record_end(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result<Option<Ended>> {
     // Above the read: the whole row is written back below, so an `update_agent`
     // landing between the two would be silently reverted.
     let hold = runtime.hold();
@@ -78,7 +98,7 @@ pub(super) fn finish(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result<()>
     // Something else ended it while the turn ran (a budget, a cancel): that
     // decision stands.
     if agent.status.is_terminal() {
-        return Ok(());
+        return Ok(None);
     }
     let at = now();
     // Whatever happens next, the interrupted wait was either restored
@@ -183,7 +203,7 @@ pub(super) fn finish(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result<()>
             // replay or a racing attempt sees Blocked and writes nothing, so
             // the ancestors are told once and the episode keeps its schedule.
             if agent.status.kind() != AgentStatusKind::Running {
-                return Ok(());
+                return Ok(None);
             }
             let suspension = crate::exhaustion::plan(runtime, &agent, &cause)?;
             agent.transition(
@@ -225,7 +245,7 @@ pub(super) fn finish(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result<()>
             // Only the daemon stopping ended the turn: leave it Running under
             // its lease, as a crash would, so the next start recovers it.
             if request.is_none() && runtime.shutdown.is_cancelled() {
-                return Ok(());
+                return Ok(None);
             }
             let (by, reason) = request.map_or((Actor::System, reason), |request| {
                 (request.by, request.reason)
@@ -245,6 +265,21 @@ pub(super) fn finish(runtime: &Runtime, ctx: &TurnCtx, next: Next) -> Result<()>
         }
     }
     runtime.apply_held(hold, commit)?;
+    Ok(Some(Ended {
+        reap,
+        bench,
+        cancelled,
+    }))
+}
+
+/// The steps that follow a durable end: reaping, benching a spent provider,
+/// and repeating a cancellation down the tree.
+pub(super) fn after_end(runtime: &Runtime, ctx: &TurnCtx, ended: Ended) -> Result<()> {
+    let Ended {
+        reap,
+        bench,
+        cancelled,
+    } = ended;
     // Only once the agent is durably terminal: its processes outlive nothing.
     if let Some(reap) = reap {
         runtime.reap_ended_agent(reap);

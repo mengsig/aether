@@ -72,7 +72,11 @@ pub enum ClientError {
     Malformed(String),
     #[error("invalid client usage: {0}")]
     InvalidUsage(String),
-    #[error("the daemon did not answer `{command}` within {}s", timeout.as_secs())]
+    #[error(
+        "the daemon did not answer `{command}` within {}s; it may be busy, for example with \
+         its database locked by another process",
+        timeout.as_secs()
+    )]
     TimedOut { command: String, timeout: Duration },
     /// A daemon this client started died before it listened. Carries what
     /// that daemon said, which is the only account of it there is.

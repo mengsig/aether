@@ -344,6 +344,18 @@ objects (including failed or cancelled runs), and doctor reports are unchanged.
 Streaming commands may already have emitted records before a terminal error
 object. Argument parsing errors retain Clap's stderr usage output and exit code 2.
 
+When another process holds the store's database lock (a backup or a `sqlite3`
+shell in a transaction, say), reads such as `aether agents` keep answering. A
+write waits SQLite's five-second busy timeout and is then refused with
+`unavailable` and "store busy: another process holds the database lock";
+retry it once the lock clears. A running turn waits the lock out instead
+(up to two minutes per write), so the reply it already has is kept.
+
+`aether wake AGENT_ID` restarts a failed agent. The failure the operator reads
+ends with what to run (`aether doctor`, `aether diagnose`); the agent is told
+only the cause and to retry its work, and its woken turn takes the next turn
+number.
+
 Run exports preserve evidence; imports do not automatically restart work.
 `aether task --owner AGENT_ID` requires a live agent without a current task.
 Agents created by `aether run` already own a task; create a taskless agent with

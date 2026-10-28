@@ -259,6 +259,8 @@ mod shutdown_recovery;
 mod snapshot_reconstruction;
 #[path = "kernel/store_double.rs"]
 mod store_double;
+#[path = "kernel/store_lock.rs"]
+mod store_lock;
 #[path = "kernel/store_outage.rs"]
 mod store_outage;
 #[path = "kernel/subtree_cancellation.rs"]

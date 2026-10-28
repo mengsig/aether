@@ -42,6 +42,7 @@ const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
 fn map_err(e: RuntimeError) -> ErrorReply {
     match e {
+        busy if busy.is_store_contended() => store_busy(&busy),
         RuntimeError::NotFound(what) => {
             ErrorReply::new(ErrorCode::NotFound, format!("{what} not found"))
         }
@@ -72,8 +73,18 @@ fn store_err(e: aether_store::StoreError) -> ErrorReply {
             first_seq,
             last_seq,
         } => ErrorReply::history_expired(first_seq, last_seq, e.to_string()),
+        busy if busy.is_contended() => store_busy(&busy),
         other => ErrorReply::internal(other),
     }
+}
+
+/// A lock another process held past the busy timeout: nothing is wrong with
+/// the request or the store, and the same request succeeds once it clears.
+fn store_busy(error: &dyn std::fmt::Display) -> ErrorReply {
+    ErrorReply::new(
+        ErrorCode::Unavailable,
+        format!("store busy: another process holds the database lock ({error}); retry shortly"),
+    )
 }
 
 /// Longest line accepted before the hello has been authorized. A hello is a
