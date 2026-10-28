@@ -53,8 +53,10 @@ release is also the text of its GitHub release.
   pending: it stayed in `aether approvals` and the TUI, and approving it
   woke the agent, at the cost of a turn, for a call that no longer existed.
   Now the approval is denied by the system with a note that starts
-  `turn ended` when its wait ends without an answer, when its agent is
-  cancelled or fails, and when restart recovery finds its turn lost; it
+  `turn ended` when its wait ends without an answer (the engine exiting
+  mid-wait included), when its agent is cancelled or fails, and when
+  restart recovery finds that an engine, a fallback included, ran the lost
+  turn that raised it; it
   leaves every list and can no longer be approved. `aether run` watched only
   its root agent, so a delegated agent's approval or question was never
   shown and `--yes` never approved it, and the run stalled. It now follows

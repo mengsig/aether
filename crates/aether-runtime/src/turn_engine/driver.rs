@@ -553,6 +553,7 @@ pub(super) async fn drive(
                                 GateSubject::from_prompt(runtime, ctx, &tool, &tool_input, declared, tool_input["tool_use_id"].as_str())?,
                                 cancel,
                                 true,
+                                answers_dropped(decisions.as_ref()),
                             )
                             .await?
                         }
@@ -1020,6 +1021,15 @@ pub(super) async fn drive(
         uncommitted,
         stalled,
     })
+}
+
+/// Completes once the engine has dropped the channel its permission answers
+/// arrive on; never for an engine that takes answers another way.
+async fn answers_dropped(decisions: Option<&mpsc::Sender<PermissionDecision>>) {
+    match decisions {
+        Some(tx) => tx.closed().await,
+        None => std::future::pending().await,
+    }
 }
 
 fn observe_closing(

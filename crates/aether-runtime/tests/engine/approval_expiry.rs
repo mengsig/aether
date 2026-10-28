@@ -1,12 +1,15 @@
-//! An approval an engine turn waits on ends with that turn: interrupted or
-//! cancelled, the turn leaves it denied by the system, never pending.
+//! An approval an engine turn waits on ends with that turn: interrupted,
+//! cancelled or left by an engine that exited, the turn leaves it denied by
+//! the system, never pending.
 use super::*;
 use aether_core::tool::{ApprovalDecision, ApprovalStatus, SideEffectClass};
 
-/// Asks for one gated call on its first turn and holds it until cancelled;
+/// Asks for one gated call on its first turn and holds it until cancelled,
+/// or with `exits` stops taking answers and closes its stream at once;
 /// later turns answer at once.
 struct AskThenHoldEngine {
     first: std::sync::atomic::AtomicBool,
+    exits: bool,
 }
 
 #[async_trait::async_trait]
@@ -25,6 +28,7 @@ impl Engine for AskThenHoldEngine {
         let (tx, rx) = mpsc::channel(4);
         let (decisions, mut answers) = mpsc::channel::<aether_engine::PermissionDecision>(1);
         let first = self.first.swap(false, std::sync::atomic::Ordering::SeqCst);
+        let exits = self.exits;
         tokio::spawn(async move {
             if first {
                 tx.send(EngineEvent::Permission {
@@ -35,6 +39,10 @@ impl Engine for AskThenHoldEngine {
                 })
                 .await
                 .unwrap();
+                if exits {
+                    // Gone without a word: no answer can reach it now.
+                    return;
+                }
                 tokio::select! {
                     answer = answers.recv() => assert!(answer.is_none_or(|a| !a.allow), "no answer may allow the call"),
                     () = cancel.cancelled() => {}
@@ -63,11 +71,13 @@ impl Engine for AskThenHoldEngine {
     }
 }
 
-async fn gated_agent_waiting_on_approval() -> (Harness, AgentId, aether_core::tool::ApprovalRequest)
-{
+async fn gated_agent_waiting_on_approval(
+    exits: bool,
+) -> (Harness, AgentId, aether_core::id::ApprovalId) {
     let h = harness_with_engine(
         Arc::new(AskThenHoldEngine {
             first: std::sync::atomic::AtomicBool::new(true),
+            exits,
         }),
         Arc::default(),
         Arc::default(),
@@ -97,9 +107,20 @@ async fn gated_agent_waiting_on_approval() -> (Harness, AgentId, aether_core::to
     h.runtime
         .send_message(agent.id, vec![ContentBlock::text("deploy")], Actor::user())
         .unwrap();
+    // Read from the log: an engine that exits may see it expired at once.
+    let raised = || {
+        h.store
+            .events(0, 10_000, &EventFilter::for_agent(agent.id))
+            .unwrap()
+            .into_iter()
+            .find_map(|event| match event.kind {
+                EventKind::ApprovalRequested { approval, .. } => Some(approval),
+                _ => None,
+            })
+    };
     let approval = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if let Some(approval) = h.store.pending_approvals().unwrap().into_iter().next() {
+            if let Some(approval) = raised() {
                 break approval;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -107,7 +128,8 @@ async fn gated_agent_waiting_on_approval() -> (Harness, AgentId, aether_core::to
     })
     .await
     .expect("approval raised within seconds");
-    assert_eq!(approval.agent_id, agent.id);
+    let stored = h.store.approval(approval).unwrap().expect("stored");
+    assert_eq!(stored.agent_id, agent.id);
     (h, agent.id, approval)
 }
 
@@ -158,9 +180,9 @@ async fn assert_expired(h: &Harness, agent: AgentId, approval: aether_core::id::
 
 #[tokio::test]
 async fn an_interrupt_expires_the_engine_approval_its_turn_waited_on() {
-    let (h, agent, approval) = gated_agent_waiting_on_approval().await;
+    let (h, agent, approval) = gated_agent_waiting_on_approval(false).await;
     assert!(h.runtime.interrupt_agent(agent, Actor::user()).unwrap());
-    assert_expired(&h, agent, approval.id).await;
+    assert_expired(&h, agent, approval).await;
     wait_for(h.store.as_ref(), agent, |a| {
         a.status.kind() == AgentStatusKind::Waiting
     })
@@ -170,14 +192,21 @@ async fn an_interrupt_expires_the_engine_approval_its_turn_waited_on() {
 
 #[tokio::test]
 async fn cancelling_the_agent_expires_the_engine_approval_its_turn_waited_on() {
-    let (h, agent, approval) = gated_agent_waiting_on_approval().await;
+    let (h, agent, approval) = gated_agent_waiting_on_approval(false).await;
     h.runtime
         .cancel_agent(agent, Some("stop".into()), Actor::user())
         .unwrap();
-    assert_expired(&h, agent, approval.id).await;
+    assert_expired(&h, agent, approval).await;
     wait_for(h.store.as_ref(), agent, |a| {
         a.status.kind() == AgentStatusKind::Cancelled
     })
     .await;
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_engine_that_exits_mid_wait_expires_the_approval_it_asked_for() {
+    let (h, agent, approval) = gated_agent_waiting_on_approval(true).await;
+    assert_expired(&h, agent, approval).await;
     h.runtime.shutdown().await;
 }

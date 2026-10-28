@@ -496,17 +496,13 @@ async fn recovery_carries_an_interruption_correction_only_for_in_flight_tools() 
     );
 }
 
-/// An engine waits on an approval inside its turn, so a restart that loses
-/// the turn expires the approval instead of leaving it for a later grant.
-#[tokio::test]
-async fn a_restart_expires_the_engine_approval_its_lost_turn_waited_on() {
-    use aether_core::tool::{ApprovalDecision, ApprovalRequest, ApprovalStatus};
-    let (runtime, _dir, mut agent) = fixture().await;
-    agent.model = aether_core::model::ModelRef::new("claude-code", "sonnet");
-    assert!(
-        runtime.engine_of(&agent.model).is_some(),
-        "the agent runs on an engine"
-    );
+/// Raise a pending approval in the agent's turn, on a link that ran `model`.
+fn raise_approval(
+    runtime: &Runtime,
+    agent: &Agent,
+    model: aether_core::model::ModelRef,
+) -> aether_core::tool::ApprovalRequest {
+    use aether_core::tool::{ApprovalRequest, ApprovalStatus};
     let approval = ApprovalRequest {
         id: aether_core::id::ApprovalId::new(),
         agent_id: agent.id,
@@ -520,28 +516,53 @@ async fn a_restart_expires_the_engine_approval_its_lost_turn_waited_on() {
         requested_at: now(),
         status: ApprovalStatus::Pending,
     };
+    let event = |kind| {
+        EventDraft::new(Actor::System, kind)
+            .agent(agent.id)
+            .run(agent.run)
+    };
     runtime
         .apply(
             Commit::new()
-                .event(
-                    EventDraft::new(
-                        Actor::System,
-                        EventKind::ApprovalRequested {
-                            approval: approval.id,
-                            call: approval.call_id,
-                            tool: approval.tool.clone(),
-                            description: approval.description.clone(),
-                            argument: None,
-                            side_effect: approval.side_effect,
-                        },
-                    )
-                    .agent(agent.id)
-                    .run(agent.run),
-                )
-                .mutate(Mutation::UpsertAgent(agent.clone()))
+                .event(event(EventKind::SnapshotCreated {
+                    snapshot: aether_core::id::SnapshotId::new(),
+                    turn: 1,
+                    model,
+                    token_estimate: 1,
+                    layers: Vec::new(),
+                }))
+                .event(event(EventKind::ApprovalRequested {
+                    approval: approval.id,
+                    call: approval.call_id,
+                    tool: approval.tool.clone(),
+                    description: approval.description.clone(),
+                    argument: None,
+                    side_effect: approval.side_effect,
+                }))
                 .mutate(Mutation::PutApproval(approval.clone())),
         )
         .expect("approval raised mid-turn");
+    approval
+}
+
+/// An engine waits on an approval inside its turn, so a restart that loses
+/// the turn expires the approval instead of leaving it for a later grant -
+/// also when the engine was a fallback behind an API primary.
+#[tokio::test]
+async fn a_restart_expires_the_engine_approval_its_lost_turn_waited_on() {
+    use aether_core::tool::ApprovalDecision;
+    let (runtime, _dir, mut agent) = fixture().await;
+    let engine = aether_core::model::ModelRef::new("claude-code", "sonnet");
+    assert!(runtime.engine_of(&engine).is_some());
+    assert!(
+        runtime.engine_of(&agent.model).is_none(),
+        "the primary is an API model"
+    );
+    agent.fallbacks = vec![engine.clone()];
+    runtime
+        .apply(Commit::new().mutate(Mutation::UpsertAgent(agent.clone())))
+        .expect("engine fallback");
+    let approval = raise_approval(&runtime, &agent, engine);
     boot(&runtime, "previous-boot");
     recover_with_boot_id(&runtime, Some("current-boot")).expect("recover");
     assert!(runtime.store.pending_approvals().unwrap().is_empty());
@@ -574,6 +595,18 @@ async fn a_restart_expires_the_engine_approval_its_lost_turn_waited_on() {
             .is_err(),
         "an expired approval cannot be granted later"
     );
+}
+
+/// An approval an API link raised is not the engine's to expire.
+#[tokio::test]
+async fn a_restart_leaves_an_api_links_approval_pending() {
+    let (runtime, _dir, agent) = fixture().await;
+    let approval = raise_approval(&runtime, &agent, agent.model.clone());
+    boot(&runtime, "previous-boot");
+    recover_with_boot_id(&runtime, Some("current-boot")).expect("recover");
+    let pending = runtime.store.pending_approvals().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, approval.id);
 }
 
 mod corrupt;

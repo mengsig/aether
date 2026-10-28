@@ -7,9 +7,9 @@ mod validation;
 
 use aether_core::agent::{AgentStatus, AgentStatusKind, BlockReason};
 use aether_core::event::{Actor, EventDraft, EventKind, RecoveryClass};
-use aether_core::id::{AgentId, ToolCallId};
+use aether_core::id::{AgentId, ApprovalId, ToolCallId};
 use aether_core::time::now;
-use aether_core::tool::{ResourceKey, SideEffectClass};
+use aether_core::tool::{ApprovalStatus, ResourceKey, SideEffectClass};
 use aether_store::{AgentFilter, Commit, EventFilter, Mutation};
 
 use crate::{Result, Runtime};
@@ -190,16 +190,7 @@ pub(crate) fn recover_agent(
         return Ok(Outcome::Changed);
     }
     let mut commit = interruption_commit(&agent, &lease, &found, &held);
-    if runtime.engine_of(&agent.model).is_some() {
-        // An engine waits on its approvals inside the turn, so the lost turn's
-        // can never release a call: they expire, not wait for a later grant.
-        runtime.expire_agent_approvals(
-            &hold,
-            &mut commit,
-            &agent,
-            "daemon restarted during the turn",
-        )?;
-    }
+    expire_lost_approvals(runtime, &mut commit, &agent, &found.engine_approvals)?;
     if let Some(reason) = reason {
         commit.push_event(crate::orphans::recovered_event(&agent, reason));
     }
@@ -218,6 +209,62 @@ pub(crate) fn recover_agent(
         runtime.resources.quarantine(id, held);
     }
     Ok(Outcome::Quarantined)
+}
+
+/// An engine waits on its approvals inside the turn, so those the lost turn
+/// raised can never release a call: they expire rather than wait for a later
+/// grant. Called under the commit hold, so a pending status read here holds.
+fn expire_lost_approvals(
+    runtime: &Runtime,
+    commit: &mut Commit,
+    agent: &aether_core::agent::Agent,
+    raised: &[ApprovalId],
+) -> Result<()> {
+    for id in raised {
+        let Some(approval) = runtime.store.approval(*id)? else {
+            continue;
+        };
+        assert_eq!(
+            approval.agent_id, agent.id,
+            "a turn raises only its agent's approvals"
+        );
+        if approval.status == ApprovalStatus::Pending {
+            crate::approval::expiry_commit(
+                commit,
+                approval,
+                agent,
+                "daemon restarted during the turn",
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Whether a link on `model` ran on an engine. A model that no longer
+/// resolves cannot be shown to be an API one, so it counts as an engine.
+fn ran_on_engine(runtime: &Runtime, model: &aether_core::model::ModelRef) -> bool {
+    runtime.models.resolve(model).map_or(true, |resolved| {
+        crate::turn_engine::engine_kind(resolved.provider.protocol).is_some()
+    })
+}
+
+/// Unreadable history cannot say which link raised what: when any model the
+/// agent may run on is an engine, every approval it has pending expires.
+fn approvals_of_unread_turn(
+    runtime: &Runtime,
+    agent: &aether_core::agent::Agent,
+) -> Result<Vec<ApprovalId>> {
+    let mut chain = std::iter::once(&agent.model).chain(&agent.fallbacks);
+    if !chain.any(|model| ran_on_engine(runtime, model)) {
+        return Ok(Vec::new());
+    }
+    Ok(runtime
+        .store
+        .pending_approvals()?
+        .into_iter()
+        .filter(|approval| approval.agent_id == agent.id)
+        .map(|approval| approval.id)
+        .collect())
 }
 
 fn recovery_event(agent: &aether_core::agent::Agent, kind: EventKind) -> EventDraft {
@@ -429,6 +476,8 @@ struct Interrupted {
     open_calls: Vec<ToolCallId>,
     cancelled_keys: Vec<ResourceKey>,
     open_invocation: Option<(aether_core::id::InvocationId, aether_core::id::SnapshotId)>,
+    /// Approvals the turn raised while an engine ran it, answered or not.
+    engine_approvals: Vec<ApprovalId>,
 }
 
 /// Events the agent's own turn wrote, oldest first, read a page at a time.
@@ -532,6 +581,7 @@ fn classify_or_inspect(
                 agent.id, agent.id
             );
             tracing::error!(agent = %agent.id, %error, "recovery requires inspection; run `aether doctor`");
+            let engine_approvals = approvals_of_unread_turn(runtime, agent)?;
             Ok(Interrupted {
                 calls: Default::default(),
                 class: RecoveryClass::Inspect,
@@ -539,6 +589,7 @@ fn classify_or_inspect(
                 open_calls: Vec::new(),
                 cancelled_keys: Vec::new(),
                 open_invocation: None,
+                engine_approvals,
             })
         }
         Err(error) => Err(error),
@@ -562,6 +613,10 @@ fn classify(
         None;
     let mut cancelled_invocation = false;
     let mut cancelled_tools: std::collections::BTreeSet<ToolCallId> = Default::default();
+    // Which model ran the link in progress: a fallback or a model changed
+    // mid-turn may differ from the agent's primary.
+    let mut engine_link = false;
+    let mut engine_approvals = Vec::new();
     let start = turn_start_seq(runtime, agent.id)?;
     walk_events(runtime, agent.id, start, Vec::new(), |kind| match kind {
         EventKind::ToolRequested { call, side_effect } => {
@@ -586,10 +641,16 @@ fn classify(
             cancelled_invocation |= *cancelled;
         }
         EventKind::InvocationCompleted { .. } => invocation_open = None,
-        EventKind::SnapshotCreated { snapshot, .. } => {
+        EventKind::SnapshotCreated {
+            snapshot, model, ..
+        } => {
             // The invocation id is minted at send time; a synthetic one is
             // fine because the failed record only needs the snapshot link.
             invocation_open = Some((aether_core::id::InvocationId::new(), *snapshot));
+            engine_link = ran_on_engine(runtime, model);
+        }
+        EventKind::ApprovalRequested { approval, .. } if engine_link => {
+            engine_approvals.push(*approval);
         }
         _ => {}
     })?;
@@ -663,6 +724,7 @@ fn classify(
         open_calls,
         cancelled_keys,
         open_invocation: invocation_open,
+        engine_approvals,
     })
 }
 

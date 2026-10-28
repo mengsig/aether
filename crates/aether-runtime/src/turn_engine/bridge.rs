@@ -30,7 +30,7 @@ pub(super) async fn handle_request(
     runtime: &Arc<Runtime>,
     ctx: &mut TurnCtx,
     tool_ctx: &Arc<ToolContext>,
-    req: EngineRequest,
+    mut req: EngineRequest,
     effects: &mut ToolEffects,
     cancel: &CancellationToken,
     parked: bool,
@@ -50,7 +50,7 @@ pub(super) async fn handle_request(
         return Ok(Served::Refused);
     }
     let reply = if req.name == "permission" {
-        decide_permission(runtime, ctx, &req.input, cancel).await?
+        decide_permission(runtime, ctx, &req.input, cancel, req.reply.closed()).await?
     } else {
         // Resolve through exactly the list the bridge advertised, so a tool
         // the bridge never offered cannot be reached by naming it.
@@ -79,7 +79,9 @@ pub(super) async fn handle_request(
                     resources: tool.resources(&req.input, tool_ctx),
                     resources_known: tool.resources_known(&req.input),
                 };
-                let verdict = permission_verdict(runtime, ctx, gate, cancel, !parked).await?;
+                let verdict =
+                    permission_verdict(runtime, ctx, gate, cancel, !parked, req.reply.closed())
+                        .await?;
                 if !verdict.allow {
                     let message = verdict
                         .message
@@ -238,6 +240,7 @@ async fn decide_permission(
     ctx: &TurnCtx,
     input: &Value,
     cancel: &CancellationToken,
+    asker_gone: impl std::future::Future<Output = ()>,
 ) -> Result<(String, bool)> {
     // Only reached while the turn is live; a parked turn denies before here.
     let tool_name = input
@@ -259,6 +262,7 @@ async fn decide_permission(
         )?,
         cancel,
         true,
+        asker_gone,
     )
     .await?;
     if !verdict.allow {
@@ -361,13 +365,15 @@ pub(super) fn bridge_tool_name(name: &str) -> &str {
 }
 
 /// Allow silently when the agent's policy does not require approval for the
-/// class; otherwise raise an approval and wait for a person.
+/// class; otherwise raise an approval and wait for a person. `asker_gone`
+/// completes when the engine can no longer take the answer.
 pub(super) async fn permission_verdict(
     runtime: &Arc<Runtime>,
     ctx: &TurnCtx,
     gate: GateSubject<'_>,
     cancel: &CancellationToken,
     may_ask: bool,
+    asker_gone: impl std::future::Future<Output = ()>,
 ) -> Result<Verdict> {
     let GateSubject {
         native_call,
@@ -470,6 +476,7 @@ pub(super) async fn permission_verdict(
         id: approval.id,
         open: true,
     };
+    tokio::pin!(asker_gone);
     let answer = loop {
         tokio::select! {
             msg = rx.recv() => match msg {
@@ -498,6 +505,12 @@ pub(super) async fn permission_verdict(
                     }
                     _ => Ok(refuse("cancelled")),
                 };
+            },
+            () = &mut asker_gone => {
+                // Nobody is left to act on an answer, so none may be given.
+                open.open = false;
+                runtime.expire_approval(approval.id, "the engine stopped waiting for an answer")?;
+                return Ok(refuse("the engine exited while the approval was pending"));
             },
         }
     };

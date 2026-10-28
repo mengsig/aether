@@ -413,8 +413,8 @@ unprompted. `aether agents` shows `waiting: approval` for an agent held on an
 approval, mid-turn included.
 
 An approval belongs to the turn that asked. When that turn ends before anyone
-answers (interrupted, cancelled, failed, or lost to a daemon restart on a
-Claude Code or Codex agent), the approval is denied by the system with a note
+answers (interrupted, cancelled, failed, its engine exited, or lost to a
+daemon restart on a Claude Code or Codex agent, a fallback included), the approval is denied by the system with a note
 that starts `turn ended`, leaves `aether approvals` and the TUI, and can no
 longer be approved: the call it asked about will not run.
 
