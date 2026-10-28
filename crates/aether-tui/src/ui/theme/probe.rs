@@ -5,6 +5,7 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::time::{Duration, Instant};
 
+use super::colors::ColorDepth;
 use super::tokens::{Background, Rgb, TerminalPalette};
 
 /// The probe's deadline: long enough for a local terminal, short enough to hide.
@@ -17,29 +18,78 @@ const QUERY: &[u8] = b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b[c";
 const MAX_REPLY_BYTES: usize = 1024;
 const POLL_INTERVAL: Duration = Duration::from_millis(2);
 
-/// Query OSC 10/11 on the tty; `None` on timeout or an unparseable answer.
-/// Called by the runner before the first frame (integration wires it).
-pub fn probe_palette(deadline: Duration) -> Option<TerminalPalette> {
-    match query_tty(deadline) {
-        Ok(reply) => parse_palette_reply(&reply),
+/// Colours and positively detected truecolor support from the terminal.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct TerminalProbe {
+    pub palette: Option<TerminalPalette>,
+    pub truecolor: bool,
+}
+
+const TRUECOLOR_QUERY: &[u8] =
+    b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b[48;2;1;2;3m\x1bP$qm\x1b\\\x1b[0m\x1bP+q524742\x1b\\\x1b[c";
+
+pub fn probe_terminal(deadline: Duration, depth: ColorDepth) -> TerminalProbe {
+    let query = if depth == ColorDepth::Indexed256 {
+        TRUECOLOR_QUERY
+    } else {
+        QUERY
+    };
+    match query_tty(deadline, query) {
+        Ok(reply) => parse_probe_reply(&reply),
         Err(error) => {
-            tracing::debug!(%error, "terminal palette probe failed; using fallbacks");
-            None
+            tracing::debug!(%error, "terminal probe failed; using fallbacks");
+            TerminalProbe::default()
         }
     }
 }
 
-/// Write [`QUERY`] to `/dev/tty` and collect the answer until DA1 or the deadline.
-/// Input typed during the probe window is consumed with the replies.
-fn query_tty(deadline: Duration) -> io::Result<Vec<u8>> {
+fn parse_probe_reply(reply: &[u8]) -> TerminalProbe {
+    let truecolor = reply.windows(2).enumerate().any(|(at, prefix)| {
+        if prefix != b"\x1bP" {
+            return false;
+        }
+        let rest = &reply[at + 2..];
+        let Some(end) = rest.windows(2).position(|w| w == b"\x1b\\") else {
+            return false;
+        };
+        let payload = &rest[..end];
+        if payload == b"1+r524742" || payload.starts_with(b"1+r524742=") {
+            return true;
+        }
+        let Some(sgr) = payload
+            .strip_prefix(b"1$r")
+            .and_then(|s| s.strip_suffix(b"m"))
+        else {
+            return false;
+        };
+        let Ok(sgr) = std::str::from_utf8(sgr) else {
+            return false;
+        };
+        let parameters: Vec<&str> = sgr.split(';').collect();
+        parameters
+            .windows(5)
+            .any(|p| p == ["48", "2", "1", "2", "3"])
+            || parameters
+                .iter()
+                .any(|p| matches!(*p, "48:2:1:2:3" | "48:2::1:2:3" | "48:2:0:1:2:3"))
+    });
+    TerminalProbe {
+        palette: parse_palette_reply(reply),
+        truecolor,
+    }
+}
+
+/// Input typed during the bounded probe window is consumed with the replies.
+fn query_tty(deadline: Duration, query: &[u8]) -> io::Result<Vec<u8>> {
+    debug_assert!(query.starts_with(b"\x1b]10;?"));
+    debug_assert!(query.ends_with(b"\x1b[c"));
     let mut writer = OpenOptions::new().write(true).open("/dev/tty")?;
-    // A separate open file description, so stdin's blocking mode is untouched.
     let mut reader = OpenOptions::new()
         .read(true)
         .custom_flags(nix::libc::O_NONBLOCK)
         .open("/dev/tty")?;
     let _raw = RawModeGuard::enable()?;
-    writer.write_all(QUERY)?;
+    writer.write_all(query)?;
     writer.flush()?;
     read_reply(&mut reader, Instant::now() + deadline)
 }
@@ -220,6 +270,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn truecolor_needs_a_positive_complete_capability_reply() {
+        for reply in [
+            &b"\x1bP1$r0;48;2;1;2;3m\x1b\\"[..],
+            &b"\x1bP1$r48:2:1:2:3m\x1b\\"[..],
+            &b"\x1bP1$r48:2::1:2:3m\x1b\\"[..],
+            &b"\x1bP1$r48:2:0:1:2:3m\x1b\\"[..],
+            &b"\x1bP1+r524742\x1b\\"[..],
+            &b"\x1bP1+r524742=31\x1b\\"[..],
+        ] {
+            let probe = parse_probe_reply(reply);
+            assert!(probe.truecolor, "{reply:?}");
+            assert_eq!(probe.palette, None);
+        }
+        for reply in [
+            &b""[..],
+            &b"garbage"[..],
+            &b"\x1bP0$r48;2;1;2;3m\x1b\\"[..],
+            &b"\x1bP0+r524742\x1b\\"[..],
+            &b"\x1bP1$r48;2;9;2;3m\x1b\\"[..],
+            &b"\x1bP1$r48:2:1:2:3m"[..],
+            &b"\x1bP1+r524742"[..],
+        ] {
+            assert_eq!(
+                parse_probe_reply(reply),
+                TerminalProbe::default(),
+                "{reply:?}"
+            );
+        }
+        assert!(TRUECOLOR_QUERY.ends_with(b"\x1b[c"));
+        assert!(!TRUECOLOR_QUERY.windows(3).any(|w| w == b"[>c"));
+    }
+
+    #[test]
     fn parses_four_two_and_one_digit_channels() {
         assert_eq!(
             parse_osc_color("rgb:ffff/8080/0000"),
@@ -272,7 +355,7 @@ mod tests {
             b"x\x1b]10;rgb:e6e6/eded/f3f3\x1b\\\x1b]11;rgb:0d0d/1111/1717\x07\x1b[?64;1;22c";
         assert!(has_device_attributes(reply));
         assert_eq!(
-            parse_palette_reply(reply),
+            parse_probe_reply(reply).palette,
             Some(TerminalPalette {
                 fg: Rgb(230, 237, 243),
                 bg: Rgb(13, 17, 23),

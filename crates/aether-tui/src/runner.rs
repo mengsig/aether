@@ -27,7 +27,7 @@ use tokio::sync::mpsc;
 use crate::app::{App, AppEvent, Effect, Then, TuiOptions, subscription_query};
 use crate::prefs::MouseMode;
 use crate::ui;
-use crate::ui::theme::probe::{PROBE_DEADLINE, probe_palette};
+use crate::ui::theme::probe::{PROBE_DEADLINE, probe_terminal};
 use crate::ui::transcript::ViewCache;
 use crate::viewed::Publisher;
 use crate::voice::control::{self, ControlRequest, Listener};
@@ -307,7 +307,7 @@ async fn run_inner(
     let mut terminal = setup_terminal(options.mouse != MouseMode::Off, &state)?;
     let mut app = App::new(options);
     // Probe before reading keys; dispatch also filters OSC replies that arrive late.
-    app.set_palette(probe_palette(PROBE_DEADLINE));
+    app.apply_terminal_probe(probe_terminal(PROBE_DEADLINE, app.theme.spec().depth));
     match crate::viewer::probe::detect_with_metrics() {
         Ok(capabilities) => {
             app.viewer.protocol = capabilities.protocol;

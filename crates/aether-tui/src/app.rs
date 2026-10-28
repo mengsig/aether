@@ -211,6 +211,8 @@ pub struct App {
     pub theme_choice: crate::ui::theme::ThemeChoice,
     /// Bumped on every theme change; part of every layout-cache key.
     pub theme_epoch: u32,
+    /// The exact spec to restore when a live picker preview is cancelled.
+    pub(crate) committed_theme: Option<crate::ui::theme::ThemeSpec>,
     /// `helpers::names_version` of `tree`; part of every layout-cache key.
     pub names_version: u64,
     pub flash: Option<flash::Flash>,

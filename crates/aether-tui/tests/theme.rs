@@ -603,3 +603,24 @@ fn markdown_paints_through_the_tokens() {
         }
     }
 }
+
+#[test]
+fn terminal_probe_repaints_the_band_at_the_confirmed_depth() {
+    use aether_tui::ui::theme::probe::TerminalProbe;
+    let mut app = fixture(None);
+    app.theme = Theme::resolve(spec(ThemeMode::Auto, ColorDepth::Indexed256, None));
+    let choice = app.theme_choice.clone();
+    assert_eq!(app.theme.tint().bg, None);
+    app.apply_terminal_probe(TerminalProbe {
+        palette: Some(DARK),
+        truecolor: true,
+    });
+    assert_eq!(app.theme.spec().depth, ColorDepth::Truecolor);
+    assert_eq!(app.theme.spec().palette, Some(DARK));
+    assert_eq!(app.theme_choice, choice);
+    let expected = aether_tui::ui::theme::probe::blend(Rgb(255, 255, 255), DARK.bg, 0.07);
+    assert_eq!(
+        app.theme.tint().bg,
+        Some(Color::Rgb(expected.0, expected.1, expected.2))
+    );
+}

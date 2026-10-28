@@ -1,7 +1,7 @@
 //! `/theme`: every built-in and every theme file, each row a swatch of its
 //! own status and tool hues on this terminal; Enter paints with it and saves.
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -204,6 +204,13 @@ fn about(choice: &ThemeChoice) -> String {
 }
 
 impl BottomView for ThemeView {
+    fn handle_chord(&mut self, key: KeyEvent, _app: &App) -> ViewOutcome {
+        if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
+            return ViewOutcome::Close(vec![ViewAction::PreviewTheme(None)]);
+        }
+        unhandled(key)
+    }
+
     fn wheel(&mut self, up: bool, app: &App) -> ViewOutcome {
         self.handle_key(super::wheel_key(up), app)
     }
@@ -218,8 +225,20 @@ impl BottomView for ThemeView {
                 let choice = self.picker.items[index].1.clone();
                 ViewOutcome::Close(vec![ViewAction::Command(SlashCommand::SetTheme(choice))])
             }
-            PickerEvent::Moved | PickerEvent::Filtered => ViewOutcome::Consumed,
-            PickerEvent::Cancelled => ViewOutcome::Close(Vec::new()),
+            PickerEvent::Moved | PickerEvent::Filtered => {
+                let visible = self.picker.visible();
+                let Some(&index) = visible.get(self.picker.cursor) else {
+                    return ViewOutcome::Consumed;
+                };
+                debug_assert!(index < self.previews.len());
+                debug_assert!(index < self.picker.items.len());
+                let (row, choice) = &self.picker.items[index];
+                if row.disabled {
+                    return ViewOutcome::Consumed;
+                }
+                ViewOutcome::Act(vec![ViewAction::PreviewTheme(Some(choice.clone()))])
+            }
+            PickerEvent::Cancelled => ViewOutcome::Close(vec![ViewAction::PreviewTheme(None)]),
             PickerEvent::Ignored => unhandled(key),
         }
     }

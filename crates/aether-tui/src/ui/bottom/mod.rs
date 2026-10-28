@@ -81,6 +81,8 @@ pub enum ViewAction {
         chord: Option<crate::keys::KeyChord>,
     },
     ResetKeys,
+    /// Paint a theme without saving; None restores the saved one.
+    PreviewTheme(Option<crate::ui::theme::ThemeChoice>),
     /// Run a parsed slash command through the normal command path.
     Command(SlashCommand),
     /// A raw effect (requests carry their own `Then`).

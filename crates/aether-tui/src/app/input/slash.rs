@@ -129,26 +129,17 @@ impl App {
     /// Paint with `choice` and remember it. A theme file is read now: a
     /// missing one changes nothing, a broken one paints its base, both said.
     fn set_theme(&mut self, choice: ThemeChoice) {
-        let (scheme, problem) =
-            match files::scheme(&choice, self.options.definitions_dir.as_deref()) {
-                Ok(scheme) => (scheme, None),
-                Err(ThemeError {
-                    message,
-                    fallback: Some(base),
-                }) => (base.scheme(), Some(message)),
-                Err(ThemeError {
-                    message,
-                    fallback: None,
-                }) => {
-                    self.flash_error(message);
-                    return;
-                }
-            };
-        self.refresh_ui_theme(ThemeSpec {
-            mode: choice.mode,
-            scheme,
-            ..self.theme.spec()
-        });
+        let (spec, problem) = self.resolve_theme_choice(&choice);
+        if let Some(error) = &problem
+            && error.fallback.is_none()
+        {
+            self.preview_theme(None);
+            self.flash_error(error.message.clone());
+            return;
+        }
+        self.committed_theme = None;
+        self.refresh_ui_theme(spec);
+        let problem = problem.map(|error| error.message);
         // Auto is "no saved theme": the next launch probes the terminal again.
         let stored = (choice != ThemeChoice::default()).then(|| choice.clone());
         let label = format!("theme {choice}");
@@ -163,6 +154,56 @@ impl App {
             (None, Ok(())) => self.flash(label),
             (None, Err(reason)) => self.flash_error(format!("{label} {dot} not saved: {reason}")),
         }
+    }
+
+    fn resolve_theme_choice(&self, choice: &ThemeChoice) -> (ThemeSpec, Option<ThemeError>) {
+        let (scheme, problem) = match files::scheme(choice, self.options.definitions_dir.as_deref())
+        {
+            Ok(scheme) => (scheme, None),
+            Err(error) => (
+                error.fallback.map(|base| base.scheme()).unwrap_or_default(),
+                Some(error),
+            ),
+        };
+        let base = self.committed_theme.unwrap_or_else(|| self.theme.spec());
+        let spec = ThemeSpec {
+            mode: choice.mode,
+            scheme,
+            ..base
+        };
+        debug_assert_eq!(spec.palette, base.palette);
+        debug_assert_eq!(spec.depth, base.depth);
+        (spec, problem)
+    }
+
+    pub(crate) fn preview_theme(&mut self, choice: Option<ThemeChoice>) {
+        let Some(choice) = choice else {
+            if let Some(spec) = self.committed_theme.take() {
+                self.refresh_ui_theme(spec);
+            }
+            return;
+        };
+        let (spec, _) = self.resolve_theme_choice(&choice);
+        let saved = *self.committed_theme.get_or_insert(self.theme.spec());
+        debug_assert_eq!(spec.ascii, saved.ascii);
+        debug_assert_eq!(spec.reduced_motion, saved.reduced_motion);
+        self.refresh_ui_theme(spec);
+    }
+
+    pub fn apply_terminal_probe(&mut self, probe: crate::ui::theme::probe::TerminalProbe) {
+        use crate::ui::theme::ColorDepth;
+        let before = self.theme.spec();
+        let depth = match (before.depth, probe.truecolor) {
+            (ColorDepth::Indexed256, true) => ColorDepth::Truecolor,
+            _ => before.depth,
+        };
+        self.refresh_ui_theme(ThemeSpec {
+            depth,
+            palette: probe.palette,
+            ..before
+        });
+        debug_assert_eq!(self.theme.spec().palette, probe.palette);
+        debug_assert!(before.depth != ColorDepth::Basic16 || depth == before.depth);
     }
 
     /// What the startup probe read from the terminal; `None` keeps the fallbacks.
