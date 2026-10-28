@@ -108,6 +108,8 @@ pub fn export_run(
         store_schema: aether_store::SCHEMA_VERSION,
         events: events_in_run,
     };
+    let header = serde_json::to_value(&manifest).map_err(StoreError::Serde)?;
+    refuse_if_masked(redactor, header)?;
     written += write_line(&mut out, &manifest)?;
     for agent in &agents {
         let mut agent = agent.clone();
@@ -321,7 +323,16 @@ fn write_record(
     redactor: &aether_tools::Redactor,
     record: &Record,
 ) -> Result<u64> {
-    if matches!(record, Record::ArtifactBytes { .. }) {
+    if let Record::ArtifactBytes { id, .. } = record {
+        // The payload was masked as bytes; only its framing is checked here.
+        let framing = Record::ArtifactBytes {
+            id: *id,
+            base64: String::new(),
+        };
+        refuse_if_masked(
+            redactor,
+            serde_json::to_value(&framing).map_err(StoreError::Serde)?,
+        )?;
         return write_line(out, record);
     }
     let mut value = serde_json::to_value(record).map_err(StoreError::Serde)?;
@@ -335,19 +346,34 @@ fn write_record(
         value["digest"] = serde_json::Value::String(digest.clone());
     }
     // A known secret that matches a field name, tag or id would leave a record
-    // the import cannot read, or one it reads without an optional field;
-    // refusing beats writing one, or the secret.
-    let refused = || {
-        invalid(
-            "a known secret value matches part of the export format (a field name, tag or id), \
-             so a masked record would not import as it was; export refused",
-        )
-    };
-    let parsed = <Record as serde::Deserialize>::deserialize(&value).map_err(|_| refused())?;
+    // the import cannot read, or one it reads without an optional field.
+    let parsed =
+        <Record as serde::Deserialize>::deserialize(&value).map_err(|_| format_collision())?;
     if serde_json::to_value(&parsed).map_err(StoreError::Serde)? != value {
-        return Err(refused());
+        return Err(format_collision());
     }
     write_line(out, &value)
+}
+
+/// Refuse a line written as it is (the manifest, a payload's framing) if
+/// masking would change it: a known secret there names part of the format.
+fn refuse_if_masked(redactor: &aether_tools::Redactor, line: serde_json::Value) -> Result<()> {
+    debug_assert!(line.is_object(), "every export line is a JSON object");
+    let mut masked = line.clone();
+    aether_tools::redact_json(redactor, &mut masked);
+    if masked != line {
+        return Err(format_collision());
+    }
+    Ok(())
+}
+
+/// Writing the masked line would break the import; writing it raw would carry
+/// the secret. Refusing is the only safe answer.
+fn format_collision() -> RuntimeError {
+    invalid(
+        "a known secret value matches part of the export format (a field name, tag or id), \
+         so a masked record would not import as it was; export refused",
+    )
 }
 
 /// An artifact's bytes as they leave the machine. A tool's artifact was

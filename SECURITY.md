@@ -71,7 +71,7 @@ The boundaries Aether does maintain, where a bypass is a security bug:
 - **Redaction of tool output.** Secret shapes and the secret values the
   daemon knows are masked in tool outcomes and errors, harness outcomes,
   native-engine bridge tool replies, refusals and denial notes, approval and
-  rule notes as they are recorded, the full-output
+  rule notes and revocation reasons as they are recorded, the full-output
   artifacts tools store, `read_artifact` replies to any
   connection, and run exports. What the masking cannot see is listed in
   [known limitations](docs/known-limitations.md#security-boundaries).

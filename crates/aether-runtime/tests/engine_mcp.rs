@@ -646,6 +646,12 @@ async fn a_permission_answer_keeps_its_input_and_masks_denial_notes() {
         )
         .expect("rule");
     assert_eq!(rule.note.as_deref(), Some("never [REDACTED:known_secret]"));
+    let revoked = h
+        .runtime
+        .revoke_approval_rule(rule.id, Actor::user(), Some(format!("leaked {NOTED}")))
+        .expect("revoke");
+    let reason = revoked.revoked.and_then(|revocation| revocation.reason);
+    assert_eq!(reason.as_deref(), Some("leaked [REDACTED:known_secret]"));
     let events = h
         .store
         .events(0, 10_000, &EventFilter::all())

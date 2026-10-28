@@ -142,6 +142,7 @@ impl Runtime {
         if rule.revoked.is_some() {
             return Err(RuntimeError::Invalid(format!("rule {id} already revoked")));
         }
+        let reason = reason.map(|reason| self.tool_runtime.redactor().redact(&reason).into_owned());
         let revocation = Revocation {
             at: now(),
             by: by.clone(),

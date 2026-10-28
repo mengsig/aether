@@ -79,9 +79,9 @@ looks like a boundary and is not one.
   approved permission prompt gets its tool input back unmasked. A known secret
   that matches part of the export format (a field name, tag or id) makes
   `aether runs export` refuse rather than write a file that would not import
-  as it was. Approval and rule notes are masked when recorded; notes recorded
-  before 1.2.7 are not. Messages, questions and answers that people and agents
-  send are delivered as written. A secret encoded more than once (base64, or
+  as it was. Approval and rule notes and rule revocation reasons are masked
+  when recorded; ones recorded before 1.2.7 are not. Messages, questions,
+  answers and cancel reasons that people and agents send are kept as written. A secret encoded more than once (base64, or
   JSON nested inside JSON beyond what a tool's own rendering adds) is not
   recognized. Native engine transcripts and model replies that repeat a secret
   are outside this masking.

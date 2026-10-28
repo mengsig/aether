@@ -151,11 +151,7 @@ impl Redactor {
         }
         // A tool that prints JSON shows a value with a newline, quote or
         // backslash escaped, so that spelling is masked as well.
-        let escaped: Vec<String> = known
-            .iter()
-            .map(|value| json_escaped(value))
-            .filter(|escaped| !known.contains(&escaped.as_str()))
-            .collect();
+        let escaped: Vec<String> = known.iter().map(|value| json_escaped(value)).collect();
         let mut spellings: Vec<&str> = known
             .iter()
             .copied()
