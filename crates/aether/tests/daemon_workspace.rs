@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 /// Longest any one CLI call may take before the test kills it and fails.
 const CALL_LIMIT: Duration = Duration::from_secs(30);
-/// How long a stopped daemon gets to exit before it is killed.
+/// How long `aether stop`, and then a stopped daemon, get before a kill.
 const EXIT_LIMIT: Duration = Duration::from_secs(10);
 
 fn isolated_command(root: &Path, cwd: &Path, args: &[&str]) -> Command {
@@ -33,15 +33,19 @@ fn isolated_command(root: &Path, cwd: &Path, args: &[&str]) -> Command {
 /// Wait for `child` until `limit`, then kill it; `None` when it had to be.
 fn finish_within(mut child: Child, limit: Duration) -> Option<Output> {
     let deadline = Instant::now() + limit;
-    while child.try_wait().ok()?.is_none() {
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
         }
-        std::thread::sleep(Duration::from_millis(20));
     }
-    child.wait_with_output().ok()
 }
 
 /// One CLI call, killed after `limit`. Never panics, so cleanup can use it.
@@ -63,22 +67,67 @@ fn output(root: &Path, cwd: &Path, args: &[&str]) -> Output {
     })
 }
 
-/// The pid of the daemon answering on `root`'s socket, if one answers.
-fn daemon_pid(root: &Path) -> Option<u32> {
-    let status = bounded(root, root, &["status", "--json"], CALL_LIMIT)?;
-    if !status.status.success() {
-        return None;
-    }
-    let status: serde_json::Value = serde_json::from_slice(&status.stdout).ok()?;
-    u32::try_from(status["pid"].as_u64()?).ok()
+/// Whether a daemon answers on `root`'s socket.
+fn answers(root: &Path) -> bool {
+    bounded(root, root, &["status", "--json"], CALL_LIMIT)
+        .is_some_and(|status| status.status.success())
 }
 
-fn alive(pid: u32) -> bool {
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+/// Every process whose argv names `root`'s socket. A detached daemon is
+/// started with `--socket`, so this finds one even when it no longer answers.
+fn daemons_on(root: &Path) -> Result<Vec<u32>, String> {
+    let found = Command::new("pgrep")
+        .arg("-f")
+        .arg(root.join("daemon.sock"))
+        .output()
+        .map_err(|error| format!("cannot run pgrep: {error}"))?;
+    match found.status.code() {
+        Some(0) => String::from_utf8_lossy(&found.stdout)
+            .split_whitespace()
+            .map(|pid| {
+                pid.parse()
+                    .map_err(|e| format!("pgrep printed {pid:?}: {e}"))
+            })
+            .collect(),
+        Some(1) => Ok(Vec::new()),
+        _ => Err(format!(
+            "pgrep failed: {}",
+            String::from_utf8_lossy(&found.stderr)
+        )),
+    }
+}
+
+/// Whether every daemon on `root` exited within `limit`.
+fn gone_within(root: &Path, limit: Duration) -> Result<bool, String> {
+    let deadline = Instant::now() + limit;
+    while !daemons_on(root)?.is_empty() {
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok(true)
+}
+
+/// Stop every detached daemon on `root`: ask it, then kill it, then check.
+fn stop_detached(root: &Path) -> Result<(), String> {
+    if daemons_on(root)?.is_empty() {
+        return Ok(());
+    }
+    let _ = bounded(root, root, &["stop"], EXIT_LIMIT);
+    if gone_within(root, EXIT_LIMIT)? {
+        return Ok(());
+    }
+    let stuck = daemons_on(root)?;
+    for pid in &stuck {
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+    }
+    if gone_within(root, EXIT_LIMIT)? {
+        return Err(format!(
+            "daemons {stuck:?} ignored `aether stop` and were killed"
+        ));
+    }
+    Err(format!("daemons {stuck:?} survived kill -9"))
 }
 
 /// Stops whatever daemon a case started, even when an assertion failed first,
@@ -88,37 +137,28 @@ struct Daemon<'a> {
     foreground: Option<Child>,
 }
 
-impl Daemon<'_> {
-    /// Whether a detached daemon on this root is gone, killing it if need be.
-    fn stop_detached(&self) -> bool {
-        let Some(pid) = daemon_pid(self.root) else {
-            return true;
-        };
-        let _ = bounded(self.root, self.root, &["stop"], CALL_LIMIT);
-        let deadline = Instant::now() + EXIT_LIMIT;
-        while alive(pid) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        if !alive(pid) {
-            return true;
-        }
-        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
-        eprintln!("daemon {pid} ignored `aether stop` and was killed");
-        false
-    }
-}
-
 impl Drop for Daemon<'_> {
     fn drop(&mut self) {
-        let clean = match self.foreground.take() {
-            Some(child) => {
-                let _ = bounded(self.root, self.root, &["stop"], CALL_LIMIT);
-                finish_within(child, EXIT_LIMIT).is_some()
+        let mut problems = Vec::new();
+        if let Some(child) = self.foreground.take() {
+            let _ = bounded(self.root, self.root, &["stop"], EXIT_LIMIT);
+            if finish_within(child, EXIT_LIMIT).is_none() {
+                problems.push("the foreground daemon ignored `aether stop` and was killed".into());
             }
-            None => self.stop_detached(),
-        };
-        if !clean && !std::thread::panicking() {
-            panic!("the daemon under {} did not stop", self.root.display());
+        }
+        // Also catches a daemon that a client call started on its own.
+        if let Err(problem) = stop_detached(self.root) {
+            problems.push(problem);
+        }
+        if problems.is_empty() {
+            return;
+        }
+        eprintln!("cleanup under {}: {problems:?}", self.root.display());
+        if !std::thread::panicking() {
+            panic!(
+                "the daemon under {} did not stop: {problems:?}",
+                self.root.display()
+            );
         }
     }
 }
@@ -126,7 +166,7 @@ impl Drop for Daemon<'_> {
 /// `status` never starts a daemon, so polling it cannot race one into being.
 fn wait_until_listening(root: &Path) {
     let deadline = Instant::now() + Duration::from_secs(20);
-    while daemon_pid(root).is_none() {
+    while !answers(root) {
         assert!(Instant::now() < deadline, "the daemon never listened");
         std::thread::sleep(Duration::from_millis(50));
     }
