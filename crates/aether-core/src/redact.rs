@@ -8,12 +8,14 @@ use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 
+mod boundary;
+
 /// Replaces recognizable secrets before output is persisted or shown.
 #[derive(Clone)]
 pub struct Redactor {
     patterns: Vec<(Regex, &'static str)>,
     /// Known secret values that span lines, which a stream must not split.
-    multiline_known: Arc<[Box<str>]>,
+    multiline_known: Arc<[boundary::MultilineSecret]>,
     /// Fewest bytes any rule matches; a shorter text run needs no masking.
     shortest_match: usize,
 }
@@ -174,7 +176,7 @@ impl Redactor {
         redactor.multiline_known = known
             .iter()
             .filter(|value| value.contains('\n'))
-            .map(|value| Box::from(*value))
+            .map(|value| boundary::MultilineSecret::new(value))
             .collect();
         debug_assert_eq!(redactor.patterns.len(), RULE_COUNT + 1);
         Ok(redactor)
@@ -296,6 +298,7 @@ impl Redactor {
         const MAX: usize = STREAM_CHUNK_BYTES + STREAM_LINE_LIMIT_BYTES;
         debug_assert!(chunk.is_empty(), "a chunk starts empty");
         let mut want = STREAM_CHUNK_BYTES;
+        let mut scan = boundary::BoundaryScan::new(&self.multiline_known);
         while want > 0 && chunk.len() < MAX {
             let before = chunk.len();
             let room = |chunk: &Vec<u8>| (MAX - chunk.len()) as u64;
@@ -309,25 +312,10 @@ impl Redactor {
             if chunk.len() == before {
                 break;
             }
-            want = self.unfinished_known_secret(chunk);
+            want = scan.unfinished(&self.multiline_known, chunk);
         }
         debug_assert!(chunk.len() <= MAX);
         Ok(())
-    }
-
-    /// How many more bytes a known secret needs when `chunk` ends with the
-    /// first lines of one, else 0.
-    fn unfinished_known_secret(&self, chunk: &[u8]) -> usize {
-        let mut need = 0;
-        for secret in self.multiline_known.iter() {
-            for (at, _) in secret.match_indices('\n') {
-                let head = &secret.as_bytes()[..=at];
-                if head.len() < secret.len() && chunk.ends_with(head) {
-                    need = need.max(secret.len() - head.len());
-                }
-            }
-        }
-        need
     }
 }
 
