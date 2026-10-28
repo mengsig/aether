@@ -15,12 +15,15 @@ use std::io;
 
 use tokio::process::{Child, Command};
 
-/// Spawn `command`, which must lead a process group of its own, so neither it
-/// nor its group can outlive this process. Keep the [`GroupWatch`] for as long
-/// as the engine runs. Must be called inside a tokio runtime.
+/// Spawn `command` leading a process group of its own, so neither it nor its
+/// group can outlive this process. Keep the [`GroupWatch`] for as long as the
+/// engine runs. Must be called inside a tokio runtime.
 #[cfg(target_os = "linux")]
 pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
+    use std::os::unix::process::CommandExt as _;
+
     let runtime = tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
+    command.as_std_mut().process_group(0);
     aether_spawn::die_with_parent(command.as_std_mut());
     let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
     let job: Job = Box::new(move || {
@@ -38,7 +41,15 @@ pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
 
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
+    use std::os::unix::process::CommandExt as _;
+
+    command.as_std_mut().process_group(0);
     Ok((command.spawn()?, GroupWatch))
+}
+
+#[cfg(not(target_os = "linux"))]
+impl GroupWatch {
+    pub(crate) fn end_group(self) {}
 }
 
 /// Kills its engine's process group if this process dies first. Dropping it
@@ -93,6 +104,19 @@ impl GroupWatch {
             }
         }
     }
+
+    /// Kill what is left of the group now, as this process's death would:
+    /// closing the pipe without stopping the watchdog lets it fire.
+    pub(crate) fn end_group(mut self) {
+        let Some(mut watchdog) = self.0.take() else {
+            return;
+        };
+        assert!(
+            watchdog.stdin.is_some(),
+            "the pipe is closed only here or in drop"
+        );
+        drop(watchdog.stdin.take());
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -137,13 +161,14 @@ fn spawner() -> io::Result<&'static std::sync::mpsc::Sender<Job>> {
 }
 
 #[cfg(all(test, target_os = "linux"))]
-mod tests {
+pub(crate) mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use std::time::Duration;
 
     /// Re-run as the "daemon" of `a_killed_parent_takes_its_engine_with_it`.
     const HELPER_ENV: &str = "AETHER_TEST_LIFELINE_PARENT";
+    const HELPER: &str = "lifeline::tests::lifeline_helper_parent";
 
     /// An engine stand-in leading its own group, as every engine does.
     fn engine(program: &str, args: &[&str]) -> tokio::process::Command {
@@ -169,7 +194,7 @@ mod tests {
         )
     }
 
-    fn alive(pid: u32) -> bool {
+    pub(crate) fn alive(pid: u32) -> bool {
         // A zombie still has a /proc entry; only a live process is running.
         std::fs::read_to_string(format!("/proc/{pid}/stat"))
             .ok()
@@ -181,7 +206,7 @@ mod tests {
     }
 
     /// Kills `pid` on drop unless it is gone, so a failed test leaves nothing.
-    struct KillOnDrop(u32);
+    pub(crate) struct KillOnDrop(pub(crate) u32);
 
     impl Drop for KillOnDrop {
         fn drop(&mut self) {
@@ -192,7 +217,7 @@ mod tests {
         }
     }
 
-    fn wait_until_gone(pid: u32, limit: Duration) -> bool {
+    pub(crate) fn wait_until_gone(pid: u32, limit: Duration) -> bool {
         let deadline = std::time::Instant::now() + limit;
         while std::time::Instant::now() < deadline {
             if !alive(pid) {
@@ -236,18 +261,15 @@ mod tests {
         drop(child);
     }
 
-    /// Run the helper parent in `mode`, SIGKILL it once its engine runs, and
+    /// Run test `helper` as a parent with `env` set to `mode`; it prints
+    /// `pid=<pid>` per process to watch, then `ready`. SIGKILL it then, and
     /// assert every process it reported dies within seconds.
-    fn kill_parent_and_expect_gone(mode: &std::ffi::OsStr) {
+    pub(crate) fn kill_parent_and_expect_gone(helper: &str, env: &str, mode: &std::ffi::OsStr) {
         use std::io::BufRead as _;
 
         let mut parent = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "lifeline::tests::lifeline_helper_parent",
-                "--nocapture",
-            ])
-            .env(HELPER_ENV, mode)
+            .args(["--exact", helper, "--nocapture"])
+            .env(env, mode)
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
@@ -290,7 +312,7 @@ mod tests {
 
     #[test]
     fn a_killed_parent_takes_its_engine_with_it() {
-        kill_parent_and_expect_gone("direct".as_ref());
+        kill_parent_and_expect_gone(HELPER, HELPER_ENV, "direct".as_ref());
     }
 
     /// The parent-death signal reaches only the wrapper; the watchdog takes
@@ -298,7 +320,7 @@ mod tests {
     #[test]
     fn a_killed_parent_takes_a_wrapped_engine_with_it() {
         let dir = tempfile::tempdir().unwrap();
-        kill_parent_and_expect_gone(dir.path().join("child.pid").as_os_str());
+        kill_parent_and_expect_gone(HELPER, HELPER_ENV, dir.path().join("child.pid").as_os_str());
     }
 
     /// A clean end drops the watch: that stops the watchdog, not the group.
@@ -336,9 +358,11 @@ mod tests {
                 .enable_all()
                 .build()
                 .unwrap();
-            let (child, watch) = runtime.block_on(async { super::spawn(sleeper()).unwrap() });
-            // Its watchdog would see this thread's runtime and pipe go; keep both.
-            std::mem::forget(watch);
+            let child = runtime.block_on(async {
+                let (child, watch) = super::spawn(sleeper()).unwrap();
+                drop(watch);
+                child
+            });
             child_tx.send(child.id().unwrap()).unwrap();
             // Keep the child unreaped by tokio: forget it, the guard kills it.
             std::mem::forget(child);

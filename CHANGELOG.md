@@ -54,8 +54,8 @@ release is also the text of its GitHub release.
   so that tokio retiring a worker thread cannot fire it early, and its
   process group holds a watchdog that kills the group once the daemon's pipe
   to it closes. A wrapper's own engine process, such as the native CLI the npm
-  `codex` launcher starts, dies too. The next start still reaps what left the
-  group.
+  `codex` launcher starts, dies too, and a version probe's group ends with
+  the probe. The next start still reaps what left the group.
   macOS has no such signal; [agent processes](docs/configuration.md#agent-processes)
   says what applies there. An engine that failed preflight at startup is no
   longer unusable until a restart: a turn, a compaction, a delegation or a

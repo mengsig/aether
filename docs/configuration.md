@@ -515,8 +515,8 @@ sends it `SIGKILL` when the daemon dies. Its process group also holds a small
 `/bin/sh` watchdog reading a pipe that only the daemon holds open; when the
 daemon dies the pipe closes and the watchdog kills the whole group. That
 takes the processes the engine started in its group, such as the native CLI
-a wrapper like the npm `codex` launcher starts, and its shell commands. The
-MCP bridge exits when its engine's pipe closes. The next daemon start kills
+a wrapper like the npm `codex` launcher starts, and its shell commands. A
+version probe's group is killed as soon as the probe ends. The MCP bridge exits when its engine's pipe closes. The next daemon start kills
 what left the group: every recorded engine process group whose
 leader still has the recorded pid and kernel start time, and every process of
 the daemon's user carrying a recorded engine's random token. It never

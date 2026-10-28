@@ -267,7 +267,7 @@ pub(crate) async fn probe_capability(
 
 /// Run one probe with no stdin, its output captured; `None` once it outlives
 /// [`PROBE_TIMEOUT`], when it is killed. Spawned like an engine, so a daemon
-/// killed mid-probe does not leave it behind.
+/// killed mid-probe does not leave it behind, and its group ends with it.
 async fn run_probe(
     program: &str,
     args: &[&str],
@@ -296,11 +296,16 @@ async fn run_probe(
         })?),
         None => None,
     };
-    let run = async {
-        let (child, _watch) = crate::lifeline::spawn(command)?;
-        child.wait_with_output().await
+    let (child, watch) = match crate::lifeline::spawn(command) {
+        Ok(spawned) => spawned,
+        Err(error) => return Ok(Some(Err(error))),
     };
-    Ok(tokio::time::timeout(PROBE_TIMEOUT, run).await.ok())
+    let output = tokio::time::timeout(PROBE_TIMEOUT, child.wait_with_output())
+        .await
+        .ok();
+    // Whatever the probe started, a wrapper's own CLI included, goes with it.
+    watch.end_group();
+    Ok(output)
 }
 
 /// Point `name` at a fresh private directory for `command`'s run.

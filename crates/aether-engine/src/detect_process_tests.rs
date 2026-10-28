@@ -88,3 +88,79 @@ async fn a_state_writing_cli_is_probed_in_a_scratch_directory_it_removes() {
         "the scratch state directory is removed: {used}"
     );
 }
+
+/// A probe leaves nothing running: what it started goes with its group.
+#[tokio::test]
+async fn a_probe_takes_what_it_started_with_it() {
+    use crate::lifeline::tests::{KillOnDrop, wait_until_gone};
+
+    let dir = tempfile::tempdir().unwrap();
+    let child_file = dir.path().join("child.pid");
+    let script = r#"sleep 30 >/dev/null 2>&1 & echo $! > "$1"; echo codex-cli 0.200.0"#;
+    let version = probe_version_with_args(
+        "/bin/sh",
+        &["-c", script, "sh", child_file.to_str().unwrap()],
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(version, EngineVersion::new(0, 200, 0));
+    let child: u32 = std::fs::read_to_string(&child_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let _guard = KillOnDrop(child);
+    assert!(
+        tokio::task::spawn_blocking(move || wait_until_gone(child, Duration::from_secs(5)))
+            .await
+            .unwrap(),
+        "the probe's background child {child} outlived it"
+    );
+}
+
+/// Re-run as the "daemon" of `a_killed_parent_takes_a_wrapped_probe_with_it`.
+const PROBE_HELPER_ENV: &str = "AETHER_TEST_PROBE_PARENT";
+
+/// The helper side: probe a wrapper that starts its CLI and waits on it,
+/// print both pids, wait to be killed.
+#[tokio::test]
+async fn probe_helper_parent() {
+    let Some(pids_file) = std::env::var_os(PROBE_HELPER_ENV) else {
+        return;
+    };
+    let pids_file = std::path::PathBuf::from(pids_file);
+    let target = pids_file.to_str().unwrap().to_owned();
+    let probe = tokio::spawn(async move {
+        let script = r#"sleep 30 & echo "$$ $!" > "$1.tmp" && mv "$1.tmp" "$1"; wait"#;
+        probe_version_with_args("/bin/sh", &["-c", script, "sh", &target], None, None).await
+    });
+    let pids = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(pids) = std::fs::read_to_string(&pids_file) {
+                return pids;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the probed wrapper reports itself and its child");
+    for pid in pids.split_whitespace() {
+        println!("pid={pid}");
+    }
+    println!("ready");
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    probe.abort();
+}
+
+/// A daemon killed mid-probe takes the probed wrapper and the CLI it started.
+#[test]
+fn a_killed_parent_takes_a_wrapped_probe_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::lifeline::tests::kill_parent_and_expect_gone(
+        "detect::process_tests::probe_helper_parent",
+        PROBE_HELPER_ENV,
+        dir.path().join("pids").as_os_str(),
+    );
+}
