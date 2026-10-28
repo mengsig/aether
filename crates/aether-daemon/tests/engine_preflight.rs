@@ -272,3 +272,33 @@ async fn a_retried_creation_is_answered_after_its_engine_breaks() {
     assert_eq!(agents.len(), 1, "no second agent: {agents:?}");
     daemon.stop().await;
 }
+
+/// A CLI usable at startup and removed since is probed again, so a started
+/// agent is refused before it exists rather than failing its first turn.
+#[tokio::test]
+async fn an_engine_removed_after_startup_refuses_a_started_agent() {
+    if run_isolated(
+        "an_engine_removed_after_startup_refuses_a_started_agent",
+        &[("claude", "printf '%s\\n' '2.1.269'\n")],
+    )
+    .await
+    {
+        return;
+    }
+    let root = std::env::var_os(ROOT_ENV).unwrap();
+    let daemon = support::TestDaemon::start().await;
+    let client = aether_client::Client::connect(&daemon.socket)
+        .await
+        .unwrap();
+    detected(&client).await;
+    std::fs::remove_file(Path::new(&root).join("claude")).unwrap();
+    let refused = client
+        .create_agent(started_claude_agent())
+        .await
+        .expect_err("a removed CLI cannot run a started agent")
+        .to_string();
+    assert!(refused.contains("install claude"), "{refused}");
+    let agents = client.list_agents(AgentQuery::default()).await.unwrap();
+    assert!(agents.is_empty(), "no agent is left behind: {agents:?}");
+    daemon.stop().await;
+}

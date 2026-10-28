@@ -723,9 +723,10 @@ directories.
 
 An engine that fails preflight is not ruled out for the daemon's life. When
 a turn, a compaction, a delegation or the creation of a started agent needs an engine that
-detection found unusable, the daemon probes that CLI again first. A
-CLI installed, upgraded or fixed since startup is then used without a
-restart. Probes of one engine run at most once every two seconds, and
+detection found unusable, or one whose CLI has since left `PATH`, the
+daemon probes that CLI again first. A CLI installed, upgraded or fixed
+since startup is then used without a restart, and one removed since is
+refused with an install hint. Probes of one engine run at most once every two seconds, and
 callers arriving meanwhile share the latest outcome. A started agent
 (`aether run`) whose engine is still unusable is refused before it exists,
 with the probe's reason. A parked agent (`aether new`) is still created: its

@@ -237,3 +237,48 @@ async fn an_unusable_engine_compactor_is_refused_with_its_probe_reason() {
     assert!(!refused.contains("not installed"), "{refused}");
     h.runtime.shutdown().await;
 }
+
+/// Delegating onto an engine that failed preflight is refused with that
+/// failure's reason and the retry advice, not a generic "not available".
+#[tokio::test]
+async fn delegating_onto_an_unusable_engine_names_its_probe_reason() {
+    let (mut h, _dir) = ComposeHarness::new().await;
+    h.runtime.engines.mark_unavailable(
+        aether_engine::EngineKind::CLAUDE_CODE,
+        "claude --version exited 1: claude is broken",
+    );
+    let delegate = HarnessAction::Delegate {
+        role: "worker".into(),
+        name: None,
+        objective: "do it".into(),
+        instructions: None,
+        model: ModelRef::new("claude-code", "haiku"),
+        effort: aether_core::model::Effort::Low,
+        scope: None,
+        workspace_mode: aether_tools::WorkspaceMode::Shared,
+        wait: false,
+        leaf: true,
+        host_context: None,
+        idempotency: None,
+    };
+    let refused = apply_action(
+        &h.runtime,
+        &mut h.ctx,
+        delegate,
+        &mut ToolEffects::default(),
+    )
+    .await
+    .expect("a refusal is a tool outcome");
+    assert!(refused.is_error, "{}", refused.content);
+    assert!(
+        refused.content.contains("claude is broken"),
+        "{}",
+        refused.content
+    );
+    assert!(
+        refused.content.contains("no daemon restart is needed"),
+        "{}",
+        refused.content
+    );
+    h.runtime.shutdown().await;
+}

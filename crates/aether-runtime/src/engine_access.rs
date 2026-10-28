@@ -53,6 +53,11 @@ impl DetectedEngines {
     }
 }
 
+/// Whether `detected` holds `kind` usable and its CLI is still installed.
+fn still_usable(detected: &DetectedEngines, kind: EngineKind) -> bool {
+    detected.usable.contains_key(&kind) && aether_engine::detect::cli_on_path(kind)
+}
+
 /// The engines. Detection runs after the socket can answer, so a reader
 /// that can wait awaits [`EngineCatalog::ready`]; one that cannot gets a
 /// retryable [`RuntimeError::Starting`] from [`EngineCatalog::now`]. An
@@ -107,14 +112,15 @@ impl EngineCatalog {
     }
 
     /// [`EngineCatalog::ready`], after probing `kind` again when it was
-    /// unusable. Probes of one engine are at least [`RECHECK_INTERVAL`]
-    /// apart; a caller arriving meanwhile gets the latest outcome.
+    /// unusable or its CLI has left `PATH` since. Probes of one engine are at
+    /// least [`RECHECK_INTERVAL`] apart; a caller arriving meanwhile gets the
+    /// latest outcome.
     pub(crate) async fn recheck(&self, kind: EngineKind) -> DetectedEngines {
         let detected = self.ready().await;
         let Some(probing) = self.probing else {
             return detected;
         };
-        if detected.usable.contains_key(&kind) {
+        if still_usable(&detected, kind) {
             return detected;
         }
         let mut rechecked = self.rechecked.lock().await;
@@ -122,7 +128,7 @@ impl EngineCatalog {
             .get(&kind)
             .is_some_and(|at| at.elapsed() < RECHECK_INTERVAL);
         // Another caller may have found it while this one waited for the lock.
-        if recent || self.detected.read().usable.contains_key(&kind) {
+        if recent || still_usable(&self.detected.read(), kind) {
             return self.detected.read().clone();
         }
         let found = detect_engine(kind, probing.prompt_cache_ttl).await;

@@ -168,6 +168,20 @@ impl std::fmt::Display for DetectError {
 
 impl std::error::Error for DetectError {}
 
+/// Whether `kind`'s CLI is still an executable on this process's `PATH`: a
+/// cheap check that a CLI probed usable earlier has not been removed since.
+/// An engine with no CLI of its own has nothing to lose, so it is present.
+pub fn cli_on_path(kind: crate::EngineKind) -> bool {
+    let program = if kind == crate::EngineKind::CLAUDE_CODE {
+        "claude"
+    } else if kind == crate::EngineKind::CODEX {
+        "codex"
+    } else {
+        return true;
+    };
+    crate::offline::executable_on_path(program, std::env::var_os("PATH").as_deref())
+}
+
 /// The variable naming the directory Codex keeps its state in. Codex
 /// creates files there on any start, `--version` included.
 pub(crate) const CODEX_STATE_ENV: &str = "CODEX_HOME";

@@ -276,16 +276,16 @@ async fn check_delegation_target(
     };
     let engine_kind = crate::turn_engine::engine_kind(resolved.provider.protocol);
     if let Some(kind) = engine_kind {
-        let Some(engine) = runtime.engines.recheck(kind).await.get(&kind) else {
-            return delegation_refusal(
-                runtime,
-                requested,
-                network,
-                &parent.model,
-                "its engine is not available in this daemon",
-            )
-            .await
-            .map(Err);
+        let detected = runtime.engines.recheck(kind).await;
+        let Some(engine) = detected.get(&kind) else {
+            let reason = crate::engine_access::unavailable_text(
+                kind,
+                &resolved.provider.id,
+                detected.unavailable.get(&kind).map(String::as_str),
+            );
+            return delegation_refusal(runtime, requested, network, &parent.model, reason)
+                .await
+                .map(Err);
         };
         if let Err(error) = engine.validate_network_policy(network == NetworkPolicy::Allowed) {
             return delegation_refusal(runtime, requested, network, &parent.model, error)
