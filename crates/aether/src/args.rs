@@ -8,28 +8,35 @@ pub(crate) use subcommands::*;
 
 /// The display flags only the terminal UI reads.
 const TUI_ONLY_FLAGS: [&str; 5] = ["theme", "reduced_motion", "plain", "ascii", "view_mode"];
-/// Commands that never draw the UI, so their help leaves those flags out.
-const HEADLESS_COMMANDS: [&str; 2] = ["daemon", "serve"];
-
-/// The command line with the UI-only flags hidden from the help of the
-/// daemon commands. They stay accepted, since the flags are global.
+/// Keep global display flags accepted, but show them only where the UI runs.
 pub(crate) fn command() -> clap::Command {
     let mut command = Args::command();
     command.build();
-    for name in HEADLESS_COMMANDS {
-        // `mut_args` keeps each argument in place; removing and re-adding one
-        // with `mut_arg` made the last flag lose its value.
-        command = command.mut_subcommand(name, |headless| {
-            headless.mut_args(|arg| {
-                if TUI_ONLY_FLAGS.contains(&arg.get_id().as_str()) {
-                    arg.hide(true)
-                } else {
-                    arg
-                }
-            })
-        });
-    }
+    debug_assert!(command.find_subcommand("tui").is_some());
+    debug_assert!(TUI_ONLY_FLAGS.iter().all(|id| {
+        command
+            .get_arguments()
+            .any(|arg| arg.get_id().as_str() == *id)
+    }));
+    command.mut_subcommands(|subcommand| {
+        if subcommand.get_name() == "tui" {
+            subcommand
+        } else {
+            hide_tui_flags(subcommand)
+        }
+    })
+}
+
+fn hide_tui_flags(command: clap::Command) -> clap::Command {
     command
+        .mut_args(|arg| {
+            if TUI_ONLY_FLAGS.contains(&arg.get_id().as_str()) {
+                arg.hide(true)
+            } else {
+                arg
+            }
+        })
+        .mut_subcommands(hide_tui_flags)
 }
 
 #[derive(Debug, Parser)]
@@ -105,6 +112,8 @@ pub(crate) enum Cmd {
     },
     /// Run the daemon.
     Daemon {
+        #[arg(hide = true, value_name = "ACTION")]
+        action: Option<String>,
         /// Stay attached to the terminal and log to stderr.
         #[arg(long)]
         foreground: bool,
@@ -249,7 +258,7 @@ pub(crate) enum Cmd {
     },
     /// Log in to a provider (API key, or OAuth where supported).
     Login {
-        provider: String,
+        provider: Option<String>,
         /// Use an API key even if OAuth is available.
         #[arg(long)]
         api_key: bool,
@@ -282,7 +291,7 @@ pub(crate) enum Cmd {
     /// offered by the check `aether` makes on launch (`[update] check`).
     #[command(
         override_usage = "aether update [OPTIONS]",
-        after_help = "Exit codes: 0 = updated, or nothing to do; 1 = error, or a migration not confirmed, with the installed binary left as it was; 2 = invalid command-line arguments. With --check: 0 = up to date, 10 = a newer release exists. A network failure exits 1 with the error code `network_error` under --json. --json prints the outcome as one object and no progress lines; the exit codes are the same.\n\nBefore an upgrade the release's summary is printed with the \"Before updating\" notes of every release it crosses. When one of them migrates the store one way, the update asks before anything is downloaded; --yes skips the question, and with --json the notes and the question go to stderr.\n\nOnly a binary that install.sh installed in a directory you can write is replaced; for any other, the command that updates it is printed. A running daemon keeps the old build until `aether stop` and the next `aether`. Where a daemon that refuses a newer build cannot be signalled (macOS, and Linux before 6.5), a running daemon is not left behind: nothing is installed until `aether stop` has been run. Assets come from GitHub releases, or from AETHER_INSTALL_BASE_URL, and their SHA-256 is checked before anything is replaced."
+        after_help = "Exit codes: 0 = updated, or nothing to do; 1 = error, or a migration not confirmed, with the installed binary left as it was; 2 = invalid command-line arguments. With --check: 0 = up to date, 10 = a newer release exists. A network failure exits 1 with the error code `network_error` under --json. --json prints the outcome as one object and no progress lines; the exit codes are the same.\n\nBefore an upgrade the release's summary is printed with the \"Before updating\" notes of every release it crosses. When one of them migrates the store one way, the update asks before anything is downloaded; --yes skips the question, and with --json the notes and the question go to stderr.\n\nOnly a binary that install.sh installed in a directory you can write is replaced; for any other, the command that updates it is printed. A running daemon keeps the old build until `aether stop` and the next `aether`; on a headless host (no TUI), use `aether stop && aether daemon`. Where a daemon that refuses a newer build cannot be signalled (macOS, and Linux before 6.5), a running daemon is not left behind: nothing is installed until `aether stop` has been run. Assets come from GitHub releases, or from AETHER_INSTALL_BASE_URL, and their SHA-256 is checked before anything is replaced."
     )]
     Update {
         /// Only report whether a newer release exists (see the exit codes).
@@ -386,9 +395,8 @@ pub(crate) enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Create a taskless agent eligible to own a task. Uses daemon defaults
-    /// for workspace, approval policy and model unless overridden here. Starts
-    /// the daemon if needed.
+    /// Create a taskless agent eligible to own a task, on the daemon's default workspace and approval policy,
+    /// and its default model unless --model names one. Starts the daemon if needed.
     New {
         /// Name to refer to the agent by, in place of its id.
         #[arg(long)]

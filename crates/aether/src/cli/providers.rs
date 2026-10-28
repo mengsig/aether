@@ -1,34 +1,26 @@
 use super::{CancellationToken, ProviderHealth, acted, connect_or_start, sane};
 
-pub async fn login(provider: String, api_key: bool, method: Option<String>) -> anyhow::Result<()> {
+pub async fn login(
+    provider: Option<String>,
+    api_key: bool,
+    method: Option<String>,
+) -> anyhow::Result<()> {
     use aether_model::LoginMethod;
     use aether_model::auth::interaction::TerminalInteraction;
-    use std::io::IsTerminal as _;
     let models = aether_model::Models::load(None)?;
-    let cli_handoff = models
-        .registry()
-        .provider(&provider)
-        .and_then(|p| p.auth.cli.clone());
-    let device_flow = !api_key && matches!(method.as_deref(), Some("device" | "device_code"));
-    if cli_handoff.is_none()
-        && !device_flow
-        && models.registry().provider(&provider).is_some()
-        && !std::io::stdin().is_terminal()
-    {
-        anyhow::bail!(
-            "`aether login {provider}` needs a terminal to read the credential; \
-             run it in a terminal (--api-key selects the API-key prompt)"
-        );
-    }
-    if let Some(cli) = cli_handoff {
-        eprintln!(
-            "{}: {} · handing off to `{} {}`",
-            sane(&provider),
-            sane(&cli.label),
-            sane(&cli.program),
-            sane(&cli.login.join(" "))
-        );
-    }
+    let provider = provider.ok_or_else(|| {
+        let known: Vec<&str> = models
+            .registry()
+            .providers()
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
+        anyhow::anyhow!(
+            "name a provider: aether login <provider>; providers: {}",
+            known.join(", ")
+        )
+    })?;
+    prepare_login(&models, &provider, api_key, method.as_deref())?;
     let has_oauth = models.oauth_label(&provider).is_some();
     let login_method = if api_key || !has_oauth {
         LoginMethod::ApiKey
@@ -48,6 +40,46 @@ pub async fn login(provider: String, api_key: bool, method: Option<String>) -> a
         info.kind,
         sane(&info.provider)
     );
+    Ok(())
+}
+
+fn prepare_login(
+    models: &aether_model::Models,
+    provider: &str,
+    api_key: bool,
+    method: Option<&str>,
+) -> anyhow::Result<()> {
+    use std::io::IsTerminal as _;
+    let cli_handoff = models
+        .registry()
+        .provider(provider)
+        .and_then(|p| p.auth.cli.as_ref());
+    let device_flow = !api_key && matches!(method, Some("device" | "device_code"));
+    if cli_handoff.is_none()
+        && !device_flow
+        && models.registry().provider(provider).is_some()
+        && !std::io::stdin().is_terminal()
+    {
+        anyhow::bail!(
+            "`aether login {provider}` needs a terminal to read the credential; \
+             run it in a terminal (--api-key selects the API-key prompt)"
+        );
+    }
+    if let Some(cli) = cli_handoff {
+        anyhow::ensure!(
+            std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+            "`aether login {provider}` hands off to `{} {}`, which needs a terminal; run it in a terminal",
+            sane(&cli.program),
+            sane(&cli.login.join(" "))
+        );
+        eprintln!(
+            "{}: {} · handing off to `{} {}`",
+            sane(provider),
+            sane(&cli.label),
+            sane(&cli.program),
+            sane(&cli.login.join(" "))
+        );
+    }
     Ok(())
 }
 
@@ -199,7 +231,7 @@ pub(super) fn health_segments(h: &ProviderHealth) -> Vec<String> {
         parts.push(format!(
             "backing off ({}) until {}",
             b.reason,
-            b.until.format("%H:%M:%S")
+            b.until.format("%H:%M:%S UTC")
         ));
     }
     if let Some(errors) = h.error_summary() {
@@ -276,6 +308,18 @@ fn probed_status_label(
 mod tests {
     use super::{auth_detail, model_cost_label, probed_status_label};
     use aether_core::model::{ModelCost, ModelCostTier};
+
+    #[test]
+    fn provider_backoff_times_name_the_utc_zone() {
+        let mut health = aether_core::provider::ProviderHealth::idle("openai");
+        health.backoff = Some(aether_core::provider::ProviderBackoff {
+            reason: "rate limited".into(),
+            until: "2026-01-01T12:34:56Z".parse().unwrap(),
+        });
+        let segments = super::health_segments(&health);
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[1], "backing off (rate limited) until 12:34:56 UTC");
+    }
 
     #[test]
     fn model_cost_labels_show_long_prompt_rates_and_exact_thresholds() {

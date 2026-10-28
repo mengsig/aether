@@ -314,7 +314,26 @@ pub async fn stop(socket: PathBuf, json: bool) -> anyhow::Result<()> {
         }
         .await
         .with_context(|| format!("could not stop the daemon that refused this build: {refused:#}")),
-        Err(e) if is_connection_failure(&e) && daemon_is_alive(&socket)? => already_stopping(json),
+        Err(e) if is_connection_failure(&e) => {
+            if daemon_is_alive(&socket)? {
+                return already_stopping(json);
+            }
+            let absent = matches!(
+                e.downcast_ref::<ClientError>(),
+                Some(ClientError::Io(error)) if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                )
+            );
+            if !absent {
+                return Err(e);
+            }
+            acted(
+                json,
+                "aetherd not running",
+                serde_json::json!({"stopping": false, "running": false}),
+            )
+        }
         Err(e) => Err(e),
     }
 }

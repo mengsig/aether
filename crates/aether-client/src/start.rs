@@ -28,6 +28,9 @@ use crate::{Client, ClientError, Result};
 /// How long a client waits for a daemon it started to answer.
 const START_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Exit status when another daemon holds the store or socket lock.
+pub const DAEMON_LOCK_BUSY_EXIT: u8 = 75;
+
 /// How much of a startup log this client will read to quote it.
 const STARTUP_LOG_TAIL: u64 = 8 * 1024;
 
@@ -38,11 +41,8 @@ const STARTUP_LOG_TAIL: u64 = 8 * 1024;
 /// socket file is left alone: a failed connect does not prove its daemon
 /// dead, and a starting daemon clears it only when nothing answers there.
 ///
-/// The daemon that is started exiting is not itself a failure: the usual
-/// reason is that another daemon is already coming up and holds the locks,
-/// and that one is what answers here. So its death is noted and the wait runs
-/// its course; only if nothing answers by then is it reported, in the
-/// daemon's own words rather than as a timeout with no cause.
+/// A successful exit or lock contention can mean another daemon is coming
+/// up. Other child failures are reported as soon as they are observed.
 pub async fn ensure_daemon(socket: impl AsRef<Path>, daemon_command: Command) -> Result<Client> {
     let socket = socket.as_ref();
     match Client::connect(socket).await {
@@ -57,8 +57,18 @@ pub async fn ensure_daemon(socket: impl AsRef<Path>, daemon_command: Command) ->
 /// Wait for `starting` to either answer on `socket` or prove it never will,
 /// within [`START_TIMEOUT`]. Shared by `ensure_daemon` and `aether daemon`'s
 /// manual, detached start, so both report a dead child the same way.
-pub async fn watch_startup(mut starting: StartingDaemon, socket: &Path) -> Result<Client> {
-    let deadline = tokio::time::Instant::now() + START_TIMEOUT;
+pub async fn watch_startup(starting: StartingDaemon, socket: &Path) -> Result<Client> {
+    watch_startup_with_timeout(starting, socket, START_TIMEOUT).await
+}
+
+async fn watch_startup_with_timeout(
+    mut starting: StartingDaemon,
+    socket: &Path,
+    timeout: Duration,
+) -> Result<Client> {
+    debug_assert!(!socket.as_os_str().is_empty());
+    debug_assert!(!timeout.is_zero());
+    let deadline = tokio::time::Instant::now() + timeout;
     let mut delay = Duration::from_millis(100);
     let mut exited: Option<ExitStatus> = None;
     loop {
@@ -73,9 +83,7 @@ pub async fn watch_startup(mut starting: StartingDaemon, socket: &Path) -> Resul
                 return Err(e);
             }
         }
-        // Read after the connect attempt, never before it: a daemon that
-        // listened and then stopped is still worth the connection it
-        // accepted. Kept, not returned, for the reason above.
+        // A successful connection takes precedence over the child exit status.
         if exited.is_none() {
             match starting.exited() {
                 Ok(status) => exited = status,
@@ -85,12 +93,15 @@ pub async fn watch_startup(mut starting: StartingDaemon, socket: &Path) -> Resul
                 }
             }
         }
-        if tokio::time::Instant::now() >= deadline {
+        let failed = exited.is_some_and(|status| {
+            !status.success() && status.code() != Some(i32::from(DAEMON_LOCK_BUSY_EXIT))
+        });
+        if failed || tokio::time::Instant::now() >= deadline {
             let failure = starting.never_answered(socket, exited);
             starting.detach();
             return Err(failure);
         }
-        tokio::time::sleep(delay).await;
+        tokio::time::sleep_until((tokio::time::Instant::now() + delay).min(deadline)).await;
         delay = (delay * 2).min(Duration::from_secs(1));
     }
 }
@@ -185,10 +196,7 @@ impl StartingDaemon {
             ));
         };
         ClientError::DaemonStartup(format!(
-            "aetherd exited ({status}) before it listened, and nothing else answered on {} \
-             within {}s: {}",
-            socket.display(),
-            START_TIMEOUT.as_secs(),
+            "aetherd exited ({status}) before it listened: {}",
             self.startup_output()
         ))
     }
@@ -268,6 +276,50 @@ fn tail(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_failed_child_returns_before_the_startup_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("absent.sock");
+        let mut command = Command::new("sh");
+        command.args(["-c", "exit 3"]);
+        let starting = StartingDaemon::spawn(command, &socket).unwrap();
+        std::fs::write(starting.startup_log(), "bad configuration").unwrap();
+        let began = std::time::Instant::now();
+        let error = watch_startup(starting, &socket).await.unwrap_err();
+        assert!(began.elapsed() < Duration::from_secs(2));
+        assert!(matches!(error, ClientError::DaemonStartup(_)));
+        let message = error.to_string();
+        assert!(message.contains("exit status: 3"), "{message}");
+        assert!(
+            message.contains("before it listened: bad configuration"),
+            "{message}"
+        );
+        assert!(!message.contains("10s"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn successful_and_lock_busy_children_keep_waiting_for_another_daemon() {
+        for status in [0, i32::from(DAEMON_LOCK_BUSY_EXIT)] {
+            let dir = tempfile::tempdir().unwrap();
+            let socket = dir.path().join("absent.sock");
+            let mut command = Command::new("sh");
+            command.args(["-c", &format!("exit {status}")]);
+            let starting = StartingDaemon::spawn(command, &socket).unwrap();
+            let timeout = Duration::from_millis(400);
+            let began = std::time::Instant::now();
+            let error = watch_startup_with_timeout(starting, &socket, timeout)
+                .await
+                .unwrap_err();
+            assert!(began.elapsed() >= timeout, "status {status} returned early");
+            assert!(matches!(error, ClientError::DaemonStartup(_)), "{error}");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("exit status: {status}"))
+            );
+        }
+    }
 
     #[test]
     fn a_tail_keeps_the_last_lines_and_drops_the_blank_ones() {
