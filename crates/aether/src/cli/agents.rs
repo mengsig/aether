@@ -75,6 +75,13 @@ pub async fn agents(
         println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
+    // An engine waits on approval mid-turn, so its status alone says running.
+    let asking: std::collections::HashSet<_> = client
+        .list_approvals()
+        .await?
+        .into_iter()
+        .map(|approval| approval.agent_id)
+        .collect();
     // Cache reads are their own column: folded into `in` they let a
     // cache-dominated total read as fresh input nobody had paid full price for.
     let glyphs = Glyphs::new(super::display_ascii(ascii)?);
@@ -94,7 +101,11 @@ pub async fn agents(
             "{} {} {} {} {} {} {} {}",
             head(&a.id.to_string(), 32, false),
             head(&a.name, 14, false),
-            head(&agent_status_label(&a, glyphs), 28, false),
+            head(
+                &agent_status_label(&a, asking.contains(&a.id), glyphs),
+                28,
+                false
+            ),
             head(&a.chain().to_string(), 28, false),
             number(a.stats.usage.input_tokens, 8),
             number(a.stats.usage.cache_read_tokens, 8),
@@ -106,9 +117,19 @@ pub async fn agents(
 }
 
 /// A pause is orthogonal to the status: a paused agent mid-turn is still
-/// running, and saying only "paused" would be a lie.
-fn agent_status_label(a: &aether_core::agent::Agent, glyphs: Glyphs) -> String {
-    let kind = if matches!(
+/// running, and saying only "paused" would be a lie. `asking` is whether one
+/// of its approvals is pending.
+fn agent_status_label(a: &aether_core::agent::Agent, asking: bool, glyphs: Glyphs) -> String {
+    use aether_core::agent::{AgentStatus, WaitCondition};
+    let on_approval = matches!(
+        &a.status,
+        AgentStatus::Waiting {
+            condition: WaitCondition::Approval { .. }
+        }
+    );
+    let kind = if (asking || on_approval) && !a.status.is_terminal() {
+        "waiting: approval".to_owned()
+    } else if matches!(
         &a.status,
         aether_core::agent::AgentStatus::Blocked {
             reason: aether_core::agent::BlockReason::Exhausted { .. }

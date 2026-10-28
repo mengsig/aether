@@ -496,4 +496,84 @@ async fn recovery_carries_an_interruption_correction_only_for_in_flight_tools() 
     );
 }
 
+/// An engine waits on an approval inside its turn, so a restart that loses
+/// the turn expires the approval instead of leaving it for a later grant.
+#[tokio::test]
+async fn a_restart_expires_the_engine_approval_its_lost_turn_waited_on() {
+    use aether_core::tool::{ApprovalDecision, ApprovalRequest, ApprovalStatus};
+    let (runtime, _dir, mut agent) = fixture().await;
+    agent.model = aether_core::model::ModelRef::new("claude-code", "sonnet");
+    assert!(
+        runtime.engine_of(&agent.model).is_some(),
+        "the agent runs on an engine"
+    );
+    let approval = ApprovalRequest {
+        id: aether_core::id::ApprovalId::new(),
+        agent_id: agent.id,
+        task_id: None,
+        call_id: ToolCallId::new(),
+        tool: "Bash".into(),
+        description: "make deploy".into(),
+        argument: None,
+        resources: Vec::new(),
+        side_effect: SideEffectClass::External,
+        requested_at: now(),
+        status: ApprovalStatus::Pending,
+    };
+    runtime
+        .apply(
+            Commit::new()
+                .event(
+                    EventDraft::new(
+                        Actor::System,
+                        EventKind::ApprovalRequested {
+                            approval: approval.id,
+                            call: approval.call_id,
+                            tool: approval.tool.clone(),
+                            description: approval.description.clone(),
+                            argument: None,
+                            side_effect: approval.side_effect,
+                        },
+                    )
+                    .agent(agent.id)
+                    .run(agent.run),
+                )
+                .mutate(Mutation::UpsertAgent(agent.clone()))
+                .mutate(Mutation::PutApproval(approval.clone())),
+        )
+        .expect("approval raised mid-turn");
+    boot(&runtime, "previous-boot");
+    recover_with_boot_id(&runtime, Some("current-boot")).expect("recover");
+    assert!(runtime.store.pending_approvals().unwrap().is_empty());
+    let events = runtime
+        .store
+        .events(0, 100, &EventFilter::own_events(agent.id))
+        .unwrap();
+    let note = events
+        .iter()
+        .find_map(|event| match &event.kind {
+            EventKind::ApprovalResolved {
+                approval: id,
+                decision: ApprovalDecision::Denied,
+                by: Actor::System,
+                note,
+            } if *id == approval.id => note.clone(),
+            _ => None,
+        })
+        .expect("the expiry is recorded");
+    assert!(note.starts_with(crate::approval::TURN_ENDED), "{note}");
+    assert!(
+        runtime
+            .resolve_approval(
+                approval.id,
+                ApprovalDecision::Approved,
+                Actor::user(),
+                None,
+                None
+            )
+            .is_err(),
+        "an expired approval cannot be granted later"
+    );
+}
+
 mod corrupt;

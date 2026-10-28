@@ -611,6 +611,21 @@ fn approval_takes_none_or_a_list_of_classes() {
 }
 
 #[test]
+fn a_gate_without_idempotent_mutation_warns_that_file_writes_stay_open() {
+    for spec in ["mutation,external", "external", "read_only"] {
+        let warning = ungated_writes(&parse_approval(spec).unwrap()).expect(spec);
+        assert!(warning.contains("add idempotent_mutation"), "{warning}");
+    }
+    for spec in ["none", "idempotent_mutation,mutation,external"] {
+        assert_eq!(
+            ungated_writes(&parse_approval(spec).unwrap()),
+            None,
+            "{spec}"
+        );
+    }
+}
+
+#[test]
 fn no_model_refusal_says_which_command_to_run() {
     let refused = anyhow::Error::new(ClientError::Protocol(aether_protocol::ErrorReply::new(
         aether_protocol::ErrorCode::NoModel,

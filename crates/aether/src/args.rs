@@ -229,7 +229,9 @@ pub(crate) enum Cmd {
         /// Most turns the run may take.
         #[arg(long)]
         max_turns: Option<u32>,
-        /// Approve every tool call automatically.
+        /// Approve automatically every approval the agent asks for, and every
+        /// one its delegated agents (children, grandchildren, ...) ask for.
+        /// Approvals from other agents of the run are printed, never approved.
         #[arg(long, short = 'y')]
         yes: bool,
         /// Approvals off: nothing asks first (the shipped default).

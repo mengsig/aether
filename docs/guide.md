@@ -47,6 +47,14 @@ They can be copied into another shell without changing the target daemon. With t
 default socket selection, hints use plain `aether`. For paths that cannot
 be printed safely, hints ask you to reuse the original socket argument.
 
+`aether run` streams the root agent's reply and ends with the root's outcome;
+an agent it delegated to finishing does not end the command. Approval
+requests and questions from those agents (children, grandchildren and so on)
+are printed too, labelled with the agent that asked, with the command that
+answers them. `--yes` approves every request the root and its delegated agents
+make, and only theirs: a request from an agent another client placed in the
+same run is printed, never approved.
+
 When the run delegates, it also prints the subtree usage including descendants;
 the JSON result adds `subtree_usage` alongside the root's own `usage`.
 
@@ -387,6 +395,28 @@ external side effects only; local file writes do not prompt. Before sending
 work to an agent, use `aether set AGENT_ID --approval
 idempotent_mutation,mutation,external` to also require approval for local
 mutations. Approval prompts are not a general filesystem sandbox.
+
+`--approval` takes `none` or a comma-separated list of the side-effect classes
+that wait for a person:
+
+| Class | What it covers |
+| --- | --- |
+| `read_only` | Reads and searches: `read_file`, `grep`, `glob`, Claude Code's `Read`, `Grep`, `Glob`. |
+| `idempotent_mutation` | File writes and edits: `write_file`, `edit_file`, `Write`, `Edit`, `MultiEdit`, `apply_patch`. |
+| `mutation` | Shell commands, background shells, delegation and every other tool not listed here. |
+| `external` | The network and outside services: `web_fetch`, and shell commands that reach a host (see below). |
+
+An unknown class is refused with the list of valid ones. A list without
+`idempotent_mutation` leaves file writes ungated, so `aether set` prints a note
+when one omits it: `--approval mutation,external` still lets Write and Edit run
+unprompted. `aether agents` shows `waiting: approval` for an agent held on an
+approval, mid-turn included.
+
+An approval belongs to the turn that asked. When that turn ends before anyone
+answers (interrupted, cancelled, failed, or lost to a daemon restart on a
+Claude Code or Codex agent), the approval is denied by the system with a note
+that starts `turn ended`, leaves `aether approvals` and the TUI, and can no
+longer be approved: the call it asked about will not run.
 
 Shell commands count as external when they may reach the network. Aether reads
 the command text, not what it does: it cuts the command at `;`, `&&`, `|`,

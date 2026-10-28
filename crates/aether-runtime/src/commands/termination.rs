@@ -310,6 +310,9 @@ impl Runtime {
                 .parent(agent.parent)
                 .run(agent.run),
         );
+        // An ended agent runs nothing more, so nothing it asked about may
+        // stay answerable.
+        self.expire_agent_approvals(hold, commit, &agent, &format!("agent {}", status.kind()))?;
         commit.push_mutation(Mutation::ClearLease(agent.id));
         commit.push_event(
             EventDraft::new(by.clone(), EventKind::LeaseReleased)

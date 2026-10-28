@@ -252,6 +252,49 @@ impl Runtime {
         Ok(())
     }
 
+    /// Expire an approval whose turn ended before anyone answered it. `None`
+    /// means this call expired it; `Some` is an answer that landed first,
+    /// which is kept rather than undone.
+    pub(crate) fn expire_approval(
+        &self,
+        id: ApprovalId,
+        why: &str,
+    ) -> Result<Option<ApprovalStatus>> {
+        let hold = self.hold();
+        let approval = self
+            .store
+            .approval(id)?
+            .ok_or_else(|| RuntimeError::NotFound(id.to_string()))?;
+        if let ApprovalStatus::Resolved { .. } = approval.status {
+            return Ok(Some(approval.status));
+        }
+        let agent = self
+            .store
+            .agent(approval.agent_id)?
+            .ok_or_else(|| RuntimeError::NotFound(approval.agent_id.to_string()))?;
+        let mut commit = Commit::new();
+        crate::approval::expiry_commit(&mut commit, approval, &agent, why);
+        self.apply_held(hold, commit)?;
+        Ok(None)
+    }
+
+    /// Expire every approval `agent` still has pending; the caller holds the
+    /// commit lock and applies `commit`.
+    pub(crate) fn expire_agent_approvals(
+        &self,
+        _hold: &crate::CommitHold<'_>,
+        commit: &mut Commit,
+        agent: &Agent,
+        why: &str,
+    ) -> Result<()> {
+        for approval in self.store.pending_approvals()? {
+            if approval.agent_id == agent.id {
+                crate::approval::expiry_commit(commit, approval, agent, why);
+            }
+        }
+        Ok(())
+    }
+
     /// Whether an approval policy can be honoured for agents on `model`:
     /// always for API models; for engines, only when the engine asks before
     /// acting (Codex's exec mode does not). Unknown, so an error, while

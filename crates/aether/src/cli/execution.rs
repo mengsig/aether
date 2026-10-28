@@ -100,10 +100,13 @@ pub async fn run(
         })
         .await?;
     initial.unsubscribe().await?;
+    // The whole run, so what a delegated agent asks reaches this command;
+    // streamed text and the outcome stay the root's.
     let query = EventQuery {
-        agent: Some(agent.id),
+        run: Some(agent.run),
         ..Default::default()
     };
+    let mut lineage = run_asks::Lineage::new(agent.id, agent.run);
     let mut sub = client
         .subscribe(Some(last_seq), query.clone(), true)
         .await?;
@@ -155,7 +158,7 @@ pub async fn run(
             None if socket.is_remote() => {
                 finish_stream(&mut out, &mut streaming)?;
                 let (connected, subscribed, snapshot) =
-                    reconnect_run(&socket, &client, &query, last_seq).await?;
+                    reconnect_run(&socket, &client, &query, agent.id, last_seq).await?;
                 client = connected;
                 sub = subscribed;
                 last_seq = sub.last_seq();
@@ -288,6 +291,14 @@ pub async fn run(
                         }
                     }
                     _ => {}
+                }
+            }
+            SubscriptionFrame::Event(event) => {
+                if let Some(line) =
+                    run_asks::other_agent_ask(&client, &mut lineage, &command, yes, &event).await?
+                {
+                    finish_stream(&mut out, &mut streaming)?;
+                    eprintln!("{line}");
                 }
             }
             _ => {}
@@ -438,17 +449,17 @@ async fn run_scope(
 mod run_notices;
 use run_notices::{GateWatch, retry_line};
 
+#[path = "run_asks.rs"]
+mod run_asks;
+
 #[path = "run_reconnect.rs"]
 mod run_reconnect;
 use run_reconnect::reconnect_run;
 
 async fn recovered_run_outcome(
     client: &aether_client::Client,
-    query: &EventQuery,
+    agent: aether_core::id::AgentId,
 ) -> anyhow::Result<Option<&'static str>> {
-    let agent = query
-        .agent
-        .ok_or_else(|| anyhow!("run reconnect has no agent"))?;
     let status = client.get_agent(agent).await?.status;
     Ok(match status {
         aether_core::agent::AgentStatus::Completed { .. } => Some("completed"),

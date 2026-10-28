@@ -82,6 +82,11 @@ struct Stub {
     /// before the command and answer history pages; the rest follow `compact`.
     compaction_log: Vec<Event>,
     compaction_cursor: u64,
+    /// While the root works, its child and grandchild and an agent another
+    /// client placed in the run ask for approval (see `run_asks`).
+    run_family: bool,
+    /// The agent is mid-turn on an approval nobody has answered.
+    awaiting_approval: bool,
 }
 impl Default for Stub {
     fn default() -> Self {
@@ -105,6 +110,8 @@ impl Default for Stub {
             viewed: None,
             compaction_log: Vec::new(),
             compaction_cursor: 0,
+            run_family: false,
+            awaiting_approval: false,
         }
     }
 }
@@ -220,7 +227,7 @@ async fn cli_with_socket(
                     device: None,
                     submission_horizon: None,
                 })),
-                Command::Subscribe { query, .. } if run_created && query.agent.is_some() => {
+                Command::Subscribe { query, .. } if run_created && query.run.is_some() => {
                     Ok(Reply::Subscribed { id: 1, last_seq: 0 })
                 }
                 Command::Subscribe { .. } => {
@@ -378,6 +385,19 @@ async fn cli_with_socket(
                     .collect(),
                 )),
                 Command::GetAgent { id } if *id == agent().id => Ok(Reply::Agent(agent())),
+                Command::GetAgent { id } if run_asks::member(*id).is_some() => {
+                    Ok(Reply::Agent(run_asks::member(*id).unwrap()))
+                }
+                Command::ResolveApproval { id, decision, .. } => {
+                    run_asks::check_resolution(*id, *decision);
+                    Ok(Reply::Ok)
+                }
+                Command::ListApprovals => Ok(Reply::Approvals(
+                    stub.awaiting_approval
+                        .then(run_asks::root_approval)
+                        .into_iter()
+                        .collect(),
+                )),
                 Command::GetAgent { .. } => {
                     Err(ErrorReply::new(ErrorCode::NotFound, "unknown agent"))
                 }
@@ -458,7 +478,13 @@ async fn cli_with_socket(
                         listing(unreported),
                     ]))
                 }
-                Command::ListAgents { .. } => Ok(Reply::Agents(vec![agent()])),
+                Command::ListAgents { .. } => {
+                    let mut listed = agent();
+                    if stub.awaiting_approval {
+                        listed.status = aether_core::agent::AgentStatus::Running;
+                    }
+                    Ok(Reply::Agents(vec![listed]))
+                }
                 Command::ListTasks { .. } => {
                     let mut task =
                         Task::new("Do work", Actor::user(), RunId::new(), AT.parse().unwrap());
@@ -660,8 +686,13 @@ async fn cli_with_socket(
                 run_created = true;
                 continue;
             }
-            if matches!(frame.command, Command::Subscribe { ref query, .. } if run_created && query.agent.is_some())
+            if matches!(frame.command, Command::Subscribe { ref query, .. } if run_created && query.run.is_some())
             {
+                if stub.run_family {
+                    for frame in run_asks::family_frames() {
+                        write_frame(&mut write, frame).await;
+                    }
+                }
                 if stub.reinvoked {
                     for text in ["STARTED", "FINISHED"] {
                         write_frame(
@@ -2491,3 +2522,6 @@ fn diagnose_without_out_names_its_own_bundle_directory() {
 
 #[path = "cli_regressions/command_polish.rs"]
 mod command_polish;
+
+#[path = "cli_regressions/run_asks.rs"]
+mod run_asks;

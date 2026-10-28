@@ -314,6 +314,49 @@ pub fn remembered_commit(
     commit.push_mutation(Mutation::PutApproval(resolved));
 }
 
+/// Deny a pending approval on the system's behalf because the turn that asked
+/// is gone. Nobody is woken: there is no call left for the answer to release.
+pub(crate) fn expiry_commit(
+    commit: &mut Commit,
+    mut approval: aether_core::tool::ApprovalRequest,
+    agent: &aether_core::agent::Agent,
+    why: &str,
+) {
+    assert_eq!(
+        approval.agent_id, agent.id,
+        "an approval expires with its own agent"
+    );
+    assert!(
+        matches!(approval.status, aether_core::tool::ApprovalStatus::Pending),
+        "only a pending approval expires"
+    );
+    let note = Some(format!("{TURN_ENDED}: {why}"));
+    let mut draft = EventDraft::new(
+        Actor::System,
+        EventKind::ApprovalResolved {
+            approval: approval.id,
+            decision: ApprovalDecision::Denied,
+            by: Actor::System,
+            note: note.clone(),
+        },
+    )
+    .agent(agent.id)
+    .parent(agent.parent)
+    .run(agent.run);
+    draft.task_id = approval.task_id;
+    commit.push_event(draft);
+    approval.status = aether_core::tool::ApprovalStatus::Resolved {
+        decision: ApprovalDecision::Denied,
+        by: Actor::System,
+        at: now(),
+        note,
+    };
+    commit.push_mutation(Mutation::PutApproval(approval));
+}
+
+/// How an expired approval's note begins.
+pub const TURN_ENDED: &str = "turn ended";
+
 /// What the model is told when a remembered decision refused its call.
 pub(crate) fn describe_denial(rule: ApprovalRuleId, note: Option<&str>) -> String {
     match note {

@@ -1,5 +1,6 @@
 use super::{recovered_run_outcome, sane};
 use aether_client::{Client, ClientError, Endpoint, Subscription};
+use aether_core::id::AgentId;
 use aether_protocol::{ErrorCode, EventQuery};
 use anyhow::bail;
 use std::time::Duration;
@@ -10,10 +11,11 @@ pub(super) async fn reconnect_run(
     endpoint: &Endpoint,
     previous: &Client,
     query: &EventQuery,
+    agent: AgentId,
     last_seq: u64,
 ) -> anyhow::Result<RunConnection> {
     debug_assert!(previous.welcome().is_some());
-    debug_assert!(query.agent.is_some());
+    debug_assert!(query.run.is_some(), "a run is watched whole");
     eprintln!(
         "{} connection lost; reconnecting (streamed text may be incomplete)",
         endpoint.display()
@@ -41,7 +43,7 @@ pub(super) async fn reconnect_run(
                 == previous.welcome().map(|welcome| &welcome.instance_id),
             "remote daemon identity changed; old run cursor discarded; reconnect in the TUI to reload the new host state"
         );
-        if let Some(connection) = resume_monitor(client, query, after).await? {
+        if let Some(connection) = resume_monitor(client, query, agent, after).await? {
             return Ok(connection);
         }
         clear_expired_cursor(&mut after);
@@ -62,6 +64,7 @@ async fn reconnect_after(endpoint: &Endpoint, wait: Duration) -> anyhow::Result<
 async fn resume_monitor(
     client: Client,
     query: &EventQuery,
+    agent: AgentId,
     after: Option<u64>,
 ) -> anyhow::Result<Option<RunConnection>> {
     let sub = match client.subscribe(after, query.clone(), true).await {
@@ -74,7 +77,7 @@ async fn resume_monitor(
         Err(_) if client.history_expired() => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let outcome = match recovered_run_outcome(&client, query).await {
+    let outcome = match recovered_run_outcome(&client, agent).await {
         Err(_) if client.history_expired() => return Ok(None),
         result => result?,
     };

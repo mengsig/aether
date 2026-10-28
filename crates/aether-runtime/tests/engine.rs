@@ -27,6 +27,8 @@ use tokio_util::sync::CancellationToken;
 
 use scripted::{Reply, ScriptedEngine};
 
+#[path = "engine/approval_expiry.rs"]
+mod approval_expiry;
 #[path = "engine/attachments.rs"]
 mod attachments;
 #[path = "engine/bridge_build.rs"]

@@ -190,6 +190,16 @@ pub(crate) fn recover_agent(
         return Ok(Outcome::Changed);
     }
     let mut commit = interruption_commit(&agent, &lease, &found, &held);
+    if runtime.engine_of(&agent.model).is_some() {
+        // An engine waits on its approvals inside the turn, so the lost turn's
+        // can never release a call: they expire, not wait for a later grant.
+        runtime.expire_agent_approvals(
+            &hold,
+            &mut commit,
+            &agent,
+            "daemon restarted during the turn",
+        )?;
+    }
     if let Some(reason) = reason {
         commit.push_event(crate::orphans::recovered_event(&agent, reason));
     }

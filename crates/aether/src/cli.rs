@@ -110,14 +110,14 @@ pub use artifacts::{artifact_show, artifacts_list};
 
 mod settings;
 #[cfg(test)]
-use settings::parse_approval;
-#[cfg(test)]
 use settings::parse_deadline;
 #[cfg(test)]
 use settings::parse_network;
 #[cfg(test)]
 use settings::parse_priority;
 pub use settings::set;
+#[cfg(test)]
+use settings::{parse_approval, ungated_writes};
 
 mod update;
 pub use update::{UpdateOptions, Version as ReleaseVersion, update};
@@ -367,7 +367,7 @@ pub struct RunOptions {
     pub token_budget: Option<u64>,
     pub cost_budget: Option<f64>,
     pub max_turns: Option<u32>,
-    /// Approve every tool call automatically.
+    /// Approve every approval the root or an agent it delegated to asks for.
     pub yes: bool,
     /// Approvals off (`--yolo`) or on (`--no-yolo`) for this agent. `None`
     /// leaves it to the daemon's `[approval] default`.
@@ -599,8 +599,13 @@ pub struct SetKnobs {
     /// Expose everything but these; repeat for several.
     #[arg(long = "deny-tool")]
     pub deny_tools: Vec<String>,
-    /// `none`, or side-effect classes needing a person, comma separated.
-    #[arg(long)]
+    /// `none`, or the side-effect classes that wait for a person, comma
+    /// separated: `read_only` (reads and searches: read_file, grep, glob),
+    /// `idempotent_mutation` (file writes and edits: write_file, edit_file,
+    /// Write, Edit, apply_patch), `mutation` (shell commands, background
+    /// shells, delegation and other tools), `external` (the network and
+    /// outside services: web_fetch, shell commands that reach a host).
+    #[arg(long, value_name = "none|CLASS,...")]
     pub approval: Option<String>,
     /// low, normal, high or critical.
     #[arg(long)]

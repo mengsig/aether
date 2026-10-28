@@ -46,6 +46,26 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **An approval ends with its turn, `aether run --yes` answers delegated
+  agents, and `--approval` names its classes (#309).** A Claude Code or
+  Codex agent waits on an approval inside its turn, but when that turn was
+  interrupted, cancelled or lost to a daemon restart the approval stayed
+  pending: it stayed in `aether approvals` and the TUI, and approving it
+  woke the agent, at the cost of a turn, for a call that no longer existed.
+  Now the approval is denied by the system with a note that starts
+  `turn ended` when its wait ends without an answer, when its agent is
+  cancelled or fails, and when restart recovery finds its turn lost; it
+  leaves every list and can no longer be approved. `aether run` watched only
+  its root agent, so a delegated agent's approval or question was never
+  shown and `--yes` never approved it, and the run stalled. It now follows
+  the whole run: approvals and questions from the root's children and
+  grandchildren are printed with the agent that asked, `--yes` approves
+  them as it approves the root's, and an agent another client placed in the
+  run is printed but never approved; the streamed reply and the outcome stay
+  the root's. `aether set --approval` help names each class and the tools it
+  covers, `aether set` notes when a list without `idempotent_mutation`
+  leaves file writes ungated, and `aether agents` shows `waiting: approval`
+  for an agent held on one, an engine agent mid-turn included.
 - **Secrets are masked in full tool-output artifacts, `read_artifact` replies
   and run exports (#308).** The event log masked the excerpt of a long tool
   output, but the full copy stored as an artifact kept the text as printed,

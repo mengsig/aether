@@ -463,17 +463,21 @@ pub(super) async fn permission_verdict(
             }))
             .mutate(Mutation::PutApproval(approval.clone())),
     )?;
-    loop {
+    // From here the wait owns the approval: however it ends, it is answered
+    // or expired, never left pending for a later turn to grant.
+    let mut open = OpenApproval {
+        runtime,
+        id: approval.id,
+        open: true,
+    };
+    let answer = loop {
         tokio::select! {
             msg = rx.recv() => match msg {
                 Ok(BusMessage::Event(e)) => {
                     if let EventKind::ApprovalResolved { approval: id, decision, note, .. } = &e.kind
                         && *id == approval.id
                     {
-                        return match decision {
-                            ApprovalDecision::Approved => Ok(allow()),
-                            ApprovalDecision::Denied => deny(note.as_deref().unwrap_or("denied by the operator")),
-                        };
+                        break (*decision, note.clone());
                     }
                 }
                 Ok(BusMessage::Delta { .. }) => {}
@@ -481,22 +485,51 @@ pub(super) async fn permission_verdict(
                     if let Some(a) = runtime.store.approval(approval.id)?
                         && let ApprovalStatus::Resolved { decision, note, .. } = a.status
                     {
-                        return match decision {
-                            ApprovalDecision::Approved => Ok(allow()),
-                            ApprovalDecision::Denied => deny(note.as_deref().unwrap_or("denied")),
-                        };
+                        break (decision, note);
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(refuse("runtime shutting down")),
             },
             _ = cancel.cancelled() => {
-                if let Some(a) = runtime.store.approval(approval.id)?
-                    && let ApprovalStatus::Resolved { decision: ApprovalDecision::Denied, note, .. } = a.status
-                {
-                    return deny(note.as_deref().unwrap_or("denied by the operator"));
-                }
-                return Ok(refuse("cancelled"));
+                open.open = false;
+                return match runtime.expire_approval(approval.id, "interrupted or cancelled")? {
+                    Some(ApprovalStatus::Resolved { decision: ApprovalDecision::Denied, note, .. }) => {
+                        deny(note.as_deref().unwrap_or("denied by the operator"))
+                    }
+                    _ => Ok(refuse("cancelled")),
+                };
             },
+        }
+    };
+    open.open = false;
+    match answer {
+        (ApprovalDecision::Approved, _) => Ok(allow()),
+        (ApprovalDecision::Denied, note) => {
+            deny(note.as_deref().unwrap_or("denied by the operator"))
+        }
+    }
+}
+
+/// An approval a wait raised and has not seen answered. Dropping it open -
+/// the turn failed or was dropped mid-wait - expires the approval.
+struct OpenApproval<'a> {
+    runtime: &'a Arc<Runtime>,
+    id: ApprovalId,
+    open: bool,
+}
+
+impl Drop for OpenApproval<'_> {
+    fn drop(&mut self) {
+        if !self.open {
+            return;
+        }
+        // Drop cannot return the error; the agent's end or restart recovery
+        // expires what this could not.
+        if let Err(error) = self
+            .runtime
+            .expire_approval(self.id, "its wait was abandoned")
+        {
+            tracing::error!(approval = %self.id, %error, "could not expire an abandoned approval");
         }
     }
 }

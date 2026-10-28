@@ -30,6 +30,9 @@ pub async fn set(
         .approval
         .map(|spec| parse_approval(&spec))
         .transpose()?;
+    if let Some(warning) = approval.as_ref().and_then(ungated_writes) {
+        eprintln!("{warning}");
+    }
     let chain = knobs
         .model
         .map(|m| ModelChain::parse(&m).ok_or_else(super::model_format_error))
@@ -130,4 +133,17 @@ pub(super) fn parse_approval(spec: &str) -> anyhow::Result<aether_core::agent::A
         bail!("approval requires at least one class; use none to disable approval explicitly");
     }
     Ok(ApprovalPolicy { require_for })
+}
+
+/// A gate that leaves file writes open, which `mutation` alone suggests it
+/// covers: say so, since Write and Edit are `idempotent_mutation`.
+pub(super) fn ungated_writes(policy: &ApprovalPolicy) -> Option<&'static str> {
+    use aether_core::tool::SideEffectClass;
+    if policy.require_for.is_empty() || policy.requires(SideEffectClass::IdempotentMutation) {
+        return None;
+    }
+    Some(
+        "note: file writes and edits (write_file, edit_file, Write, Edit) are \
+         idempotent_mutation and still run without asking; add idempotent_mutation to gate them",
+    )
 }
