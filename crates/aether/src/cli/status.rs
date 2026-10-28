@@ -231,10 +231,8 @@ fn approval_line(s: &aether_protocol::DaemonStatus) -> String {
 fn activity_lines(s: &aether_protocol::DaemonStatus, at: Timestamp) -> Vec<String> {
     let mut out = Vec::new();
     out.push(format!(
-        "usage    {} in · {} cached · {} out · {}",
-        units::tokens(s.usage_total.input_tokens),
-        units::tokens(s.usage_total.cache_read_tokens),
-        units::tokens(s.usage_total.output_tokens),
+        "usage    {} · {}",
+        s.usage_total.tokens_line(units::tokens),
         s.usage_total.cost_and_estimate_line()
     ));
     out.push(format!(
@@ -495,11 +493,24 @@ mod tests {
     }
 
     #[test]
+    fn status_usage_places_cache_writes_between_input_and_cached_tokens() {
+        let at = aether_core::time::now();
+        let mut status = fixture(at);
+        status.usage_total.cache_write_tokens = 42;
+        let lines = activity_lines(&status, at);
+        assert!(
+            lines[0]
+                .starts_with("usage    1.23M in · 42 cache-write · 5.98B cached · 89.0k out · ")
+        );
+        assert!(!lines[0].contains("5981893206"));
+    }
+
+    #[test]
     fn a_person_reads_scaled_tokens_and_one_qualifier_per_run() {
         let at = aether_core::time::now();
         let text = status_text(&fixture(at), &LocalInstall::default(), false, at).expect("renders");
         assert!(
-            text.contains("usage    1.23M in · 5.98B cached · 89.0k out"),
+            text.contains("usage    1.23M in · 0 cache-write · 5.98B cached · 89.0k out"),
             "{text}"
         );
         assert!(!text.contains("5981893206"), "{text}");

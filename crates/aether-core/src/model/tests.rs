@@ -760,3 +760,46 @@ fn future_cost_gap_values_read_as_unknown() {
     assert_eq!(usage.cost_gap, Some(CostGap::Unknown));
     assert_eq!(usage.cost_usd, 0.5);
 }
+
+#[test]
+fn tokens_line_formats_every_category_in_order() {
+    let usage = Usage {
+        input_tokens: 12,
+        cache_write_tokens: 34,
+        cache_write_1h_tokens: 10,
+        cache_read_tokens: 56,
+        output_tokens: 78,
+        ..Default::default()
+    };
+    assert_eq!(
+        usage.tokens_line(|n| format!("[{n}]")),
+        "[12] in · [34] cache-write · [56] cached · [78] out"
+    );
+    assert_eq!(
+        Usage::default().tokens_line(|n| n.to_string()),
+        "0 in · 0 cache-write · 0 cached · 0 out"
+    );
+}
+
+#[test]
+fn cost_basis_labels_share_one_vocabulary() {
+    assert_eq!(CostBasis::Unknown.label(), None);
+    assert_eq!(CostBasis::ListPrice.label(), Some("list price"));
+    assert_eq!(
+        CostBasis::ProviderReported.label(),
+        Some("provider-reported")
+    );
+    assert_eq!(CostBasis::Mixed.label(), Some("mixed basis"));
+}
+
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic]
+fn tokens_line_rejects_cache_tiers_exceeding_total_writes() {
+    let usage = Usage {
+        cache_write_tokens: 1,
+        cache_write_1h_tokens: 2,
+        ..Default::default()
+    };
+    usage.tokens_line(|n| n.to_string());
+}

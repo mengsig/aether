@@ -80,19 +80,19 @@ impl Labels {
     }
 }
 
-/// Keep cost provenance compact in the tree; the inspector spells out the basis.
+/// Cost provenance uses the same vocabulary as the inspector.
 fn cost_text(cost: Option<crate::app::transcript::Cost>) -> String {
-    use aether_core::model::CostBasis;
     let Some(cost) = cost else {
         return String::new();
     };
+    debug_assert!(cost.usd.is_finite());
+    debug_assert!(cost.usd >= 0.0);
     let prefix = if cost.estimated { "~" } else { "" };
-    let basis = match cost.basis {
-        CostBasis::Unknown => "",
-        CostBasis::ListPrice => " list",
-        CostBasis::ProviderReported => " reported",
-        CostBasis::Mixed => " mixed",
-    };
+    let basis = cost
+        .basis
+        .label()
+        .map(|label| format!(" {label}"))
+        .unwrap_or_default();
     format!("{prefix}${:.2}{basis}", cost.usd)
 }
 

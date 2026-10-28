@@ -36,26 +36,30 @@ pub async fn artifacts_list(
         return Ok(());
     }
     println!(
-        "{:<32} {:<16} {:>10} {:<20} {:<32} summary",
+        "{:<32} {:<16} {:>10} {:<23} {:<32} summary",
         "id", "kind", "bytes", "created", "agent"
     );
     for a in rows {
-        println!(
-            "{:<32} {:<16} {:>10} {:<20} {:<32} {}{}",
-            a.id.to_string(),
-            kind_label(&a.kind),
-            a.size_bytes,
-            a.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            a.agent_id.map(|id| id.to_string()).unwrap_or_default(),
-            short(&a.summary, 60),
-            if a.evicted_at.is_some() {
-                " (bytes dropped by retention)"
-            } else {
-                ""
-            },
-        );
+        println!("{}", artifact_line(&a));
     }
     Ok(())
+}
+
+fn artifact_line(a: &aether_core::artifact::Artifact) -> String {
+    format!(
+        "{:<32} {:<16} {:>10} {:<23} {:<32} {}{}",
+        a.id.to_string(),
+        kind_label(&a.kind),
+        a.size_bytes,
+        a.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        a.agent_id.map(|id| id.to_string()).unwrap_or_default(),
+        short(&a.summary, 60),
+        if a.evicted_at.is_some() {
+            " (bytes dropped by retention)"
+        } else {
+            ""
+        },
+    )
 }
 
 fn kind_label(kind: &ArtifactKind) -> String {
@@ -124,4 +128,29 @@ pub async fn artifact_show(
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn artifact_row_marks_created_time_as_utc() {
+        let artifact = aether_core::artifact::Artifact {
+            id: aether_core::id::ArtifactId::new(),
+            kind: super::ArtifactKind::File,
+            name: "result".into(),
+            path: None,
+            summary: "saved result".into(),
+            size_bytes: 42,
+            content_type: None,
+            digest: None,
+            created_by: aether_core::event::Actor::System,
+            agent_id: None,
+            task_id: None,
+            created_at: "2026-01-02T03:04:05Z".parse().unwrap(),
+            evicted_at: None,
+        };
+        let line = super::artifact_line(&artifact);
+        assert!(line.contains("2026-01-02 03:04:05 UTC"), "{line}");
+        assert!(line.ends_with("saved result"), "{line}");
+    }
 }
