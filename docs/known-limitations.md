@@ -285,14 +285,16 @@ isolation depend on the installed engine version and the platform; see
   next clean stop; with no daemon answering, a mark left behind is a warning
   too. It says the run ended badly, not why.
 - After a hard kill of the daemon (`kill -9`, a crash) on Linux, its engine
-  processes die with it, but processes an engine started (its shell
-  commands) keep running until the next daemon start. That start kills the
-  process group of every engine it recorded, but only while the recorded pid
-  and start time still match a live group leader, plus every process carrying
-  a recorded engine's token. A descendant that cleared its environment and
-  left the group is reaped only when its agent ends. On macOS there is no
-  parent-death signal and nothing is recorded or reaped, so the engines of a
-  killed daemon keep running and must be stopped by hand. A graceful stop
+  processes die with it, along with every process still in an engine's
+  process group. A process an engine started that left its group (with
+  `setsid`, for one) keeps running until the next daemon start. That start
+  kills the process group of every engine it recorded, but only while the
+  recorded pid and start time still match a live group leader, plus every
+  process carrying a recorded engine's token. A descendant that cleared its
+  environment and left the group is reaped only when its agent ends. On macOS
+  there is no parent-death signal, no group watchdog, and nothing is recorded
+  or reaped, so the engines of a killed daemon keep running and must be
+  stopped by hand. A graceful stop
   leaves no engine running.
 - When an agent ends, its engines' leftover processes are found by their
   environment tag and, with a user systemd, their scope

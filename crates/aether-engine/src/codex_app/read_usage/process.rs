@@ -11,6 +11,7 @@ use super::{EngineError, failure};
 
 pub(super) struct UsageProcess {
     pub(super) child: Child,
+    _watch: crate::lifeline::GroupWatch,
 }
 
 impl UsageProcess {
@@ -25,16 +26,20 @@ impl UsageProcess {
         command.as_std_mut().process_group(0);
         aether_spawn::reset_signals(command.as_std_mut());
         crate::strip_hidden(&mut command, hidden_env);
-        let child = crate::lifeline::spawn(command).map_err(|source| match source.kind() {
-            std::io::ErrorKind::NotFound => EngineError::NotInstalled {
-                program: program.into(),
-            },
-            _ => EngineError::Spawn {
-                program: program.into(),
-                source,
-            },
-        })?;
-        Ok(Self { child })
+        let (child, watch) =
+            crate::lifeline::spawn(command).map_err(|source| match source.kind() {
+                std::io::ErrorKind::NotFound => EngineError::NotInstalled {
+                    program: program.into(),
+                },
+                _ => EngineError::Spawn {
+                    program: program.into(),
+                    source,
+                },
+            })?;
+        Ok(Self {
+            child,
+            _watch: watch,
+        })
     }
 
     pub(super) async fn finish(&mut self, deadline: Instant) -> Result<(), EngineError> {

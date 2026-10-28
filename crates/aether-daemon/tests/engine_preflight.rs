@@ -302,3 +302,42 @@ async fn an_engine_removed_after_startup_refuses_a_started_agent() {
     assert!(agents.is_empty(), "no agent is left behind: {agents:?}");
     daemon.stop().await;
 }
+
+/// A CLI removed right after a probe found it is refused at once, not served
+/// from that probe until the next one may run.
+#[tokio::test]
+async fn an_engine_removed_right_after_a_recheck_refuses_a_started_agent() {
+    if run_isolated(
+        "an_engine_removed_right_after_a_recheck_refuses_a_started_agent",
+        &[("claude", FAILS_UNTIL_FIXED)],
+    )
+    .await
+    {
+        return;
+    }
+    let root = std::env::var_os(ROOT_ENV).unwrap();
+    let daemon = support::TestDaemon::start().await;
+    let client = aether_client::Client::connect(&daemon.socket)
+        .await
+        .unwrap();
+    detected(&client).await;
+    std::fs::write(Path::new(&root).join("fixed"), "").unwrap();
+    let agent = client
+        .create_agent(started_claude_agent())
+        .await
+        .expect("the repaired CLI is probed again and accepted");
+    std::fs::remove_file(Path::new(&root).join("claude")).unwrap();
+    let refused = client
+        .create_agent(started_claude_agent())
+        .await
+        .expect_err("a CLI removed since the last probe cannot run a started agent")
+        .to_string();
+    assert!(refused.contains("install claude"), "{refused}");
+    let agents = client.list_agents(AgentQuery::default()).await.unwrap();
+    assert_eq!(
+        agents.iter().map(|a| a.id).collect::<Vec<_>>(),
+        vec![agent.id],
+        "only the first agent exists"
+    );
+    daemon.stop().await;
+}

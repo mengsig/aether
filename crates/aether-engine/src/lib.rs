@@ -652,7 +652,8 @@ where
     export_temp_dir(&mut command, temp_dir);
     export_build_env(&mut command, build_env);
     let run_token = orphans::tag(&mut command);
-    let mut child = lifeline::spawn(command).map_err(|e| spawn_error(program, &cwd, e))?;
+    let (mut child, group_watch) =
+        lifeline::spawn(command).map_err(|e| spawn_error(program, &cwd, e))?;
     let program = program.to_owned();
     let pid = child.id();
     let mut stdin = child
@@ -707,6 +708,7 @@ where
     let redactor = redactor.clone();
     tokio::spawn(async move {
         let _engine_record = engine_record;
+        let _group_watch = group_watch;
         let mut lines = output::BoundedLines::new(stdout);
         let mut response_done = false;
         let mut stdout_error = None;

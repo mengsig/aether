@@ -511,9 +511,13 @@ left that group keep running until their agent ends after the restart.
 A daemon that dies without a clean shutdown (killed with `SIGKILL`, out of
 memory, crashed) takes its engines with it on Linux. Each engine process, and
 each engine version probe, starts with a parent-death signal, so the kernel
-sends it `SIGKILL` when the daemon dies. Processes the engine started itself
-are not marked. The MCP bridge exits when its engine's pipe closes. The next
-daemon start kills the rest: every recorded engine process group whose
+sends it `SIGKILL` when the daemon dies. Its process group also holds a small
+`/bin/sh` watchdog reading a pipe that only the daemon holds open; when the
+daemon dies the pipe closes and the watchdog kills the whole group. That
+takes the processes the engine started in its group, such as the native CLI
+a wrapper like the npm `codex` launcher starts, and its shell commands. The
+MCP bridge exits when its engine's pipe closes. The next daemon start kills
+what left the group: every recorded engine process group whose
 leader still has the recorded pid and kernel start time, and every process of
 the daemon's user carrying a recorded engine's random token. It never
 signals a process it cannot tie to an engine it started. macOS has neither a

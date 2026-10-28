@@ -84,6 +84,7 @@ pub(super) struct Sandbox {
     bridge: tokio::task::JoinHandle<()>,
     // Closing it ends the sandbox even if Aether dies without dropping this.
     _stdin: tokio::process::ChildStdin,
+    _watch: crate::lifeline::GroupWatch,
     _dir: tempfile::TempDir,
     pub(super) environment: Environment,
 }
@@ -283,7 +284,7 @@ pub(super) async fn start(
     crate::strip_hidden(&mut command, hidden_env);
     crate::export_temp_dir(&mut command, temp_dir);
     crate::export_build_env(&mut command, build_env);
-    let mut child = crate::lifeline::spawn(command)
+    let (mut child, watch) = crate::lifeline::spawn(command)
         .map_err(|e| unsupported(format!("cannot start bwrap: {e}")))?;
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
@@ -335,6 +336,7 @@ pub(super) async fn start(
         child,
         bridge,
         _stdin: stdin,
+        _watch: watch,
         _dir: dir,
         environment: Environment {
             url: format!("ws://127.0.0.1:{port}"),

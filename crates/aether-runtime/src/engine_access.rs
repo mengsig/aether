@@ -55,7 +55,7 @@ impl DetectedEngines {
 
 /// Whether `detected` holds `kind` usable and its CLI is still installed.
 fn still_usable(detected: &DetectedEngines, kind: EngineKind) -> bool {
-    detected.usable.contains_key(&kind) && aether_engine::detect::cli_on_path(kind)
+    detected.usable.contains_key(&kind) && aether_engine::detect::missing_cli(kind).is_none()
 }
 
 /// The engines. Detection runs after the socket can answer, so a reader
@@ -128,13 +128,29 @@ impl EngineCatalog {
             .get(&kind)
             .is_some_and(|at| at.elapsed() < RECHECK_INTERVAL);
         // Another caller may have found it while this one waited for the lock.
-        if recent || still_usable(&self.detected.read(), kind) {
+        if still_usable(&self.detected.read(), kind) {
             return self.detected.read().clone();
+        }
+        if recent {
+            return self.record_if_removed(kind);
         }
         let found = detect_engine(kind, probing.prompt_cache_ttl).await;
         rechecked.insert(kind, Instant::now());
         let mut detected = self.detected.write();
         detected.record(kind, found);
+        detected.clone()
+    }
+
+    /// Between probes, a usable `kind` whose CLI has left `PATH` is recorded
+    /// unusable at once, rather than served until the next probe may run.
+    fn record_if_removed(&self, kind: EngineKind) -> DetectedEngines {
+        let mut detected = self.detected.write();
+        if detected.usable.contains_key(&kind)
+            && let Some(missing) = aether_engine::detect::missing_cli(kind)
+        {
+            detected.record(kind, Err(missing.to_string()));
+            debug_assert!(!detected.usable.contains_key(&kind), "recorded unusable");
+        }
         detected.clone()
     }
 

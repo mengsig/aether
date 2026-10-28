@@ -168,18 +168,24 @@ impl std::fmt::Display for DetectError {
 
 impl std::error::Error for DetectError {}
 
-/// Whether `kind`'s CLI is still an executable on this process's `PATH`: a
-/// cheap check that a CLI probed usable earlier has not been removed since.
+/// Why `kind`'s CLI is no longer an executable on this process's `PATH`, if
+/// it is not: a cheap check that a CLI probed usable earlier is still there.
 /// An engine with no CLI of its own has nothing to lose, so it is present.
-pub fn cli_on_path(kind: crate::EngineKind) -> bool {
+pub fn missing_cli(kind: crate::EngineKind) -> Option<DetectError> {
     let program = if kind == crate::EngineKind::CLAUDE_CODE {
         "claude"
     } else if kind == crate::EngineKind::CODEX {
         "codex"
     } else {
-        return true;
+        return None;
     };
-    crate::offline::executable_on_path(program, std::env::var_os("PATH").as_deref())
+    if crate::offline::executable_on_path(program, std::env::var_os("PATH").as_deref()) {
+        return None;
+    }
+    Some(DetectError::NotInstalled {
+        program: program.to_owned(),
+        os_error: "no executable of that name in any PATH directory".to_owned(),
+    })
 }
 
 /// The variable naming the directory Codex keeps its state in. Codex
@@ -290,7 +296,10 @@ async fn run_probe(
         })?),
         None => None,
     };
-    let run = async { crate::lifeline::spawn(command)?.wait_with_output().await };
+    let run = async {
+        let (child, _watch) = crate::lifeline::spawn(command)?;
+        child.wait_with_output().await
+    };
     Ok(tokio::time::timeout(PROBE_TIMEOUT, run).await.ok())
 }
 
