@@ -180,3 +180,34 @@ async fn compose_tool_results_resolves_batches_beyond_both_history_windows() {
     assert!(matches!(events[0].kind, EventKind::ToolSucceeded { .. }));
     h.runtime.shutdown().await;
 }
+
+/// An outcome stored before masking, or before its secret was known, is
+/// masked when an interrupted turn's tool results are composed from it.
+#[tokio::test]
+async fn compose_tool_results_masks_a_settled_outcome_stored_raw() {
+    let (h, _dir) = ComposeHarness::new().await;
+    let invocation = InvocationId::new();
+    let token = format!("ghp_{}", "A".repeat(36));
+    let succeeded = h.request(1, invocation, "call_0");
+    h.settle(succeeded.id, &format!("read {token}"));
+    let failed = h.request(2, invocation, "call_1");
+    h.runtime
+        .apply(Commit::new().event(h.ctx.draft(EventKind::ToolFailed {
+            call: failed.id,
+            error: format!("refused {token}"),
+            retryable: false,
+            duration_ms: None,
+        })))
+        .expect("record failure");
+    h.assistant_tool_uses(invocation, &["call_0", "call_1"]);
+
+    compose_tool_results(&h.runtime, &h.ctx).expect("compose");
+    let content = h.composed_results().expect("a tool result was composed");
+    let text = serde_json::to_string(&content).expect("serializes");
+    assert!(!text.contains(&token), "{text}");
+    assert_eq!(
+        text.matches("[REDACTED:github_token]").count(),
+        2,
+        "both the success and the failure are masked: {text}"
+    );
+}

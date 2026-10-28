@@ -266,6 +266,7 @@ pub(super) fn compose_tool_results(runtime: &Runtime, ctx: &TurnCtx) -> Result<(
         .values()
         .map(|call| (call.provider_call_id.as_str(), call))
         .collect();
+    let redactor = runtime.tool_runtime.redactor();
     let mut blocks = Vec::with_capacity(ids.len());
     for provider_id in &ids {
         let Some(call) = by_provider_id.get(provider_id.as_str()) else {
@@ -274,9 +275,12 @@ pub(super) fn compose_tool_results(runtime: &Runtime, ctx: &TurnCtx) -> Result<(
         let Some((text, is_error)) = settled.get(&call.id) else {
             return Ok(()); // still pending
         };
+        // Masked again: an outcome recorded before masking, or before its
+        // secret was known, must not reach the provider as stored.
+        let text = redactor.redact(text).into_owned();
         blocks.push(ContentBlock::ToolResult {
             tool_use_id: provider_id.clone(),
-            content: vec![ToolResultBlock::Text { text: text.clone() }],
+            content: vec![ToolResultBlock::Text { text }],
             is_error: *is_error,
         });
     }

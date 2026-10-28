@@ -58,7 +58,8 @@ release is also the text of its GitHub release.
   chunks never split a known secret, a key block or a bearer token or AWS
   key assignment that spans lines), every
   harness outcome (as data, before it is rendered) and tool error before it
-  is committed, a recorded outcome again when a re-driven call replays it,
+  is committed, a recorded outcome again when a re-driven call replays it
+  or an interrupted turn's tool results are composed from it,
   approval and rule notes and revocation reasons when they are
   recorded, every tool
   reply, refusal and denial note the native-engine bridge returns to the
