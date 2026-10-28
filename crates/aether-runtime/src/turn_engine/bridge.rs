@@ -105,7 +105,7 @@ pub(super) async fn handle_request(
                             if let Some(error) =
                                 crate::turn::validate_wait(runtime, ctx, &condition, true)?
                             {
-                                let reply = (error.content, true);
+                                let reply = masked_reply(runtime, (error.content, true));
                                 let _ = req.reply.send(reply.clone());
                                 return Ok(Served::Ran(Some(reply)));
                             }
@@ -120,10 +120,11 @@ pub(super) async fn handle_request(
                         if parked
                             && !effects.admits_after_park(&action, ctx.agent.config.long_lived)
                         {
+                            // The refusal can quote the question it is waiting on.
                             let refusal = effects
                                 .refusal_for_asked(&action)
                                 .unwrap_or_else(|| TURN_IS_OVER.to_owned());
-                            let _ = req.reply.send((refusal, true));
+                            let _ = req.reply.send(masked_reply(runtime, (refusal, true)));
                             return Ok(Served::Refused);
                         }
                         // Ending the turn would stop the session's running jobs, so

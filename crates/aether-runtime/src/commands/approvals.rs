@@ -167,6 +167,9 @@ impl Runtime {
         if let Some(receipt) = self.replay_receipt(&hold, submission.as_ref())? {
             return Ok(receipt);
         }
+        // Masked before it is recorded: the note reaches the event log, the
+        // asker's inbox and, as a denial reason, the engine.
+        let note = note.map(|note| self.tool_runtime.redactor().redact(&note).into_owned());
         let mut approval = self
             .store
             .approval(id)?

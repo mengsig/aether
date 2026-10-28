@@ -109,6 +109,7 @@ impl Runtime {
             .validate()
             .map_err(|e: RuleError| RuntimeError::Invalid(e.to_string()))?;
         self.check_scope_exists(&scope)?;
+        let note = note.map(|note| self.tool_runtime.redactor().redact(&note).into_owned());
         let rule = ApprovalRule {
             id: ApprovalRuleId::new(),
             decision,

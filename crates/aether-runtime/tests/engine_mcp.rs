@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_core::agent::{AgentConfig, AgentStatusKind, ApprovalPolicy, NetworkPolicy, Scope};
+use aether_core::approval::{RuleMatch, RuleScope};
 use aether_core::event::{Actor, EventKind};
 use aether_core::id::AgentId;
 use aether_core::mcp::McpServerState;
@@ -573,13 +574,15 @@ async fn a_bridged_reply_quoting_a_known_secret_reaches_the_engine_masked() {
 }
 
 /// A permission answer carries the input the engine is about to run, so an
-/// approved command keeps a secret it holds; a denial note is masked.
+/// approved command keeps a secret it holds; a note is masked when recorded.
 #[tokio::test]
 async fn a_permission_answer_keeps_its_input_and_masks_denial_notes() {
     const KNOWN: &str = "fleet-token-0123456789abcdef";
-    let redactor = aether_tools::Redactor::with_known_secrets([KNOWN]).expect("compiles");
+    // Only ever written in a note, so any trace of it is a recorded note.
+    const NOTED: &str = "note-token-fedcba9876543210";
+    let redactor = aether_tools::Redactor::with_known_secrets([KNOWN, NOTED]).expect("compiles");
     let mut h = harness_with(None, redactor).await;
-    start_agent(&h);
+    let agent = start_agent(&h);
     let bridge = h.ready.recv().await.expect("the turn started");
     let prompt = |command: String| json!({"tool_name": "Bash", "input": {"command": command}, "tool_use_id": "tu-1"});
 
@@ -621,17 +624,38 @@ async fn a_permission_answer_keeps_its_input_and_masks_denial_notes() {
                 pending.id,
                 ApprovalDecision::Denied,
                 Actor::user(),
-                Some(format!("not with {KNOWN}")),
+                Some(format!("not with {KNOWN} or {NOTED}")),
                 None,
             )
             .expect("deny");
         let (reply, _) = calling.await.expect("join").expect("answered");
         assert!(!reply.contains(KNOWN), "{tool}: {reply}");
         assert!(
-            reply.contains("not with [REDACTED:known_secret]"),
+            reply.contains("not with [REDACTED:known_secret] or [REDACTED:known_secret]"),
             "{tool}: {reply}"
         );
     }
+    let rule = h
+        .runtime
+        .add_approval_rule(
+            ApprovalDecision::Denied,
+            RuleMatch::tool("mcp__mock__write_note"),
+            RuleScope::Agent { id: agent },
+            Actor::user(),
+            Some(format!("never {NOTED}")),
+        )
+        .expect("rule");
+    assert_eq!(rule.note.as_deref(), Some("never [REDACTED:known_secret]"));
+    let events = h
+        .store
+        .events(0, 10_000, &EventFilter::all())
+        .expect("events");
+    let log = serde_json::to_string(&events).expect("json");
+    assert!(
+        log.contains("approval.resolved"),
+        "the denials were recorded"
+    );
+    assert!(!log.contains(NOTED), "a note is recorded unmasked");
 
     if let Some(finish) = h.finish.take() {
         let _ = finish.send(());

@@ -27,7 +27,10 @@ pub(crate) fn list(
         .agent(caller)?
         .ok_or_else(|| RuntimeError::NotFound(caller.to_string()))?;
     let Some(parent) = me.parent else {
-        return Ok(outcome(json!({"parent":null,"peers":[],"next_after":null})));
+        return Ok(outcome(
+            runtime,
+            json!({"parent":null,"peers":[],"next_after":null}),
+        ));
     };
     let mut peers: Vec<_> = runtime
         .store
@@ -55,6 +58,7 @@ pub(crate) fn list(
         }));
     }
     Ok(outcome(
+        runtime,
         json!({"parent":parent,"peers":rows,"next_after":next}),
     ))
 }

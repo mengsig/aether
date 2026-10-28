@@ -21,7 +21,10 @@ fn visible(task: &Task, ids: &BTreeSet<AgentId>) -> bool {
         || task.creator.agent_id().is_some_and(|id| ids.contains(&id))
 }
 
-pub(crate) fn outcome(value: Value) -> ToolOutcome {
+/// Masked as data before it is rendered: rendering escapes a secret's
+/// newline, quote or backslash, twice over for one the data held escaped.
+pub(crate) fn outcome(runtime: &Runtime, mut value: Value) -> ToolOutcome {
+    aether_tools::redact_json(runtime.tool_runtime.redactor(), &mut value);
     ToolOutcome {
         content: value.to_string(),
         structured: Some(value),
@@ -63,7 +66,7 @@ pub(crate) fn agents(
             })
         })
         .collect();
-    Ok(outcome(json!({"agents":rows,"next_after":next})))
+    Ok(outcome(runtime, json!({"agents":rows,"next_after":next})))
 }
 
 pub(crate) fn tasks(
@@ -91,7 +94,7 @@ pub(crate) fn tasks(
     let rows: Vec<_> = tasks.into_iter().map(|t| json!({
         "id":t.id, "owner":t.owner, "status":t.status.kind(), "objective":brief(&t.objective,160),
     })).collect();
-    Ok(outcome(json!({"tasks":rows,"next_after":next})))
+    Ok(outcome(runtime, json!({"tasks":rows,"next_after":next})))
 }
 
 pub(crate) fn task(
@@ -136,6 +139,7 @@ pub(crate) fn task(
     let text: String = serialized.chars().skip(offset).take(max_chars).collect();
     let end = offset + text.chars().count();
     Ok(outcome(
+        runtime,
         json!({"task":id,"revision":current_revision,"format":"json","offset":offset,"text":text,"total_chars":total_chars,"next_offset":(end < total_chars).then_some(end)}),
     ))
 }
@@ -199,6 +203,7 @@ pub(crate) fn artifact(
     }
     let end = offset + text.len() as u64;
     Ok(outcome(
+        runtime,
         json!({"id":id,"offset":offset,"text":text,"total_bytes":record.size_bytes,"next_offset":(end < record.size_bytes).then_some(end)}),
     ))
 }

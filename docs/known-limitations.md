@@ -78,8 +78,12 @@ looks like a boundary and is not one.
   them; a run export masks them. For the same reason a native engine's
   approved permission prompt gets its tool input back unmasked. A known secret
   that matches part of the export format (a field name, tag or id) makes
-  `aether runs export` refuse rather than write a file that cannot be
-  imported. Native engine transcripts and model replies that repeat a secret
+  `aether runs export` refuse rather than write a file that would not import
+  as it was. Approval and rule notes are masked when recorded; notes recorded
+  before 1.2.7 are not. Messages, questions and answers that people and agents
+  send are delivered as written. A secret encoded more than once (base64, or
+  JSON nested inside JSON beyond what a tool's own rendering adds) is not
+  recognized. Native engine transcripts and model replies that repeat a secret
   are outside this masking.
 - **The GitHub watcher turns repository text into agent work.** Who may
   trigger it is decided by repository permission, the operator logins you name

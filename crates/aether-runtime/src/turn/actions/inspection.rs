@@ -75,11 +75,7 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
             "checkpoint": agent.checkpoint
         }
     });
-    Ok(ToolOutcome {
-        content: data.to_string(),
-        structured: Some(data),
-        ..Default::default()
-    })
+    Ok(crate::inspection::outcome(runtime, data))
 }
 
 async fn list_models(
@@ -149,11 +145,7 @@ async fn list_models(
     }
     let data = serde_json::json!({"providers": statuses, "models": models, "configured_alternatives": alternatives, "current_model": ctx.agent.model,
         "guidance": "Choose a connection with available=true. configured reports credentials; available also checks the engine and your current network policy. Inspect configured_alternatives before declaring a model family unavailable. Each model has a tier (fast, balanced, strong, frontier; null when unranked), a capability band within its provider; a provider may lack a tier. Prefer capability first, then cost within a suitable tier: frontier or strong for the hardest work, balanced for demanding work, fast for focused, low-cost work. Select by tier, never by model name. Respect explicit model choices and budgets. API-equivalent prices are not subscription charges. Reasoning with tools on an OpenAI model requires the openai-responses provider on the API path."});
-    Ok(ToolOutcome {
-        content: data.to_string(),
-        structured: Some(data),
-        ..Default::default()
-    })
+    Ok(crate::inspection::outcome(runtime, data))
 }
 
 async fn read_artifact(
@@ -177,19 +169,11 @@ async fn refresh_provider_usage(
     provider: Option<String>,
 ) -> Result<ToolOutcome> {
     let data = runtime.refresh_provider_usage(provider.as_deref()).await?;
-    Ok(usage_outcome(data))
+    Ok(crate::inspection::outcome(runtime, data))
 }
 
 fn provider_usage(runtime: &Arc<Runtime>) -> ToolOutcome {
-    usage_outcome(runtime.provider_usage())
-}
-
-fn usage_outcome(data: serde_json::Value) -> ToolOutcome {
-    ToolOutcome {
-        content: data.to_string(),
-        structured: Some(data),
-        ..Default::default()
-    }
+    crate::inspection::outcome(runtime, runtime.provider_usage())
 }
 
 /// Read-only listing and inspection actions.

@@ -470,8 +470,60 @@ async fn an_export_is_refused_when_a_known_secret_matches_the_format() {
     source.daemon.runtime.shutdown().await;
 }
 
+/// A known secret that names an optional field would import as a record
+/// without it, so that export is refused too.
+#[tokio::test]
+async fn an_export_is_refused_when_a_known_secret_names_an_optional_field() {
+    let source = seeded_knowing(
+        vec![ScriptedClient::tool_call(
+            "complete_task",
+            json!({"summary": "published"}),
+        )],
+        &[KNOWN, "content_type"],
+    )
+    .await;
+    let runtime = &source.daemon.runtime;
+    let agent = start_worker(&source.daemon, "publish");
+    runtime
+        .publish_artifact(
+            ArtifactPublication {
+                kind: ArtifactKind::File,
+                name: "deploy.log".into(),
+                summary: "evidence".into(),
+                content_type: Some("text/plain".into()),
+                bytes: b"deployed\n".to_vec(),
+                agent,
+                task: None,
+            },
+            Actor::user(),
+        )
+        .await
+        .expect("publish");
+    wait_terminal(source.daemon.store.as_ref(), agent).await;
+    let run = source
+        .daemon
+        .store
+        .agent(agent)
+        .expect("agent")
+        .expect("exists")
+        .run;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("run.aether");
+    let refused = transfer::export_run(
+        source.daemon.store.as_ref(),
+        run,
+        &file,
+        &runtime.config().redactor,
+    )
+    .expect_err("a record that would import without its content type is not written");
+    assert!(refused.to_string().contains("export format"), "{refused}");
+    assert!(!file.exists(), "no archive is named as complete");
+    runtime.shutdown().await;
+}
+
 /// `read_artifact` renders its result as JSON, which escapes a newline, quote
-/// or backslash in a secret; the escaped spelling is masked too.
+/// or backslash in a secret, twice over for a secret the artifact held as JSON.
 #[tokio::test]
 async fn reading_an_artifact_masks_secrets_that_json_escapes() {
     const SECRETS: [&str; 3] = [
@@ -511,7 +563,12 @@ async fn reading_an_artifact_masks_secrets_that_json_escapes() {
                 name: "secrets.log".into(),
                 summary: "evidence".into(),
                 content_type: Some("text/plain".into()),
-                bytes: SECRETS.join("\n").into_bytes(),
+                bytes: format!(
+                    "{}\n{}",
+                    SECRETS.join("\n"),
+                    serde_json::to_string(&SECRETS).expect("json")
+                )
+                .into_bytes(),
                 agent: agent.id,
                 task: None,
             },
@@ -553,7 +610,11 @@ async fn reading_an_artifact_masks_secrets_that_json_escapes() {
     let decoded: serde_json::Value = serde_json::from_str(&content).expect("JSON content");
     assert_eq!(
         decoded["text"],
-        ["[REDACTED:known_secret]"; 3].join("\n"),
+        format!(
+            "{}\n{}",
+            [MASK; 3].join("\n"),
+            serde_json::to_string(&[MASK; 3]).expect("json")
+        ),
         "{content}"
     );
     let events = event_log(source.daemon.store.as_ref());

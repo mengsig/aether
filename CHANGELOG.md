@@ -55,11 +55,14 @@ release is also the text of its GitHub release.
   MCP `token_env` values, provider keys). Now the runtime redactor, known
   secrets included, masks a tool's full output before it is stored (a shell
   log is masked as a stream, so a large one is never held in memory), every
-  harness outcome and tool error before it is committed, every tool reply and
-  denial note the native-engine bridge returns to the engine, object keys as
+  harness outcome (as data, before it is rendered) and tool error before it
+  is committed, approval and rule notes when they are recorded, every tool
+  reply, refusal and denial note the native-engine bridge returns to the
+  engine, object keys as
   well as values in a tool's structured output, a known secret's JSON-escaped
   spelling as well as its own, every `read_artifact` reply to any connection,
-  and every export record and payload. An artifact a
+  and every export record and payload; an export a known secret would leave
+  unimportable is refused. An artifact a
   client publishes is still stored as sent and masked on each of those ways
   out; the shell's own output log on disk stays raw for the agent. See
   [known limitations](docs/known-limitations.md#security-boundaries).

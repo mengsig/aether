@@ -335,12 +335,17 @@ fn write_record(
         value["digest"] = serde_json::Value::String(digest.clone());
     }
     // A known secret that matches a field name, tag or id would leave a record
-    // the import cannot read; refusing beats writing one, or the secret.
-    if <Record as serde::Deserialize>::deserialize(&value).is_err() {
-        return Err(invalid(
+    // the import cannot read, or one it reads without an optional field;
+    // refusing beats writing one, or the secret.
+    let refused = || {
+        invalid(
             "a known secret value matches part of the export format (a field name, tag or id), \
-             so a masked record would not import; export refused",
-        ));
+             so a masked record would not import as it was; export refused",
+        )
+    };
+    let parsed = <Record as serde::Deserialize>::deserialize(&value).map_err(|_| refused())?;
+    if serde_json::to_value(&parsed).map_err(StoreError::Serde)? != value {
+        return Err(refused());
     }
     write_line(out, &value)
 }

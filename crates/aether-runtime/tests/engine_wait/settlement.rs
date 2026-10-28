@@ -91,6 +91,46 @@ async fn completing_after_ask_user_in_one_engine_turn_is_refused() {
     h.runtime.shutdown().await;
 }
 
+/// The refusal quotes the open question, so it reaches the engine masked.
+#[tokio::test]
+async fn a_refusal_quoting_the_open_question_is_masked() {
+    const KNOWN: &str = "fleet-token-0123456789abcdef";
+    let mut h = harness_configured(Duration::from_secs(30), Script::default(), |config| {
+        config.redactor = aether_tools::Redactor::with_known_secrets([KNOWN]).expect("compiles");
+    })
+    .await;
+    let worker = start_agent(
+        &h,
+        CreateAgentSpec {
+            role: "worker".into(),
+            objective: Some("rotate it".into()),
+            start: true,
+            config: Some(AgentConfig {
+                approval: ApprovalPolicy::none(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+    let turn = turn_of(&mut h, worker).await;
+    let question = format!("rotate {KNOWN} now?");
+    let (reply, is_error) = call(&h, &turn, "ask_user", json!({"question": question})).await;
+    assert!(!is_error, "{reply}");
+
+    let (reply, is_error) = call(&h, &turn, "complete_task", json!({"summary": "rotated"})).await;
+    assert!(
+        is_error,
+        "completing under an open question was allowed: {reply}"
+    );
+    assert!(!reply.contains(KNOWN), "{reply}");
+    assert!(
+        reply.contains("rotate [REDACTED:known_secret] now?"),
+        "the refusal still names the question: {reply}"
+    );
+    let _ = turn.end.send(());
+    h.runtime.shutdown().await;
+}
+
 /// The same guard on the engine-bridge path, which serves one
 /// tool call per request instead of a batch. A `long_lived` agent's settle
 /// only parks it on `Inbox` rather than ending it, so the park gate must
