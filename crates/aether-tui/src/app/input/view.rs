@@ -184,6 +184,7 @@ impl App {
                 ViewAction::PinWorkspace { path, pinned } => self.pin_workspace(&path, pinned),
                 ViewAction::SetKey { action, chord } => self.set_key(action, chord),
                 ViewAction::ResetKeys => self.reset_keys(),
+                ViewAction::PreviewTheme(choice) => self.preview_theme(choice),
             }
         }
         effects

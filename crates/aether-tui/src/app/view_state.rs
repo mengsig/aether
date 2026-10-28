@@ -131,6 +131,7 @@ impl App {
             bottom: Default::default(),
             theme,
             theme_choice,
+            committed_theme: None,
             theme_epoch: 0,
             names_version: 0,
             flash: None,

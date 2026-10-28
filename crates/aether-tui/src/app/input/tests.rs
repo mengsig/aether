@@ -1088,3 +1088,113 @@ fn focused_board_passes_voice_keys_and_empty_draft_quit() {
     press(&mut app, ctrl('g'));
     assert!(quits(&press(&mut app, ctrl('d'))));
 }
+
+#[test]
+fn theme_picker_previews_without_saving_then_restores_or_commits() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = app();
+    app.options.prefs_dir = Some(dir.path().into());
+    app.run_slash(SlashCommand::SetTheme("auto".parse().unwrap()));
+    let original = app.theme.spec();
+    let choice = app.theme_choice.clone();
+    let path = dir.path().join(crate::prefs::FILE);
+    let saved = std::fs::read(&path).unwrap();
+    app.run_slash(SlashCommand::Theme);
+    press(&mut app, key(KeyCode::Down));
+    assert_ne!(app.theme.spec().mode, original.mode);
+    for _ in 0..2 {
+        press(&mut app, key(KeyCode::Down));
+    }
+    assert_eq!(
+        app.theme.spec().scheme,
+        crate::ui::theme::Builtin::Nord.scheme()
+    );
+    assert_eq!(app.theme_choice, choice);
+    assert_eq!(std::fs::read(&path).unwrap(), saved);
+    press(&mut app, key(KeyCode::Esc));
+    assert_eq!(app.theme.spec(), original);
+    assert!(app.committed_theme.is_none());
+    app.run_slash(SlashCommand::Theme);
+    for c in "nord".chars() {
+        press(&mut app, key(KeyCode::Char(c)));
+    }
+    assert_eq!(
+        app.theme.spec().scheme,
+        crate::ui::theme::Builtin::Nord.scheme()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), saved);
+    press(&mut app, key(KeyCode::Enter));
+    assert_eq!(app.theme_choice.to_string(), "nord");
+    assert!(app.committed_theme.is_none());
+    assert_ne!(std::fs::read(&path).unwrap(), saved);
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("theme = \"nord\"")
+    );
+}
+
+#[test]
+fn terminal_probe_upgrades_only_indexed_depth_on_positive_support() {
+    use crate::ui::theme::ColorDepth;
+    use crate::ui::theme::probe::TerminalProbe;
+    use crate::ui::theme::tokens::{Rgb, TerminalPalette, ThemeSpec};
+    for (before, supported, after) in [
+        (ColorDepth::Indexed256, true, ColorDepth::Truecolor),
+        (ColorDepth::Indexed256, false, ColorDepth::Indexed256),
+        (ColorDepth::Basic16, true, ColorDepth::Basic16),
+    ] {
+        let mut app = app();
+        app.theme = Theme::resolve(ThemeSpec {
+            depth: before,
+            ..app.theme.spec()
+        });
+        let palette = Some(TerminalPalette {
+            fg: Rgb(255, 255, 255),
+            bg: Rgb(0, 0, 0),
+        });
+        app.apply_terminal_probe(TerminalProbe {
+            palette,
+            truecolor: supported,
+        });
+        assert_eq!(app.theme.spec().depth, after);
+        assert_eq!(app.theme.spec().palette, palette);
+    }
+}
+
+#[test]
+fn broken_theme_previews_its_fallback_without_flashing_or_saving() {
+    use crate::ui::theme::{Builtin, files};
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(files::dir(dir.path())).unwrap();
+    std::fs::write(
+        files::dir(dir.path()).join("broken.toml"),
+        "base = \"nord\"\nrunning = \"invalid\"",
+    )
+    .unwrap();
+    let mut app = app();
+    app.options.definitions_dir = Some(dir.path().into());
+    app.options.prefs_dir = Some(dir.path().into());
+    let original = app.theme.spec();
+    let choice = app.theme_choice.clone();
+    let flash = app.live_flash().map(str::to_owned);
+    app.preview_theme(Some("broken".parse().unwrap()));
+    assert_eq!(app.live_flash(), flash.as_deref());
+    assert_eq!(app.theme.spec().scheme, Builtin::Nord.scheme());
+    assert_eq!(app.theme_choice, choice);
+    assert!(!dir.path().join(crate::prefs::FILE).exists());
+    app.preview_theme(None);
+    assert_eq!(app.theme.spec(), original);
+}
+
+#[test]
+fn ctrl_c_restores_the_theme_before_closing_its_picker() {
+    let mut app = app();
+    let original = app.theme.spec();
+    app.run_slash(SlashCommand::Theme);
+    press(&mut app, key(KeyCode::Down));
+    assert!(app.committed_theme.is_some());
+    press(&mut app, ctrl('c'));
+    assert_eq!(app.theme.spec(), original);
+    assert!(app.bottom.view_stack.is_empty());
+}

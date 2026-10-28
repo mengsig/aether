@@ -190,7 +190,14 @@ Everything you send goes to the viewed agent.
 Each agent keeps its own draft: switching to another agent parks your text,
 pasted blocks and image chips, and selecting the first agent again brings them back.
 
+With no model configured, Enter keeps your request in the composer. The
+`no model to run on yet · /login` hint stays until the next key.
+
 ### Images
+
+A message the host refuses (for example, images sent to a host older than
+protocol 19) returns to that agent's draft with its images. A message whose
+delivery is uncertain also returns to the draft and is never resent automatically.
 
 A message can carry images (a screenshot, a diagram) next to its text. There
 are three ways to attach one, and each adds a chip above the draft,
@@ -369,8 +376,10 @@ hue; everything else holds still.
 | any other name | a theme file, below |
 
 `/theme` lists every theme with a swatch of its colours on your terminal
-(colourless when `NO_COLOR` chose `mono`);
-Enter uses one and saves it to `ui.toml` as `theme = "<name>"`. `/theme <name>`
+(colourless when `NO_COLOR` chose `mono`).
+Moving through the list previews each theme across the whole screen. Enter keeps
+it and saves it to `ui.toml` as `theme = "<name>"`; Esc restores the original
+theme (clear an active filter first). `/theme <name>`
 does the same directly, and `/settings` steps through the built-ins. For one
 run use `--theme` (also `AETHER_THEME`). The flag wins over `NO_COLOR`, which
 wins over the saved choice. `dusk`, `dawn` and `monochrome` are still accepted
@@ -382,7 +391,14 @@ When the terminal reports its background, each hue is made readable against it
 and rules are blended from the terminal's own colours. Colours are reduced to
 the terminal's depth: 256-colour terminals get the nearest palette entry, and
 16-colour terminals use their own basic colours, so there every palette looks
-the same.
+the same. At 256 colours the user-message band picks the nearest entry that
+still stands out from the probed background.
+
+`COLORTERM=truecolor` enables truecolor. SSH does not normally forward
+`COLORTERM`, so when `TERM` claims 256 colours Aether also asks the terminal
+at startup using DECRQSS and XTGETTCAP. If the terminal does not confirm
+support, set `COLORTERM=truecolor` on the host, or configure SSH
+`SendEnv COLORTERM` and server `AcceptEnv COLORTERM`.
 
 ### Theme files
 
@@ -584,7 +600,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+G` | go to the agents board, opening it if hidden |
 | `Ctrl+B` | show / hide the agents board |
 | `Ctrl+O` | switch workspace: view its agent, or start one there |
-| `Alt+O` | files in the focused or latest message |
+| `Alt+O` | files in the focused message or nearest recent message with references |
 | `Alt+E` | open the viewed file externally |
 | `Alt+W` | close the file viewer |
 | `Alt+Z` | toggle full screen file viewer |
@@ -870,7 +886,8 @@ from a bounded journal, so unchanged frames do not rescan hidden history.
 ## Local file viewer
 
 **Alt+O** lists local file references in the last clicked message, or the
-latest message when none is focused. Bare paths, Markdown links and local
+nearest recent message with file references (looking up to 64 messages back)
+when none is focused. Bare paths, Markdown links and local
 `file://` links are supported. Click a highlighted reference without dragging
 to open it; dragging continues to select text. The viewed agent's own
 workspace resolves relative paths, including a child's separate workspace.
