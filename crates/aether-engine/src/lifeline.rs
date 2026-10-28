@@ -92,6 +92,8 @@ impl GroupWatch {
             .stderr(std::process::Stdio::null());
         command.as_std_mut().process_group(pid as i32);
         aether_spawn::reset_signals(command.as_std_mut());
+        // A group stop's TERM must not end it before the stop's KILL lands.
+        aether_spawn::ignore_stop_signals(command.as_std_mut());
         match command.spawn() {
             Ok(watchdog) => {
                 assert!(watchdog.stdin.is_some(), "the watchdog reads a pipe");
@@ -185,13 +187,16 @@ pub(crate) mod tests {
     }
 
     /// A CLI wrapper that starts the real engine as its child and waits on it,
-    /// as the npm `codex` launcher does without `process.execve`.
-    fn wrapper(child_pid_file: &std::path::Path) -> tokio::process::Command {
+    /// as the npm `codex` launcher does without `process.execve`. With
+    /// `ignore_term` both ignore SIGTERM, as a test runner might.
+    fn wrapper(child_pid_file: &str, ignore_term: bool) -> tokio::process::Command {
         let script = r#"sleep 30 & echo $! > "$1.tmp" && mv "$1.tmp" "$1"; wait"#;
-        engine(
-            "/bin/sh",
-            &["-c", script, "sh", child_pid_file.to_str().unwrap()],
-        )
+        let script = if ignore_term {
+            format!("trap '' TERM; {script}")
+        } else {
+            script.to_owned()
+        };
+        engine("/bin/sh", &["-c", &script, "sh", child_pid_file])
     }
 
     pub(crate) fn alive(pid: u32) -> bool {
@@ -229,24 +234,30 @@ pub(crate) mod tests {
     }
 
     /// The helper side: spawn an engine stand-in, print the pids to watch,
-    /// wait to be killed. `HELPER_ENV` names a file for a wrapper's child pid.
+    /// wait to be killed. `HELPER_ENV` is `direct`, or a file for a wrapper's
+    /// child pid; prefixed `term:`, the group is sent SIGTERM before `ready`.
     #[tokio::test]
     async fn lifeline_helper_parent() {
         let Some(mode) = std::env::var_os(HELPER_ENV) else {
             return;
         };
-        let child_pid_file = std::path::PathBuf::from(&mode);
+        let mode = mode.into_string().unwrap();
+        let (stopping, child_pid_file) = match mode.strip_prefix("term:") {
+            Some(file) => (true, file),
+            None => (false, mode.as_str()),
+        };
         let command = if mode == "direct" {
             sleeper()
         } else {
-            wrapper(&child_pid_file)
+            wrapper(child_pid_file, stopping)
         };
         let (child, _watch) = super::spawn(command).unwrap();
-        println!("pid={}", child.id().unwrap());
+        let pid = child.id().unwrap();
+        println!("pid={pid}");
         if mode != "direct" {
             let wrapped = tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
-                    if let Ok(pid) = std::fs::read_to_string(&child_pid_file) {
+                    if let Ok(pid) = std::fs::read_to_string(child_pid_file) {
                         return pid;
                     }
                     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -255,6 +266,13 @@ pub(crate) mod tests {
             .await
             .expect("the wrapper reports its child");
             println!("pid={}", wrapped.trim());
+        }
+        if stopping {
+            // The first step of a group stop; its KILL would follow the grace.
+            let group = nix::unistd::Pid::from_raw(pid as i32);
+            nix::sys::signal::killpg(group, nix::sys::signal::Signal::SIGTERM).unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert!(alive(pid), "the wrapper ignores TERM");
         }
         println!("ready");
         tokio::time::sleep(Duration::from_secs(60)).await;
@@ -321,6 +339,15 @@ pub(crate) mod tests {
     fn a_killed_parent_takes_a_wrapped_engine_with_it() {
         let dir = tempfile::tempdir().unwrap();
         kill_parent_and_expect_gone(HELPER, HELPER_ENV, dir.path().join("child.pid").as_os_str());
+    }
+
+    /// A daemon killed in a group stop's grace, after its TERM and before its
+    /// KILL, still takes the members that ignore TERM.
+    #[test]
+    fn a_parent_killed_mid_stop_takes_a_term_ignoring_engine_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mode = format!("term:{}", dir.path().join("child.pid").display());
+        kill_parent_and_expect_gone(HELPER, HELPER_ENV, mode.as_ref());
     }
 
     /// A clean end drops the watch: that stops the watchdog, not the group.

@@ -74,6 +74,23 @@ mod unix {
     /// No parent-death signal outside Linux; see the Linux variant.
     #[cfg(not(target_os = "linux"))]
     pub fn die_with_parent(_command: &mut std::process::Command) {}
+
+    /// Signals a process group is stopped with before its SIGKILL.
+    const STOP: [Signal; 3] = [Signal::SIGHUP, Signal::SIGINT, Signal::SIGTERM];
+
+    /// Make `command`'s child ignore SIGHUP, SIGINT and SIGTERM from the start,
+    /// so only SIGKILL ends it. Register after [`reset_signals`], which it overrides.
+    pub fn ignore_stop_signals(command: &mut std::process::Command) {
+        // SAFETY: installing SIG_IGN is a raw sigaction call on stack data.
+        unsafe {
+            command.pre_exec(|| {
+                for sig in STOP {
+                    signal(sig, SigHandler::SigIgn).map_err(io::Error::from)?;
+                }
+                Ok(())
+            })
+        };
+    }
 }
 
 /// Ignore SIGINT in this process, as a launcher's `&` would.
@@ -88,7 +105,9 @@ pub fn ignore_sigint() -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-pub use unix::{die_with_parent, reset_child_signals, reset_pty_signals, reset_signals};
+pub use unix::{
+    die_with_parent, ignore_stop_signals, reset_child_signals, reset_pty_signals, reset_signals,
+};
 
 #[cfg(not(unix))]
 pub fn reset_signals(_command: &mut std::process::Command) {}
@@ -138,6 +157,25 @@ mod tests {
         let ignored = reset.lines().find(|l| l.starts_with("SigIgn:")).unwrap();
         let bits = u64::from_str_radix(ignored.rsplit('\t').next().unwrap(), 16).unwrap();
         assert_eq!(bits & (1 << (Signal::SIGINT as u64 - 1)), 0, "{reset}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stop_signal_ignoring_child_ignores_them_after_a_reset() {
+        let mut command = read_masks();
+        reset_signals(&mut command);
+        ignore_stop_signals(&mut command);
+        let status = String::from_utf8(command.output().unwrap().stdout).unwrap();
+        let ignored = status.lines().find(|l| l.starts_with("SigIgn:")).unwrap();
+        let bits = u64::from_str_radix(ignored.rsplit('\t').next().unwrap(), 16).unwrap();
+        for sig in [Signal::SIGHUP, Signal::SIGINT, Signal::SIGTERM] {
+            assert_ne!(
+                bits & (1 << (sig as u64 - 1)),
+                0,
+                "{sig} not ignored: {status}"
+            );
+        }
+        assert_eq!(bits & (1 << (Signal::SIGQUIT as u64 - 1)), 0, "{status}");
     }
 
     /// Spawn `sleep 30` from a thread that ends at once; `die` marks it.

@@ -513,7 +513,8 @@ memory, crashed) takes its engines with it on Linux. Each engine process, and
 each engine version probe, starts with a parent-death signal, so the kernel
 sends it `SIGKILL` when the daemon dies. Its process group also holds a small
 `/bin/sh` watchdog reading a pipe that only the daemon holds open; when the
-daemon dies the pipe closes and the watchdog kills the whole group. That
+daemon dies the pipe closes and the watchdog kills the whole group. It
+ignores `SIGTERM`, so a daemon killed while stopping a group still kills it. That
 takes the processes the engine started in its group, such as the native CLI
 a wrapper like the npm `codex` launcher starts, and its shell commands. A
 version probe's group is killed as soon as the probe ends. The MCP bridge exits when its engine's pipe closes. The next daemon start kills
