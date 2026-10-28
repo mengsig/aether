@@ -51,10 +51,10 @@ pub async fn notify_resolve(
             .resolve_notification(id)
             .await
             .with_context(|| format!("resolve notification {id}"))?;
-        return report_resolved(json, std::slice::from_ref(&resolved));
+        return report_resolved(json, std::slice::from_ref(&resolved), false);
     }
     let resolved = resolve_all_open(&client).await?;
-    report_resolved(json, &resolved)
+    report_resolved(json, &resolved, true)
 }
 
 async fn connect_to_center(socket: impl Into<aether_client::Endpoint>) -> anyhow::Result<Client> {
@@ -91,13 +91,13 @@ async fn resolve_all_open(client: &Client) -> anyhow::Result<Vec<Notification>> 
     }
 }
 
-fn report_resolved(json: bool, resolved: &[Notification]) -> anyhow::Result<()> {
+fn report_resolved(json: bool, resolved: &[Notification], counted: bool) -> anyhow::Result<()> {
     if json {
         println!("{}", serde_json::to_string(resolved)?);
-    } else if let [one] = resolved {
-        println!("resolved {}", one.id);
-    } else {
+    } else if counted {
         println!("resolved {}", resolved.len());
+    } else {
+        println!("resolved {}", resolved[0].id);
     }
     Ok(())
 }

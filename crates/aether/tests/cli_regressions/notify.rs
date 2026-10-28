@@ -43,11 +43,14 @@ fn answer(command: Command, center: &mut [Notification]) -> Result<Reply, ErrorR
     }
 }
 
-async fn serve(listener: UnixListener, features: &'static [&'static str]) {
+async fn serve(
+    listener: UnixListener,
+    features: &'static [&'static str],
+    mut center: Vec<Notification>,
+) {
     let (stream, _) = listener.accept().await.unwrap();
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
-    let mut center = center();
     while let Some(line) = next_request(&mut lines).await {
         let frame: ClientFrame = serde_json::from_str(&line).unwrap();
         let result = match frame.command {
@@ -71,9 +74,17 @@ async fn serve(listener: UnixListener, features: &'static [&'static str]) {
 }
 
 async fn run(args: &[&str], features: &'static [&'static str]) -> Output {
+    run_with(args, features, center()).await
+}
+
+async fn run_with(
+    args: &[&str],
+    features: &'static [&'static str],
+    center: Vec<Notification>,
+) -> Output {
     let root = tempfile::tempdir().unwrap();
     let listener = UnixListener::bind(root.path().join("a.sock")).unwrap();
-    let server = tokio::spawn(serve(listener, features));
+    let server = tokio::spawn(serve(listener, features, center));
     let mut command = process::Command::from(isolated_command(root.path(), args));
     command.kill_on_drop(true);
     let output = tokio::time::timeout(Duration::from_secs(30), command.output())
@@ -179,5 +190,15 @@ fn resolve_needs_an_id_or_all_but_not_both() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    }
+}
+
+#[tokio::test]
+async fn resolve_all_prints_a_count_for_none_or_one() {
+    let open = |n: usize| center().into_iter().take(n).collect::<Vec<_>>();
+    for (center, expected) in [(open(0), "resolved 0\n"), (open(1), "resolved 1\n")] {
+        let output = run_with(&["notify", "resolve", "--all"], &["notifications"], center).await;
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stdout(&output), expected);
     }
 }
