@@ -171,6 +171,59 @@ async fn unreadable_resource_history_does_not_clear_the_lease() {
     );
 }
 
+#[tokio::test]
+async fn a_quarantined_recovery_still_expires_the_lost_engine_approval() {
+    let dir = tempfile::tempdir().expect("private state");
+    let path = dir.path().join("state.db");
+    let store = Arc::new(SqliteStore::open(&path).expect("store"));
+    let runtime = start(store, dir.path()).await;
+    runtime.shutdown().await;
+    let mut bad = interrupted(&runtime);
+    let engine = aether_core::model::ModelRef::new("claude-code", "sonnet");
+    assert!(runtime.engine_of(&engine).is_some());
+    bad.fallbacks = vec![engine.clone()];
+    runtime
+        .apply(Commit::new().mutate(Mutation::UpsertAgent(bad.clone())))
+        .expect("engine fallback");
+    acquire(&runtime, bad.id);
+    let approval = raise_approval(&runtime, &bad, engine);
+    let conn = rusqlite::Connection::open(&path).expect("raw store");
+    assert_eq!(
+        conn.execute(
+            "UPDATE events SET body = '{' WHERE agent_id = ?1 AND type = 'lease.resource_acquired'",
+            [bad.id.to_string()],
+        )
+        .expect("corrupt resource event"),
+        1
+    );
+    recover(&runtime).expect("isolate the corrupt resource history");
+    assert!(matches!(
+        runtime.store.agent(bad.id).unwrap().unwrap().status,
+        AgentStatus::Blocked {
+            reason: BlockReason::Inspection { .. }
+        }
+    ));
+    assert!(matches!(
+        runtime.store.approval(approval.id).unwrap().unwrap().status,
+        aether_core::tool::ApprovalStatus::Resolved {
+            decision: aether_core::tool::ApprovalDecision::Denied,
+            ..
+        }
+    ));
+    assert!(
+        runtime
+            .resolve_approval(
+                approval.id,
+                aether_core::tool::ApprovalDecision::Approved,
+                Actor::user(),
+                None,
+                None
+            )
+            .is_err(),
+        "an expired approval cannot be granted later"
+    );
+}
+
 fn missing_checkpoint_artifact(agent: AgentId) -> aether_core::checkpoint::Checkpoint {
     use aether_core::checkpoint::{
         ArtifactNote, Checkpoint, CheckpointDraft, CheckpointProvenance,

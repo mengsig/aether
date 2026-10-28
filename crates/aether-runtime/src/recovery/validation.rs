@@ -159,20 +159,23 @@ pub(super) fn quarantine_failed_recovery(
         },
         now(),
     )?;
-    runtime.apply(
-        Commit::new()
-            .event(
-                EventDraft::new(
-                    Actor::System,
-                    EventKind::AgentBlocked {
-                        reason: detail,
-                        dependency: None,
-                    },
-                )
-                .agent(id)
-                .run(agent.run),
-            )
-            .mutate(Mutation::UpsertAgent(agent)),
-    )?;
+    let hold = runtime.hold();
+    let mut commit = Commit::new().event(
+        EventDraft::new(
+            Actor::System,
+            EventKind::AgentBlocked {
+                reason: detail,
+                dependency: None,
+            },
+        )
+        .agent(id)
+        .run(agent.run),
+    );
+    // The turn was lost however recovery failed: an approval an engine waited
+    // on inside it is expired, not left for a grant nothing can act on.
+    let lost = approvals_of_unread_turn(runtime, &agent)?;
+    expire_lost_approvals(runtime, &mut commit, &agent, &lost)?;
+    commit.push_mutation(Mutation::UpsertAgent(agent));
+    runtime.apply_held(hold, commit)?;
     Ok(())
 }
