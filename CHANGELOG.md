@@ -58,6 +58,16 @@ release is also the text of its GitHub release.
   which runs expire and why the others are kept is unchanged. Schema version
   28 adds an `approvals(agent_id)` index for those checks; stores upgrade in
   place on first open.
+- **Turn, delegation and command checks read only the agents they need
+  (#314).** The per-turn budget check, the wake budget check, pause, resume,
+  `update_agent` with `subtree`, delegation validation and the inspection
+  scope decoded every agent the store had ever held, up to 230 ms per check
+  with 20k archived agents, and validation searched that list once per
+  subtree member. They now load the agent's subtree through one indexed
+  query, and the delegation cap advisory loads only the ancestry of the
+  delegating agent and of running turns: under 1 ms each at that scale.
+  Results are unchanged, including the completed, cancelled, paused and
+  archived descendants they count.
 
 - **Status, doctor and auth report current and correct state (#311).**
   Problems about one agent (a stall, a failed budget, deadline or

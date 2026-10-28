@@ -57,7 +57,8 @@ pub(super) fn store_error_class(e: &StoreError) -> &'static str {
     }
 }
 
-/// How many times the advisory reloads ancestry because a turn started while it read.
+/// How many times the advisory reloads ancestry because a turn started while
+/// it read, before it reads the whole fleet instead.
 const ANCESTRY_ROUNDS: usize = 4;
 
 /// The advisory told to whoever calls `delegate`: which cap, if any, the
@@ -95,16 +96,15 @@ pub(super) fn cap_status(runtime: &Runtime, agent: &Agent, child_on_engine: bool
         drop(sched);
         wanted.extend(started);
     }
-    unknown_status(
-        runtime,
-        agent,
-        "a scheduler that kept changing",
-        "turns kept starting while ancestry was read",
-    )
+    // Turns kept starting meanwhile: count over the whole fleet, as before #314.
+    match runtime.store.agents(&AgentFilter::default()) {
+        Ok(fleet) => counted_status(runtime, agent, &fleet, &runtime.sched.lock(), engine_cap),
+        Err(e) => unknown_status(runtime, agent, store_error_class(&e), &e.to_string()),
+    }
 }
 
-/// `chains` holds `agent` and the ancestors of every running turn, which is
-/// all `cap_holder` and `on_provider_descendants` read of the fleet.
+/// `chains` holds `agent` and the ancestors of every running turn (or the
+/// whole fleet): all `cap_holder` and `on_provider_descendants` read of it.
 fn counted_status(
     runtime: &Runtime,
     agent: &Agent,
