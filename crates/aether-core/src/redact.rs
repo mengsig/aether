@@ -9,6 +9,9 @@ use std::sync::{Arc, LazyLock};
 use regex::Regex;
 
 mod boundary;
+mod span;
+
+pub use span::CUT_CONTEXT_BYTES;
 
 /// Replaces recognizable secrets before output is persisted or shown.
 #[derive(Clone)]
@@ -21,6 +24,8 @@ pub struct Redactor {
     known_bytes: Option<regex::bytes::Regex>,
     /// Fewest bytes any rule matches; a shorter text run needs no masking.
     shortest_match: usize,
+    /// Bytes in the longest spelling of a known secret, 0 with none.
+    longest_known: usize,
 }
 
 /// Shortest known secret value masked verbatim: a shorter one would also
@@ -121,6 +126,7 @@ impl Redactor {
             multiline_known: Arc::from([]),
             known_bytes: None,
             shortest_match: MIN_KNOWN_SECRET_CHARS,
+            longest_known: 0,
         }
     }
 
@@ -165,6 +171,12 @@ impl Redactor {
             .collect();
         spellings.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
         spellings.dedup();
+        redactor.longest_known = spellings[0].len();
+        debug_assert!(
+            spellings
+                .iter()
+                .all(|value| value.len() <= redactor.longest_known)
+        );
         let alternation = spellings
             .iter()
             .map(|value| regex::escape(value))
@@ -343,11 +355,13 @@ impl Redactor {
             return Ok(chunk.len());
         }
         let partial = scan.partial().max(boundary::open_shape(chunk));
-        Ok(boundary::cut_at_cap(
-            chunk,
-            partial,
-            self.known_bytes.as_ref(),
-        ))
+        let cut = boundary::cut_at_cap(chunk, partial, self.known_bytes.as_ref());
+        // A line that fills the chunk is cut mid-line: hold back enough to see
+        // any secret across the cut whole, and keep the cut off it.
+        let latest = chunk.len().saturating_sub(self.cut_context());
+        let (_, clear) = self.clear_span(chunk, 0, cut.min(latest));
+        debug_assert!(clear <= chunk.len());
+        Ok(if clear == 0 { chunk.len() } else { clear })
     }
 }
 
@@ -717,6 +731,32 @@ mod tests {
                 out == whole.as_ref(),
                 "{known:?}: the stream differs from masking the whole input"
             );
+        }
+    }
+
+    #[test]
+    fn a_line_cut_at_the_stream_cap_never_splits_a_secret() {
+        const CAP: usize = STREAM_CHUNK_BYTES + STREAM_LINE_LIMIT_BYTES;
+        let known = "fleet-token-0123456789abcdef";
+        let key = "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz012345";
+        let r = Redactor::with_known_secrets([known]).unwrap();
+        for (secret, label) in [(known, "known_secret"), (key, "anthropic_key")] {
+            for before_cap in [1, 8, secret.len() - 1] {
+                // One line with no break, so the cap cuts it mid-line.
+                let input = format!("{} {secret} tail\n", ".".repeat(CAP - before_cap - 1));
+                let mut out = Vec::new();
+                r.redact_stream(input.as_bytes(), &mut out).unwrap();
+                let out = String::from_utf8(out).unwrap();
+                assert!(
+                    out.contains(&format!("[REDACTED:{label}]")),
+                    "{label} {before_cap}: masked whole"
+                );
+                assert!(
+                    !out.contains(&secret[secret.len() - 8..]),
+                    "{label} {before_cap}: no part of it shows"
+                );
+                assert!(out.ends_with(" tail\n"), "the rest of the line is kept");
+            }
         }
     }
 
