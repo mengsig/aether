@@ -27,6 +27,15 @@ async fn fixture_with_worker(
     days: u16,
     keep_running: bool,
 ) -> (Arc<Runtime>, Agent, tempfile::TempDir) {
+    let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+    fixture_on(store, days, keep_running).await
+}
+
+async fn fixture_on(
+    store: Arc<SqliteStore>,
+    days: u16,
+    keep_running: bool,
+) -> (Arc<Runtime>, Agent, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("config.toml"),
@@ -35,7 +44,7 @@ async fn fixture_with_worker(
     .unwrap();
     let runtime = Runtime::start_with_engines(
         RuntimeConfig::default(),
-        Arc::new(SqliteStore::open_in_memory().unwrap()),
+        store,
         Arc::new(Models::load(Some(dir.path().to_path_buf())).unwrap()),
         Arc::new(ToolRegistry::with_builtins()),
         Some(Arc::new(ScriptedClient::with_responses(vec![]))),
@@ -233,6 +242,24 @@ async fn quarantine_protects_history_until_resources_are_released() {
 
 /// Judging a run scans whole tables; under the commit gate and `sched` that
 /// stalled every commit and `status` for minutes each hourly sweep.
+/// Under the gate and `sched`, expiry judges only what changed since the
+/// screen; a second whole-table pass there stalled every commit (#314).
+#[tokio::test]
+async fn an_eligible_run_is_judged_in_full_once_before_the_commit_gate() {
+    let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let (runtime, agent, _dir) = fixture_on(store.clone(), 7, false).await;
+    let passes = store.history_guard_passes();
+    let verdict = runtime
+        .expire_run_history(agent.run, now() - chrono::Duration::days(7))
+        .unwrap();
+    assert!(matches!(verdict, RunExpiry::Expired { .. }), "{verdict:?}");
+    assert_eq!(
+        store.history_guard_passes(),
+        passes + 1,
+        "only the screen judges the whole tables"
+    );
+}
+
 #[tokio::test]
 async fn a_protected_run_is_judged_without_the_commit_gate_or_scheduler() {
     use std::time::Duration;

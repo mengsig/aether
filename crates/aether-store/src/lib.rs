@@ -45,7 +45,7 @@ use aether_core::memory_feedback::{FeedbackTally, MemoryFeedback};
 
 pub use migration_backup::backup_database;
 pub use schema::SCHEMA_VERSION;
-pub use sqlite::{PushSubscriptionRow, RunExpiry, SqliteStore};
+pub use sqlite::{HistoryScreen, PushSubscriptionRow, RunExpiry, SqliteStore};
 
 /// The single write path, shared by everything that commits to one store.
 ///
@@ -587,8 +587,12 @@ pub trait Store: Send + Sync {
     ) -> Result<RunExpiry>;
 
     /// The checks of [`Store::expire_run_history`] without the write gate or
-    /// a write transaction: why `run` cannot expire yet, or `None` when it may.
-    fn screen_run_expiry(&self, run: RunId, before: Timestamp) -> Result<Option<RunExpiry>>;
+    /// a write transaction: why `run` cannot expire yet, or that it may.
+    fn screen_run_expiry(&self, run: RunId, before: Timestamp) -> Result<HistoryScreen>;
+
+    /// [`Store::expire_run_history`] for a run `screen` found eligible, judging
+    /// again only what was written since the screen.
+    fn expire_screened_run(&self, screen: &HistoryScreen, hold: &Hold<'_>) -> Result<RunExpiry>;
 
     /// Copy durable state into an isolated ephemeral store for ordered expiry simulation.
     /// Mutating the returned store must never change source rows or payload files.

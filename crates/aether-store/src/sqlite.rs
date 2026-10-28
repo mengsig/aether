@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 
 mod blobs;
+mod change_watch;
 mod checkpoint;
 mod devices;
 mod engine_sessions;
@@ -23,7 +24,7 @@ mod event_blobs;
 mod event_queries;
 mod history_retention;
 mod quarantine;
-pub use history_retention::RunExpiry;
+pub use history_retention::{HistoryScreen, RunExpiry};
 mod ledger;
 mod memories;
 mod memory_feedback;
@@ -59,6 +60,13 @@ pub struct SqliteStore {
     /// string the record carries, so a shared blob resolves the same way.
     mem_artifacts: Mutex<BTreeMap<String, Vec<u8>>>,
     commits: AtomicU64,
+    /// Rows written on `conn` while a history screen is open.
+    changes: std::sync::Arc<change_watch::ChangeLog>,
+    /// `conn`'s `PRAGMA data_version` when last read, which moves when any
+    /// other connection commits: such writes are not in `changes`.
+    data_version: std::sync::atomic::AtomicI64,
+    /// Whole-table history guard passes, so tests can see where they run.
+    guard_passes: AtomicU64,
     writes: write_tally::WriteLedger,
     /// Submissions recorded since the last size pass. Finding the overflow
     /// costs a scan of the table, so it is paid every
@@ -168,7 +176,11 @@ impl SqliteStore {
         reader.execute_batch(KEEP_TEMP_IN_MEMORY)?;
         store.reader = Some(Mutex::new(reader));
         store.path = Some(path.to_path_buf());
-        store.checkpointer = Some(checkpoint::Checkpointer::start(path, every)?);
+        store.checkpointer = Some(checkpoint::Checkpointer::start(
+            path,
+            every,
+            store.changes.clone(),
+        )?);
         Ok(store)
     }
 
@@ -221,6 +233,9 @@ impl SqliteStore {
             [],
         )?;
         Self::ensure_submission_ledger(&conn)?;
+        let changes = std::sync::Arc::new(change_watch::ChangeLog::default());
+        change_watch::ChangeLog::install(&changes, &conn)?;
+        let data_version = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
         Ok(Self {
             conn: Mutex::new(conn),
             reader: None,
@@ -230,6 +245,9 @@ impl SqliteStore {
             staging_dir: None,
             mem_artifacts: Mutex::new(BTreeMap::new()),
             commits: AtomicU64::new(0),
+            changes,
+            data_version: std::sync::atomic::AtomicI64::new(data_version),
+            guard_passes: AtomicU64::new(0),
             writes: write_tally::WriteLedger::new(),
             submissions_since_size_pass: AtomicU64::new(0),
             max_submissions: aether_core::idempotency::MAX_SUBMISSIONS,

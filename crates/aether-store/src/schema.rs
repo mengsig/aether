@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 27;
+pub const SCHEMA_VERSION: u32 = 28;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -489,9 +489,15 @@ CREATE TRIGGER IF NOT EXISTS event_blob_refs_collect AFTER DELETE ON event_blob_
 END;
 "#;
 
+// History retention asks whether a run's agents hold a pending approval, and
+// without this index every such question read the whole approvals table.
+const V28: &str = r#"
+CREATE INDEX IF NOT EXISTS approvals_agent ON approvals(agent_id);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27,
+    V22, V23, V24, V25, V26, V27, V28,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the

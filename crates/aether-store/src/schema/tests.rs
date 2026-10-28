@@ -1239,3 +1239,29 @@ fn v27_replays_over_a_store_whose_stamp_was_rewound() {
         "the reference still resolves"
     );
 }
+
+#[test]
+fn a_v27_store_gains_the_approvals_agent_index_history_retention_reads() {
+    let directory = tempfile::tempdir().unwrap();
+    let v27 = database_at(&directory.path().join("aether.db"), 27);
+    let plan = |conn: &Connection| -> String {
+        conn.prepare(
+            "EXPLAIN QUERY PLAN SELECT id FROM approvals \
+             WHERE agent_id IN (SELECT id FROM agents WHERE run=?1)",
+        )
+        .unwrap()
+        .query_map(["run"], |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap()
+        .join("; ")
+    };
+    assert!(!plan(&v27).contains("approvals_agent"), "{}", plan(&v27));
+    migrate(&v27).unwrap();
+    assert_eq!(version(&v27), SCHEMA_VERSION);
+    assert!(
+        plan(&v27).contains("USING INDEX approvals_agent"),
+        "{}",
+        plan(&v27)
+    );
+}

@@ -80,8 +80,16 @@ impl Store for SqliteStore {
         &self,
         run: aether_core::id::RunId,
         before: Timestamp,
-    ) -> Result<Option<crate::RunExpiry>> {
+    ) -> Result<crate::HistoryScreen> {
         SqliteStore::screen_run_expiry(self, run, before)
+    }
+
+    fn expire_screened_run(
+        &self,
+        screen: &crate::HistoryScreen,
+        hold: &crate::Hold<'_>,
+    ) -> Result<crate::RunExpiry> {
+        SqliteStore::expire_screened_run(self, screen, hold)
     }
 
     fn commit(&self, commit: Commit) -> Result<Vec<Event>> {

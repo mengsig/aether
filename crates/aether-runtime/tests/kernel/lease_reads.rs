@@ -78,8 +78,16 @@ impl Store for CountingStore {
         &self,
         run: aether_core::id::RunId,
         before: aether_core::time::Timestamp,
-    ) -> StoreResult<Option<aether_store::RunExpiry>> {
+    ) -> StoreResult<aether_store::HistoryScreen> {
         self.inner.screen_run_expiry(run, before)
+    }
+
+    fn expire_screened_run(
+        &self,
+        screen: &aether_store::HistoryScreen,
+        hold: &aether_store::Hold<'_>,
+    ) -> aether_store::Result<aether_store::RunExpiry> {
+        self.inner.expire_screened_run(screen, hold)
     }
 
     fn commit(&self, commit: Commit) -> StoreResult<Vec<Event>> {

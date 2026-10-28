@@ -4,6 +4,7 @@ use aether_core::agent::AgentStatusKind;
 use aether_core::task::TaskStatus;
 
 mod provenance;
+mod recheck;
 
 #[test]
 fn engine_session_ownership_survives_history_expiry_and_reopen() {
@@ -220,6 +221,9 @@ struct Fixture {
     task: Task,
     cutoff: Timestamp,
     gate: WriteGate,
+    /// Taken right after seeding, so expiry through it judges a test's own
+    /// writes as rows written since the screen.
+    early: crate::HistoryScreen,
 }
 
 impl Fixture {
@@ -260,12 +264,16 @@ impl Fixture {
                 ],
             )
             .expect("seed history");
+        let cutoff = now() - chrono::Duration::days(7);
+        let early = store.screen_run_expiry(agent.run, cutoff).expect("screen");
+        assert_eq!(early.blocker(), None, "the seeded run may expire");
         Self {
             store,
             agent,
             task,
-            cutoff: now() - chrono::Duration::days(7),
+            cutoff,
             gate: WriteGate::new(),
+            early,
         }
     }
 
@@ -283,7 +291,8 @@ impl Fixture {
             "preview wrote to the store"
         );
         assert_eq!(self.store.last_seq()?, last_seq);
-        let screened = self.store.screen_run_expiry(self.agent.run, self.cutoff)?;
+        let screen = self.store.screen_run_expiry(self.agent.run, self.cutoff)?;
+        let screened = screen.blocker().cloned();
         match (&preview, &screened) {
             (None, Some(RunExpiry::Missing)) => {}
             (Some(p), Some(RunExpiry::Protected(reason))) => {
@@ -305,9 +314,15 @@ impl Fixture {
             }
             other => panic!("preview and screen disagree: {other:?}"),
         }
-        let verdict =
-            self.store
-                .expire_run_history(self.agent.run, self.cutoff, &self.gate.hold())?;
+        let rechecked = self.store.recheck_screened(&self.early)?;
+        let verdict = self.store.expire_screened_run(&screen, &self.gate.hold())?;
+        match &rechecked {
+            Some(kept) => assert_eq!(kept, &verdict, "the recheck and expiry disagree"),
+            None => assert!(
+                matches!(verdict, RunExpiry::Expired { .. }),
+                "the recheck let through a run expiry kept: {verdict:?}"
+            ),
+        }
         if let (Some(p), RunExpiry::Expired { events, rows }) = (&preview, &verdict) {
             assert_eq!(p.events, *events as u64);
             assert_eq!(p.rows, *rows as u64);
@@ -763,7 +778,10 @@ fn the_v25_migration_releases_a_run_pinned_by_runless_lease_and_memory_events() 
         crate::schema::migrate(&conn).unwrap();
     }
     assert_eq!(
-        f.store.screen_run_expiry(f.agent.run, f.cutoff).unwrap(),
+        f.store
+            .screen_run_expiry(f.agent.run, f.cutoff)
+            .unwrap()
+            .blocker(),
         None
     );
     let verdict = f
@@ -894,8 +912,9 @@ fn screening_a_file_store_takes_neither_of_its_connections() {
         assert_eq!(
             screened
                 .expect("screened while both connections were held")
-                .unwrap(),
-            Some(RunExpiry::Protected("unfinished work"))
+                .unwrap()
+                .blocker(),
+            Some(&RunExpiry::Protected("unfinished work"))
         );
     });
 }

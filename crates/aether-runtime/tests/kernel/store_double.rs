@@ -189,8 +189,16 @@ impl Store for CommitsMidPass {
         &self,
         run: aether_core::id::RunId,
         before: aether_core::time::Timestamp,
-    ) -> Result<Option<aether_store::RunExpiry>> {
+    ) -> Result<aether_store::HistoryScreen> {
         self.inner.screen_run_expiry(run, before)
+    }
+
+    fn expire_screened_run(
+        &self,
+        screen: &aether_store::HistoryScreen,
+        hold: &aether_store::Hold<'_>,
+    ) -> aether_store::Result<aether_store::RunExpiry> {
+        self.inner.expire_screened_run(screen, hold)
     }
 
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool> {

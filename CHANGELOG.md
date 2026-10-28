@@ -46,6 +46,19 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **History expiry no longer judges whole tables under the commit gate
+  (#314).** Expiring one finished run re-ran every retention guard, whole-table
+  scans of the inbox, agents, events and more, while holding the runtime's
+  commit gate and scheduler lock: about 165 ms per run with 100k inbox rows,
+  during which every commit and `status` waited. The run is still judged in
+  full beforehand, under no lock. Under the gate expiry now re-reads only the
+  run's own agents and tasks and the rows written since that judgement, and
+  judges in full again only when the run itself gained members or another
+  connection wrote to the store. Held time for that run drops to about 1 ms;
+  which runs expire and why the others are kept is unchanged. Schema version
+  28 adds an `approvals(agent_id)` index for those checks; stores upgrade in
+  place on first open.
+
 - **Status, doctor and auth report current and correct state (#311).**
   Problems about one agent (a stall, a failed budget, deadline or
   scheduling check, a pending cancellation, a lease heartbeat) and about one
