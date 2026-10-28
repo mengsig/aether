@@ -251,7 +251,7 @@ pub const KEYS: &[KeySpec] = &[
     key(
         Session,
         "Alt+O",
-        "files in the focused or latest message",
+        "files in the focused or nearest message with references",
         "files in message",
     )
     .bound(&[KeyAction::Files]),

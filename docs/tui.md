@@ -600,7 +600,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+G` | go to the agents board, opening it if hidden |
 | `Ctrl+B` | show / hide the agents board |
 | `Ctrl+O` | switch workspace: view its agent, or start one there |
-| `Alt+O` | files in the focused message or nearest recent message with references |
+| `Alt+O` | files in the focused or nearest message with references |
 | `Alt+E` | open the viewed file externally |
 | `Alt+W` | close the file viewer |
 | `Alt+Z` | toggle full screen file viewer |

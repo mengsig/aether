@@ -148,8 +148,9 @@ async fn a_client_whose_daemon_lost_the_race_waits_for_the_winner() {
     let client = ensure_daemon(
         &socket,
         shell(&format!(
-            "printf 'Error: another aether daemon is already running\\n' > {}; exit 1",
-            startup_log_in(&dir).display()
+            "printf 'Error: another aether daemon is already running\\n' > {}; exit {}",
+            startup_log_in(&dir).display(),
+            aether_client::DAEMON_LOCK_BUSY_EXIT
         )),
     )
     .await
