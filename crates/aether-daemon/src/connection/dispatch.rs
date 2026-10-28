@@ -59,6 +59,28 @@ pub(super) fn read_artifact_slice(
     Ok((bytes, truncated))
 }
 
+/// [`read_artifact_slice`] with the daemon's known secrets masked. A mask
+/// label can be longer than what it hides, so the masked slice is cut to the
+/// same cap again and reported truncated, keeping the reply inside its frame.
+pub(super) fn masked_artifact_slice(
+    store: &dyn aether_store::Store,
+    id: aether_core::id::ArtifactId,
+    max_bytes: usize,
+    clamp: usize,
+    redactor: &aether_core::redact::Redactor,
+) -> aether_store::Result<(Vec<u8>, bool)> {
+    let cap = max_bytes.min(clamp);
+    let (slice, truncated) = read_artifact_slice(store, id, max_bytes, clamp)?;
+    debug_assert!(slice.len() <= cap, "the raw slice honours its cap");
+    let mut masked = redactor.redact_bytes(&slice).into_owned();
+    if masked.len() <= cap {
+        return Ok((masked, truncated));
+    }
+    masked.truncate(text_safe_end(&masked, cap));
+    debug_assert!(masked.len() <= cap);
+    Ok((masked, true))
+}
+
 /// Run `work` on the blocking pool. A panic in it is the connection's
 /// internal error, not a lost reply.
 pub(super) async fn blocking<T: Send + 'static>(

@@ -5,7 +5,7 @@ use crate::Daemon;
 use aether_protocol::{Command, ErrorReply, Reply};
 use base64::Engine as _;
 
-use crate::connection::dispatch::{MAX_ARTIFACT_READ_BYTES, blocking, read_artifact_slice};
+use crate::connection::dispatch::{MAX_ARTIFACT_READ_BYTES, blocking, masked_artifact_slice};
 use crate::connection::store_err;
 
 pub(super) fn owns(command: &Command) -> bool {
@@ -89,8 +89,13 @@ async fn read_artifact(
     // A published artifact is stored as sent, and an older tool artifact
     // unmasked: every reply is masked, observers' and the operator's alike.
     let read = blocking(move || {
-        read_artifact_slice(store.as_ref(), id, max_bytes, MAX_ARTIFACT_READ_BYTES)
-            .map(|(slice, truncated)| (redactor.redact_bytes(&slice).into_owned(), truncated))
+        masked_artifact_slice(
+            store.as_ref(),
+            id,
+            max_bytes,
+            MAX_ARTIFACT_READ_BYTES,
+            &redactor,
+        )
     })
     .await?;
     let (slice, truncated) = read.map_err(store_err)?;

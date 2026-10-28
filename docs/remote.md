@@ -846,7 +846,9 @@ behavior.
 - Both device roles can read fleet snapshots, transcripts, artifacts, replay,
   MCP descriptions and events. Artifact bytes in a `read_artifact` reply are
   masked by the daemon's redactor, known secret values included, for every
-  connection; the event log and transcripts are masked when written. Remote-administration events (`remote.*`)
+  connection. Tool outcomes and errors are masked before they enter the event
+  log, but tool arguments are kept as typed; see
+  [known limitations](known-limitations.md#security-boundaries). Remote-administration events (`remote.*`)
   become `remote.restricted` with `{"redacted":true}` payloads on device
   connections, preserving sequence numbers while hiding fingerprints and
   revocation history. Token connections receive the same redaction. This

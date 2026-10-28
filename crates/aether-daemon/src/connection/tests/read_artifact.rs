@@ -1,5 +1,7 @@
 //! `ReadArtifact` caps what one reply carries so it fits the client's frame.
-use crate::connection::dispatch::{MAX_ARTIFACT_READ_BYTES, read_artifact_slice};
+use crate::connection::dispatch::{
+    MAX_ARTIFACT_READ_BYTES, masked_artifact_slice, read_artifact_slice,
+};
 use aether_core::id::ArtifactId;
 use aether_store::Store as _;
 
@@ -39,6 +41,24 @@ fn a_cut_inside_a_character_backs_off_to_its_start() {
 fn the_default_cap_leaves_the_base64_reply_under_the_client_frame_limit() {
     let encoded = MAX_ARTIFACT_READ_BYTES.div_ceil(3) * 4;
     assert!(encoded < 64 * 1024 * 1024 - 1024 * 1024, "{encoded}");
+}
+
+/// Masking an 8-byte secret with a 23-byte label nearly triples a slice; the
+/// reply must still fit the cap it was asked for, and say it was cut.
+#[test]
+fn a_masked_slice_that_grows_past_the_cap_is_cut_and_marked_truncated() {
+    const SHORT: &str = "s3cr3t-8";
+    let redactor = aether_tools::Redactor::with_known_secrets([SHORT]).expect("compiles");
+    let (store, id, _dir) = stored(SHORT.repeat(100).as_bytes());
+    let (slice, truncated) =
+        masked_artifact_slice(&store, id, usize::MAX, 800, &redactor).expect("read");
+    assert!(truncated, "the masked reply was cut");
+    assert!(slice.len() <= 800, "{}", slice.len());
+    let text = String::from_utf8(slice).expect("text");
+    assert!(text.starts_with("[REDACTED:known_secret]") && !text.contains(SHORT));
+    let (whole, cut) =
+        masked_artifact_slice(&store, id, usize::MAX, 4096, &redactor).expect("read");
+    assert!(!cut && whole.len() == 2300, "{} {cut}", whole.len());
 }
 
 /// A published artifact is stored as sent; the reply to any connection, an

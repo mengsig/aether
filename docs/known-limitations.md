@@ -73,8 +73,10 @@ looks like a boundary and is not one.
   output for the agent, and artifacts stored before 1.2.7 are masked only
   when read or exported. A `read_artifact` page boundary, the cut of a large
   `ReadArtifact` reply, or a single line over 4 MiB in a shell log can split
-  a secret so that neither half is recognized. Native engine transcripts and
-  model replies that repeat a secret are outside this masking.
+  a secret so that neither half is recognized. Tool arguments are kept in the
+  event log as typed, because an approval answered later re-runs the call from
+  them; a run export masks them. Native engine transcripts and model replies
+  that repeat a secret are outside this masking.
 - **The GitHub watcher turns repository text into agent work.** Who may
   trigger it is decided by repository permission, the operator logins you name
   and the allowlists described in the
