@@ -271,9 +271,9 @@ impl Redactor {
 
     /// Copies `input` to `output` with every chunk masked, holding about one
     /// chunk in memory. Chunks end at a line break, and never partway through
-    /// a known secret that spans lines; a key block cut between chunks is
-    /// masked from its start to its end, or to the end of the input when it
-    /// has none, as [`Self::redact`] does. Only a line longer than
+    /// a known secret, bearer token or AWS key assignment that spans lines; a
+    /// key block cut between chunks is masked from its start to its end, or
+    /// to the end of the input when it has none, as [`Self::redact`] does. Only a line longer than
     /// [`STREAM_LINE_LIMIT_BYTES`] is cut mid-line. Returns the bytes written.
     pub fn redact_stream(
         &self,
@@ -304,7 +304,8 @@ impl Redactor {
     }
 
     /// Reads about [`STREAM_CHUNK_BYTES`] more on to a line end, and on again
-    /// while the chunk ends partway through a known secret. Returns how much
+    /// while the chunk ends partway through a known secret or a built-in rule
+    /// whose whitespace crosses lines. Returns how much
     /// of the chunk is ready to mask; the rest is held back for the next one.
     fn read_chunk(
         &self,
@@ -332,12 +333,16 @@ impl Redactor {
                 break;
             }
             want = scan.unfinished(&self.multiline_known, chunk);
+            if want == 0 && boundary::open_shape(chunk) > 0 {
+                // Read a whole chunk on, so a run of blank lines is scanned once.
+                want = STREAM_CHUNK_BYTES;
+            }
         }
         debug_assert!(chunk.len() <= MAX);
         if ended || chunk.len() < MAX {
             return Ok(chunk.len());
         }
-        let partial = scan.partial();
+        let partial = scan.partial().max(boundary::open_shape(chunk));
         Ok(boundary::cut_at_cap(
             chunk,
             partial,
@@ -732,6 +737,53 @@ mod tests {
             "{}",
             &text[text.len() - 64..]
         );
+    }
+
+    /// A built-in rule whose whitespace crosses a line end is never split
+    /// where a chunk ends, however many blank lines it spans.
+    #[test]
+    fn stream_never_splits_a_built_in_shape_at_a_line_end() {
+        let token = "opaque-token-0123456789";
+        let aws = "wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY01";
+        let cases = [
+            ("Bearer\n", token.to_owned()),
+            ("bearer \n\n\n", format!("\n  {token}")),
+            ("AWS_SECRET_ACCESS_KEY =\n", aws.to_owned()),
+            ("aws_secret_access_key\n", format!("= '\n{aws}'")),
+            ("awsSecretAccessKey: \"\n", format!("{aws}\"")),
+        ];
+        let r = Redactor::default();
+        for (head, rest) in cases {
+            // The first chunk ends with `head`; the value follows in the next.
+            let mut input = "x".repeat(STREAM_CHUNK_BYTES - head.len() - 1);
+            input.push('\n');
+            input.push_str(head);
+            input.push_str(&rest);
+            input.push('\n');
+            let whole = r.redact_bytes(input.as_bytes());
+            let masked = String::from_utf8_lossy(&whole);
+            assert!(
+                !masked.contains(token) && !masked.contains(aws),
+                "{head:?}: masking the whole input hides the value"
+            );
+            let mut out = Vec::new();
+            r.redact_stream(input.as_bytes(), &mut out)
+                .expect("streams");
+            assert!(
+                out == whole.as_ref(),
+                "{head:?}: the stream differs from masking the whole input"
+            );
+        }
+    }
+
+    #[test]
+    fn the_open_shape_is_the_tail_from_its_rule_name() {
+        assert_eq!(boundary::open_shape(b"x Bearer \n"), 8);
+        assert_eq!(boundary::open_shape(b"AWS_secret_ACCESS_key=\"\n"), 24);
+        assert_eq!(boundary::open_shape(b"a Bearer abc\n"), 0);
+        assert_eq!(boundary::open_shape(b"unbearer\n"), 0);
+        assert_eq!(boundary::open_shape(b"my_aws_secret_access_key\n"), 0);
+        assert_eq!(boundary::open_shape(b"key = \n"), 0);
     }
 
     #[test]

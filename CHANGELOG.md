@@ -54,7 +54,9 @@ release is also the text of its GitHub release.
   masked secret shapes but not the values the daemon knows (listener token,
   MCP `token_env` values, provider keys). Now the runtime redactor, known
   secrets included, masks a tool's full output before it is stored (a shell
-  log is masked as a stream, so a large one is never held in memory), every
+  log is masked as a stream, so a large one is never held in memory, whose
+  chunks never split a known secret, a key block or a bearer token or AWS
+  key assignment that spans lines), every
   harness outcome (as data, before it is rendered) and tool error before it
   is committed, approval and rule notes and revocation reasons when they are
   recorded, every tool

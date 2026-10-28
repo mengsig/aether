@@ -1,5 +1,6 @@
 //! Whether a stream chunk ends partway into a known secret that spans lines,
-//! found in time linear in the chunk whatever the secret's shape.
+//! found in time linear in the chunk whatever the secret's shape, or into a
+//! built-in rule whose whitespace may cross a line end.
 
 /// A known secret that spans lines, with the tables of a Knuth-Morris-Pratt
 /// matcher over its bytes.
@@ -127,6 +128,62 @@ pub(super) fn cut_at_cap(
     }
     debug_assert!(cut <= chunk.len());
     if cut == 0 { chunk.len() } else { cut }
+}
+
+/// The length of the tail of `chunk` that starts a built-in rule whose
+/// whitespace may cross a line end (a bearer token, an AWS secret key
+/// assignment) and still waits for its value, else 0.
+pub(super) fn open_shape(chunk: &[u8]) -> usize {
+    // Any non-ASCII byte may belong to a Unicode space; holding more is safe.
+    let spaced = |byte: u8| byte.is_ascii_whitespace() || byte == 0x0b || !byte.is_ascii();
+    let quoted = |byte: u8| spaced(byte) || matches!(byte, b'"' | b'\'');
+    let bearer_end = trim_end(chunk, spaced);
+    if bearer_end < chunk.len()
+        && let Some(start) = word_start(chunk, bearer_end, &["bearer"])
+    {
+        return chunk.len() - start;
+    }
+    let mut name_end = trim_end(chunk, quoted);
+    if name_end > 0 && matches!(chunk[name_end - 1], b'=' | b':') {
+        name_end = trim_end(&chunk[..name_end - 1], quoted);
+    }
+    if name_end == chunk.len() {
+        return 0;
+    }
+    let start = word_start(chunk, name_end, &["key", "access", "secret", "aws"]);
+    let open = start.map_or(0, |start| chunk.len() - start);
+    debug_assert!(open <= chunk.len());
+    open
+}
+
+/// Where the run of trailing bytes `strip` accepts begins.
+fn trim_end(bytes: &[u8], strip: impl Fn(u8) -> bool) -> usize {
+    bytes
+        .iter()
+        .rposition(|byte| !strip(*byte))
+        .map_or(0, |at| at + 1)
+}
+
+/// Where a word ending at `end` begins when it spells `parts`, read from its
+/// end, case-insensitively with an optional `_` between parts.
+fn word_start(text: &[u8], end: usize, parts: &[&str]) -> Option<usize> {
+    assert!(
+        end <= text.len() && !parts.is_empty(),
+        "a word inside the text"
+    );
+    let mut start = end;
+    for (at, part) in parts.iter().enumerate() {
+        if at > 0 && start > 0 && text[start - 1] == b'_' {
+            start -= 1;
+        }
+        start = start.checked_sub(part.len())?;
+        if !text[start..start + part.len()].eq_ignore_ascii_case(part.as_bytes()) {
+            return None;
+        }
+    }
+    let word = |byte: &u8| byte.is_ascii_alphanumeric() || *byte == b'_';
+    let bounded = start == 0 || !text.get(start - 1).is_some_and(word);
+    bounded.then_some(start)
 }
 
 #[cfg(test)]
