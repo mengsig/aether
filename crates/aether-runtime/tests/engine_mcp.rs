@@ -572,6 +572,72 @@ async fn a_bridged_reply_quoting_a_known_secret_reaches_the_engine_masked() {
     }
 }
 
+/// A permission answer carries the input the engine is about to run, so an
+/// approved command keeps a secret it holds; a denial note is masked.
+#[tokio::test]
+async fn a_permission_answer_keeps_its_input_and_masks_denial_notes() {
+    const KNOWN: &str = "fleet-token-0123456789abcdef";
+    let redactor = aether_tools::Redactor::with_known_secrets([KNOWN]).expect("compiles");
+    let mut h = harness_with(None, redactor).await;
+    start_agent(&h);
+    let bridge = h.ready.recv().await.expect("the turn started");
+    let prompt = |command: String| json!({"tool_name": "Bash", "input": {"command": command}, "tool_use_id": "tu-1"});
+
+    let (reply, is_error) = h
+        .runtime
+        .engine_tool(
+            bridge.agent,
+            &bridge.token,
+            "permission".into(),
+            prompt(format!("mkdir out && grep {KNOWN} notes.md")),
+        )
+        .await
+        .expect("answered");
+    assert!(!is_error, "{reply}");
+    let answer: serde_json::Value = serde_json::from_str(&reply).expect("a permission answer");
+    assert_eq!(answer["behavior"], "allow", "{reply}");
+    assert_eq!(
+        answer["updatedInput"]["command"],
+        format!("mkdir out && grep {KNOWN} notes.md"),
+        "the approved input runs as asked"
+    );
+
+    for (tool, input) in [
+        ("permission", prompt("curl -sI https://example.com".into())),
+        ("mcp__mock__write_note", json!({"key": "k", "text": "hi"})),
+    ] {
+        let calling = {
+            let runtime = h.runtime.clone();
+            let bridge = bridge.clone();
+            tokio::spawn(async move {
+                runtime
+                    .engine_tool(bridge.agent, &bridge.token, tool.into(), input)
+                    .await
+            })
+        };
+        let pending = wait_for_approval(h.store.as_ref()).await;
+        h.runtime
+            .resolve_approval(
+                pending.id,
+                ApprovalDecision::Denied,
+                Actor::user(),
+                Some(format!("not with {KNOWN}")),
+                None,
+            )
+            .expect("deny");
+        let (reply, _) = calling.await.expect("join").expect("answered");
+        assert!(!reply.contains(KNOWN), "{tool}: {reply}");
+        assert!(
+            reply.contains("not with [REDACTED:known_secret]"),
+            "{tool}: {reply}"
+        );
+    }
+
+    if let Some(finish) = h.finish.take() {
+        let _ = finish.send(());
+    }
+}
+
 #[tokio::test]
 async fn a_call_the_engine_ran_itself_is_recorded_with_the_tools_own_class() {
     let mut h = harness().await;

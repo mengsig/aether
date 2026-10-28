@@ -149,7 +149,21 @@ impl Redactor {
         if known.is_empty() {
             return Ok(redactor);
         }
-        let alternation = known
+        // A tool that prints JSON shows a value with a newline, quote or
+        // backslash escaped, so that spelling is masked as well.
+        let escaped: Vec<String> = known
+            .iter()
+            .map(|value| json_escaped(value))
+            .filter(|escaped| !known.contains(&escaped.as_str()))
+            .collect();
+        let mut spellings: Vec<&str> = known
+            .iter()
+            .copied()
+            .chain(escaped.iter().map(String::as_str))
+            .collect();
+        spellings.sort_unstable_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+        spellings.dedup();
+        let alternation = spellings
             .iter()
             .map(|value| regex::escape(value))
             .collect::<Vec<_>>()
@@ -319,6 +333,13 @@ impl Redactor {
         }
         need
     }
+}
+
+/// `value` as it reads inside a JSON string, without the quotes.
+fn json_escaped(value: &str) -> String {
+    let quoted = serde_json::Value::from(value).to_string();
+    debug_assert!(quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"'));
+    quoted[1..quoted.len() - 1].to_owned()
 }
 
 /// Whether `text` opens a private key block it does not close.
@@ -694,5 +715,31 @@ mod tests {
             plain.redact_bytes(b"\xffSECRET\xff"),
             Cow::Borrowed(_)
         ));
+    }
+
+    #[test]
+    fn a_known_secret_escaped_inside_json_is_masked() {
+        let secrets = [
+            "alpha123\nbeta4567",
+            "q-sec-77\"q-tail-88",
+            "b-sec-55\\b-tail-66",
+        ];
+        let r = Redactor::with_known_secrets(secrets).unwrap();
+        for secret in secrets {
+            let rendered = serde_json::json!({ "text": format!("token {secret} end") }).to_string();
+            let out = r.redact(&rendered);
+            for fragment in [
+                "alpha123",
+                "beta4567",
+                "q-sec-77",
+                "q-tail-88",
+                "b-sec-55",
+                "b-tail-66",
+            ] {
+                assert!(!out.contains(fragment), "{out}");
+            }
+            let decoded: serde_json::Value = serde_json::from_str(&out).unwrap();
+            assert_eq!(decoded["text"], "token [REDACTED:known_secret] end");
+        }
     }
 }

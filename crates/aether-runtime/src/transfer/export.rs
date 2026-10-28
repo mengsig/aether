@@ -334,6 +334,14 @@ fn write_record(
         debug_assert!(value.get("digest").is_some(), "a set digest is serialized");
         value["digest"] = serde_json::Value::String(digest.clone());
     }
+    // A known secret that matches a field name, tag or id would leave a record
+    // the import cannot read; refusing beats writing one, or the secret.
+    if <Record as serde::Deserialize>::deserialize(&value).is_err() {
+        return Err(invalid(
+            "a known secret value matches part of the export format (a field name, tag or id), \
+             so a masked record would not import; export refused",
+        ));
+    }
     write_line(out, &value)
 }
 

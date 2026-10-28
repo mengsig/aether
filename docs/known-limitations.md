@@ -75,8 +75,12 @@ looks like a boundary and is not one.
   `ReadArtifact` reply, or a single line over 4 MiB in a shell log can split
   a secret so that neither half is recognized. Tool arguments are kept in the
   event log as typed, because an approval answered later re-runs the call from
-  them; a run export masks them. Native engine transcripts and model replies
-  that repeat a secret are outside this masking.
+  them; a run export masks them. For the same reason a native engine's
+  approved permission prompt gets its tool input back unmasked. A known secret
+  that matches part of the export format (a field name, tag or id) makes
+  `aether runs export` refuse rather than write a file that cannot be
+  imported. Native engine transcripts and model replies that repeat a secret
+  are outside this masking.
 - **The GitHub watcher turns repository text into agent work.** Who may
   trigger it is decided by repository permission, the operator logins you name
   and the allowlists described in the

@@ -432,3 +432,135 @@ async fn an_artifact_digest_holding_a_known_secret_still_imports() {
     );
     source.daemon.runtime.shutdown().await;
 }
+
+/// A known secret that is also a field name of the export format cannot be
+/// masked without breaking the record, so the export is refused instead.
+#[tokio::test]
+async fn an_export_is_refused_when_a_known_secret_matches_the_format() {
+    let source = seeded_knowing(
+        vec![ScriptedClient::tool_call(
+            "complete_task",
+            json!({"summary": "done"}),
+        )],
+        &[KNOWN, "created_at"],
+    )
+    .await;
+    let agent = start_worker(&source.daemon, "finish");
+    wait_terminal(source.daemon.store.as_ref(), agent).await;
+    let run = source
+        .daemon
+        .store
+        .agent(agent)
+        .expect("agent")
+        .expect("exists")
+        .run;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("run.aether");
+    let refused = transfer::export_run(
+        source.daemon.store.as_ref(),
+        run,
+        &file,
+        &source.daemon.runtime.config().redactor,
+    )
+    .expect_err("a record that would not import is not written");
+    assert!(refused.to_string().contains("export format"), "{refused}");
+    assert!(!refused.to_string().contains("created_at"), "{refused}");
+    assert!(!file.exists(), "no archive is named as complete");
+    source.daemon.runtime.shutdown().await;
+}
+
+/// `read_artifact` renders its result as JSON, which escapes a newline, quote
+/// or backslash in a secret; the escaped spelling is masked too.
+#[tokio::test]
+async fn reading_an_artifact_masks_secrets_that_json_escapes() {
+    const SECRETS: [&str; 3] = [
+        "alpha123\nbeta4567",
+        "q-sec-77\"q-tail-88",
+        "b-sec-55\\b-tail-66",
+    ];
+    const FRAGMENTS: [&str; 6] = [
+        "alpha123",
+        "beta4567",
+        "q-sec-77",
+        "q-tail-88",
+        "b-sec-55",
+        "b-tail-66",
+    ];
+    let source = seeded_knowing(Vec::new(), &SECRETS).await;
+    let runtime = &source.daemon.runtime;
+    let (agent, _) = runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "assistant".into(),
+                start: true,
+                config: Some(AgentConfig {
+                    long_lived: true,
+                    approval: ApprovalPolicy::none(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("create");
+    let artifact = runtime
+        .publish_artifact(
+            ArtifactPublication {
+                kind: ArtifactKind::File,
+                name: "secrets.log".into(),
+                summary: "evidence".into(),
+                content_type: Some("text/plain".into()),
+                bytes: SECRETS.join("\n").into_bytes(),
+                agent: agent.id,
+                task: None,
+            },
+            Actor::user(),
+        )
+        .await
+        .expect("publish");
+    source.client.push_all([
+        ScriptedClient::tool_call("read_artifact", json!({"id": artifact.id})),
+        ScriptedClient::text("read it"),
+    ]);
+    runtime
+        .send_message(agent.id, vec![ContentBlock::text("read it")], Actor::user())
+        .expect("send");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let content = loop {
+        let succeeded = source
+            .daemon
+            .store
+            .events(0, 10_000, &EventFilter::for_agent(agent.id))
+            .expect("events")
+            .into_iter()
+            .find_map(|event| match event.kind {
+                aether_core::event::EventKind::ToolSucceeded { outcome, .. } => Some(outcome),
+                _ => None,
+            });
+        if let Some(outcome) = succeeded
+            && source.client.remaining() == 0
+        {
+            break outcome.content;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the read never settled"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+
+    let decoded: serde_json::Value = serde_json::from_str(&content).expect("JSON content");
+    assert_eq!(
+        decoded["text"],
+        ["[REDACTED:known_secret]"; 3].join("\n"),
+        "{content}"
+    );
+    let events = event_log(source.daemon.store.as_ref());
+    let sent = format!("{:?}", source.client.requests());
+    for fragment in FRAGMENTS {
+        assert!(!events.contains(fragment), "the log carries {fragment}");
+        assert!(!sent.contains(fragment), "the provider was sent {fragment}");
+    }
+    runtime.shutdown().await;
+}

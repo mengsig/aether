@@ -84,7 +84,7 @@ pub(super) async fn handle_request(
                     let message = verdict
                         .message
                         .unwrap_or_else(|| "denied by the operator".to_owned());
-                    let reply = (message, true);
+                    let reply = masked_reply(runtime, (message, true));
                     let _ = req.reply.send(reply.clone());
                     return Ok(if parked {
                         Served::Refused
@@ -166,11 +166,12 @@ pub(super) async fn handle_request(
             }
         }
     };
-    // The engine forwards the reply to its provider, so an MCP server's
-    // output or error is masked here, before it leaves.
-    let reply = match runtime.tool_runtime.redactor().redact(&reply.0) {
-        std::borrow::Cow::Borrowed(_) => reply,
-        std::borrow::Cow::Owned(clean) => (clean, reply.1),
+    // A permission answer carries the input the engine runs, kept exact;
+    // `decide_permission` masks only its note.
+    let reply = if req.name == "permission" {
+        reply
+    } else {
+        masked_reply(runtime, reply)
     };
     // Served during the wind-down: the result stands, and the stop leads it
     // so the engine does not read it as an invitation to continue. Prepended,
@@ -190,6 +191,15 @@ pub(super) async fn handle_request(
 fn held(action: &aether_tools::HarnessAction) -> bool {
     use aether_tools::HarnessAction as A;
     matches!(action, A::AskUser { .. } | A::Delegate { wait: true, .. })
+}
+
+/// The engine forwards a reply to its provider, so a tool's output, error or
+/// a denial note is masked before it leaves.
+fn masked_reply(runtime: &Runtime, reply: (String, bool)) -> (String, bool) {
+    match runtime.tool_runtime.redactor().redact(&reply.0) {
+        std::borrow::Cow::Borrowed(_) => reply,
+        std::borrow::Cow::Owned(clean) => (clean, reply.1),
+    }
 }
 
 /// A permission prompt answered "no", in the shape the engine's
@@ -251,11 +261,12 @@ async fn decide_permission(
     )
     .await?;
     if !verdict.allow {
+        let message = verdict
+            .message
+            .as_deref()
+            .unwrap_or("denied by the operator");
         return Ok(denied_prompt(
-            verdict
-                .message
-                .as_deref()
-                .unwrap_or("denied by the operator"),
+            &runtime.tool_runtime.redactor().redact(message),
         ));
     }
     Ok((
