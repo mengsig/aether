@@ -43,6 +43,9 @@ impl std::fmt::Debug for Redactor {
 
 const RULE_COUNT: usize = 19;
 
+/// What every private key block rule leaves in place of the block.
+const PRIVATE_KEY_MASK: &str = "[REDACTED:private_key]";
+
 static DEFAULT_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     // One rule per key shape the distribution can hold: every credentialed
     // provider it ships, plus the tool-side shapes.
@@ -83,16 +86,16 @@ static DEFAULT_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(||
         (r"\bhf_[A-Za-z0-9]{30,}", "[REDACTED:huggingface_token]"),
         (
             r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
-            "[REDACTED:private_key]",
+            PRIVATE_KEY_MASK,
         ),
         // Truncated captures: a tail that starts inside a key, or a key whose end was cut.
         (
             r"\A[A-Za-z0-9+/=\r\n ]*-----END [A-Z ]*PRIVATE KEY-----",
-            "[REDACTED:private_key]",
+            PRIVATE_KEY_MASK,
         ),
         (
             r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*\z",
-            "[REDACTED:private_key]",
+            PRIVATE_KEY_MASK,
         ),
     ];
     rules

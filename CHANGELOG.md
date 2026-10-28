@@ -184,8 +184,8 @@ older clients see no change. Store schema 28 (was 27).
   JSON-escaped spelling as well as its own, every `read_artifact` reply to
   any connection, and every export record and payload. A `read_artifact`
   page, a `ReadArtifact` reply cut at its `max_bytes` and a shell log line
-  cut at its size cap never cut a secret in two: the cut moves off it, so no
-  part of it shows. An export a known secret would leave unimportable is
+  cut at its size cap never cut a secret in two: the cut moves off it, and
+  off any word or private key block, so no part of it shows. An export a known secret would leave unimportable is
   refused. An artifact a client publishes
   is still stored as sent and masked on each of those ways out; the shell's
   own output log on disk stays raw for the agent. See

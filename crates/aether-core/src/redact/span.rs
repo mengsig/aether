@@ -3,12 +3,37 @@
 //! unmasked, since neither matches a rule alone.
 
 use std::ops::Range;
+use std::sync::LazyLock;
 
-use super::Redactor;
+use regex::bytes::Regex;
 
-/// The least context [`Redactor::clear_span`] reads on each side of a cut:
-/// longer than any key shape it guards, a private key block included.
+use super::{PRIVATE_KEY_MASK, Redactor};
+
+/// The least context a window holds on each side of a cut, for
+/// [`Redactor::clear_span`] to see any secret around the cut whole.
 pub const CUT_CONTEXT_BYTES: usize = 16 << 10;
+
+/// Private key block edges over bytes, so an invalid byte inside a block
+/// cannot hide it the way it splits the text rules' UTF-8 runs.
+static BLOCK_BEGIN: LazyLock<Regex> =
+    LazyLock::new(|| byte_rule(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"));
+static BLOCK_END: LazyLock<Regex> =
+    LazyLock::new(|| byte_rule(r"-----END [A-Z ]*PRIVATE KEY-----"));
+/// A window that starts inside a block, as the text rule for a cut key reads it.
+static HEADLESS_BLOCK: LazyLock<Regex> =
+    LazyLock::new(|| byte_rule(r"\A[A-Za-z0-9+/=\r\n ]*-----END [A-Z ]*PRIVATE KEY-----"));
+
+fn byte_rule(pattern: &str) -> Regex {
+    // A rule that cannot compile must stop the process, not vanish.
+    #[allow(clippy::expect_used)]
+    Regex::new(pattern).expect("a built-in key block rule compiles")
+}
+
+/// Whether `byte` belongs to the alphabet of a key-shaped token. A cut
+/// inside an unbroken run of these may be a cut inside a key of any length.
+fn is_key_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"_-.~+/=".contains(&byte)
+}
 
 impl Redactor {
     /// How many bytes past each end of a span a window should hold, where
@@ -17,39 +42,75 @@ impl Redactor {
         CUT_CONTEXT_BYTES.max(self.longest_known)
     }
 
-    /// `start..end` of `window` moved off every rule match that crosses it.
-    /// A match across `start` is skipped; one across `end` is left out, or
-    /// taken whole when it starts at the span's start, so a span never
-    /// shrinks to nothing on a secret it starts with. `start <= end` after.
+    /// `start..end` of `window` moved off every secret shape that crosses
+    /// it: a run of key characters, a private key block or a rule match. One
+    /// across `start` is skipped; one across `end` is left out, or taken
+    /// whole when it starts at the span's start, so a span never shrinks to
+    /// nothing on a secret it starts with. `start <= end` after.
     pub fn clear_span(&self, window: &[u8], start: usize, end: usize) -> (usize, usize) {
         assert!(start <= end, "a span starts before it ends");
         assert!(end <= window.len(), "the span lies inside its window");
-        let mut start_matches = self.matches_near(window, start);
-        start_matches.sort_by_key(|found| found.start);
-        let mut clear_start = start;
-        for found in start_matches {
-            if found.start < clear_start && found.end > clear_start {
-                clear_start = found.end;
-            }
-        }
-        let mut clear_end = end.max(clear_start);
-        let mut end_matches = self.matches_near(window, clear_end);
-        end_matches.sort_by_key(|found| std::cmp::Reverse(found.end));
-        for found in end_matches {
-            if found.start < clear_end && found.end > clear_end {
-                clear_end = if found.start > clear_start {
-                    found.start
-                } else {
-                    found.end
-                };
-            }
-        }
-        debug_assert!(clear_start <= clear_end && clear_end <= window.len());
+        let blocks = key_blocks(window);
+        let clear_start = self.skip_forward(window, &blocks, start);
+        let clear_end = self.clear_end(window, &blocks, clear_start, end.max(clear_start));
+        debug_assert!(start <= clear_start && clear_start <= clear_end);
+        debug_assert!(clear_end <= window.len());
         (clear_start, clear_end)
     }
 
-    /// Every rule's matches within [`Self::cut_context`] of `cut`, as ranges
-    /// of `window`; text runs between invalid bytes are searched apart.
+    /// The first point from `at` on that no secret shape crosses.
+    fn skip_forward(&self, window: &[u8], blocks: &[Range<usize>], mut at: usize) -> usize {
+        while let Some(crossing) = self.across(window, blocks, at) {
+            debug_assert!(crossing.end > at, "each pass moves forward");
+            at = crossing.end;
+        }
+        at
+    }
+
+    /// `end` moved back before every secret shape that crosses it, or past
+    /// one that reaches back to `start`, a point nothing crosses.
+    fn clear_end(
+        &self,
+        window: &[u8],
+        blocks: &[Range<usize>],
+        start: usize,
+        mut end: usize,
+    ) -> usize {
+        debug_assert!(start <= end, "the end is sought from the cleared start on");
+        while let Some(crossing) = self.across(window, blocks, end) {
+            if crossing.start <= start {
+                return self.skip_forward(window, blocks, crossing.end);
+            }
+            debug_assert!(crossing.start < end, "each pass moves back");
+            end = crossing.start;
+        }
+        end
+    }
+
+    /// The hull of every secret shape with `at` strictly inside it, if any.
+    fn across(&self, window: &[u8], blocks: &[Range<usize>], at: usize) -> Option<Range<usize>> {
+        if at == 0 || at >= window.len() {
+            return None;
+        }
+        let mut hull = key_run(window, at);
+        let crossing = blocks
+            .iter()
+            .cloned()
+            .chain(self.matches_near(window, at))
+            .filter(|found| found.start < at && at < found.end);
+        for found in crossing {
+            hull = Some(match hull {
+                Some(seen) => seen.start.min(found.start)..seen.end.max(found.end),
+                None => found,
+            });
+        }
+        debug_assert!(hull.as_ref().is_none_or(|h| h.start < at && at < h.end));
+        hull
+    }
+
+    /// Every text rule's matches within [`Self::cut_context`] of `cut`, as
+    /// ranges of `window`; text runs between invalid bytes are searched
+    /// apart. Private key blocks are left to [`key_blocks`].
     fn matches_near(&self, window: &[u8], cut: usize) -> Vec<Range<usize>> {
         let context = self.cut_context();
         let low = cut.saturating_sub(context);
@@ -59,7 +120,11 @@ impl Redactor {
         for chunk in window[low..high].utf8_chunks() {
             let text = chunk.valid();
             if text.len() >= self.shortest_match {
-                for (rule, _) in &self.patterns {
+                let rules = self
+                    .patterns
+                    .iter()
+                    .filter(|(_, mask)| *mask != PRIVATE_KEY_MASK);
+                for (rule, _) in rules {
                     found.extend(
                         rule.find_iter(text)
                             .map(|hit| at + hit.start()..at + hit.end()),
@@ -71,6 +136,44 @@ impl Redactor {
         debug_assert_eq!(at, high, "every byte of the neighbourhood was walked");
         found
     }
+}
+
+/// The unbroken run of key characters on both sides of `at`, if any.
+fn key_run(window: &[u8], at: usize) -> Option<Range<usize>> {
+    debug_assert!(0 < at && at < window.len(), "a cut has a byte on each side");
+    if !is_key_byte(window[at - 1]) || !is_key_byte(window[at]) {
+        return None;
+    }
+    let start = window[..at]
+        .iter()
+        .rposition(|&byte| !is_key_byte(byte))
+        .map_or(0, |before| before + 1);
+    let end = window[at..]
+        .iter()
+        .position(|&byte| !is_key_byte(byte))
+        .map_or(window.len(), |after| at + after);
+    debug_assert!(start < at && at < end);
+    Some(start..end)
+}
+
+/// Every private key block in `window`, in order: BEGIN to its END, or to
+/// the window's end without one, and a lead that ends in an END.
+fn key_blocks(window: &[u8]) -> Vec<Range<usize>> {
+    let mut blocks = Vec::new();
+    let mut at = 0;
+    if let Some(headless) = HEADLESS_BLOCK.find(window) {
+        blocks.push(0..headless.end());
+        at = headless.end();
+    }
+    while let Some(begin) = BLOCK_BEGIN.find_at(window, at) {
+        let end = BLOCK_END
+            .find_at(window, begin.end())
+            .map_or(window.len(), |end| end.end());
+        blocks.push(begin.start()..end);
+        at = end;
+    }
+    debug_assert!(blocks.windows(2).all(|pair| pair[0].end <= pair[1].start));
+    blocks
 }
 
 #[cfg(test)]
@@ -139,7 +242,62 @@ mod tests {
     fn plain_text_keeps_its_span() {
         let redactor = known();
         let text = "nothing secret here, only words";
-        assert_eq!(redactor.clear_span(text.as_bytes(), 3, 17), (3, 17));
+        assert_eq!(redactor.clear_span(text.as_bytes(), 8, 19), (8, 19));
         assert_eq!(redactor.cut_context(), CUT_CONTEXT_BYTES);
+    }
+
+    #[test]
+    fn a_cut_never_splits_a_word_which_may_be_a_key() {
+        let redactor = Redactor::default();
+        let text = "nothing secret here, only words";
+        assert_eq!(redactor.clear_span(text.as_bytes(), 3, 17), (7, 15));
+    }
+
+    #[test]
+    fn a_token_longer_than_the_context_is_hidden_from_its_middle() {
+        let redactor = Redactor::default();
+        let token = format!("sk-ant-{}", "A".repeat(40_000));
+        let text = format!("x {token} tail");
+        let token_end = 2 + token.len();
+        let (start, end) = redactor.clear_span(text.as_bytes(), 20_000, 20_008);
+        assert_eq!(
+            (start, end),
+            (token_end, token_end),
+            "nothing of it is shown"
+        );
+        let (_, end) = redactor.clear_span(text.as_bytes(), 0, 20_000);
+        assert_eq!(end, 2, "a page ends before it");
+    }
+
+    #[test]
+    fn a_cut_inside_a_key_block_keeps_the_text_after_its_end() {
+        let redactor = Redactor::default();
+        let text = "head -----BEGIN PRIVATE KEY-----\nQUJDREVGR0hJSktMTU5PUA==\n\
+                    -----END PRIVATE KEY----- TAIL MUST SURVIVE";
+        let block = 5..text.find(" TAIL").unwrap();
+        for cut in block.start + 1..block.end {
+            let (start, _) = redactor.clear_span(text.as_bytes(), cut, cut);
+            assert_eq!(start, block.end, "a span from {cut} starts after the block");
+            let (_, end) = redactor.clear_span(text.as_bytes(), 0, cut);
+            assert_eq!(end, block.start, "a span to {cut} ends before the block");
+        }
+    }
+
+    #[test]
+    fn an_invalid_byte_inside_a_key_block_does_not_hide_it() {
+        let redactor = Redactor::default();
+        let text = b"-----BEGIN PRIVATE KEY-----\n\xffsensitive!payload!0123456789\n\
+                     -----END PRIVATE KEY----- tail";
+        let block_end = text.len() - b" tail".len();
+        assert_eq!(redactor.clear_span(text, 29, 45), (block_end, block_end));
+        let (_, end) = redactor.clear_span(text, 0, 45);
+        assert_eq!(
+            end, block_end,
+            "a span from the block's start takes it whole"
+        );
+        assert_eq!(
+            redactor.redact_bytes(&text[..end]),
+            b"[REDACTED:private_key]".as_slice()
+        );
     }
 }
