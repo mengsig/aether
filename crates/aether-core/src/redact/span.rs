@@ -48,9 +48,10 @@ fn is_key_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"_-.~+/=".contains(&byte)
 }
 
-/// Whether `byte` may stand between a key name and its value.
+/// Whether `byte` may stand between a key name and its value: the rules'
+/// `\s` takes Unicode blank space too, every byte of which is non-ASCII.
 fn is_gap_byte(byte: u8) -> bool {
-    byte.is_ascii_whitespace() || b"\"':".contains(&byte)
+    !byte.is_ascii() || b" \t\n\r\x0b\x0c\"':".contains(&byte)
 }
 
 impl Redactor {
@@ -298,6 +299,20 @@ mod tests {
                 (start, end)
             );
         }
+    }
+
+    #[test]
+    fn a_long_unicode_blank_gap_does_not_hide_a_bearer_name() {
+        let redactor = Redactor::default();
+        let gap = "\u{2003}\u{0b}".repeat(4_500);
+        let text = format!("log Bearer{gap}0123456789abcdef tail");
+        let value = 10 + gap.len()..10 + gap.len() + 16;
+        assert!(
+            gap.len() > CUT_CONTEXT_BYTES,
+            "the name lies beyond the context"
+        );
+        let (start, end) = redactor.clear_span(text.as_bytes(), value.start, value.end);
+        assert_eq!((start, end), (value.end, value.end), "the value is skipped");
     }
 
     #[test]
