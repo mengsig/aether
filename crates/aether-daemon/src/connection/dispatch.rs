@@ -59,9 +59,10 @@ pub(super) fn read_artifact_slice(
     Ok((bytes, truncated))
 }
 
-/// [`read_artifact_slice`] with the daemon's known secrets masked. A mask
-/// label can be longer than what it hides, so the masked slice is cut to the
-/// same cap again and reported truncated, keeping the reply inside its frame.
+/// [`read_artifact_slice`] with the daemon's known secrets masked. It reads
+/// past the cap so that a secret the cap would cut is left out whole, never
+/// shown in part. A mask label can be longer than what it hides, so the
+/// masked slice is cut to the cap again and reported truncated.
 pub(super) fn masked_artifact_slice(
     store: &dyn aether_store::Store,
     id: aether_core::id::ArtifactId,
@@ -70,9 +71,22 @@ pub(super) fn masked_artifact_slice(
     redactor: &aether_core::redact::Redactor,
 ) -> aether_store::Result<(Vec<u8>, bool)> {
     let cap = max_bytes.min(clamp);
-    let (slice, truncated) = read_artifact_slice(store, id, max_bytes, clamp)?;
-    debug_assert!(slice.len() <= cap, "the raw slice honours its cap");
-    let mut masked = redactor.redact_bytes(&slice).into_owned();
+    let context = redactor.cut_context();
+    let (window, more) = read_artifact_slice(
+        store,
+        id,
+        cap.saturating_add(context),
+        clamp.saturating_add(context),
+    )?;
+    let cut = if window.len() > cap {
+        text_safe_end(&window, cap)
+    } else {
+        window.len()
+    };
+    let (start, end) = redactor.clear_span(&window, 0, cut);
+    debug_assert_eq!(start, 0, "a reply always starts at the artifact's start");
+    let truncated = more || end < window.len();
+    let mut masked = redactor.redact_bytes(&window[..end]).into_owned();
     if masked.len() <= cap {
         return Ok((masked, truncated));
     }

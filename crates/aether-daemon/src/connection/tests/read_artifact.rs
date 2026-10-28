@@ -61,6 +61,28 @@ fn a_masked_slice_that_grows_past_the_cap_is_cut_and_marked_truncated() {
     assert!(!cut && whole.len() == 2300, "{} {cut}", whole.len());
 }
 
+/// A cap the caller picks never cuts a secret so that its first part shows:
+/// a reply ends before the secret, or takes it whole and masked.
+#[test]
+fn no_cap_shows_the_start_of_a_known_secret() {
+    const KNOWN: &str = "fleet-token-0123456789abcdef";
+    let redactor = aether_tools::Redactor::with_known_secrets([KNOWN]).expect("compiles");
+    let text = format!("head {KNOWN} tail");
+    let (store, id, _dir) = stored(text.as_bytes());
+    for cap in 1..text.len() {
+        let (slice, truncated) =
+            masked_artifact_slice(&store, id, cap, MAX_ARTIFACT_READ_BYTES, &redactor)
+                .expect("read");
+        let shown = String::from_utf8(slice).expect("text");
+        assert!(truncated, "cap {cap}: the reply says it was cut");
+        assert!(shown.len() <= cap, "cap {cap}: {shown:?}");
+        assert!(
+            !shown.contains("fleet-to"),
+            "cap {cap}: part of the secret shows in {shown:?}"
+        );
+    }
+}
+
 /// A published artifact is stored as sent; the reply to any connection, an
 /// observer's included, carries the daemon's known secrets masked.
 #[tokio::test]
