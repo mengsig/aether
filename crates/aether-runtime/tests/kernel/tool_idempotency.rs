@@ -227,7 +227,11 @@ async fn a_re_driven_call_replays_its_committed_outcome_instead_of_repeating_it(
         })
         .expect("the write was requested");
     // A re-drive replays the recorded call, id and all; the record is keyed
-    // by that id, so it answers this call and no other.
+    // by that id, so it answers this call and no other. It holds a token the
+    // runtime masks now, as a record made before masking would.
+    let token = format!("ghp_{}", "A".repeat(36));
+    let mut recorded = ToolOutcome::ok(format!("already written with {token}"));
+    recorded.structured = Some(json!({ "token": token }));
     h.store
         .commit(
             Commit::new().mutate(Mutation::RecordToolOutcome(RecordedOutcome {
@@ -237,7 +241,7 @@ async fn a_re_driven_call_replays_its_committed_outcome_instead_of_repeating_it(
                 call_id: call.id,
                 tool: call.name.clone(),
                 at: aether_core::time::now(),
-                outcome: ToolOutcome::ok("already written"),
+                outcome: recorded,
             })),
         )
         .expect("record");
@@ -270,6 +274,18 @@ async fn a_re_driven_call_replays_its_committed_outcome_instead_of_repeating_it(
     assert_eq!(replayed.len(), 1, "{:?}", types(h.store.as_ref(), agent.id));
     assert_eq!(replayed[0].0, call.id);
     assert_eq!(replayed[0].1, call.id, "the replay names the call that ran");
+    let replayed_outcome = events
+        .iter()
+        .find_map(|e| match &e.kind {
+            EventKind::ToolSucceeded { call: id, outcome } if *id == call.id => Some(outcome),
+            _ => None,
+        })
+        .expect("the replay commits the recorded outcome");
+    let committed = serde_json::to_string(replayed_outcome).expect("serializes");
+    assert!(
+        !committed.contains(&token) && committed.contains("[REDACTED:github_token]"),
+        "a replayed outcome is masked like a fresh one: {committed}"
+    );
 }
 
 #[tokio::test]

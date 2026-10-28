@@ -388,15 +388,7 @@ pub(super) async fn run_tool_calls(
     let mut replays: Vec<(ToolCall, RecordedOutcome)> = Vec::new();
     let mut to_run = Vec::with_capacity(runnable.len());
     for (call, tool) in runnable {
-        let recorded = match (&call.idempotency_key, call.invocation_id) {
-            (Some(key), Some(invocation)) => {
-                runtime
-                    .store
-                    .recorded_outcome(call.agent_id, invocation, call.id, key)?
-            }
-            _ => None,
-        };
-        match recorded {
+        match replayable(runtime, &call)? {
             Some(recorded) => replays.push((call, recorded)),
             None => to_run.push((call, tool)),
         }

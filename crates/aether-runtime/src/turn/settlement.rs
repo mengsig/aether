@@ -156,14 +156,20 @@ pub(super) async fn settle_resolved_approvals(
     Ok(())
 }
 
-/// The outcome committed for this call's key while driving its invocation.
+/// The outcome committed for this call's key while driving its invocation,
+/// masked again: it may predate masking or a secret the runtime knows now.
 pub(super) fn replayable(runtime: &Runtime, call: &ToolCall) -> Result<Option<RecordedOutcome>> {
     let (Some(key), Some(invocation)) = (&call.idempotency_key, call.invocation_id) else {
         return Ok(None);
     };
-    Ok(runtime
+    let recorded = runtime
         .store
-        .recorded_outcome(call.agent_id, invocation, call.id, key)?)
+        .recorded_outcome(call.agent_id, invocation, call.id, key)?;
+    Ok(recorded.map(|mut recorded| {
+        debug_assert_eq!(&recorded.key, key, "the store answers for this key");
+        aether_tools::redact_outcome(runtime.tool_runtime.redactor(), &mut recorded.outcome);
+        recorded
+    }))
 }
 
 /// What to record so a re-drive of this call replays instead of running.
