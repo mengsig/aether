@@ -178,7 +178,8 @@ pub(crate) fn artifact(
             record.size_bytes
         )));
     }
-    let Some(bytes) = runtime.store.read_artifact_range(id, offset, limit)? else {
+    let requested = offset;
+    let Some((offset, bytes)) = clear_page(runtime, id, requested, limit)? else {
         return Ok(ToolOutcome::error(
             "Artifact content is missing or was evicted.",
         ));
@@ -196,7 +197,8 @@ pub(crate) fn artifact(
             ));
         }
     };
-    if text.is_empty() && offset < record.size_bytes {
+    // A page that skipped a secret may be empty, and still moves on.
+    if text.is_empty() && offset <= requested && offset < record.size_bytes {
         return Ok(ToolOutcome::error(
             "Artifact content is incomplete; the requested page could not be read.",
         ));
@@ -206,6 +208,38 @@ pub(crate) fn artifact(
         runtime,
         json!({"id":id,"offset":offset,"text":text,"total_bytes":record.size_bytes,"next_offset":(end < record.size_bytes).then_some(end)}),
     ))
+}
+
+/// Up to `limit` bytes of artifact `id` from `offset`, with where they start,
+/// moved off any secret a page edge would cut so that no part of it shows: a
+/// page starting inside one starts after it, one ending inside it ends before.
+fn clear_page(
+    runtime: &Runtime,
+    id: ArtifactId,
+    offset: u64,
+    limit: usize,
+) -> Result<Option<(u64, Vec<u8>)>> {
+    let redactor = runtime.tool_runtime.redactor();
+    let context = redactor.cut_context();
+    let window_start = offset.saturating_sub(context as u64);
+    let lead = usize::try_from(offset - window_start)
+        .map_err(|e| RuntimeError::Internal(e.to_string()))?;
+    let Some(window) = runtime.store.read_artifact_range(
+        id,
+        window_start,
+        lead.saturating_add(limit).saturating_add(context),
+    )?
+    else {
+        return Ok(None);
+    };
+    let page_start = lead.min(window.len());
+    let page_end = page_start.saturating_add(limit).min(window.len());
+    let (start, end) = redactor.clear_span(&window, page_start, page_end);
+    assert!(start >= page_start, "a page never starts before its offset");
+    let mut window = window;
+    window.truncate(end);
+    window.drain(..start);
+    Ok(Some((window_start + start as u64, window)))
 }
 
 #[cfg(test)]
@@ -323,6 +357,58 @@ mod tests {
                 .unwrap()
                 .is_error
         );
+        runtime.shutdown().await;
+    }
+
+    /// No page an agent can ask for shows part of a key: a page cut inside
+    /// one ends before it or takes it whole, and one starting inside it
+    /// starts after it.
+    #[tokio::test]
+    async fn artifact_pages_never_cut_a_secret() {
+        const KEY: &str = "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz012345";
+        let (runtime, _config) = runtime().await;
+        let (agent, _) = create(&runtime, None);
+        let text = format!("head {KEY} tail");
+        let published = runtime
+            .publish_artifact(
+                crate::artifacts::ArtifactPublication {
+                    kind: aether_core::artifact::ArtifactKind::File,
+                    name: "notes.txt".into(),
+                    summary: "a key in text".into(),
+                    content_type: Some("text/plain".into()),
+                    bytes: text.clone().into_bytes(),
+                    agent: agent.id,
+                    task: None,
+                },
+                Actor::agent(agent.id),
+            )
+            .await
+            .unwrap();
+        let page = |offset: usize, limit: usize| {
+            let outcome = artifact(&runtime, agent.id, published.id, offset as u64, limit).unwrap();
+            assert!(!outcome.is_error, "{offset}+{limit}: {}", outcome.content);
+            outcome.structured.unwrap()
+        };
+        let leaks = |shown: &str| {
+            KEY.as_bytes()
+                .windows(8)
+                .any(|piece| shown.contains(std::str::from_utf8(piece).unwrap()))
+        };
+        for offset in 0..text.len() {
+            for limit in [4, 8, 30] {
+                let shown = page(offset, limit);
+                let text = shown["text"].as_str().unwrap();
+                assert!(!leaks(text), "{offset}+{limit}: {text:?}");
+            }
+        }
+        // Paging by next_offset still reaches the end.
+        let (mut offset, mut pages) = (0, 0);
+        while let Some(next) = page(offset, 4)["next_offset"].as_u64() {
+            assert!(next as usize > offset, "every page moves on");
+            offset = next as usize;
+            pages += 1;
+            assert!(pages < text.len(), "paging ends");
+        }
         runtime.shutdown().await;
     }
 
