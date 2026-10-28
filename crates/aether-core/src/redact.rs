@@ -11,7 +11,7 @@ use regex::Regex;
 mod boundary;
 mod span;
 
-pub use span::CUT_CONTEXT_BYTES;
+pub use span::{CUT_CONTEXT_BYTES, PAGE_LOOKBACK_BYTES};
 
 /// Replaces recognizable secrets before output is persisted or shown.
 #[derive(Clone)]

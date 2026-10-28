@@ -213,6 +213,7 @@ pub(crate) fn artifact(
 /// Up to `limit` bytes of artifact `id` from `offset`, with where they start,
 /// moved off any secret a page edge would cut so that no part of it shows: a
 /// page starting inside one starts after it, one ending inside it ends before.
+/// The window reaches back far enough to see a long token or key block begin.
 fn clear_page(
     runtime: &Runtime,
     id: ArtifactId,
@@ -221,7 +222,8 @@ fn clear_page(
 ) -> Result<Option<(u64, Vec<u8>)>> {
     let redactor = runtime.tool_runtime.redactor();
     let context = redactor.cut_context();
-    let window_start = offset.saturating_sub(context as u64);
+    let lookback = context.max(aether_core::redact::PAGE_LOOKBACK_BYTES);
+    let window_start = offset.saturating_sub(lookback as u64);
     let lead = usize::try_from(offset - window_start)
         .map_err(|e| RuntimeError::Internal(e.to_string()))?;
     let Some(window) = runtime.store.read_artifact_range(
@@ -409,6 +411,71 @@ mod tests {
             pages += 1;
             assert!(pages < text.len(), "paging ends");
         }
+        runtime.shutdown().await;
+    }
+
+    async fn publish_text(runtime: &Runtime, agent: AgentId, bytes: Vec<u8>) -> ArtifactId {
+        let publication = crate::artifacts::ArtifactPublication {
+            kind: aether_core::artifact::ArtifactKind::File,
+            name: "notes.txt".into(),
+            summary: "long text".into(),
+            content_type: Some("text/plain".into()),
+            bytes,
+            agent,
+            task: None,
+        };
+        let published = runtime
+            .publish_artifact(publication, Actor::agent(agent))
+            .await;
+        published.unwrap().id
+    }
+
+    /// Every page's text from `offset` on, following next_offset.
+    fn pages_from(
+        runtime: &Runtime,
+        agent: AgentId,
+        id: ArtifactId,
+        offset: u64,
+        limit: usize,
+    ) -> String {
+        let (mut offset, mut shown) = (offset, String::new());
+        loop {
+            let outcome = artifact(runtime, agent, id, offset, limit).unwrap();
+            assert!(!outcome.is_error, "{offset}+{limit}: {}", outcome.content);
+            let page = outcome.structured.unwrap();
+            shown.push_str(page["text"].as_str().unwrap());
+            let Some(next) = page["next_offset"].as_u64() else {
+                return shown;
+            };
+            assert!(next > offset, "every page moves on");
+            offset = next;
+        }
+    }
+
+    #[tokio::test]
+    async fn paging_keeps_every_byte_of_a_long_run_that_is_no_key() {
+        let (runtime, _config) = runtime().await;
+        let (agent, _) = create(&runtime, None);
+        let text = format!("x {} tail", "A".repeat(40_000));
+        let id = publish_text(&runtime, agent.id, text.clone().into_bytes()).await;
+        assert_eq!(pages_from(&runtime, agent.id, id, 0, 512), text);
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_page_inside_a_long_key_block_shows_none_of_it() {
+        let (runtime, _config) = runtime().await;
+        let (agent, _) = create(&runtime, None);
+        let line = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0123456789ABCDEFGHIJKLMNOPQRSTU\n";
+        let text = format!(
+            "-----BEGIN PRIVATE KEY-----\n{}-----END PRIVATE KEY----- tail",
+            line.repeat(1_600)
+        );
+        let id = publish_text(&runtime, agent.id, text.into_bytes()).await;
+        let shown = pages_from(&runtime, agent.id, id, 40_000, 256);
+        assert_eq!(shown, " tail", "a page inside the block skips to its end");
+        let shown = pages_from(&runtime, agent.id, id, 0, 256);
+        assert_eq!(shown, "[REDACTED:private_key] tail");
         runtime.shutdown().await;
     }
 

@@ -13,6 +13,19 @@ use super::{PRIVATE_KEY_MASK, Redactor};
 /// [`Redactor::clear_span`] to see any secret around the cut whole.
 pub const CUT_CONTEXT_BYTES: usize = 16 << 10;
 
+/// How far before a page its window should reach, where the source has it,
+/// so that a token or private key block begun that far back is seen whole.
+pub const PAGE_LOOKBACK_BYTES: usize = 1 << 20;
+
+/// Runs and gaps a rule match is followed across beyond the context: a
+/// value, its blank space and `=`, and its key name, on either side.
+const REACH_HOPS: usize = 5;
+
+/// Most times a cut moves on past one secret onto the next. Each pass
+/// searches afresh, and matches of a secret repeated back to back fall
+/// differently from each neighbourhood, so passes are bounded.
+const MAX_PASSES: usize = 8;
+
 /// Private key block edges over bytes, so an invalid byte inside a block
 /// cannot hide it the way it splits the text rules' UTF-8 runs.
 static BLOCK_BEGIN: LazyLock<Regex> =
@@ -29,10 +42,15 @@ fn byte_rule(pattern: &str) -> Regex {
     Regex::new(pattern).expect("a built-in key block rule compiles")
 }
 
-/// Whether `byte` belongs to the alphabet of a key-shaped token. A cut
-/// inside an unbroken run of these may be a cut inside a key of any length.
+/// Whether `byte` belongs to the alphabet of a key-shaped token, which a
+/// rule match can run on through for any length.
 fn is_key_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"_-.~+/=".contains(&byte)
+}
+
+/// Whether `byte` may stand between a key name and its value.
+fn is_gap_byte(byte: u8) -> bool {
+    byte.is_ascii_whitespace() || b"\"':".contains(&byte)
 }
 
 impl Redactor {
@@ -42,11 +60,10 @@ impl Redactor {
         CUT_CONTEXT_BYTES.max(self.longest_known)
     }
 
-    /// `start..end` of `window` moved off every secret shape that crosses
-    /// it: a run of key characters, a private key block or a rule match. One
-    /// across `start` is skipped; one across `end` is left out, or taken
-    /// whole when it starts at the span's start, so a span never shrinks to
-    /// nothing on a secret it starts with. `start <= end` after.
+    /// `start..end` of `window` moved off every secret that crosses it: a
+    /// private key block or a rule match. One across `start` is skipped; one
+    /// across `end` is left out, or taken whole when it starts at the span's
+    /// start, so a span never shrinks to nothing on a secret it starts with.
     pub fn clear_span(&self, window: &[u8], start: usize, end: usize) -> (usize, usize) {
         assert!(start <= end, "a span starts before it ends");
         assert!(end <= window.len(), "the span lies inside its window");
@@ -58,17 +75,20 @@ impl Redactor {
         (clear_start, clear_end)
     }
 
-    /// The first point from `at` on that no secret shape crosses.
+    /// The first point from `at` on that no secret crosses.
     fn skip_forward(&self, window: &[u8], blocks: &[Range<usize>], mut at: usize) -> usize {
-        while let Some(crossing) = self.across(window, blocks, at) {
+        for _ in 0..MAX_PASSES {
+            let Some(crossing) = self.across(window, blocks, at) else {
+                break;
+            };
             debug_assert!(crossing.end > at, "each pass moves forward");
             at = crossing.end;
         }
         at
     }
 
-    /// `end` moved back before every secret shape that crosses it, or past
-    /// one that reaches back to `start`, a point nothing crosses.
+    /// `end` moved back before every secret that crosses it, or past one
+    /// that reaches back to `start`, a point nothing crosses.
     fn clear_end(
         &self,
         window: &[u8],
@@ -77,7 +97,10 @@ impl Redactor {
         mut end: usize,
     ) -> usize {
         debug_assert!(start <= end, "the end is sought from the cleared start on");
-        while let Some(crossing) = self.across(window, blocks, end) {
+        for _ in 0..MAX_PASSES {
+            let Some(crossing) = self.across(window, blocks, end) else {
+                break;
+            };
             if crossing.start <= start {
                 return self.skip_forward(window, blocks, crossing.end);
             }
@@ -87,12 +110,12 @@ impl Redactor {
         end
     }
 
-    /// The hull of every secret shape with `at` strictly inside it, if any.
+    /// The hull of every secret with `at` strictly inside it, if any.
     fn across(&self, window: &[u8], blocks: &[Range<usize>], at: usize) -> Option<Range<usize>> {
         if at == 0 || at >= window.len() {
             return None;
         }
-        let mut hull = key_run(window, at);
+        let mut hull: Option<Range<usize>> = None;
         let crossing = blocks
             .iter()
             .cloned()
@@ -108,13 +131,14 @@ impl Redactor {
         hull
     }
 
-    /// Every text rule's matches within [`Self::cut_context`] of `cut`, as
-    /// ranges of `window`; text runs between invalid bytes are searched
-    /// apart. Private key blocks are left to [`key_blocks`].
+    /// Every text rule's matches within [`Self::cut_context`] of `cut`, and
+    /// on over a token or blank gap at either edge, as ranges of `window`.
+    /// Text runs between invalid bytes are searched apart; private key
+    /// blocks are left to [`key_blocks`].
     fn matches_near(&self, window: &[u8], cut: usize) -> Vec<Range<usize>> {
         let context = self.cut_context();
-        let low = cut.saturating_sub(context);
-        let high = cut.saturating_add(context).min(window.len());
+        let low = reach_back(window, cut.saturating_sub(context));
+        let high = reach_forward(window, cut.saturating_add(context).min(window.len()));
         let mut found = Vec::new();
         let mut at = low;
         for chunk in window[low..high].utf8_chunks() {
@@ -138,22 +162,39 @@ impl Redactor {
     }
 }
 
-/// The unbroken run of key characters on both sides of `at`, if any.
-fn key_run(window: &[u8], at: usize) -> Option<Range<usize>> {
-    debug_assert!(0 < at && at < window.len(), "a cut has a byte on each side");
-    if !is_key_byte(window[at - 1]) || !is_key_byte(window[at]) {
-        return None;
+/// Where a match crossing `at` may begin: back over a token `at` lies in,
+/// then over gaps and runs in turn, so a long blank gap hides no key name.
+fn reach_back(window: &[u8], mut at: usize) -> usize {
+    assert!(at <= window.len(), "the reach starts inside the window");
+    for hop in 0..REACH_HOPS {
+        let class = if hop % 2 == 0 {
+            is_key_byte
+        } else {
+            is_gap_byte
+        };
+        at = window[..at]
+            .iter()
+            .rposition(|&byte| !class(byte))
+            .map_or(0, |before| before + 1);
     }
-    let start = window[..at]
-        .iter()
-        .rposition(|&byte| !is_key_byte(byte))
-        .map_or(0, |before| before + 1);
-    let end = window[at..]
-        .iter()
-        .position(|&byte| !is_key_byte(byte))
-        .map_or(window.len(), |after| at + after);
-    debug_assert!(start < at && at < end);
-    Some(start..end)
+    at
+}
+
+/// Where a match crossing `at` may end, as [`reach_back`] reads forward.
+fn reach_forward(window: &[u8], mut at: usize) -> usize {
+    assert!(at <= window.len(), "the reach starts inside the window");
+    for hop in 0..REACH_HOPS {
+        let class = if hop % 2 == 0 {
+            is_key_byte
+        } else {
+            is_gap_byte
+        };
+        at = window[at..]
+            .iter()
+            .position(|&byte| !class(byte))
+            .map_or(window.len(), |after| at + after);
+    }
+    at
 }
 
 /// Every private key block in `window`, in order: BEGIN to its END, or to
@@ -242,15 +283,32 @@ mod tests {
     fn plain_text_keeps_its_span() {
         let redactor = known();
         let text = "nothing secret here, only words";
-        assert_eq!(redactor.clear_span(text.as_bytes(), 8, 19), (8, 19));
+        assert_eq!(redactor.clear_span(text.as_bytes(), 3, 17), (3, 17));
         assert_eq!(redactor.cut_context(), CUT_CONTEXT_BYTES);
     }
 
     #[test]
-    fn a_cut_never_splits_a_word_which_may_be_a_key() {
+    fn a_long_run_that_is_no_key_is_cut_anywhere() {
         let redactor = Redactor::default();
-        let text = "nothing secret here, only words";
-        assert_eq!(redactor.clear_span(text.as_bytes(), 3, 17), (7, 15));
+        let text = format!("x {} tail", "A".repeat(40_000));
+        let spans = [(0, 4), (20_000, 20_008), (39_998, 40_006)];
+        for (start, end) in spans {
+            assert_eq!(
+                redactor.clear_span(text.as_bytes(), start, end),
+                (start, end)
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_blank_gap_does_not_hide_a_bearer_name() {
+        let redactor = Redactor::default();
+        let text = format!("log Bearer{}0123456789abcdef tail", " ".repeat(20_000));
+        let value = 20_010..20_026;
+        let (start, end) = redactor.clear_span(text.as_bytes(), value.start, value.end);
+        assert_eq!((start, end), (value.end, value.end), "the value is skipped");
+        let (_, end) = redactor.clear_span(text.as_bytes(), 0, 10_000);
+        assert_eq!(end, 4, "a span ending in the gap leaves the name out");
     }
 
     #[test]

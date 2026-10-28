@@ -72,15 +72,17 @@ looks like a boundary and is not one.
   the shell's output log in the agent's temp directory keeps the command's
   output for the agent, and artifacts stored before 1.2.7 are masked only
   when read or exported. A `read_artifact` page, a capped `ReadArtifact`
-  reply and a shell log line cut at its size cap never split a run of
-  key characters (letters, digits and `_-.~+/=`), a private key block, or any
-  other secret seen whole within 16 KiB of the cut (or the longest known
-  secret, if longer). A page that starts inside one starts after it, so a run
-  longer than a page's reach is skipped, not shown. Still open: a private key
-  block longer than 16 KiB read from its middle, when that part holds anything
-  but base64 lines; a single token longer than the shell log's 5 MiB cap; and
-  more than 4 MiB of blank lines between a bearer or AWS key name and its
-  value in a shell log. Each can be split so that neither half is recognized.
+  reply and a shell log line cut at its size cap move their cut off any
+  secret seen whole around it: a private key block, a token of any length
+  from where it starts, a bearer or AWS key name across any blank space
+  before its value, and any other match within 16 KiB of the cut (or the
+  longest known secret, if longer). A `read_artifact` page looks back up to
+  1 MiB for where a token or key block began. Still open: a token or private
+  key block that began more than 1 MiB before a page, a single token longer
+  than the shell log's 5 MiB cap, more than 4 MiB of blank lines between a
+  bearer or AWS key name and its value in a shell log, and a known secret
+  repeated back to back many times over, whose matches can fall either way
+  of a cut. Each can be split so that neither part is recognized.
   Tool arguments are kept in the
   event log as typed, because an approval answered later re-runs the call from
   them; a run export masks them. For the same reason a native engine's
