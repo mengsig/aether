@@ -71,10 +71,12 @@ looks like a boundary and is not one.
   publishes is stored as sent (masked on every read and export, not on disk),
   the shell's output log in the agent's temp directory keeps the command's
   output for the agent, and artifacts stored before 1.2.7 are masked only
-  when read or exported. A `read_artifact` page boundary, the cut of a large
-  `ReadArtifact` reply, or in a shell log a single line over 4 MiB or more
-  than 4 MiB of blank lines between a bearer or AWS key name and its value,
-  can split a secret so that neither half is recognized. Tool arguments are kept in the
+  when read or exported. A `read_artifact` page, a capped `ReadArtifact`
+  reply and a shell log line cut at its size cap move their cut off any
+  secret seen whole within 16 KiB of it (or the longest known secret, if
+  longer). A key over that length, or more than 4 MiB of blank lines between a
+  bearer or AWS key name and its value in a shell log, can still be split so
+  that neither half is recognized. Tool arguments are kept in the
   event log as typed, because an approval answered later re-runs the call from
   them; a run export masks them. For the same reason a native engine's
   approved permission prompt gets its tool input back unmasked. A known secret

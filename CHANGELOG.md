@@ -89,16 +89,20 @@ older clients see no change. Store schema 28 (was 27).
   process group holds a watchdog that kills the group once the daemon's pipe
   to it closes. A wrapper's own engine process, such as the native CLI the npm
   `codex` launcher starts, dies too, and a version probe's group ends with
-  the probe. The next start still reaps what left the group. macOS has no
-  such signal; [agent processes](docs/configuration.md#agent-processes)
-  says what applies there. An engine that failed preflight at startup is no
+  the probe, and an engine whose watchdog cannot start is not started. The
+  next start still reaps what left the group. macOS has no such signal;
+  [agent processes](docs/configuration.md#agent-processes) says what applies
+  there. An engine that failed preflight at startup is no
   longer unusable until a restart: a turn, a compaction, a delegation or a
   started agent that needs it probes the CLI again, at most every two seconds,
   as it does for a usable CLI that has since left `PATH`; between probes a
   CLI that left `PATH` is refused at once. A failure names the fresh reason
-  and says that no restart is needed. `aether run`
-  with a missing or unusable engine now exits non-zero and creates no agent;
-  spawn schedules are still accepted, and each run's first turn probes again.
+  and says that no restart is needed. An agent whose approval policy gates
+  calls is refused, not run ungated, when the engine found for it can no
+  longer ask before acting, such as a Codex CLI replaced by an exec-only
+  build. `aether run` with a missing or unusable engine now exits non-zero
+  and creates no agent; spawn schedules are still accepted, and each run's
+  first turn probes again.
   Messaging a failed agent names `aether wake <agent>` and
   `aether restart <agent>`, and an engine killed by a signal with nothing on
   stderr no longer ends its error with a dangling colon. `aether doctor` in
@@ -178,8 +182,11 @@ older clients see no change. Store schema 28 (was 27).
   denial note the native-engine bridge returns to the engine, object keys as
   well as values in a tool's structured output, a known secret's
   JSON-escaped spelling as well as its own, every `read_artifact` reply to
-  any connection, and every export record and payload. An export a known
-  secret would leave unimportable is refused. An artifact a client publishes
+  any connection, and every export record and payload. A `read_artifact`
+  page, a `ReadArtifact` reply cut at its `max_bytes` and a shell log line
+  cut at its size cap never cut a secret in two: the cut moves off it, so no
+  part of it shows. An export a known secret would leave unimportable is
+  refused. An artifact a client publishes
   is still stored as sent and masked on each of those ways out; the shell's
   own output log on disk stays raw for the agent. See
   [known limitations](docs/known-limitations.md#security-boundaries).
