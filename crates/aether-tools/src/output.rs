@@ -1,10 +1,9 @@
 //! Output bounding and redaction: large outputs become artifacts, and the
 //! excerpt that reaches the model and the event log is redacted.
 //!
-//! The artifact itself holds the raw output - an agent reads its own output
-//! back, and a redacted copy would be the only one it had. The cleaning for
-//! those bytes happens where they cross a boundary, in the run export
-//! (ARCHITECTURE §13.2).
+//! The artifact is redacted too: the runtime's artifact sink masks the full
+//! output before it is stored, so `read_artifact` and every device reading it
+//! see the masked copy (ARCHITECTURE §13.2).
 
 pub use aether_core::redact::Redactor;
 

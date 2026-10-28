@@ -26,6 +26,7 @@ async fn a_run_with_a_live_agent_is_not_exported() {
         source.store.as_ref(),
         agent.run,
         &dir.path().join("run.aether"),
+        &aether_tools::Redactor::default(),
     )
     .expect_err("a live run must not be exported");
     assert!(error.to_string().contains("live agents"), "{error}");
@@ -84,8 +85,13 @@ async fn an_event_appended_mid_export_does_not_produce_an_unimportable_file() {
 
     for attempt in 0..30 {
         let file = dir.path().join(format!("run-{attempt}.aether"));
-        let exported =
-            transfer::export_run(store.as_ref(), run, &file).expect("the export must not fail");
+        let exported = transfer::export_run(
+            store.as_ref(),
+            run,
+            &file,
+            &aether_tools::Redactor::default(),
+        )
+        .expect("the export must not fail");
         let text = std::fs::read_to_string(&file).expect("read");
         let promised = serde_json::from_str::<serde_json::Value>(
             text.lines().next().expect("a manifest line"),
@@ -127,7 +133,13 @@ async fn a_record_from_another_run_is_refused() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
 
     let stranger = RunId::new();
     let text = std::fs::read_to_string(&file).expect("read");
@@ -163,7 +175,13 @@ async fn a_truncated_file_imports_nothing() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
 
     // Cut the last record in half: the failure lands after hundreds of good
     // records, which is exactly where a batching import committed a partial
@@ -219,7 +237,13 @@ async fn a_file_missing_records_is_refused_against_its_own_manifest() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
 
     // Drop one event line, keeping the file otherwise well-formed: without
     // the manifest's count there is nothing to notice it by.
@@ -261,7 +285,13 @@ async fn duplicate_artifact_payload_is_refused_before_commit() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     let mut text = std::fs::read_to_string(&file).expect("read");
     let payload = text
         .lines()
@@ -296,8 +326,13 @@ async fn export_refuses_existing_partial_without_replacing_it() {
     let partial = dir.path().join("run.aether.partial");
     std::fs::write(&path, b"previous export").expect("target");
     std::fs::write(&partial, b"previous partial").expect("partial");
-    let error =
-        transfer::export_run(source.store.as_ref(), run, &path).expect_err("existing partial");
+    let error = transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &path,
+        &aether_tools::Redactor::default(),
+    )
+    .expect_err("existing partial");
     assert!(
         matches!(error, aether_runtime::RuntimeError::Store(aether_store::StoreError::Io(ref error)) if error.kind() == std::io::ErrorKind::AlreadyExists)
     );
@@ -326,8 +361,13 @@ async fn export_refuses_symlink_partial_without_touching_its_target() {
     std::fs::write(&target, b"keep").expect("target");
     std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).expect("mode");
     std::os::unix::fs::symlink(&target, &partial).expect("symlink");
-    let error =
-        transfer::export_run(source.store.as_ref(), run, &path).expect_err("symlink partial");
+    let error = transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &path,
+        &aether_tools::Redactor::default(),
+    )
+    .expect_err("symlink partial");
     assert!(
         matches!(error, aether_runtime::RuntimeError::Store(aether_store::StoreError::Io(ref error)) if error.kind() == std::io::ErrorKind::AlreadyExists)
     );

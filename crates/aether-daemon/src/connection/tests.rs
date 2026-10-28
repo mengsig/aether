@@ -179,21 +179,29 @@ async fn daemon_with_network(
     store: Arc<dyn aether_store::Store>,
     network: aether_core::agent::NetworkPolicy,
 ) -> (Daemon, tempfile::TempDir) {
+    daemon_with_config(store, |config| config.network_default = network).await
+}
+
+pub(super) async fn daemon_with_config(
+    store: Arc<dyn aether_store::Store>,
+    configure: impl FnOnce(&mut aether_runtime::RuntimeConfig),
+) -> (Daemon, tempfile::TempDir) {
     let config_dir = tempfile::tempdir().expect("config dir");
     let models = Arc::new(
         aether_model::Models::load(Some(config_dir.path().to_path_buf())).expect("models"),
     );
+    let mut config = aether_runtime::RuntimeConfig {
+        holder: "test".into(),
+        default_model: Some(aether_core::model::ModelRef::new(
+            "anthropic",
+            "claude-sonnet-5-5",
+        )),
+        attachment_dir: Some(config_dir.path().join("attachments")),
+        ..Default::default()
+    };
+    configure(&mut config);
     let runtime = aether_runtime::Runtime::start_with_engines(
-        aether_runtime::RuntimeConfig {
-            holder: "test".into(),
-            network_default: network,
-            default_model: Some(aether_core::model::ModelRef::new(
-                "anthropic",
-                "claude-sonnet-5-5",
-            )),
-            attachment_dir: Some(config_dir.path().join("attachments")),
-            ..Default::default()
-        },
+        config,
         store,
         models.clone(),
         Arc::new(aether_tools::ToolRegistry::with_builtins()),

@@ -46,6 +46,20 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Secrets are masked in full tool-output artifacts, `read_artifact` replies
+  and run exports (#308).** The event log masked the excerpt of a long tool
+  output, but the full copy stored as an artifact kept the text as printed,
+  an API agent's `read_artifact` outcome committed up to 64 KiB of that text
+  to the event log and sent it to the provider, and `aether runs export`
+  masked secret shapes but not the values the daemon knows (listener token,
+  MCP `token_env` values, provider keys). Now the runtime redactor, known
+  secrets included, masks a tool's full output before it is stored (a shell
+  log is masked as a stream, so a large one is never held in memory), every
+  harness outcome and tool error before it is committed, every `read_artifact`
+  reply to any connection, and every export record and payload. An artifact a
+  client publishes is still stored as sent and masked on each of those ways
+  out; the shell's own output log on disk stays raw for the agent. See
+  [known limitations](docs/known-limitations.md#security-boundaries).
 - **Rejected messages return to the draft, and TUI shortcuts behave consistently
   (#312).** Images refused by a host older than protocol 19 and a first request
   sent without a model return to the agent's draft with their images. Uncertain

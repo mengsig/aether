@@ -10,8 +10,20 @@ mod schedules;
 use crate::workspace::review::path_text as workspace_path_for_reply;
 
 /// Apply a harness action: validate, transition, record. Returns what the
-/// model is told.
+/// model is told, masked like any tool's outcome: a `read_artifact` page or a
+/// task result carries whatever text produced it.
 pub(crate) async fn apply_action(
+    runtime: &Arc<Runtime>,
+    ctx: &mut TurnCtx,
+    action: HarnessAction,
+    effects: &mut ToolEffects,
+) -> Result<ToolOutcome> {
+    let mut outcome = dispatch_action(runtime, ctx, action, effects).await?;
+    aether_tools::redact_outcome(runtime.tool_runtime.redactor(), &mut outcome);
+    Ok(outcome)
+}
+
+async fn dispatch_action(
     runtime: &Arc<Runtime>,
     ctx: &mut TurnCtx,
     action: HarnessAction,

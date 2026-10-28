@@ -844,7 +844,9 @@ behavior.
   or hyphens. Its payload never grants operator standing; only a stored actor
   or the daemon's verified GitHub watcher may do that.
 - Both device roles can read fleet snapshots, transcripts, artifacts, replay,
-  MCP descriptions and events. Remote-administration events (`remote.*`)
+  MCP descriptions and events. Artifact bytes in a `read_artifact` reply are
+  masked by the daemon's redactor, known secret values included, for every
+  connection; the event log and transcripts are masked when written. Remote-administration events (`remote.*`)
   become `remote.restricted` with `{"redacted":true}` payloads on device
   connections, preserving sequence numbers while hiding fingerprints and
   revocation history. Token connections receive the same redaction. This

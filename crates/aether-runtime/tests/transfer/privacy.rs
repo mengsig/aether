@@ -1,9 +1,8 @@
 use super::*;
 
-/// A tool output too large for the model context is stored raw as an
-/// artifact - the agent may read its own output back - so the export is
-/// where those bytes cross a boundary, and where they are cleaned. They are
-/// also the largest and least reviewed content in the file.
+/// A tool output too large for the model context is stored as an artifact,
+/// masked before it is stored, and the export masks every payload again on
+/// its way out. They are the largest and least reviewed content in the file.
 #[tokio::test]
 async fn a_secret_in_an_artifact_payload_does_not_travel() {
     let secret = "sk-ant-abcdefghijklmnopqrstuvwxyz0123456789";
@@ -43,7 +42,6 @@ async fn a_secret_in_an_artifact_payload_does_not_travel() {
         .expect("exists")
         .run;
 
-    // What is stored here is the raw output, deliberately.
     let stored: Vec<Vec<u8>> = source
         .store
         .artifacts(&aether_store::ArtifactFilter {
@@ -55,15 +53,28 @@ async fn a_secret_in_an_artifact_payload_does_not_travel() {
         .filter_map(|a| source.store.read_artifact_bytes(a.id).expect("read"))
         .collect();
     assert!(
+        stored.iter().any(|b| {
+            let text = String::from_utf8_lossy(b);
+            text.contains("line 2000 of the log") && text.contains("[REDACTED:anthropic_key]")
+        }),
+        "the run stored no masked copy of the output; the test proves nothing"
+    );
+    assert!(
         stored
             .iter()
-            .any(|b| String::from_utf8_lossy(b).contains(secret)),
-        "the run produced no artifact carrying the secret; the test proves nothing"
+            .all(|b| !String::from_utf8_lossy(b).contains(secret)),
+        "a key in a tool output reached the artifact store"
     );
 
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    let exported = transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    let exported = transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     assert!(exported.artifact_payloads > 0, "no payload was written");
 
     let text = std::fs::read_to_string(&file).expect("read export");
@@ -137,7 +148,13 @@ async fn a_secret_in_a_tool_argument_does_not_travel() {
 
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     let text = std::fs::read_to_string(&file).expect("read");
     assert!(
         text.contains("REDACTED"),

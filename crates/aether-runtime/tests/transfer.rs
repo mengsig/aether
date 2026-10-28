@@ -286,3 +286,6 @@ mod schedules;
 
 #[path = "transfer/artifacts.rs"]
 mod artifacts;
+
+#[path = "transfer/known_secrets.rs"]
+mod known_secrets;

@@ -85,8 +85,12 @@ async fn read_artifact(
         .map_err(store_err)?
         .ok_or_else(|| ErrorReply::not_found(id))?;
     let store = rt.store().clone();
+    let redactor = rt.config().redactor.clone();
+    // A published artifact is stored as sent, and an older tool artifact
+    // unmasked: every reply is masked, observers' and the operator's alike.
     let read = blocking(move || {
         read_artifact_slice(store.as_ref(), id, max_bytes, MAX_ARTIFACT_READ_BYTES)
+            .map(|(slice, truncated)| (redactor.redact_bytes(&slice).into_owned(), truncated))
     })
     .await?;
     let (slice, truncated) = read.map_err(store_err)?;

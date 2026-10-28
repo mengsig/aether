@@ -50,9 +50,11 @@ pub(super) async fn dispatch(daemon: &Daemon, command: Command) -> Result<Reply,
         // stall every other client's command behind it.
         Command::ExportRun { run, path } => {
             let store = rt.store().clone();
-            let exported =
-                blocking(move || aether_runtime::transfer::export_run(store.as_ref(), run, &path))
-                    .await?;
+            let redactor = rt.config().redactor.clone();
+            let exported = blocking(move || {
+                aether_runtime::transfer::export_run(store.as_ref(), run, &path, &redactor)
+            })
+            .await?;
             Ok(Reply::RunExported(exported.map_err(map_err)?))
         }
         Command::ImportRun { path } => {

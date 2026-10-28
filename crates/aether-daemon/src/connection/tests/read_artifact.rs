@@ -40,3 +40,75 @@ fn the_default_cap_leaves_the_base64_reply_under_the_client_frame_limit() {
     let encoded = MAX_ARTIFACT_READ_BYTES.div_ceil(3) * 4;
     assert!(encoded < 64 * 1024 * 1024 - 1024 * 1024, "{encoded}");
 }
+
+/// A published artifact is stored as sent; the reply to any connection, an
+/// observer's included, carries the daemon's known secrets masked.
+#[tokio::test]
+async fn a_reply_masks_the_daemons_known_secrets() {
+    use crate::authz::AuthContext;
+    use crate::connection::dispatch::dispatch_version;
+    use aether_core::event::Actor;
+    use aether_protocol::{Command, Reply};
+    use base64::Engine as _;
+    const KNOWN: &str = "fleet-token-0123456789abcdef";
+    let store: std::sync::Arc<dyn aether_store::Store> =
+        std::sync::Arc::new(aether_store::SqliteStore::open_in_memory().expect("store"));
+    let (daemon, _config_dir) = super::daemon_with_config(store.clone(), |config| {
+        config.redactor = aether_tools::Redactor::with_known_secrets([KNOWN]).expect("compiles");
+    })
+    .await;
+    let (agent, _) = daemon
+        .runtime
+        .create_agent(
+            aether_runtime::CreateAgentSpec {
+                role: "root".into(),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("agent");
+    let artifact = daemon
+        .runtime
+        .publish_artifact(
+            aether_runtime::artifacts::ArtifactPublication {
+                kind: aether_core::artifact::ArtifactKind::File,
+                name: "deploy.log".into(),
+                summary: "evidence".into(),
+                content_type: Some("text/plain".into()),
+                bytes: format!("token {KNOWN}\n\u{ff}").into_bytes(),
+                agent: agent.id,
+                task: None,
+            },
+            Actor::user(),
+        )
+        .await
+        .expect("publish");
+    let raw = store
+        .read_artifact_bytes(artifact.id)
+        .expect("read")
+        .expect("bytes");
+    assert!(
+        String::from_utf8_lossy(&raw).contains(KNOWN),
+        "stored as sent"
+    );
+    for auth in [AuthContext::Token, AuthContext::Local] {
+        let command = Command::ReadArtifact {
+            id: artifact.id,
+            max_bytes: 1024,
+        };
+        let Ok(Reply::ArtifactBytes { base64, .. }) =
+            dispatch_version(&daemon, command, Actor::user(), &auth).await
+        else {
+            panic!("an artifact reply for {auth:?}");
+        };
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(base64)
+            .expect("base64");
+        assert_eq!(
+            String::from_utf8(bytes).expect("text"),
+            "token [REDACTED:known_secret]\n\u{ff}",
+            "{auth:?}"
+        );
+    }
+    daemon.runtime.shutdown().await;
+}

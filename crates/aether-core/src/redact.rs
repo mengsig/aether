@@ -152,7 +152,79 @@ impl Redactor {
         }
         out
     }
+
+    /// Masks the UTF-8 text runs of `bytes` and keeps every other byte as
+    /// it is, so a log with a stray invalid byte is still cleaned.
+    pub fn redact_bytes<'a>(&self, bytes: &'a [u8]) -> Cow<'a, [u8]> {
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            return match self.redact(text) {
+                Cow::Borrowed(_) => Cow::Borrowed(bytes),
+                Cow::Owned(clean) => Cow::Owned(clean.into_bytes()),
+            };
+        }
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut changed = false;
+        for chunk in bytes.utf8_chunks() {
+            let text = chunk.valid();
+            // No rule matches fewer bytes, and binary data is mostly short runs.
+            if text.len() >= MIN_KNOWN_SECRET_CHARS
+                && let Cow::Owned(clean) = self.redact(text)
+            {
+                changed = true;
+                out.extend_from_slice(clean.as_bytes());
+            } else {
+                out.extend_from_slice(text.as_bytes());
+            }
+            out.extend_from_slice(chunk.invalid());
+        }
+        if !changed {
+            debug_assert_eq!(out, bytes, "an unchanged copy holds the same bytes");
+            return Cow::Borrowed(bytes);
+        }
+        Cow::Owned(out)
+    }
+
+    /// Copies `input` to `output` with every chunk masked, holding about one
+    /// chunk in memory. Chunks end at a line break, so a secret on one line is
+    /// never split; a key block cut between chunks falls to the truncated-key
+    /// rules. Only a line longer than [`STREAM_LINE_LIMIT_BYTES`] is cut
+    /// mid-line. Returns the bytes written.
+    pub fn redact_stream(
+        &self,
+        mut input: impl std::io::BufRead,
+        mut output: impl std::io::Write,
+    ) -> std::io::Result<u64> {
+        use std::io::{BufRead as _, Read as _};
+        let mut chunk = Vec::with_capacity(STREAM_CHUNK_BYTES);
+        let mut written = 0u64;
+        loop {
+            chunk.clear();
+            (&mut input)
+                .take(STREAM_CHUNK_BYTES as u64)
+                .read_to_end(&mut chunk)?;
+            if chunk.is_empty() {
+                break;
+            }
+            if chunk.last() != Some(&b'\n') {
+                (&mut input)
+                    .take(STREAM_LINE_LIMIT_BYTES as u64)
+                    .read_until(b'\n', &mut chunk)?;
+            }
+            debug_assert!(chunk.len() <= STREAM_CHUNK_BYTES + STREAM_LINE_LIMIT_BYTES);
+            let clean = self.redact_bytes(&chunk);
+            output.write_all(&clean)?;
+            written += clean.len() as u64;
+        }
+        output.flush()?;
+        Ok(written)
+    }
 }
+
+/// How much [`Redactor::redact_stream`] reads before it looks for a line end.
+pub const STREAM_CHUNK_BYTES: usize = 1 << 20;
+
+/// How far past a chunk [`Redactor::redact_stream`] reads to finish its line.
+pub const STREAM_LINE_LIMIT_BYTES: usize = 4 << 20;
 
 /// The known secret values could not be compiled into one rule.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -407,5 +479,49 @@ mod tests {
     fn clean_text_is_borrowed() {
         let r = Redactor::default();
         assert!(matches!(r.redact("nothing secret here"), Cow::Borrowed(_)));
+    }
+
+    const KNOWN: &str = "fleet-token-0123456789abcdef";
+
+    #[test]
+    fn bytes_are_masked_around_invalid_utf8_and_otherwise_kept() {
+        let r = Redactor::with_known_secrets([KNOWN]).unwrap();
+        let mut log = b"\xff\xfeheader ".to_vec();
+        log.extend_from_slice(KNOWN.as_bytes());
+        log.extend_from_slice(b" tail\x80\x00");
+        let out = r.redact_bytes(&log);
+        let text = String::from_utf8_lossy(&out);
+        assert!(!text.contains(KNOWN), "{text}");
+        assert!(out.starts_with(b"\xff\xfeheader [REDACTED:known_secret] tail"));
+        assert!(
+            out.ends_with(b"\x80\x00"),
+            "invalid bytes are kept verbatim"
+        );
+        let binary = [0u8, 159, 146, 150, 255, 7];
+        assert!(matches!(r.redact_bytes(&binary), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn stream_masks_secrets_across_chunks_and_lines() {
+        let r = Redactor::with_known_secrets([KNOWN]).unwrap();
+        // A secret straddling the first chunk's end, and one per later line.
+        let mut input = "x".repeat(STREAM_CHUNK_BYTES - 5);
+        input.push_str(KNOWN);
+        input.push('\n');
+        for i in 0..20_000 {
+            input.push_str(&format!("line {i} {KNOWN}\n"));
+        }
+        input.push_str("-----BEGIN PRIVATE KEY-----\nZm9vYmFy\n-----END PRIVATE KEY-----");
+        let mut out = Vec::new();
+        let written = r.redact_stream(input.as_bytes(), &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(written, text.len() as u64);
+        assert!(!text.contains(KNOWN) && !text.contains("Zm9vYmFy"));
+        assert_eq!(text.matches("[REDACTED:known_secret]").count(), 20_001);
+        assert!(
+            text.ends_with("[REDACTED:private_key]"),
+            "{}",
+            &text[text.len() - 64..]
+        );
     }
 }

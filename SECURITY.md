@@ -68,6 +68,11 @@ The boundaries Aether does maintain, where a bypass is a security bug:
 - **Credential handling.** Stored provider credentials are kept in
   owner-only files, redacted from the event log and from diagnostic bundles,
   and hidden from Aether's built-in tools and from MCP servers.
+- **Redaction of tool output.** Secret shapes and the secret values the
+  daemon knows are masked in tool outcomes and errors, harness outcomes, the
+  full-output artifacts tools store, `read_artifact` replies to any
+  connection, and run exports. What the masking cannot see is listed in
+  [known limitations](docs/known-limitations.md#security-boundaries).
 - **External triggers.** The GitHub watcher and signed webhooks only dispatch
   requests that pass their documented permission, allowlist and signature
   checks, and never grant more authority than documented.

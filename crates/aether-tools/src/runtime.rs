@@ -7,7 +7,7 @@ use std::time::Duration;
 use aether_core::agent::ApprovalPolicy;
 use aether_core::idempotency::IdempotencyKey;
 use aether_core::time::{Timestamp, now};
-use aether_core::tool::{SideEffectClass, ToolCall, ToolDescriptor};
+use aether_core::tool::{SideEffectClass, ToolCall, ToolDescriptor, ToolOutcome};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -253,22 +253,14 @@ impl ToolRuntime {
                 // Nothing is left of the budget, so another attempt could
                 // only time out again; report what actually happened.
                 Err(e) if e.is_retryable() && attempt < attempts && !out_of_time => {
-                    retried.push(e.to_string())
+                    retried.push(redactor.redact(&e.to_string()).into_owned())
                 }
                 _ => break,
             }
         }
         let result = result.map(|exec| match exec {
             ToolExecution::Outcome(mut outcome) => {
-                if let std::borrow::Cow::Owned(clean) = redactor.redact(&outcome.content) {
-                    outcome.content = clean;
-                }
-                // `structured` is committed to the event log whole, and an
-                // MCP server chooses its content, so the redactor must see
-                // it too - not just the text half.
-                if let Some(value) = outcome.structured.as_mut() {
-                    redact_json(&redactor, value);
-                }
+                redact_outcome(&redactor, &mut outcome);
                 ToolExecution::Outcome(outcome)
             }
             action => action,
@@ -285,6 +277,18 @@ impl ToolRuntime {
                 ran: true,
             },
         )
+    }
+}
+
+/// Mask an outcome's text and its `structured` value before it is committed.
+/// `structured` is committed to the event log whole, and an MCP server or an
+/// artifact chooses its content, so the redactor must see it too.
+pub fn redact_outcome(redactor: &Redactor, outcome: &mut ToolOutcome) {
+    if let std::borrow::Cow::Owned(clean) = redactor.redact(&outcome.content) {
+        outcome.content = clean;
+    }
+    if let Some(value) = outcome.structured.as_mut() {
+        redact_json(redactor, value);
     }
 }
 

@@ -118,8 +118,8 @@ pub(super) fn cap_status(runtime: &Runtime, agent: &Agent, child_on_engine: bool
         Err(e) => {
             let (cap, source) = effective_cap(runtime, agent);
             // The full error (a sqlite path, routinely) is logged for an
-            // operator, never sent to the model or the event log: a
-            // harness action's outcome text skips the outcome redactor.
+            // operator, never sent to the model or the event log: the
+            // redactor masks secrets, not private paths.
             tracing::warn!(agent = %agent.id, error = %e, "cap advisory: could not read the fleet");
             CapStatus::Unknown {
                 cap,

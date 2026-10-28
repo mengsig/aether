@@ -1,4 +1,8 @@
 //! Artifact storage for tools: bytes go to the store, the record becomes an event.
+//!
+//! A tool's output is masked by the runtime redactor before it is stored, so
+//! its secrets never reach the store. What a client publishes is kept as sent
+//! and masked where it is read instead.
 
 use std::sync::Arc;
 
@@ -33,6 +37,10 @@ impl ArtifactSink for StoreArtifactSink {
         ctx_agent: AgentId,
         ctx_task: Option<TaskId>,
     ) -> Result<Artifact, ToolError> {
+        let bytes = match self.runtime.tool_runtime.redactor().redact_bytes(&bytes) {
+            std::borrow::Cow::Borrowed(_) => bytes,
+            std::borrow::Cow::Owned(clean) => clean,
+        };
         self.runtime
             .publish_artifact(
                 ArtifactPublication {
@@ -65,12 +73,14 @@ impl ArtifactSink for StoreArtifactSink {
         let summary = summary.to_owned();
         let content_type = content_type.map(str::to_owned);
         tokio::task::spawn_blocking(move || {
+            // Masked before the lock: a large log must not stall every other publication.
+            let masked = masked_copy(runtime.tool_runtime.redactor(), &source)?;
             let _hold = runtime.artifact_lock.blocking_lock();
             let run = run_of(&runtime, ctx_agent)?;
             let id = ArtifactId::new();
             let imported = runtime
                 .store
-                .import_artifact_file(id, &source)
+                .import_artifact_file(id, masked.path())
                 .map_err(|e| ToolError::Internal(e.to_string()))?;
             let artifact = Artifact {
                 id,
@@ -105,6 +115,21 @@ impl ArtifactSink for StoreArtifactSink {
         .await
         .map_err(|e| ToolError::Internal(e.to_string()))?
     }
+}
+
+/// A masked copy of `source`, beside it so it stays on the same disk and
+/// under the same owner. The raw file stays where it was for its producer.
+fn masked_copy(
+    redactor: &aether_tools::Redactor,
+    source: &std::path::Path,
+) -> Result<tempfile::NamedTempFile, ToolError> {
+    let dir = source
+        .parent()
+        .ok_or_else(|| ToolError::Internal(format!("{} has no directory", source.display())))?;
+    let input = std::fs::File::open(source)?;
+    let mut masked = tempfile::NamedTempFile::new_in(dir)?;
+    redactor.redact_stream(std::io::BufReader::new(input), masked.as_file_mut())?;
+    Ok(masked)
 }
 
 /// Payload and association for an artifact produced by a tool or client.

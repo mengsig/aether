@@ -56,7 +56,13 @@ async fn schedules_and_history_travel_without_reactivating_archived_work() {
     source.store.commit(commit).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("timers.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).unwrap();
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .unwrap();
     let target = daemon(Vec::new()).await;
     let imported = transfer::import_run(&target.runtime, &file).unwrap();
     let jobs = target.store.schedules(None).unwrap();

@@ -56,7 +56,13 @@ async fn deduplicated_artifacts_travel_with_their_records_and_bytes() {
     }));
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("run.aether");
-    let exported = transfer::export_run(source.store.as_ref(), run, &file).unwrap();
+    let exported = transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .unwrap();
     assert_eq!(exported.artifacts, 2);
     assert_eq!(exported.artifact_payloads, 2);
     let target = daemon(Vec::new()).await;
@@ -80,7 +86,13 @@ async fn redacted_artifact_metadata_matches_payload_and_cannot_dedup_raw_secrets
     let run = source.store.agent(agent).unwrap().unwrap().run;
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).unwrap();
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .unwrap();
     let text = std::fs::read_to_string(&file).unwrap();
     let records: Vec<Record> = text
         .lines()
@@ -189,7 +201,13 @@ async fn invalid_ulid_shaped_prose_survives_run_import() {
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).unwrap();
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .unwrap();
     let target = daemon(Vec::new()).await;
     transfer::import_run(&target.runtime, &file).unwrap();
     assert_eq!(
@@ -205,7 +223,13 @@ async fn imported_legacy_dedup_events_without_records_can_be_exported_again() {
     let run = source.store.agent(agent).unwrap().unwrap().run;
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("legacy.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).unwrap();
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .unwrap();
     let text = std::fs::read_to_string(&file).unwrap();
     let mut lines = text.lines();
     let mut legacy = lines.next().unwrap().to_owned() + "\n";
@@ -223,7 +247,13 @@ async fn imported_legacy_dedup_events_without_records_can_be_exported_again() {
     let target = daemon(Vec::new()).await;
     let imported = transfer::import_run(&target.runtime, &file).unwrap();
     let output = dir.path().join("reexport.aether");
-    let exported = transfer::export_run(target.store.as_ref(), imported.run, &output).unwrap();
+    let exported = transfer::export_run(
+        target.store.as_ref(),
+        imported.run,
+        &output,
+        &aether_tools::Redactor::default(),
+    )
+    .unwrap();
     assert_eq!(exported.artifacts, 1);
     let records: Vec<Record> = std::fs::read_to_string(output)
         .unwrap()
@@ -264,7 +294,13 @@ async fn unavailable_artifacts_export_no_payload_or_secret_metadata() {
         let run = source.store.agent(agent).unwrap().unwrap().run;
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("run.aether");
-        let exported = transfer::export_run(source.store.as_ref(), run, &file).unwrap();
+        let exported = transfer::export_run(
+            source.store.as_ref(),
+            run,
+            &file,
+            &aether_tools::Redactor::default(),
+        )
+        .unwrap();
         assert_eq!(exported.artifacts, 2);
         assert_eq!(exported.artifact_payloads, 0);
         let records: Vec<Record> = std::fs::read_to_string(&file)
@@ -311,7 +347,13 @@ async fn disk_import_preserves_legacy_evicted_payloads_until_pending_unlink() {
         let run = source.store.agent(agent).unwrap().unwrap().run;
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("legacy.aether");
-        transfer::export_run(source.store.as_ref(), run, &file).unwrap();
+        transfer::export_run(
+            source.store.as_ref(),
+            run,
+            &file,
+            &aether_tools::Redactor::default(),
+        )
+        .unwrap();
         if evicted {
             let archive = std::fs::read_to_string(&file).unwrap();
             let mut lines = archive.lines();
@@ -358,7 +400,13 @@ async fn authenticated_exports_reject_tampered_or_missing_payloads_before_commit
     let run = source.store.agent(agent).unwrap().unwrap().run;
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).unwrap();
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .unwrap();
     let original = std::fs::read_to_string(&file).unwrap();
     for missing in [false, true] {
         let mut lines = original.lines();
@@ -424,7 +472,13 @@ async fn legacy_redacted_payload_repairs_the_record_and_created_event() {
     let run = source.store.agent(agent).unwrap().unwrap().run;
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("legacy.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).unwrap();
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .unwrap();
     let original = std::fs::read_to_string(&file).unwrap();
     let mut lines = original.lines();
     let mut manifest: aether_core::transfer::Manifest =

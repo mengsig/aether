@@ -63,6 +63,18 @@ looks like a boundary and is not one.
   with `aether remote revoke` and remove it from your Tailscale account.
 - **Tailscale HTTPS publishes machine names.** Enabling HTTPS certificates for
   a tailnet lists its machine names in public certificate-transparency logs.
+- **Secret masking is pattern-based and has gaps.** Aether masks known key
+  shapes and the secret values the daemon itself holds (listener token, MCP
+  `token_env` values, provider keys) in tool outcomes, stored tool-output
+  artifacts, `read_artifact` replies and exports. A secret in any other shape
+  is not recognized. Some copies stay raw by design: an artifact a client
+  publishes is stored as sent (masked on every read and export, not on disk),
+  the shell's output log in the agent's temp directory keeps the command's
+  output for the agent, and artifacts stored before 1.2.7 are masked only
+  when read or exported. A `read_artifact` page boundary, the cut of a large
+  `ReadArtifact` reply, or a single line over 4 MiB in a shell log can split
+  a secret so that neither half is recognized. Native engine transcripts and
+  model replies that repeat a secret are outside this masking.
 - **The GitHub watcher turns repository text into agent work.** Who may
   trigger it is decided by repository permission, the operator logins you name
   and the allowlists described in the

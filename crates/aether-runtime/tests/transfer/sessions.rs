@@ -21,7 +21,13 @@ async fn an_engine_session_does_not_travel() {
 
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     let text = std::fs::read_to_string(&file).expect("read");
     assert!(
         !text.contains("sess_on_the_exporting_machine"),
@@ -39,7 +45,13 @@ async fn import_scrubs_a_tampered_engine_session_record() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
 
     let tampered: String = std::fs::read_to_string(&file)
         .expect("read")

@@ -135,7 +135,11 @@ pub(super) async fn settle_resolved_approvals(
                 },
                 Err(e) => EventKind::ToolFailed {
                     call: result.call.id,
-                    error: e.to_string(),
+                    error: runtime
+                        .tool_runtime
+                        .redactor()
+                        .redact(&e.to_string())
+                        .into_owned(),
                     retryable: e.is_retryable(),
                     duration_ms: ran.then_some(duration),
                 },

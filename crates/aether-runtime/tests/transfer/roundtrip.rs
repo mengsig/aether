@@ -9,7 +9,13 @@ async fn a_run_survives_the_round_trip_and_reports_the_same() {
 
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    let exported = transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    let exported = transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     assert_eq!(exported.run, run);
     assert_eq!(exported.events, before.body.events);
     assert!(exported.bytes_written > 0);
@@ -41,7 +47,13 @@ async fn an_imported_run_keeps_the_times_it_ran_at() {
     let before = report_of(source.store.as_ref(), run);
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
 
     // Long enough that a timestamp taken at import could not be mistaken for
     // one taken while the run was going.
@@ -59,7 +71,13 @@ async fn an_artifact_travels_with_its_bytes() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    let exported = transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    let exported = transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     assert!(
         exported.artifacts > 0,
         "the run produced no artifact to move"
@@ -90,7 +108,13 @@ async fn an_export_is_readable_by_its_owner_only() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     let mode = std::fs::metadata(&file)
         .expect("metadata")
         .permissions()
@@ -120,7 +144,13 @@ async fn a_rule_answered_approval_survives_the_round_trip() {
 
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     let target = daemon(Vec::new()).await;
     let imported = transfer::import_run(&target.runtime, &file).expect("import");
     let after = report_of(target.store.as_ref(), imported.run);
@@ -137,7 +167,13 @@ async fn the_provenance_event_carries_the_count_it_actually_imported() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    let exported = transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    let exported = transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     let target = daemon(Vec::new()).await;
     let imported = transfer::import_run(&target.runtime, &file).expect("import");
 

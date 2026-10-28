@@ -5,7 +5,13 @@ async fn an_imported_agent_is_history_and_takes_no_turns() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     let target = daemon(Vec::new()).await;
     let imported = transfer::import_run(&target.runtime, &file).expect("import");
     let agents = target
@@ -35,7 +41,13 @@ async fn a_forged_export_cannot_produce_an_agent_that_runs() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     forge_live_agents(&file);
 
     let target = daemon(Vec::new()).await;
@@ -117,7 +129,13 @@ async fn a_forged_export_cannot_lend_its_scope_to_a_live_agent() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     forge_live_agents(&file);
 
     let target = daemon(Vec::new()).await;
@@ -264,7 +282,13 @@ async fn an_imported_run_does_not_count_as_this_daemon_spend() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
 
     let target = daemon(Vec::new()).await;
     let before = target.runtime.status().expect("status");
@@ -308,7 +332,13 @@ async fn an_agent_the_file_never_ended_still_arrives_ended() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
 
     // Strip every terminal agent event, and correct the manifest so the file
     // is refused for this and nothing else.
@@ -366,7 +396,13 @@ async fn an_unfinished_task_arrives_terminal() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
 
     let text = std::fs::read_to_string(&file).expect("read");
     let mut out = String::new();
@@ -408,7 +444,13 @@ async fn recovery_never_classifies_an_imported_turn() {
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
 
     // The one status restart recovery acts on. Before the fix this arrived
     // verbatim, and the next daemon start wrote its own lease.expired,
@@ -471,7 +513,13 @@ async fn an_imported_decision_is_not_recorded_as_this_operators() {
     let (source, run) = run_answered_by_a_rule().await;
     let dir = tempfile::tempdir().expect("dir");
     let file = dir.path().join("run.aether");
-    transfer::export_run(source.store.as_ref(), run, &file).expect("export");
+    transfer::export_run(
+        source.store.as_ref(),
+        run,
+        &file,
+        &aether_tools::Redactor::default(),
+    )
+    .expect("export");
     let target = daemon(Vec::new()).await;
     let imported = transfer::import_run(&target.runtime, &file).expect("import");
 

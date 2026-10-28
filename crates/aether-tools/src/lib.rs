@@ -30,7 +30,9 @@ pub use exec::{PreparedCommand, Teardown};
 pub use mcp::{McpCaller, McpError, McpManager, McpServerSpec, McpTransportSpec};
 pub use output::{BoundedOutput, OutputPolicy, Redactor};
 pub use registry::ToolRegistry;
-pub use runtime::{BatchResult, ExecutionPolicy, ToolRuntime, redact_json, requires_approval};
+pub use runtime::{
+    BatchResult, ExecutionPolicy, ToolRuntime, redact_json, redact_outcome, requires_approval,
+};
 pub use tool::{
     ArtifactSink, DelegateKey, HarnessAction, Tool, ToolContext, ToolError, ToolExecution,
     WorkspaceMode, parse_input,

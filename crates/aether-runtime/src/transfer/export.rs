@@ -24,7 +24,15 @@ use std::io::{BufWriter, Write as _};
 /// A run with a live agent is refused: exporting one would capture a
 /// half-finished agent whose engine session and workspace live on this
 /// machine, and importing that elsewhere would be a lie about its state.
-pub fn export_run(store: &dyn Store, run: RunId, path: &Path) -> Result<ExportSummary> {
+///
+/// Every record is masked by `redactor`, which must be the runtime's own so
+/// the daemon's known secret values are masked along with the secret shapes.
+pub fn export_run(
+    store: &dyn Store,
+    run: RunId,
+    path: &Path,
+    redactor: &aether_tools::Redactor,
+) -> Result<ExportSummary> {
     let agents = store.agents(&AgentFilter {
         run: Some(run),
         ..Default::default()
@@ -84,7 +92,6 @@ pub fn export_run(store: &dyn Store, run: RunId, path: &Path) -> Result<ExportSu
         bytes_written: 0,
     };
     let mut written = 0u64;
-    let redactor = aether_tools::Redactor::default();
     // Counted before the manifest is written, so the header can promise how
     // many events follow and an import can hold the file to it. The stream
     // below stops at the same sequence: the scheduler's artifact sweep runs
@@ -111,10 +118,10 @@ pub fn export_run(store: &dyn Store, run: RunId, path: &Path) -> Result<ExportSu
         agent.engine_session = None;
         agent.engine_usage = None;
         agent.engine_sent = None;
-        written += write_record(&mut out, &redactor, &Record::Agent(agent))?;
+        written += write_record(&mut out, redactor, &Record::Agent(agent))?;
     }
     for task in &tasks {
-        written += write_record(&mut out, &redactor, &Record::Task(task.clone()))?;
+        written += write_record(&mut out, redactor, &Record::Task(task.clone()))?;
     }
 
     for agent in &agents {
@@ -124,10 +131,10 @@ pub fn export_run(store: &dyn Store, run: RunId, path: &Path) -> Result<ExportSu
                 continue;
             };
             same_run(path, "schedule", source, run)?;
-            written += write_record(&mut out, &redactor, &Record::Schedule(job.clone()))?;
+            written += write_record(&mut out, redactor, &Record::Schedule(job.clone()))?;
             for occurrence in store.schedule_history(job.id, usize::MAX)? {
                 written +=
-                    write_record(&mut out, &redactor, &Record::ScheduleOccurrence(occurrence))?;
+                    write_record(&mut out, redactor, &Record::ScheduleOccurrence(occurrence))?;
             }
         }
     }
@@ -153,7 +160,7 @@ pub fn export_run(store: &dyn Store, run: RunId, path: &Path) -> Result<ExportSu
                 if seen_snapshots.insert(id, ()).is_none()
                     && let Some(snapshot) = store.snapshot(id)?
                 {
-                    written += write_record(&mut out, &redactor, &Record::Snapshot(snapshot))?;
+                    written += write_record(&mut out, redactor, &Record::Snapshot(snapshot))?;
                     summary.snapshots += 1;
                 }
             }
@@ -161,13 +168,13 @@ pub fn export_run(store: &dyn Store, run: RunId, path: &Path) -> Result<ExportSu
                 && seen_invocations.insert(*invocation, ()).is_none()
                 && let Some(record) = store.invocation(*invocation)?
             {
-                written += write_record(&mut out, &redactor, &Record::Invocation(record))?;
+                written += write_record(&mut out, redactor, &Record::Invocation(record))?;
                 summary.invocations += 1;
             }
             if let Some(checkpoint) = checkpoint_of(store, &event.kind)?
                 && seen_checkpoints.insert(checkpoint.id, ()).is_none()
             {
-                written += write_record(&mut out, &redactor, &Record::Checkpoint(checkpoint))?;
+                written += write_record(&mut out, redactor, &Record::Checkpoint(checkpoint))?;
                 summary.checkpoints += 1;
             }
             let artifact = match &event.kind {
@@ -185,7 +192,7 @@ pub fn export_run(store: &dyn Store, run: RunId, path: &Path) -> Result<ExportSu
                 let payload = if artifact.evicted_at.is_none() {
                     store
                         .read_artifact_bytes(artifact.id)?
-                        .map(|bytes| redacted_payload(&redactor, bytes))
+                        .map(|bytes| redacted_payload(redactor, bytes))
                 } else {
                     None
                 };
@@ -194,12 +201,12 @@ pub fn export_run(store: &dyn Store, run: RunId, path: &Path) -> Result<ExportSu
                     .as_ref()
                     .map(|bytes| hex::encode(sha2::Sha256::digest(bytes)));
                 seen_artifacts.insert(artifact.id, artifact.clone());
-                written += write_record(&mut out, &redactor, &Record::Artifact(artifact.clone()))?;
+                written += write_record(&mut out, redactor, &Record::Artifact(artifact.clone()))?;
                 summary.artifacts += 1;
                 if let Some(bytes) = payload {
                     written += write_record(
                         &mut out,
-                        &redactor,
+                        redactor,
                         &Record::ArtifactBytes {
                             id: artifact.id,
                             base64: BASE64.encode(bytes),
@@ -225,7 +232,7 @@ pub fn export_run(store: &dyn Store, run: RunId, path: &Path) -> Result<ExportSu
                 }
                 _ => {}
             }
-            written += write_record(&mut out, &redactor, &Record::Event(event))?;
+            written += write_record(&mut out, redactor, &Record::Event(event))?;
             summary.events += 1;
         }
         if count < 1_000 {
@@ -322,15 +329,15 @@ fn write_record(
     write_line(out, &value)
 }
 
-/// An artifact's bytes as they leave the machine. The stored copy stays raw:
-/// `OutputPolicy::bound` stores the full tool output and the agent may read
-/// its own artifact back, so the cleaning belongs at the boundary the content
-/// crosses, like every other record. Binary payloads travel as they are -
-/// there is no text in them to run patterns over.
+/// An artifact's bytes as they leave the machine. A tool's artifact was
+/// masked when it was stored, but a published one is kept as sent and an
+/// older one may predate that, so the boundary masks again. The text runs of
+/// a payload that is not all UTF-8 are masked too; its other bytes travel as
+/// they are.
 fn redacted_payload(redactor: &aether_tools::Redactor, bytes: Vec<u8>) -> Vec<u8> {
-    match String::from_utf8(bytes) {
-        Ok(text) => redactor.redact(&text).into_owned().into_bytes(),
-        Err(not_text) => not_text.into_bytes(),
+    match redactor.redact_bytes(&bytes) {
+        std::borrow::Cow::Borrowed(_) => bytes,
+        std::borrow::Cow::Owned(clean) => clean,
     }
 }
 

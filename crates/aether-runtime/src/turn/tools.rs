@@ -503,9 +503,12 @@ pub(super) async fn run_tool_calls(
                     })))?;
                 }
                 Err(e) => {
+                    // A tool's error can quote what it read, like its output.
+                    let error = e.to_string();
+                    let error = runtime.tool_runtime.redactor().redact(&error);
                     runtime.apply(Commit::new().event(ctx.draft(EventKind::ToolFailed {
                         call: result.call.id,
-                        error: e.to_string(),
+                        error: error.into_owned(),
                         retryable: e.is_retryable(),
                         duration_ms: ran.then_some(duration),
                     })))?;

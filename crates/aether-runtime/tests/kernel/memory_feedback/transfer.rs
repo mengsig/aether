@@ -16,7 +16,13 @@ async fn feedback_audit_travels_with_remapped_ids_but_does_not_create_memory_rec
         .unwrap();
     let run = source.store.agent(agent).unwrap().unwrap().run;
     let path = source.workspace_root.join("feedback.aether");
-    export_run(source.store.as_ref(), run, &path).unwrap();
+    export_run(
+        source.store.as_ref(),
+        run,
+        &path,
+        &aether_tools::Redactor::default(),
+    )
+    .unwrap();
     let target = harness(Vec::new()).await;
     let imported = import_run(&target.runtime, &path).unwrap();
     let events = target
