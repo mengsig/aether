@@ -34,6 +34,9 @@ pub(crate) async fn execute(
         );
         return Ok(EngineLink::Done(Next::Failed(reason)));
     };
+    if let Some(reason) = ungated_refusal(runtime, &ctx.agent, engine.as_ref()) {
+        return Ok(EngineLink::Done(Next::Failed(reason)));
+    }
     let Some(bridge) = runtime.config.bridge.clone() else {
         return Ok(EngineLink::Done(Next::Failed(
             "engine bridge is not configured on this daemon".into(),
@@ -688,6 +691,30 @@ pub(crate) async fn execute(
         CompletionSource::NativeTurn,
     )
     .map(EngineLink::Done)
+}
+
+/// Why `agent` must not run on `engine`: its approval policy gates calls,
+/// and the engine detected now cannot ask before acting (Codex exec mode).
+/// A CLI replaced since the agent was admitted must not drop its approvals.
+fn ungated_refusal(
+    runtime: &Runtime,
+    agent: &aether_core::agent::Agent,
+    engine: &dyn aether_engine::Engine,
+) -> Option<String> {
+    if runtime.config.yolo || agent.config.approval.is_yolo() || engine.gates_permissions() {
+        return None;
+    }
+    debug_assert!(!agent.config.approval.require_for.is_empty());
+    Some(format!(
+        "{} now runs as {}, which cannot ask before acting, and this agent's approval \
+         policy requires approvals; install a CLI that can (for Codex, one with app-server \
+         support), or turn approvals off with `aether set {} --approval none`, then retry \
+         with `aether wake {}`",
+        engine.kind().as_str(),
+        engine.adapter(),
+        agent.id,
+        agent.id,
+    ))
 }
 
 /// Fold one engine run's closing totals into the agent's usage and commit it.
