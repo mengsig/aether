@@ -25,9 +25,16 @@ impl App {
             return;
         }
         let Some(transcript) = self.selected.and_then(|id| self.transcripts.get(&id)) else {
+            self.flash("No local file references in recent messages");
             return;
         };
-        let cell = self
+        let references = |cell: &super::transcript::Cell| {
+            cell.model
+                .copy_source()
+                .map(crate::viewer::references::parse)
+                .filter(|refs| !refs.is_empty())
+        };
+        let focused = self
             .viewer
             .source_cell
             .filter(|(agent, _)| *agent == self.selected)
@@ -38,27 +45,21 @@ impl App {
                     .chain(transcript.active.iter())
                     .find(|c| c.id == id)
             })
-            .or_else(|| {
-                transcript
-                    .active
-                    .as_ref()
-                    .filter(|c| c.model.copy_source().is_some())
-            })
-            .or_else(|| {
-                transcript
-                    .cells
-                    .iter()
-                    .rev()
-                    .find(|c| c.model.copy_source().is_some())
-            });
-        let refs = cell
-            .and_then(|c| c.model.copy_source())
-            .map(crate::viewer::references::parse)
-            .unwrap_or_default();
-        if refs.is_empty() {
-            self.flash("No local file references in this message");
+            .and_then(references);
+        let refs = focused.or_else(|| {
+            transcript
+                .active
+                .iter()
+                .chain(transcript.cells.iter().rev())
+                .take(64)
+                .find_map(references)
+        });
+        let Some(refs) = refs else {
+            self.flash("No local file references in recent messages");
             return;
-        }
+        };
+        debug_assert!(!refs.is_empty());
+        debug_assert!(refs.iter().all(|reference| !reference.target.is_empty()));
         self.viewer.picker = refs;
         self.viewer.request = self.viewer.request.wrapping_add(1);
         self.viewer.pending = None;

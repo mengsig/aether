@@ -145,7 +145,7 @@ pub(super) fn explain(theme: &Theme, error: &ClientError, then: Then, command: &
     // Only this code means nothing can run yet; any other model error, such
     // as a retired or misspelled one, falls through with the daemon's text.
     let no_model = matches!(error, ClientError::Protocol(reply) if reply.code == aether_protocol::ErrorCode::NoModel);
-    if matches!(then, Then::AgentCreated(_)) && no_model {
+    if matches!(then, Then::AgentCreated(_) | Then::RootDefaults { .. }) && no_model {
         return theme
             .decoration(
                 "no model to run on yet · /login to sign in, then send a message",
@@ -153,63 +153,42 @@ pub(super) fn explain(theme: &Theme, error: &ClientError, then: Then, command: &
             )
             .into();
     }
-    let next = match error {
-        ClientError::Incompatible(_) => {
-            crate::ui_format!(
-                theme,
-                "the daemon is a different version · `{command} stop`, then start it again",
-                "the daemon is a different version | `{command} stop`, then start it again"
-            )
-        }
-        ClientError::Disconnected | ClientError::Io(_) => {
-            crate::ui_format!(
-                theme,
-                "lost the daemon · reconnecting · `{command} daemon` starts one",
-                "lost the daemon | reconnecting | `{command} daemon` starts one"
-            )
-        }
-        ClientError::Unauthorized(_) => {
-            crate::ui_format!(
-                theme,
-                "the token this daemon wants is not the one you gave · check AETHER_TOKEN",
-                "the token this daemon wants is not the one you gave | check AETHER_TOKEN"
-            )
-        }
+    let next = failure_hint(theme, error, command);
+    crate::ui_format!(theme, "{text} · {next}", "{text} | {next}")
+}
+
+fn failure_hint(theme: &Theme, error: &ClientError, command: &str) -> String {
+    match error {
+        ClientError::Incompatible(_) => crate::ui_format!(
+            theme,
+            "the daemon is a different version · `{command} stop`, then start it again",
+            "the daemon is a different version | `{command} stop`, then start it again"
+        ),
+        ClientError::Disconnected | ClientError::Io(_) => crate::ui_format!(
+            theme,
+            "lost the daemon · reconnecting · `{command} daemon` starts one",
+            "lost the daemon | reconnecting | `{command} daemon` starts one"
+        ),
+        ClientError::Unauthorized(_) => crate::ui_format!(
+            theme,
+            "the token this daemon wants is not the one you gave · check AETHER_TOKEN",
+            "the token this daemon wants is not the one you gave | check AETHER_TOKEN"
+        ),
         ClientError::Protocol(_) => crate::ui_format!(
             theme,
             "the daemon refused it · /doctor shows what is set up",
             "the daemon refused it | /doctor shows what is set up"
         ),
-        ClientError::DaemonStartup(_) => {
-            crate::ui_format!(
-                theme,
-                "the daemon stopped as it started · the reason above is its own · fix that, then \
-             start it again",
-                "the daemon stopped as it started | the reason above is its own | fix that, then \
-             start it again"
-            )
-        }
-        // An older build never greets, but neither does a daemon whose workers are all blocked.
+        ClientError::DaemonStartup(_) => crate::ui_format!(
+            theme,
+            "the daemon stopped as it started · the reason above is its own · fix that, then \
+         start it again",
+            "the daemon stopped as it started | the reason above is its own | fix that, then \
+         start it again"
+        ),
         ClientError::TimedOut {
             command: request, ..
-        } if request == "hello" => {
-            crate::ui_format!(
-                theme,
-                "the daemon never answered · it may be overloaded or from an older build · \
-             `{command} stop`, then start it again",
-                "the daemon never answered | it may be overloaded or from an \
-             older build | `{command} stop`, then start it again"
-            )
-        }
-        ClientError::TimedOut { .. } => {
-            crate::ui_format!(
-                theme,
-                "the daemon is connected but slow · it may be busy on a loaded disk · try again; \
-             if it keeps happening, `{command} stop`, then start it again",
-                "the daemon is connected but slow | \
-             it may be busy on a loaded disk | try again; if it keeps happening, `{command} stop`, then start it again"
-            )
-        }
+        } => timeout_hint(theme, request, command),
         ClientError::Codec(_) | ClientError::Unexpected { .. } | ClientError::Malformed(_) => {
             crate::ui_format!(
                 theme,
@@ -225,9 +204,28 @@ pub(super) fn explain(theme: &Theme, error: &ClientError, then: Then, command: &
             "client request error · report this with the log in ~/.local/state/aether",
             "client request error | report this with the log in ~/.local/state/aether"
         ),
-    };
+    }
+}
 
-    crate::ui_format!(theme, "{text} · {next}", "{text} | {next}")
+fn timeout_hint(theme: &Theme, request: &str, command: &str) -> String {
+    // An older build never greets, but neither does a daemon whose workers are all blocked.
+    if request == "hello" {
+        crate::ui_format!(
+            theme,
+            "the daemon never answered · it may be overloaded or from an older build · \
+             `{command} stop`, then start it again",
+            "the daemon never answered | it may be overloaded or from an \
+             older build | `{command} stop`, then start it again"
+        )
+    } else {
+        crate::ui_format!(
+            theme,
+            "the daemon is connected but slow · it may be busy on a loaded disk · try again; \
+             if it keeps happening, `{command} stop`, then start it again",
+            "the daemon is connected but slow | \
+             it may be busy on a loaded disk | try again; if it keeps happening, `{command} stop`, then start it again"
+        )
+    }
 }
 
 /// What a reply was for, in the person's terms, for the disconnected-reply
@@ -239,6 +237,7 @@ pub(super) fn then_operation(then: &Then) -> &'static str {
         Then::Host(_) => "host workspace service",
         Then::RootDefaults { .. } | Then::AgentCreated(_) => "starting the agent",
         Then::Ignore => "that request",
+        Then::MessageSent { .. } => "sending your message",
         Then::CompactionAccepted(_) => "asking to compact the context",
         Then::VoiceReply(_) => "sending a voice reply",
         Then::Status | Then::StatusPoll => "refreshing status",

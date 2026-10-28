@@ -490,3 +490,5 @@ fn merged_images_over_the_byte_limit_do_not_send_or_lose_the_draft() {
     assert_eq!(app.input.text, "keep me");
     assert_eq!(app.input.images.len(), 2);
 }
+
+mod recovery;

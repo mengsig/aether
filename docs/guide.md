@@ -435,7 +435,8 @@ reliability target. See [known limits](known-limitations.md).
 ### View local files beside the conversation
 
 Click a file path or a Markdown file link in a message, or press **Alt+O**
-for the files in the last clicked message (otherwise the latest message).
+for the files in the clicked message, or else the nearest recent message
+with file references.
 Relative paths resolve in the viewed agent's workspace. Enter opens the
 selected file in a side pane; **Esc** (with the viewer focused) or **Alt+W** closes it. **Alt+- / Alt+=**
 resize it and **Alt+Z** toggles full screen. **Tab** moves focus between the

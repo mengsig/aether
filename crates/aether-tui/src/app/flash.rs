@@ -1,4 +1,4 @@
-//! Transient hint-row feedback ("copied 12 lines"), shown for 2 s (SPEC §1.1).
+//! Hint-row feedback: timed notices and errors kept until the next key.
 
 use aether_core::time::Timestamp;
 
@@ -15,6 +15,12 @@ pub struct Flash {
     pub until: Timestamp,
 }
 
+impl Flash {
+    pub(super) fn until_key(&self) -> bool {
+        self.until == Timestamp::MAX_UTC
+    }
+}
+
 impl App {
     /// Show `text` in the hint row until it has had time to be read.
     pub(crate) fn flash(&mut self, text: impl Into<String>) {
@@ -28,6 +34,15 @@ impl App {
             until: self.now + chrono::Duration::milliseconds(ms),
         });
         self.dirty = true;
+    }
+
+    pub(super) fn keep_flash_until_key(&mut self) {
+        if let Some(flash) = &mut self.flash {
+            // The reducer and frame scheduler both use this deadline.
+            flash.until = Timestamp::MAX_UTC;
+        }
+        debug_assert!(self.flash.as_ref().is_some_and(|flash| flash.until_key()));
+        debug_assert!(self.live_flash().is_some());
     }
 
     /// Keep failed client operations in the transcript after the hint expires.

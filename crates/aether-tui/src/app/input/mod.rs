@@ -34,6 +34,10 @@ pub(crate) enum Dispatch {
 
 impl App {
     pub fn dispatch_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        if self.flash.as_ref().is_some_and(|flash| flash.until_key()) {
+            self.flash = None;
+            self.dirty = true;
+        }
         #[cfg(unix)]
         if ctrl(key, 'z') {
             return vec![Effect::Suspend];

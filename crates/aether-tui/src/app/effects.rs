@@ -42,6 +42,10 @@ pub enum Then {
         link: u64,
     },
     Ignore,
+    MessageSent {
+        agent: AgentId,
+        message: super::images::Outgoing,
+    },
     CompactionAccepted(AgentId),
     Status,
     /// The periodic refresh: only its own answer frees the next poll.

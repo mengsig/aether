@@ -75,6 +75,21 @@ impl InputState {
         assert!(self.cursor <= self.text.len());
     }
 
+    /// Put an unsent message before anything typed since it left the composer.
+    pub(crate) fn restore_message(&mut self, message: super::images::Outgoing) {
+        let current = self.swap_draft(Draft::default());
+        let cursor = (!current.text.is_empty())
+            .then(|| message.text.len() + usize::from(!message.text.is_empty()) + current.cursor);
+        self.set_text(message.text);
+        self.images = message.images;
+        self.absorb_draft(current);
+        if let Some(cursor) = cursor {
+            self.cursor = cursor;
+        }
+        debug_assert!(self.cursor <= self.text.len());
+        debug_assert!(self.text.is_char_boundary(self.cursor));
+    }
+
     /// Swap the composer's draft for `other`, returning the draft that was in it.
     pub(crate) fn swap_draft(&mut self, other: Draft) -> Draft {
         assert!(
