@@ -17,7 +17,11 @@ release is also the text of its GitHub release.
   most 10 s), to every process tagged with, or in an engine scope of, an agent
   its own store ran; agents of another daemon and imported agents are never
   touched. Once the stop begins no new host shell command or engine starts,
-  nor one for a cancelled turn whose agent's reap has begun.
+  nor one for a cancelled turn whose agent's reap has begun. The bwrap
+  sandbox of a network-denied Codex turn is tagged, scoped and gated like its
+  engine, a reap waits for an engine still joining its scope, and what a
+  background shell job detached gets `SIGTERM` and a 2 s grace before
+  `SIGKILL` when the job ends.
   Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
   nothing changes.
 

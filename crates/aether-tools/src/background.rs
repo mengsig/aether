@@ -593,7 +593,8 @@ async fn own(
         None => signal_until_gone(&mut child, pgid, teardown.as_ref()).await,
     };
     #[cfg(target_os = "linux")]
-    let status = journal::kill_job(job).and(status);
+    // What the job detached gets the same SIGTERM, then SIGKILL, as its group.
+    let status = journal::stop_job(job, STOP_GRACE).await.and(status);
     #[cfg(not(target_os = "linux"))]
     let _ = job;
     // What is still in the pipes belongs to this process: drain it before

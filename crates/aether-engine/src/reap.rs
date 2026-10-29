@@ -188,7 +188,8 @@ mod linux {
     }
 
     /// Where some agents' processes are looked for: the scopes listed at the
-    /// start, and their tags but the one the daemon carries itself.
+    /// start, once their engines are in them, and their tags but the one the
+    /// daemon carries itself.
     pub(super) struct Sweep {
         agents: Vec<AgentId>,
         units: Vec<Unit>,
@@ -198,6 +199,13 @@ mod linux {
     impl Sweep {
         pub(super) async fn new(agents: &[AgentId]) -> Self {
             assert!(!agents.is_empty(), "a sweep needs an agent to look for");
+            // An engine spawned before the caller's fence may not be in its scope yet.
+            if !crate::scope::settled(agents, crate::scope::ADOPTION_BUDGET).await {
+                tracing::warn!(
+                    ?agents,
+                    "an engine is still joining its scope; sweeping without it"
+                );
+            }
             Self {
                 agents: agents.to_vec(),
                 units: crate::scope::agent_units(agents).await,

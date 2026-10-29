@@ -13,7 +13,8 @@ use aether_core::id::AgentId;
 pub(crate) const AGENT_ENV: &str = aether_core::agent::PROCESS_AGENT_ENV;
 
 /// The command to spawn `program` as an engine of `agent`. The caller still
-/// puts it in its own process group and passes the child to [`adopt`].
+/// puts it in its own process group, spawns it with [`crate::spawn_gated`]
+/// and passes the child to [`adopt`].
 pub(crate) fn command(program: &str, agent: Option<AgentId>) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(program);
     if let Some(agent) = agent {
@@ -22,15 +23,80 @@ pub(crate) fn command(program: &str, agent: Option<AgentId>) -> tokio::process::
     command
 }
 
-/// Move the running engine `pid` of `agent` into a scope of its own, where
-/// systemd can make one. A failure is logged; the engine runs on regardless.
-pub(crate) async fn adopt(pid: Option<u32>, agent: Option<AgentId>) {
+/// The longest a sweep waits for its agents' engines to settle into their
+/// scopes: both of an adoption's systemd waits, and a margin.
+#[cfg(target_os = "linux")]
+pub(crate) const ADOPTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(11);
+
+/// Agents with an engine spawned but not yet in its scope, once per engine.
+static ADOPTING: std::sync::Mutex<Vec<AgentId>> = std::sync::Mutex::new(Vec::new());
+static ADOPTED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+fn adopting() -> std::sync::MutexGuard<'static, Vec<AgentId>> {
+    // The list stays valid whatever panicked while holding it.
+    ADOPTING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// An engine of an agent spawned but not yet moved into its scope. Begun
+/// under the spawn gate, so a sweep after a fence waits for it ([`settled`]).
+#[derive(Debug)]
+pub(crate) struct Adoption(Option<AgentId>);
+
+impl Adoption {
+    pub(crate) fn begin(agent: Option<AgentId>) -> Self {
+        if let Some(agent) = agent {
+            adopting().push(agent);
+        }
+        Self(agent)
+    }
+}
+
+impl Drop for Adoption {
+    fn drop(&mut self) {
+        let Some(agent) = self.0 else {
+            return;
+        };
+        let mut adopting = adopting();
+        match adopting.iter().position(|pending| *pending == agent) {
+            Some(at) => drop(adopting.swap_remove(at)),
+            None => tracing::error!(%agent, "an engine adoption was not recorded"),
+        }
+        drop(adopting);
+        ADOPTED.notify_waiters();
+    }
+}
+
+/// Wait until no engine of `agents` is between its spawn and its scope, at
+/// most `budget`; false when one still is.
+#[cfg(target_os = "linux")]
+pub(crate) async fn settled(agents: &[AgentId], budget: std::time::Duration) -> bool {
+    assert!(!agents.is_empty(), "no agent to wait for");
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        let notified = ADOPTED.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if !adopting().iter().any(|pending| agents.contains(pending)) {
+            return true;
+        }
+        if tokio::time::timeout_at(deadline, notified).await.is_err() {
+            return false;
+        }
+    }
+}
+
+/// Move the running engine `pid` of `adoption`'s agent into a scope of its
+/// own, where systemd can make one. A failure is logged; the engine runs on.
+pub(crate) async fn adopt(pid: Option<u32>, adoption: Adoption) {
     #[cfg(target_os = "linux")]
-    if let (Some(pid), Some(agent)) = (pid, agent) {
+    if let (Some(pid), Some(agent)) = (pid, adoption.0) {
         linux::adopt(pid, agent).await;
     }
     #[cfg(not(target_os = "linux"))]
-    let _ = (pid, agent);
+    let _ = pid;
+    drop(adoption);
 }
 
 #[cfg(target_os = "linux")]
@@ -337,7 +403,37 @@ mod linux {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::linux::{Unit, holds_own_cgroup, unit_agents, unit_names, units_from_show};
+    use super::{Adoption, settled};
+    use aether_core::id::AgentId;
     use std::path::Path;
+    use std::time::Duration;
+
+    /// A sweep waits for its own agents' engines to join their scopes, and
+    /// for no other agent's.
+    #[tokio::test]
+    async fn a_sweep_waits_for_its_agents_adoptions_alone() {
+        let (agent, other) = (AgentId::new(), AgentId::new());
+        let adoption = Adoption::begin(Some(agent));
+        assert!(
+            !settled(&[agent], Duration::from_millis(50)).await,
+            "settled while an engine was joining its scope"
+        );
+        assert!(
+            settled(&[other], Duration::from_millis(50)).await,
+            "waited for another agent's engine"
+        );
+        let finished = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            drop(adoption);
+        });
+        assert!(
+            settled(&[agent], Duration::from_secs(30)).await,
+            "never settled once the engine joined its scope"
+        );
+        finished.await.unwrap();
+        drop(Adoption::begin(None));
+        assert!(settled(&[agent], Duration::ZERO).await);
+    }
 
     #[test]
     fn lists_only_the_agents_scopes() {

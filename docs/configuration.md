@@ -508,7 +508,8 @@ whatever is left after the grace. It records what it stopped as an
 and in `survived` any still alive after that. Only processes of the daemon's
 own user are signalled, and never the daemon itself. A turn cancelled as its
 agent ended starts no host command or engine after the reap begins; one it was
-already starting is in place before the reap looks. If the agent is restarted
+already starting is in place before the reap looks, and the reap waits, up to
+11 seconds, for an engine still being moved into its scope. If the agent is restarted
 during the grace, the reap stops, so its next engine is spared.
 
 A daemon shutdown ends no agent, but it leaves none of their processes

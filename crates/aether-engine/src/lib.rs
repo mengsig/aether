@@ -585,19 +585,28 @@ where
 }
 
 /// [`lifeline::spawn`], unless the launch's daemon has closed its spawns or
-/// `cancel`, the launch's turn token, is cancelled.
+/// `cancel`, the launch's turn token, is cancelled. The [`scope::Adoption`]
+/// goes to [`scope::adopt`].
 pub(crate) fn spawn_gated(
     command: tokio::process::Command,
     launch: Option<&EngineLaunchContext>,
     cancel: &CancellationToken,
-) -> std::io::Result<(tokio::process::Child, lifeline::GroupWatch)> {
+) -> std::io::Result<(tokio::process::Child, lifeline::GroupWatch, scope::Adoption)> {
     let Some(launch) = launch else {
-        return lifeline::spawn(command);
+        let (child, watch) = lifeline::spawn(command)?;
+        return Ok((child, watch, scope::Adoption::begin(None)));
     };
-    // Held until the engine has exec'd, so a sweep after a fence finds it.
+    // Held until the engine has exec'd and its adoption is recorded, so a
+    // sweep after a fence finds the engine and waits for its scope.
     launch
         .spawns
-        .spawn(|| cancel.is_cancelled(), || lifeline::spawn(command))
+        .spawn(
+            || cancel.is_cancelled(),
+            || {
+                let (child, watch) = lifeline::spawn(command)?;
+                Ok((child, watch, scope::Adoption::begin(Some(launch.agent_id))))
+            },
+        )
         .map_err(std::io::Error::other)?
 }
 
@@ -673,7 +682,7 @@ where
     export_temp_dir(&mut command, temp_dir);
     export_build_env(&mut command, build_env);
     let run_token = orphans::tag(&mut command);
-    let (mut child, group_watch) =
+    let (mut child, group_watch, adoption) =
         spawn_gated(command, launch, &cancel).map_err(|e| spawn_error(program, &cwd, e))?;
     let program = program.to_owned();
     let pid = child.id();
@@ -695,7 +704,7 @@ where
     let interrupt_input = input_tx.downgrade();
 
     let engine_record = orphans::EngineRecord::register(pid, run_token.as_deref());
-    scope::adopt(pid, agent).await;
+    scope::adopt(pid, adoption).await;
     let stdin_error = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     let stdin_error_writer = stdin_error.clone();
     let mut stdin_task = tokio::spawn(async move {

@@ -358,6 +358,31 @@ async fn stop_kills_setsid_descendants_without_touching_other_jobs() {
     registry.stop_all().await;
 }
 
+/// A browser or server a job detached gets SIGTERM, and time to act on it,
+/// before any SIGKILL.
+#[tokio::test]
+async fn stop_terms_setsid_descendants_before_killing_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = BackgroundProcesses::new();
+    let ctx = ctx_in(dir.path());
+    let script = "setsid bash -c 'trap \"touch termed; exit 0\" TERM; echo $$ > escaped.tmp; \
+                  mv escaped.tmp escaped; while :; do sleep 0.1; done' </dev/null >/dev/null 2>&1 & wait";
+    let job = registry.start(ctx.agent_id, script, &ctx).unwrap();
+    ready(&dir.path().join("escaped")).await;
+    let pid = std::fs::read_to_string(dir.path().join("escaped"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(alive(pid));
+    registry.stop(ctx.agent_id, job.id).await.unwrap();
+    dead(pid).await;
+    assert!(
+        dir.path().join("termed").exists(),
+        "the detached process was killed without a SIGTERM first"
+    );
+}
+
 #[tokio::test]
 async fn recovery_kills_setsid_descendants_after_the_original_group_is_gone() {
     let dir = tempfile::tempdir().unwrap();

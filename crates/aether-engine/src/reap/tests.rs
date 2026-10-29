@@ -132,7 +132,7 @@ async fn start_detached(agent: AgentId, script: &str) -> u32 {
         .stdout(std::process::Stdio::piped());
     command.as_std_mut().process_group(0);
     let mut child = command.spawn().unwrap();
-    crate::scope::adopt(child.id(), Some(agent)).await;
+    crate::scope::adopt(child.id(), crate::scope::Adoption::begin(Some(agent))).await;
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(b"go\n").await.unwrap();
     drop(stdin);

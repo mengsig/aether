@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use super::super::loopback;
 use crate::EngineError;
+use tokio_util::sync::CancellationToken;
 
 const READY: &str = "#!/bin/sh\necho ws://fake\nexec sleep 600\n";
 const FAILING: &str = "#!/bin/sh\necho fixture-exec-server-unavailable >&2\nexit 44\n";
@@ -48,7 +49,15 @@ async fn exec_server_exit_fails_closed_promptly_and_leaves_nothing() {
     let started = tokio::time::Instant::now();
     let result = tokio::time::timeout(
         Duration::from_secs(15),
-        loopback::start(&program, &cwd, &[], None, &[]),
+        loopback::start(
+            &program,
+            &cwd,
+            &[],
+            None,
+            &[],
+            None,
+            &CancellationToken::new(),
+        ),
     )
     .await
     .expect("a failed exec-server must not hang startup");
@@ -67,9 +76,17 @@ async fn exec_server_exit_fails_closed_promptly_and_leaves_nothing() {
 #[ignore = "needs bwrap and socat on PATH"]
 async fn dropping_the_sandbox_ends_the_namespace() {
     let (_dir, cwd, program) = fixture(READY);
-    let sandbox = loopback::start(&program, &cwd, &[], None, &[])
-        .await
-        .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
+    let sandbox = loopback::start(
+        &program,
+        &cwd,
+        &[],
+        None,
+        &[],
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
     assert!(processes_in(&cwd).len() >= 4, "{:?}", processes_in(&cwd));
     drop(sandbox);
     assert_all_gone(&cwd).await;
@@ -84,9 +101,17 @@ async fn the_exec_server_writes_to_the_agent_temp_dir() {
     let (_dir, cwd, program) = fixture(PROBE);
     let leaf = cwd.join("0123456789AB");
     std::fs::create_dir(&leaf).unwrap();
-    let sandbox = loopback::start(&program, &cwd, &[], Some(&leaf), &[])
-        .await
-        .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
+    let sandbox = loopback::start(
+        &program,
+        &cwd,
+        &[],
+        Some(&leaf),
+        &[],
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
     let seen = std::fs::read_to_string(leaf.join("seen")).expect("written inside the sandbox");
     assert_eq!(seen, format!("{0}|{0}|{0}", leaf.display()));
     drop(sandbox);
@@ -98,9 +123,17 @@ async fn the_exec_server_writes_to_the_agent_temp_dir() {
 #[ignore = "needs bwrap and socat on PATH"]
 async fn exec_server_death_mid_turn_is_reported() {
     let (_dir, cwd, program) = fixture(READY);
-    let mut sandbox = loopback::start(&program, &cwd, &[], None, &[])
-        .await
-        .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
+    let mut sandbox = loopback::start(
+        &program,
+        &cwd,
+        &[],
+        None,
+        &[],
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
     let server = processes_in(&cwd)
         .into_iter()
         .find(|pid| {
@@ -158,9 +191,17 @@ async fn parent_exit_fixture() {
     };
     let cwd = PathBuf::from(cwd);
     let program = std::env::var("AETHER_LOOPBACK_FIXTURE_PROGRAM").unwrap();
-    let _sandbox = loopback::start(&program, &cwd, &[], None, &[])
-        .await
-        .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
+    let _sandbox = loopback::start(
+        &program,
+        &cwd,
+        &[],
+        None,
+        &[],
+        None,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("sandbox did not start: {e}"));
     println!("SANDBOX STARTED");
     // Exits without running Drop, like a crashed or killed daemon.
     std::process::exit(0);
@@ -188,7 +229,16 @@ async fn seccomp_keeps_sockets_inside_the_namespace() {
          codex_app::tests::sandbox::socket_probe_fixture --ignored --nocapture\n",
         cwd.display()
     ));
-    let result = loopback::start(&program, &cwd, &[], None, &[]).await;
+    let result = loopback::start(
+        &program,
+        &cwd,
+        &[],
+        None,
+        &[],
+        None,
+        &CancellationToken::new(),
+    )
+    .await;
     assert!(matches!(result, Err(EngineError::Unsupported(_))));
     let report = std::fs::read_to_string(&report)
         .unwrap_or_else(|e| panic!("the probe must write its report: {e}"));
@@ -265,7 +315,16 @@ async fn headless_browser_renders_only_loopback_pages() {
         browser.display(),
         exe.display()
     ));
-    let result = loopback::start(&program, &cwd, &[], None, &[]).await;
+    let result = loopback::start(
+        &program,
+        &cwd,
+        &[],
+        None,
+        &[],
+        None,
+        &CancellationToken::new(),
+    )
+    .await;
     assert!(matches!(result, Err(EngineError::Unsupported(_))));
     let read = |name: &str| {
         std::fs::read_to_string(cwd.join(name))
@@ -480,4 +539,28 @@ fn socket_probe_fixture() {
         .map_err(errno),
     );
     std::fs::write(dir.join("report.txt"), report.join("\n")).unwrap();
+}
+
+/// A turn stopped before its sandbox starts: bwrap never runs, so nothing of
+/// it can escape its agent's reap. Needs no bwrap, as nothing is spawned.
+#[tokio::test]
+async fn no_sandbox_starts_for_a_stopped_turn() {
+    if loopback::seccomp_filter().is_none() {
+        return;
+    }
+    let (_dir, cwd, program) = fixture(READY);
+    let launch = crate::EngineLaunchContext {
+        run_id: aether_core::id::RunId::new(),
+        agent_id: aether_core::id::AgentId::new(),
+        task_id: None,
+        spawns: crate::SpawnGate::default(),
+    };
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let result = loopback::start(&program, &cwd, &[], None, &[], Some(&launch), &cancel).await;
+    let Err(EngineError::Unsupported(reason)) = result else {
+        panic!("a stopped turn started its sandbox");
+    };
+    assert!(reason.contains("has stopped"), "{reason}");
+    assert!(processes_in(&cwd).is_empty(), "a sandbox process ran");
 }

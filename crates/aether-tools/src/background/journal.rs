@@ -214,9 +214,36 @@ pub(crate) fn kill_job(job: ProcessId) -> io::Result<()> {
     kill_job_at(job, Path::new("/proc"))
 }
 
+/// SIGTERM what `job` left running outside its process group, then SIGKILL
+/// whatever of it outlives `grace`.
+pub(crate) async fn stop_job(job: ProcessId, grace: std::time::Duration) -> io::Result<()> {
+    let proc_root = Path::new("/proc");
+    let deadline = tokio::time::Instant::now() + grace;
+    if signal_job_at(job, proc_root, Some(rustix::process::Signal::TERM))? == 0 {
+        return Ok(());
+    }
+    while tokio::time::Instant::now() < deadline {
+        if signal_job_at(job, proc_root, None)? == 0 {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    kill_job_at(job, proc_root)
+}
+
 fn kill_job_at(job: ProcessId, proc_root: &Path) -> io::Result<()> {
-    use rustix::process::{Pid as ProcessPid, PidfdFlags, pidfd_open, pidfd_send_signal};
+    signal_job_at(job, proc_root, Some(rustix::process::Signal::KILL)).map(drop)
+}
+
+/// Send `signal` to each live process of this user carrying `job`'s token,
+/// or with none only count them; returns how many there were.
+fn signal_job_at(
+    job: ProcessId,
+    proc_root: &Path,
+    signal: Option<rustix::process::Signal>,
+) -> io::Result<usize> {
     let token = format!("{JOB_ENV}={job}");
+    let mut found = 0;
     for entry in std::fs::read_dir(proc_root)? {
         let entry = entry?;
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
@@ -225,39 +252,60 @@ fn kill_job_at(job: ProcessId, proc_root: &Path) -> io::Result<()> {
         if pid <= 1 || pid == std::process::id() as i32 {
             continue;
         }
-        let metadata = match entry.metadata() {
-            Ok(metadata) => metadata,
-            Err(error) if disappeared(&error) => continue,
-            Err(error) => return Err(error),
-        };
-        if metadata.uid() != geteuid().as_raw() {
-            continue;
-        }
-        let Some(environment) = readable_environ(&entry.path())? else {
-            continue;
-        };
-        if carries(&environment, &token) {
-            // A pidfd prevents signalling an unrelated process after PID reuse.
-            let Some(pid) = ProcessPid::from_raw(pid) else {
-                continue;
-            };
-            let process = match pidfd_open(pid, PidfdFlags::empty()) {
-                Ok(process) => process,
-                Err(rustix::io::Errno::SRCH) => continue,
-                Err(error) => return Err(error.into()),
-            };
-            let Some(environment) = readable_environ(&entry.path())? else {
-                continue;
-            };
-            if carries(&environment, &token) {
-                match pidfd_send_signal(&process, rustix::process::Signal::KILL) {
-                    Ok(()) | Err(rustix::io::Errno::SRCH) => {}
-                    Err(error) => return Err(error.into()),
-                }
-            }
+        if signal_carrier(&entry, pid, &token, signal)? {
+            found += 1;
         }
     }
-    Ok(())
+    Ok(found)
+}
+
+/// Signal the process at `entry` if it is this user's and carries `token`;
+/// false when it does not, or is gone.
+fn signal_carrier(
+    entry: &std::fs::DirEntry,
+    pid: i32,
+    token: &str,
+    signal: Option<rustix::process::Signal>,
+) -> io::Result<bool> {
+    use rustix::process::{Pid as ProcessPid, PidfdFlags, pidfd_open, pidfd_send_signal};
+    assert!(pid > 1, "not a job process: {pid}");
+    let metadata = match entry.metadata() {
+        Ok(metadata) => metadata,
+        Err(error) if disappeared(&error) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if metadata.uid() != geteuid().as_raw() {
+        return Ok(false);
+    }
+    let Some(environment) = readable_environ(&entry.path())? else {
+        return Ok(false);
+    };
+    if !carries(&environment, token) {
+        return Ok(false);
+    }
+    // A pidfd prevents signalling an unrelated process after PID reuse.
+    let Some(pid) = ProcessPid::from_raw(pid) else {
+        return Ok(false);
+    };
+    let process = match pidfd_open(pid, PidfdFlags::empty()) {
+        Ok(process) => process,
+        Err(rustix::io::Errno::SRCH) => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let Some(environment) = readable_environ(&entry.path())? else {
+        return Ok(false);
+    };
+    if !carries(&environment, token) {
+        return Ok(false);
+    }
+    let Some(signal) = signal else {
+        return Ok(true);
+    };
+    match pidfd_send_signal(&process, signal) {
+        Ok(()) => Ok(true),
+        Err(rustix::io::Errno::SRCH) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// A scanned process's environment, or None once it is gone or unreadable.
