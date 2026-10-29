@@ -211,6 +211,32 @@ async fn a_late_hand_up_settles_with_the_live_owner_it_would_have_reached() {
     assert_eq!(runtime.settle_owner(middle), None, "a stop took it");
 }
 
+/// A sweep is for one end: an agent woken since, or ended again, is spared,
+/// as what that later end left is its own to stop or hand up.
+#[tokio::test]
+async fn a_sweep_spares_an_agent_that_ended_again_since() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let parent = idle_agent(&runtime, None).await;
+    let agent = idle_agent(&runtime, Some(parent)).await;
+    end(&runtime, agent, AgentStatus::Failed { error: "x".into() });
+    let ends = runtime.current_ends(&[agent]);
+    assert!(runtime.still_in_end(agent, ends.get(&agent)));
+
+    end(&runtime, agent, AgentStatus::Ready);
+    assert!(!runtime.still_in_end(agent, ends.get(&agent)), "woken");
+    end(&runtime, agent, AgentStatus::Running);
+    end(&runtime, agent, AgentStatus::Failed { error: "y".into() });
+    assert!(
+        !runtime.still_in_end(agent, ends.get(&agent)),
+        "ended again"
+    );
+    assert!(
+        !runtime.still_in_end(agent, None),
+        "an unread end spares it"
+    );
+}
+
 struct NoSink;
 
 #[async_trait::async_trait]

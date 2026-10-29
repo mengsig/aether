@@ -512,6 +512,15 @@ impl Runtime {
                 "Startup artifact cleanup failed: {error}; periodic maintenance will retry. Run `aether doctor` and `aether diagnose`."
             )),
         }
+        // A daemon that died left its agents' detached processes and what they
+        // handed up running; a stop would have taken them, so this start does.
+        let reaped = runtime.reap_all_agent_processes().await;
+        if reaped > 0 {
+            tracing::info!(
+                reaped,
+                "stopped processes a previous daemon's agents left running"
+            );
+        }
         disk::spawn(runtime.clone());
         scheduler::spawn(runtime.clone());
         retention::spawn(runtime.clone());
@@ -783,7 +792,7 @@ impl Runtime {
             None => 0,
         };
         // What left those groups, and what engines detached, is found by agent.
-        let reaped = self.reap_agent_processes_at_shutdown().await;
+        let reaped = self.reap_all_agent_processes().await;
         if reaped > 0 {
             tracing::info!(reaped, "stopped agent processes with the daemon");
         }

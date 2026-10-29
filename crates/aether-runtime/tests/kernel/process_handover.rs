@@ -143,3 +143,31 @@ async fn a_cancelled_childs_server_stops_with_it() {
     assert!(!parent_row.status.is_terminal(), "{:?}", parent_row.status);
     assert!(sibling.alive(), "a process outside the tree survives");
 }
+
+/// A daemon that died left a process its agent detached; the next start over
+/// the same store stops it, as a clean stop would have, and spares one of an
+/// agent it never ran.
+#[tokio::test]
+async fn a_start_after_a_crash_stops_what_its_agents_left_running() {
+    let h = harness(vec![]).await;
+    let sibling = Sibling::start();
+    let agent = idle_parent(&h);
+    let leftover = Sibling::tagged(agent);
+    assert!(leftover.alive(), "the leftover is running before the start");
+
+    let restarted = harness_full(
+        vec![],
+        |_| {},
+        |_| {},
+        None,
+        None,
+        Some(h.store.clone()),
+        |_| {},
+    )
+    .await;
+    wait_gone(&restarted, leftover.pid(), "the dead daemon's leftover").await;
+    assert!(
+        sibling.alive(),
+        "a process of an agent never ran here survives"
+    );
+}

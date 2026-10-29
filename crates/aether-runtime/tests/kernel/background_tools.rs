@@ -136,9 +136,14 @@ pub(super) struct Sibling(std::process::Child);
 #[cfg(target_os = "linux")]
 impl Sibling {
     pub(super) fn start() -> Self {
+        Self::tagged(AgentId::new())
+    }
+
+    /// A detached process carrying `agent`'s tag, as one its engine left would.
+    pub(super) fn tagged(agent: AgentId) -> Self {
         let child = std::process::Command::new("setsid")
             .args(["sleep", "300"])
-            .env("AETHER_ENGINE_AGENT", AgentId::new().to_string())
+            .env("AETHER_ENGINE_AGENT", agent.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -148,7 +153,11 @@ impl Sibling {
     }
 
     pub(super) fn alive(&self) -> bool {
-        process_alive(self.0.id() as i32)
+        process_alive(self.pid())
+    }
+
+    pub(super) fn pid(&self) -> i32 {
+        i32::try_from(self.0.id()).expect("a pid fits an i32")
     }
 }
 

@@ -8,6 +8,7 @@ use aether_core::agent::{Agent, AgentStatus};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::AgentId;
 use aether_core::model::ContentBlock;
+use aether_core::time::Timestamp;
 use aether_engine::reap::AgentProcess;
 use aether_store::Commit;
 use aether_tools::background::{BackgroundProcesses, ProcessStatus};
@@ -151,7 +152,7 @@ impl Runtime {
                 handed_to.remove(id);
             }
         }
-        self.reap_engine_processes(handle, agent, owned.clone());
+        self.reap_engine_processes(hold, handle, agent, owned.clone());
         let Some(processes) = self.tools.background() else {
             return;
         };
@@ -169,6 +170,7 @@ impl Runtime {
     /// server, a detached job - and record it on `agent` as `agent.processes_reaped`.
     fn reap_engine_processes(
         &self,
+        _hold: &CommitHold<'_>,
         handle: &tokio::runtime::Handle,
         agent: AgentId,
         owned: Vec<AgentId>,
@@ -176,9 +178,14 @@ impl Runtime {
         let grace = self.models.config().agents.reap_grace();
         let me = self.me.clone();
         let gates = self.spawn_gates();
+        let ends = self.current_ends(&owned);
         handle.spawn(async move {
-            // A restarted agent's tag is its new engine's, so the sweep spares it.
-            let ended = |id| me.upgrade().is_some_and(|runtime| runtime.has_ended(id));
+            // An agent restarted since, even one that has ended again, is spared:
+            // its tag is its new engine's, or what that end handed up.
+            let ended = |id| {
+                me.upgrade()
+                    .is_some_and(|runtime| runtime.still_in_end(id, ends.get(&id)))
+            };
             let report = aether_engine::reap::reap_agents(&owned, grace, ended, &gates).await;
             if report.is_empty() {
                 return;
@@ -330,10 +337,10 @@ impl Runtime {
         Ok(())
     }
 
-    /// Stop what this daemon's agents still have running as it stops, ended
-    /// or not: once it exits, nothing would stop a detached server or
-    /// browser until the agent ends. Returns how many processes were signalled.
-    pub(crate) async fn reap_agent_processes_at_shutdown(&self) -> usize {
+    /// Stop what this daemon's agents have running, ended or not: as it stops,
+    /// since nothing would stop it after, and as it starts, after one that died.
+    /// Returns how many processes were signalled.
+    pub(crate) async fn reap_all_agent_processes(&self) -> usize {
         let mut found = aether_engine::reap::agents_with_processes().await;
         // A turn that outlived the wait for it may still fork; its agent is swept too.
         found.extend(self.sched.lock().running.keys().copied());
@@ -369,7 +376,6 @@ impl Runtime {
         }
     }
 
-    /// Whether `agent` is still ended; a restart means its processes are its new engine's.
     /// The gates every engine and host command starts through, in the order
     /// a sweep holds them.
     fn spawn_gates(&self) -> Vec<aether_engine::SpawnGate> {
@@ -378,6 +384,41 @@ impl Runtime {
         gates
     }
 
+    /// When each of `agents` entered its current status: that names its end,
+    /// which a later wake and end would replace. An unreadable one is left out.
+    fn current_ends(&self, agents: &[AgentId]) -> HashMap<AgentId, Option<Timestamp>> {
+        let mut ends = HashMap::with_capacity(agents.len());
+        for agent in agents {
+            match self.store.agent(*agent) {
+                Ok(row) => {
+                    ends.insert(*agent, row.and_then(|row| row.status_since));
+                }
+                Err(error) => {
+                    tracing::warn!(%agent, %error, "cannot read the ended agent; sparing its processes");
+                }
+            }
+        }
+        debug_assert!(ends.len() <= agents.len(), "an end per agent at most");
+        ends
+    }
+
+    /// Whether `agent` is still in the end `since` names; a missing row has
+    /// ended for good. `None` for `since` was unreadable, so it is spared.
+    fn still_in_end(&self, agent: AgentId, since: Option<&Option<Timestamp>>) -> bool {
+        let Some(since) = since else {
+            return false;
+        };
+        match self.store.agent(agent) {
+            Ok(Some(row)) => row.status.is_terminal() && row.status_since == *since,
+            Ok(None) => true,
+            Err(error) => {
+                tracing::warn!(%agent, %error, "cannot tell whether the agent is still ended; sparing its processes");
+                false
+            }
+        }
+    }
+
+    /// Whether `agent` is still ended; a restart means its processes are its new engine's.
     fn has_ended(&self, agent: AgentId) -> bool {
         match self.store.agent(agent) {
             Ok(Some(row)) => row.status.is_terminal(),
