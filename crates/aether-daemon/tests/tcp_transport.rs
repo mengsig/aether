@@ -112,6 +112,47 @@ async fn a_quiet_connection_is_closed_and_a_pinging_one_is_not() {
     daemon.stop().await;
 }
 
+/// A request still running is not a quiet connection: the idle clock waits for
+/// its reply, then starts again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connection_awaiting_a_slow_reply_is_not_idle() {
+    let daemon = TestDaemon::start_with_tcp(TOKEN, |listen| {
+        listen.idle_timeout = Duration::from_secs(1);
+    })
+    .await;
+    let mut conn = RawConn::connect_tcp(daemon.tcp_addr())
+        .await
+        .expect("connect");
+    conn.hello_with(PROTOCOL_VERSION, Some(TOKEN))
+        .await
+        .expect("served");
+    let locker = rusqlite::Connection::open(daemon.store_path()).unwrap();
+    locker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let write = conn
+        .request(
+            json!({"cmd": "create_agent", "role": "idle-test", "start": false,
+            "model": {"provider": "claude-code", "model": "haiku"}}),
+        )
+        .await;
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    locker.execute_batch("ROLLBACK").unwrap();
+
+    let reply = conn
+        .recv()
+        .await
+        .expect("the write's reply, not an idle close");
+    assert_eq!(reply["id"], write, "{reply}");
+    let started = std::time::Instant::now();
+    let notice = conn.recv().await.expect("an idle notice once it answered");
+    assert_eq!(notice["id"], 0, "{notice}");
+    assert_eq!(notice["result"]["Err"]["code"], "unavailable", "{notice}");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the idle clock starts again after the reply"
+    );
+    daemon.stop().await;
+}
+
 /// The cap is on connections served at once: the one over it waits in the
 /// backlog and is served the moment a slot frees, rather than being dropped.
 #[tokio::test]

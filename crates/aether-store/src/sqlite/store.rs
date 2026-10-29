@@ -45,7 +45,7 @@ impl Store for SqliteStore {
 
     fn engine_session_ownerships(&self) -> Result<Vec<crate::EngineSessionOwnership>> {
         Self::read_many(
-            &self.read_conn(),
+            &*self.read_conn()?,
             "SELECT body FROM engine_session_ownership ORDER BY engine, session_id",
             &[],
         )
@@ -93,7 +93,7 @@ impl Store for SqliteStore {
     }
 
     fn commit(&self, commit: Commit) -> Result<Vec<Event>> {
-        let mut conn = self.conn.lock();
+        let mut conn = self.write_conn();
         // Immediate: a deferred transaction that reads first gets SQLITE_BUSY,
         // with no busy wait, when a WAL truncate lands before its first write.
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -149,7 +149,7 @@ impl Store for SqliteStore {
     }
 
     fn import(&self, events: Vec<ImportedEvent>, mutations: Vec<Mutation>) -> Result<Vec<Event>> {
-        let mut conn = self.conn.lock();
+        let mut conn = self.write_conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut seq = Self::last_seq_in(&tx)?;
         let mut tally = WriteTally::default();
@@ -173,7 +173,7 @@ impl Store for SqliteStore {
     }
 
     fn last_seq(&self) -> Result<u64> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let v: String =
             conn.query_row("SELECT value FROM meta WHERE key = 'last_seq'", [], |r| {
                 r.get(0)
@@ -210,7 +210,7 @@ impl Store for SqliteStore {
                 )
             }
         };
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         // API invocations commit their response before dispatching tools.
         let lower = if matches!(scope, crate::ToolEventScope::Invocation(_)) {
             let sql = "SELECT seq FROM events WHERE agent_id = ?1 \
@@ -251,7 +251,7 @@ impl Store for SqliteStore {
     }
 
     fn event_by_id(&self, id: EventId) -> Result<Option<Event>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let mut events = super::event_blobs::read_events(
             &conn,
             "SELECT body FROM events WHERE id = ?1",
@@ -266,7 +266,7 @@ impl Store for SqliteStore {
         agent: AgentId,
         model: &aether_core::model::ModelRef,
     ) -> Result<Option<Event>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let sql = "SELECT body FROM events WHERE agent_id = ?1 AND type = 'custom' \
                    AND json_extract(body, '$.kind.name') \
                        IN ('exhaustion.reported', 'exhaustion.provider_recovered') \
@@ -286,7 +286,7 @@ impl Store for SqliteStore {
         if names.is_empty() {
             return Ok(None);
         }
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         // The `(type, seq)` index walks custom events newest first.
         let sql = "SELECT body FROM events WHERE type = 'custom' \
                    AND json_extract(body, '$.kind.name') IN (SELECT value FROM json_each(?1)) \
@@ -309,7 +309,7 @@ impl Store for SqliteStore {
         if seq == 0 || seq > i64::MAX as u64 {
             return Ok(None);
         }
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let mut events = super::event_blobs::read_events(
             &conn,
             "SELECT body FROM events WHERE seq = ?1",
@@ -389,7 +389,7 @@ impl Store for SqliteStore {
 
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool> {
         // UNION drops repeated rows, so a corrupt parent cycle ends the walk.
-        Ok(self.read_conn().query_row(
+        Ok(self.read_conn()?.query_row(
             "WITH RECURSIVE up(id, parent) AS (
                  SELECT id, parent FROM agents WHERE id = ?2
                  UNION
@@ -416,7 +416,7 @@ impl Store for SqliteStore {
     }
 
     fn subtree_ids(&self, root: AgentId) -> Result<BTreeSet<AgentId>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let mut stmt = conn.prepare_cached(
             "WITH RECURSIVE down(id) AS (
                  SELECT id FROM agents WHERE id = ?1
@@ -494,7 +494,7 @@ impl Store for SqliteStore {
         if after >= i64::MAX as u64 {
             return Ok(Vec::new());
         }
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         Self::read_many(
             &conn,
             "SELECT body FROM inbox WHERE agent_id = ?1 AND seq > ?2 ORDER BY seq ASC",
@@ -503,7 +503,7 @@ impl Store for SqliteStore {
     }
 
     fn inbox_last_seq(&self, agent: AgentId) -> Result<u64> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let v: i64 = conn.query_row(
             "SELECT COALESCE(MAX(seq), 0) FROM inbox WHERE agent_id = ?1",
             [agent.to_string()],
@@ -546,7 +546,7 @@ impl Store for SqliteStore {
                    'memories', json(COALESCE(json_extract(s.body, '$.memory_ids'), '[]'))) \
                    FROM json_each(?1) AS wanted JOIN snapshots AS s ON s.id = wanted.value \
                    ORDER BY wanted.key";
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let found: Vec<SnapshotMemories> =
             Self::read_many(&conn, sql, &[&serde_json::to_string(ids)?])?;
         debug_assert!(found.len() <= ids.len());
@@ -562,7 +562,7 @@ impl Store for SqliteStore {
     }
 
     fn invocations_for_agent(&self, agent: AgentId) -> Result<Vec<Invocation>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         Self::read_many(
             &conn,
             "SELECT body FROM invocations WHERE agent_id = ?1 ORDER BY turn ASC, started_at ASC",
@@ -589,7 +589,7 @@ impl Store for SqliteStore {
     }
 
     fn pending_approvals(&self) -> Result<Vec<ApprovalRequest>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         Self::read_many(
             &conn,
             "SELECT body FROM approvals WHERE state = 'pending' ORDER BY requested_at ASC",
@@ -604,7 +604,7 @@ impl Store for SqliteStore {
         call: ToolCallId,
         key: &IdempotencyKey,
     ) -> Result<Option<RecordedOutcome>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let mut stmt = conn.prepare(
             "SELECT body FROM tool_outcomes
              WHERE agent_id = ?1 AND invocation_id = ?2 AND call_id = ?3 AND key = ?4",
@@ -632,7 +632,7 @@ impl Store for SqliteStore {
     }
 
     fn submission_ledger(&self) -> Result<SubmissionLedger> {
-        Self::ledger_in(&self.read_conn())
+        Self::ledger_in(&*self.read_conn()?)
     }
 
     fn approval_rule(&self, id: ApprovalRuleId) -> Result<Option<ApprovalRule>> {
@@ -643,7 +643,7 @@ impl Store for SqliteStore {
     }
 
     fn approval_rules(&self, include_revoked: bool) -> Result<Vec<ApprovalRule>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let sql = if include_revoked {
             "SELECT body FROM approval_rules ORDER BY created_at ASC"
         } else {
@@ -665,11 +665,11 @@ impl Store for SqliteStore {
     }
 
     fn device(&self, id: DeviceId) -> Result<Option<DeviceRow>> {
-        Self::read_device(&self.read_conn(), id)
+        Self::read_device(&*self.read_conn()?, id)
     }
 
     fn devices(&self, include_revoked: bool) -> Result<Vec<DeviceRow>> {
-        Self::read_devices(&self.read_conn(), include_revoked)
+        Self::read_devices(&*self.read_conn()?, include_revoked)
     }
 
     fn memory_was_in_task_context(
@@ -720,7 +720,7 @@ impl Store for SqliteStore {
     }
 
     fn artifacts_for_task(&self, task: TaskId) -> Result<Vec<Artifact>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         Self::read_many(
             &conn,
             "SELECT body FROM artifacts WHERE task_id = ?1 ORDER BY created_at ASC",
@@ -753,14 +753,14 @@ impl Store for SqliteStore {
             " ORDER BY created_at DESC, rowid DESC LIMIT {}",
             filter.limit.clamp(1, 5000)
         ));
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let refs: Vec<&dyn rusqlite::ToSql> =
             args.iter().map(|a| a as &dyn rusqlite::ToSql).collect();
         Self::read_many(&conn, &sql, &refs)
     }
 
     fn artifact_by_digest(&self, digest: &str) -> Result<Option<Artifact>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let mut found: Vec<Artifact> = Self::read_many(
             &conn,
             "SELECT body FROM artifacts WHERE digest = ?1 AND evicted = 0
@@ -771,7 +771,7 @@ impl Store for SqliteStore {
     }
 
     fn live_artifacts(&self) -> Result<Vec<Artifact>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         Self::read_many(
             &conn,
             "SELECT body FROM artifacts WHERE evicted = 0 ORDER BY created_at ASC",
@@ -858,7 +858,7 @@ impl Store for SqliteStore {
     }
 
     fn schedules(&self, target: Option<AgentId>) -> Result<Vec<Schedule>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         Self::read_many(
             &conn,
             "SELECT body FROM schedules WHERE (?1 IS NULL OR target=?1) ORDER BY id",
@@ -867,7 +867,7 @@ impl Store for SqliteStore {
     }
 
     fn due_schedules(&self, at: Timestamp, limit: usize) -> Result<Vec<Schedule>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         Self::read_many(
             &conn,
             "SELECT body FROM schedules WHERE next_due <= ?1 ORDER BY next_due, id LIMIT ?2",
@@ -876,7 +876,7 @@ impl Store for SqliteStore {
     }
 
     fn schedule_history(&self, id: ScheduleId, limit: usize) -> Result<Vec<ScheduleOccurrence>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         Self::read_many(
             &conn,
             "SELECT body FROM schedule_occurrences WHERE schedule=?1 ORDER BY due DESC LIMIT ?2",
@@ -885,7 +885,7 @@ impl Store for SqliteStore {
     }
 
     fn meta(&self, key: &str) -> Result<Option<String>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         Ok(conn
             .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
             .optional()?)
