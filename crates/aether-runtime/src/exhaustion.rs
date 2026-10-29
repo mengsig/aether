@@ -694,7 +694,7 @@ fn verdict(class: ExhaustionClass) -> String {
     match class {
         ExhaustionClass::Credentials => format!(
             "{kept} The provider refused the engine CLI's sign-in: sign it in again (for \
-             Claude Code run `claude login`, for Codex `codex login`)."
+             Claude Code run `claude auth login`, for Codex `codex login`)."
         ),
         ExhaustionClass::QuotaExhausted | ExhaustionClass::UsageLimit => kept.to_owned(),
     }

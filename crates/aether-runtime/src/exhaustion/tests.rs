@@ -580,3 +580,11 @@ async fn provider_incidents_deduplicate_across_history_windows_until_that_provid
     );
     runtime.shutdown().await;
 }
+
+#[test]
+fn a_refused_sign_in_names_the_commands_that_sign_the_clis_in_again() {
+    let told = verdict(ExhaustionClass::Credentials);
+    assert!(told.contains("`claude auth login`"), "{told}");
+    assert!(told.contains("`codex login`"), "{told}");
+    assert!(!verdict(ExhaustionClass::UsageLimit).contains("login"));
+}
