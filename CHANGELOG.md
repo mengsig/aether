@@ -6,6 +6,19 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- **Browsers and helpers an agent detached no longer outlive it (#332).**
+  Aether's own shell tool now tags every host command with its agent's id
+  (`AETHER_ENGINE_AGENT`), as engines already were, so a Chromium, Firefox,
+  `node` server or other helper a command detaches with `setsid` or a double
+  fork is stopped when the agent completes, fails or is cancelled. A daemon
+  stop now also sends `SIGTERM`, then `SIGKILL` after `reap_grace_secs` (at
+  most 10 s), to every process tagged with, or in an engine scope of, an agent
+  its own store ran; agents of another daemon and imported agents are never
+  touched. Containers run by the Docker daemon stay out of scope. Linux only;
+  elsewhere nothing changes.
+
 ## 1.2.7
 
 Released 2026-10-29. A patch release from the 2026-10-26 end-to-end sweep:

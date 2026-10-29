@@ -10,7 +10,7 @@
 use aether_core::id::AgentId;
 
 /// Environment variable naming the agent an engine and its descendants run for.
-pub(crate) const AGENT_ENV: &str = "AETHER_ENGINE_AGENT";
+pub(crate) const AGENT_ENV: &str = aether_core::agent::PROCESS_AGENT_ENV;
 
 /// The command to spawn `program` as an engine of `agent`. The caller still
 /// puts it in its own process group and passes the child to [`adopt`].
@@ -34,7 +34,7 @@ pub(crate) async fn adopt(pid: Option<u32>, agent: Option<AgentId>) {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) use linux::{Unit, agent_units, signal_units};
+pub(crate) use linux::{Unit, agent_units, agents_with_units, signal_units};
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -60,8 +60,11 @@ mod linux {
         pub procs: PathBuf,
     }
 
+    /// What every engine scope's name starts with.
+    const UNIT_STEM: &str = "aether-engine-";
+
     fn unit_prefix(agent: AgentId) -> String {
-        format!("aether-engine-{agent}-")
+        format!("{UNIT_STEM}{agent}-")
     }
 
     fn disabled() -> bool {
@@ -135,32 +138,21 @@ mod linux {
         ))
     }
 
-    /// The live scopes of `agent`'s engines, but none holding this process:
+    /// The live scopes of `agents`' engines, but none holding this process:
     /// a daemon started from an agent's shell must not stop itself.
-    pub(crate) async fn agent_units(agent: AgentId) -> Vec<Unit> {
-        if disabled() {
+    pub(crate) async fn agent_units(agents: &[AgentId]) -> Vec<Unit> {
+        if disabled() || agents.is_empty() {
             return Vec::new();
         }
-        let pattern = format!("{}*", unit_prefix(agent));
-        let listed = systemctl(&[
-            "list-units",
-            "--type=scope",
-            "--all",
-            "--plain",
-            "--no-legend",
-            "--full",
-            &pattern,
-        ])
-        .await;
-        // Without a user manager there are no scopes to look for.
-        let listed = match listed {
-            Ok(listed) => listed,
-            Err(error) => {
-                tracing::debug!(%agent, %error, "no engine scopes listed");
-                return Vec::new();
-            }
+        let prefixes: Vec<String> = agents.iter().map(|agent| unit_prefix(*agent)).collect();
+        let pattern = match prefixes.as_slice() {
+            [one] => format!("{one}*"),
+            _ => format!("{UNIT_STEM}*"),
         };
-        let names = unit_names(&listed, &unit_prefix(agent));
+        let Some(listed) = list_scopes(&pattern).await else {
+            return Vec::new();
+        };
+        let names = unit_names(&listed, &prefixes);
         if names.is_empty() {
             return Vec::new();
         }
@@ -169,7 +161,7 @@ mod linux {
         let shown = match systemctl(&args).await {
             Ok(shown) => shown,
             Err(error) => {
-                tracing::warn!(%agent, %error, "cannot read the agent's engine scopes");
+                tracing::warn!(?agents, %error, "cannot read the agents' engine scopes");
                 return Vec::new();
             }
         };
@@ -177,7 +169,7 @@ mod linux {
         let own = match std::fs::read_to_string("/proc/self/cgroup") {
             Ok(own) => own,
             Err(error) => {
-                tracing::warn!(%agent, %error, "cannot read the daemon's own cgroup; sparing engine scopes");
+                tracing::warn!(?agents, %error, "cannot read the daemon's own cgroup; sparing engine scopes");
                 return Vec::new();
             }
         };
@@ -185,6 +177,44 @@ mod linux {
             .into_iter()
             .filter(|unit| !holds_own_cgroup(unit, &own))
             .collect()
+    }
+
+    /// The agents any engine scope of this user manager is named after, of
+    /// this daemon or another.
+    pub(crate) async fn agents_with_units() -> Vec<AgentId> {
+        if disabled() {
+            return Vec::new();
+        }
+        let Some(listed) = list_scopes(&format!("{UNIT_STEM}*")).await else {
+            return Vec::new();
+        };
+        unit_agents(&listed)
+    }
+
+    /// `list-units` output for the scopes matching `pattern`; none without a
+    /// user manager.
+    async fn list_scopes(pattern: &str) -> Option<String> {
+        assert!(
+            pattern.starts_with(UNIT_STEM),
+            "not an engine scope pattern: {pattern}"
+        );
+        let listed = systemctl(&[
+            "list-units",
+            "--type=scope",
+            "--all",
+            "--plain",
+            "--no-legend",
+            "--full",
+            pattern,
+        ])
+        .await;
+        match listed {
+            Ok(listed) => Some(listed),
+            Err(error) => {
+                tracing::debug!(%error, "no engine scopes listed");
+                None
+            }
+        }
     }
 
     /// Signal every process of `units`. A scope that ended since it was
@@ -201,18 +231,43 @@ mod linux {
         }
     }
 
-    /// The scope names of `list-units --plain --no-legend` output that carry `prefix`.
-    pub(super) fn unit_names(listed: &str, prefix: &str) -> Vec<String> {
+    /// The scope names of `list-units --plain --no-legend` output that carry one of `prefixes`.
+    pub(super) fn unit_names(listed: &str, prefixes: &[String]) -> Vec<String> {
         assert!(
-            !prefix.is_empty(),
-            "an empty prefix would match every scope"
+            prefixes.iter().all(|prefix| prefix.starts_with(UNIT_STEM)),
+            "a prefix that is not an engine's would match foreign scopes: {prefixes:?}"
         );
         listed
             .lines()
             .filter_map(|line| line.split_whitespace().next())
-            .filter(|name| name.starts_with(prefix) && name.ends_with(".scope"))
+            .filter(|name| name.ends_with(".scope"))
+            .filter(|name| {
+                prefixes
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix.as_str()))
+            })
             .map(str::to_owned)
             .collect()
+    }
+
+    /// The agents the engine scopes of `list-units` output are named after,
+    /// sorted and deduplicated.
+    pub(super) fn unit_agents(listed: &str) -> Vec<AgentId> {
+        let mut agents: Vec<AgentId> = listed
+            .lines()
+            .filter_map(|line| line.split_whitespace().next())
+            .filter(|name| name.ends_with(".scope"))
+            .filter_map(|name| {
+                name.strip_prefix(UNIT_STEM)?
+                    .split('-')
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .collect();
+        agents.sort_unstable();
+        agents.dedup();
+        agents
     }
 
     /// Units of `show --property=Id,ControlGroup` output that still have a cgroup.
@@ -281,7 +336,7 @@ mod linux {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::linux::{Unit, holds_own_cgroup, unit_names, units_from_show};
+    use super::linux::{Unit, holds_own_cgroup, unit_agents, unit_names, units_from_show};
     use std::path::Path;
 
     #[test]
@@ -289,11 +344,33 @@ mod tests {
         let listed = "aether-engine-agt_A-prc_1.scope loaded active running aether-engine-agt_A-prc_1.scope\n\
                       aether-engine-agt_AB-prc_2.scope loaded active running x\n\
                       other.scope loaded active running y\n";
+        let a = "aether-engine-agt_A-".to_owned();
         assert_eq!(
-            unit_names(listed, "aether-engine-agt_A-"),
+            unit_names(listed, std::slice::from_ref(&a)),
             vec!["aether-engine-agt_A-prc_1.scope".to_owned()]
         );
-        assert!(unit_names("", "aether-engine-agt_A-").is_empty());
+        assert_eq!(
+            unit_names(listed, &[a.clone(), "aether-engine-agt_AB-".to_owned()]).len(),
+            2
+        );
+        assert!(unit_names("", &[a]).is_empty());
+    }
+
+    #[test]
+    fn names_the_agents_of_engine_scopes_only() {
+        let a = aether_core::id::AgentId::new();
+        let b = aether_core::id::AgentId::new();
+        let listed = format!(
+            "aether-engine-{a}-prc_1.scope loaded active running x\n\
+             aether-engine-{a}-prc_2.scope loaded active running x\n\
+             aether-engine-{b}-prc_3.scope loaded inactive dead x\n\
+             aether-engine-garbage-prc_4.scope loaded active running x\n\
+             other-{a}.scope loaded active running y\n"
+        );
+        let mut expected = vec![a, b];
+        expected.sort_unstable();
+        assert_eq!(unit_agents(&listed), expected);
+        assert!(unit_agents("").is_empty());
     }
 
     #[test]

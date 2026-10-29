@@ -765,6 +765,11 @@ impl Runtime {
             Some(processes) => processes.stop_all().await,
             None => 0,
         };
+        // What left those groups, and what engines detached, is found by agent.
+        let reaped = self.reap_agent_processes_at_shutdown().await;
+        if reaped > 0 {
+            tracing::info!(reaped, "stopped agent processes with the daemon");
+        }
         if let Err(e) = self.apply(Commit::new().event(EventDraft::new(
             Actor::System,
             EventKind::DaemonStopped {

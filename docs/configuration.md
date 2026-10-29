@@ -487,7 +487,11 @@ its contents. Inventory bytes describe the tree before cleanup.
 
 Each engine an agent runs starts as the leader of its own process group, with
 `AETHER_ENGINE_AGENT` set to the agent's id in its environment, which its
-descendants inherit. On Linux, once the engine is running, the daemon asks the
+descendants inherit. Aether's own shell tool sets the same variable on every
+command it runs on the host, in the foreground or the background, so a browser,
+dev server or other helper that a command detaches (a new session, a double
+fork) still carries its agent's id after it leaves the command's process group.
+Containers run by the Docker daemon do not, and are not Aether's to stop. On Linux, once the engine is running, the daemon asks the
 user systemd manager to move it into a transient scope named
 `aether-engine-<agent>-<id>.scope`, whose cgroup then holds every descendant,
 even one that cleared its environment or started its own session. A process
@@ -503,10 +507,17 @@ whatever is left after the grace. It records what it stopped as an
 `agent.processes_reaped` event, with the pids, the ones that needed `SIGKILL`,
 and in `survived` any still alive after that. Only processes of the daemon's
 own user are signalled, and never the daemon itself. If the agent is restarted
-during the grace, the reap stops, so its next engine is spared. A daemon
-shutdown does not end its agents, so it skips this reap: it stops each running
-engine's process group, as for any interrupted turn, and only processes that
-left that group keep running until their agent ends after the restart.
+during the grace, the reap stops, so its next engine is spared.
+
+A daemon shutdown ends no agent, but it leaves none of their processes
+running either. It stops each running engine's process group, as for any
+interrupted turn, and every background shell. Then it finds every process
+carrying an agent's tag or in an engine scope, keeps the agents its own store
+ran (never an imported one, nor another daemon's), and stops their processes
+the same way, in one sweep, with a grace of `reap_grace_secs` but at most 10
+seconds. The daemon log records what it stopped. A process is signalled only
+through a pidfd opened before its tag is checked again, so a pid reused
+meanwhile is never hit.
 
 A daemon that dies without a clean shutdown (killed with `SIGKILL`, out of
 memory, crashed) takes its engines with it on Linux. Each engine process, and

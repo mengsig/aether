@@ -136,6 +136,160 @@ async fn an_engine_descendant_that_left_its_group_dies_with_its_agent() {
     );
 }
 
+/// A shell command that detaches `sleep` the way a browser or dev server
+/// does - a new session, then a fork whose parent exits - and records its
+/// pid. It returns once the pid is recorded, as `setsid -w` waits for `sh`.
+#[cfg(target_os = "linux")]
+fn detach_sleep(marker_name: &str) -> String {
+    format!(
+        "setsid -w sh -c 'sleep 300 & echo $! > {marker_name}.tmp && mv {marker_name}.tmp {marker_name}' \
+         </dev/null >/dev/null 2>&1"
+    )
+}
+
+/// A detached process of an agent this daemon never ran, as another
+/// daemon's would be: no reap here may touch it. Killed when dropped.
+#[cfg(target_os = "linux")]
+struct Sibling(std::process::Child);
+
+#[cfg(target_os = "linux")]
+impl Sibling {
+    fn start() -> Self {
+        let child = std::process::Command::new("setsid")
+            .args(["sleep", "300"])
+            .env("AETHER_ENGINE_AGENT", AgentId::new().to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the sibling");
+        Self(child)
+    }
+
+    fn alive(&self) -> bool {
+        process_alive(self.0.id() as i32)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Sibling {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn wait_gone(h: &Harness, pid: i32, what: &str) {
+    // A liveness flip has no partial-progress signal: a ceiling-only wait.
+    wait_for_with_budget(
+        h.wait_ceiling,
+        h.wait_ceiling,
+        || (!process_alive(pid)).then_some(()),
+        || (),
+        || format!("{what} {pid} is still running"),
+    )
+    .await;
+}
+
+/// What an agent's own shell detaches leaves its turn's process group and
+/// session, but the agent's end still finds it by its tag, and only it.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_process_detached_from_an_agent_shell_dies_with_the_agent_alone() {
+    let marker_name = "detached.pid";
+    let h = harness(vec![
+        ScriptedClient::tool_call("bash", json!({ "command": detach_sleep(marker_name) })),
+        ScriptedClient::tool_call("complete_task", json!({ "summary": "started it" })),
+    ])
+    .await;
+    let sibling = Sibling::start();
+    let mut s = spec("start a detached server");
+    s.config = Some(AgentConfig {
+        approval: ApprovalPolicy::none(),
+        ..Default::default()
+    });
+    let (agent, _) = h.runtime.create_agent(s, Actor::user()).expect("create");
+
+    let pid = wait_for_marker(&h.workspace_root, marker_name).await;
+    let status = h.wait_until(agent.id, |s| s.is_terminal()).await;
+    assert!(
+        matches!(status, AgentStatus::Completed { .. }),
+        "{status:?}"
+    );
+    let reaped = || {
+        h.store
+            .events(0, 10_000, &EventFilter::for_agent(agent.id))
+            .expect("events")
+            .into_iter()
+            .find_map(|e| match e.kind {
+                EventKind::Custom { name, payload } if name == "agent.processes_reaped" => {
+                    Some(payload)
+                }
+                _ => None,
+            })
+    };
+    let payload = wait_for_with_budget(
+        h.wait_ceiling,
+        h.wait_ceiling,
+        reaped,
+        || (),
+        || format!("no agent.processes_reaped for detached process {pid}"),
+    )
+    .await;
+    wait_gone(&h, pid, "the detached process").await;
+
+    assert!(
+        sibling.alive(),
+        "a process outside the agent survives its end"
+    );
+    assert!(
+        payload["pids"]
+            .as_array()
+            .is_some_and(|pids| pids.contains(&json!(pid))),
+        "the reap stopped it: {payload}"
+    );
+}
+
+/// A daemon stop does not end its agents, but nothing they detached may
+/// outlive it; a process outside them runs on.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_daemon_stop_takes_what_its_waiting_agents_detached() {
+    let marker_name = "detached-at-stop.pid";
+    let h = harness(vec![
+        ScriptedClient::tool_call("bash", json!({ "command": detach_sleep(marker_name) })),
+        ScriptedClient::text("started it"),
+    ])
+    .await;
+    let sibling = Sibling::start();
+    let mut s = spec("start a detached server, then wait");
+    s.config = Some(AgentConfig {
+        approval: ApprovalPolicy::none(),
+        long_lived: true,
+        ..Default::default()
+    });
+    let (agent, _) = h.runtime.create_agent(s, Actor::user()).expect("create");
+    h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    let pid = wait_for_marker(&h.workspace_root, marker_name).await;
+    assert!(process_alive(pid), "the detached process outlives its turn");
+
+    h.runtime.shutdown().await;
+
+    wait_gone(&h, pid, "the detached process").await;
+    assert!(
+        sibling.alive(),
+        "a process outside the agents survives the stop"
+    );
+    let row = h.store.agent(agent.id).expect("read").expect("exists");
+    assert!(
+        !row.status.is_terminal(),
+        "the stop ends no agent: {:?}",
+        row.status
+    );
+}
+
 /// Whether `pid` is a live (non-zombie) process. `/proc` only exists on
 /// Linux, so elsewhere this reports "not alive" and only the negative
 /// assertions below mean anything.

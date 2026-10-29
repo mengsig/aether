@@ -126,7 +126,12 @@ fn host_command(command: &str, ctx: &ToolContext) -> Result<tokio::process::Comm
     cmd.arg("-lc")
         .arg(command)
         .current_dir(&ctx.cwd)
-        .envs(&ctx.env);
+        .envs(&ctx.env)
+        // What the command detaches still carries it, so the agent's end finds it.
+        .env(
+            aether_core::agent::PROCESS_AGENT_ENV,
+            ctx.agent_id.to_string(),
+        );
     pipes(&mut cmd, ctx);
     if let Some(dir) = &ctx.temp_dir {
         aether_core::agent_temp::ensure_agent_leaf(dir, ctx.agent_id, &ctx.instance_id)
@@ -445,6 +450,25 @@ mod tests {
         let prepared = prepare("echo hi", &ctx).expect("prepare");
         assert!(prepared.teardown.is_none());
         assert_eq!(rendered(&prepared.command), "bash -lc echo hi");
+    }
+
+    #[tokio::test]
+    async fn host_commands_carry_their_agent_even_when_the_context_sets_another() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut ctx = ctx_in(dir.path());
+        let name = aether_core::agent::PROCESS_AGENT_ENV;
+        ctx.env.insert(name.into(), "agt_spoofed".into());
+        let output = prepare(&format!(r#"printf '%s' "${name}""#), &ctx)
+            .expect("prepare")
+            .command
+            .output()
+            .await
+            .expect("run");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            ctx.agent_id.to_string()
+        );
     }
 
     /// `ctx` with its agent's temp dir under a fresh root in `dir`.

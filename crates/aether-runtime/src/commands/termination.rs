@@ -11,6 +11,10 @@ use aether_store::{AgentFilter, Commit, Mutation};
 /// The custom event naming what an ended agent's engines left running.
 pub(crate) const PROCESSES_REAPED_EVENT: &str = "agent.processes_reaped";
 
+/// The longest a daemon stop waits between SIGTERM and SIGKILL to its agents'
+/// processes, whatever `reap_grace_secs` says: a stop must not hang for minutes.
+const SHUTDOWN_REAP_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
 impl Runtime {
     /// Stop the running turn but keep the agent: it records what it has so
     /// far and waits for the next message. False when no turn was running.
@@ -193,6 +197,41 @@ impl Runtime {
                 tracing::error!(%agent, %error, "could not record the agent's reaped processes");
             }
         });
+    }
+
+    /// Stop what this daemon's agents still have running as it stops, ended
+    /// or not: once it exits, nothing would stop a detached server or
+    /// browser until the agent ends. Returns how many processes were signalled.
+    pub(crate) async fn reap_agent_processes_at_shutdown(&self) -> usize {
+        let found = aether_engine::reap::agents_with_processes().await;
+        let ours: Vec<AgentId> = found
+            .into_iter()
+            .filter(|agent| self.ran_here(*agent))
+            .collect();
+        if ours.is_empty() {
+            return 0;
+        }
+        let grace = self
+            .models
+            .config()
+            .agents
+            .reap_grace()
+            .min(SHUTDOWN_REAP_GRACE);
+        let report = aether_engine::reap::reap_agents(&ours, grace).await;
+        report.terminated.len()
+    }
+
+    /// Whether `agent` is one this store ran. Another daemon's agents carry
+    /// tags too, and an imported agent ran elsewhere; neither is ours to stop.
+    fn ran_here(&self, agent: AgentId) -> bool {
+        match self.store.agent(agent) {
+            Ok(Some(row)) => !matches!(row.status, AgentStatus::Imported { .. }),
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(%agent, %error, "cannot tell whether the agent is ours; sparing its processes");
+                false
+            }
+        }
     }
 
     /// Whether `agent` is still ended; a restart means its processes are its new engine's.

@@ -306,9 +306,11 @@ isolation depend on the installed engine version and the platform; see
   or reaped, so the engines of a killed daemon keep running and must be
   stopped by hand. A graceful stop
   leaves no engine running.
-- When an agent ends, its engines' leftover processes are found by their
-  environment tag and, with a user systemd, their scope
+- When an agent ends or the daemon stops, the processes its engines and its
+  shell commands left are found by their environment tag and, with a user
+  systemd, their engines' scope
   ([agent processes](configuration.md#agent-processes)). This needs Linux. A
-  process that cleared its environment is found only through a scope, so
-  without a user systemd it keeps running. On macOS a process left behind
+  process that cleared its environment is found only through an engine's
+  scope, so one detached from Aether's own shell tool, or from an engine
+  without a user systemd, keeps running. On macOS a process left behind
   after a turn keeps running.
