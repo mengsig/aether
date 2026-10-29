@@ -544,8 +544,9 @@ own user are signalled, and never the daemon itself. A turn cancelled as its
 agent ended starts no host command or engine after the reap begins; one it was
 already starting is in place before the reap looks, and the reap waits, up to
 11 seconds, for an engine still being moved into its scope. If an agent is restarted
-during the grace, the reap drops it, so its next engine is spared, and goes on
-stopping the other agents' processes. Each round holds new engines and host
+during the grace, or before the reap begins, the reap drops it, so its next engine
+is spared, and so is what it hands up should it end again, and goes on stopping
+the other agents' processes. Each round holds new engines and host
 commands from starting while it checks which agents are still ended and
 signals, so a restarted agent's next engine is never among those signalled.
 An ending agent's background jobs are taken from it at its end, under the
@@ -600,8 +601,12 @@ version probe's group is killed as soon as the probe ends. The MCP bridge
 exits when its engine's pipe closes. The next daemon start kills what left
 the group: every recorded engine process group whose leader still has the
 recorded pid and kernel start time, and every process of
-the daemon's user carrying a recorded engine's random token. It never
-signals a process it cannot tie to an engine it started. macOS has neither a
+the daemon's user carrying a recorded engine's random token. Before it runs
+any turn it then stops, as a clean stop would have, every process carrying
+the tag of one of its own agents or in one of their engine scopes, whatever
+the agent's state: a server a child detached, or one handed up. It never
+signals a process it cannot tie to an engine it started or an agent it ran.
+macOS has neither a
 parent-death signal nor a readable start time. There, an engine left by a
 killed daemon runs until it exits on its own, and the next start reaps
 nothing. Stop the daemon with `aether stop` rather than killing it.

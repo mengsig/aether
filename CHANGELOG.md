@@ -36,7 +36,8 @@ release is also the text of its GitHub release.
   with no live ancestor, fails or is cancelled, or when the daemon stops. A
   child that fails or is cancelled stops its own at once. A process started
   with `AETHER_KEEP_PROCESS=1` is never signalled by these sweeps, so one
-  meant to outlive the tree can.
+  meant to outlive the tree can. A daemon start after a crash stops what the
+  dead daemon's agents left running, as a clean stop would have.
 
 ## 1.2.7
 
