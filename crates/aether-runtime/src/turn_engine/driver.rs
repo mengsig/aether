@@ -1152,7 +1152,7 @@ fn merge_cleanup_receipt(outcome: &mut EngineOutcome, receipt: EngineOutcome) {
         outcome.cost_usage = receipt.cost_usage;
     }
     let class = crate::exhaustion::engine_error_class(receipt.error.as_deref().unwrap_or(""));
-    if crate::exhaustion::recoverable_by_fallback(class) {
+    if crate::exhaustion::native_suspends(class) {
         outcome.error = receipt.error;
     }
     if receipt.text.as_deref().is_some_and(|text| !text.is_empty()) {

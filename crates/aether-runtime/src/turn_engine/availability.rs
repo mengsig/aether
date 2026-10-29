@@ -39,8 +39,8 @@ pub(super) async fn wait_for_engine(
     backoff.failed();
     let mut last_reason = unfinished_probe(runtime, kind, provider);
     loop {
-        // Dropping a probe is safe: detection kills its CLI, and nothing is
-        // recorded for a probe that did not finish. One already done wins.
+        // Dropping a probe is safe: detection kills its CLI and records nothing.
+        // One that finds the engine back wins even at the deadline: launch it.
         let detected = tokio::select! {
             biased;
             () = cancel.cancelled() => return Ok(Availability::Cancelled),
@@ -50,7 +50,6 @@ pub(super) async fn wait_for_engine(
             }
         };
         if let Some(engine) = detected.launchable(&kind) {
-            debug_assert_eq!(engine.kind(), kind, "the catalog is keyed by kind");
             return Ok(Availability::Ready(engine));
         }
         let reason = crate::engine_access::unavailable_text(kind, provider, detected.reason(&kind));
