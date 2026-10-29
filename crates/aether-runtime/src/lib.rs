@@ -305,6 +305,9 @@ pub struct Runtime {
     /// Closed by [`Runtime::shutdown`] before it sweeps agent processes, so
     /// no engine starts after that sweep.
     pub(crate) engine_spawns: aether_engine::SpawnGate,
+    /// Ended agents whose reap has not run yet, which still hold what is
+    /// handed to them. Changed only under the commit hold.
+    pub(crate) awaiting_reap: parking_lot::Mutex<std::collections::HashSet<AgentId>>,
     pub(crate) tools: Arc<ToolRegistry>,
     /// Resource keys held by mutating tool calls in flight, across agents.
     pub(crate) resources: Arc<resources::ResourceLeases>,
@@ -459,6 +462,7 @@ impl Runtime {
             workspace_gc_cursor: Default::default(),
             workspace_gc_active: Default::default(),
             engine_spawns: Default::default(),
+            awaiting_reap: Default::default(),
             storage_gc_lock: parking_lot::Mutex::new(()),
             storage_last_run: parking_lot::Mutex::new(None),
             seeded_repositories: parking_lot::Mutex::new(std::collections::HashSet::new()),

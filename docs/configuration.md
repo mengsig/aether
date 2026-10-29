@@ -523,6 +523,10 @@ What an agent leaves running when it ends depends on how it ends.
   together with those of every ended agent beneath it reached through ended
   agents only, which is what was handed up to it. A live descendant keeps its
   own, and what was handed to it, until it ends.
+- An agent that has ended but whose own stop has not run yet still counts as
+  live for both rules: a child completing meanwhile hands up to it, and its
+  stop decides what happens to that, while a sweep of an agent above it
+  leaves it and what it holds to its own stop.
 
 To stop them the daemon sends `SIGTERM` to every live process in the swept
 agents' scopes or carrying one of their tags, including any forked meanwhile,

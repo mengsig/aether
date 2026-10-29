@@ -321,6 +321,8 @@ impl Runtime {
         }
         let id = agent.id;
         commit.push_mutation(Mutation::UpsertAgent(agent));
+        // Under the hold, as every reap's ownership decision is.
+        self.awaiting_reap.lock().insert(id);
         Ok(PendingReap(id))
     }
 }

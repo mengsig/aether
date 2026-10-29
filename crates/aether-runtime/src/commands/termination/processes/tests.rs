@@ -53,13 +53,14 @@ async fn an_end_owns_its_ended_descendants_but_not_a_live_ones() {
     end(&runtime, under_live, completed());
     end(&runtime, child, AgentStatus::Failed { error: "x".into() });
 
-    let mut owned = runtime.owned_agents(child);
+    let hold = runtime.hold();
+    let mut owned = runtime.owned_agents(&hold, child);
     assert_eq!(owned.first(), Some(&child), "the ending agent comes first");
     owned.sort_unstable();
     let mut expected = vec![child, done];
     expected.sort_unstable();
     assert_eq!(owned, expected);
-    assert_eq!(runtime.owned_agents(live), vec![live, under_live]);
+    assert_eq!(runtime.owned_agents(&hold, live), vec![live, under_live]);
 }
 
 /// A completed agent hands up to its nearest live ancestor, past ended ones;
@@ -75,25 +76,74 @@ async fn only_a_completed_agent_with_a_live_ancestor_hands_up() {
     end(&runtime, middle, completed());
     end(&runtime, leaf, completed());
     end(&runtime, failed, AgentStatus::Failed { error: "x".into() });
+    let hold = runtime.hold();
 
     assert_eq!(
-        runtime.handed_up_to(leaf),
+        runtime.handed_up_to(&hold, leaf),
         Some(root),
         "past the ended parent"
     );
-    assert_eq!(runtime.handed_up_to(middle), Some(root));
+    assert_eq!(runtime.handed_up_to(&hold, middle), Some(root));
     assert_eq!(
-        runtime.handed_up_to(failed),
+        runtime.handed_up_to(&hold, failed),
         None,
         "a failure stops its own"
     );
 
+    drop(hold);
     end(&runtime, root, completed());
-    assert_eq!(runtime.handed_up_to(leaf), None, "no live ancestor is left");
+    let hold = runtime.hold();
     assert_eq!(
-        runtime.handed_up_to(root),
+        runtime.handed_up_to(&hold, leaf),
+        None,
+        "no live ancestor is left"
+    );
+    assert_eq!(
+        runtime.handed_up_to(&hold, root),
         None,
         "a root has no one to hand to"
+    );
+}
+
+/// An ended agent whose reap is still to come keeps what is handed to it:
+/// its own reap decides, so a sweep never takes what it already handed on.
+#[tokio::test]
+async fn an_ancestor_awaiting_its_reap_still_owns_what_is_handed_up() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let grandparent = idle_agent(&runtime, None).await;
+    let parent = idle_agent(&runtime, Some(grandparent)).await;
+    let child = idle_agent(&runtime, Some(parent)).await;
+    end(&runtime, parent, AgentStatus::Failed { error: "x".into() });
+    end(&runtime, child, completed());
+
+    let hold = runtime.hold();
+    runtime.awaiting_reap.lock().extend([parent, child]);
+    assert_eq!(
+        runtime.handed_up_to(&hold, child),
+        Some(parent),
+        "the failed parent's reap is to come"
+    );
+    assert_eq!(
+        runtime.owned_agents(&hold, parent),
+        vec![parent],
+        "a child whose reap is to come is not swept"
+    );
+
+    runtime.awaiting_reap.lock().remove(&child);
+    assert_eq!(runtime.owned_agents(&hold, parent), vec![parent, child]);
+    runtime.awaiting_reap.lock().remove(&parent);
+    assert_eq!(
+        runtime.handed_up_to(&hold, child),
+        Some(grandparent),
+        "past the parent once it is reaped"
+    );
+    drop(hold);
+    runtime.awaiting_reap.lock().insert(parent);
+    assert_eq!(
+        runtime.settle_owner(None, parent).await,
+        None,
+        "the owner's own reap reports it"
     );
 }
 
