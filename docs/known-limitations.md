@@ -315,7 +315,10 @@ isolation depend on the installed engine version and the platform; see
   without a user systemd, keeps running: `env -i setsid server` escapes both.
   An engine joins its scope asynchronously, after it has started, so that a
   launch never waits on a slow or missing user manager; what it detaches
-  before it has joined is found by its tag alone. A non-dumpable process,
+  before it has joined is found by its tag alone. A sweep reads a process
+  caught inside `exec` again once its new image is set up, for up to 50 ms; a
+  `vfork` child (`posix_spawn`) reads as its parent until its exec, so a keep
+  mark set only for that child is not seen until then. A non-dumpable process,
   whose environment cannot be read, is spared in a scope, and in the group of
   a background job that is stopped or whose shell exited, as it may carry the keep mark; one a browser sandboxed this way exits with the browser, but
   another keeps running. On macOS a process left behind after a turn keeps

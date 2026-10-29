@@ -511,7 +511,7 @@ mod linux {
             return None;
         }
         // Gone or not readable: not one to signal.
-        std::fs::read(dir.join("environ")).ok()
+        aether_spawn::read_environ(&dir).ok()
     }
 
     /// Live pids listed in a cgroup's `cgroup.procs`, except `own`. A cgroup

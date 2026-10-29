@@ -190,7 +190,7 @@ impl Journal {
             // A vanished leader could belong to a reused group. Every live
             // member must still carry this job's token before we signal it.
             if leader_missing && member.running() {
-                let environment = match std::fs::read(entry.path().join("environ")) {
+                let environment = match aether_spawn::read_environ(&entry.path()) {
                     Ok(environment) => environment,
                     Err(e) if disappeared(&e) => continue,
                     Err(e) => return Err(e),
@@ -352,7 +352,7 @@ fn signal_pinned(
 
 /// A scanned process's environment, or None once it is gone or unreadable.
 fn readable_environ(process: &Path) -> io::Result<Option<Vec<u8>>> {
-    match std::fs::read(process.join("environ")) {
+    match aether_spawn::read_environ(process) {
         Ok(environment) => Ok(Some(environment)),
         Err(error) if disappeared(&error) => Ok(None),
         // Same-uid non-dumpable processes are unreadable and aren't proven ours. Before

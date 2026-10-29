@@ -26,7 +26,9 @@ release is also the text of its GitHub release.
   `SIGKILL`, and what it forks during the grace gets `SIGTERM` within 50 ms;
   one forked as the grace ends gets `SIGKILL` alone; the shell of a job that exits
   on its own is reaped only once its group is stopped, so the group id is
-  never reused under the signal.
+  never reused under the signal. A process caught inside `exec`, whose
+  environment reads empty or torn until its new program is set up, is read
+  again rather than missed, as is a bash still reading its environment.
   Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
   nothing changes.
 - **A delegated child that completes hands what it left running to its parent
