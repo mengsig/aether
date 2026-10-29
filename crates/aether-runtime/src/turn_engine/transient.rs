@@ -150,7 +150,12 @@ impl Backoff {
 
     /// The engine made progress: the next failure opens a fresh window at the
     /// floor delay, at most [`MAX_RECOVERIES`] times a turn. False once spent.
+    /// Progress before any failure ends no outage and spends nothing.
     pub(super) fn recovered(&mut self) -> bool {
+        if self.started.is_none() {
+            debug_assert_eq!(self.waits, 0, "waits follow a failure");
+            return true;
+        }
         if self.recoveries >= MAX_RECOVERIES {
             return false;
         }
@@ -411,6 +416,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn progress_ends_only_so_many_outages_of_one_turn() {
         let mut backoff = Backoff::new(Duration::from_secs(60), Duration::from_secs(15));
+        assert!(backoff.recovered(), "progress before any failure is free");
         for _ in 1..MAX_RECOVERIES {
             backoff.failed();
             assert!(backoff.recovered());

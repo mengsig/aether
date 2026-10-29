@@ -35,17 +35,19 @@ pub(super) async fn wait_for_engine(
         runtime.config.engine_transient_retry_window,
         runtime.config.engine_transient_retry_floor,
     );
-    let mut last_reason = String::new();
+    // The window opens now, so even a first probe that hangs ends with it.
+    backoff.failed();
+    let mut last_reason = unfinished_probe(runtime, kind, provider);
     loop {
         // Dropping a probe is safe: detection kills its CLI, and nothing is
-        // recorded for a probe that did not finish.
+        // recorded for a probe that did not finish. One already done wins.
         let detected = tokio::select! {
+            biased;
             () = cancel.cancelled() => return Ok(Availability::Cancelled),
+            detected = runtime.engines.recheck(kind) => detected,
             () = window_end(&backoff) => {
-                debug_assert!(!last_reason.is_empty(), "the window opens on a failed probe");
                 return Ok(Availability::Unavailable(gave_up(last_reason, &backoff)));
             }
-            detected = runtime.engines.recheck(kind) => detected,
         };
         if let Some(engine) = detected.launchable(&kind) {
             debug_assert_eq!(engine.kind(), kind, "the catalog is keyed by kind");
@@ -74,13 +76,24 @@ pub(super) async fn wait_for_engine(
     }
 }
 
-/// When the retry window runs out; never before the first failed probe opens it.
 async fn window_end(backoff: &Backoff) {
-    if !backoff.started() {
-        return std::future::pending().await;
-    }
+    debug_assert!(
+        backoff.started(),
+        "the window opened before the first probe"
+    );
     let left = backoff.window().saturating_sub(backoff.elapsed());
     tokio::time::sleep(left).await;
+}
+
+/// Why the engine is unusable when no probe of it has finished in the window:
+/// the detection already on record, else the probe itself.
+fn unfinished_probe(runtime: &Runtime, kind: EngineKind, provider: &str) -> String {
+    match runtime.engines.now() {
+        Ok(detected) if detected.launchable(&kind).is_none() => {
+            crate::engine_access::unavailable_text(kind, provider, detected.reason(&kind))
+        }
+        _ => format!("the {} CLI probe did not finish", kind.as_str()),
+    }
 }
 
 fn gave_up(reason: String, backoff: &Backoff) -> String {
@@ -268,28 +281,30 @@ mod tests {
 
     #[tokio::test]
     async fn a_hung_probe_ends_with_the_window() {
-        let (runtime, _dir, ctx) = waiting_with_session(Duration::from_millis(300)).await;
-        hang_probes_after(&runtime, Duration::from_millis(50));
-        let started = std::time::Instant::now();
-        let found = tokio::time::timeout(
-            Duration::from_secs(5),
-            wait_for_engine(
-                &runtime,
-                &ctx,
-                KIND,
-                "claude-code",
-                &CancellationToken::new(),
-            ),
-        )
-        .await
-        .expect("the window bounds a probe that never returns")
-        .unwrap();
-        assert!(
-            matches!(found, Availability::Unavailable(ref reason) if reason.contains("not installed")),
-            "the last finished probe's reason is kept"
-        );
-        assert!(started.elapsed() >= Duration::from_millis(300));
-        runtime.shutdown().await;
+        for (window, hangs_after) in [(300, 50), (300, 0), (0, 0)] {
+            let window = Duration::from_millis(window);
+            let (runtime, _dir, ctx) = waiting_with_session(window).await;
+            hang_probes_after(&runtime, Duration::from_millis(hangs_after));
+            if hangs_after == 0 {
+                // The hang is in place before the first probe starts.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            let started = std::time::Instant::now();
+            let cancel = CancellationToken::new();
+            let found = tokio::time::timeout(
+                Duration::from_secs(5),
+                wait_for_engine(&runtime, &ctx, KIND, "claude-code", &cancel),
+            )
+            .await
+            .expect("the window bounds a probe that never returns, the first one too")
+            .unwrap();
+            assert!(
+                matches!(found, Availability::Unavailable(ref reason) if reason.contains("not installed")),
+                "the reason on record is kept"
+            );
+            assert!(started.elapsed() >= window);
+            runtime.shutdown().await;
+        }
     }
 
     #[tokio::test]
