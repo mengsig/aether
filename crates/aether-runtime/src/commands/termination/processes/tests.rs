@@ -250,6 +250,51 @@ async fn a_daemon_sweep_takes_only_what_no_live_agent_holds() {
     );
 }
 
+/// A detached process tagged with `agent`, as one its engine left would be.
+#[cfg(target_os = "linux")]
+fn tagged_leftover(agent: AgentId) -> std::process::Child {
+    std::process::Command::new("setsid")
+        .args(["sleep", "30"])
+        .env(aether_core::agent::PROCESS_AGENT_ENV, agent.to_string())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+/// Hold a spawn in the engine gate for a second, then wake `agent` from it:
+/// a sweep that reaches its first round meanwhile waits for the spawn.
+#[cfg(target_os = "linux")]
+fn wake_from_a_held_spawn(runtime: &Runtime, agent: AgentId) -> std::thread::JoinHandle<bool> {
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (gate, store) = (runtime.engine_spawns.clone(), runtime.store.clone());
+    let spawning = std::thread::spawn(move || {
+        gate.spawn(
+            || false,
+            || {
+                started_tx.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let mut row = store.agent(agent).unwrap().unwrap();
+                row.transition(AgentStatus::Ready, now()).unwrap();
+                store
+                    .commit(Commit::new().mutate(Mutation::UpsertAgent(row)))
+                    .unwrap();
+            },
+        )
+        .is_ok()
+    });
+    started_rx.recv().unwrap();
+    spawning
+}
+
+/// Whether `child` still runs; it is killed and reaped either way.
+#[cfg(target_os = "linux")]
+fn still_running(mut child: std::process::Child) -> bool {
+    let alive = child.try_wait().unwrap().is_none();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    alive
+}
+
 /// A daemon sweep holds the spawn gates through each round, so a wake that
 /// lands while the round waits for them spares the woken agent's processes.
 #[cfg(target_os = "linux")]
@@ -259,37 +304,79 @@ async fn a_daemon_sweep_spares_an_agent_woken_before_its_round() {
     runtime.shutdown.cancel();
     let agent = idle_agent(&runtime, None).await;
     end(&runtime, agent, AgentStatus::Failed { error: "x".into() });
-    let mut leftover = std::process::Command::new("setsid")
-        .args(["sleep", "30"])
-        .env(aether_core::agent::PROCESS_AGENT_ENV, agent.to_string())
-        .stdin(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let (started_tx, started_rx) = std::sync::mpsc::channel();
-    let (gate, store) = (runtime.engine_spawns.clone(), runtime.store.clone());
-    let spawning = std::thread::spawn(move || {
-        gate.spawn(
-            || false,
-            || {
-                started_tx.send(()).unwrap();
-                // Long enough for the sweep to reach its first round and wait.
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                let mut row = store.agent(agent).unwrap().unwrap();
-                row.transition(AgentStatus::Ready, now()).unwrap();
-                store
-                    .commit(Commit::new().mutate(Mutation::UpsertAgent(row)))
-                    .unwrap();
-            },
-        )
-    });
-    started_rx.recv().unwrap();
+    let leftover = tagged_leftover(agent);
+    let waking = wake_from_a_held_spawn(&runtime, agent);
 
     runtime.reap_unheld_agent_processes().await;
-    spawning.join().unwrap().unwrap();
-    let alive = leftover.try_wait().unwrap().is_none();
-    leftover.kill().unwrap();
-    leftover.wait().unwrap();
-    assert!(alive, "the agent woken before the round keeps its server");
+    assert!(waking.join().unwrap(), "the held spawn ran");
+    assert!(
+        still_running(leftover),
+        "the agent woken before the round keeps its server"
+    );
+}
+
+/// A completed child swept for want of a live ancestor is spared once that
+/// ancestor wakes before the round, and is recorded as handed up to it.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_daemon_sweep_spares_a_child_whose_ancestor_wakes_before_its_round() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let parent = idle_agent(&runtime, None).await;
+    let child = idle_agent(&runtime, Some(parent)).await;
+    end(&runtime, child, completed());
+    end(&runtime, parent, AgentStatus::Failed { error: "x".into() });
+    let leftover = tagged_leftover(child);
+    let waking = wake_from_a_held_spawn(&runtime, parent);
+
+    runtime.reap_unheld_agent_processes().await;
+    assert!(waking.join().unwrap(), "the held spawn ran");
+    assert!(
+        still_running(leftover),
+        "the woken parent holds its child's server"
+    );
+    assert_eq!(runtime.handed_to.lock().get(&child), Some(&parent));
+}
+
+/// An ancestry that cannot be read proves no one holds a completed child's
+/// processes, so a daemon sweep spares them and records no owner.
+#[tokio::test]
+async fn a_daemon_sweep_spares_a_child_whose_ancestry_is_unreadable() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.db");
+    let runtime = Runtime::start_with_engines(
+        crate::RuntimeConfig {
+            max_concurrent_turns: 0,
+            default_model: Some(aether_core::model::ModelRef::new(
+                "anthropic",
+                "claude-sonnet-5-5",
+            )),
+            ..Default::default()
+        },
+        std::sync::Arc::new(aether_store::SqliteStore::open(&path).unwrap()),
+        std::sync::Arc::new(aether_model::Models::load(Some(dir.path().into())).unwrap()),
+        std::sync::Arc::new(aether_tools::ToolRegistry::with_builtins()),
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    runtime.shutdown.cancel();
+    let root = idle_agent(&runtime, None).await;
+    let parent = idle_agent(&runtime, Some(root)).await;
+    let child = idle_agent(&runtime, Some(parent)).await;
+    end(&runtime, child, completed());
+    end(&runtime, parent, completed());
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE agents SET body='{' WHERE id=?1",
+            [parent.to_string()],
+        )
+        .unwrap();
+
+    assert!(runtime.unheld_agents(&[child]).is_empty(), "spared");
+    assert!(runtime.handed_to.lock().is_empty(), "no owner is known");
 }
 
 /// A sweep is for one end: an agent woken since, or ended again, is spared,

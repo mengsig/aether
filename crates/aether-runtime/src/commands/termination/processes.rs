@@ -28,6 +28,17 @@ const HANDED_UP_LISTED: usize = 50;
 /// The deepest ancestry walked for an owner; a parent cycle must not spin.
 const MAX_ANCESTRY: usize = 10_000;
 
+/// Who holds what an ended agent left running, as the store says now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Holder {
+    /// The nearest ancestor of a completed agent that holds processes.
+    Live(AgentId),
+    /// It ended otherwise, or no ancestor holds processes.
+    Nobody,
+    /// The agent or one of its ancestors could not be read.
+    Unknown,
+}
+
 impl Runtime {
     /// Let go of what an ended agent was holding, once its terminal
     /// transition is committed: its quarantine hold, whose release the commit
@@ -63,46 +74,62 @@ impl Runtime {
 
     /// Whether `row` still holds what is handed to it: it is live, or it
     /// ended and its own reap, which passes that on or stops it, is to come.
-    fn holds_processes(&self, _hold: &CommitHold<'_>, row: &Agent) -> bool {
+    fn holds_processes(&self, row: &Agent) -> bool {
         !row.status.is_terminal() || self.awaiting_reap.lock().contains(&row.id)
     }
 
     /// The ancestor a completed agent hands its processes to. None when it
     /// ended otherwise, or no ancestor holds processes: then they are stopped.
-    fn handed_up_to(&self, hold: &CommitHold<'_>, agent: AgentId) -> Option<AgentId> {
+    fn handed_up_to(&self, _hold: &CommitHold<'_>, agent: AgentId) -> Option<AgentId> {
+        match self.holder(agent) {
+            Holder::Live(owner) => Some(owner),
+            // An end with an unreadable ancestry stops what it left, as one with no owner does.
+            Holder::Nobody | Holder::Unknown => None,
+        }
+    }
+
+    /// Who holds what ended `agent` left, read from the store now: the nearest
+    /// ancestor that holds processes, if it completed.
+    fn holder(&self, agent: AgentId) -> Holder {
         let row = match self.store.agent(agent) {
             Ok(Some(row)) => row,
-            Ok(None) => return None,
+            Ok(None) => return Holder::Nobody,
             Err(error) => {
-                tracing::warn!(%agent, %error, "cannot read the ended agent; stopping its processes");
-                return None;
+                tracing::warn!(%agent, %error, "cannot read the ended agent");
+                return Holder::Unknown;
             }
         };
         // Restarted since: its processes are its next engine's, and no reap signals them.
         if !matches!(row.status, AgentStatus::Completed { .. }) {
-            return None;
+            return Holder::Nobody;
         }
-        let owner = self.nearest_holder(hold, row.parent)?;
-        assert_ne!(owner, agent, "an ended agent is not its own owner");
-        Some(owner)
+        let holder = self.nearest_holder(row.parent);
+        assert_ne!(
+            holder,
+            Holder::Live(agent),
+            "an ended agent is not its own owner"
+        );
+        holder
     }
 
     /// The first agent from `next` up the parent chain that holds processes.
-    fn nearest_holder(&self, hold: &CommitHold<'_>, mut next: Option<AgentId>) -> Option<AgentId> {
+    fn nearest_holder(&self, mut next: Option<AgentId>) -> Holder {
         for _ in 0..MAX_ANCESTRY {
-            let id = next?;
+            let Some(id) = next else {
+                return Holder::Nobody;
+            };
             match self.store.agent(id) {
-                Ok(Some(row)) if self.holds_processes(hold, &row) => return Some(id),
+                Ok(Some(row)) if self.holds_processes(&row) => return Holder::Live(id),
                 Ok(Some(row)) => next = row.parent,
-                Ok(None) => return None,
+                Ok(None) => return Holder::Nobody,
                 Err(error) => {
-                    tracing::warn!(agent = %id, %error, "cannot read an ancestor; stopping the processes");
-                    return None;
+                    tracing::warn!(agent = %id, %error, "cannot read an ancestor");
+                    return Holder::Unknown;
                 }
             }
         }
         tracing::error!(?next, "the ancestry walk exceeded {MAX_ANCESTRY} agents");
-        None
+        Holder::Unknown
     }
 
     /// Whether `agent` still holds what is handed to it: it is live, or it
@@ -353,35 +380,50 @@ impl Runtime {
         if unheld.is_empty() {
             return 0;
         }
+        let signalled = self.sweep_unheld(&unheld).await;
+        // An ancestor woken meanwhile holds what the sweep spared for it.
+        self.unheld_agents(&unheld);
+        signalled
+    }
+
+    /// Stop what the ended `unheld` left running, sparing each one that a
+    /// live agent holds by the time a round signals it. Returns how many were signalled.
+    async fn sweep_unheld(&self, unheld: &[AgentId]) -> usize {
+        assert!(!unheld.is_empty(), "a sweep needs an agent to stop");
         let grace = self
             .models
             .config()
             .agents
             .reap_grace()
             .min(SHUTDOWN_REAP_GRACE);
-        let ends = self.current_ends(&unheld);
-        // One woken meanwhile runs what it holds again, so it is spared; each
+        let ends = self.current_ends(unheld);
+        // An agent woken meanwhile, or one whose ancestor was, is spared; each
         // round holds the gates a wake commits outside of, so none lands mid-round.
-        let ended = |id| self.still_in_end(id, ends.get(&id));
+        let ended = |id| self.still_in_end(id, ends.get(&id)) && self.holder(id) == Holder::Nobody;
         let gates = self.spawn_gates();
-        let report = aether_engine::reap::reap_agents(&unheld, grace, ended, &gates).await;
+        let report = aether_engine::reap::reap_agents(unheld, grace, ended, &gates).await;
         report.terminated.len()
     }
 
     /// The ended agents among the sorted `found` that this store ran and whose
     /// processes no live agent holds. A completed one with a live ancestor is
-    /// recorded as handed up to it, as a start after a crash lost that record.
+    /// recorded as handed up to it, as a start after a crash lost that record;
+    /// one whose ancestry cannot be read is spared.
     fn unheld_agents(&self, found: &[AgentId]) -> Vec<AgentId> {
         debug_assert!(found.is_sorted(), "found agents are sorted");
-        let hold = self.hold();
+        let _hold = self.hold();
         let mut unheld = Vec::new();
         for agent in found.iter().copied().filter(|id| self.ended_here(*id)) {
-            let Some(owner) = self.handed_up_to(&hold, agent) else {
-                unheld.push(agent);
-                continue;
-            };
-            let recorded = *self.handed_to.lock().entry(agent).or_insert(owner);
-            tracing::info!(%agent, owner = %recorded, "a completed agent's processes stay with its live ancestor");
+            match self.holder(agent) {
+                Holder::Nobody => unheld.push(agent),
+                Holder::Live(owner) => {
+                    let recorded = *self.handed_to.lock().entry(agent).or_insert(owner);
+                    tracing::info!(%agent, owner = %recorded, "a completed agent's processes stay with its live ancestor");
+                }
+                Holder::Unknown => {
+                    tracing::warn!(%agent, "cannot tell who holds the agent's processes; sparing them");
+                }
+            }
         }
         assert!(unheld.len() <= found.len(), "only found agents are swept");
         unheld
