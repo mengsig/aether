@@ -19,7 +19,10 @@ clients on 17 through 24 see it as `usage_limit`.
   suspended with the new `credentials` class: the operator is told once per
   episode and the suspension names the fix, the provider is benched, and the
   agent resumes when a probe answers after the CLI is signed in again. A
-  configured fallback still takes the turn first. A stalled engine that names
+  configured fallback still takes the turn first, and a native engine left for
+  one, on a refused sign-in or a spent plan, is now benched for a minute as an
+  HTTP provider already was, so other turns go straight to their fallback
+  instead of relaunching the refused CLI. A stalled engine that names
   the refusal as it is stopped suspends the same way instead of being retried
   as a stall. Models reached over HTTP keep failing on an auth error.
 - **A briefly unusable engine no longer fails agents.** A turn whose engine

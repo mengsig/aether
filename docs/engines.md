@@ -904,10 +904,11 @@ with class `credentials`, instead of failing the agent. Claude Code's
 has expired" and a result with `api_error_status` 401, and Codex's
 "401 Unauthorized" and "access token could not be refreshed" count. The
 operator is told once per episode, not once per probe, and the suspension
-names the fix (`claude /login`, `codex login`). Once the CLI is signed in
+names the fix (`claude login`, `codex login`). Once the CLI is signed in
 again, the next probe answers and every agent suspended on that provider is
 released. A configured fallback link takes the turn first, as for an exhausted
-quota. A stalled engine that names a refused sign-in or a spent plan as it is
+quota, and the engine it leaves is benched for a minute (as an HTTP provider
+is), so other turns go straight to their fallback instead of relaunching it. A stalled engine that names a refused sign-in or a spent plan as it is
 stopped is suspended on that, not retried as a stall. Models reached over HTTP
 keep failing on an auth error: their key is configuration, not a session that
 expires.

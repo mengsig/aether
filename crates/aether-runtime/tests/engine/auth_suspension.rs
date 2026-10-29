@@ -69,3 +69,53 @@ async fn a_refused_sign_in_suspends_the_agent_until_a_probe_answers() {
     assert_eq!(custom_events(&h, id, "exhaustion.probe_failed"), 1);
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_refused_sign_in_with_a_fallback_benches_the_provider_it_leaves() {
+    let engine = QueuedEngine::new(vec![refused(), answered("the fallback answered")]);
+    let h = harness_with_engine(
+        engine.clone(),
+        Arc::new(Mutex::new(vec![])),
+        Arc::new(Mutex::new(vec![])),
+    )
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "assistant".into(),
+                start: true,
+                model: Some(ModelRef::new("claude-code", "haiku")),
+                fallbacks: vec![ModelRef::new("codex", "gpt-6.1-sol")],
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .unwrap();
+    h.runtime
+        .send_message(agent.id, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    wait_for(h.store.as_ref(), agent.id, |a| {
+        a.stats.turns == 1 && matches!(a.status, AgentStatus::Waiting { .. })
+    })
+    .await;
+    assert_eq!(engine.prompts.lock().unwrap().len(), 2, "the fallback ran");
+    let benched: Vec<String> = h
+        .store
+        .events(0, 10_000, &EventFilter::default())
+        .unwrap()
+        .into_iter()
+        .filter_map(|event| match event.kind {
+            EventKind::ProviderBackoff {
+                provider, reason, ..
+            } => Some(format!("{provider}: {reason}")),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        benched,
+        ["claude-code: auth from the provider"],
+        "other turns must not relaunch a CLI whose sign-in was refused"
+    );
+    h.runtime.shutdown().await;
+}

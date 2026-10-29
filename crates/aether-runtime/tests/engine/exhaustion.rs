@@ -226,11 +226,7 @@ async fn engine_exhaustion_uses_fallback_without_crossing_native_sessions() {
         tools: vec![],
     }];
     second.extend(answered("fallback answered"));
-    let engine = QueuedEngine::new(vec![
-        first,
-        second,
-        answered("new primary session answered"),
-    ]);
+    let engine = QueuedEngine::new(vec![first, second, answered("the fallback answered again")]);
     let h = harness_with_engine(
         engine.clone(),
         Arc::new(Mutex::new(vec![])),
@@ -275,10 +271,12 @@ async fn engine_exhaustion_uses_fallback_without_crossing_native_sessions() {
         agent.stats.turns == 2 && matches!(agent.status, AgentStatus::Waiting { .. })
     })
     .await;
+    // The spent primary is benched, so the next turn stays on the fallback
+    // and resumes the fallback's own session, never the primary's.
     assert_eq!(
         *engine.sessions.lock().unwrap(),
-        vec![None, None, None],
-        "primary must not resume the fallback's session"
+        vec![None, None, Some("codex-session".to_owned())],
+        "a fallback must not resume the primary's session"
     );
     assert_eq!(engine.prompts.lock().unwrap().len(), 3);
     h.runtime.shutdown().await;
