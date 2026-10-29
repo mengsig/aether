@@ -569,19 +569,22 @@ whole process group, so a kept process must also leave it, for example
 `AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept process
 afterwards; that is up to whoever started it.
 
-A daemon shutdown ends no agent, but it leaves none of their processes
-running either. It stops each running engine's process group, as for any
+A daemon shutdown ends no agent, and it leaves what a live agent holds
+running, so a server an agent started is still up when a restart's recovery
+resumes the agent. It stops each running engine's process group, as for any
 interrupted turn. From then on it refuses to start any host command or
 engine, letting one already being started finish first, and it stops every
 background shell. Then it finds every process carrying an agent's tag or in an
 engine scope, keeps the agents its own store ran (never an imported one, nor
-another daemon's), and stops their processes
+another daemon's) that have ended, and of those leaves each completed one
+whose processes a live ancestor holds, by the rules above. It stops the rest
 the same way, in one sweep, with a grace of `reap_grace_secs` but at most 10
-seconds. An agent whose turn is still running then is swept as well, so
-what that turn forks during the grace is stopped too. The daemon log records
-what it stopped. A process is signalled only through a pidfd opened before
-its tag, or its scope, and the keep entry are checked again, so a pid reused
-meanwhile is never hit.
+seconds, and spares one woken meanwhile. The daemon log records what it
+stopped. A process is signalled only through a pidfd opened before its tag,
+or its scope, and the keep entry are checked again, so a pid reused meanwhile
+is never hit. What a live agent holds runs on while the daemon is down and is
+stopped when that agent ends after the next start; to stop it with the daemon,
+end or cancel the agent first.
 
 The tag attributes processes; it is not a security boundary. Any process of
 the same user that sets `AETHER_ENGINE_AGENT` to one of the daemon's agents
@@ -599,14 +602,21 @@ and the engine does not start until its watchdog is in the group. That
 takes the processes the engine started in its group, such as the native CLI
 a wrapper like the npm `codex` launcher starts, and its shell commands. A
 version probe's group is killed as soon as the probe ends. The MCP bridge
-exits when its engine's pipe closes. The next daemon start kills what left
-the group: every recorded engine process group whose leader still has the
-recorded pid and kernel start time, and every process of
-the daemon's user carrying a recorded engine's random token. Before it runs
-any turn it then stops, as a clean stop would have, every process carrying
-the tag of one of its own agents or in one of their engine scopes, whatever
-the agent's state: a server a child detached, or one handed up. It never
-signals a process it cannot tie to an engine it started or an agent it ran.
+exits when its engine's pipe closes. The next daemon start kills
+the engines themselves: every recorded engine process group whose leader
+still has the recorded pid and kernel start time, with the tool commands in
+it, and every process of the daemon's user carrying a recorded engine's random
+token that runs for no agent. A token carrier that also carries an agent's tag
+(a dev server, a database, a `docker compose` client an agent started) or the
+keep entry is left alone there. Before it runs any turn the start then stops,
+as a clean stop would have, what no live agent holds: the processes tagged
+with, or in an engine scope of, each of its own agents that has ended, unless
+it completed under a live ancestor. That ancestor then holds them again, as
+the hand-up the dead daemon recorded only in memory said, and they stop with
+its end; it is not told again. A live agent's own processes, and what a
+completed child handed up to it, are spared, so the agents recovery resumes
+find their servers up. It never signals a process it cannot tie to an engine
+it started or an agent it ran.
 macOS has neither a
 parent-death signal nor a readable start time. There, an engine left by a
 killed daemon runs until it exits on its own, and the next start reaps

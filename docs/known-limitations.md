@@ -300,8 +300,11 @@ isolation depend on the installed engine version and the platform; see
   `setsid`, for one) keeps running until the next daemon start. That start
   kills the process group of every engine it recorded, but only while the
   recorded pid and start time still match a live group leader, plus every
-  process carrying a recorded engine's token. A descendant that cleared its
-  environment and left the group is reaped only when its agent ends. On macOS
+  process carrying a recorded engine's token that runs for no agent. What runs
+  for an agent is stopped then only when that agent has ended and no live
+  ancestor holds it; a live agent's server keeps running for its recovery. A
+  descendant that cleared its environment and left the group is reaped only
+  when its agent ends. On macOS
   there is no parent-death signal, no group watchdog, and nothing is recorded
   or reaped, so the engines of a killed daemon keep running and must be
   stopped by hand. A graceful stop
@@ -322,6 +325,6 @@ isolation depend on the installed engine version and the platform; see
   running.
 - What a delegated child that completed left running passes to its nearest
   live ancestor and runs until that ancestor's tree ends, so a long-lived root
-  keeps every server and browser its completed children left until it ends,
-  is cancelled or the daemon stops. It is told each one's pid and command,
-  and can stop them sooner.
+  keeps every server and browser its completed children left until it ends
+  or is cancelled; a daemon stop or restart leaves them running. It is told
+  each one's pid and command, and can stop them sooner.
