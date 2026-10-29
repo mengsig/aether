@@ -49,9 +49,12 @@ release is also the text of its GitHub release.
   run for no agent and are not kept with `AETHER_KEEP_PROCESS=1`. What runs
   for an agent is stopped at a daemon stop or start only when that agent has
   ended and no live ancestor holds it; a completed child's processes go back
-  to its nearest live ancestor and stop with its end. Such processes now run
-  on while the daemon is down: end or cancel an agent before `aether stop`
-  to stop what it holds. Linux only.
+  to its nearest live ancestor and stop with its end. A start after a crash
+  reads who held them from the order the agents ended in, and spares them
+  where it cannot tell. Such processes now run on while the daemon is down:
+  end or cancel an agent before `aether stop` to stop what it holds. Background
+  shell jobs still stop with the daemon, whose pipes carry their output.
+  Linux only.
 
 ## 1.2.7
 

@@ -328,3 +328,14 @@ isolation depend on the installed engine version and the platform; see
   keeps every server and browser its completed children left until it ends
   or is cancelled; a daemon stop or restart leaves them running. It is told
   each one's pid and command, and can stop them sooner.
+- A background shell job of Aether's own shell tool still stops with the
+  daemon, even for a live agent: its output, input and terminal run through
+  the daemon, which a restart cannot hand back, and what the job detached
+  stops with it. A server an agent needs across a restart should be detached
+  from an engine's own shell or a shell command that is not a background job,
+  where the sweeps treat it as the agent's.
+- A start after a crash rebuilds who holds a completed agent's processes from
+  the order the agents ended in, since the hand-ups were recorded only in
+  memory. An ancestor that was skipped, then woke and ended again after the
+  child, is taken to have held them; where the order cannot be told, as with
+  equal end times, the start spares them.

@@ -250,6 +250,46 @@ async fn a_daemon_sweep_takes_only_what_no_live_agent_holds() {
     );
 }
 
+/// What a child left went with the parent it reached: a parent that failed
+/// after the child completed stopped it, though a live grandparent remains,
+/// while a child that completed after its parent failed handed past it. A
+/// hand-up this daemon recorded decides before the order of ends.
+#[tokio::test]
+async fn a_daemon_sweep_follows_the_order_agents_ended_in() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let grandparent = idle_agent(&runtime, None).await;
+    let holding = idle_agent(&runtime, Some(grandparent)).await;
+    let early = idle_agent(&runtime, Some(holding)).await;
+    let recorded = idle_agent(&runtime, Some(holding)).await;
+    let skipped = idle_agent(&runtime, Some(grandparent)).await;
+    let late = idle_agent(&runtime, Some(skipped)).await;
+    let ends = [
+        (early, completed()),
+        (recorded, completed()),
+        (skipped, AgentStatus::Failed { error: "x".into() }),
+        (late, completed()),
+        (holding, AgentStatus::Failed { error: "x".into() }),
+    ];
+    for (agent, status) in ends {
+        // Distinct end times, so the order of ends is known.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        end(&runtime, agent, status);
+    }
+    runtime.handed_to.lock().insert(recorded, grandparent);
+    let mut found = vec![holding, early, recorded, skipped, late];
+    found.sort_unstable();
+
+    let mut expected = vec![holding, early, skipped];
+    expected.sort_unstable();
+    assert_eq!(runtime.unheld_agents(&found), expected);
+    assert_eq!(
+        runtime.handed_to.lock().clone(),
+        HashMap::from([(recorded, grandparent), (late, grandparent)]),
+        "past the parent that failed first"
+    );
+}
+
 /// A detached process tagged with `agent`, as one its engine left would be.
 #[cfg(target_os = "linux")]
 fn tagged_leftover(agent: AgentId) -> std::process::Child {

@@ -106,7 +106,7 @@ impl Runtime {
         if !matches!(row.status, AgentStatus::Completed { .. }) {
             return Holder::Nobody;
         }
-        let holder = self.nearest_holder(row.parent);
+        let holder = self.nearest_holder(row.parent, None);
         assert_ne!(
             holder,
             Holder::Live(agent),
@@ -116,22 +116,94 @@ impl Runtime {
     }
 
     /// The first agent from `next` up the parent chain that holds processes.
-    fn nearest_holder(&self, mut next: Option<AgentId>) -> Holder {
+    /// Given `held_since`, when the processes reached the walk, an ancestor
+    /// that ended after it held them then: a completed one passed them on, any other stopped them.
+    fn nearest_holder(
+        &self,
+        mut next: Option<AgentId>,
+        mut held_since: Option<Timestamp>,
+    ) -> Holder {
         for _ in 0..MAX_ANCESTRY {
             let Some(id) = next else {
                 return Holder::Nobody;
             };
-            match self.store.agent(id) {
-                Ok(Some(row)) if self.holds_processes(&row) => return Holder::Live(id),
-                Ok(Some(row)) => next = row.parent,
+            let row = match self.store.agent(id) {
+                Ok(Some(row)) => row,
                 Ok(None) => return Holder::Nobody,
                 Err(error) => {
                     tracing::warn!(agent = %id, %error, "cannot read an ancestor");
                     return Holder::Unknown;
                 }
+            };
+            if self.holds_processes(&row) {
+                return Holder::Live(id);
             }
+            debug_assert!(row.status.is_terminal(), "only an ended ancestor is passed");
+            // Without both end times, or with equal ones, the order is unknown and the walk spares.
+            let held_at_end = held_since
+                .zip(row.status_since)
+                .is_some_and(|(since, end)| end > since);
+            if held_at_end {
+                if !matches!(row.status, AgentStatus::Completed { .. }) {
+                    return Holder::Nobody;
+                }
+                held_since = row.status_since;
+            }
+            next = row.parent;
         }
         tracing::error!(?next, "the ancestry walk exceeded {MAX_ANCESTRY} agents");
+        Holder::Unknown
+    }
+
+    /// Who holds what ended `agent` left, for a daemon sweep: the owner it was
+    /// handed up to while this daemon ran, or else the one the order of ends in
+    /// the store gives, as a start after a crash lost that record.
+    fn sweep_holder(&self, agent: AgentId) -> Holder {
+        let recorded = self.handed_to.lock().get(&agent).copied();
+        if let Some(owner) = recorded {
+            return self.recorded_holder(owner);
+        }
+        let row = match self.store.agent(agent) {
+            Ok(Some(row)) => row,
+            Ok(None) => return Holder::Nobody,
+            Err(error) => {
+                tracing::warn!(%agent, %error, "cannot read the ended agent");
+                return Holder::Unknown;
+            }
+        };
+        if !matches!(row.status, AgentStatus::Completed { .. }) {
+            return Holder::Nobody;
+        }
+        let holder = self.nearest_holder(row.parent, row.status_since);
+        assert_ne!(
+            holder,
+            Holder::Live(agent),
+            "an ended agent is not its own owner"
+        );
+        holder
+    }
+
+    /// The agent that holds what was handed up to `owner`, following the
+    /// hand-ups recorded since; no one once a stop took it.
+    fn recorded_holder(&self, mut owner: AgentId) -> Holder {
+        for _ in 0..MAX_ANCESTRY {
+            match self.store.agent(owner) {
+                Ok(Some(row)) if self.holds_processes(&row) => return Holder::Live(owner),
+                Ok(Some(_)) => {}
+                Ok(None) => return Holder::Nobody,
+                Err(error) => {
+                    tracing::warn!(agent = %owner, %error, "cannot read a recorded owner");
+                    return Holder::Unknown;
+                }
+            }
+            let next = self.handed_to.lock().get(&owner).copied();
+            let Some(next) = next else {
+                return Holder::Nobody;
+            };
+            assert_ne!(next, owner, "an ended owner hands nothing to itself");
+            owner = next;
+        }
+        tracing::error!(%owner, "the hand-up walk exceeded {MAX_ANCESTRY} agents");
         Holder::Unknown
     }
 
@@ -413,7 +485,8 @@ impl Runtime {
         // round holds the gates a wake commits outside of, so none lands mid-round.
         let spared = parking_lot::Mutex::new(Vec::new());
         let ended = |id| {
-            let unheld = self.still_in_end(id, ends.get(&id)) && self.holder(id) == Holder::Nobody;
+            let unheld =
+                self.still_in_end(id, ends.get(&id)) && self.sweep_holder(id) == Holder::Nobody;
             if !unheld {
                 spared.lock().push(id);
             }
@@ -440,7 +513,7 @@ impl Runtime {
         let _hold = self.hold();
         let mut unheld = Vec::new();
         for agent in found.iter().copied().filter(|id| self.ended_here(*id)) {
-            match self.holder(agent) {
+            match self.sweep_holder(agent) {
                 Holder::Nobody => unheld.push(agent),
                 Holder::Live(owner) => {
                     let recorded = *self.handed_to.lock().entry(agent).or_insert(owner);

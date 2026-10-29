@@ -615,7 +615,11 @@ as a clean stop would have, what no live agent holds: the processes tagged
 with, or in an engine scope of, each of its own agents that has ended, unless
 it completed under a live ancestor. That ancestor then holds them again, as
 the hand-up the dead daemon recorded only in memory said, and they stop with
-its end; it is not told again. A live agent's own processes, and what a
+its end; it is not told again. The start reads who held them from the order
+the agents ended in: an ancestor that ended after the child completed held
+them then, so they stopped with a failed or cancelled one and moved on with
+a completed one, while one that had ended before was handed past. Where the
+order cannot be told it spares them. A live agent's own processes, and what a
 completed child handed up to it, are spared, so the agents recovery resumes
 find their servers up. It never signals a process it cannot tie to an engine
 it started or an agent it ran.
