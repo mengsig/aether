@@ -370,6 +370,48 @@ pub(crate) fn group_is_running(pgid: Pid) -> io::Result<bool> {
     Ok(false)
 }
 
+/// What the group of a job whose leader was reaped holds. Its id is free
+/// for reuse once it empties, so only the job's token proves it the job's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LeaderlessGroup {
+    Empty,
+    /// Every live member carries the job's token.
+    Job,
+    /// A live member does not, or could not be read.
+    Unproven,
+}
+
+pub(crate) fn leaderless_group(pgid: Pid, job: ProcessId) -> io::Result<LeaderlessGroup> {
+    assert!(pgid.as_raw() > 1, "not a job's group: {pgid}");
+    let token = format!("{JOB_ENV}={job}");
+    let mut found = false;
+    for entry in std::fs::read_dir("/proc")? {
+        let entry = entry?;
+        if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
+            continue;
+        }
+        let member = match std::fs::read(entry.path().join("stat")) {
+            Ok(stat) => identity(&stat)?,
+            Err(e) if disappeared(&e) => continue,
+            Err(e) => return Err(e),
+        };
+        if member.group != pgid.as_raw() || !member.running() {
+            continue;
+        }
+        if !readable_environ(&entry.path())?
+            .is_some_and(|environment| carries(&environment, &token))
+        {
+            return Ok(LeaderlessGroup::Unproven);
+        }
+        found = true;
+    }
+    Ok(if found {
+        LeaderlessGroup::Job
+    } else {
+        LeaderlessGroup::Empty
+    })
+}
+
 fn disappeared(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(nix::libc::ESRCH)
 }

@@ -586,7 +586,7 @@ async fn own(
     let status = match exited {
         Some(status) => {
             let cleanup = match pgid {
-                Some(pgid) => stop_exited_group(pgid).await,
+                Some(pgid) => stop_exited_group(pgid, job).await,
                 None => Ok(()),
             };
             status.and_then(|status| cleanup.map(|_| status))
@@ -647,18 +647,30 @@ fn signal_group(pgid: Pid, signal: Signal) -> std::io::Result<()> {
 
 /// What a job whose shell exited left in its group: SIGTERM, then SIGKILL
 /// once it outlives the stop grace. Elsewhere than Linux it is killed at once.
-async fn stop_exited_group(pgid: Pid) -> std::io::Result<()> {
-    #[cfg(target_os = "linux")]
-    match journal::group_is_running(pgid) {
-        Ok(false) => {}
-        Ok(true) => {
-            if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
-                tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
-            }
-            wait_group_gone(pgid).await;
-        }
-        Err(error) => tracing::warn!(%pgid, %error, "cannot inspect group; killing it"),
+#[cfg(target_os = "linux")]
+async fn stop_exited_group(pgid: Pid, job: ProcessId) -> std::io::Result<()> {
+    use journal::LeaderlessGroup;
+    // Signalled at once after the leader's reap, as before; later only once
+    // every member still carries the job's token, as the group id is free.
+    if journal::leaderless_group(pgid, job)? == LeaderlessGroup::Empty {
+        return Ok(());
     }
+    if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
+        tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
+    }
+    wait_group_gone(pgid).await;
+    match journal::leaderless_group(pgid, job)? {
+        LeaderlessGroup::Empty => Ok(()),
+        LeaderlessGroup::Job => signal_group(pgid, Signal::SIGKILL),
+        LeaderlessGroup::Unproven => {
+            tracing::warn!(%pgid, %job, "cannot prove the exited job's group is still its own; not killing it");
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn stop_exited_group(pgid: Pid, _job: ProcessId) -> std::io::Result<()> {
     signal_group(pgid, Signal::SIGKILL)
 }
 
