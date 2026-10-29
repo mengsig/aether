@@ -2,6 +2,7 @@
 //! this build, and its requests decode unchanged (docs/protocol.md).
 
 use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame};
+use aether_core::agent::{BlockReason, ExhaustionClass};
 use aether_core::model::ContentBlock;
 use aether_core::replay::{ReplayFrame, TurnOutcome};
 use serde_json::Value;
@@ -59,7 +60,8 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
     let line = crate::encode(started.as_ref().unwrap_or(frame))?;
     let hide_images = version < 19 && line.contains(IMAGE_REF_TAG);
     let hide_devices = version < 18 && line.contains(DEVICE_ORIGIN);
-    if !hide_images && !hide_devices {
+    let hide_credentials = version < 25 && line.contains(CREDENTIALS_CLASS);
+    if !hide_images && !hide_devices && !hide_credentials {
         return Ok(line);
     }
     let mut value: Value = serde_json::from_str(&line)?;
@@ -69,7 +71,45 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
     if hide_devices {
         hide_device_origins(&mut value);
     }
+    if hide_credentials {
+        hide_credentials_class(&mut value);
+    }
     crate::encode(&value)
+}
+
+/// The exhaustion class new in v25, as a block reason encodes it.
+const CREDENTIALS_CLASS: &str = r#""class":"credentials""#;
+
+/// Show a suspension on refused credentials as a usage limit to a client before
+/// v25, which cannot decode the class; its detail still names the refusal.
+fn hide_credentials_class(value: &mut Value) {
+    match value {
+        Value::Array(items) => items.iter_mut().for_each(hide_credentials_class),
+        Value::Object(fields) => {
+            if credentials_block(fields) {
+                let usage_limit = ExhaustionClass::UsageLimit.as_str();
+                fields.insert("class".into(), usage_limit.into());
+                debug_assert!(!credentials_block(fields));
+                return;
+            }
+            fields.values_mut().for_each(hide_credentials_class);
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+/// Only a real block reason, not arbitrary JSON (a tool's input) that carries
+/// the same two fields.
+fn credentials_block(fields: &serde_json::Map<String, Value>) -> bool {
+    fields.get("block").and_then(Value::as_str) == Some("exhausted")
+        && fields.get("class").and_then(Value::as_str) == Some("credentials")
+        && matches!(
+            serde_json::from_value::<BlockReason>(Value::Object(fields.clone())),
+            Ok(BlockReason::Exhausted {
+                class: ExhaustionClass::Credentials,
+                ..
+            })
+        )
 }
 
 /// What marks a device origin in an encoded frame. Quotes inside a JSON
@@ -609,7 +649,7 @@ mod tests {
 
     #[test]
     fn the_window_retains_existing_versions() {
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 24));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 25));
         for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
             let mut hello = Hello::new("t", "0");
             hello.protocol_version = version;
@@ -852,7 +892,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 24));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 25));
     }
 
     #[test]
@@ -872,6 +912,44 @@ mod tests {
         let mut hello = Hello::new("v16", "test");
         hello.protocol_version = 16;
         assert!(negotiate(&hello).is_err());
+    }
+
+    #[test]
+    fn a_credentials_suspension_reads_as_a_usage_limit_before_v25() {
+        let mut agent = suspended_agent();
+        let AgentStatus::Blocked {
+            reason: BlockReason::Exhausted { class, .. },
+        } = &mut agent.status
+        else {
+            panic!("a suspended agent is blocked on exhaustion");
+        };
+        *class = aether_core::agent::ExhaustionClass::Credentials;
+        let frame = reply(Reply::Agent(agent));
+        let current = encode_for(PROTOCOL_VERSION, &frame).unwrap();
+        assert_eq!(crate::decode::<ServerFrame>(&current).unwrap(), frame);
+        let older = encode_for(24, &frame).unwrap();
+        assert!(!older.contains(CREDENTIALS_CLASS), "{older}");
+        let ServerFrame::Reply {
+            result: Ok(Reply::Agent(seen)),
+            ..
+        } = crate::decode::<ServerFrame>(&older).unwrap()
+        else {
+            panic!("an agent reply stays an agent reply");
+        };
+        assert!(matches!(
+            seen.status,
+            AgentStatus::Blocked {
+                reason: BlockReason::Exhausted {
+                    class: aether_core::agent::ExhaustionClass::UsageLimit,
+                    ..
+                }
+            }
+        ));
+        // A tool input that only mimics the shape is left as it was.
+        let mimic = serde_json::json!({"block": "exhausted", "class": "credentials"});
+        let mut walked = mimic.clone();
+        hide_credentials_class(&mut walked);
+        assert_eq!(walked, mimic);
     }
 
     fn stored_image() -> aether_core::attachment::AttachmentRef {

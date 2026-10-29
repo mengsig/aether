@@ -31,6 +31,8 @@ use scripted::{Reply, ScriptedEngine};
 mod approval_expiry;
 #[path = "engine/attachments.rs"]
 mod attachments;
+#[path = "engine/auth_suspension.rs"]
+mod auth_suspension;
 #[path = "engine/bridge_build.rs"]
 mod bridge_build;
 #[path = "engine/budgets.rs"]

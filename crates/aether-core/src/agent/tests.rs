@@ -367,6 +367,26 @@ fn a_block_names_exactly_one_cause() {
     assert!(lease.describe().contains("/r/a.rs"));
 }
 
+#[test]
+fn a_refused_sign_in_suspends_as_credentials_and_nothing_else_new_does() {
+    use crate::model::ModelErrorClass;
+    let class = ExhaustionClass::of(ModelErrorClass::Auth).expect("a sign-in is renewable");
+    assert_eq!(class, ExhaustionClass::Credentials);
+    assert_eq!(class.as_str(), "credentials");
+    assert_eq!(serde_json::to_value(class).unwrap(), "credentials");
+    for unrecoverable in [
+        ModelErrorClass::ContextLimit,
+        ModelErrorClass::Permission,
+        ModelErrorClass::Unknown,
+    ] {
+        assert_eq!(
+            ExhaustionClass::of(unrecoverable),
+            None,
+            "{unrecoverable:?}"
+        );
+    }
+}
+
 /// Rows written before the reason was typed still load, parked for a
 /// person rather than silently resumed.
 #[test]

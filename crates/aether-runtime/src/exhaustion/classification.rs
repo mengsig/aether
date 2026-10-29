@@ -11,6 +11,12 @@ pub(crate) fn recoverable_by_fallback(class: ModelErrorClass) -> bool {
     )
 }
 
+/// Classes a native turn ends on to fall back or suspend rather than fail: a
+/// refused sign-in is renewed by the operator, and no retry of the turn helps.
+pub(crate) fn native_suspends(class: ModelErrorClass) -> bool {
+    recoverable_by_fallback(class) || class == ModelErrorClass::Auth
+}
+
 /// Classes a native turn waits out instead of failing. Exhaustion and context
 /// limits are never among them: those take the fallback/suspension path.
 pub(crate) fn native_transient(class: ModelErrorClass) -> bool {
@@ -36,6 +42,8 @@ pub(crate) fn engine_error_class(error: &str) -> ModelErrorClass {
         || lower.contains("context window exceeded")
     {
         ModelErrorClass::ContextLimit
+    } else if AUTH_SIGNALS.iter().any(|signal| lower.contains(signal)) {
+        ModelErrorClass::Auth
     } else if lower.contains("codex app-server did not start the turn in time")
         || transient_spawn_failure(&lower)
     {
@@ -75,6 +83,19 @@ const TRANSIENT_SPAWN_SIGNALS: [&str; 6] = [
     "executable file busy",
     "cannot allocate memory",
     "out of memory",
+];
+
+/// A sign-in the provider refused, as Claude Code (its API error types, its
+/// `/login` hint, the 401 its result reports) and Codex word it.
+const AUTH_SIGNALS: [&str; 8] = [
+    "authentication_error",
+    "invalid api key",
+    "invalid x-api-key",
+    "please run /login",
+    "oauth token has expired",
+    "api_error_status: 401",
+    "401 unauthorized",
+    "access token could not be refreshed",
 ];
 
 /// Connectivity failures as Claude Code (Node errno and its own prose) and
@@ -236,12 +257,51 @@ mod tests {
                 "Model is overloaded: socket hang up",
                 ModelErrorClass::Overloaded,
             ),
+            // A refused sign-in outranks the transport and 5xx prose around it.
             (
                 "authentication_error: invalid x-api-key",
-                ModelErrorClass::Unknown,
+                ModelErrorClass::Auth,
             ),
+            (
+                r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}} · Please run /login"#,
+                ModelErrorClass::Auth,
+            ),
+            ("Invalid API key · Please run /login", ModelErrorClass::Auth),
+            (
+                "Failed to authenticate.\napi_error_status: 401",
+                ModelErrorClass::Auth,
+            ),
+            (
+                "unexpected status 401 Unauthorized: stream disconnected",
+                ModelErrorClass::Auth,
+            ),
+            (
+                "Your access token could not be refreshed because your refresh token was already used.",
+                ModelErrorClass::Auth,
+            ),
+            ("session expired: please log in", ModelErrorClass::Unknown),
         ] {
             assert_eq!(engine_error_class(error), class, "{error}");
+        }
+    }
+
+    #[test]
+    fn a_refused_sign_in_suspends_a_native_turn_and_a_hiccup_does_not() {
+        for class in [
+            ModelErrorClass::Auth,
+            ModelErrorClass::QuotaExhausted,
+            ModelErrorClass::UsageLimit,
+            ModelErrorClass::ContextLimit,
+        ] {
+            assert!(native_suspends(class), "{class:?}");
+        }
+        for class in [
+            ModelErrorClass::Network,
+            ModelErrorClass::Server,
+            ModelErrorClass::Permission,
+            ModelErrorClass::Unknown,
+        ] {
+            assert!(!native_suspends(class), "{class:?}");
         }
     }
 

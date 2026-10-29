@@ -379,7 +379,7 @@ pub(crate) async fn execute(
             && !cancel.is_cancelled()
             && !run.outcome.interrupted
             && run.outcome.session_lost
-            && !crate::exhaustion::recoverable_by_fallback(class)
+            && !crate::exhaustion::native_suspends(class)
             && !crate::exhaustion::native_transient(class)
             && run.unanswered()
             && !pending_request
@@ -675,7 +675,7 @@ pub(crate) async fn execute(
         if stalled.is_some() {
             return Ok(EngineLink::Done(Next::Interrupted));
         }
-        if crate::exhaustion::recoverable_by_fallback(class) {
+        if crate::exhaustion::native_suspends(class) {
             return Ok(EngineLink::Exhausted { class, error });
         }
         return Ok(EngineLink::Done(Next::Failed(error)));
