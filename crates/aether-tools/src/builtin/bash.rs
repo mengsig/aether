@@ -187,9 +187,9 @@ impl Tool for BashTool {
             return Err(ToolError::InvalidInput("command is empty".into()));
         }
         if background || tty {
-            let status = self
-                .processes
-                .start_with_terminal(ctx.agent_id, &command, ctx, tty)?;
+            let status =
+                self.processes
+                    .start_with_terminal(ctx.agent_id, &command, ctx, tty, &cancel)?;
             return Ok(ToolExecution::Outcome(ToolOutcome {
                 content: format!(
                     "started {} in the background · read it with shell_output, end it with \
@@ -207,7 +207,7 @@ impl Tool for BashTool {
         let prepared = prepare(&command, ctx)?;
         let mut cmd = prepared.command;
         let capture = Capture::new(ctx, self.capture_limit)?;
-        let mut child = self.processes.spawn_host(|| Ok(cmd.spawn()?))?;
+        let mut child = self.processes.spawn_host(&cancel, || Ok(cmd.spawn()?))?;
         let mut guard = GroupGuard {
             pgid: child.id().map(|p| Pid::from_raw(p as i32)),
             teardown: prepared.teardown,
@@ -641,6 +641,34 @@ mod tests {
                     json!({"command": "touch ran", "background": background}),
                     &ctx,
                     CancellationToken::new(),
+                )
+                .await;
+            assert!(
+                matches!(result, Err(ToolError::Cancelled)),
+                "background {background}: refused"
+            );
+        }
+        assert!(!dir.path().join("ran").exists(), "nothing ran");
+        assert!(processes.list(ctx.agent_id).unwrap().is_empty());
+    }
+
+    /// An agent can end while its cancelled turn is still inside a shell
+    /// call; once past the gate's fence, that call starts nothing.
+    #[tokio::test]
+    async fn no_command_starts_for_a_cancelled_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_in(dir.path());
+        let processes = Arc::new(BackgroundProcesses::new());
+        let tool = BashTool::new(processes.clone());
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        processes.fence_spawns();
+        for background in [false, true] {
+            let result = tool
+                .execute(
+                    json!({"command": "touch ran", "background": background}),
+                    &ctx,
+                    cancel.clone(),
                 )
                 .await;
             assert!(

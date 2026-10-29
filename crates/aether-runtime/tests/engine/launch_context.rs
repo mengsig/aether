@@ -85,12 +85,12 @@ async fn launch_identity_survives_resume_and_compaction() {
     );
     assert!(recorded.iter().all(|launch| launch.context == expected));
     assert!(
-        spawns.spawn(|| ()).is_ok(),
+        spawns.spawn(|| false, || ()).is_ok(),
         "a running daemon launches engines"
     );
     h.runtime.shutdown().await;
     assert!(
-        spawns.spawn(|| ()).is_err(),
+        spawns.spawn(|| false, || ()).is_err(),
         "a stopped daemon still lets its engines start"
     );
 }

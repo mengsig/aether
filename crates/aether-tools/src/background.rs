@@ -19,6 +19,7 @@ use aether_core::time::{Timestamp, now};
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::capture::{Capture, pump};
 use crate::exec::{Teardown, prepare_interactive};
@@ -165,15 +166,18 @@ impl BackgroundProcesses {
         command: &str,
         ctx: &ToolContext,
     ) -> Result<ProcessStatus, ToolError> {
-        self.start_with_terminal(agent, command, ctx, false)
+        self.start_with_terminal(agent, command, ctx, false, &CancellationToken::new())
     }
 
+    /// [`Self::start`], on a terminal if asked. Refused once `cancel`, the
+    /// calling turn's token, is cancelled.
     pub fn start_with_terminal(
         &self,
         agent: AgentId,
         command: &str,
         ctx: &ToolContext,
         terminal: bool,
+        cancel: &CancellationToken,
     ) -> Result<ProcessStatus, ToolError> {
         self.reap_settled(agent)?;
         let mut processes = self.lock()?;
@@ -191,7 +195,7 @@ impl BackgroundProcesses {
         cmd.kill_on_drop(true);
         #[cfg(target_os = "linux")]
         cmd.env(journal::JOB_ENV, id.to_string());
-        let (mut child, pty) = self.spawn_host(|| {
+        let (mut child, pty) = self.spawn_host(cancel, || {
             if terminal {
                 let (child, pty) = crate::terminal::spawn(&cmd)?;
                 Ok((child, Some(pty)))
@@ -359,7 +363,7 @@ impl BackgroundProcesses {
         agent: AgentId,
         id: ProcessId,
         chars: &str,
-        cancel: tokio_util::sync::CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<usize, ToolError> {
         let writer = {
             let processes = self.lock()?;
@@ -411,13 +415,22 @@ impl BackgroundProcesses {
         Ok(out)
     }
 
-    /// Run `spawn`, which starts a host command, unless spawns are closed;
-    /// the gate stays held meanwhile, so a close waits for it to finish.
+    /// Run `spawn`, which starts a host command, unless spawns are closed or
+    /// `cancel` is; the gate stays held meanwhile, so a fence waits for it.
     pub(crate) fn spawn_host<T>(
         &self,
+        cancel: &CancellationToken,
         spawn: impl FnOnce() -> Result<T, ToolError>,
     ) -> Result<T, ToolError> {
-        self.spawns.spawn(spawn).map_err(|_| ToolError::Cancelled)?
+        self.spawns
+            .spawn(|| cancel.is_cancelled(), spawn)
+            .map_err(|_| ToolError::Cancelled)?
+    }
+
+    /// Wait out the host commands being started, so a sweep after a turn's
+    /// cancellation sees each one that will ever start for that turn.
+    pub fn fence_spawns(&self) {
+        self.spawns.fence();
     }
 
     /// Refuse every host command from now on, once the spawns under way have

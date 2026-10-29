@@ -4,7 +4,7 @@
 //! daemon launched with `&` from a non-interactive shell has SIGINT ignored,
 //! and every child would inherit that, so ^C could not stop it.
 //!
-//! [`SpawnGate`] refuses new host processes once a stopping daemon closes it.
+//! [`SpawnGate`] refuses new host processes once a sweep for them has begun.
 
 #[cfg(unix)]
 #[allow(unsafe_code)]
@@ -183,7 +183,7 @@ pub fn ignore_sigint() -> std::io::Result<()> {
 
 mod spawn_gate;
 
-pub use spawn_gate::{SpawnGate, SpawnsClosed};
+pub use spawn_gate::{SpawnGate, SpawnRefused};
 #[cfg(target_os = "linux")]
 pub use unix::{StartGate, gate_start};
 #[cfg(unix)]

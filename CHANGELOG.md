@@ -16,7 +16,8 @@ release is also the text of its GitHub release.
   stop now also sends `SIGTERM`, then `SIGKILL` after `reap_grace_secs` (at
   most 10 s), to every process tagged with, or in an engine scope of, an agent
   its own store ran; agents of another daemon and imported agents are never
-  touched. Once the stop begins, no new host shell command or engine starts.
+  touched. Once the stop begins no new host shell command or engine starts,
+  nor one for a cancelled turn whose agent's reap has begun.
   Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
   nothing changes.
 

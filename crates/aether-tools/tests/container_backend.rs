@@ -374,7 +374,7 @@ async fn interactive_terminal_stays_in_the_container_and_accepts_input() {
     let processes = BackgroundProcesses::new();
     let process = processes.start_with_terminal(ctx.agent_id,
         "test -t 0 && test -t 1 && test -e /.dockerenv && printf 'READY\n'; read -r answer; printf 'ANSWER=%s\n' \"$answer\"",
-        &ctx, true).unwrap();
+        &ctx, true, &tokio_util::sync::CancellationToken::new()).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
         let bytes = std::fs::read(&process.output_path).unwrap();

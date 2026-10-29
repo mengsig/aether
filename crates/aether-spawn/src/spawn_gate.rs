@@ -1,34 +1,46 @@
-//! Refuses new host processes once a stopping daemon has swept them.
+//! Refuses new host processes once a sweep for them has begun.
 
 use std::sync::{Arc, PoisonError, RwLock};
 
 /// Whether host processes may still start. Clones share one gate. A spawn
-/// holds it until its child has exec'd, so whoever closes it sees that child.
+/// holds it until its child has exec'd, so whoever closes or fences it after
+/// that spawn began sees that child.
 #[derive(Debug, Clone, Default)]
 pub struct SpawnGate(Arc<RwLock<bool>>);
 
-/// The gate was closed before the spawn could start.
+/// The gate was closed, or the caller had stopped, before the spawn began.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpawnsClosed;
+pub struct SpawnRefused;
 
-impl std::fmt::Display for SpawnsClosed {
+impl std::fmt::Display for SpawnRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("no process starts once the daemon is stopping")
+        f.write_str("no process starts once its turn or the daemon has stopped")
     }
 }
 
-impl std::error::Error for SpawnsClosed {}
+impl std::error::Error for SpawnRefused {}
 
 impl SpawnGate {
-    /// Run `spawn` unless the gate is closed. `spawn` must return only once
-    /// its child has exec'd or failed to.
-    pub fn spawn<T>(&self, spawn: impl FnOnce() -> T) -> Result<T, SpawnsClosed> {
+    /// Run `spawn` unless the gate is closed or `stopped` returns true; both
+    /// are read under the gate. `spawn` must return only once its child has
+    /// exec'd or failed to.
+    pub fn spawn<T>(
+        &self,
+        stopped: impl FnOnce() -> bool,
+        spawn: impl FnOnce() -> T,
+    ) -> Result<T, SpawnRefused> {
         // A spawn that panicked poisons the lock, but the flag stays valid.
         let closed = self.0.read().unwrap_or_else(PoisonError::into_inner);
-        if *closed {
-            return Err(SpawnsClosed);
+        if *closed || stopped() {
+            return Err(SpawnRefused);
         }
         Ok(spawn())
+    }
+
+    /// Wait out the spawns under way. A spawn that begins later sees any
+    /// stop its `stopped` reports from before this call.
+    pub fn fence(&self) {
+        drop(self.0.write().unwrap_or_else(PoisonError::into_inner));
     }
 
     /// Refuse every later spawn, after waiting out those under way.
@@ -48,56 +60,103 @@ impl Eq for SpawnGate {}
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
     fn a_closed_gate_refuses_and_clones_share_it() {
         let gate = SpawnGate::default();
         let clone = gate.clone();
-        assert_eq!(gate.spawn(|| 7), Ok(7));
+        assert_eq!(gate.spawn(|| false, || 7), Ok(7));
         clone.close();
         let mut ran = false;
-        assert_eq!(gate.spawn(|| ran = true), Err(SpawnsClosed));
+        assert_eq!(gate.spawn(|| false, || ran = true), Err(SpawnRefused));
         assert!(!ran, "a closed gate never runs the spawn");
         assert_eq!(gate, clone);
         assert_ne!(gate, SpawnGate::default());
     }
 
     #[test]
-    fn closing_waits_for_a_spawn_under_way() {
+    fn a_stopped_caller_is_refused_while_others_still_spawn() {
         let gate = SpawnGate::default();
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
-        let (finish_tx, finish_rx) = std::sync::mpsc::channel::<()>();
-        let spawner = {
-            let gate = gate.clone();
-            std::thread::spawn(move || {
-                gate.spawn(|| {
+        let mut ran = false;
+        assert_eq!(gate.spawn(|| true, || ran = true), Err(SpawnRefused));
+        assert!(!ran, "a stopped caller's spawn ran");
+        gate.fence();
+        assert_eq!(gate.spawn(|| false, || 1), Ok(1), "a fence closes nothing");
+    }
+
+    /// Holds a spawn inside the gate on a thread of its own until released.
+    struct Paused {
+        thread: std::thread::JoinHandle<Result<(), SpawnRefused>>,
+        finish: mpsc::Sender<()>,
+    }
+
+    fn pause_a_spawn(gate: &SpawnGate) -> Paused {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finish, finish_rx) = mpsc::channel::<()>();
+        let gate = gate.clone();
+        let thread = std::thread::spawn(move || {
+            gate.spawn(
+                || false,
+                || {
                     started_tx.send(()).unwrap();
                     finish_rx.recv().unwrap();
-                })
-            })
-        };
+                },
+            )
+        });
         started_rx.recv().unwrap();
-        let (closed_tx, closed_rx) = std::sync::mpsc::channel();
-        let closer = {
-            let gate = gate.clone();
-            std::thread::spawn(move || {
-                gate.close();
-                closed_tx.send(()).unwrap();
-            })
-        };
+        Paused { thread, finish }
+    }
+
+    /// Runs `wait` on a thread and reports whether it returned within a while.
+    fn returns_while_paused(wait: impl FnOnce() + Send + 'static) -> mpsc::Receiver<()> {
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            wait();
+            done_tx.send(()).unwrap();
+        });
         assert!(
-            closed_rx
-                .recv_timeout(std::time::Duration::from_millis(200))
-                .is_err(),
-            "close returned while a spawn was under way"
+            done_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            "returned while a spawn was under way"
         );
-        finish_tx.send(()).unwrap();
-        assert_eq!(spawner.join().unwrap(), Ok(()));
-        closed_rx
+        done_rx
+    }
+
+    #[test]
+    fn closing_waits_for_a_spawn_under_way() {
+        let gate = SpawnGate::default();
+        let paused = pause_a_spawn(&gate);
+        let closer = gate.clone();
+        let closed = returns_while_paused(move || closer.close());
+        paused.finish.send(()).unwrap();
+        assert_eq!(paused.thread.join().unwrap(), Ok(()));
+        closed.recv().expect("close returns once the spawn is done");
+        assert_eq!(gate.spawn(|| false, || ()), Err(SpawnRefused));
+    }
+
+    /// A turn stopped while one of its spawns is under way: the fence returns
+    /// only after that spawn, and every later spawn of the turn is refused.
+    #[test]
+    fn a_fence_after_a_stop_orders_every_spawn_of_the_stopped_caller() {
+        let gate = SpawnGate::default();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let paused = pause_a_spawn(&gate);
+        stopped.store(true, Ordering::SeqCst);
+        let fencer = gate.clone();
+        let fenced = returns_while_paused(move || fencer.fence());
+        paused.finish.send(()).unwrap();
+        assert_eq!(paused.thread.join().unwrap(), Ok(()));
+        fenced
             .recv()
-            .expect("close returns once the spawn is done");
-        closer.join().unwrap();
-        assert_eq!(gate.spawn(|| ()), Err(SpawnsClosed));
+            .expect("the fence returns once the spawn is done");
+        let late = stopped.clone();
+        let mut ran = false;
+        let refused = gate.spawn(move || late.load(Ordering::SeqCst), || ran = true);
+        assert_eq!(refused, Err(SpawnRefused));
+        assert!(!ran, "a spawn of the stopped caller ran after the fence");
     }
 }

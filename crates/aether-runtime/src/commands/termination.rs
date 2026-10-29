@@ -162,6 +162,12 @@ impl Runtime {
     pub(crate) fn reap_ended_agent(&self, pending: PendingReap) {
         let agent = pending.0;
         self.resources.release_quarantine(agent);
+        // A turn cancelled as its agent ended may be starting a process now.
+        // Past these fences it has started or never will, so the sweep sees it.
+        self.engine_spawns.fence();
+        if let Some(processes) = self.tools.background() {
+            processes.fence_spawns();
+        }
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             tracing::warn!(%agent, "no runtime to stop the agent's processes on");
             return;

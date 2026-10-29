@@ -584,18 +584,20 @@ where
     .await
 }
 
-/// [`lifeline::spawn`], unless the launch's daemon has closed its spawns.
+/// [`lifeline::spawn`], unless the launch's daemon has closed its spawns or
+/// `cancel`, the launch's turn token, is cancelled.
 pub(crate) fn spawn_gated(
     command: tokio::process::Command,
     launch: Option<&EngineLaunchContext>,
+    cancel: &CancellationToken,
 ) -> std::io::Result<(tokio::process::Child, lifeline::GroupWatch)> {
     let Some(launch) = launch else {
         return lifeline::spawn(command);
     };
-    // Held until the engine has exec'd, so a daemon stop's sweep finds it.
+    // Held until the engine has exec'd, so a sweep after a fence finds it.
     launch
         .spawns
-        .spawn(|| lifeline::spawn(command))
+        .spawn(|| cancel.is_cancelled(), || lifeline::spawn(command))
         .map_err(std::io::Error::other)?
 }
 
@@ -672,7 +674,7 @@ where
     export_build_env(&mut command, build_env);
     let run_token = orphans::tag(&mut command);
     let (mut child, group_watch) =
-        spawn_gated(command, launch).map_err(|e| spawn_error(program, &cwd, e))?;
+        spawn_gated(command, launch, &cancel).map_err(|e| spawn_error(program, &cwd, e))?;
     let program = program.to_owned();
     let pid = child.id();
     let mut stdin = child

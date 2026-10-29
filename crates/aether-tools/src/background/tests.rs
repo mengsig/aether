@@ -405,6 +405,7 @@ async fn background_and_terminal_processes_get_the_agent_temp_dir() {
                 r#"printf '%s|%s|%s' "$TMPDIR" "$TMP" "$TEMP""#,
                 &ctx,
                 terminal,
+                &tokio_util::sync::CancellationToken::new(),
             )
             .unwrap();
         let mut seen = String::new();

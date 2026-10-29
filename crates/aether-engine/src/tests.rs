@@ -447,19 +447,36 @@ async fn run_process_tells_a_missing_workspace_from_a_missing_program() {
     assert!(matches!(&error, EngineError::WorkspaceMissing { path } if path == &file));
 }
 
-/// A daemon that stopped has already swept its agents' processes: an engine
-/// launched afterwards would escape that sweep, so it never starts.
+/// A sweep of a stopped turn's or daemon's processes has begun: an engine
+/// launched afterwards would escape it, so it never starts.
 #[tokio::test(flavor = "multi_thread")]
-async fn no_engine_starts_once_its_daemon_closed_spawns() {
+async fn no_engine_starts_once_its_turn_or_daemon_stopped() {
+    for daemon_stopped in [true, false] {
+        let launch = EngineLaunchContext {
+            run_id: aether_core::id::RunId::new(),
+            agent_id: aether_core::id::AgentId::new(),
+            task_id: None,
+            spawns: SpawnGate::default(),
+        };
+        let cancel = CancellationToken::new();
+        if daemon_stopped {
+            launch.spawns.close();
+        } else {
+            cancel.cancel();
+        }
+        let ran = launch_touch(&launch, cancel).await;
+        assert!(
+            !ran,
+            "an engine started after its stop (daemon: {daemon_stopped})"
+        );
+    }
+}
+
+/// Launch `touch` as an engine and report whether it ran; panics unless a
+/// refused launch fails as a spawn error.
+async fn launch_touch(launch: &EngineLaunchContext, cancel: CancellationToken) -> bool {
     let dir = tempfile::tempdir().expect("temp dir");
     let marker = dir.path().join("ran");
-    let launch = EngineLaunchContext {
-        run_id: aether_core::id::RunId::new(),
-        agent_id: aether_core::id::AgentId::new(),
-        task_id: None,
-        spawns: SpawnGate::default(),
-    };
-    launch.spawns.close();
     let started = run_process_with_env(
         "touch",
         vec![marker.to_string_lossy().into_owned()],
@@ -468,21 +485,18 @@ async fn no_engine_starts_once_its_daemon_closed_spawns() {
         None,
         &[],
         &[],
-        Some(&launch),
+        Some(launch),
         &aether_core::redact::Redactor::default(),
         String::new(),
         false,
         None,
-        CancellationToken::new(),
+        cancel,
         |_| Vec::new(),
     )
     .await;
     let Err(EngineError::Spawn { source, .. }) = started else {
-        panic!("a closed gate let the engine start");
+        panic!("a refused engine launch did not fail to spawn");
     };
-    assert!(
-        source.to_string().contains("daemon is stopping"),
-        "{source}"
-    );
-    assert!(!marker.exists(), "the engine ran after spawns closed");
+    assert!(source.to_string().contains("has stopped"), "{source}");
+    marker.exists()
 }

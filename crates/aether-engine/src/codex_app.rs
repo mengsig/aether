@@ -460,7 +460,7 @@ impl CodexAppEngine {
         crate::export_temp_dir(&mut command, turn.temp_dir.as_deref());
         crate::export_build_env(&mut command, &turn.build_env);
         let run_token = crate::orphans::tag(&mut command);
-        let (mut child, group_watch) = crate::spawn_gated(command, context.as_ref())
+        let (mut child, group_watch) = crate::spawn_gated(command, context.as_ref(), &cancel)
             .map_err(|e| crate::spawn_error(&self.program, &cwd, e))?;
         let engine_record =
             crate::orphans::EngineRecord::register(child.id(), run_token.as_deref());
