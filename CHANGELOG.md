@@ -29,8 +29,8 @@ clients on 17 through 24 see it as `usage_limit`.
   not launch it until a probe passes, and it is recorded unusable only after
   three failed probes over at least 30 seconds. A turn on an engine that is
   not launchable probes it again under the transient retry backoff and fails
-  only when the window ends; an agent new to an engine never found still
-  fails at once. The CLI probe timeout is 60 seconds instead of 15.
+  when the window ends, even mid-probe; an agent new to an engine never found
+  still fails at once. The CLI probe timeout is 60 seconds instead of 15.
 - **An engine launch the OS refused for now is retried.** A spawn that failed
   with `EAGAIN`, `ETXTBSY` (the CLI replaced by an update) or `ENOMEM` failed
   the agent; it is now a transient timeout, retried within the transient
@@ -40,8 +40,10 @@ clients on 17 through 24 see it as `usage_limit`.
   cleared, so a long turn with two brief outages hours apart failed at the
   second; the third stall of a turn ended it even when hours of work came
   between them. A model message or a tool result now restarts both the
-  window (and the backoff, from the 15-second floor) and the stall count.
-  Claude Code's synthetic API-error message is not progress.
+  window (and the backoff, from the 15-second floor) and the stall count, for
+  at most eight outages of one turn, so an engine that fails after every bit
+  of progress still gives up. Claude Code's synthetic API-error message is
+  not progress.
 
 ## 1.2.7
 

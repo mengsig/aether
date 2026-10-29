@@ -745,8 +745,9 @@ A turn whose engine is not launchable does not fail an agent that has run on
 it before (or on an engine that was usable earlier in the daemon's life). It
 probes the CLI again under the transient retry backoff below, emitting an
 `engine.transient_retry` event with class `detection` and `waiting_for`
-`engine CLI` for each wait, and fails only when the retry window ends. A new
-agent on an engine that was never found still fails at once.
+`engine CLI` for each wait, and fails when the retry window ends, even
+mid-probe; cancelling the agent also ends a probe still running. A new agent
+on an engine that was never found still fails at once.
 
 A launch the OS refused for now - `EAGAIN` (fork or process limits),
 `ETXTBSY` (the binary being replaced by an update) or `ENOMEM` - is a
@@ -960,7 +961,10 @@ on the first error). The window is a hard bound per turn: it starts at the
 turn's first transient failure and no attempt starts after it ends. Real
 progress resets it - a model message or a tool result, not a partial stream
 delta or Claude Code's synthetic error message - so a long turn that recovers
-gives its next outage a fresh window and backoff from the 15s floor. The agent then fails, the error names the class
+gives its next outage a fresh window and backoff from the 15s floor. Progress
+ends at most eight outages of one turn this way; after that the window runs
+on, so an engine that answers a little and then fails every attempt still
+gives up. The agent then fails, the error names the class
 and how long it retried, and every responsible ancestor is told. The turn
 keeps its scheduler and engine-cap slot while it waits.
 
@@ -980,8 +984,8 @@ subscribe to it. Aether then stops the engine process and resumes the same
 session, like a transient failure, waiting with the same backoff. After two
 consecutive retries (the third stall in a row) the turn ends with a recorded
 error saying the engine stalled. Progress after a stall - a model message or a
-tool result - restarts that count, so a long turn is not ended by stalls hours
-apart; the agent goes idle and a message resumes its session. While
+tool result - restarts that count, within the same eight-outage budget, so a
+long turn is not ended by stalls hours apart; the agent goes idle and a message resumes its session. While
 an agent is stalled, `aether status` lists it under "Needs attention", and the
 TUI and `aether run` print a notice for each stall.
 
