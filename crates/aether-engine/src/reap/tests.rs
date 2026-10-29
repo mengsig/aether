@@ -366,7 +366,7 @@ async fn a_daemon_stop_reaps_every_agent_it_names_in_one_sweep() {
         "{found:?}"
     );
 
-    let report = reap_agents(&[a, b], Duration::from_millis(300), |_| true).await;
+    let report = reap_agents(&[a, b], Duration::from_millis(300), |_| true, &[]).await;
 
     assert!(report.terminated.contains(&pid_a), "{report:?}");
     assert!(report.killed.contains(&pid_b), "{report:?}");
@@ -401,9 +401,13 @@ async fn a_restarted_agent_is_dropped_from_a_sweep_without_sparing_the_rest() {
     .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let report = reap_agents(&[ended, restarted], Duration::from_secs(5), |id| {
-        id == ended
-    })
+    let gates = [aether_spawn::SpawnGate::default()];
+    let report = reap_agents(
+        &[ended, restarted],
+        Duration::from_secs(5),
+        |id| id == ended,
+        &gates,
+    )
     .await;
 
     assert!(report.terminated.contains(&stopped), "{report:?}");
@@ -461,5 +465,9 @@ async fn a_process_marked_to_be_kept_outlives_its_agent() {
 
 #[tokio::test]
 async fn reaping_no_agents_signals_nothing() {
-    assert!(reap_agents(&[], Duration::ZERO, |_| true).await.is_empty());
+    assert!(
+        reap_agents(&[], Duration::ZERO, |_| true, &[])
+            .await
+            .is_empty()
+    );
 }

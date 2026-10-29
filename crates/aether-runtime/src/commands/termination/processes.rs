@@ -129,14 +129,13 @@ impl Runtime {
         let owned = self.owned_agents(agent);
         assert_eq!(owned.first(), Some(&agent), "an end stops its own first");
         self.reap_engine_processes(handle, agent, owned.clone());
-        let Some(processes) = self.tools.background().cloned() else {
+        let Some(processes) = self.tools.background() else {
             return;
         };
+        // Taken now: a job an agent woken meanwhile starts is not stopped with these.
+        let stopping = processes.stop_agents(&owned);
         handle.spawn(async move {
-            let mut stopped = 0;
-            for owner in &owned {
-                stopped += processes.stop_agent(*owner).await;
-            }
+            let stopped = stopping.await;
             if stopped > 0 {
                 tracing::info!(%agent, stopped, "stopped background processes with the agent");
             }
@@ -153,10 +152,11 @@ impl Runtime {
     ) {
         let grace = self.models.config().agents.reap_grace();
         let me = self.me.clone();
+        let gates = self.spawn_gates();
         handle.spawn(async move {
             // A restarted agent's tag is its new engine's, so the sweep spares it.
             let ended = |id| me.upgrade().is_some_and(|runtime| runtime.has_ended(id));
-            let report = aether_engine::reap::reap_agents(&owned, grace, ended).await;
+            let report = aether_engine::reap::reap_agents(&owned, grace, ended, &gates).await;
             if report.is_empty() {
                 return;
             }
@@ -181,11 +181,12 @@ impl Runtime {
         );
         let me = self.me.clone();
         let jobs = self.tools.background().cloned();
+        // Moved now: a job an agent woken meanwhile starts stays its own.
+        let handed_jobs = match &jobs {
+            Some(jobs) => hand_up_jobs(jobs, &owned, owner),
+            None => Vec::new(),
+        };
         handle.spawn(async move {
-            let handed_jobs = match &jobs {
-                Some(jobs) => hand_up_jobs(jobs, &owned, owner),
-                None => Vec::new(),
-            };
             let processes = aether_engine::reap::live_processes(&owned).await;
             let Some(runtime) = me.upgrade() else {
                 tracing::warn!(%agent, %owner, "runtime gone before the hand-up was recorded");
@@ -220,7 +221,7 @@ impl Runtime {
                 (Some(next), Some(jobs)) => drop(hand_up_jobs(jobs, &[owner], next)),
                 (Some(_), None) => {}
                 (None, Some(jobs)) => {
-                    let stopped = jobs.stop_agent(owner).await;
+                    let stopped = jobs.stop_agents(&[owner]).await;
                     tracing::info!(%owner, stopped, "stopped jobs handed to an owner that had ended");
                 }
                 (None, None) => {}
@@ -329,7 +330,7 @@ impl Runtime {
             .agents
             .reap_grace()
             .min(SHUTDOWN_REAP_GRACE);
-        let report = aether_engine::reap::reap_agents(&ours, grace, |_| true).await;
+        let report = aether_engine::reap::reap_agents(&ours, grace, |_| true, &[]).await;
         report.terminated.len()
     }
 
@@ -347,6 +348,14 @@ impl Runtime {
     }
 
     /// Whether `agent` is still ended; a restart means its processes are its new engine's.
+    /// The gates every engine and host command starts through, in the order
+    /// a sweep holds them.
+    fn spawn_gates(&self) -> Vec<aether_engine::SpawnGate> {
+        let mut gates = vec![self.engine_spawns.clone()];
+        gates.extend(self.tools.background().map(|jobs| jobs.spawn_gate()));
+        gates
+    }
+
     fn has_ended(&self, agent: AgentId) -> bool {
         match self.store.agent(agent) {
             Ok(Some(row)) => row.status.is_terminal(),

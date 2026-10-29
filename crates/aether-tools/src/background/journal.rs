@@ -380,24 +380,21 @@ pub(crate) fn group_is_running(pgid: Pid) -> io::Result<bool> {
     Ok(false)
 }
 
-/// What the group of a job whose leader was reaped holds. Its id is free
-/// for reuse once it empties, so only the job's token proves it the job's.
+/// What the group of a job whose shell exited holds besides that shell. The
+/// shell is not reaped yet, so its zombie keeps the group id from reuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LeaderlessGroup {
+pub(crate) enum ExitedGroup {
     Empty,
-    /// Every live member carries the job's token.
-    Job,
-    /// A live member does not carry it, or could not be read.
-    Unproven,
+    Live,
     /// A live member is marked to be kept past its owner, so the group is
     /// not signalled as a whole.
     Kept,
 }
 
-pub(crate) fn leaderless_group(pgid: Pid, job: ProcessId) -> io::Result<LeaderlessGroup> {
+pub(crate) fn exited_group(pgid: Pid) -> io::Result<ExitedGroup> {
     assert!(pgid.as_raw() > 1, "not a job's group: {pgid}");
-    let token = format!("{JOB_ENV}={job}");
-    let mut group = LeaderlessGroup::Empty;
+    let keep = keep_entry();
+    let mut group = ExitedGroup::Empty;
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
         if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
@@ -411,18 +408,11 @@ pub(crate) fn leaderless_group(pgid: Pid, job: ProcessId) -> io::Result<Leaderle
         if member.group != pgid.as_raw() || !member.running() {
             continue;
         }
-        let environment = readable_environ(&entry.path())?;
-        if environment
-            .as_ref()
-            .is_some_and(|environment| carries(environment, &keep_entry()))
+        if readable_environ(&entry.path())?.is_some_and(|environment| carries(&environment, &keep))
         {
-            return Ok(LeaderlessGroup::Kept);
+            return Ok(ExitedGroup::Kept);
         }
-        if !environment.is_some_and(|environment| carries(&environment, &token)) {
-            group = LeaderlessGroup::Unproven;
-        } else if group == LeaderlessGroup::Empty {
-            group = LeaderlessGroup::Job;
-        }
+        group = ExitedGroup::Live;
     }
     Ok(group)
 }

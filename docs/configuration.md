@@ -514,7 +514,9 @@ What an agent leaves running when it ends depends on how it ends.
   child's turn is over, after the result of its task. If the ancestor ended
   meanwhile, the jobs go on as its own end would have sent them, and the
   message and event name the live agent that holds them in the end; when
-  none is left they are stopped and no message is sent.
+  none is left they are stopped and no message is sent. An owner that ends
+  just after it was told hands them on, or stops them, with its own end, and
+  the next owner is told in turn.
 - Any other end stops them: a child that fails or is cancelled, the root of
   a task tree (an agent with no live ancestor) however it ends, and an agent
   that runs out of time or budget. The ending agent's processes are stopped
@@ -533,7 +535,11 @@ agent ended starts no host command or engine after the reap begins; one it was
 already starting is in place before the reap looks, and the reap waits, up to
 11 seconds, for an engine still being moved into its scope. If an agent is restarted
 during the grace, the reap drops it, so its next engine is spared, and goes on
-stopping the other agents' processes.
+stopping the other agents' processes. Each round holds new engines and host
+commands from starting while it checks which agents are still ended and
+signals, so a restarted agent's next engine is never among those signalled.
+An ending agent's background jobs are taken from it at its end, so a job it
+starts once restarted stays its own.
 
 A process meant to outlive the whole task tree, and the daemon, can be kept:
 start it with `AETHER_KEEP_PROCESS=1` in its environment, which what it starts
@@ -543,7 +549,8 @@ stop. Each process is signalled on its own, scopes included, so a kept one
 inside an engine's scope is spared too; there, a process whose environment
 cannot be read (a non-dumpable one) is treated as kept, as the mark cannot be
 ruled out. A background job whose shell exits leaves its group unsignalled
-while a member carries the mark. Stopping a turn or a background job, the
+while a member carries the mark; the shell is reaped only once its group is
+stopped, so the group id cannot be reused meanwhile. Stopping a turn or a background job, the
 end of a foreground command, and recovery after a crash still signal the
 whole process group, so a kept process must also leave it, for example
 `AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept process

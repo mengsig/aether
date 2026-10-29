@@ -439,6 +439,11 @@ impl BackgroundProcesses {
         self.spawns.close();
     }
 
+    /// The gate every host command starts through, for a sweep to hold.
+    pub fn spawn_gate(&self) -> aether_spawn::SpawnGate {
+        self.spawns.clone()
+    }
+
     /// Stop and forget the handle, retaining its log until eviction or agent end.
     pub async fn stop(&self, agent: AgentId, id: ProcessId) -> Result<ProcessStatus, ToolError> {
         let process = {
@@ -466,14 +471,27 @@ impl BackgroundProcesses {
     /// Stop everything an agent started. Called when the agent ends, so a
     /// cancelled agent never leaves a process behind. Returns how many.
     pub async fn stop_agent(&self, agent: AgentId) -> usize {
-        let count = self.stop_matching(|p| p.agent == agent).await;
+        self.stop_agents(&[agent]).await
+    }
+
+    /// Take what `agents` hold, and their stopped logs, out of the registry
+    /// now, before the returned future stops it: a process an agent woken
+    /// again starts later is not among them. The future returns how many.
+    pub fn stop_agents(&self, agents: &[AgentId]) -> impl Future<Output = usize> + Send + 'static {
+        let doomed = self.take_matching(|p| agents.contains(&p.agent));
+        assert!(
+            doomed.iter().all(|p| agents.contains(&p.agent)),
+            "only the ending agents' processes are taken"
+        );
         match self.stopped_output.lock() {
             Ok(mut stopped) => {
-                stopped.remove(&agent);
+                for agent in agents {
+                    stopped.remove(agent);
+                }
             }
             Err(error) => tracing::error!(%error, "cannot remove stopped shell output"),
         }
-        count
+        stop_taken(doomed)
     }
 
     /// Give `to` every process `from` holds, as a child that completed hands
@@ -502,7 +520,7 @@ impl BackgroundProcesses {
     /// Stop every process this daemon started, whatever agent owns it. The
     /// daemon must not exit leaving processes nothing can reach.
     pub async fn stop_all(&self) -> usize {
-        let count = self.stop_matching(|_| true).await;
+        let count = stop_taken(self.take_matching(|_| true)).await;
         match self.stopped_output.lock() {
             Ok(mut stopped) => stopped.clear(),
             Err(error) => tracing::error!(%error, "cannot remove stopped shell output"),
@@ -510,8 +528,8 @@ impl BackgroundProcesses {
         count
     }
 
-    async fn stop_matching(&self, wanted: impl Fn(&Process) -> bool) -> usize {
-        let mut doomed: Vec<Process> = match self.processes.lock() {
+    fn take_matching(&self, wanted: impl Fn(&Process) -> bool) -> Vec<Process> {
+        match self.processes.lock() {
             Ok(mut processes) => {
                 let ids: Vec<ProcessId> = processes
                     .values()
@@ -522,21 +540,9 @@ impl BackgroundProcesses {
             }
             Err(_) => {
                 tracing::error!("background registry poisoned; cannot stop processes");
-                return 0;
-            }
-        };
-        let count = doomed.len();
-        for process in &mut doomed {
-            if let Some(stop) = process.stop.take() {
-                let _ = stop.send(());
+                Vec::new()
             }
         }
-        for process in doomed {
-            if let Err(error) = end(process).await {
-                tracing::error!(%error, "cannot finish stopping background process");
-            }
-        }
-        count
     }
 
     /// The process's own exit signal, so a test can await the reap instead of
@@ -587,6 +593,22 @@ async fn end(mut process: Process) -> Result<(), ToolError> {
     Ok(())
 }
 
+/// Stop processes already taken out of the registry. Returns how many.
+async fn stop_taken(mut doomed: Vec<Process>) -> usize {
+    let count = doomed.len();
+    for process in &mut doomed {
+        if let Some(stop) = process.stop.take() {
+            let _ = stop.send(());
+        }
+    }
+    for process in doomed {
+        if let Err(error) = end(process).await {
+            tracing::error!(%error, "cannot finish stopping background process");
+        }
+    }
+    count
+}
+
 /// Own the child and clean its group before publishing completion.
 #[allow(clippy::too_many_arguments)]
 async fn own(
@@ -602,16 +624,18 @@ async fn own(
 ) {
     let pgid = child.id().map(|p| Pid::from_raw(p as i32));
     let exited = tokio::select! {
-        status = child.wait() => Some(status),
+        exit = leader_exited(&mut child) => Some(exit),
         _ = stop => None,
         _ = capture.failed.cancelled() => None,
     };
     let status = match exited {
-        Some(status) => {
+        Some(exit) => {
             let cleanup = match pgid {
-                Some(pgid) => stop_exited_group(pgid, job).await,
+                Some(pgid) => stop_exited_group(pgid).await,
                 None => Ok(()),
             };
+            // Reaped only now: until then its zombie kept the group id from reuse.
+            let status = exit.and(child.wait().await);
             status.and_then(|status| cleanup.map(|_| status))
         }
         None => signal_until_gone(&mut child, pgid, teardown.as_ref()).await,
@@ -668,34 +692,69 @@ fn signal_group(pgid: Pid, signal: Signal) -> std::io::Result<()> {
     }
 }
 
-/// What a job whose shell exited left in its group: SIGTERM, then SIGKILL
-/// once it outlives the stop grace. Elsewhere than Linux it is killed at once.
+/// Wait until the job's shell exits, leaving it unreaped, so its zombie
+/// keeps the group id from reuse while the group is stopped.
 #[cfg(target_os = "linux")]
-async fn stop_exited_group(pgid: Pid, job: ProcessId) -> std::io::Result<()> {
-    use journal::LeaderlessGroup;
-    // Signalled at once after the leader's reap, as before; later only once
-    // every member still carries the job's token, as the group id is free.
-    let group = journal::leaderless_group(pgid, job)?;
-    if matches!(group, LeaderlessGroup::Empty | LeaderlessGroup::Kept) {
+async fn leader_exited(child: &mut tokio::process::Child) -> std::io::Result<()> {
+    let Some(pid) = child.id() else {
+        return child.wait().await.map(drop);
+    };
+    match exited_unreaped(pid).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            tracing::warn!(pid, %error, "cannot wait for the job's shell unreaped; reaping it");
+            child.wait().await.map(drop)
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn leader_exited(child: &mut tokio::process::Child) -> std::io::Result<()> {
+    child.wait().await.map(drop)
+}
+
+/// Wait until `pid`, a child of this process, exits, without reaping it.
+#[cfg(target_os = "linux")]
+async fn exited_unreaped(pid: u32) -> std::io::Result<()> {
+    use rustix::process::{Pid as ProcessPid, WaitId, WaitIdOptions, waitid};
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let raw = i32::try_from(pid)
+        .ok()
+        .and_then(ProcessPid::from_raw)
+        .ok_or_else(|| std::io::Error::other(format!("not a process id: {pid}")))?;
+    let peek = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
+    // Listening before the first look, so an exit between a look and the wait still wakes it.
+    let mut exits = signal(SignalKind::child())?;
+    while waitid(WaitId::Pid(raw), peek)?.is_none() {
+        if exits.recv().await.is_none() {
+            return Err(std::io::Error::other("the SIGCHLD stream closed"));
+        }
+    }
+    Ok(())
+}
+
+/// What a job whose shell exited left in its group: SIGTERM, then SIGKILL
+/// once it outlives the stop grace, unless a member is kept. The shell is
+/// still unreaped, so the group id cannot be reused meanwhile.
+#[cfg(target_os = "linux")]
+async fn stop_exited_group(pgid: Pid) -> std::io::Result<()> {
+    use journal::ExitedGroup;
+    if journal::exited_group(pgid)? != ExitedGroup::Live {
         return Ok(());
     }
     if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
         tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
     }
     wait_group_gone(pgid).await;
-    match journal::leaderless_group(pgid, job)? {
-        LeaderlessGroup::Empty => Ok(()),
-        LeaderlessGroup::Job => signal_group(pgid, Signal::SIGKILL),
-        LeaderlessGroup::Unproven => {
-            tracing::warn!(%pgid, %job, "cannot prove the exited job's group is still its own; not killing it");
-            Ok(())
-        }
-        LeaderlessGroup::Kept => Ok(()),
+    match journal::exited_group(pgid)? {
+        ExitedGroup::Live => signal_group(pgid, Signal::SIGKILL),
+        ExitedGroup::Empty | ExitedGroup::Kept => Ok(()),
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-async fn stop_exited_group(pgid: Pid, _job: ProcessId) -> std::io::Result<()> {
+async fn stop_exited_group(pgid: Pid) -> std::io::Result<()> {
     signal_group(pgid, Signal::SIGKILL)
 }
 

@@ -12,6 +12,7 @@
 use std::time::Duration;
 
 use aether_core::id::AgentId;
+use aether_spawn::SpawnGate;
 
 /// How many SIGKILL rounds catch processes forked while the last one landed.
 #[cfg(target_os = "linux")]
@@ -48,23 +49,55 @@ pub struct AgentProcess {
 /// restarted, and its next engine carries the same tag - nothing more is signalled.
 #[cfg(target_os = "linux")]
 pub async fn reap_agent(agent: AgentId, grace: Duration, ended: impl Fn() -> bool) -> ReapReport {
-    reap_agents(&[agent], grace, |_| ended()).await
+    reap_agents(&[agent], grace, |_| ended(), &[]).await
 }
 
 /// [`reap_agent`] for every one of `agents` at once, as an owner ends with
 /// what it took over or the daemon stops: one scan of the processes per round.
 /// An agent `ended` no longer holds is dropped from the sweep; the rest go on.
+/// Each round holds `gates` from asking `ended` to signalling, so a process an
+/// agent restarted meanwhile starts is never among those signalled.
 #[cfg(target_os = "linux")]
 pub async fn reap_agents(
     agents: &[AgentId],
     grace: Duration,
     ended: impl Fn(AgentId) -> bool,
+    gates: &[SpawnGate],
 ) -> ReapReport {
     if agents.is_empty() {
         return ReapReport::default();
     }
     let mut sweep = linux::Sweep::new(agents).await;
-    reap(&mut sweep, grace, ended).await
+    reap(&mut sweep, grace, Rounds { ended, gates }).await
+}
+
+/// What each signal round of a reap asks first, and holds while it signals.
+#[cfg(target_os = "linux")]
+struct Rounds<'a, F> {
+    ended: F,
+    gates: &'a [SpawnGate],
+}
+
+#[cfg(target_os = "linux")]
+impl<F: Fn(AgentId) -> bool> Rounds<'_, F> {
+    /// Signal the sweep's live members but those in the sorted `skip`, with
+    /// every spawn held off; `None`, signalling nothing, once no agent is ended.
+    fn signal(
+        &self,
+        sweep: &mut linux::Sweep,
+        skip: &[u32],
+        signal: nix::sys::signal::Signal,
+    ) -> Option<Vec<u32>> {
+        let _held: Vec<_> = self.gates.iter().map(SpawnGate::hold).collect();
+        if !sweep.keep_ended(&self.ended) {
+            return None;
+        }
+        let targets = unsignalled(&sweep.members(), skip);
+        if !targets.is_empty() {
+            sweep.signal(&targets, signal);
+        }
+        Some(targets)
+    }
 }
 
 /// The live processes a sweep of `agents` would signal now, by pid.
@@ -105,7 +138,7 @@ pub async fn agents_with_processes() -> Vec<AgentId> {
 async fn reap(
     sweep: &mut linux::Sweep,
     grace: Duration,
-    ended: impl Fn(AgentId) -> bool,
+    rounds: Rounds<'_, impl Fn(AgentId) -> bool>,
 ) -> ReapReport {
     use nix::sys::signal::Signal;
 
@@ -115,15 +148,11 @@ async fn reap(
     // The first round always runs: even a zero grace sends SIGTERM first.
     while !alive.is_empty() {
         if !unsignalled(&alive, &report.terminated).is_empty() {
-            if !sweep.keep_ended(&ended) {
+            let Some(fresh) = rounds.signal(sweep, &report.terminated, Signal::SIGTERM) else {
                 return stopped_early(sweep, report);
-            }
-            let fresh = unsignalled(&sweep.members(), &report.terminated);
-            if !fresh.is_empty() {
-                sweep.signal(&fresh, Signal::SIGTERM);
-                report.terminated.extend(fresh);
-                report.terminated.sort_unstable();
-            }
+            };
+            report.terminated.extend(fresh);
+            report.terminated.sort_unstable();
         }
         if tokio::time::Instant::now() >= deadline {
             break;
@@ -135,15 +164,13 @@ async fn reap(
         if sweep.members().is_empty() {
             break;
         }
-        if !sweep.keep_ended(&ended) {
+        let Some(killed) = rounds.signal(sweep, &[], Signal::SIGKILL) else {
             return stopped_early(sweep, report);
-        }
-        let alive = sweep.members();
-        if alive.is_empty() {
+        };
+        if killed.is_empty() {
             break;
         }
-        sweep.signal(&alive, Signal::SIGKILL);
-        report.killed.extend(&alive);
+        report.killed.extend(killed);
         tokio::time::sleep(linux::POLL).await;
     }
     report.killed.sort_unstable();
@@ -186,6 +213,7 @@ pub async fn reap_agents(
     _agents: &[AgentId],
     _grace: Duration,
     _ended: impl Fn(AgentId) -> bool,
+    _gates: &[SpawnGate],
 ) -> ReapReport {
     ReapReport::default()
 }

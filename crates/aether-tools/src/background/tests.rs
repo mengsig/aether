@@ -336,6 +336,38 @@ async fn leader_exit_kills_descendants_and_preserves_written_output() {
     assert!(!p.output_path.parent().unwrap().exists());
 }
 
+/// A shell that exits while its group outlives SIGTERM stays unreaped until
+/// the group is killed, so the group id cannot be reused meanwhile.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_exited_shell_pins_its_group_until_the_group_is_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    reg.start(agent,
+        "echo $$ > leader; bash -c 'trap \"\" TERM; echo $BASHPID > held.tmp && mv held.tmp held; while :; do sleep 1; done' & while [ ! -s held ]; do sleep 0.01; done",
+        &ctx_in(dir.path())).unwrap();
+    let held = loop {
+        if let Some(pid) = read_pid(&dir.path().join("held")) {
+            break pid;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    let leader = read_pid(&dir.path().join("leader")).expect("leader pid");
+    let zombie = || {
+        std::fs::read_to_string(format!("/proc/{leader}/stat")).is_ok_and(|s| s.contains(") Z "))
+    };
+    wait_until("the shell to exit unreaped", zombie).await;
+    assert!(
+        alive(held),
+        "the member ignoring SIGTERM outlives the grace's start"
+    );
+
+    wait_until("the job to settle", || !reg.list(agent).unwrap()[0].running).await;
+    assert!(!alive(held), "the group is killed after the grace");
+    assert!(!zombie(), "the shell is reaped once its group is stopped");
+}
+
 /// A self-exiting job's group is not signalled while a member is kept: the
 /// kept member survives and the rest are still stopped one by one.
 #[cfg(target_os = "linux")]

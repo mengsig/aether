@@ -23,7 +23,9 @@ release is also the text of its GitHub release.
   engine, and a reap waits for an engine still joining its scope. What a
   background shell job leaves running when it ends or is stopped, in its
   process group or detached, including what that forks meanwhile, gets
-  `SIGTERM` and a 2 s grace before `SIGKILL`.
+  `SIGTERM` and a 2 s grace before `SIGKILL`; the shell of a job that exits
+  on its own is reaped only once its group is stopped, so the group id is
+  never reused under the signal.
   Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
   nothing changes.
 - **A delegated child that completes hands what it left running to its parent

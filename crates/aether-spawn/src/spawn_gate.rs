@@ -1,6 +1,6 @@
 //! Refuses new host processes once a sweep for them has begun.
 
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock, RwLockWriteGuard};
 
 /// Whether host processes may still start. Clones share one gate. A spawn
 /// holds it until its child has exec'd, so whoever closes or fences it after
@@ -47,7 +47,18 @@ impl SpawnGate {
     pub fn close(&self) {
         *self.0.write().unwrap_or_else(PoisonError::into_inner) = true;
     }
+
+    /// Wait out the spawns under way, then hold every later one off until the
+    /// guard drops, so what a sweep decides and signals meanwhile stays true.
+    pub fn hold(&self) -> SpawnHold<'_> {
+        SpawnHold(self.0.write().unwrap_or_else(PoisonError::into_inner))
+    }
 }
+
+/// Spawns wait while this lives; see [`SpawnGate::hold`].
+#[must_use = "spawns are held off only while the guard lives"]
+#[derive(Debug)]
+pub struct SpawnHold<'a>(#[allow(dead_code)] RwLockWriteGuard<'a, bool>);
 
 impl PartialEq for SpawnGate {
     fn eq(&self, other: &Self) -> bool {
@@ -124,6 +135,25 @@ mod tests {
             "returned while a spawn was under way"
         );
         done_rx
+    }
+
+    #[test]
+    fn a_hold_waits_for_a_spawn_under_way_and_holds_off_the_next() {
+        let gate = SpawnGate::default();
+        let paused = pause_a_spawn(&gate);
+        let holder = gate.clone();
+        let (release, released) = mpsc::channel::<()>();
+        let held = returns_while_paused(move || {
+            let _hold = holder.hold();
+            released.recv().unwrap();
+        });
+        paused.finish.send(()).unwrap();
+        assert_eq!(paused.thread.join().unwrap(), Ok(()));
+        let spawner = gate.clone();
+        let next = returns_while_paused(move || assert_eq!(spawner.spawn(|| false, || ()), Ok(())));
+        release.send(()).unwrap();
+        held.recv().expect("the hold ends once released");
+        next.recv().expect("the next spawn runs once the hold ends");
     }
 
     #[test]

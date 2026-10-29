@@ -183,7 +183,7 @@ pub fn ignore_sigint() -> std::io::Result<()> {
 
 mod spawn_gate;
 
-pub use spawn_gate::{SpawnGate, SpawnRefused};
+pub use spawn_gate::{SpawnGate, SpawnHold, SpawnRefused};
 #[cfg(target_os = "linux")]
 pub use unix::{StartGate, gate_start};
 #[cfg(unix)]
