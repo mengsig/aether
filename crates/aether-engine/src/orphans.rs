@@ -215,9 +215,6 @@ fn kill_tagged(token: &str) -> io::Result<()> {
     assert!(!token.is_empty(), "an empty token would match any process");
     let entry_token = format!("{TOKEN_ENV}={token}");
     let own = std::process::id();
-    let own_agent = std::env::var(aether_core::agent::PROCESS_AGENT_ENV)
-        .ok()
-        .map(|tag| format!("{}={tag}", aether_core::agent::PROCESS_AGENT_ENV));
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
@@ -250,7 +247,7 @@ fn kill_tagged(token: &str) -> io::Result<()> {
         if !environment
             .split(|b| *b == 0)
             .any(|e| e == entry_token.as_bytes())
-            || spared(&environment, own_agent.as_deref())
+            || spared(&environment)
         {
             continue;
         }
@@ -263,20 +260,15 @@ fn kill_tagged(token: &str) -> io::Result<()> {
 }
 
 /// Whether a token carrier with `environment` is left alone: it runs for an
-/// agent, whose ownership the runtime's start sweep decides, or is kept. The
-/// tag `own_agent` the daemon inherited from an agent's shell names no agent of its own.
+/// agent, whose ownership the runtime's start sweep decides, or is kept. A tag
+/// the daemon inherited from an agent's shell spares too: that agent's end,
+/// under the daemon that runs it, stops what carries it.
 #[cfg(target_os = "linux")]
-fn spared(environment: &[u8], own_agent: Option<&str>) -> bool {
+fn spared(environment: &[u8]) -> bool {
     let agent = format!("{}=", aether_core::agent::PROCESS_AGENT_ENV);
     let keep = format!("{}=1", aether_core::agent::PROCESS_KEEP_ENV);
-    debug_assert!(
-        own_agent.is_none_or(|own| own.starts_with(&agent)),
-        "the daemon's own tag is a whole entry"
-    );
     environment.split(|b| *b == 0).any(|entry| {
-        let tagged = entry.len() > agent.len()
-            && entry.starts_with(agent.as_bytes())
-            && own_agent.is_none_or(|own| entry != own.as_bytes());
+        let tagged = entry.len() > agent.len() && entry.starts_with(agent.as_bytes());
         tagged || entry == keep.as_bytes()
     })
 }
@@ -396,6 +388,8 @@ mod tests {
         let mut child = std::process::Command::new("sh")
             .args(["-c", "setsid sleep 31 & wait"])
             .env(TOKEN_ENV, token)
+            .env_remove(aether_core::agent::PROCESS_AGENT_ENV)
+            .env_remove(aether_core::agent::PROCESS_KEEP_ENV)
             .process_group(0)
             .spawn()
             .unwrap();
@@ -432,7 +426,12 @@ mod tests {
     #[allow(clippy::unwrap_used)]
     fn carrier(token: &str, extra: Option<(&str, &str)>) -> std::process::Child {
         let mut command = std::process::Command::new("sleep");
-        command.arg("30").env(TOKEN_ENV, token).process_group(0);
+        command
+            .arg("30")
+            .env(TOKEN_ENV, token)
+            .env_remove(aether_core::agent::PROCESS_AGENT_ENV)
+            .env_remove(aether_core::agent::PROCESS_KEEP_ENV)
+            .process_group(0);
         if let Some((key, value)) = extra {
             command.env(key, value);
         }
@@ -458,6 +457,42 @@ mod tests {
             child.kill().unwrap();
             child.wait().unwrap();
         }
+    }
+
+    /// Runs the named test of this binary again with the daemon tagged `tag`.
+    #[allow(clippy::unwrap_used)]
+    fn rerun_tagged(test: &str, tag: &str) -> std::process::ExitStatus {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--test-threads=1"])
+            .env(aether_core::agent::PROCESS_AGENT_ENV, tag)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap()
+    }
+
+    #[test]
+    fn spares_a_carrier_tagged_like_the_daemon_itself() {
+        use aether_core::agent::PROCESS_AGENT_ENV;
+        const TAG: &str = "agt-the-daemon-inherited-this-tag";
+        const NAME: &str = "orphans::tests::spares_a_carrier_tagged_like_the_daemon_itself";
+        if std::env::var(PROCESS_AGENT_ENV).as_deref() != Ok(TAG) {
+            assert!(rerun_tagged(NAME, TAG).success(), "the tagged rerun passes");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let token = "tok-spares-the-daemon-tag-0001";
+        let mut server = carrier(token, Some((PROCESS_AGENT_ENV, TAG)));
+        std::fs::write(dir.path().join("4194300"), format!("1\n{token}")).unwrap();
+        reap(dir.path()).unwrap();
+        let killed = exits_soon(&mut server);
+        if !killed {
+            server.kill().unwrap();
+            server.wait().unwrap();
+        }
+        assert!(
+            !killed,
+            "the agent the daemon was started from keeps its server"
+        );
     }
 
     #[test]
