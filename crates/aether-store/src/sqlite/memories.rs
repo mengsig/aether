@@ -32,7 +32,7 @@ impl SqliteStore {
         }
         args.push(Box::new(memory_limit(query.limit)));
         sql.push_str(&format!(" LIMIT ?{}", args.len()));
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
         let records: Vec<MemoryRecord> = Self::read_many(&conn, &sql, &refs)?;
         if let Some(record) = records.iter().find(|record| {

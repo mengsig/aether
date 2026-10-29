@@ -39,7 +39,7 @@ fn decode((device, updated_at, body): RawRow) -> Result<PushSubscriptionRow> {
 
 impl SqliteStore {
     pub fn push_subscription(&self, device: DeviceId) -> Result<Option<PushSubscriptionRow>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         conn.query_row(
             "SELECT device, updated_at, body FROM push_subscriptions WHERE device = ?1",
             [device.to_string()],
@@ -52,7 +52,7 @@ impl SqliteStore {
 
     /// Every subscription, in device id order.
     pub fn push_subscriptions(&self) -> Result<Vec<PushSubscriptionRow>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let mut statement = conn
             .prepare("SELECT device, updated_at, body FROM push_subscriptions ORDER BY device")?;
         let rows = statement.query_map([], raw)?;

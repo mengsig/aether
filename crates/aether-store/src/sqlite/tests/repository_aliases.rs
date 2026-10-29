@@ -164,7 +164,7 @@ fn the_moved_records_keep_everything_but_their_scope(store: &SqliteStore, filed:
     }
     // An in-memory store reads on its one connection: release it before querying.
     let rows: Vec<(String, String)> = {
-        let conn = store.read_conn();
+        let conn = store.read_conn().expect("a read connection");
         let mut statement = conn.prepare("SELECT scope, body FROM memories").unwrap();
         statement
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))

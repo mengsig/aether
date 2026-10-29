@@ -48,6 +48,25 @@ clients on 17 through 24 see it as `usage_limit`.
   at most eight outages of one turn, so an engine that fails after every bit
   of progress still gives up. Claude Code's synthetic API-error message is
   not progress.
+- **`status` and `get_tree` answer while the daemon does slow work (#333).**
+  A connection ran its commands one at a time, so the TUI's polls waited
+  behind any slow request it had sent first. One example is a write waiting
+  out a database lock. Every read in the daemon also shared one store
+  connection, so a long transcript read held every other client's `status`.
+  The client then gave up with "the daemon did not answer `status` within
+  60s". Reads on a connection now run side by side as soon as they are read,
+  off the threads that answer sockets; other commands still run one at a
+  time, in order, and `shutdown` still waits for them. The store reads on a
+  pool of up to 32 connections. A request over two seconds is logged with
+  its command and with where its time went, as are a slow `status` section
+  and a long wait for a store connection. The timeout message points at
+  that log. On a 1.8 GB store with seven clients reading 25 MB transcripts,
+  the slowest `get_tree` went from 2.0 s to 0.7 s and the slowest `status`
+  from 2.4 s to 1.6 s. Behind a write held by a database lock, they now
+  answer in milliseconds instead of waiting for that write. Replies on one
+  connection can now arrive out of request order; every Aether client
+  already matches them by `id` (see
+  [Reply order](docs/protocol.md#reply-order)).
 
 ## 1.2.7
 

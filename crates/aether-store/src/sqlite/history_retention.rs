@@ -76,7 +76,7 @@ impl SqliteStore {
         before: Timestamp,
         _hold: &Hold<'_>,
     ) -> Result<RunExpiry> {
-        let mut conn = self.conn.lock();
+        let mut conn = self.write_conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let id = run.to_string();
         if let Some(kept) = expiry_blocker(&tx, &id, before, &self.guard_passes)? {
@@ -180,7 +180,7 @@ impl SqliteStore {
     // Guard scans must not queue normal readers or commits behind whole-table reads.
     fn read_history<T>(&self, read: impl FnOnce(&Transaction<'_>) -> Result<T>) -> Result<T> {
         let Some(path) = &self.path else {
-            let mut conn = self.read_conn();
+            let mut conn = self.read_conn()?;
             return read(&conn.transaction()?);
         };
         let mut conn = Connection::open_with_flags(

@@ -24,6 +24,7 @@ mod event_blobs;
 mod event_queries;
 mod history_retention;
 mod quarantine;
+mod read_pool;
 pub use history_retention::{HistoryScreen, RunExpiry};
 mod ledger;
 mod memories;
@@ -44,12 +45,13 @@ mod write_tally;
 const KEEP_TEMP_IN_MEMORY: &str = "PRAGMA temp_store = MEMORY;";
 
 /// A SQLite-backed store. Writes share one connection, serialized by a mutex:
-/// the daemon is the single writer. A file store reads on a second connection
-/// and checkpoints its WAL on a third, so neither waits behind a commit.
+/// the daemon is the single writer. A file store reads on connections of their
+/// own, one per concurrent read, and checkpoints its WAL on another, so no
+/// read waits behind a commit or another read.
 pub struct SqliteStore {
     conn: Mutex<Connection>,
     /// Read-only; `None` in memory, where reads share `conn`.
-    reader: Option<Mutex<Connection>>,
+    reader: Option<read_pool::ReadPool>,
     checkpointer: Option<checkpoint::Checkpointer>,
     /// The database file, for work that opens a connection of its own; `None` in memory.
     path: Option<PathBuf>,
@@ -168,13 +170,7 @@ impl SqliteStore {
         }
         store.recover_staged_blobs()?;
         store.retry_evicted_blobs()?;
-        let reader = Connection::open_with_flags(
-            path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        reader.busy_timeout(std::time::Duration::from_secs(5))?;
-        reader.execute_batch(KEEP_TEMP_IN_MEMORY)?;
-        store.reader = Some(Mutex::new(reader));
+        store.reader = Some(read_pool::ReadPool::open(path)?);
         store.path = Some(path.to_path_buf());
         store.checkpointer = Some(checkpoint::Checkpointer::start(
             path,
@@ -256,14 +252,35 @@ impl SqliteStore {
         })
     }
 
-    /// The connection for reads. Every commit is visible to it once `commit`
+    /// A connection for reads. Every commit is visible to it once `commit`
     /// returns; it never sees one in progress.
-    pub(super) fn read_conn(&self) -> MutexGuard<'_, Connection> {
-        self.reader.as_ref().unwrap_or(&self.conn).lock()
+    pub(super) fn read_conn(&self) -> Result<ReadConn<'_>> {
+        match &self.reader {
+            Some(pool) => Ok(ReadConn::Pooled(pool.lease()?)),
+            None => Ok(ReadConn::Shared(self.conn.lock())),
+        }
+    }
+
+    /// The write connection. A wait for it this long is logged, so a slow
+    /// request's log shows that it queued behind another write.
+    pub(super) fn write_conn(&self) -> MutexGuard<'_, Connection> {
+        if let Some(conn) = self.conn.try_lock() {
+            return conn;
+        }
+        let started = std::time::Instant::now();
+        let conn = self.conn.lock();
+        let waited = started.elapsed();
+        if waited >= read_pool::SLOW_WAIT {
+            tracing::warn!(
+                waited_ms = waited.as_millis() as u64,
+                "a store write waited for the write connection: another write held it"
+            );
+        }
+        conn
     }
 
     pub(super) fn read_one<T: DeserializeOwned>(&self, sql: &str, id: &str) -> Result<Option<T>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let body: Option<String> = conn.query_row(sql, [id], |r| r.get(0)).optional()?;
         body.map(|b| serde_json::from_str(&b).map_err(StoreError::from))
             .transpose()
@@ -285,6 +302,33 @@ impl SqliteStore {
 
     pub(super) fn artifact_path(&self, id: ArtifactId) -> Option<PathBuf> {
         self.artifact_dir.as_ref().map(|d| d.join(id.to_string()))
+    }
+}
+
+/// A connection a read holds: its own from the pool, or in memory the one
+/// connection every read and write shares.
+pub(super) enum ReadConn<'a> {
+    Pooled(read_pool::Lease<'a>),
+    Shared(MutexGuard<'a, Connection>),
+}
+
+impl std::ops::Deref for ReadConn<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        match self {
+            Self::Pooled(lease) => lease,
+            Self::Shared(guard) => guard,
+        }
+    }
+}
+
+impl std::ops::DerefMut for ReadConn<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        match self {
+            Self::Pooled(lease) => lease,
+            Self::Shared(guard) => guard,
+        }
     }
 }
 
