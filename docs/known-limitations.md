@@ -334,8 +334,8 @@ isolation depend on the installed engine version and the platform; see
   stops with it. A server an agent needs across a restart should be detached
   from an engine's own shell or a shell command that is not a background job,
   where the sweeps treat it as the agent's.
-- A start after a crash rebuilds who holds a completed agent's processes from
-  the order the agents ended in, since the hand-ups were recorded only in
-  memory. An ancestor that was skipped, then woke and ended again after the
-  child, is taken to have held them; where the order cannot be told, as with
-  equal end times, the start spares them.
+- The daemon records hand-ups only in memory, so a start after a crash
+  cannot tell whether an ancestor that has since failed or been cancelled
+  held a completed child's processes, which its end would have stopped, or
+  was handed past. The start spares them: they stay with the nearest live
+  ancestor and stop with its end.
