@@ -154,11 +154,8 @@ impl Runtime {
         let grace = self.models.config().agents.reap_grace();
         let me = self.me.clone();
         handle.spawn(async move {
-            // A restart of any of them means the tag is its new engine's.
-            let ended = || {
-                me.upgrade()
-                    .is_some_and(|runtime| owned.iter().all(|id| runtime.has_ended(*id)))
-            };
+            // A restarted agent's tag is its new engine's, so the sweep spares it.
+            let ended = |id| me.upgrade().is_some_and(|runtime| runtime.has_ended(id));
             let report = aether_engine::reap::reap_agents(&owned, grace, ended).await;
             if report.is_empty() {
                 return;
@@ -194,9 +191,10 @@ impl Runtime {
                 tracing::warn!(%agent, %owner, "runtime gone before the hand-up was recorded");
                 return;
             };
-            if let Some(jobs) = &jobs {
-                runtime.settle_late_jobs(jobs, owner).await;
-            }
+            // With no live owner left, the ends that stopped it stopped all of this.
+            let Some(owner) = runtime.settle_owner(jobs.as_deref(), owner).await else {
+                return;
+            };
             if processes.is_empty() && handed_jobs.is_empty() {
                 return;
             }
@@ -204,19 +202,33 @@ impl Runtime {
         });
     }
 
-    /// `owner` may have ended since it was chosen, its reap done before the
-    /// jobs arrived: pass them on, or stop them, as its own end would have.
-    async fn settle_late_jobs(&self, jobs: &BackgroundProcesses, owner: AgentId) {
-        if !self.has_ended(owner) {
-            return;
-        }
-        match self.handed_up_to(owner) {
-            Some(next) => drop(hand_up_jobs(jobs, &[owner], next)),
-            None => {
-                let stopped = jobs.stop_agent(owner).await;
-                tracing::info!(%owner, stopped, "stopped jobs handed to an owner that had ended");
+    /// The live agent that holds what was handed to `owner`. An owner that
+    /// ended before the jobs arrived, its reap done, passes them on or stops
+    /// them as its own end would have; `None` once they are stopped.
+    async fn settle_owner(
+        &self,
+        jobs: Option<&BackgroundProcesses>,
+        mut owner: AgentId,
+    ) -> Option<AgentId> {
+        for _ in 0..MAX_ANCESTRY {
+            if !self.has_ended(owner) {
+                return Some(owner);
             }
+            let next = self.handed_up_to(owner);
+            assert_ne!(next, Some(owner), "an ended owner hands nothing to itself");
+            match (next, jobs) {
+                (Some(next), Some(jobs)) => drop(hand_up_jobs(jobs, &[owner], next)),
+                (Some(_), None) => {}
+                (None, Some(jobs)) => {
+                    let stopped = jobs.stop_agent(owner).await;
+                    tracing::info!(%owner, stopped, "stopped jobs handed to an owner that had ended");
+                }
+                (None, None) => {}
+            }
+            owner = next?;
         }
+        tracing::error!(%owner, "the hand-up walk exceeded {MAX_ANCESTRY} agents");
+        None
     }
 
     /// Record the hand-up on `agent` and tell `owner` what now runs for it.
@@ -317,7 +329,7 @@ impl Runtime {
             .agents
             .reap_grace()
             .min(SHUTDOWN_REAP_GRACE);
-        let report = aether_engine::reap::reap_agents(&ours, grace, || true).await;
+        let report = aether_engine::reap::reap_agents(&ours, grace, |_| true).await;
         report.terminated.len()
     }
 

@@ -100,7 +100,7 @@ pub(crate) async fn adopt(pid: Option<u32>, adoption: Adoption) {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) use linux::{Unit, agent_units, agents_with_units, in_unit};
+pub(crate) use linux::{Unit, agent_units, agents_with_units, belongs_to, in_unit};
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -130,6 +130,11 @@ mod linux {
 
     fn unit_prefix(agent: AgentId) -> String {
         format!("{UNIT_STEM}{agent}-")
+    }
+
+    /// Whether `unit` is a scope of `agent`'s engines.
+    pub(crate) fn belongs_to(unit: &Unit, agent: AgentId) -> bool {
+        unit.name.starts_with(&unit_prefix(agent))
     }
 
     fn disabled() -> bool {

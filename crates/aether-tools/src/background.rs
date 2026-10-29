@@ -675,7 +675,8 @@ async fn stop_exited_group(pgid: Pid, job: ProcessId) -> std::io::Result<()> {
     use journal::LeaderlessGroup;
     // Signalled at once after the leader's reap, as before; later only once
     // every member still carries the job's token, as the group id is free.
-    if journal::leaderless_group(pgid, job)? == LeaderlessGroup::Empty {
+    let group = journal::leaderless_group(pgid, job)?;
+    if matches!(group, LeaderlessGroup::Empty | LeaderlessGroup::Kept) {
         return Ok(());
     }
     if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
@@ -689,6 +690,7 @@ async fn stop_exited_group(pgid: Pid, job: ProcessId) -> std::io::Result<()> {
             tracing::warn!(%pgid, %job, "cannot prove the exited job's group is still its own; not killing it");
             Ok(())
         }
+        LeaderlessGroup::Kept => Ok(()),
     }
 }
 

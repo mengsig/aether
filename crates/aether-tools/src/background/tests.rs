@@ -336,6 +336,26 @@ async fn leader_exit_kills_descendants_and_preserves_written_output() {
     assert!(!p.output_path.parent().unwrap().exists());
 }
 
+/// A self-exiting job's group is not signalled while a member is kept: the
+/// kept member survives and the rest are still stopped one by one.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn leader_exit_spares_a_kept_member_of_its_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    reg.start(agent,
+        "AETHER_KEEP_PROCESS=1 sleep 300 & echo $! > kept; sleep 301 & echo $! > swept.tmp && mv swept.tmp swept",
+        &ctx_in(dir.path())).unwrap();
+    wait_until("leader exit", || !reg.list(agent).unwrap()[0].running).await;
+    let kept = read_pid(&dir.path().join("kept")).expect("kept pid");
+    let swept = read_pid(&dir.path().join("swept")).expect("swept pid");
+    wait_until("the unkept member to stop", || !alive(swept)).await;
+    let survived = alive(kept);
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(kept), Signal::SIGKILL).ok();
+    assert!(survived, "the kept member of the group outlives the job");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn stop_escalates_after_leader_exits_on_term() {
     let dir = tempfile::tempdir().unwrap();

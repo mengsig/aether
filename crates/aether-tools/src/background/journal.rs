@@ -348,8 +348,12 @@ fn readable_environ(process: &Path) -> io::Result<Option<Vec<u8>>> {
 /// Whether a process with `environment` is one of the job's that a sweep
 /// signals: it carries `token` and was not kept past its owner.
 fn swept(environment: &[u8], token: &str) -> bool {
-    let keep = format!("{}=1", aether_core::agent::PROCESS_KEEP_ENV);
-    carries(environment, token) && !carries(environment, &keep)
+    carries(environment, token) && !carries(environment, &keep_entry())
+}
+
+/// The environment entry that keeps a process past its owner.
+fn keep_entry() -> String {
+    format!("{}=1", aether_core::agent::PROCESS_KEEP_ENV)
 }
 
 fn carries(environment: &[u8], token: &str) -> bool {
@@ -383,14 +387,17 @@ pub(crate) enum LeaderlessGroup {
     Empty,
     /// Every live member carries the job's token.
     Job,
-    /// A live member does not, is kept past its owner, or could not be read.
+    /// A live member does not carry it, or could not be read.
     Unproven,
+    /// A live member is marked to be kept past its owner, so the group is
+    /// not signalled as a whole.
+    Kept,
 }
 
 pub(crate) fn leaderless_group(pgid: Pid, job: ProcessId) -> io::Result<LeaderlessGroup> {
     assert!(pgid.as_raw() > 1, "not a job's group: {pgid}");
     let token = format!("{JOB_ENV}={job}");
-    let mut found = false;
+    let mut group = LeaderlessGroup::Empty;
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
         if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
@@ -404,17 +411,20 @@ pub(crate) fn leaderless_group(pgid: Pid, job: ProcessId) -> io::Result<Leaderle
         if member.group != pgid.as_raw() || !member.running() {
             continue;
         }
-        if !readable_environ(&entry.path())?.is_some_and(|environment| swept(&environment, &token))
+        let environment = readable_environ(&entry.path())?;
+        if environment
+            .as_ref()
+            .is_some_and(|environment| carries(environment, &keep_entry()))
         {
-            return Ok(LeaderlessGroup::Unproven);
+            return Ok(LeaderlessGroup::Kept);
         }
-        found = true;
+        if !environment.is_some_and(|environment| carries(&environment, &token)) {
+            group = LeaderlessGroup::Unproven;
+        } else if group == LeaderlessGroup::Empty {
+            group = LeaderlessGroup::Job;
+        }
     }
-    Ok(if found {
-        LeaderlessGroup::Job
-    } else {
-        LeaderlessGroup::Empty
-    })
+    Ok(group)
 }
 
 fn disappeared(error: &io::Error) -> bool {

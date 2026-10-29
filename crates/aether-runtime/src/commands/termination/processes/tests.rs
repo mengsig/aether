@@ -97,6 +97,29 @@ async fn only_a_completed_agent_with_a_live_ancestor_hands_up() {
     );
 }
 
+/// What reaches an owner that has since ended goes on to the next live one,
+/// past every ended hop, and to no one once the root has ended.
+#[tokio::test]
+async fn a_late_hand_up_settles_with_the_live_owner_it_would_have_reached() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let root = idle_agent(&runtime, None).await;
+    let upper = idle_agent(&runtime, Some(root)).await;
+    let middle = idle_agent(&runtime, Some(upper)).await;
+    assert_eq!(runtime.settle_owner(None, middle).await, Some(middle));
+
+    end(&runtime, middle, completed());
+    end(&runtime, upper, completed());
+    assert_eq!(
+        runtime.settle_owner(None, middle).await,
+        Some(root),
+        "past two ended owners"
+    );
+
+    end(&runtime, root, AgentStatus::Cancelled { reason: None });
+    assert_eq!(runtime.settle_owner(None, middle).await, None);
+}
+
 #[test]
 fn the_message_names_each_job_and_process_and_caps_the_list() {
     let processes: Vec<AgentProcess> = (2..=(HANDED_UP_LISTED as u32 + 3))

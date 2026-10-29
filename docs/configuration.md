@@ -511,7 +511,10 @@ What an agent leaves running when it ends depends on how it ends.
   child records the same as an `agent.processes_handed_up` event with `to`,
   `pids`, `processes` and `jobs`. A child that delegated a server to run on
   thus leaves it running for its parent to use. The message arrives once the
-  child's turn is over, after the result of its task.
+  child's turn is over, after the result of its task. If the ancestor ended
+  meanwhile, the jobs go on as its own end would have sent them, and the
+  message and event name the live agent that holds them in the end; when
+  none is left they are stopped and no message is sent.
 - Any other end stops them: a child that fails or is cancelled, the root of
   a task tree (an agent with no live ancestor) however it ends, and an agent
   that runs out of time or budget. The ending agent's processes are stopped
@@ -528,18 +531,23 @@ and in `survived` any still alive after that. Only processes of the daemon's
 own user are signalled, and never the daemon itself. A turn cancelled as its
 agent ended starts no host command or engine after the reap begins; one it was
 already starting is in place before the reap looks, and the reap waits, up to
-11 seconds, for an engine still being moved into its scope. If the agent is restarted
-during the grace, the reap stops, so its next engine is spared.
+11 seconds, for an engine still being moved into its scope. If an agent is restarted
+during the grace, the reap drops it, so its next engine is spared, and goes on
+stopping the other agents' processes.
 
 A process meant to outlive the whole task tree, and the daemon, can be kept:
 start it with `AETHER_KEEP_PROCESS=1` in its environment, which what it starts
 inherits. No sweep signals such a process: not at an agent's end, not when the
 background shell job that started it ends or is stopped, and not at a daemon
 stop. Each process is signalled on its own, scopes included, so a kept one
-inside an engine's scope is spared too. Stopping a turn or a background job
-still signals its whole process group, so a kept process must also leave it,
-for example `AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept
-process afterwards; that is up to whoever started it.
+inside an engine's scope is spared too; there, a process whose environment
+cannot be read (a non-dumpable one) is treated as kept, as the mark cannot be
+ruled out. A background job whose shell exits leaves its group unsignalled
+while a member carries the mark. Stopping a turn or a background job, the
+end of a foreground command, and recovery after a crash still signal the
+whole process group, so a kept process must also leave it, for example
+`AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept process
+afterwards; that is up to whoever started it.
 
 A daemon shutdown ends no agent, but it leaves none of their processes
 running either. It stops each running engine's process group, as for any

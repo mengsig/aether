@@ -48,22 +48,23 @@ pub struct AgentProcess {
 /// restarted, and its next engine carries the same tag - nothing more is signalled.
 #[cfg(target_os = "linux")]
 pub async fn reap_agent(agent: AgentId, grace: Duration, ended: impl Fn() -> bool) -> ReapReport {
-    reap_agents(&[agent], grace, ended).await
+    reap_agents(&[agent], grace, |_| ended()).await
 }
 
 /// [`reap_agent`] for every one of `agents` at once, as an owner ends with
 /// what it took over or the daemon stops: one scan of the processes per round.
+/// An agent `ended` no longer holds is dropped from the sweep; the rest go on.
 #[cfg(target_os = "linux")]
 pub async fn reap_agents(
     agents: &[AgentId],
     grace: Duration,
-    ended: impl Fn() -> bool,
+    ended: impl Fn(AgentId) -> bool,
 ) -> ReapReport {
     if agents.is_empty() {
         return ReapReport::default();
     }
-    let sweep = linux::Sweep::new(agents).await;
-    reap(&sweep, grace, ended).await
+    let mut sweep = linux::Sweep::new(agents).await;
+    reap(&mut sweep, grace, ended).await
 }
 
 /// The live processes a sweep of `agents` would signal now, by pid.
@@ -101,7 +102,11 @@ pub async fn agents_with_processes() -> Vec<AgentId> {
 }
 
 #[cfg(target_os = "linux")]
-async fn reap(sweep: &linux::Sweep, grace: Duration, ended: impl Fn() -> bool) -> ReapReport {
+async fn reap(
+    sweep: &mut linux::Sweep,
+    grace: Duration,
+    ended: impl Fn(AgentId) -> bool,
+) -> ReapReport {
     use nix::sys::signal::Signal;
 
     let mut report = ReapReport::default();
@@ -109,18 +114,16 @@ async fn reap(sweep: &linux::Sweep, grace: Duration, ended: impl Fn() -> bool) -
     let mut alive = sweep.members();
     // The first round always runs: even a zero grace sends SIGTERM first.
     while !alive.is_empty() {
-        let fresh: Vec<u32> = alive
-            .iter()
-            .copied()
-            .filter(|pid| report.terminated.binary_search(pid).is_err())
-            .collect();
-        if !fresh.is_empty() {
-            if !ended() {
+        if !unsignalled(&alive, &report.terminated).is_empty() {
+            if !sweep.keep_ended(&ended) {
                 return stopped_early(sweep, report);
             }
-            sweep.signal(&fresh, Signal::SIGTERM);
-            report.terminated.extend(fresh);
-            report.terminated.sort_unstable();
+            let fresh = unsignalled(&sweep.members(), &report.terminated);
+            if !fresh.is_empty() {
+                sweep.signal(&fresh, Signal::SIGTERM);
+                report.terminated.extend(fresh);
+                report.terminated.sort_unstable();
+            }
         }
         if tokio::time::Instant::now() >= deadline {
             break;
@@ -129,12 +132,15 @@ async fn reap(sweep: &linux::Sweep, grace: Duration, ended: impl Fn() -> bool) -
         alive = sweep.members();
     }
     for _ in 0..KILL_ROUNDS {
+        if sweep.members().is_empty() {
+            break;
+        }
+        if !sweep.keep_ended(&ended) {
+            return stopped_early(sweep, report);
+        }
         let alive = sweep.members();
         if alive.is_empty() {
             break;
-        }
-        if !ended() {
-            return stopped_early(sweep, report);
         }
         sweep.signal(&alive, Signal::SIGKILL);
         report.killed.extend(&alive);
@@ -145,6 +151,17 @@ async fn reap(sweep: &linux::Sweep, grace: Duration, ended: impl Fn() -> bool) -
     report.survived = sweep.members();
     log(sweep.agents(), &report);
     report
+}
+
+/// The pids of `alive` not yet in `terminated`, which is sorted.
+#[cfg(target_os = "linux")]
+fn unsignalled(alive: &[u32], terminated: &[u32]) -> Vec<u32> {
+    debug_assert!(terminated.is_sorted(), "terminated pids are kept sorted");
+    alive
+        .iter()
+        .copied()
+        .filter(|pid| terminated.binary_search(pid).is_err())
+        .collect()
 }
 
 #[cfg(target_os = "linux")]
@@ -168,7 +185,7 @@ pub async fn reap_agent(agent: AgentId, _grace: Duration, _ended: impl Fn() -> b
 pub async fn reap_agents(
     _agents: &[AgentId],
     _grace: Duration,
-    _ended: impl Fn() -> bool,
+    _ended: impl Fn(AgentId) -> bool,
 ) -> ReapReport {
     ReapReport::default()
 }
@@ -230,6 +247,16 @@ mod linux {
         Some(format!("{AGENT_ENV}={tag}"))
     }
 
+    /// The tag entries of `agents`, sorted for [`carries`].
+    fn tag_entries(agents: &[AgentId]) -> Vec<String> {
+        let mut tags: Vec<String> = agents
+            .iter()
+            .filter_map(|agent| tag_entry(*agent))
+            .collect();
+        tags.sort_unstable();
+        tags
+    }
+
     /// Where some agents' processes are looked for: the scopes listed at the
     /// start, once their engines are in them, and their tags but the one the
     /// daemon carries itself.
@@ -252,11 +279,26 @@ mod linux {
             Self {
                 agents: agents.to_vec(),
                 units: crate::scope::agent_units(agents).await,
-                tags: agents
-                    .iter()
-                    .filter_map(|agent| tag_entry(*agent))
-                    .collect(),
+                tags: tag_entries(agents),
             }
+        }
+
+        /// Drop the agents `ended` no longer holds, with their tags and
+        /// scopes: a restarted one's processes are its next engine's. False once none is left.
+        pub(super) fn keep_ended(&mut self, ended: &impl Fn(AgentId) -> bool) -> bool {
+            let before = self.agents.len();
+            self.agents.retain(|agent| ended(*agent));
+            if self.agents.len() != before {
+                tracing::info!(remaining = ?self.agents, "an agent resumed; sparing its processes");
+                self.tags = tag_entries(&self.agents);
+                let agents = &self.agents;
+                self.units.retain(|unit| {
+                    agents
+                        .iter()
+                        .any(|agent| crate::scope::belongs_to(unit, *agent))
+                });
+            }
+            !self.agents.is_empty()
         }
 
         pub(super) fn agents(&self) -> &[AgentId] {
@@ -391,13 +433,15 @@ mod linux {
             .filter(move |pid| *pid > 1 && *pid != own)
     }
 
-    /// Whether `pid`, a live process of `uid`, sets the keep entry exactly.
+    /// Whether live `pid` sets the keep entry exactly, or may: an environment
+    /// that cannot be read (a non-dumpable process) cannot prove it is not kept.
     pub(super) fn kept(proc_root: &Path, pid: u32, uid: u32) -> bool {
-        environment(proc_root, pid, uid).is_some_and(|environment| {
-            environment
+        match environment(proc_root, pid, uid) {
+            Some(environment) => environment
                 .split(|byte| *byte == 0)
-                .any(|entry| entry == KEEP_ENTRY.as_bytes())
-        })
+                .any(|entry| entry == KEEP_ENTRY.as_bytes()),
+            None => is_live(proc_root, pid),
+        }
     }
 
     /// `pid`'s command line with spaces for its separators, shortened, or its
@@ -414,12 +458,15 @@ mod linux {
         Some(format!("[{}]", name.trim()))
     }
 
-    /// Whether `pid` is a live process of `uid` whose environment holds one of `tags` exactly.
+    /// Whether `pid` is a live process of `uid` whose environment holds one
+    /// of the sorted `tags` exactly.
     pub(super) fn carries(proc_root: &Path, pid: u32, tags: &[String], uid: u32) -> bool {
+        debug_assert!(tags.is_sorted(), "tags are searched, so kept sorted");
         environment(proc_root, pid, uid).is_some_and(|environment| {
-            environment
-                .split(|byte| *byte == 0)
-                .any(|entry| tags.iter().any(|tag| entry == tag.as_bytes()))
+            environment.split(|byte| *byte == 0).any(|entry| {
+                tags.binary_search_by(|tag| tag.as_bytes().cmp(entry))
+                    .is_ok()
+            })
         })
     }
 

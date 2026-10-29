@@ -109,6 +109,12 @@ fn only_the_exact_keep_entry_keeps_a_process() {
         !kept(root.path(), 13, own_uid()),
         "a gone process is not kept"
     );
+    fake_process(root.path(), 14, "S", &[]);
+    std::fs::remove_file(root.path().join("14/environ")).unwrap();
+    assert!(
+        kept(root.path(), 14, own_uid()),
+        "an unreadable environment may hold the entry"
+    );
 }
 
 #[test]
@@ -360,7 +366,7 @@ async fn a_daemon_stop_reaps_every_agent_it_names_in_one_sweep() {
         "{found:?}"
     );
 
-    let report = reap_agents(&[a, b], Duration::from_millis(300), || true).await;
+    let report = reap_agents(&[a, b], Duration::from_millis(300), |_| true).await;
 
     assert!(report.terminated.contains(&pid_a), "{report:?}");
     assert!(report.killed.contains(&pid_b), "{report:?}");
@@ -375,6 +381,43 @@ async fn a_daemon_stop_reaps_every_agent_it_names_in_one_sweep() {
     );
     let cleanup = reap_agent(spared, Duration::from_secs(5), || true).await;
     assert!(cleanup.terminated.contains(&other), "{cleanup:?}");
+}
+
+/// One agent of a sweep that restarts keeps its processes; the others named
+/// in the same sweep are still stopped.
+#[tokio::test]
+async fn a_restarted_agent_is_dropped_from_a_sweep_without_sparing_the_rest() {
+    let ended = AgentId::new();
+    let restarted = AgentId::new();
+    let stopped = start_detached(
+        ended,
+        "setsid sleep 51 </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    let spared = start_detached(
+        restarted,
+        "setsid sleep 52 </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let report = reap_agents(&[ended, restarted], Duration::from_secs(5), |id| {
+        id == ended
+    })
+    .await;
+
+    assert!(report.terminated.contains(&stopped), "{report:?}");
+    assert!(!report.terminated.contains(&spared), "{report:?}");
+    assert!(
+        wait_gone(stopped).await,
+        "the ended agent's process is gone"
+    );
+    assert!(
+        is_live(Path::new("/proc"), spared),
+        "the restarted agent's process runs on"
+    );
+    let cleanup = reap_agent(restarted, Duration::from_secs(5), || true).await;
+    assert!(cleanup.terminated.contains(&spared), "{cleanup:?}");
 }
 
 /// A process marked to be kept is listed by no sweep and signalled by none,
@@ -418,5 +461,5 @@ async fn a_process_marked_to_be_kept_outlives_its_agent() {
 
 #[tokio::test]
 async fn reaping_no_agents_signals_nothing() {
-    assert!(reap_agents(&[], Duration::ZERO, || true).await.is_empty());
+    assert!(reap_agents(&[], Duration::ZERO, |_| true).await.is_empty());
 }
