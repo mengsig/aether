@@ -75,7 +75,7 @@ fn decode(id: &str, body: &str) -> Result<Notification> {
 
 impl SqliteStore {
     pub(super) fn read_notification(&self, id: NotificationId) -> Result<Option<Notification>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let body: Option<String> = conn
             .query_row(
                 "SELECT body FROM notifications WHERE id = ?1",
@@ -91,7 +91,7 @@ impl SqliteStore {
         source: &str,
         key: &str,
     ) -> Result<Option<Notification>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let row: Option<(String, String)> = conn
             .query_row(
                 "SELECT id, body FROM notifications WHERE source = ?1 AND key = ?2",
@@ -106,7 +106,7 @@ impl SqliteStore {
         &self,
         filter: &NotificationFilter,
     ) -> Result<Vec<Notification>> {
-        read_filtered(&self.read_conn(), filter)
+        read_filtered(&*self.read_conn()?, filter)
     }
 }
 

@@ -220,10 +220,10 @@ fn timeout_hint(theme: &Theme, request: &str, command: &str) -> String {
     } else {
         crate::ui_format!(
             theme,
-            "the daemon is connected but slow · it may be busy on a loaded disk · try again; \
+            "the daemon is connected but slow · its log names what it waited on · try again; \
              if it keeps happening, `{command} stop`, then start it again",
-            "the daemon is connected but slow | \
-             it may be busy on a loaded disk | try again; if it keeps happening, `{command} stop`, then start it again"
+            "the daemon is connected but slow | its log names what it waited on | \
+             try again; if it keeps happening, `{command} stop`, then start it again"
         )
     }
 }

@@ -25,14 +25,22 @@ pub(super) fn owns(command: &Command) -> bool {
 }
 
 pub(super) async fn dispatch(daemon: &Daemon, command: Command) -> Result<Reply, ErrorReply> {
-    let rt = &daemon.runtime;
-    let store = rt.store().as_ref();
+    if let Command::ReadArtifact { id, max_bytes } = command {
+        return read_artifact(daemon, id, max_bytes).await;
+    }
+    // A long transcript or event read must not hold an async worker the
+    // daemon answers other requests on (#333).
+    let store = daemon.runtime.store().clone();
+    blocking(move || read(store.as_ref(), command)).await?
+}
+
+fn read(store: &dyn aether_store::Store, command: Command) -> Result<Reply, ErrorReply> {
     match command {
         Command::GetEvents {
             after,
             limit,
             query,
-        } => get_events(daemon, after, limit, query),
+        } => get_events(store, after, limit, query),
         Command::GetTranscript { agent, after } => Ok(Reply::Transcript(
             store
                 .transcript(agent, after)
@@ -68,7 +76,6 @@ pub(super) async fn dispatch(daemon: &Daemon, command: Command) -> Result<Reply,
             .map_err(store_err)?
             .map(Reply::Artifact)
             .ok_or_else(|| ErrorReply::not_found(id)),
-        Command::ReadArtifact { id, max_bytes } => read_artifact(daemon, id, max_bytes).await,
         _ => unreachable!("routed to the wrong command family"),
     }
 }
@@ -107,12 +114,11 @@ async fn read_artifact(
 }
 
 fn get_events(
-    daemon: &Daemon,
+    store: &dyn aether_store::Store,
     after: u64,
     limit: usize,
     query: aether_protocol::EventQuery,
 ) -> Result<Reply, ErrorReply> {
-    let store = daemon.runtime.store().as_ref();
     let before = query.before;
     if before.is_some() && after != 0 {
         return Err(ErrorReply::invalid(

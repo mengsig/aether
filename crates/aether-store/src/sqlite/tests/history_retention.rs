@@ -901,7 +901,8 @@ fn screening_a_file_store_takes_neither_of_its_connections() {
         .reader
         .as_ref()
         .expect("a file store reads apart")
-        .lock();
+        .lease()
+        .expect("a read connection");
     std::thread::scope(|scope| {
         let (tx, rx) = std::sync::mpsc::channel();
         let store = &f.store;
@@ -1141,6 +1142,7 @@ fn feedback_rows_survive_expiring_their_task_history() {
     let task_id: String = f
         .store
         .read_conn()
+        .expect("a read connection")
         .query_row(
             "SELECT task_id FROM memory_feedback WHERE id = ?1",
             [record.id.to_string()],

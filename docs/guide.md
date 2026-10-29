@@ -364,6 +364,28 @@ holds the database lock"; retry it once the lock clears. A running turn
 waits the lock out instead (up to two minutes per write), so the reply and
 usage it already has are kept.
 
+A client gives the daemon 60 seconds to answer a request before it reports
+"the daemon did not answer `status` within 60s, though it is still
+connected". `status`, `get_tree` and the other reads answer within about two
+seconds on a busy daemon with a store of several gigabytes. They no longer
+wait behind slow work on the same connection, or behind another client's
+long reads. When a request does take over two seconds, the daemon log
+(`logs/aetherd.log` in the data directory) records it. A warning names the
+command and splits its time into `queued_ms`, the time it waited behind
+earlier commands on its connection, and `ran_ms`, the time it ran. A request
+still running after two seconds is logged then as well, as "slow request
+still running", so one that never finishes is in the log too. Other
+warnings say what it waited on:
+
+- "slow status section" names the part of `status` that was slow.
+- "a store read waited for a free read connection" means every one of the
+  store's 32 read connections was busy.
+- "a store write waited for the write connection" means it waited for
+  another write.
+
+If the timeout comes with none of these, the daemon is hung. Save the log
+before stopping it and report it.
+
 `aether wake AGENT_ID` restarts a failed agent. The failure the operator reads
 ends with what to run (`aether doctor`, `aether diagnose`); the agent is told
 only the cause and to retry its work, and its woken turn takes the next turn
