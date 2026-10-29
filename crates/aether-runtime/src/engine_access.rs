@@ -2,12 +2,20 @@ use crate::{Result, Runtime, RuntimeError, turn_engine, withheld_by_position};
 use aether_core::id::AgentId;
 use aether_core::model::{ModelRef, PromptCacheTtl};
 use aether_engine::{Engine, EngineKind};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{collections::HashMap, sync::Arc};
 
 /// The shortest gap between two probes of one unusable engine, so a burst
 /// of turns and creations shares one probe rather than each running the CLI.
 const RECHECK_INTERVAL: Duration = Duration::from_secs(2);
+
+/// A usable engine is recorded unusable only after this many failed probes
+/// in a row, spanning at least [`DEMOTE_SPAN`]: one probe that failed under
+/// load, or a CLI caught mid-update, must not refuse new agents.
+const DEMOTE_FAILURES: u32 = 3;
+
+const DEMOTE_SPAN: Duration = Duration::from_secs(30);
 
 /// What engine detection found: the usable engines, and why each other one
 /// is not, when preflight ran and found a specific reason.
@@ -15,6 +23,11 @@ const RECHECK_INTERVAL: Duration = Duration::from_secs(2);
 pub(crate) struct DetectedEngines {
     pub(crate) usable: HashMap<EngineKind, Arc<dyn Engine>>,
     pub(crate) unavailable: HashMap<EngineKind, String>,
+    /// Usable engines whose latest probe failed, with why: kept for agents
+    /// and creation, but no turn launches one until a probe passes again.
+    pub(crate) suspect: HashMap<EngineKind, String>,
+    /// Engines found usable at some point since the daemon started.
+    pub(crate) seen: HashSet<EngineKind>,
 }
 
 impl DetectedEngines {
@@ -22,12 +35,32 @@ impl DetectedEngines {
         self.usable.get(kind).cloned()
     }
 
+    /// The engine a turn may launch now: usable, and its latest probe passed.
+    pub(crate) fn launchable(&self, kind: &EngineKind) -> Option<Arc<dyn Engine>> {
+        self.get(kind).filter(|_| !self.suspect.contains_key(kind))
+    }
+
+    /// Whether `kind` was usable at some point, so its absence may pass.
+    pub(crate) fn was_usable(&self, kind: &EngineKind) -> bool {
+        self.seen.contains(kind)
+    }
+
+    /// Why `kind` cannot be launched now, when a probe found a reason.
+    pub(crate) fn reason(&self, kind: &EngineKind) -> Option<&str> {
+        self.unavailable
+            .get(kind)
+            .or_else(|| self.suspect.get(kind))
+            .map(String::as_str)
+    }
+
     /// Keep one engine's latest detection outcome, replacing the older one.
     fn record(&mut self, kind: EngineKind, found: std::result::Result<Arc<dyn Engine>, String>) {
+        self.suspect.remove(&kind);
         match found {
             Ok(engine) => {
                 self.unavailable.remove(&kind);
                 self.usable.insert(kind, engine);
+                self.seen.insert(kind);
             }
             Err(reason) => {
                 self.usable.remove(&kind);
@@ -40,6 +73,52 @@ impl DetectedEngines {
         );
     }
 
+    /// Fold one probe of `kind` in. A usable engine keeps its last good
+    /// detection through a timeout, and through other failures until
+    /// `streak` reaches [`DEMOTE_FAILURES`] over [`DEMOTE_SPAN`].
+    fn observe(
+        &mut self,
+        kind: EngineKind,
+        probe: Probe,
+        streak: &mut Option<Streak>,
+        at: Instant,
+    ) {
+        let was_usable = self.usable.contains_key(&kind);
+        match probe.found {
+            // A slow CLI proves nothing either way: keep what was known.
+            _ if probe.timed_out && was_usable => {}
+            Ok(engine) => {
+                *streak = None;
+                self.record(kind, Ok(engine));
+            }
+            Err(reason) if was_usable => {
+                let failing = streak.get_or_insert(Streak {
+                    failures: 0,
+                    since: at,
+                });
+                failing.failures += 1;
+                let demote = failing.failures >= DEMOTE_FAILURES
+                    && at.saturating_duration_since(failing.since) >= DEMOTE_SPAN;
+                if demote {
+                    *streak = None;
+                    self.record(kind, Err(reason));
+                } else {
+                    self.suspect.insert(kind, reason);
+                }
+            }
+            Err(reason) => {
+                *streak = None;
+                self.record(kind, Err(reason));
+            }
+        }
+        debug_assert!(
+            self.suspect
+                .keys()
+                .all(|kind| self.usable.contains_key(kind)),
+            "only a usable engine can be suspect"
+        );
+    }
+
     /// Every engine unusable for one reason: detection itself failed.
     fn failed(reason: &str) -> Self {
         let unavailable = [EngineKind::CLAUDE_CODE, EngineKind::CODEX]
@@ -49,13 +128,35 @@ impl DetectedEngines {
         Self {
             usable: HashMap::new(),
             unavailable,
+            ..Self::default()
         }
     }
 }
 
-/// Whether `detected` holds `kind` usable and its CLI is still installed.
+/// One probe's outcome. `timed_out` is set when any step of it outlived its
+/// deadline, so even a fallback it found says nothing about the engine.
+struct Probe {
+    found: std::result::Result<Arc<dyn Engine>, String>,
+    timed_out: bool,
+}
+
+/// Failed probes in a row of an engine still recorded usable.
+#[derive(Debug, Clone, Copy)]
+struct Streak {
+    failures: u32,
+    since: Instant,
+}
+
+/// One engine's probing so far: when it last ran, and any failing streak.
+#[derive(Default)]
+struct ProbeHistory {
+    at: Option<Instant>,
+    streak: Option<Streak>,
+}
+
+/// Whether `detected` holds `kind` launchable and its CLI is still installed.
 fn still_usable(detected: &DetectedEngines, kind: EngineKind) -> bool {
-    detected.usable.contains_key(&kind) && aether_engine::detect::missing_cli(kind).is_none()
+    detected.launchable(&kind).is_some() && aether_engine::detect::missing_cli(kind).is_none()
 }
 
 /// The engines. Detection runs after the socket can answer, so a reader
@@ -69,8 +170,8 @@ pub(crate) struct EngineCatalog {
     detected: parking_lot::RwLock<DetectedEngines>,
     /// `None` for engines a test supplied: there is nothing to probe.
     probing: Option<Probing>,
-    /// When each engine was last probed again; held across that probe.
-    rechecked: tokio::sync::Mutex<HashMap<EngineKind, Instant>>,
+    /// Each engine's probing history; held across a probe.
+    rechecked: tokio::sync::Mutex<HashMap<EngineKind, ProbeHistory>>,
 }
 
 /// What probing an engine again needs.
@@ -112,9 +213,9 @@ impl EngineCatalog {
     }
 
     /// [`EngineCatalog::ready`], after probing `kind` again when it was
-    /// unusable or its CLI has left `PATH` since. Probes of one engine are at
-    /// least [`RECHECK_INTERVAL`] apart; a caller arriving meanwhile gets the
-    /// latest outcome.
+    /// unusable, suspect, or its CLI has left `PATH` since. Probes of one
+    /// engine are at least [`RECHECK_INTERVAL`] apart; a caller arriving
+    /// meanwhile gets the latest outcome.
     pub(crate) async fn recheck(&self, kind: EngineKind) -> DetectedEngines {
         let detected = self.ready().await;
         let Some(probing) = self.probing else {
@@ -124,32 +225,32 @@ impl EngineCatalog {
             return detected;
         }
         let mut rechecked = self.rechecked.lock().await;
-        let recent = rechecked
-            .get(&kind)
-            .is_some_and(|at| at.elapsed() < RECHECK_INTERVAL);
+        let history = rechecked.entry(kind).or_default();
+        let recent = history.at.is_some_and(|at| at.elapsed() < RECHECK_INTERVAL);
         // Another caller may have found it while this one waited for the lock.
         if still_usable(&self.detected.read(), kind) {
             return self.detected.read().clone();
         }
         if recent {
-            return self.record_if_removed(kind);
+            return self.suspect_if_removed(kind);
         }
-        let found = detect_engine(kind, probing.prompt_cache_ttl).await;
-        rechecked.insert(kind, Instant::now());
+        let probe = detect_engine(kind, probing.prompt_cache_ttl).await;
+        let at = Instant::now();
+        history.at = Some(at);
         let mut detected = self.detected.write();
-        detected.record(kind, found);
+        detected.observe(kind, probe, &mut history.streak, at);
         detected.clone()
     }
 
-    /// Between probes, a usable `kind` whose CLI has left `PATH` is recorded
-    /// unusable at once, rather than served until the next probe may run.
-    fn record_if_removed(&self, kind: EngineKind) -> DetectedEngines {
+    /// Between probes, a usable `kind` whose CLI has left `PATH` is suspect
+    /// at once: no turn launches it, though only probes can demote it.
+    fn suspect_if_removed(&self, kind: EngineKind) -> DetectedEngines {
         let mut detected = self.detected.write();
         if detected.usable.contains_key(&kind)
             && let Some(missing) = aether_engine::detect::missing_cli(kind)
         {
-            detected.record(kind, Err(missing.to_string()));
-            debug_assert!(!detected.usable.contains_key(&kind), "recorded unusable");
+            detected.suspect.insert(kind, missing.to_string());
+            debug_assert!(detected.launchable(&kind).is_none(), "recorded suspect");
         }
         detected.clone()
     }
@@ -158,6 +259,26 @@ impl EngineCatalog {
     #[cfg(test)]
     pub(crate) fn mark_unavailable(&self, kind: EngineKind, reason: &str) {
         self.detected.write().record(kind, Err(reason.to_owned()));
+    }
+
+    /// Record `engine` usable for `kind`, as a passing probe would.
+    #[cfg(test)]
+    pub(crate) fn mark_usable(&self, kind: EngineKind, engine: Arc<dyn Engine>) {
+        self.detected.write().record(kind, Ok(engine));
+    }
+
+    /// Record a usable `kind` as suspect for `reason`, as one failed probe would.
+    #[cfg(test)]
+    pub(crate) fn mark_suspect(&self, kind: EngineKind, reason: &str) {
+        let mut detected = self.detected.write();
+        assert!(detected.usable.contains_key(&kind), "only a usable engine");
+        detected.suspect.insert(kind, reason.to_owned());
+    }
+
+    /// Clear what [`EngineCatalog::mark_suspect`] recorded, as a passing probe would.
+    #[cfg(test)]
+    pub(crate) fn clear_suspect(&self, kind: EngineKind) {
+        self.detected.write().suspect.remove(&kind);
     }
 
     fn finish(&self, engines: DetectedEngines) {
@@ -233,17 +354,13 @@ async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEng
         detect_engine(EngineKind::CODEX, prompt_cache_ttl)
     );
     let mut detected = DetectedEngines::default();
-    for (kind, found) in [
+    for (kind, probe) in [
         (EngineKind::CLAUDE_CODE, claude),
         (EngineKind::CODEX, codex),
     ] {
-        match found {
-            Ok(engine) => {
-                detected.usable.insert(kind, engine);
-            }
-            Err(reason) => {
-                detected.unavailable.insert(kind, reason);
-            }
+        match probe.found {
+            Ok(engine) => detected.record(kind, Ok(engine)),
+            Err(reason) => detected.record(kind, Err(reason)),
         }
     }
     debug_assert_eq!(
@@ -255,24 +372,26 @@ async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEng
 }
 
 /// Probe one engine's CLI: usable, or why not.
-async fn detect_engine(
-    kind: EngineKind,
-    prompt_cache_ttl: Option<PromptCacheTtl>,
-) -> std::result::Result<Arc<dyn Engine>, String> {
+async fn detect_engine(kind: EngineKind, prompt_cache_ttl: Option<PromptCacheTtl>) -> Probe {
     if kind == EngineKind::CLAUDE_CODE {
         return detect_claude(prompt_cache_ttl).await;
     }
     if kind == EngineKind::CODEX {
         return detect_codex().await;
     }
-    Err(format!(
-        "{kind} has no installed-CLI detection in this daemon"
-    ))
+    Probe {
+        found: Err(format!(
+            "{kind} has no installed-CLI detection in this daemon"
+        )),
+        timed_out: false,
+    }
 }
 
-async fn detect_claude(
-    prompt_cache_ttl: Option<PromptCacheTtl>,
-) -> std::result::Result<Arc<dyn Engine>, String> {
+fn timed_out(reason: &aether_engine::detect::DetectError) -> bool {
+    matches!(reason, aether_engine::detect::DetectError::TimedOut { .. })
+}
+
+async fn detect_claude(prompt_cache_ttl: Option<PromptCacheTtl>) -> Probe {
     match aether_engine::ClaudeCodeEngine::detect_verbose().await {
         Ok(e) => {
             // Usable-with-a-limitation is not unavailable: it
@@ -284,24 +403,40 @@ async fn detect_claude(
                 Some(ttl) => e.with_prompt_cache_ttl(ttl),
                 None => e,
             };
-            Ok(Arc::new(e))
+            Probe {
+                found: Ok(Arc::new(e)),
+                timed_out: false,
+            }
         }
         Err(reason) => {
             tracing::warn!(engine = "claude-code", %reason, "engine CLI unusable");
-            Err(reason.to_string())
+            Probe {
+                timed_out: timed_out(&reason),
+                found: Err(reason.to_string()),
+            }
         }
     }
 }
 
 /// The app-server protocol gates, steers and interrupts; exec mode is the
-/// fallback for older Codex builds.
-async fn detect_codex() -> std::result::Result<Arc<dyn Engine>, String> {
+/// fallback for older Codex builds. An app-server probe that timed out marks
+/// the whole probe, so a slow machine never swaps a usable app engine for exec.
+async fn detect_codex() -> Probe {
     let app_reason = match aether_engine::CodexAppEngine::detect_verbose().await {
-        Ok(e) => return Ok(Arc::new(e)),
+        Ok(e) => {
+            return Probe {
+                found: Ok(Arc::new(e)),
+                timed_out: false,
+            };
+        }
         Err(reason) => reason,
     };
+    let app_timed_out = timed_out(&app_reason);
     match aether_engine::CodexEngine::detect_verbose().await {
-        Ok(e) => Ok(Arc::new(e)),
+        Ok(e) => Probe {
+            found: Ok(Arc::new(e)),
+            timed_out: app_timed_out,
+        },
         Err(exec_reason) => {
             tracing::warn!(
                 engine = "codex",
@@ -309,15 +444,17 @@ async fn detect_codex() -> std::result::Result<Arc<dyn Engine>, String> {
                 exec_reason = %exec_reason,
                 "engine CLI unusable"
             );
+            let timed_out = app_timed_out || timed_out(&exec_reason);
             // The common case - codex simply absent - fails both probes
             // with the identical reason; do not repeat it.
-            if app_reason == exec_reason {
+            let found = if app_reason == exec_reason {
                 Err(app_reason.to_string())
             } else {
                 Err(format!(
                     "{app_reason} (legacy exec fallback: {exec_reason})"
                 ))
-            }
+            };
+            Probe { found, timed_out }
         }
     }
 }
@@ -505,10 +642,123 @@ pub(crate) fn mint_engine_token() -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    struct Named(&'static str);
+
+    #[async_trait::async_trait]
+    impl Engine for Named {
+        fn kind(&self) -> EngineKind {
+            EngineKind::CLAUDE_CODE
+        }
+
+        fn adapter(&self) -> String {
+            self.0.into()
+        }
+
+        async fn run(
+            &self,
+            _turn: aether_engine::EngineTurn,
+            _cancel: tokio_util::sync::CancellationToken,
+        ) -> std::result::Result<aether_engine::EngineRun, aether_engine::EngineError> {
+            Err(aether_engine::EngineError::Unsupported(
+                "a test engine".into(),
+            ))
+        }
+    }
+
+    const KIND: EngineKind = EngineKind::CLAUDE_CODE;
+
+    fn found(adapter: &'static str) -> Probe {
+        Probe {
+            found: Ok(Arc::new(Named(adapter))),
+            timed_out: false,
+        }
+    }
+
+    fn failed(reason: &str, timed_out: bool) -> Probe {
+        Probe {
+            found: Err(reason.into()),
+            timed_out,
+        }
+    }
+
+    fn usable() -> DetectedEngines {
+        let mut detected = DetectedEngines::default();
+        detected.record(KIND, Ok(Arc::new(Named("good"))));
+        detected
+    }
+
+    #[test]
+    fn a_usable_engine_is_demoted_only_after_repeated_failures_over_time() {
+        let (mut detected, mut streak, start) = (usable(), None, Instant::now());
+        for after in [0, 10, 20] {
+            let at = start + Duration::from_secs(after);
+            detected.observe(KIND, failed("not on PATH", false), &mut streak, at);
+            assert!(detected.get(&KIND).is_some(), "kept at {after}s");
+            assert!(detected.launchable(&KIND).is_none(), "but not launched");
+            assert!(detected.unavailable.is_empty());
+            assert_eq!(detected.reason(&KIND), Some("not on PATH"));
+        }
+        let at = start + DEMOTE_SPAN;
+        detected.observe(KIND, failed("still not on PATH", false), &mut streak, at);
+        assert!(detected.get(&KIND).is_none());
+        assert!(detected.was_usable(&KIND), "a demoted engine may come back");
+        assert_eq!(detected.reason(&KIND), Some("still not on PATH"));
+        assert!(streak.is_none() && detected.suspect.is_empty());
+    }
+
+    #[test]
+    fn a_passing_probe_ends_the_streak_and_the_suspicion() {
+        let (mut detected, mut streak, start) = (usable(), None, Instant::now());
+        detected.observe(KIND, failed("exited 1", false), &mut streak, start);
+        detected.observe(KIND, failed("exited 1", false), &mut streak, start);
+        detected.observe(KIND, found("good"), &mut streak, start);
+        assert!(streak.is_none());
+        assert_eq!(detected.launchable(&KIND).unwrap().adapter(), "good");
+        let later = start + DEMOTE_SPAN * 2;
+        detected.observe(KIND, failed("exited 1", false), &mut streak, later);
+        assert!(
+            detected.get(&KIND).is_some(),
+            "a new streak starts from one failure"
+        );
+    }
+
+    #[test]
+    fn a_probe_that_timed_out_keeps_the_last_good_detection() {
+        let (mut detected, mut streak, start) = (usable(), None, Instant::now());
+        for after in [0, 60, 120, 180] {
+            let at = start + Duration::from_secs(after);
+            detected.observe(KIND, failed("timed out", true), &mut streak, at);
+            // A fallback found while the preferred probe timed out replaces nothing.
+            detected.observe(
+                KIND,
+                Probe {
+                    timed_out: true,
+                    ..found("fallback")
+                },
+                &mut streak,
+                at,
+            );
+        }
+        assert_eq!(detected.launchable(&KIND).unwrap().adapter(), "good");
+        assert!(streak.is_none());
+    }
+
+    #[test]
+    fn an_engine_never_usable_takes_each_probe_as_it_comes() {
+        let (mut detected, mut streak, at) = (DetectedEngines::default(), None, Instant::now());
+        detected.observe(KIND, failed("timed out", true), &mut streak, at);
+        assert_eq!(detected.reason(&KIND), Some("timed out"));
+        assert!(detected.get(&KIND).is_none() && !detected.was_usable(&KIND));
+        detected.observe(KIND, found("good"), &mut streak, at);
+        assert_eq!(detected.launchable(&KIND).unwrap().adapter(), "good");
+        assert!(detected.reason(&KIND).is_none());
+    }
+
     #[test]
     fn engine_tokens_are_full_length_hex_and_unique() {
-        let tokens: std::collections::HashSet<_> =
-            (0..128).map(|_| super::mint_engine_token()).collect();
+        let tokens: std::collections::HashSet<_> = (0..128).map(|_| mint_engine_token()).collect();
         assert_eq!(tokens.len(), 128);
         assert!(
             tokens.iter().all(

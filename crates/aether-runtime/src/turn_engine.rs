@@ -144,6 +144,7 @@ mod outcome;
 use outcome::{
     EngineVerdict, Uncommitted, engine_verdict, record_engine_failure, record_unanswered_prompt,
 };
+mod availability;
 mod driver;
 mod native_wait;
 mod stall;

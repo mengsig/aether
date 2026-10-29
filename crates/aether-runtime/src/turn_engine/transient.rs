@@ -10,7 +10,7 @@ use super::{
 };
 
 /// Recorded before every wait, so clients can show what the agent waits on.
-const TRANSIENT_RETRY_EVENT: &str = "engine.transient_retry";
+pub(super) const TRANSIENT_RETRY_EVENT: &str = "engine.transient_retry";
 
 /// Longest single wait between attempts.
 const MAX_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -150,9 +150,17 @@ impl Backoff {
         debug_assert!(!self.spent() || self.window.is_zero());
     }
 
-    fn elapsed(&self) -> Duration {
+    pub(super) fn elapsed(&self) -> Duration {
         self.started
             .map_or(Duration::ZERO, |started| started.elapsed())
+    }
+
+    pub(super) fn waits(&self) -> u32 {
+        self.waits
+    }
+
+    pub(super) fn window(&self) -> Duration {
+        self.window
     }
 
     pub(super) fn spent(&self) -> bool {
@@ -160,7 +168,7 @@ impl Backoff {
     }
 
     /// The next wait, never past the window; `None` once it is spent.
-    fn next_delay(&mut self) -> Option<Duration> {
+    pub(super) fn next_delay(&mut self) -> Option<Duration> {
         let remaining = self.window.checked_sub(self.elapsed())?;
         if remaining.is_zero() {
             return None;

@@ -24,15 +24,23 @@ pub(crate) async fn execute(
     let Some(kind) = engine_kind(resolved.provider.protocol) else {
         return Err(RuntimeError::Internal("not an engine provider".into()));
     };
-    // An engine found unusable is probed again here, so the reason is current.
-    let detected = runtime.engines.recheck(kind).await;
-    let Some(engine) = detected.get(&kind) else {
-        let reason = crate::engine_access::unavailable_text(
-            kind,
-            &resolved.provider.id,
-            detected.unavailable.get(&kind).map(String::as_str),
-        );
-        return Ok(EngineLink::Done(Next::Failed(reason)));
+    // An engine found unusable is probed again, and waited for, here.
+    let engine = match super::availability::wait_for_engine(
+        runtime,
+        ctx,
+        kind,
+        &resolved.provider.id,
+        &cancel,
+    )
+    .await?
+    {
+        super::availability::Availability::Ready(engine) => engine,
+        super::availability::Availability::Unavailable(reason) => {
+            return Ok(EngineLink::Done(Next::Failed(reason)));
+        }
+        super::availability::Availability::Cancelled => {
+            return Ok(EngineLink::Done(Next::Cancelled(Some("cancelled".into()))));
+        }
     };
     if let Some(reason) = ungated_refusal(runtime, &ctx.agent, engine.as_ref()) {
         return Ok(EngineLink::Done(Next::Failed(reason)));

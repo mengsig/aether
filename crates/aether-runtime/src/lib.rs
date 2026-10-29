@@ -401,7 +401,7 @@ impl Runtime {
             client_override,
             engine_access::EngineCatalog::detected(engine_access::DetectedEngines {
                 usable: engines,
-                unavailable: HashMap::new(),
+                ..Default::default()
             }),
         )
         .await

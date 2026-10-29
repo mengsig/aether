@@ -7,7 +7,7 @@ async fn assert_probe_timeout(capability: bool) {
     let dir = tempfile::tempdir().unwrap();
     let script = dir.path().join("probe.sh");
     let pid_file = dir.path().join("probe.sh.pid");
-    std::fs::write(&script, "echo $$ > \"$0.pid\"\nexec sleep 30\n").unwrap();
+    std::fs::write(&script, "echo $$ > \"$0.pid\"\nexec sleep 10\n").unwrap();
     let script = script.to_str().unwrap();
     let error = if capability {
         probe_capability("/bin/sh", &[script], "app-server", None, None)

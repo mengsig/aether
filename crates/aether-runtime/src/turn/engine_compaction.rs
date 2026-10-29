@@ -45,7 +45,7 @@ pub(super) async fn try_engine_compaction(
         .engines
         .recheck(kind)
         .await
-        .get(&kind)
+        .launchable(&kind)
         .filter(|engine| engine.compacts_natively())
     else {
         return Ok(false);
