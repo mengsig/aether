@@ -17,7 +17,7 @@ impl SqliteStore {
         identity: impl Fn(&T) -> String,
     ) -> Result<Vec<T>> {
         let rows = {
-            let conn = self.read_conn();
+            let conn = self.read_conn()?;
             let mut statement = conn.prepare(sql)?;
             statement
                 .query_map(params, |row| {
@@ -60,7 +60,7 @@ impl SqliteStore {
         identity: impl Fn(&T) -> String,
     ) -> Result<Option<T>> {
         let body = self
-            .read_conn()
+            .read_conn()?
             .query_row(sql, [id], |row| {
                 Ok(row.get::<_, String>(0).map_err(|error| error.to_string()))
             })
@@ -80,7 +80,7 @@ impl SqliteStore {
     }
 
     fn meta_quarantine_exists(&self, table: &str, id: &str) -> Result<bool> {
-        Ok(self.read_conn().query_row(
+        Ok(self.read_conn()?.query_row(
             "SELECT EXISTS(SELECT 1 FROM meta WHERE key=?1)",
             [format!("{PREFIX}{table}.{id}")],
             |row| row.get(0),
@@ -117,7 +117,7 @@ impl SqliteStore {
 
     pub(super) fn list_quarantines(&self) -> Result<Vec<RecordQuarantine>> {
         let rows = {
-            let conn = self.read_conn();
+            let conn = self.read_conn()?;
             let mut statement = conn.prepare(
                 "SELECT key, value FROM meta WHERE key LIKE 'quarantine.%' ORDER BY key",
             )?;

@@ -352,7 +352,7 @@ impl SqliteStore {
     pub fn pending_artifact_cleanup(
         &self,
     ) -> Result<aether_core::retention::PendingArtifactCleanup> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let mut stmt =
             conn.prepare("SELECT id FROM artifacts WHERE unlink_pending=1 ORDER BY id")?;
         let ids = stmt.query_map([], |row| row.get::<_, String>(0))?;

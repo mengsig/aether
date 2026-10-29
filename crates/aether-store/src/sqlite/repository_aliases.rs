@@ -15,7 +15,7 @@ use crate::{RepositoryAliasMove, Result, StoreError};
 
 impl SqliteStore {
     pub(super) fn resolve_repository_id(&self, repository: &str) -> Result<String> {
-        let canonical = canonical_of(&self.read_conn(), repository)?;
+        let canonical = canonical_of(&*self.read_conn()?, repository)?;
         if canonical.as_deref() == Some(repository) {
             return Err(StoreError::Corrupt(format!(
                 "repository alias `{repository}` points to itself; run `aether doctor`"
@@ -25,7 +25,7 @@ impl SqliteStore {
     }
 
     pub(super) fn list_repository_aliases(&self) -> Result<Vec<RepositoryAlias>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let aliases: Vec<RepositoryAlias> = Self::read_many(
             &conn,
             "SELECT body FROM repository_aliases ORDER BY alias",
@@ -47,7 +47,7 @@ impl SqliteStore {
                 alias.alias, alias.canonical
             )));
         }
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let existing = registered(&conn, alias)?;
         let records = filed_under(&conn, &alias.alias)?;
         let counts = tally(&conn, alias, &records)?;

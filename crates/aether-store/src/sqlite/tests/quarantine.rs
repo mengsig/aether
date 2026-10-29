@@ -63,6 +63,7 @@ impl Record {
     fn raw_body(&self, store: &SqliteStore) -> rusqlite::types::Value {
         store
             .read_conn()
+            .expect("a read connection")
             .query_row(
                 &format!("SELECT body FROM {} WHERE {}=?1", self.table, self.key),
                 [&self.id],
@@ -316,6 +317,7 @@ fn corrupt_event_history_fails_instead_of_silently_dropping_events() {
     );
     let body: String = store
         .read_conn()
+        .expect("a read connection")
         .query_row(
             "SELECT body FROM events WHERE seq=?1",
             [events[0].seq as i64],
@@ -378,6 +380,7 @@ fn invalid_utf8_text_is_quarantined_without_rewriting_its_bytes() {
         assert!(matches!(record.read(&store), Err(StoreError::Corrupt(_))));
         let bytes: Vec<u8> = store
             .read_conn()
+            .expect("a read connection")
             .query_row(
                 &format!(
                     "SELECT CAST(body AS BLOB) FROM {} WHERE {}=?1",

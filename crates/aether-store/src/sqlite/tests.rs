@@ -131,6 +131,7 @@ mod ledger;
 mod artifacts;
 
 mod commit_stalls;
+mod concurrent_reads;
 mod disk_full;
 mod event_blobs;
 mod expired_history;

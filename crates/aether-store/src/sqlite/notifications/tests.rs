@@ -73,7 +73,7 @@ fn filters_by_state_and_source_and_keeps_the_state_column_in_step() {
         .notifications(&filter(Vec::new(), Some("ci")))
         .unwrap();
     assert_eq!(from_ci, vec![unread.clone()]);
-    let conn = store.read_conn();
+    let conn = store.read_conn().expect("a read connection");
     assert_eq!(state_column(&conn, read.id), Some(NotificationState::Read));
     assert_eq!(
         state_column(&conn, unread.id),
