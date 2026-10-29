@@ -360,9 +360,11 @@ impl Runtime {
             .reap_grace()
             .min(SHUTDOWN_REAP_GRACE);
         let ends = self.current_ends(&unheld);
-        // One woken meanwhile runs what it holds again, so it is spared.
+        // One woken meanwhile runs what it holds again, so it is spared; each
+        // round holds the gates a wake commits outside of, so none lands mid-round.
         let ended = |id| self.still_in_end(id, ends.get(&id));
-        let report = aether_engine::reap::reap_agents(&unheld, grace, ended, &[]).await;
+        let gates = self.spawn_gates();
+        let report = aether_engine::reap::reap_agents(&unheld, grace, ended, &gates).await;
         report.terminated.len()
     }
 

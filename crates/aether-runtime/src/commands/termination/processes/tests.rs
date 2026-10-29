@@ -250,6 +250,48 @@ async fn a_daemon_sweep_takes_only_what_no_live_agent_holds() {
     );
 }
 
+/// A daemon sweep holds the spawn gates through each round, so a wake that
+/// lands while the round waits for them spares the woken agent's processes.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_daemon_sweep_spares_an_agent_woken_before_its_round() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let agent = idle_agent(&runtime, None).await;
+    end(&runtime, agent, AgentStatus::Failed { error: "x".into() });
+    let mut leftover = std::process::Command::new("setsid")
+        .args(["sleep", "30"])
+        .env(aether_core::agent::PROCESS_AGENT_ENV, agent.to_string())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (gate, store) = (runtime.engine_spawns.clone(), runtime.store.clone());
+    let spawning = std::thread::spawn(move || {
+        gate.spawn(
+            || false,
+            || {
+                started_tx.send(()).unwrap();
+                // Long enough for the sweep to reach its first round and wait.
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let mut row = store.agent(agent).unwrap().unwrap();
+                row.transition(AgentStatus::Ready, now()).unwrap();
+                store
+                    .commit(Commit::new().mutate(Mutation::UpsertAgent(row)))
+                    .unwrap();
+            },
+        )
+    });
+    started_rx.recv().unwrap();
+
+    runtime.reap_unheld_agent_processes().await;
+    spawning.join().unwrap().unwrap();
+    let alive = leftover.try_wait().unwrap().is_none();
+    leftover.kill().unwrap();
+    leftover.wait().unwrap();
+    assert!(alive, "the agent woken before the round keeps its server");
+}
+
 /// A sweep is for one end: an agent woken since, or ended again, is spared,
 /// as what that later end left is its own to stop or hand up.
 #[tokio::test]
