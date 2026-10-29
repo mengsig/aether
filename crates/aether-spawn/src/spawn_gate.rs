@@ -149,13 +149,19 @@ mod tests {
         let gate = SpawnGate::default();
         let paused = pause_a_spawn(&gate);
         let holder = gate.clone();
+        let (holding_tx, holding) = mpsc::channel::<()>();
         let (release, released) = mpsc::channel::<()>();
         let held = returns_while_paused(move || {
             let _hold = holder.hold();
+            holding_tx.send(()).unwrap();
             released.recv().unwrap();
         });
         paused.finish.send(()).unwrap();
         assert_eq!(paused.thread.join().unwrap(), Ok(()));
+        // The next spawn must start only once the hold is taken, or it could take the gate first.
+        holding
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the hold is taken once the spawn under way is done");
         let spawner = gate.clone();
         let next = returns_while_paused(move || assert_eq!(spawner.spawn(|| false, || ()), Ok(())));
         release.send(()).unwrap();
