@@ -78,3 +78,36 @@ async fn a_synthetic_error_message_is_not_progress() {
     );
     h.runtime.shutdown().await;
 }
+
+/// Progress ends at most eight outages of one turn (`MAX_RECOVERIES`): an
+/// engine that answers a little and then fails every attempt still gives up.
+#[tokio::test]
+async fn an_engine_that_fails_after_every_bit_of_progress_still_gives_up() {
+    const RECOVERIES: usize = 8;
+    let runs = (0..40).map(|_| progressed_then_failed(None)).collect();
+    let engine = QueuedEngine::new(runs);
+    let h = harness_with_engine_config(engine.clone(), |config| {
+        config.engine_transient_retry_window = Duration::from_millis(80);
+        config.engine_transient_retry_floor = Duration::from_millis(20);
+    })
+    .await;
+    let id = chat_agent(&h);
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    wait_for(h.store.as_ref(), id, |a| {
+        a.stats.turns > 0 && a.status.kind() != AgentStatusKind::Running
+    })
+    .await;
+    let launches = engine.prompts.lock().unwrap().len();
+    assert!(
+        (RECOVERIES + 1..=RECOVERIES + 6).contains(&launches),
+        "{launches} launches"
+    );
+    let recorded = failures(&h, id);
+    assert!(
+        recorded.last().is_some_and(|(_, retryable)| !retryable),
+        "{recorded:?}"
+    );
+    h.runtime.shutdown().await;
+}

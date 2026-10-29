@@ -172,6 +172,8 @@ pub(crate) struct EngineCatalog {
     probing: Option<Probing>,
     /// Each engine's probing history; held across a probe.
     rechecked: tokio::sync::Mutex<HashMap<EngineKind, ProbeHistory>>,
+    #[cfg(test)]
+    hung: std::sync::atomic::AtomicBool,
 }
 
 /// What probing an engine again needs.
@@ -217,6 +219,10 @@ impl EngineCatalog {
     /// engine are at least [`RECHECK_INTERVAL`] apart; a caller arriving
     /// meanwhile gets the latest outcome.
     pub(crate) async fn recheck(&self, kind: EngineKind) -> DetectedEngines {
+        #[cfg(test)]
+        if self.hung.load(std::sync::atomic::Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         let detected = self.ready().await;
         let Some(probing) = self.probing else {
             return detected;
@@ -253,6 +259,12 @@ impl EngineCatalog {
             debug_assert!(detected.launchable(&kind).is_none(), "recorded suspect");
         }
         detected.clone()
+    }
+
+    /// From now on every recheck hangs, as one behind a hung CLI's probe would.
+    #[cfg(test)]
+    pub(crate) fn hang_rechecks(&self) {
+        self.hung.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Record `kind` as unusable for `reason`, as a failed probe would.

@@ -22,6 +22,7 @@ pub(super) enum Availability {
 /// The engine this turn launches, once a probe finds it launchable. Waits
 /// only for an engine that was usable before, here or for this agent's
 /// session; gives up after `[scheduler] engine_transient_retry_minutes`.
+/// Cancelling, or the window ending, also ends a probe still running.
 pub(super) async fn wait_for_engine(
     runtime: &Runtime,
     ctx: &TurnCtx,
@@ -34,8 +35,18 @@ pub(super) async fn wait_for_engine(
         runtime.config.engine_transient_retry_window,
         runtime.config.engine_transient_retry_floor,
     );
+    let mut last_reason = String::new();
     loop {
-        let detected = runtime.engines.recheck(kind).await;
+        // Dropping a probe is safe: detection kills its CLI, and nothing is
+        // recorded for a probe that did not finish.
+        let detected = tokio::select! {
+            () = cancel.cancelled() => return Ok(Availability::Cancelled),
+            () = window_end(&backoff) => {
+                debug_assert!(!last_reason.is_empty(), "the window opens on a failed probe");
+                return Ok(Availability::Unavailable(gave_up(last_reason, &backoff)));
+            }
+            detected = runtime.engines.recheck(kind) => detected,
+        };
         if let Some(engine) = detected.launchable(&kind) {
             debug_assert_eq!(engine.kind(), kind, "the catalog is keyed by kind");
             return Ok(Availability::Ready(engine));
@@ -56,7 +67,20 @@ pub(super) async fn wait_for_engine(
             () = cancel.cancelled() => return Ok(Availability::Cancelled),
             () = tokio::time::sleep(delay) => {}
         }
+        if backoff.spent() {
+            return Ok(Availability::Unavailable(gave_up(reason, &backoff)));
+        }
+        last_reason = reason;
     }
+}
+
+/// When the retry window runs out; never before the first failed probe opens it.
+async fn window_end(backoff: &Backoff) {
+    if !backoff.started() {
+        return std::future::pending().await;
+    }
+    let left = backoff.window().saturating_sub(backoff.elapsed());
+    tokio::time::sleep(left).await;
 }
 
 fn gave_up(reason: String, backoff: &Backoff) -> String {
@@ -230,6 +254,63 @@ mod tests {
             matches!(found, Availability::Unavailable(ref reason) if reason.contains("not installed"))
         );
         assert_eq!(announced(&runtime, &ctx), 0, "nothing was waited for");
+        runtime.shutdown().await;
+    }
+
+    /// A probe that never returns, as one queued behind a hung CLI's would.
+    fn hang_probes_after(runtime: &Arc<Runtime>, after: Duration) {
+        let holding = runtime.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(after).await;
+            holding.engines.hang_rechecks();
+        });
+    }
+
+    #[tokio::test]
+    async fn a_hung_probe_ends_with_the_window() {
+        let (runtime, _dir, ctx) = waiting_with_session(Duration::from_millis(300)).await;
+        hang_probes_after(&runtime, Duration::from_millis(50));
+        let started = std::time::Instant::now();
+        let found = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_engine(
+                &runtime,
+                &ctx,
+                KIND,
+                "claude-code",
+                &CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("the window bounds a probe that never returns")
+        .unwrap();
+        assert!(
+            matches!(found, Availability::Unavailable(ref reason) if reason.contains("not installed")),
+            "the last finished probe's reason is kept"
+        );
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn cancelling_ends_a_probe_still_running() {
+        let (runtime, _dir, ctx) = waiting_with_session(Duration::from_secs(3600)).await;
+        hang_probes_after(&runtime, Duration::ZERO);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let cancel = CancellationToken::new();
+        let cancelling = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            cancelling.cancel();
+        });
+        let found = tokio::time::timeout(
+            Duration::from_secs(5),
+            wait_for_engine(&runtime, &ctx, KIND, "claude-code", &cancel),
+        )
+        .await
+        .expect("cancelling does not wait for the probe");
+        assert!(matches!(found.unwrap(), Availability::Cancelled));
+        assert_eq!(announced(&runtime, &ctx), 0, "no probe finished to wait on");
         runtime.shutdown().await;
     }
 

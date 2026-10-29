@@ -342,9 +342,8 @@ pub(crate) async fn execute(
         drop(registered);
         drop(req_rx);
         // The provider answered, so whatever failed earlier is over: the retry
-        // window and the stall count bound one outage, not the turn's life.
-        if run.progressed {
-            backoff.recovered();
+        // window and the stall count bound one outage, up to MAX_RECOVERIES.
+        if run.progressed && backoff.recovered() {
             stalls = 0;
         }
         let class = match run.stalled {
