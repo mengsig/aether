@@ -515,9 +515,15 @@ interrupted turn, and every background shell. Then it finds every process
 carrying an agent's tag or in an engine scope, keeps the agents its own store
 ran (never an imported one, nor another daemon's), and stops their processes
 the same way, in one sweep, with a grace of `reap_grace_secs` but at most 10
-seconds. The daemon log records what it stopped. A process is signalled only
-through a pidfd opened before its tag is checked again, so a pid reused
-meanwhile is never hit.
+seconds. An agent whose turn is still running then is swept as well, so
+what that turn forks during the grace is stopped too. The daemon log records
+what it stopped. A process is signalled only through a pidfd opened before
+its tag is checked again, so a pid reused meanwhile is never hit.
+
+The tag attributes processes; it is not a security boundary. Any process of
+the same user that sets `AETHER_ENGINE_AGENT` to one of the daemon's agents
+is treated as that agent's, and a descendant that removes it is found only
+through an engine scope.
 
 A daemon that dies without a clean shutdown (killed with `SIGKILL`, out of
 memory, crashed) takes its engines with it on Linux. Each engine process, and

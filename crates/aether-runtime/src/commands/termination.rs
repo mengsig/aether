@@ -203,7 +203,11 @@ impl Runtime {
     /// or not: once it exits, nothing would stop a detached server or
     /// browser until the agent ends. Returns how many processes were signalled.
     pub(crate) async fn reap_agent_processes_at_shutdown(&self) -> usize {
-        let found = aether_engine::reap::agents_with_processes().await;
+        let mut found = aether_engine::reap::agents_with_processes().await;
+        // A turn that outlived the wait for it may still fork; its agent is swept too.
+        found.extend(self.sched.lock().running.keys().copied());
+        found.sort_unstable();
+        found.dedup();
         let ours: Vec<AgentId> = found
             .into_iter()
             .filter(|agent| self.ran_here(*agent))
