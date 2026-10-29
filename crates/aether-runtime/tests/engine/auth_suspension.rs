@@ -2,7 +2,7 @@
 //! `credentials` instead of failing it, says so once, and resumes on a probe.
 use super::*;
 
-const REFUSED: &str = r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}} · Please run /login"#;
+pub(super) const REFUSED: &str = r#"API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired."}} · Please run /login"#;
 
 fn refused() -> Vec<EngineEvent> {
     vec![EngineEvent::Done(EngineOutcome {

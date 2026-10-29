@@ -907,8 +907,10 @@ operator is told once per episode, not once per probe, and the suspension
 names the fix (`claude /login`, `codex login`). Once the CLI is signed in
 again, the next probe answers and every agent suspended on that provider is
 released. A configured fallback link takes the turn first, as for an exhausted
-quota. Models reached over HTTP keep failing on an auth error: their key is
-configuration, not a session that expires.
+quota. A stalled engine that names a refused sign-in or a spent plan as it is
+stopped is suspended on that, not retried as a stall. Models reached over HTTP
+keep failing on an auth error: their key is configuration, not a session that
+expires.
 
 ## Transient provider and network failures
 

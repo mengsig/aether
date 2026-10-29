@@ -346,6 +346,13 @@ pub(crate) async fn execute(
         if run.progressed && backoff.recovered() {
             stalls = 0;
         }
+        // A refused sign-in or spent plan the stalled engine named on its way
+        // out is the cause, not the silence: suspend on it, never retry it.
+        let named =
+            crate::exhaustion::engine_error_class(run.outcome.error.as_deref().unwrap_or(""));
+        if run.stalled.is_some() && crate::exhaustion::native_suspends(named) {
+            run.stalled = None;
+        }
         let class = match run.stalled {
             Some(_) => super::ModelErrorClass::Timeout,
             None => crate::exhaustion::engine_error_class(
