@@ -585,9 +585,10 @@ async fn own(
     };
     let status = match exited {
         Some(status) => {
-            let cleanup = pgid
-                .map(|pgid| signal_group(pgid, Signal::SIGKILL))
-                .transpose();
+            let cleanup = match pgid {
+                Some(pgid) => stop_exited_group(pgid).await,
+                None => Ok(()),
+            };
             status.and_then(|status| cleanup.map(|_| status))
         }
         None => signal_until_gone(&mut child, pgid, teardown.as_ref()).await,
@@ -644,6 +645,45 @@ fn signal_group(pgid: Pid, signal: Signal) -> std::io::Result<()> {
     }
 }
 
+/// What a job whose shell exited left in its group: SIGTERM, then SIGKILL
+/// once it outlives the stop grace. Elsewhere than Linux it is killed at once.
+async fn stop_exited_group(pgid: Pid) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    match journal::group_is_running(pgid) {
+        Ok(false) => {}
+        Ok(true) => {
+            if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
+                tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
+            }
+            wait_group_gone(pgid).await;
+        }
+        Err(error) => tracing::warn!(%pgid, %error, "cannot inspect group; killing it"),
+    }
+    signal_group(pgid, Signal::SIGKILL)
+}
+
+/// Wait until `pgid` has no live member, at most the stop grace.
+async fn wait_group_gone(pgid: Pid) {
+    let deadline = tokio::time::Instant::now() + STOP_GRACE;
+    loop {
+        #[cfg(target_os = "linux")]
+        match journal::group_is_running(pgid) {
+            Ok(false) => return,
+            Ok(true) => {}
+            Err(error) => {
+                tracing::warn!(%pgid, %error, "cannot inspect group; allowing full stop grace");
+                tokio::time::sleep_until(deadline).await;
+                return;
+            }
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        tokio::time::sleep(remaining.min(Duration::from_millis(50))).await;
+    }
+}
+
 /// Keep the leader unreaped through the grace period, pinning its group ID
 /// even if it exits before descendants that ignore SIGTERM.
 async fn signal_until_gone(
@@ -656,24 +696,7 @@ async fn signal_until_gone(
         if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
             tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
         }
-        let deadline = tokio::time::Instant::now() + STOP_GRACE;
-        loop {
-            #[cfg(target_os = "linux")]
-            match journal::group_is_running(pgid) {
-                Ok(false) => break,
-                Ok(true) => {}
-                Err(error) => {
-                    tracing::warn!(%pgid, %error, "cannot inspect group; allowing full stop grace");
-                    tokio::time::sleep_until(deadline).await;
-                    break;
-                }
-            }
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            tokio::time::sleep(remaining.min(Duration::from_millis(50))).await;
-        }
+        wait_group_gone(pgid).await;
         killed = signal_group(pgid, Signal::SIGKILL);
     }
     if let Some(teardown) = teardown {

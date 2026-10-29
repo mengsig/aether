@@ -383,6 +383,69 @@ async fn stop_terms_setsid_descendants_before_killing_them() {
     );
 }
 
+fn pid_in(path: &Path) -> i32 {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+/// What a detached process forks from its SIGTERM handler, during the grace,
+/// is part of the job too and does not outlive it.
+#[tokio::test]
+async fn stop_catches_what_a_detached_process_forks_as_it_terminates() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("parent.sh"),
+        "trap 'touch parent-termed; setsid sh -c \"trap \\\"\\\" TERM; while :; do sleep 0.1; done\" \
+         </dev/null >/dev/null 2>&1 & echo $! > child.tmp; mv child.tmp child; exit 0' TERM\n\
+         echo $$ > parent.tmp; mv parent.tmp parent\n\
+         while :; do sleep 0.1; done\n",
+    )
+    .unwrap();
+    let registry = BackgroundProcesses::new();
+    let ctx = ctx_in(dir.path());
+    let script = "setsid sh ./parent.sh </dev/null >/dev/null 2>&1 & wait";
+    let job = registry.start(ctx.agent_id, script, &ctx).unwrap();
+    ready(&dir.path().join("parent")).await;
+    let parent = pid_in(&dir.path().join("parent"));
+    registry.stop(ctx.agent_id, job.id).await.unwrap();
+    dead(parent).await;
+    assert!(
+        dir.path().join("parent-termed").exists(),
+        "the detached process got no SIGTERM"
+    );
+    let child = pid_in(&dir.path().join("child"));
+    dead(child).await;
+}
+
+/// A job whose shell exits on its own leaves a helper in its group: the
+/// helper gets SIGTERM, and time to act on it, before any SIGKILL.
+#[tokio::test]
+async fn a_finished_job_terms_what_its_group_left_running() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("helper.sh"),
+        "trap 'touch termed; exit 0' TERM\n\
+         echo $$ > helper.tmp; mv helper.tmp helper\n\
+         while :; do sleep 0.1; done\n",
+    )
+    .unwrap();
+    let registry = BackgroundProcesses::new();
+    let ctx = ctx_in(dir.path());
+    let script = "sh ./helper.sh </dev/null >/dev/null 2>&1 & \
+                  until [ -e helper ]; do sleep 0.05; done";
+    registry.start(ctx.agent_id, script, &ctx).unwrap();
+    ready(&dir.path().join("helper")).await;
+    let helper = pid_in(&dir.path().join("helper"));
+    dead(helper).await;
+    assert!(
+        dir.path().join("termed").exists(),
+        "the helper was killed without a SIGTERM first"
+    );
+}
+
 #[tokio::test]
 async fn recovery_kills_setsid_descendants_after_the_original_group_is_gone() {
     let dir = tempfile::tempdir().unwrap();

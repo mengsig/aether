@@ -214,36 +214,73 @@ pub(crate) fn kill_job(job: ProcessId) -> io::Result<()> {
     kill_job_at(job, Path::new("/proc"))
 }
 
-/// SIGTERM what `job` left running outside its process group, then SIGKILL
-/// whatever of it outlives `grace`.
+/// How many SIGKILL rounds catch job processes forked while the last landed.
+const KILL_ROUNDS: usize = 5;
+const JOB_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// SIGTERM what `job` left running outside its process group, including what
+/// it forks meanwhile, then SIGKILL whatever of it outlives `grace`.
 pub(crate) async fn stop_job(job: ProcessId, grace: std::time::Duration) -> io::Result<()> {
+    use rustix::process::Signal as JobSignal;
     let proc_root = Path::new("/proc");
+    let token = format!("{JOB_ENV}={job}");
     let deadline = tokio::time::Instant::now() + grace;
-    if signal_job_at(job, proc_root, Some(rustix::process::Signal::TERM))? == 0 {
-        return Ok(());
-    }
-    while tokio::time::Instant::now() < deadline {
-        if signal_job_at(job, proc_root, None)? == 0 {
+    let mut terminated: Vec<i32> = Vec::new();
+    loop {
+        let members = job_members(proc_root, &token)?;
+        if members.is_empty() {
             return Ok(());
         }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        for pid in members {
+            if !terminated.contains(&pid) && signal_member(proc_root, pid, &token, JobSignal::TERM)?
+            {
+                terminated.push(pid);
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(JOB_POLL).await;
     }
-    kill_job_at(job, proc_root)
+    for _ in 0..KILL_ROUNDS {
+        if !signal_job_at(proc_root, &token, JobSignal::KILL)? {
+            return Ok(());
+        }
+        tokio::time::sleep(JOB_POLL).await;
+    }
+    let survivors = job_members(proc_root, &token)?;
+    if survivors.is_empty() {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "background job {job} processes survived SIGKILL: {survivors:?}"
+    )))
 }
 
 fn kill_job_at(job: ProcessId, proc_root: &Path) -> io::Result<()> {
-    signal_job_at(job, proc_root, Some(rustix::process::Signal::KILL)).map(drop)
+    let token = format!("{JOB_ENV}={job}");
+    signal_job_at(proc_root, &token, rustix::process::Signal::KILL).map(drop)
 }
 
-/// Send `signal` to each live process of this user carrying `job`'s token,
-/// or with none only count them; returns how many there were.
+/// Send `signal` to each live process of this user carrying `token`; true
+/// when there was one.
 fn signal_job_at(
-    job: ProcessId,
     proc_root: &Path,
-    signal: Option<rustix::process::Signal>,
-) -> io::Result<usize> {
-    let token = format!("{JOB_ENV}={job}");
-    let mut found = 0;
+    token: &str,
+    signal: rustix::process::Signal,
+) -> io::Result<bool> {
+    let mut found = false;
+    for pid in job_members(proc_root, token)? {
+        found |= signal_member(proc_root, pid, token, signal)?;
+    }
+    Ok(found)
+}
+
+/// The live processes of this user under `proc_root` carrying `token`,
+/// without init and this daemon.
+fn job_members(proc_root: &Path, token: &str) -> io::Result<Vec<i32>> {
+    assert!(token.starts_with(JOB_ENV), "not a job token: {token}");
+    let mut members = Vec::new();
     for entry in std::fs::read_dir(proc_root)? {
         let entry = entry?;
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
@@ -252,55 +289,44 @@ fn signal_job_at(
         if pid <= 1 || pid == std::process::id() as i32 {
             continue;
         }
-        if signal_carrier(&entry, pid, &token, signal)? {
-            found += 1;
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if disappeared(&error) => continue,
+            Err(error) => return Err(error),
+        };
+        if metadata.uid() != geteuid().as_raw() {
+            continue;
+        }
+        if readable_environ(&entry.path())?.is_some_and(|environment| carries(&environment, token))
+        {
+            members.push(pid);
         }
     }
-    Ok(found)
+    Ok(members)
 }
 
-/// Signal the process at `entry` if it is this user's and carries `token`;
-/// false when it does not, or is gone.
-fn signal_carrier(
-    entry: &std::fs::DirEntry,
+/// Signal `pid` through a pidfd opened before its `token` is checked again,
+/// so a pid reused since the scan is never hit; false once it is gone.
+fn signal_member(
+    proc_root: &Path,
     pid: i32,
     token: &str,
-    signal: Option<rustix::process::Signal>,
+    signal: rustix::process::Signal,
 ) -> io::Result<bool> {
     use rustix::process::{Pid as ProcessPid, PidfdFlags, pidfd_open, pidfd_send_signal};
     assert!(pid > 1, "not a job process: {pid}");
-    let metadata = match entry.metadata() {
-        Ok(metadata) => metadata,
-        Err(error) if disappeared(&error) => return Ok(false),
-        Err(error) => return Err(error),
-    };
-    if metadata.uid() != geteuid().as_raw() {
-        return Ok(false);
-    }
-    let Some(environment) = readable_environ(&entry.path())? else {
+    let Some(raw) = ProcessPid::from_raw(pid) else {
         return Ok(false);
     };
-    if !carries(&environment, token) {
-        return Ok(false);
-    }
-    // A pidfd prevents signalling an unrelated process after PID reuse.
-    let Some(pid) = ProcessPid::from_raw(pid) else {
-        return Ok(false);
-    };
-    let process = match pidfd_open(pid, PidfdFlags::empty()) {
+    let process = match pidfd_open(raw, PidfdFlags::empty()) {
         Ok(process) => process,
         Err(rustix::io::Errno::SRCH) => return Ok(false),
         Err(error) => return Err(error.into()),
     };
-    let Some(environment) = readable_environ(&entry.path())? else {
-        return Ok(false);
-    };
-    if !carries(&environment, token) {
+    let path = proc_root.join(pid.to_string());
+    if !readable_environ(&path)?.is_some_and(|environment| carries(&environment, token)) {
         return Ok(false);
     }
-    let Some(signal) = signal else {
-        return Ok(true);
-    };
     match pidfd_send_signal(&process, signal) {
         Ok(()) => Ok(true),
         Err(rustix::io::Errno::SRCH) => Ok(false),

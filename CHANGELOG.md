@@ -19,9 +19,10 @@ release is also the text of its GitHub release.
   touched. Once the stop begins no new host shell command or engine starts,
   nor one for a cancelled turn whose agent's reap has begun. The bwrap
   sandbox of a network-denied Codex turn is tagged, scoped and gated like its
-  engine, a reap waits for an engine still joining its scope, and what a
-  background shell job detached gets `SIGTERM` and a 2 s grace before
-  `SIGKILL` when the job ends.
+  engine, and a reap waits for an engine still joining its scope. What a
+  background shell job leaves running when it ends or is stopped, in its
+  process group or detached, including what that forks meanwhile, gets
+  `SIGTERM` and a 2 s grace before `SIGKILL`.
   Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
   nothing changes.
 
