@@ -580,8 +580,9 @@ another daemon's) that have ended, and of those leaves each completed one
 whose processes a live ancestor holds, by the rules above. It stops the rest
 the same way, in one sweep, with a grace of `reap_grace_secs` but at most 10
 seconds. It spares an agent woken meanwhile, or whose ancestor was, which
-then holds what the agent left, and one whose ancestry it cannot read. The
-daemon log records what it stopped. A process is signalled only through a pidfd opened before its tag,
+then holds what the agent left, and one whose ancestry it cannot read. If
+that ancestor ends again before the sweep records it as holding, the sweep
+goes back for the agent, up to three times. The daemon log records what it stopped. A process is signalled only through a pidfd opened before its tag,
 or its scope, and the keep entry are checked again, so a pid reused meanwhile
 is never hit. What a live agent holds runs on while the daemon is down and is
 stopped when that agent ends after the next start; to stop it with the daemon,

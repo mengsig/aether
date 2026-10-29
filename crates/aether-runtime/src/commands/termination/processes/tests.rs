@@ -338,6 +338,67 @@ async fn a_daemon_sweep_spares_a_child_whose_ancestor_wakes_before_its_round() {
     assert_eq!(runtime.handed_to.lock().get(&child), Some(&parent));
 }
 
+/// A parent woken before the round spares its child, but if it fails again
+/// before the sweep records the hand-up, the sweep goes back for the child.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_daemon_sweep_takes_a_childs_server_back_from_an_ancestor_that_ended_again() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let parent = idle_agent(&runtime, None).await;
+    let child = idle_agent(&runtime, Some(parent)).await;
+    end(&runtime, child, completed());
+    end(&runtime, parent, AgentStatus::Failed { error: "x".into() });
+    let mut leftover = tagged_leftover(child);
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let owner = runtime.clone();
+    let waking = std::thread::spawn(move || {
+        let set = |status: AgentStatus| {
+            let mut row = owner.store.agent(parent).unwrap().unwrap();
+            row.transition(status, now()).unwrap();
+            owner
+                .store
+                .commit(Commit::new().mutate(Mutation::UpsertAgent(row)))
+                .unwrap();
+        };
+        let hold = owner
+            .engine_spawns
+            .spawn(
+                || false,
+                || {
+                    started_tx.send(()).unwrap();
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    set(AgentStatus::Ready);
+                    // Kept past the round, so the sweep records nothing before the end below.
+                    owner.hold()
+                },
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        set(AgentStatus::Failed {
+            error: "again".into(),
+        });
+        drop(hold);
+    });
+    started_rx.recv().unwrap();
+
+    runtime.reap_unheld_agent_processes().await;
+    waking.join().unwrap();
+    let stopped = (0..100).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        leftover.try_wait().unwrap().is_some()
+    });
+    if !stopped {
+        leftover.kill().unwrap();
+        leftover.wait().unwrap();
+    }
+    assert!(stopped, "no live agent holds the child's server any more");
+    assert!(
+        runtime.handed_to.lock().is_empty(),
+        "no hand-up outlived its holder"
+    );
+}
+
 /// An ancestry that cannot be read proves no one holds a completed child's
 /// processes, so a daemon sweep spares them and records no owner.
 #[tokio::test]

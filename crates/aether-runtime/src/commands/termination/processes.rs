@@ -23,6 +23,9 @@ pub(crate) const PROCESSES_HANDED_UP_EVENT: &str = "agent.processes_handed_up";
 /// The longest a daemon stop waits between SIGTERM and SIGKILL to its agents'
 /// processes, whatever `reap_grace_secs` says: a stop must not hang for minutes.
 const SHUTDOWN_REAP_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+/// How often a daemon sweep goes back for agents it spared for a holder that
+/// may have ended again since; each pass needs another wake and end to race it.
+const SWEEP_PASSES: usize = 3;
 /// The most processes a hand-up message names; its event records them all.
 const HANDED_UP_LISTED: usize = 50;
 /// The deepest ancestry walked for an owner; a parent cycle must not spin.
@@ -376,19 +379,28 @@ impl Runtime {
         found.extend(self.sched.lock().running.keys().copied());
         found.sort_unstable();
         found.dedup();
-        let unheld = self.unheld_agents(&found);
-        if unheld.is_empty() {
-            return 0;
+        let mut unheld = self.unheld_agents(&found);
+        let mut signalled = 0;
+        for _ in 0..SWEEP_PASSES {
+            if unheld.is_empty() {
+                return signalled;
+            }
+            let (stopped, spared) = self.sweep_unheld(&unheld).await;
+            signalled += stopped;
+            // An ancestor woken meanwhile holds what the sweep spared for it,
+            // unless it ended again before this records the hand-up.
+            unheld = self.unheld_agents(&spared);
         }
-        let signalled = self.sweep_unheld(&unheld).await;
-        // An ancestor woken meanwhile holds what the sweep spared for it.
-        self.unheld_agents(&unheld);
+        if !unheld.is_empty() {
+            tracing::warn!(agents = ?unheld, "agents kept waking through the daemon sweep; leaving their processes");
+        }
         signalled
     }
 
     /// Stop what the ended `unheld` left running, sparing each one that a
-    /// live agent holds by the time a round signals it. Returns how many were signalled.
-    async fn sweep_unheld(&self, unheld: &[AgentId]) -> usize {
+    /// live agent holds by the time a round signals it. Returns how many were
+    /// signalled, and the sorted agents spared.
+    async fn sweep_unheld(&self, unheld: &[AgentId]) -> (usize, Vec<AgentId>) {
         assert!(!unheld.is_empty(), "a sweep needs an agent to stop");
         let grace = self
             .models
@@ -399,10 +411,24 @@ impl Runtime {
         let ends = self.current_ends(unheld);
         // An agent woken meanwhile, or one whose ancestor was, is spared; each
         // round holds the gates a wake commits outside of, so none lands mid-round.
-        let ended = |id| self.still_in_end(id, ends.get(&id)) && self.holder(id) == Holder::Nobody;
+        let spared = parking_lot::Mutex::new(Vec::new());
+        let ended = |id| {
+            let unheld = self.still_in_end(id, ends.get(&id)) && self.holder(id) == Holder::Nobody;
+            if !unheld {
+                spared.lock().push(id);
+            }
+            unheld
+        };
         let gates = self.spawn_gates();
         let report = aether_engine::reap::reap_agents(unheld, grace, ended, &gates).await;
-        report.terminated.len()
+        let mut spared = spared.into_inner();
+        spared.sort_unstable();
+        spared.dedup();
+        debug_assert!(
+            spared.iter().all(|id| unheld.binary_search(id).is_ok()),
+            "only swept agents are spared"
+        );
+        (report.terminated.len(), spared)
     }
 
     /// The ended agents among the sorted `found` that this store ran and whose
