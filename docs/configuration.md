@@ -532,7 +532,10 @@ What an agent leaves running when it ends depends on how it ends.
 
 To stop them the daemon sends `SIGTERM` to every live process in the swept
 agents' scopes or carrying one of their tags, including any forked meanwhile,
-and sends `SIGKILL` to whatever is left after the grace. It records what it
+and sends `SIGKILL` to whatever is left after the grace. A process forked
+as the grace ends, after the last `SIGTERM` round, gets `SIGKILL` alone: a
+grace that waited for every newcomer would never end for one that keeps
+forking. A background job's stop works the same way, in rounds 50 ms apart. It records what it
 stopped on the ending agent as an
 `agent.processes_reaped` event, with the pids, the ones that needed `SIGKILL`,
 and in `survived` any still alive after that. Only processes of the daemon's

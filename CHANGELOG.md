@@ -22,8 +22,9 @@ release is also the text of its GitHub release.
   sandbox of a network-denied Codex turn is tagged, scoped and gated like its
   engine, and a reap waits for an engine still joining its scope. What a
   background shell job leaves running when it ends or is stopped, in its
-  process group or detached, including what that forks meanwhile, gets
-  `SIGTERM` and a 2 s grace before `SIGKILL`; the shell of a job that exits
+  process group or detached, gets `SIGTERM` and a 2 s grace before
+  `SIGKILL`, and what it forks during the grace gets `SIGTERM` within 50 ms;
+  one forked as the grace ends gets `SIGKILL` alone; the shell of a job that exits
   on its own is reaped only once its group is stopped, so the group id is
   never reused under the signal.
   Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
