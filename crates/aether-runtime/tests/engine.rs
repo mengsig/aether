@@ -51,6 +51,8 @@ mod completion_waits;
 mod cost_gap;
 #[path = "engine/effort.rs"]
 mod effort;
+#[path = "engine/engine_availability.rs"]
+mod engine_availability;
 #[path = "engine/exhaustion.rs"]
 mod exhaustion;
 #[path = "engine/extended_context.rs"]

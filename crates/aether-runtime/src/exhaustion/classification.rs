@@ -36,7 +36,9 @@ pub(crate) fn engine_error_class(error: &str) -> ModelErrorClass {
         || lower.contains("context window exceeded")
     {
         ModelErrorClass::ContextLimit
-    } else if lower.contains("codex app-server did not start the turn in time") {
+    } else if lower.contains("codex app-server did not start the turn in time")
+        || transient_spawn_failure(&lower)
+    {
         ModelErrorClass::Timeout
     } else if [
         "selected model is at capacity",
@@ -55,6 +57,25 @@ pub(crate) fn engine_error_class(error: &str) -> ModelErrorClass {
         ModelErrorClass::Unknown
     }
 }
+
+/// A launch the OS refused for now: fork limits or memory under load, or the
+/// binary being replaced by an update. A missing CLI or a denial is not one.
+fn transient_spawn_failure(lower: &str) -> bool {
+    lower.contains("could not start ")
+        && TRANSIENT_SPAWN_SIGNALS
+            .iter()
+            .any(|signal| lower.contains(signal))
+}
+
+/// EAGAIN, ETXTBSY and ENOMEM, as the OS words them and as Rust names their kinds.
+const TRANSIENT_SPAWN_SIGNALS: [&str; 6] = [
+    "resource temporarily unavailable",
+    "operation would block",
+    "text file busy",
+    "executable file busy",
+    "cannot allocate memory",
+    "out of memory",
+];
 
 /// Connectivity failures as Claude Code (Node errno and its own prose) and
 /// Codex report them while the host is offline.
@@ -117,6 +138,34 @@ mod tests {
             ("process failed", ModelErrorClass::Unknown),
         ] {
             assert_eq!(engine_error_class(error), class, "{error}");
+        }
+    }
+
+    #[test]
+    fn a_launch_the_os_refused_for_now_is_transient_and_a_missing_cli_is_not() {
+        for error in [
+            "could not start claude: Resource temporarily unavailable (os error 11)",
+            "could not start claude: Text file busy (os error 26)",
+            "could not start codex: Cannot allocate memory (os error 12)",
+            "could not start claude: operation would block",
+            "could not start claude: executable file busy",
+        ] {
+            assert_eq!(
+                engine_error_class(error),
+                ModelErrorClass::Timeout,
+                "{error}"
+            );
+        }
+        for error in [
+            "could not start claude: Permission denied (os error 13)",
+            "claude is not installed or not on PATH",
+            "FATAL ERROR: JavaScript heap out of memory",
+        ] {
+            assert_eq!(
+                engine_error_class(error),
+                ModelErrorClass::Unknown,
+                "{error}"
+            );
         }
     }
 
