@@ -45,6 +45,18 @@ fn holds_pid(payload: &serde_json::Value, pid: i32) -> bool {
         .is_some_and(|pids| pids.contains(&json!(pid)))
 }
 
+/// Whether `parent`'s inbox holds a message naming `pid` and its command.
+fn told_of(h: &Harness, parent: AgentId, pid: i32) -> bool {
+    let inbox = h.store.inbox(parent, 0).expect("inbox");
+    inbox.into_iter().any(|item| match item.kind {
+        InboxKind::Message { content, .. } => content.iter().any(|block| {
+            matches!(block, ContentBlock::Text { text }
+                if text.contains(&format!("{pid}: ")) && text.contains("sleep 300"))
+        }),
+        _ => false,
+    })
+}
+
 /// A child that completes hands the server it detached to its parent, which
 /// is told its pid and command; the server runs until the parent ends.
 #[tokio::test]
@@ -79,19 +91,15 @@ async fn a_completed_childs_server_runs_until_its_parent_ends() {
         custom_event(&h, child.id, "agent.processes_reaped").is_none(),
         "a completed child stops nothing"
     );
-    let told = h
-        .store
-        .inbox(parent, 0)
-        .expect("inbox")
-        .into_iter()
-        .any(|item| match item.kind {
-            InboxKind::Message { content, .. } => content.iter().any(|block| {
-                matches!(block, ContentBlock::Text { text }
-                    if text.contains(&format!("{pid}: ")) && text.contains("sleep 300"))
-            }),
-            _ => false,
-        });
-    assert!(told, "the parent is told the pid and command it now owns");
+    // The message follows the hand-up event in a commit of its own.
+    wait_for_with_budget(
+        h.wait_ceiling,
+        h.wait_ceiling,
+        || told_of(&h, parent, pid).then_some(()),
+        || (),
+        || format!("the parent is never told the pid {pid} and command it now owns"),
+    )
+    .await;
 
     h.runtime
         .cancel_agent(parent, Some("done".into()), Actor::user())
