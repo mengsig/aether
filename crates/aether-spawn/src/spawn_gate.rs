@@ -53,6 +53,13 @@ impl SpawnGate {
     pub fn hold(&self) -> SpawnHold<'_> {
         SpawnHold(self.0.write().unwrap_or_else(PoisonError::into_inner))
     }
+
+    /// Run `change` with no hold in place, even once the gate is closed: a
+    /// change a sweep's decision rests on lands before or after it, not inside.
+    pub fn outside_holds<T>(&self, change: impl FnOnce() -> T) -> T {
+        let _open = self.0.read().unwrap_or_else(PoisonError::into_inner);
+        change()
+    }
 }
 
 /// Spawns wait while this lives; see [`SpawnGate::hold`].
@@ -154,6 +161,30 @@ mod tests {
         release.send(()).unwrap();
         held.recv().expect("the hold ends once released");
         next.recv().expect("the next spawn runs once the hold ends");
+    }
+
+    #[test]
+    fn a_change_outside_holds_waits_for_a_hold_and_runs_once_closed() {
+        let gate = SpawnGate::default();
+        let holder = gate.clone();
+        let (held_tx, held_rx) = mpsc::channel::<()>();
+        let (release, released) = mpsc::channel::<()>();
+        let holding = std::thread::spawn(move || {
+            let _hold = holder.hold();
+            held_tx.send(()).unwrap();
+            released.recv().unwrap();
+        });
+        held_rx.recv().unwrap();
+        let changer = gate.clone();
+        let changed = returns_while_paused(move || assert_eq!(changer.outside_holds(|| 7), 7));
+        release.send(()).unwrap();
+        holding.join().unwrap();
+        changed.recv().expect("the change runs once the hold ends");
+        gate.close();
+        assert!(
+            gate.outside_holds(|| true),
+            "a closed gate still lets a change through"
+        );
     }
 
     #[test]

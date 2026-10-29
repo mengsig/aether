@@ -379,48 +379,30 @@ fn carries(environment: &[u8], token: &str) -> bool {
         .any(|entry| entry == token.as_bytes())
 }
 
-pub(crate) fn group_is_running(pgid: Pid) -> io::Result<bool> {
-    for entry in std::fs::read_dir("/proc")? {
-        let entry = entry?;
-        if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
-            continue;
-        }
-        let member = match std::fs::read(entry.path().join("stat")) {
-            Ok(stat) => identity(&stat)?,
-            Err(e) if disappeared(&e) => continue,
-            Err(e) => return Err(e),
-        };
-        if member.group == pgid.as_raw() && member.running() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// SIGTERM the members of an exited job's group `pgid`, then SIGKILL what
-/// outlives `grace`. Its shell is unreaped, so the group id is not reused
-/// meanwhile; each member is signalled on its own, so one kept is spared.
-pub(crate) async fn stop_exited_group(pgid: Pid, grace: std::time::Duration) -> io::Result<()> {
+/// SIGTERM the members of a job's group `pgid`, then SIGKILL what outlives
+/// `grace`. Its shell is unreaped, so the group id is not reused meanwhile;
+/// each member is signalled on its own, so one kept is spared.
+pub(crate) async fn stop_pinned_group(pgid: Pid, grace: std::time::Duration) -> io::Result<()> {
     use rustix::process::Signal as JobSignal;
     assert!(pgid.as_raw() > 1, "not a job's group: {pgid}");
     let proc_root = Path::new("/proc");
-    if !signal_exited_group(proc_root, pgid, JobSignal::TERM)? {
+    if !signal_pinned_group(proc_root, pgid, JobSignal::TERM)? {
         return Ok(());
     }
     let deadline = tokio::time::Instant::now() + grace;
-    while !exited_group_members(proc_root, pgid)?.is_empty() {
+    while !pinned_group_members(proc_root, pgid)?.is_empty() {
         if tokio::time::Instant::now() >= deadline {
             break;
         }
         tokio::time::sleep(JOB_POLL).await;
     }
     for _ in 0..KILL_ROUNDS {
-        if !signal_exited_group(proc_root, pgid, JobSignal::KILL)? {
+        if !signal_pinned_group(proc_root, pgid, JobSignal::KILL)? {
             return Ok(());
         }
         tokio::time::sleep(JOB_POLL).await;
     }
-    let survivors = exited_group_members(proc_root, pgid)?;
+    let survivors = pinned_group_members(proc_root, pgid)?;
     if survivors.is_empty() {
         return Ok(());
     }
@@ -431,13 +413,13 @@ pub(crate) async fn stop_exited_group(pgid: Pid, grace: std::time::Duration) -> 
 
 /// Send `signal` to each member of `pgid` that may be signalled; true when
 /// there was one.
-fn signal_exited_group(
+fn signal_pinned_group(
     proc_root: &Path,
     pgid: Pid,
     signal: rustix::process::Signal,
 ) -> io::Result<bool> {
     let mut found = false;
-    for pid in exited_group_members(proc_root, pgid)? {
+    for pid in pinned_group_members(proc_root, pgid)? {
         found |= signal_pinned(proc_root, pid, signal, |process| {
             signalled_in_group(process, pgid)
         })?;
@@ -446,7 +428,7 @@ fn signal_exited_group(
 }
 
 /// The live members of `pgid` that may be signalled, without init and this daemon.
-fn exited_group_members(proc_root: &Path, pgid: Pid) -> io::Result<Vec<i32>> {
+fn pinned_group_members(proc_root: &Path, pgid: Pid) -> io::Result<Vec<i32>> {
     let mut members = Vec::new();
     for entry in std::fs::read_dir(proc_root)? {
         let entry = entry?;

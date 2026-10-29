@@ -534,7 +534,7 @@ fn an_exited_group_signals_only_readable_unkept_members() {
         );
     }
     assert_eq!(
-        exited_group_members(proc_root.path(), group).unwrap(),
+        pinned_group_members(proc_root.path(), group).unwrap(),
         vec![10]
     );
 }

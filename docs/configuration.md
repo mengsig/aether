@@ -529,10 +529,6 @@ What an agent leaves running when it ends depends on how it ends.
   live for both rules: a child completing meanwhile hands up to it, and its
   stop decides what happens to that, while a sweep of the agent it handed to
   leaves it and what it holds to its own stop.
-- A completed agent that is woken again takes back the processes carrying its
-  tag or in its scopes, as the daemon tells processes apart by those alone;
-  the background jobs it handed up stay with their new owner. Its next end
-  hands them up or stops them again.
 
 To stop them the daemon sends `SIGTERM` to every live process in the swept
 agents' scopes or carrying one of their tags, including any forked meanwhile,
@@ -547,8 +543,9 @@ already starting is in place before the reap looks, and the reap waits, up to
 during the grace, or before the reap begins, the reap drops it, so its next engine
 is spared, and so is what it hands up should it end again, and goes on stopping
 the other agents' processes. Each round holds new engines and host
-commands from starting while it checks which agents are still ended and
-signals, so a restarted agent's next engine is never among those signalled.
+commands from starting, and a failed agent from being woken, while it checks
+which agents are still ended and signals, so a restarted agent's next engine,
+or what it hands up, is never among those signalled.
 An ending agent's background jobs are taken from it at its end, under the
 same lock a wake takes, so a job it starts once woken stays its own.
 
@@ -559,10 +556,10 @@ background shell job that started it ends or is stopped, and not at a daemon
 stop. Each process is signalled on its own, scopes included, so a kept one
 inside an engine's scope is spared too; there, a process whose environment
 cannot be read (a non-dumpable one) is treated as kept, as the mark cannot be
-ruled out. When a background job's shell exits on its own, what is left in
-its process group is signalled one process at a time, sparing a kept one and
-one whose environment cannot be read; the shell is reaped only afterwards,
-so the group id cannot be reused meanwhile. Stopping a turn or a background job, the
+ruled out. When a background job is stopped, or its shell exits on its own,
+what is in its process group is signalled one process at a time, sparing a
+kept one and one whose environment cannot be read; the shell is reaped only
+afterwards, so the group id cannot be reused meanwhile. Stopping a turn, the
 end of a foreground command, and recovery after a crash still signal the
 whole process group, so a kept process must also leave it, for example
 `AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept process

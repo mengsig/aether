@@ -388,6 +388,27 @@ async fn leader_exit_spares_a_kept_member_of_its_group() {
     assert!(survived, "the kept member of the group outlives the job");
 }
 
+/// Stopping a running job spares a member marked to be kept, and still stops
+/// the rest of its group.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_job_spares_a_kept_member_of_its_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    let job = reg.start(agent,
+        "AETHER_KEEP_PROCESS=1 sleep 300 & echo $! > kept; sleep 301 & echo $! > swept.tmp && mv swept.tmp swept; wait",
+        &ctx_in(dir.path())).unwrap();
+    wait_until("both members", || dir.path().join("swept").exists()).await;
+    let kept = read_pid(&dir.path().join("kept")).expect("kept pid");
+    let swept = read_pid(&dir.path().join("swept")).expect("swept pid");
+    reg.stop(agent, job.id).await.unwrap();
+    wait_until("the unkept member to stop", || !alive(swept)).await;
+    let survived = alive(kept);
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(kept), Signal::SIGKILL).ok();
+    assert!(survived, "the kept member of the group outlives the stop");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn stop_escalates_after_leader_exits_on_term() {
     let dir = tempfile::tempdir().unwrap();

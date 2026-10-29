@@ -317,7 +317,7 @@ isolation depend on the installed engine version and the platform; see
   launch never waits on a slow or missing user manager; what it detaches
   before it has joined is found by its tag alone. A non-dumpable process,
   whose environment cannot be read, is spared in a scope, and in the group of
-  a background job whose shell exited, as it may carry the keep mark; one a browser sandboxed this way exits with the browser, but
+  a background job that is stopped or whose shell exited, as it may carry the keep mark; one a browser sandboxed this way exits with the browser, but
   another keeps running. On macOS a process left behind after a turn keeps
   running.
 - What a delegated child that completed left running passes to its nearest

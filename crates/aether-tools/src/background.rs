@@ -741,34 +741,12 @@ async fn exited_unreaped(pid: u32) -> std::io::Result<()> {
 /// once it outlives the stop grace, member by member, sparing a kept one.
 #[cfg(target_os = "linux")]
 async fn stop_exited_group(pgid: Pid) -> std::io::Result<()> {
-    journal::stop_exited_group(pgid, STOP_GRACE).await
+    journal::stop_pinned_group(pgid, STOP_GRACE).await
 }
 
 #[cfg(not(target_os = "linux"))]
 async fn stop_exited_group(pgid: Pid) -> std::io::Result<()> {
     signal_group(pgid, Signal::SIGKILL)
-}
-
-/// Wait until `pgid` has no live member, at most the stop grace.
-async fn wait_group_gone(pgid: Pid) {
-    let deadline = tokio::time::Instant::now() + STOP_GRACE;
-    loop {
-        #[cfg(target_os = "linux")]
-        match journal::group_is_running(pgid) {
-            Ok(false) => return,
-            Ok(true) => {}
-            Err(error) => {
-                tracing::warn!(%pgid, %error, "cannot inspect group; allowing full stop grace");
-                tokio::time::sleep_until(deadline).await;
-                return;
-            }
-        }
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return;
-        }
-        tokio::time::sleep(remaining.min(Duration::from_millis(50))).await;
-    }
 }
 
 /// Keep the leader unreaped through the grace period, pinning its group ID
@@ -778,19 +756,32 @@ async fn signal_until_gone(
     pgid: Option<Pid>,
     teardown: Option<&Teardown>,
 ) -> std::io::Result<std::process::ExitStatus> {
-    let mut killed = Ok(());
-    if let Some(pgid) = pgid {
-        if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
-            tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
-        }
-        wait_group_gone(pgid).await;
-        killed = signal_group(pgid, Signal::SIGKILL);
-    }
+    let stopped = match pgid {
+        Some(pgid) => stop_running_group(pgid).await,
+        None => Ok(()),
+    };
     if let Some(teardown) = teardown {
         teardown.run();
     }
-    killed?;
+    stopped?;
     child.wait().await
+}
+
+/// Stop a running job's group as an exited one's: its unreaped shell pins
+/// the group id, so each member is signalled on its own and a kept one spared.
+#[cfg(target_os = "linux")]
+async fn stop_running_group(pgid: Pid) -> std::io::Result<()> {
+    journal::stop_pinned_group(pgid, STOP_GRACE).await
+}
+
+/// SIGTERM the whole group, then SIGKILL it once the stop grace is over.
+#[cfg(not(target_os = "linux"))]
+async fn stop_running_group(pgid: Pid) -> std::io::Result<()> {
+    if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
+        tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
+    }
+    tokio::time::sleep(STOP_GRACE).await;
+    signal_group(pgid, Signal::SIGKILL)
 }
 
 #[cfg(test)]
