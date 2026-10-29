@@ -211,6 +211,45 @@ async fn a_late_hand_up_settles_with_the_live_owner_it_would_have_reached() {
     assert_eq!(runtime.settle_owner(middle), None, "a stop took it");
 }
 
+/// A daemon stop or start sweeps an ended agent no live agent holds; a live
+/// one keeps its own, a completed one's stay with its nearest live ancestor,
+/// recorded as holding them, and an agent this store never ran is left alone.
+#[tokio::test]
+async fn a_daemon_sweep_takes_only_what_no_live_agent_holds() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let root = idle_agent(&runtime, None).await;
+    let middle = idle_agent(&runtime, Some(root)).await;
+    let leaf = idle_agent(&runtime, Some(middle)).await;
+    let failed = idle_agent(&runtime, Some(root)).await;
+    let done_root = idle_agent(&runtime, None).await;
+    let under_done = idle_agent(&runtime, Some(done_root)).await;
+    for agent in [middle, leaf, done_root, under_done] {
+        end(&runtime, agent, completed());
+    }
+    end(&runtime, failed, AgentStatus::Failed { error: "x".into() });
+    let mut found = vec![
+        root,
+        middle,
+        leaf,
+        failed,
+        done_root,
+        under_done,
+        AgentId::new(),
+    ];
+    found.sort_unstable();
+
+    let mut expected = vec![failed, done_root, under_done];
+    expected.sort_unstable();
+    assert_eq!(runtime.unheld_agents(&found), expected);
+    let handed = runtime.handed_to.lock().clone();
+    assert_eq!(
+        handed,
+        HashMap::from([(middle, root), (leaf, root)]),
+        "past the completed middle"
+    );
+}
+
 /// A sweep is for one end: an agent woken since, or ended again, is spared,
 /// as what that later end left is its own to stop or hand up.
 #[tokio::test]

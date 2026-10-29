@@ -1,6 +1,7 @@
 //! What an ended agent leaves running. A child that completed under a live
 //! ancestor hands it to the nearest one; any other end stops it, together
-//! with what reaped agents handed up to it. A daemon stop stops it all.
+//! with what reaped agents handed up to it. A daemon stop or start stops
+//! what no live agent holds.
 
 use crate::commands::PendingReap;
 use crate::{CommitHold, Runtime};
@@ -337,20 +338,19 @@ impl Runtime {
         Ok(())
     }
 
-    /// Stop what this daemon's agents have running, ended or not: as it stops,
-    /// since nothing would stop it after, and as it starts, after one that died.
-    /// Returns how many processes were signalled.
-    pub(crate) async fn reap_all_agent_processes(&self) -> usize {
+    /// Stop what this daemon's agents left running that no live agent holds:
+    /// as it stops, since nothing would stop it after, and as it starts, after
+    /// one that died. A live agent keeps its own, and a completed one's stay
+    /// with its nearest live ancestor, so agents a restart resumes find their
+    /// servers up. Returns how many processes were signalled.
+    pub(crate) async fn reap_unheld_agent_processes(&self) -> usize {
         let mut found = aether_engine::reap::agents_with_processes().await;
-        // A turn that outlived the wait for it may still fork; its agent is swept too.
+        // An ended agent whose turn outlived the wait for it may still fork.
         found.extend(self.sched.lock().running.keys().copied());
         found.sort_unstable();
         found.dedup();
-        let ours: Vec<AgentId> = found
-            .into_iter()
-            .filter(|agent| self.ran_here(*agent))
-            .collect();
-        if ours.is_empty() {
+        let unheld = self.unheld_agents(&found);
+        if unheld.is_empty() {
             return 0;
         }
         let grace = self
@@ -359,18 +359,43 @@ impl Runtime {
             .agents
             .reap_grace()
             .min(SHUTDOWN_REAP_GRACE);
-        let report = aether_engine::reap::reap_agents(&ours, grace, |_| true, &[]).await;
+        let ends = self.current_ends(&unheld);
+        // One woken meanwhile runs what it holds again, so it is spared.
+        let ended = |id| self.still_in_end(id, ends.get(&id));
+        let report = aether_engine::reap::reap_agents(&unheld, grace, ended, &[]).await;
         report.terminated.len()
     }
 
-    /// Whether `agent` is one this store ran. Another daemon's agents carry
-    /// tags too, and an imported agent ran elsewhere; neither is ours to stop.
-    fn ran_here(&self, agent: AgentId) -> bool {
+    /// The ended agents among the sorted `found` that this store ran and whose
+    /// processes no live agent holds. A completed one with a live ancestor is
+    /// recorded as handed up to it, as a start after a crash lost that record.
+    fn unheld_agents(&self, found: &[AgentId]) -> Vec<AgentId> {
+        debug_assert!(found.is_sorted(), "found agents are sorted");
+        let hold = self.hold();
+        let mut unheld = Vec::new();
+        for agent in found.iter().copied().filter(|id| self.ended_here(*id)) {
+            let Some(owner) = self.handed_up_to(&hold, agent) else {
+                unheld.push(agent);
+                continue;
+            };
+            let recorded = *self.handed_to.lock().entry(agent).or_insert(owner);
+            tracing::info!(%agent, owner = %recorded, "a completed agent's processes stay with its live ancestor");
+        }
+        assert!(unheld.len() <= found.len(), "only found agents are swept");
+        unheld
+    }
+
+    /// Whether `agent` is one this store ran and has ended. Another daemon's
+    /// agents carry tags too, and an imported agent ran elsewhere; neither is
+    /// ours to stop, and a live agent's processes are its own.
+    fn ended_here(&self, agent: AgentId) -> bool {
         match self.store.agent(agent) {
-            Ok(Some(row)) => !matches!(row.status, AgentStatus::Imported { .. }),
+            Ok(Some(row)) => {
+                row.status.is_terminal() && !matches!(row.status, AgentStatus::Imported { .. })
+            }
             Ok(None) => false,
             Err(error) => {
-                tracing::warn!(%agent, %error, "cannot tell whether the agent is ours; sparing its processes");
+                tracing::warn!(%agent, %error, "cannot tell whether the agent is ours and ended; sparing its processes");
                 false
             }
         }
@@ -490,8 +515,8 @@ fn hand_up_message(
 
     let mut text = format!(
         "Agent {agent} completed and handed you what it left running. It is stopped \
-         when you end with no live ancestor, are cancelled or fail, or the daemon \
-         stops; stop it sooner with `kill <pid>`."
+         when you end with no live ancestor, are cancelled or fail; a daemon \
+         restart leaves it running. Stop it sooner with `kill <pid>`."
     );
     if !jobs.is_empty() {
         text.push_str("\nBackground shell jobs, now yours to read and stop:");
