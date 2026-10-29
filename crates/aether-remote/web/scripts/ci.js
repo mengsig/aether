@@ -11,6 +11,11 @@ process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(root,'node_modules','.browsers'
 process.env.npm_config_cache = path.join(root,'node_modules','.npm-cache');
 await mkdir(process.env.TMPDIR,{recursive:true});
 
+/** A skipped browser check must be impossible to miss in the output. @param {string} reason */
+function skipLoudly(reason) {
+  console.log(`\n\x1b[1;33m==> Web browser checks SKIPPED, so the live web suite did not run: ${reason}\n    Set it up as crates/aether-remote/web/README.md describes; hosted CI runs it.\x1b[0m\n`);
+}
+
 /** @param {string} command @param {string[]} args */
 function run(command,args) {
   assert.ok(command.length > 0,'A CI command must have an executable.');
@@ -25,7 +30,7 @@ function run(command,args) {
 async function browserAvailable() {
   const cli = path.join(root,'node_modules','@playwright','test','cli.js');
   if (!existsSync(cli)) {
-    console.log('Web browser checks skipped (needs local @playwright/test).');
+    skipLoudly('needs local @playwright/test (npm ci in crates/aether-remote/web).');
     return false;
   }
   const {chromium} = await import('@playwright/test');
@@ -34,7 +39,7 @@ async function browserAvailable() {
     browser = await chromium.launch({headless:true});
   } catch (error) {
     if (!(error instanceof Error) || !error.message.includes("Executable doesn't exist at ")) throw error;
-    console.log('Web browser checks skipped (needs Chromium in web/node_modules/.browsers).');
+    skipLoudly('needs Chromium in web/node_modules/.browsers (PLAYWRIGHT_BROWSERS_PATH=$PWD/node_modules/.browsers npx playwright install chromium).');
     return false;
   }
   try {
@@ -47,7 +52,7 @@ async function browserAvailable() {
 /** @param {string|undefined} binary */
 async function runLive(binary) {
   if (!binary) {
-    console.log('Web live browser checks skipped (set AETHER_BINARY to an executable daemon).');
+    skipLoudly('set AETHER_BINARY to an executable daemon.');
     return;
   }
   assert.ok(path.isAbsolute(binary),'The daemon path must survive the web working directory change.');
@@ -56,12 +61,12 @@ async function runLive(binary) {
     if (!(await stat(binary)).isFile()) throw new Error(`The daemon binary is not a file: ${binary}`);
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || !['ENOENT','EACCES','ENOTDIR'].includes(String(error.code))) throw error;
-    console.log(`Web live browser checks skipped (needs executable daemon: ${binary}).`);
+    skipLoudly(`needs an executable daemon: ${binary}.`);
     return;
   }
   const python = spawnSync('python3',['--version'],{env:process.env,encoding:'utf8'});
   if (python.error && 'code' in python.error && python.error.code === 'ENOENT') {
-    console.log('Web live browser checks skipped (needs python3).');
+    skipLoudly('the live suite needs python3.');
     return;
   }
   if (python.error) throw python.error;

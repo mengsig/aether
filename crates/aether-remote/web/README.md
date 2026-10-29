@@ -32,7 +32,7 @@ Use a binary built from this checkout: the test exercises its embedded web asset
 
 Python 3, Git and the local Chromium installation are required. Configuration, data and the short Unix socket live under a unique `/var/tmp/aw-*` directory, removed on completion; browser temporary files remain in `node_modules/.live-tmp`. Logs and both-theme captures go to `test-results/live/`. This command never builds Rust. Real push delivery and physical iOS installation remain separate device checks: the remote endpoint policy intentionally refuses loopback/private push services.
 
-Repository `scripts/ci.sh` runs the web type checks and units when Node/npm are present. Missing local Chromium skips browser checks explicitly; a browser that is installed but fails is an error. With Chromium, Python and the CI binary, the same lane runs this real-daemon suite after the mock browser suite. `RUN_CONTROLS_BROWSER=0 npm run test:unit` runs only nonbrowser units.
+Repository `scripts/ci.sh` runs the web type checks and units when Node/npm are present. Missing local Chromium skips browser checks, with a yellow SKIPPED banner naming the live suite (hosted CI always runs it, and its schedule check waits about a minute for the first delivery); a browser that is installed but fails is an error. With Chromium, Python and the CI binary, the same lane runs this real-daemon suite after the mock browser suite. `RUN_CONTROLS_BROWSER=0 npm run test:unit` runs only nonbrowser units.
 
 ## Runtime layout
 

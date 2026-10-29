@@ -25,7 +25,7 @@ export function spawnScheduleForm(view,refresh) {
     {label:'Host workspace',name:'workspace',required:true},
     {label:'Provider/model',name:'model',required:true},
     {label:'Reasoning effort',name:'effort',options:['medium','low','high','x_high','max']},
-    {label:'Interval in seconds',name:'seconds',type:'number',value:'86400'},
+    {label:'Interval in seconds',name:'seconds',type:'number',value:'86400',min:60,hint:'The daemon refuses intervals under 60 seconds.'},
     {label:'Maximum runs',name:'limit',type:'number',value:'7'},
   ],async values => {
     const command = spawnScheduleCommand(values);

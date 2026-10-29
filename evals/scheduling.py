@@ -30,11 +30,11 @@ for model in args.model:
         try:
             start_daemon(binary, env, str(workspace))
             with AetherClient(env['AETHER_SOCKET']) as client:
-                prompt = 'Every ten seconds, read README.md and tell me its title. Stop the timer after two deliveries.'
+                prompt = 'Every minute, read README.md and tell me its title. Stop the timer after two deliveries.'
                 result['prompt'] = prompt
                 root = client.create_agent(model=model, effort='low', objective=prompt)
                 result['agent'] = root['id']
-                deadline = time.monotonic() + 240
+                deadline = time.monotonic() + 420
                 paused = None
                 while time.monotonic() < deadline:
                     jobs = client.request(protocol.list_schedules(target=root['id']))['data']
@@ -49,7 +49,7 @@ for model in args.model:
                     time.sleep(0.25)
                 if paused is None or current['status']['state'] != 'waiting':
                     raise TimeoutError('No waiting agent with a timer before the deadline')
-                assert paused['recurrence'] == {'kind': 'interval', 'seconds': 10}, paused
+                assert paused['recurrence'] == {'kind': 'interval', 'seconds': 60}, paused
                 assert paused['max_deliveries'] == 2, paused
                 result['paused_before_restart'] = paused
             stop_daemon(binary, env)
@@ -58,7 +58,7 @@ for model in args.model:
                 restored = client.request(protocol.get_schedule(id=paused['id']))['data']
                 assert restored == paused, (restored, paused)
                 client.request(protocol.update_schedule(id=paused['id'], action='resume'))
-                deadline = time.monotonic() + 240
+                deadline = time.monotonic() + 420
                 while time.monotonic() < deadline:
                     job = client.request(protocol.get_schedule(id=paused['id']))['data']
                     current = client.get_agent(root['id'])

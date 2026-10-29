@@ -80,6 +80,11 @@ older clients see no change. Store schema 28 (was 27).
 
 ### Fixed
 
+- **The phone app's schedule forms match the 60-second minimum.** The
+  interval fields now carry `min=60` and a hint, and the live web test
+  creates a 60-second schedule and checks that a shorter one shows the
+  daemon's refusal. The scheduling eval asks for a one-minute timer. A
+  skipped web browser or live check in `make ci` now prints a yellow banner.
 - **Engines die with the daemon, and preflight is current (#313).** A daemon
   killed with `SIGKILL` left its engine processes running, reparented to
   init, until the next start reaped them. This also happened to the test

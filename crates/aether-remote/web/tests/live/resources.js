@@ -65,12 +65,35 @@ async function checkModel(page,fixture,id) {
   }
 }
 
+/** The daemon's shortest schedule interval; the first delivery comes one interval after creation. */
+const MIN_INTERVAL_SECONDS=60;
+const FIRST_OCCURRENCE_TIMEOUT_MS=(MIN_INTERVAL_SECONDS+30)*1000;
+
+/** @param {Page} page @param {Fixture} fixture @param {string} id */
+async function checkShortIntervalRefused(page,fixture,id) {
+  const name=`Too frequent ${Date.now()}`;
+  const seconds=page.getByLabel('Interval in seconds (interval only)',{exact:true});
+  await page.getByLabel('Schedule name',{exact:true}).fill(name);
+  await seconds.fill(String(MIN_INTERVAL_SECONDS-1));
+  await page.getByLabel('Message for the agent',{exact:true}).fill('must never be delivered');
+  await expect(seconds).toHaveJSProperty('validity.rangeUnderflow',true);
+  await expect(page.getByText('The daemon refuses intervals under 60 seconds.',{exact:true}).first()).toBeVisible();
+  // The form's minimum is a hint: drop it so the daemon, which stays the authority, answers.
+  await seconds.evaluate(control=>control.removeAttribute('min'));
+  await page.getByRole('button',{name:'Create schedule',exact:true}).click();
+  await expect(page.locator('.controls-error')).toContainText(`schedule interval must be at least ${MIN_INTERVAL_SECONDS} seconds; got ${MIN_INTERVAL_SECONDS-1}`);
+  const reply=await fixture.request({cmd:'list_schedules',target:id});
+  expect(reply.data.some((/** @type {{name:string}} */ item)=>item.name===name)).toBe(false);
+  await seconds.evaluate((control,minimum)=>control.setAttribute('min',minimum),String(MIN_INTERVAL_SECONDS));
+}
+
 /** @param {Page} page @param {Fixture} fixture @param {string} id */
 async function checkSchedules(page,fixture,id) {
   await openPanel(page,fixture,id,'schedules');
+  await checkShortIntervalRefused(page,fixture,id);
   const name=`Live schedule ${Date.now()}`;
   await page.getByLabel('Schedule name',{exact:true}).fill(name);
-  await page.getByLabel('Interval in seconds (interval only)',{exact:true}).fill('2');
+  await page.getByLabel('Interval in seconds (interval only)',{exact:true}).fill(String(MIN_INTERVAL_SECONDS));
   await page.getByLabel('Message for the agent',{exact:true}).fill('hello from the live schedule');
   await page.getByRole('button',{name:'Create schedule',exact:true}).click();
   await accepted(page);
@@ -84,7 +107,7 @@ async function checkSchedules(page,fixture,id) {
   expect((await fixture.request({cmd:'get_schedule',id:schedule.id})).data.status.state).toBe('paused');
   await row.getByRole('button',{name:'Resume',exact:true}).click();
   await accepted(page);
-  const history=await until(()=>fixture.request({cmd:'schedule_history',id:schedule.id,limit:10}),value=>value.data.length>0,'schedule occurrence');
+  const history=await until(()=>fixture.request({cmd:'schedule_history',id:schedule.id,limit:10}),value=>value.data.length>0,'schedule occurrence',FIRST_OCCURRENCE_TIMEOUT_MS);
   expect(history.data[0].outcome.outcome).toBe('delivered');
   await row.getByRole('button',{name:'History',exact:true}).click();
   await expect(row.getByText('Delivered',{exact:true}).first()).toBeVisible();

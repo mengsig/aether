@@ -4,7 +4,7 @@ import { mutate, replyData, records, assertOperator } from './protocol.js';
 /** @typedef {import('../../types.js').Context} Context */
 /** @typedef {import('../../types.js').Command} Command */
 /** @typedef {ReturnType<typeof panel>} Panel */
-/** @typedef {{label:string,name:string,value?:string,type?:string,options?:string[],required?:boolean}} InputSpec */
+/** @typedef {{label:string,name:string,value?:string,type?:string,options?:string[],required?:boolean,min?:number,hint?:string}} InputSpec */
 
 /** @param {string} title @param {string} [detail] */
 export function card(title, detail = '') {
@@ -82,6 +82,7 @@ export function input(spec) {
   control.name = spec.name;
   control.value = spec.value || (spec.options?.[0] ?? '');
   control.required = spec.required || false;
+  if (control instanceof HTMLInputElement && spec.min !== undefined) control.min = String(spec.min);
   return field(spec.label, control);
 }
 
@@ -92,7 +93,7 @@ export function form(view, title, specs, submit, mutation = true) {
   const root = el('form', 'stack controls-form');
   const fields = el('fieldset', 'stack');
   if (mutation) fields.dataset.mutation = 'true';
-  fields.append(el('legend', '', title), ...specs.map(input));
+  fields.append(el('legend', '', title), ...specs.flatMap(spec => spec.hint ? [input(spec), el('p', 'muted small', spec.hint)] : [input(spec)]));
   const send = el('button', 'button primary', title);
   send.type = 'submit';
   fields.append(send);

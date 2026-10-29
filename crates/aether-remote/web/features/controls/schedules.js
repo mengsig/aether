@@ -12,7 +12,7 @@ function createForm(view, agent, refresh) {
   return form(view, 'Create schedule', [
     { label: 'Schedule name', name: 'name', required: true },
     { label: 'Recurrence', name: 'kind', options: ['interval', 'cron'] },
-    { label: 'Interval in seconds (interval only)', name: 'seconds', type: 'number', value: '3600' },
+    { label: 'Interval in seconds (interval only)', name: 'seconds', type: 'number', value: '3600', min: 60, hint: 'The daemon refuses intervals under 60 seconds.' },
     { label: 'Five-field cron expression (cron only)', name: 'expression', value: '0 9 * * *' },
     { label: 'IANA timezone (cron only)', name: 'timezone', value: Intl.DateTimeFormat().resolvedOptions().timeZone },
     { label: 'Message for the agent', name: 'message', type: 'textarea', required: true },
