@@ -475,6 +475,20 @@ async fn a_daemon_sweep_spares_a_child_whose_ancestry_is_unreadable() {
     assert!(handed.is_empty(), "no owner is known");
 }
 
+/// An agent gone from the store since it was found has no ancestry to read.
+#[tokio::test]
+async fn an_agent_gone_from_the_store_has_no_known_holder() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    assert_eq!(runtime.holder(AgentId::new()), Holder::Unknown);
+    let hold = runtime.hold();
+    assert_eq!(
+        runtime.handed_up_to(&hold, AgentId::new()),
+        None,
+        "an end with no known owner stops what it left"
+    );
+}
+
 /// A parent gone from the store may have led to a live ancestor, so a daemon
 /// sweep spares the completed child under it.
 #[tokio::test]

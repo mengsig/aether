@@ -38,7 +38,7 @@ enum Holder {
     Live(AgentId),
     /// It ended otherwise, or no ancestor holds processes.
     Nobody,
-    /// One of its ancestors could not be read, or is gone from the store.
+    /// It or one of its ancestors could not be read, or is gone from the store.
     Unknown,
 }
 
@@ -96,7 +96,8 @@ impl Runtime {
     fn holder(&self, agent: AgentId) -> Holder {
         let row = match self.store.agent(agent) {
             Ok(Some(row)) => row,
-            Ok(None) => return Holder::Nobody,
+            // History retention removed it since; its ancestry is not known.
+            Ok(None) => return Holder::Unknown,
             Err(error) => {
                 tracing::warn!(%agent, %error, "cannot read the ended agent");
                 return Holder::Unknown;
