@@ -476,6 +476,29 @@ impl BackgroundProcesses {
         count
     }
 
+    /// Give `to` every process `from` holds, as a child that completed hands
+    /// what it started to its nearest live ancestor. Returns those still running.
+    pub fn hand_up(&self, from: AgentId, to: AgentId) -> Result<Vec<ProcessStatus>, ToolError> {
+        assert_ne!(from, to, "an agent hands nothing to itself");
+        let mut handed = Vec::new();
+        {
+            let mut processes = self.lock()?;
+            for process in processes.values_mut().filter(|p| p.agent == from) {
+                process.agent = to;
+                handed.push(self.status_of(process)?);
+            }
+        }
+        match self.stopped_output.lock() {
+            Ok(mut stopped) => {
+                stopped.remove(&from);
+            }
+            Err(error) => tracing::error!(%error, "cannot remove stopped shell output"),
+        }
+        handed.retain(|status| status.running);
+        handed.sort_by_key(|status| status.started_at);
+        Ok(handed)
+    }
+
     /// Stop every process this daemon started, whatever agent owns it. The
     /// daemon must not exit leaving processes nothing can reach.
     pub async fn stop_all(&self) -> usize {

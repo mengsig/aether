@@ -12,7 +12,8 @@ release is also the text of its GitHub release.
   Aether's own shell tool now tags every host command with its agent's id
   (`AETHER_ENGINE_AGENT`), as engines already were, so a Chromium, Firefox,
   `node` server or other helper a command detaches with `setsid` or a double
-  fork is stopped when the agent completes, fails or is cancelled. A daemon
+  fork is stopped when the agent fails or is cancelled, or completes with no
+  live ancestor to hand it to (see below). A daemon
   stop now also sends `SIGTERM`, then `SIGKILL` after `reap_grace_secs` (at
   most 10 s), to every process tagged with, or in an engine scope of, an agent
   its own store ran; agents of another daemon and imported agents are never
@@ -25,6 +26,15 @@ release is also the text of its GitHub release.
   `SIGTERM` and a 2 s grace before `SIGKILL`.
   Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
   nothing changes.
+- **A delegated child that completes hands what it left running to its parent
+  (#332).** A server or browser a child started is not stopped when the child
+  completes normally: it and the child's background shell jobs pass to the
+  nearest live ancestor, which is sent their pids and command lines and can
+  read and stop the jobs. They are stopped when the agent holding them ends
+  with no live ancestor, fails or is cancelled, or when the daemon stops. A
+  child that fails or is cancelled stops its own at once. A process started
+  with `AETHER_KEEP_PROCESS=1` is never signalled by these sweeps, so one
+  meant to outlive the tree can.
 
 ## 1.2.7
 

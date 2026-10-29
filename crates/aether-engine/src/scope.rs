@@ -100,7 +100,7 @@ pub(crate) async fn adopt(pid: Option<u32>, adoption: Adoption) {
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) use linux::{Unit, agent_units, agents_with_units, signal_units};
+pub(crate) use linux::{Unit, agent_units, agents_with_units, in_unit};
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -110,7 +110,6 @@ mod linux {
     use std::time::Duration;
 
     use aether_core::id::AgentId;
-    use nix::sys::signal::Signal;
 
     /// Set to `0` to run engines in their process group alone.
     const DISABLE_ENV: &str = "AETHER_ENGINE_SCOPE";
@@ -241,7 +240,7 @@ mod linux {
         };
         units_from_show(&shown, Path::new(CGROUP_ROOT))
             .into_iter()
-            .filter(|unit| !holds_own_cgroup(unit, &own))
+            .filter(|unit| !in_unit(unit, &own))
             .collect()
     }
 
@@ -280,20 +279,6 @@ mod linux {
                 tracing::debug!(%error, "no engine scopes listed");
                 None
             }
-        }
-    }
-
-    /// Signal every process of `units`. A scope that ended since it was
-    /// listed fails the call; any process truly left shows as a survivor.
-    pub(crate) async fn signal_units(units: &[Unit], signal: Signal) {
-        if units.is_empty() {
-            return;
-        }
-        let flag = format!("--signal={}", signal.as_str());
-        let mut args = vec!["kill", "--kill-whom=all", flag.as_str()];
-        args.extend(units.iter().map(|unit| unit.name.as_str()));
-        if let Err(error) = systemctl(&args).await {
-            tracing::debug!(?signal, %error, "systemctl kill of engine scopes");
         }
     }
 
@@ -363,9 +348,10 @@ mod linux {
         units
     }
 
-    /// Whether this process's cgroup v2 path (from `/proc/self/cgroup`) lies in `unit`'s.
-    pub(super) fn holds_own_cgroup(unit: &Unit, own_cgroup: &str) -> bool {
-        let Some(own) = own_cgroup.lines().find_map(|line| line.strip_prefix("0::")) else {
+    /// Whether the process whose `/proc/<pid>/cgroup` reads `cgroup` lies in
+    /// `unit`'s cgroup v2 tree. Signalled one by one, a kept process is spared.
+    pub(crate) fn in_unit(unit: &Unit, cgroup: &str) -> bool {
+        let Some(own) = cgroup.lines().find_map(|line| line.strip_prefix("0::")) else {
             return false;
         };
         let Some(unit_dir) = unit.procs.parent() else {
@@ -402,7 +388,7 @@ mod linux {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::linux::{Unit, holds_own_cgroup, unit_agents, unit_names, units_from_show};
+    use super::linux::{Unit, in_unit, unit_agents, unit_names, units_from_show};
     use super::{Adoption, settled};
     use aether_core::id::AgentId;
     use std::path::Path;
@@ -490,9 +476,9 @@ mod tests {
             name: "a.scope".into(),
             procs: "/sys/fs/cgroup/user.slice/a.scope/cgroup.procs".into(),
         };
-        assert!(holds_own_cgroup(&unit, "0::/user.slice/a.scope\n"));
-        assert!(holds_own_cgroup(&unit, "0::/user.slice/a.scope/sub\n"));
-        assert!(!holds_own_cgroup(&unit, "0::/user.slice/a.scope2\n"));
-        assert!(!holds_own_cgroup(&unit, "0::/user.slice/b.scope\n"));
+        assert!(in_unit(&unit, "0::/user.slice/a.scope\n"));
+        assert!(in_unit(&unit, "0::/user.slice/a.scope/sub\n"));
+        assert!(!in_unit(&unit, "0::/user.slice/a.scope2\n"));
+        assert!(!in_unit(&unit, "0::/user.slice/b.scope\n"));
     }
 }

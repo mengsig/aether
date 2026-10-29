@@ -500,10 +500,29 @@ tag. Without a working user systemd the engine keeps its process group and tag
 alone; the engine is already running, so this never delays or fails it. Set
 `AETHER_ENGINE_SCOPE=0` in the daemon's environment to skip the scopes.
 
-When an agent ends - it completes, fails, is cancelled, or runs out of time or
-budget - the daemon sends `SIGTERM` to every live process in the agent's scopes
-or carrying its tag, including any forked meanwhile, and sends `SIGKILL` to
-whatever is left after the grace. It records what it stopped as an
+What an agent leaves running when it ends depends on how it ends.
+
+- A delegated child that completes normally under a live ancestor stops
+  nothing. What it and the ended agents beneath it left running - processes
+  carrying their tags or in their engine scopes, and their background shell
+  jobs - passes to the nearest live ancestor, usually its parent. That agent
+  can read and stop the background jobs as its own, and gets a message from
+  the system listing each process it took over by pid and command line. The
+  child records the same as an `agent.processes_handed_up` event with `to`,
+  `pids`, `processes` and `jobs`. A child that delegated a server to run on
+  thus leaves it running for its parent to use. The message arrives once the
+  child's turn is over, after the result of its task.
+- Any other end stops them: a child that fails or is cancelled, the root of
+  a task tree (an agent with no live ancestor) however it ends, and an agent
+  that runs out of time or budget. The ending agent's processes are stopped
+  together with those of every ended agent beneath it reached through ended
+  agents only, which is what was handed up to it. A live descendant keeps its
+  own, and what was handed to it, until it ends.
+
+To stop them the daemon sends `SIGTERM` to every live process in the swept
+agents' scopes or carrying one of their tags, including any forked meanwhile,
+and sends `SIGKILL` to whatever is left after the grace. It records what it
+stopped on the ending agent as an
 `agent.processes_reaped` event, with the pids, the ones that needed `SIGKILL`,
 and in `survived` any still alive after that. Only processes of the daemon's
 own user are signalled, and never the daemon itself. A turn cancelled as its
@@ -511,6 +530,16 @@ agent ended starts no host command or engine after the reap begins; one it was
 already starting is in place before the reap looks, and the reap waits, up to
 11 seconds, for an engine still being moved into its scope. If the agent is restarted
 during the grace, the reap stops, so its next engine is spared.
+
+A process meant to outlive the whole task tree, and the daemon, can be kept:
+start it with `AETHER_KEEP_PROCESS=1` in its environment, which what it starts
+inherits. No sweep signals such a process: not at an agent's end, not when the
+background shell job that started it ends or is stopped, and not at a daemon
+stop. Each process is signalled on its own, scopes included, so a kept one
+inside an engine's scope is spared too. Stopping a turn or a background job
+still signals its whole process group, so a kept process must also leave it,
+for example `AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept
+process afterwards; that is up to whoever started it.
 
 A daemon shutdown ends no agent, but it leaves none of their processes
 running either. It stops each running engine's process group, as for any
@@ -523,7 +552,8 @@ the same way, in one sweep, with a grace of `reap_grace_secs` but at most 10
 seconds. An agent whose turn is still running then is swept as well, so
 what that turn forks during the grace is stopped too. The daemon log records
 what it stopped. A process is signalled only through a pidfd opened before
-its tag is checked again, so a pid reused meanwhile is never hit.
+its tag, or its scope, and the keep entry are checked again, so a pid reused
+meanwhile is never hit.
 
 The tag attributes processes; it is not a security boundary. Any process of
 the same user that sets `AETHER_ENGINE_AGENT` to one of the daemon's agents

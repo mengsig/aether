@@ -10,8 +10,8 @@ use tokio::io::AsyncWriteExt as _;
 
 use aether_core::id::AgentId;
 
-use super::linux::{carries, cgroup_members, is_live, tagged, tagged_agents};
-use super::{agents_with_processes, reap_agent, reap_agents};
+use super::linux::{carries, cgroup_members, command_line, is_live, kept, tagged, tagged_agents};
+use super::{agents_with_processes, live_processes, reap_agent, reap_agents};
 
 const UID: u32 = 4242;
 
@@ -94,6 +94,37 @@ fn never_selects_another_users_process() {
     assert!(carries(root.path(), 10, &tags(&[tag]), own_uid()));
     assert!(!carries(root.path(), 10, &tags(&[tag]), UID));
     assert!(tagged(root.path(), &tags(&[tag]), 0, UID).is_empty());
+}
+
+#[test]
+fn only_the_exact_keep_entry_keeps_a_process() {
+    let root = tempfile::tempdir().unwrap();
+    fake_process(root.path(), 10, "S", &["AETHER_KEEP_PROCESS=1"]);
+    fake_process(root.path(), 11, "S", &["AETHER_KEEP_PROCESS=0"]);
+    fake_process(root.path(), 12, "S", &["X=AETHER_KEEP_PROCESS=1"]);
+    assert!(kept(root.path(), 10, own_uid()));
+    assert!(!kept(root.path(), 11, own_uid()));
+    assert!(!kept(root.path(), 12, own_uid()));
+    assert!(
+        !kept(root.path(), 13, own_uid()),
+        "a gone process is not kept"
+    );
+}
+
+#[test]
+fn names_a_process_by_its_command_line_or_its_name() {
+    let root = tempfile::tempdir().unwrap();
+    fake_process(root.path(), 10, "S", &[]);
+    std::fs::write(root.path().join("10/cmdline"), b"node\0server.js\0").unwrap();
+    fake_process(root.path(), 11, "S", &[]);
+    std::fs::write(root.path().join("11/cmdline"), b"").unwrap();
+    std::fs::write(root.path().join("11/comm"), "chrome\n").unwrap();
+    assert_eq!(
+        command_line(root.path(), 10).as_deref(),
+        Some("node server.js")
+    );
+    assert_eq!(command_line(root.path(), 11).as_deref(), Some("[chrome]"));
+    assert_eq!(command_line(root.path(), 12), None);
 }
 
 #[test]
@@ -329,7 +360,7 @@ async fn a_daemon_stop_reaps_every_agent_it_names_in_one_sweep() {
         "{found:?}"
     );
 
-    let report = reap_agents(&[a, b], Duration::from_millis(300)).await;
+    let report = reap_agents(&[a, b], Duration::from_millis(300), || true).await;
 
     assert!(report.terminated.contains(&pid_a), "{report:?}");
     assert!(report.killed.contains(&pid_b), "{report:?}");
@@ -346,7 +377,46 @@ async fn a_daemon_stop_reaps_every_agent_it_names_in_one_sweep() {
     assert!(cleanup.terminated.contains(&other), "{cleanup:?}");
 }
 
+/// A process marked to be kept is listed by no sweep and signalled by none,
+/// in a scope or by its tag; one beside it without the mark is stopped.
+#[tokio::test]
+async fn a_process_marked_to_be_kept_outlives_its_agent() {
+    let agent = AgentId::new();
+    let kept = start_detached(
+        agent,
+        "AETHER_KEEP_PROCESS=1 setsid sleep 49 </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    let swept = start_detached(
+        agent,
+        "setsid sleep 50 </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    let listed: Vec<u32> = live_processes(&[agent])
+        .await
+        .iter()
+        .map(|p| p.pid)
+        .collect();
+
+    let report = reap_agent(agent, Duration::from_secs(5), || true).await;
+
+    let kept_alive = is_live(Path::new("/proc"), kept);
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(kept as i32),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .unwrap();
+    assert!(
+        listed.contains(&swept) && !listed.contains(&kept),
+        "{listed:?}"
+    );
+    assert!(report.terminated.contains(&swept), "{report:?}");
+    assert!(!report.terminated.contains(&kept), "{report:?}");
+    assert!(kept_alive, "the kept process was signalled");
+    assert!(wait_gone(swept).await, "the unmarked process is gone");
+}
+
 #[tokio::test]
 async fn reaping_no_agents_signals_nothing() {
-    assert!(reap_agents(&[], Duration::ZERO).await.is_empty());
+    assert!(reap_agents(&[], Duration::ZERO, || true).await.is_empty());
 }

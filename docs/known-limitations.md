@@ -312,5 +312,13 @@ isolation depend on the installed engine version and the platform; see
   ([agent processes](configuration.md#agent-processes)). This needs Linux. A
   process that cleared its environment is found only through an engine's
   scope, so one detached from Aether's own shell tool, or from an engine
-  without a user systemd, keeps running. On macOS a process left behind
+  without a user systemd, keeps running: `env -i setsid server` escapes both.
+  An engine joins its scope asynchronously, after it has started, so that a
+  launch never waits on a slow or missing user manager; what it detaches
+  before it has joined is found by its tag alone. On macOS a process left behind
   after a turn keeps running.
+- What a delegated child that completed left running passes to its nearest
+  live ancestor and runs until that ancestor's tree ends, so a long-lived root
+  keeps every server and browser its completed children left until it ends,
+  is cancelled or the daemon stops. It is told each one's pid and command,
+  and can stop them sooner.

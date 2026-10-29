@@ -3,7 +3,8 @@
 //!
 //! The processes are found by the agent's tag in their environment, set on
 //! its engines and host shell commands, and, on Linux with systemd, in the
-//! agent's engine scopes ([`crate::scope`]). A daemon shutdown reaps the
+//! agent's engine scopes ([`crate::scope`]). A process whose environment
+//! sets `AETHER_KEEP_PROCESS=1` is never signalled. A daemon shutdown reaps the
 //! agents [`agents_with_processes`] names that its own store ran, in one sweep.
 //! Elsewhere than Linux nothing can be found again after a turn, so only the
 //! turn's own process-group stop applies.
@@ -33,25 +34,53 @@ impl ReapReport {
     }
 }
 
+/// A live process of some agent, as an owner taking it over is told of it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AgentProcess {
+    pub pid: u32,
+    /// Its command line, shortened; its name when the command line is empty.
+    pub command: String,
+}
+
 /// SIGTERM every live process of `agent`'s engines and shell commands,
 /// including those forked meanwhile, then SIGKILL what outlives `grace`.
 /// `ended` is asked before each signal: once it is false - the agent was
 /// restarted, and its next engine carries the same tag - nothing more is signalled.
 #[cfg(target_os = "linux")]
 pub async fn reap_agent(agent: AgentId, grace: Duration, ended: impl Fn() -> bool) -> ReapReport {
-    let sweep = linux::Sweep::new(&[agent]).await;
-    reap(&sweep, grace, ended).await
+    reap_agents(&[agent], grace, ended).await
 }
 
-/// [`reap_agent`] for every one of `agents` at once, as the daemon stops:
-/// one scan of the processes per round, however many agents there are.
+/// [`reap_agent`] for every one of `agents` at once, as an owner ends with
+/// what it took over or the daemon stops: one scan of the processes per round.
 #[cfg(target_os = "linux")]
-pub async fn reap_agents(agents: &[AgentId], grace: Duration) -> ReapReport {
+pub async fn reap_agents(
+    agents: &[AgentId],
+    grace: Duration,
+    ended: impl Fn() -> bool,
+) -> ReapReport {
     if agents.is_empty() {
         return ReapReport::default();
     }
     let sweep = linux::Sweep::new(agents).await;
-    reap(&sweep, grace, || true).await
+    reap(&sweep, grace, ended).await
+}
+
+/// The live processes a sweep of `agents` would signal now, by pid.
+#[cfg(target_os = "linux")]
+pub async fn live_processes(agents: &[AgentId]) -> Vec<AgentProcess> {
+    if agents.is_empty() {
+        return Vec::new();
+    }
+    let sweep = linux::Sweep::new(agents).await;
+    sweep
+        .members()
+        .into_iter()
+        .filter_map(|pid| {
+            let command = linux::command_line(std::path::Path::new("/proc"), pid)?;
+            Some(AgentProcess { pid, command })
+        })
+        .collect()
 }
 
 /// The agents some live process of this user is tagged with, or that still
@@ -89,7 +118,7 @@ async fn reap(sweep: &linux::Sweep, grace: Duration, ended: impl Fn() -> bool) -
             if !ended() {
                 return stopped_early(sweep, report);
             }
-            sweep.signal(&fresh, Signal::SIGTERM).await;
+            sweep.signal(&fresh, Signal::SIGTERM);
             report.terminated.extend(fresh);
             report.terminated.sort_unstable();
         }
@@ -107,7 +136,7 @@ async fn reap(sweep: &linux::Sweep, grace: Duration, ended: impl Fn() -> bool) -
         if !ended() {
             return stopped_early(sweep, report);
         }
-        sweep.signal(&alive, Signal::SIGKILL).await;
+        sweep.signal(&alive, Signal::SIGKILL);
         report.killed.extend(&alive);
         tokio::time::sleep(linux::POLL).await;
     }
@@ -136,8 +165,17 @@ pub async fn reap_agent(agent: AgentId, _grace: Duration, _ended: impl Fn() -> b
 }
 
 #[cfg(not(target_os = "linux"))]
-pub async fn reap_agents(_agents: &[AgentId], _grace: Duration) -> ReapReport {
+pub async fn reap_agents(
+    _agents: &[AgentId],
+    _grace: Duration,
+    _ended: impl Fn() -> bool,
+) -> ReapReport {
     ReapReport::default()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn live_processes(_agents: &[AgentId]) -> Vec<AgentProcess> {
+    Vec::new()
 }
 
 /// Nothing can be found again on this platform.
@@ -171,6 +209,11 @@ mod linux {
     use nix::sys::signal::Signal;
 
     use crate::scope::{AGENT_ENV, Unit};
+
+    /// The environment entry that spares a process every sweep.
+    const KEEP_ENTRY: &str = "AETHER_KEEP_PROCESS=1";
+    /// The longest command line an owner is shown for a process it took over.
+    const COMMAND_CHARS: usize = 200;
 
     pub(super) const POLL: Duration = Duration::from_millis(100);
     const PROC: &str = "/proc";
@@ -220,7 +263,8 @@ mod linux {
             &self.agents
         }
 
-        /// Live pids in the scopes or carrying a tag, sorted, without this process.
+        /// Live pids in the scopes or carrying a tag, sorted, without this
+        /// process and any process kept past its owner.
         pub(super) fn members(&self) -> Vec<u32> {
             let proc_root = Path::new(PROC);
             let own = std::process::id();
@@ -235,28 +279,43 @@ mod linux {
             }
             members.sort_unstable();
             members.dedup();
+            members.retain(|pid| !kept(proc_root, *pid, uid));
             members
         }
 
-        /// Signal the scopes whole and each of `pids` that still carries a tag.
-        pub(super) async fn signal(&self, pids: &[u32], signal: Signal) {
+        /// Signal each of `pids` that is still one of the sweep's: it carries
+        /// a tag or lies in a scope, and is not kept.
+        pub(super) fn signal(&self, pids: &[u32], signal: Signal) {
             assert!(!pids.is_empty(), "a signal round needs a target");
-            crate::scope::signal_units(&self.units, signal).await;
-            if self.tags.is_empty() {
-                return;
-            }
             let uid = nix::unistd::geteuid().as_raw();
             for pid in pids {
-                if let Err(error) = signal_pinned(*pid, &self.tags, uid, signal) {
+                if let Err(error) = signal_pinned(*pid, signal, |pid| self.holds(pid, uid)) {
                     tracing::warn!(pid, ?signal, %error, "could not signal an agent process");
                 }
             }
         }
+
+        /// Whether `pid` belongs to this sweep right now.
+        fn holds(&self, pid: u32, uid: u32) -> bool {
+            assert_ne!(pid, std::process::id(), "the daemon never sweeps itself");
+            let proc_root = Path::new(PROC);
+            let tagged = !self.tags.is_empty() && carries(proc_root, pid, &self.tags, uid);
+            let scoped = || {
+                std::fs::read_to_string(proc_root.join(pid.to_string()).join("cgroup")).is_ok_and(
+                    |cgroup| {
+                        self.units
+                            .iter()
+                            .any(|unit| crate::scope::in_unit(unit, &cgroup))
+                    },
+                )
+            };
+            (tagged || scoped()) && !kept(proc_root, pid, uid)
+        }
     }
 
-    /// Signal `pid` through a pidfd opened before its tag is checked again, so
+    /// Signal `pid` through a pidfd opened before `holds` checks it again, so
     /// a pid reused since the scan is never signalled.
-    fn signal_pinned(pid: u32, tags: &[String], uid: u32, signal: Signal) -> io::Result<()> {
+    fn signal_pinned(pid: u32, signal: Signal, holds: impl Fn(u32) -> bool) -> io::Result<()> {
         use rustix::process::{Pid, PidfdFlags, Signal as RustixSignal};
 
         assert!(pid > 1, "not an agent process: {pid}");
@@ -268,7 +327,7 @@ mod linux {
             Err(rustix::io::Errno::SRCH) => return Ok(()),
             Err(errno) => return Err(errno.into()),
         };
-        if !carries(Path::new(PROC), pid, tags, uid) {
+        if !holds(pid) {
             return Ok(());
         }
         let signal = match signal {
@@ -330,6 +389,29 @@ mod linux {
             .filter_map(Result::ok)
             .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
             .filter(move |pid| *pid > 1 && *pid != own)
+    }
+
+    /// Whether `pid`, a live process of `uid`, sets the keep entry exactly.
+    pub(super) fn kept(proc_root: &Path, pid: u32, uid: u32) -> bool {
+        environment(proc_root, pid, uid).is_some_and(|environment| {
+            environment
+                .split(|byte| *byte == 0)
+                .any(|entry| entry == KEEP_ENTRY.as_bytes())
+        })
+    }
+
+    /// `pid`'s command line with spaces for its separators, shortened, or its
+    /// name in brackets when empty; none once it is gone.
+    pub(super) fn command_line(proc_root: &Path, pid: u32) -> Option<String> {
+        let dir = proc_root.join(pid.to_string());
+        let raw = std::fs::read(dir.join("cmdline")).ok()?;
+        let joined = String::from_utf8_lossy(&raw).replace('\0', " ");
+        let line = joined.trim();
+        if !line.is_empty() {
+            return Some(line.chars().take(COMMAND_CHARS).collect());
+        }
+        let name = std::fs::read_to_string(dir.join("comm")).ok()?;
+        Some(format!("[{}]", name.trim()))
     }
 
     /// Whether `pid` is a live process of `uid` whose environment holds one of `tags` exactly.

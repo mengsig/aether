@@ -297,8 +297,7 @@ fn job_members(proc_root: &Path, token: &str) -> io::Result<Vec<i32>> {
         if metadata.uid() != geteuid().as_raw() {
             continue;
         }
-        if readable_environ(&entry.path())?.is_some_and(|environment| carries(&environment, token))
-        {
+        if readable_environ(&entry.path())?.is_some_and(|environment| swept(&environment, token)) {
             members.push(pid);
         }
     }
@@ -324,7 +323,7 @@ fn signal_member(
         Err(error) => return Err(error.into()),
     };
     let path = proc_root.join(pid.to_string());
-    if !readable_environ(&path)?.is_some_and(|environment| carries(&environment, token)) {
+    if !readable_environ(&path)?.is_some_and(|environment| swept(&environment, token)) {
         return Ok(false);
     }
     match pidfd_send_signal(&process, signal) {
@@ -344,6 +343,13 @@ fn readable_environ(process: &Path) -> io::Result<Option<Vec<u8>>> {
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(None),
         Err(error) => Err(error),
     }
+}
+
+/// Whether a process with `environment` is one of the job's that a sweep
+/// signals: it carries `token` and was not kept past its owner.
+fn swept(environment: &[u8], token: &str) -> bool {
+    let keep = format!("{}=1", aether_core::agent::PROCESS_KEEP_ENV);
+    carries(environment, token) && !carries(environment, &keep)
 }
 
 fn carries(environment: &[u8], token: &str) -> bool {
@@ -377,7 +383,7 @@ pub(crate) enum LeaderlessGroup {
     Empty,
     /// Every live member carries the job's token.
     Job,
-    /// A live member does not, or could not be read.
+    /// A live member does not, is kept past its owner, or could not be read.
     Unproven,
 }
 
@@ -398,8 +404,7 @@ pub(crate) fn leaderless_group(pgid: Pid, job: ProcessId) -> io::Result<Leaderle
         if member.group != pgid.as_raw() || !member.running() {
             continue;
         }
-        if !readable_environ(&entry.path())?
-            .is_some_and(|environment| carries(&environment, &token))
+        if !readable_environ(&entry.path())?.is_some_and(|environment| swept(&environment, &token))
         {
             return Ok(LeaderlessGroup::Unproven);
         }

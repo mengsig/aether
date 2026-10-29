@@ -123,6 +123,44 @@ async fn stopping_an_agent_kills_its_processes_and_leaves_others_alone() {
     reg.stop(other, b.id).await.unwrap();
 }
 
+/// A completed child's jobs pass to its parent, which can then read and
+/// stop them; the child no longer holds them.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handed_up_process_belongs_to_its_new_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let (child, parent) = (AgentId::new(), AgentId::new());
+    let job = reg.start(child, "sleep 60", &ctx_in(dir.path())).unwrap();
+    let finished = reg.start(child, "true", &ctx_in(dir.path())).unwrap();
+    wait_until("the short job to finish", || {
+        !reg.read(child, finished.id).unwrap().status.running
+    })
+    .await;
+
+    let handed = reg.hand_up(child, parent).unwrap();
+
+    assert_eq!(
+        handed.iter().map(|status| status.id).collect::<Vec<_>>(),
+        vec![job.id],
+        "only what still runs is listed"
+    );
+    assert!(
+        reg.list(child).unwrap().is_empty(),
+        "the child holds nothing"
+    );
+    assert!(reg.read(parent, job.id).unwrap().status.running);
+    assert_eq!(
+        reg.stop_agent(child).await,
+        0,
+        "the child's end stops nothing"
+    );
+    assert_eq!(
+        reg.stop_agent(parent).await,
+        2,
+        "the parent's end stops both"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_agent_cannot_reach_another_agents_process() {
     let dir = tempfile::tempdir().unwrap();

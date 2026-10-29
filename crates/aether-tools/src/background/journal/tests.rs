@@ -383,6 +383,38 @@ async fn stop_terms_setsid_descendants_before_killing_them() {
     );
 }
 
+/// A process the command marks to be kept outlives its job's stop; one it
+/// detached without the mark does not.
+#[tokio::test]
+async fn stop_spares_a_detached_process_marked_to_be_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = BackgroundProcesses::new();
+    let ctx = ctx_in(dir.path());
+    let script = "AETHER_KEEP_PROCESS=1 setsid sh -c 'echo $$ > kept.tmp; mv kept.tmp kept; \
+                  exec sleep 60' </dev/null >/dev/null 2>&1 & \
+                  setsid sh -c 'echo $$ > swept.tmp; mv swept.tmp swept; exec sleep 60' \
+                  </dev/null >/dev/null 2>&1 & wait";
+    let job = registry.start(ctx.agent_id, script, &ctx).unwrap();
+    ready(&dir.path().join("kept")).await;
+    ready(&dir.path().join("swept")).await;
+    let (kept, swept) = (
+        pid_in(&dir.path().join("kept")),
+        pid_in(&dir.path().join("swept")),
+    );
+    registry.stop(ctx.agent_id, job.id).await.unwrap();
+    dead(swept).await;
+    let alive_after_stop = alive(kept);
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(kept),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .unwrap();
+    assert!(
+        alive_after_stop,
+        "the kept process was stopped with its job"
+    );
+}
+
 fn pid_in(path: &Path) -> i32 {
     std::fs::read_to_string(path)
         .unwrap()

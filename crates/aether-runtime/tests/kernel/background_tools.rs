@@ -101,26 +101,7 @@ async fn an_engine_descendant_that_left_its_group_dies_with_its_agent() {
         .cancel_agent(agent.id, Some("done".into()), Actor::user())
         .expect("cancel");
     h.wait_until(agent.id, |s| s.is_terminal()).await;
-    let reaped = || {
-        h.store
-            .events(0, 10_000, &EventFilter::for_agent(agent.id))
-            .expect("events")
-            .into_iter()
-            .find_map(|e| match e.kind {
-                EventKind::Custom { name, payload } if name == "agent.processes_reaped" => {
-                    Some(payload)
-                }
-                _ => None,
-            })
-    };
-    let payload = wait_for_with_budget(
-        h.wait_ceiling,
-        h.wait_ceiling,
-        reaped,
-        || (),
-        || format!("no agent.processes_reaped for detached process {pid}"),
-    )
-    .await;
+    let payload = wait_custom_event(&h, agent.id, "agent.processes_reaped").await;
 
     assert!(!process_alive(pid), "the detached process is gone");
     assert!(
@@ -140,7 +121,7 @@ async fn an_engine_descendant_that_left_its_group_dies_with_its_agent() {
 /// does - a new session, then a fork whose parent exits - and records its
 /// pid. It returns once the pid is recorded, as `setsid -w` waits for `sh`.
 #[cfg(target_os = "linux")]
-fn detach_sleep(marker_name: &str) -> String {
+pub(super) fn detach_sleep(marker_name: &str) -> String {
     format!(
         "setsid -w sh -c 'sleep 300 & echo $! > {marker_name}.tmp && mv {marker_name}.tmp {marker_name}' \
          </dev/null >/dev/null 2>&1"
@@ -150,11 +131,11 @@ fn detach_sleep(marker_name: &str) -> String {
 /// A detached process of an agent this daemon never ran, as another
 /// daemon's would be: no reap here may touch it. Killed when dropped.
 #[cfg(target_os = "linux")]
-struct Sibling(std::process::Child);
+pub(super) struct Sibling(std::process::Child);
 
 #[cfg(target_os = "linux")]
 impl Sibling {
-    fn start() -> Self {
+    pub(super) fn start() -> Self {
         let child = std::process::Command::new("setsid")
             .args(["sleep", "300"])
             .env("AETHER_ENGINE_AGENT", AgentId::new().to_string())
@@ -166,7 +147,7 @@ impl Sibling {
         Self(child)
     }
 
-    fn alive(&self) -> bool {
+    pub(super) fn alive(&self) -> bool {
         process_alive(self.0.id() as i32)
     }
 }
@@ -180,7 +161,7 @@ impl Drop for Sibling {
 }
 
 #[cfg(target_os = "linux")]
-async fn wait_gone(h: &Harness, pid: i32, what: &str) {
+pub(super) async fn wait_gone(h: &Harness, pid: i32, what: &str) {
     // A liveness flip has no partial-progress signal: a ceiling-only wait.
     wait_for_with_budget(
         h.wait_ceiling,
@@ -217,26 +198,7 @@ async fn a_process_detached_from_an_agent_shell_dies_with_the_agent_alone() {
         matches!(status, AgentStatus::Completed { .. }),
         "{status:?}"
     );
-    let reaped = || {
-        h.store
-            .events(0, 10_000, &EventFilter::for_agent(agent.id))
-            .expect("events")
-            .into_iter()
-            .find_map(|e| match e.kind {
-                EventKind::Custom { name, payload } if name == "agent.processes_reaped" => {
-                    Some(payload)
-                }
-                _ => None,
-            })
-    };
-    let payload = wait_for_with_budget(
-        h.wait_ceiling,
-        h.wait_ceiling,
-        reaped,
-        || (),
-        || format!("no agent.processes_reaped for detached process {pid}"),
-    )
-    .await;
+    let payload = wait_custom_event(&h, agent.id, "agent.processes_reaped").await;
     wait_gone(&h, pid, "the detached process").await;
 
     assert!(
@@ -249,6 +211,39 @@ async fn a_process_detached_from_an_agent_shell_dies_with_the_agent_alone() {
             .is_some_and(|pids| pids.contains(&json!(pid))),
         "the reap stopped it: {payload}"
     );
+}
+
+/// The payload of `agent`'s first custom event `name`, if recorded yet.
+#[cfg(target_os = "linux")]
+pub(super) fn custom_event(h: &Harness, agent: AgentId, name: &str) -> Option<serde_json::Value> {
+    h.store
+        .events(0, 10_000, &EventFilter::for_agent(agent))
+        .expect("events")
+        .into_iter()
+        .find_map(|e| match e.kind {
+            EventKind::Custom {
+                name: found,
+                payload,
+            } if found == name => Some(payload),
+            _ => None,
+        })
+}
+
+/// Wait for [`custom_event`], failing at the harness ceiling.
+#[cfg(target_os = "linux")]
+pub(super) async fn wait_custom_event(
+    h: &Harness,
+    agent: AgentId,
+    name: &str,
+) -> serde_json::Value {
+    wait_for_with_budget(
+        h.wait_ceiling,
+        h.wait_ceiling,
+        || custom_event(h, agent, name),
+        || (),
+        || format!("no {name} for {agent}"),
+    )
+    .await
 }
 
 /// A daemon stop does not end its agents, but nothing they detached may
@@ -293,7 +288,7 @@ async fn a_daemon_stop_takes_what_its_waiting_agents_detached() {
 /// Whether `pid` is a live (non-zombie) process. `/proc` only exists on
 /// Linux, so elsewhere this reports "not alive" and only the negative
 /// assertions below mean anything.
-fn process_alive(pid: i32) -> bool {
+pub(super) fn process_alive(pid: i32) -> bool {
     if !cfg!(target_os = "linux") {
         return false;
     }
