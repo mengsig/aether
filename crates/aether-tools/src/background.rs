@@ -91,6 +91,8 @@ pub struct BackgroundProcesses {
     stopped_output: Mutex<HashMap<AgentId, VecDeque<Arc<Capture>>>>,
     #[cfg(target_os = "linux")]
     journal: Mutex<Option<journal::Journal>>,
+    /// Set once the daemon stops; see [`BackgroundProcesses::close_spawns`].
+    spawns_closed: std::sync::RwLock<bool>,
 }
 
 impl std::fmt::Debug for BackgroundProcesses {
@@ -189,12 +191,14 @@ impl BackgroundProcesses {
         cmd.kill_on_drop(true);
         #[cfg(target_os = "linux")]
         cmd.env(journal::JOB_ENV, id.to_string());
-        let (mut child, pty) = if terminal {
-            let (child, pty) = crate::terminal::spawn(&cmd)?;
-            (child, Some(pty))
-        } else {
-            (cmd.spawn()?, None)
-        };
+        let (mut child, pty) = self.spawn_host(|| {
+            if terminal {
+                let (child, pty) = crate::terminal::spawn(&cmd)?;
+                Ok((child, Some(pty)))
+            } else {
+                Ok((cmd.spawn()?, None))
+            }
+        })?;
         #[cfg(target_os = "linux")]
         let (registration, durability) = {
             let registered = self
@@ -405,6 +409,32 @@ impl BackgroundProcesses {
         }
         out.sort_by_key(|s| s.started_at);
         Ok(out)
+    }
+
+    /// Run `spawn`, which starts a host command, unless spawns are closed;
+    /// the gate stays held meanwhile, so a close waits for it to finish.
+    pub(crate) fn spawn_host<T>(
+        &self,
+        spawn: impl FnOnce() -> Result<T, ToolError>,
+    ) -> Result<T, ToolError> {
+        let closed = self
+            .spawns_closed
+            .read()
+            .map_err(|_| ToolError::Internal("host spawn gate poisoned".into()))?;
+        if *closed {
+            return Err(ToolError::Cancelled);
+        }
+        spawn()
+    }
+
+    /// Refuse every host command from now on, once the spawns under way have
+    /// finished, so a daemon stop's sweep sees every process there will be.
+    pub fn close_spawns(&self) {
+        match self.spawns_closed.write() {
+            Ok(mut closed) => *closed = true,
+            // A spawn that panicked poisoned it, and a poisoned gate refuses anyway.
+            Err(poisoned) => *poisoned.into_inner() = true,
+        }
     }
 
     /// Stop and forget the handle, retaining its log until eviction or agent end.

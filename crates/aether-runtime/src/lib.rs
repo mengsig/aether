@@ -762,7 +762,11 @@ impl Runtime {
         // Nothing this daemon started may outlive it: after exit the registry
         // is empty, so a survivor would be unreachable forever.
         let background_processes_stopped = match self.tools.background() {
-            Some(processes) => processes.stop_all().await,
+            Some(processes) => {
+                // A turn that outlived the wait above may still reach a spawn.
+                processes.close_spawns();
+                processes.stop_all().await
+            }
             None => 0,
         };
         // What left those groups, and what engines detached, is found by agent.

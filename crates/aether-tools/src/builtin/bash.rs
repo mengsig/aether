@@ -207,7 +207,7 @@ impl Tool for BashTool {
         let prepared = prepare(&command, ctx)?;
         let mut cmd = prepared.command;
         let capture = Capture::new(ctx, self.capture_limit)?;
-        let mut child = cmd.spawn()?;
+        let mut child = self.processes.spawn_host(|| Ok(cmd.spawn()?))?;
         let mut guard = GroupGuard {
             pgid: child.id().map(|p| Pid::from_raw(p as i32)),
             teardown: prepared.teardown,
@@ -626,5 +626,29 @@ mod tests {
             "capturing git status must not add untracked files: {}",
             String::from_utf8_lossy(&status.stdout)
         );
+    }
+
+    #[tokio::test]
+    async fn no_command_starts_once_host_spawns_are_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ctx_in(dir.path());
+        let processes = Arc::new(BackgroundProcesses::new());
+        let tool = BashTool::new(processes.clone());
+        processes.close_spawns();
+        for background in [false, true] {
+            let result = tool
+                .execute(
+                    json!({"command": "touch ran", "background": background}),
+                    &ctx,
+                    CancellationToken::new(),
+                )
+                .await;
+            assert!(
+                matches!(result, Err(ToolError::Cancelled)),
+                "background {background}: refused"
+            );
+        }
+        assert!(!dir.path().join("ran").exists(), "nothing ran");
+        assert!(processes.list(ctx.agent_id).unwrap().is_empty());
     }
 }
