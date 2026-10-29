@@ -502,3 +502,39 @@ async fn recovery_kills_setsid_descendants_after_the_original_group_is_gone() {
     dead(pid).await;
     assert!(!registration.0.exists());
 }
+
+/// Only a live member of the group whose environment is readable and not
+/// kept is signalled: an unreadable one may carry the keep mark.
+#[test]
+fn an_exited_group_signals_only_readable_unkept_members() {
+    let proc_root = tempfile::tempdir().unwrap();
+    let group = Pid::from_raw(4242);
+    let member = |pid: u32, state: char, pgid: i32, environ: Option<&[u8]>| {
+        let dir = proc_root.path().join(pid.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        let fields = format!("{pid} (sleep) {state} 1 {pgid}{}", " 0".repeat(18));
+        std::fs::write(dir.join("stat"), fields).unwrap();
+        if let Some(environ) = environ {
+            std::fs::write(dir.join("environ"), environ).unwrap();
+        }
+        dir
+    };
+    let plain = member(10, 'S', 4242, Some(b"PATH=/bin\0"));
+    let kept = member(11, 'S', 4242, Some(b"AETHER_KEEP_PROCESS=1\0"));
+    let unreadable = member(12, 'S', 4242, None);
+    let elsewhere = member(13, 'S', 4243, Some(b"PATH=/bin\0"));
+    let zombie = member(14, 'Z', 4242, Some(b"PATH=/bin\0"));
+
+    assert!(signalled_in_group(&plain, group).unwrap());
+    for spared in [kept, unreadable, elsewhere, zombie] {
+        assert!(
+            !signalled_in_group(&spared, group).unwrap(),
+            "{}",
+            spared.display()
+        );
+    }
+    assert_eq!(
+        exited_group_members(proc_root.path(), group).unwrap(),
+        vec![10]
+    );
+}

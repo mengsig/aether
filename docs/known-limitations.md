@@ -316,8 +316,8 @@ isolation depend on the installed engine version and the platform; see
   An engine joins its scope asynchronously, after it has started, so that a
   launch never waits on a slow or missing user manager; what it detaches
   before it has joined is found by its tag alone. A non-dumpable process,
-  whose environment cannot be read, is spared in a scope as it may carry the
-  keep mark; one a browser sandboxed this way exits with the browser, but
+  whose environment cannot be read, is spared in a scope, and in the group of
+  a background job whose shell exited, as it may carry the keep mark; one a browser sandboxed this way exits with the browser, but
   another keeps running. On macOS a process left behind after a turn keeps
   running.
 - What a delegated child that completed left running passes to its nearest

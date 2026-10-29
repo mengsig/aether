@@ -630,9 +630,10 @@ async fn own(
     };
     let status = match exited {
         Some(exit) => {
-            let cleanup = match pgid {
-                Some(pgid) => stop_exited_group(pgid).await,
-                None => Ok(()),
+            // A shell already reaped no longer pins the group id; its group is left alone.
+            let cleanup = match (pgid, &exit) {
+                (Some(pgid), Ok(true)) => stop_exited_group(pgid).await,
+                _ => Ok(()),
             };
             // Reaped only now: until then its zombie kept the group id from reuse.
             let status = exit.and(child.wait().await);
@@ -693,24 +694,26 @@ fn signal_group(pgid: Pid, signal: Signal) -> std::io::Result<()> {
 }
 
 /// Wait until the job's shell exits, leaving it unreaped, so its zombie
-/// keeps the group id from reuse while the group is stopped.
+/// keeps the group id from reuse while the group is stopped. True when it
+/// does; false once the shell had to be reaped to wait for it.
 #[cfg(target_os = "linux")]
-async fn leader_exited(child: &mut tokio::process::Child) -> std::io::Result<()> {
+async fn leader_exited(child: &mut tokio::process::Child) -> std::io::Result<bool> {
     let Some(pid) = child.id() else {
-        return child.wait().await.map(drop);
+        return child.wait().await.map(|_| false);
     };
     match exited_unreaped(pid).await {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(true),
         Err(error) => {
             tracing::warn!(pid, %error, "cannot wait for the job's shell unreaped; reaping it");
-            child.wait().await.map(drop)
+            child.wait().await.map(|_| false)
         }
     }
 }
 
+/// Elsewhere the shell is reaped to wait for it, and its group killed at once.
 #[cfg(not(target_os = "linux"))]
-async fn leader_exited(child: &mut tokio::process::Child) -> std::io::Result<()> {
-    child.wait().await.map(drop)
+async fn leader_exited(child: &mut tokio::process::Child) -> std::io::Result<bool> {
+    child.wait().await.map(|_| true)
 }
 
 /// Wait until `pid`, a child of this process, exits, without reaping it.
@@ -735,22 +738,10 @@ async fn exited_unreaped(pid: u32) -> std::io::Result<()> {
 }
 
 /// What a job whose shell exited left in its group: SIGTERM, then SIGKILL
-/// once it outlives the stop grace, unless a member is kept. The shell is
-/// still unreaped, so the group id cannot be reused meanwhile.
+/// once it outlives the stop grace, member by member, sparing a kept one.
 #[cfg(target_os = "linux")]
 async fn stop_exited_group(pgid: Pid) -> std::io::Result<()> {
-    use journal::ExitedGroup;
-    if journal::exited_group(pgid)? != ExitedGroup::Live {
-        return Ok(());
-    }
-    if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
-        tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
-    }
-    wait_group_gone(pgid).await;
-    match journal::exited_group(pgid)? {
-        ExitedGroup::Live => signal_group(pgid, Signal::SIGKILL),
-        ExitedGroup::Empty | ExitedGroup::Kept => Ok(()),
-    }
+    journal::stop_exited_group(pgid, STOP_GRACE).await
 }
 
 #[cfg(not(target_os = "linux"))]

@@ -312,8 +312,26 @@ fn signal_member(
     token: &str,
     signal: rustix::process::Signal,
 ) -> io::Result<bool> {
+    signal_pinned(proc_root, pid, signal, |process| {
+        Ok(readable_environ(process)?.is_some_and(|environment| swept(&environment, token)))
+    })
+}
+
+/// Signal `pid` through a pidfd opened before `still` checks its /proc entry
+/// again, so a pid reused since the scan is never hit; false once it is gone.
+fn signal_pinned(
+    proc_root: &Path,
+    pid: i32,
+    signal: rustix::process::Signal,
+    still: impl Fn(&Path) -> io::Result<bool>,
+) -> io::Result<bool> {
     use rustix::process::{Pid as ProcessPid, PidfdFlags, pidfd_open, pidfd_send_signal};
     assert!(pid > 1, "not a job process: {pid}");
+    assert_ne!(
+        pid,
+        std::process::id() as i32,
+        "the daemon never signals itself"
+    );
     let Some(raw) = ProcessPid::from_raw(pid) else {
         return Ok(false);
     };
@@ -322,8 +340,7 @@ fn signal_member(
         Err(rustix::io::Errno::SRCH) => return Ok(false),
         Err(error) => return Err(error.into()),
     };
-    let path = proc_root.join(pid.to_string());
-    if !readable_environ(&path)?.is_some_and(|environment| swept(&environment, token)) {
+    if !still(&proc_root.join(pid.to_string()))? {
         return Ok(false);
     }
     match pidfd_send_signal(&process, signal) {
@@ -380,41 +397,84 @@ pub(crate) fn group_is_running(pgid: Pid) -> io::Result<bool> {
     Ok(false)
 }
 
-/// What the group of a job whose shell exited holds besides that shell. The
-/// shell is not reaped yet, so its zombie keeps the group id from reuse.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExitedGroup {
-    Empty,
-    Live,
-    /// A live member is marked to be kept past its owner, so the group is
-    /// not signalled as a whole.
-    Kept,
+/// SIGTERM the members of an exited job's group `pgid`, then SIGKILL what
+/// outlives `grace`. Its shell is unreaped, so the group id is not reused
+/// meanwhile; each member is signalled on its own, so one kept is spared.
+pub(crate) async fn stop_exited_group(pgid: Pid, grace: std::time::Duration) -> io::Result<()> {
+    use rustix::process::Signal as JobSignal;
+    assert!(pgid.as_raw() > 1, "not a job's group: {pgid}");
+    let proc_root = Path::new("/proc");
+    if !signal_exited_group(proc_root, pgid, JobSignal::TERM)? {
+        return Ok(());
+    }
+    let deadline = tokio::time::Instant::now() + grace;
+    while !exited_group_members(proc_root, pgid)?.is_empty() {
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(JOB_POLL).await;
+    }
+    for _ in 0..KILL_ROUNDS {
+        if !signal_exited_group(proc_root, pgid, JobSignal::KILL)? {
+            return Ok(());
+        }
+        tokio::time::sleep(JOB_POLL).await;
+    }
+    let survivors = exited_group_members(proc_root, pgid)?;
+    if survivors.is_empty() {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "group {pgid} processes survived SIGKILL: {survivors:?}"
+    )))
 }
 
-pub(crate) fn exited_group(pgid: Pid) -> io::Result<ExitedGroup> {
-    assert!(pgid.as_raw() > 1, "not a job's group: {pgid}");
-    let keep = keep_entry();
-    let mut group = ExitedGroup::Empty;
-    for entry in std::fs::read_dir("/proc")? {
-        let entry = entry?;
-        if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
-            continue;
-        }
-        let member = match std::fs::read(entry.path().join("stat")) {
-            Ok(stat) => identity(&stat)?,
-            Err(e) if disappeared(&e) => continue,
-            Err(e) => return Err(e),
-        };
-        if member.group != pgid.as_raw() || !member.running() {
-            continue;
-        }
-        if readable_environ(&entry.path())?.is_some_and(|environment| carries(&environment, &keep))
-        {
-            return Ok(ExitedGroup::Kept);
-        }
-        group = ExitedGroup::Live;
+/// Send `signal` to each member of `pgid` that may be signalled; true when
+/// there was one.
+fn signal_exited_group(
+    proc_root: &Path,
+    pgid: Pid,
+    signal: rustix::process::Signal,
+) -> io::Result<bool> {
+    let mut found = false;
+    for pid in exited_group_members(proc_root, pgid)? {
+        found |= signal_pinned(proc_root, pid, signal, |process| {
+            signalled_in_group(process, pgid)
+        })?;
     }
-    Ok(group)
+    Ok(found)
+}
+
+/// The live members of `pgid` that may be signalled, without init and this daemon.
+fn exited_group_members(proc_root: &Path, pgid: Pid) -> io::Result<Vec<i32>> {
+    let mut members = Vec::new();
+    for entry in std::fs::read_dir(proc_root)? {
+        let entry = entry?;
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
+            continue;
+        };
+        if pid <= 1 || pid == std::process::id() as i32 {
+            continue;
+        }
+        if signalled_in_group(&entry.path(), pgid)? {
+            members.push(pid);
+        }
+    }
+    Ok(members)
+}
+
+/// Whether `process` is a live member of `pgid` whose environment is
+/// readable and not marked to be kept; one that cannot be read may be kept.
+fn signalled_in_group(process: &Path, pgid: Pid) -> io::Result<bool> {
+    let member = match std::fs::read(process.join("stat")) {
+        Ok(stat) => identity(&stat)?,
+        Err(e) if disappeared(&e) => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    if member.group != pgid.as_raw() || !member.running() {
+        return Ok(false);
+    }
+    Ok(readable_environ(process)?.is_some_and(|environment| !carries(&environment, &keep_entry())))
 }
 
 fn disappeared(error: &io::Error) -> bool {

@@ -44,10 +44,18 @@ impl Runtime {
             tracing::warn!(%agent, "no runtime to stop the agent's processes on");
             return;
         };
+        // No wake commits under the hold, so what the agent holds now is what
+        // its end leaves, and a job its next turn starts is never among it.
+        let hold = self.hold();
+        if !self.has_ended(agent) {
+            tracing::info!(%agent, "restarted before its reap; its processes stay its own");
+            return;
+        }
         match self.handed_up_to(agent) {
             Some(owner) => self.hand_up_processes(&handle, agent, owner),
             None => self.stop_owned_processes(&handle, agent),
         }
+        drop(hold);
     }
 
     /// The live ancestor a completed agent hands its processes to. None when
@@ -212,19 +220,27 @@ impl Runtime {
         mut owner: AgentId,
     ) -> Option<AgentId> {
         for _ in 0..MAX_ANCESTRY {
-            if !self.has_ended(owner) {
-                return Some(owner);
-            }
-            let next = self.handed_up_to(owner);
-            assert_ne!(next, Some(owner), "an ended owner hands nothing to itself");
-            match (next, jobs) {
-                (Some(next), Some(jobs)) => drop(hand_up_jobs(jobs, &[owner], next)),
-                (Some(_), None) => {}
-                (None, Some(jobs)) => {
-                    let stopped = jobs.stop_agents(&[owner]).await;
-                    tracing::info!(%owner, stopped, "stopped jobs handed to an owner that had ended");
+            let (next, stopping) = {
+                // Held so the owner cannot wake between the check and the move.
+                let _hold = self.hold();
+                if !self.has_ended(owner) {
+                    return Some(owner);
                 }
-                (None, None) => {}
+                let next = self.handed_up_to(owner);
+                assert_ne!(next, Some(owner), "an ended owner hands nothing to itself");
+                let stopping = match (next, jobs) {
+                    (Some(next), Some(jobs)) => {
+                        drop(hand_up_jobs(jobs, &[owner], next));
+                        None
+                    }
+                    (None, Some(jobs)) => Some(jobs.stop_agents(&[owner])),
+                    (_, None) => None,
+                };
+                (next, stopping)
+            };
+            if let Some(stopping) = stopping {
+                let stopped = stopping.await;
+                tracing::info!(%owner, stopped, "stopped jobs handed to an owner that had ended");
             }
             owner = next?;
         }

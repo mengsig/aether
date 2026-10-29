@@ -538,8 +538,8 @@ during the grace, the reap drops it, so its next engine is spared, and goes on
 stopping the other agents' processes. Each round holds new engines and host
 commands from starting while it checks which agents are still ended and
 signals, so a restarted agent's next engine is never among those signalled.
-An ending agent's background jobs are taken from it at its end, so a job it
-starts once restarted stays its own.
+An ending agent's background jobs are taken from it at its end, under the
+same lock a wake takes, so a job it starts once woken stays its own.
 
 A process meant to outlive the whole task tree, and the daemon, can be kept:
 start it with `AETHER_KEEP_PROCESS=1` in its environment, which what it starts
@@ -548,9 +548,10 @@ background shell job that started it ends or is stopped, and not at a daemon
 stop. Each process is signalled on its own, scopes included, so a kept one
 inside an engine's scope is spared too; there, a process whose environment
 cannot be read (a non-dumpable one) is treated as kept, as the mark cannot be
-ruled out. A background job whose shell exits leaves its group unsignalled
-while a member carries the mark; the shell is reaped only once its group is
-stopped, so the group id cannot be reused meanwhile. Stopping a turn or a background job, the
+ruled out. When a background job's shell exits on its own, what is left in
+its process group is signalled one process at a time, sparing a kept one and
+one whose environment cannot be read; the shell is reaped only afterwards,
+so the group id cannot be reused meanwhile. Stopping a turn or a background job, the
 end of a foreground command, and recovery after a crash still signal the
 whole process group, so a kept process must also leave it, for example
 `AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept process

@@ -120,6 +120,65 @@ async fn a_late_hand_up_settles_with_the_live_owner_it_would_have_reached() {
     assert_eq!(runtime.settle_owner(None, middle).await, None);
 }
 
+struct NoSink;
+
+#[async_trait::async_trait]
+impl aether_tools::ArtifactSink for NoSink {
+    async fn store(
+        &self,
+        _kind: aether_core::artifact::ArtifactKind,
+        _name: &str,
+        _summary: &str,
+        _content_type: Option<&str>,
+        _bytes: Vec<u8>,
+        _agent: AgentId,
+        _task: Option<aether_core::id::TaskId>,
+    ) -> std::result::Result<aether_core::artifact::Artifact, aether_tools::ToolError> {
+        Err(aether_tools::ToolError::Internal("no sink".into()))
+    }
+}
+
+fn tool_context(agent: AgentId, cwd: &std::path::Path) -> aether_tools::ToolContext {
+    aether_tools::ToolContext {
+        agent_id: agent,
+        task_id: None,
+        instance_id: "test-instance".into(),
+        scope: aether_core::agent::Scope::default(),
+        cwd: cwd.to_path_buf(),
+        artifacts: std::sync::Arc::new(NoSink),
+        env: Default::default(),
+        hidden_env: Vec::new().into(),
+        temp_dir: None,
+        build_env: Vec::new(),
+    }
+}
+
+/// An agent woken between its terminal commit and its reap keeps what it
+/// runs: the reap decides under the commit hold, which a wake also takes.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_agent_woken_before_its_reap_keeps_its_jobs() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let dir = tempfile::tempdir().unwrap();
+    let agent = idle_agent(&runtime, None).await;
+    let jobs = runtime.tools.background().expect("the shell jobs").clone();
+    let job = jobs
+        .start(agent, "sleep 30", &tool_context(agent, dir.path()))
+        .unwrap();
+    end(&runtime, agent, AgentStatus::Failed { error: "x".into() });
+    end(&runtime, agent, AgentStatus::Ready);
+
+    runtime.reap_ended_agent(PendingReap(agent));
+
+    let held = jobs.list(agent).unwrap();
+    assert!(
+        held.iter()
+            .any(|status| status.id == job.id && status.running),
+        "{held:?}"
+    );
+    assert_eq!(jobs.stop_agent(agent).await, 1);
+}
+
 #[test]
 fn the_message_names_each_job_and_process_and_caps_the_list() {
     let processes: Vec<AgentProcess> = (2..=(HANDED_UP_LISTED as u32 + 3))
