@@ -433,6 +433,39 @@ async fn stopping_a_job_stops_its_leader_even_when_kept() {
     assert!(!alive(leader), "the kept leader is stopped with its job");
 }
 
+/// A member that forks a cleanup worker on SIGTERM: the worker, new to the
+/// group during the grace, is sent SIGTERM too before any SIGKILL.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_forked_during_the_grace_is_sent_sigterm() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("worker.sh"),
+        "trap 'echo termed > worker-termed; exit 0' TERM\n\
+         echo $$ > worker.tmp && mv worker.tmp worker\n\
+         while :; do sleep 0.05; done\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("cleanup.sh"),
+        "trap 'sh ./worker.sh & wait; exit 0' TERM\n\
+         echo $$ > ready.tmp && mv ready.tmp ready\n\
+         while :; do sleep 0.05; done\n",
+    )
+    .unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    let job = reg
+        .start(agent, "sh ./cleanup.sh & wait", &ctx_in(dir.path()))
+        .unwrap();
+    wait_until("cleanup ready", || dir.path().join("ready").exists()).await;
+    reg.stop(agent, job.id).await.unwrap();
+    assert!(
+        dir.path().join("worker-termed").exists(),
+        "the worker forked during the grace got SIGTERM"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn stop_escalates_after_leader_exits_on_term() {
     let dir = tempfile::tempdir().unwrap();

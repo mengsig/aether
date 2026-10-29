@@ -386,18 +386,29 @@ pub(crate) async fn stop_pinned_group(pgid: Pid, grace: std::time::Duration) -> 
     use rustix::process::Signal as JobSignal;
     assert!(pgid.as_raw() > 1, "not a job's group: {pgid}");
     let proc_root = Path::new("/proc");
-    if !signal_pinned_group(proc_root, pgid, JobSignal::TERM)? {
-        return Ok(());
-    }
     let deadline = tokio::time::Instant::now() + grace;
-    while !pinned_group_members(proc_root, pgid)?.is_empty() {
+    let mut terminated = std::collections::HashSet::new();
+    // Each round sends SIGTERM to members new since the last, as one forked
+    // during the grace is owed the same chance; the first round always runs.
+    loop {
+        let members = pinned_group_members(proc_root, pgid)?;
+        if members.is_empty() {
+            return Ok(());
+        }
+        let fresh: Vec<i32> = members
+            .into_iter()
+            .filter(|pid| !terminated.contains(pid))
+            .collect();
+        signal_members(proc_root, pgid, &fresh, JobSignal::TERM)?;
+        terminated.extend(fresh);
         if tokio::time::Instant::now() >= deadline {
             break;
         }
         tokio::time::sleep(JOB_POLL).await;
     }
     for _ in 0..KILL_ROUNDS {
-        if !signal_pinned_group(proc_root, pgid, JobSignal::KILL)? {
+        let members = pinned_group_members(proc_root, pgid)?;
+        if !signal_members(proc_root, pgid, &members, JobSignal::KILL)? {
             return Ok(());
         }
         tokio::time::sleep(JOB_POLL).await;
@@ -411,16 +422,17 @@ pub(crate) async fn stop_pinned_group(pgid: Pid, grace: std::time::Duration) -> 
     )))
 }
 
-/// Send `signal` to each member of `pgid` that may be signalled; true when
-/// there was one.
-fn signal_pinned_group(
+/// Send `signal` to each of `pids` still a member of `pgid` that may be
+/// signalled; true when there was one.
+fn signal_members(
     proc_root: &Path,
     pgid: Pid,
+    pids: &[i32],
     signal: rustix::process::Signal,
 ) -> io::Result<bool> {
     let mut found = false;
-    for pid in pinned_group_members(proc_root, pgid)? {
-        found |= signal_pinned(proc_root, pid, signal, |process| {
+    for pid in pids {
+        found |= signal_pinned(proc_root, *pid, signal, |process| {
             signalled_in_group(process, pgid)
         })?;
     }
