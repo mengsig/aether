@@ -64,6 +64,9 @@ pub(super) struct StreamState {
     pub(super) invoked: bool,
     /// The model called at least one tool this turn.
     pub(super) ran_tools: bool,
+    /// A real model message or a finished tool call: the provider answered,
+    /// unlike Claude Code's synthetic API-error message.
+    pub(super) progressed: bool,
     /// Present only for incremental billing; previous runs must survive reconciliation.
     pub(super) usage_before: Option<(Usage, Usage)>,
     pub(super) stream_usage: Usage,
@@ -152,6 +155,7 @@ impl StreamState {
             usage_seen: false,
             invoked: false,
             ran_tools: false,
+            progressed: false,
             usage_before: None,
             stream_usage: Usage::default(),
             request_usage_seen: false,
@@ -234,6 +238,9 @@ fn push_capped(buf: &mut String, text: &str) -> bool {
 /// Protocol notes one turn may put on the record, and how much of one is
 /// kept. Both bounds are on the engine's own text, which is untrusted.
 const MAX_PROTOCOL_NOTES: u32 = 8;
+
+/// The model Claude Code names on the message it writes for a failed API call.
+const SYNTHETIC_ERROR_MODEL: &str = "<synthetic>";
 const MAX_STREAMED_BYTES: usize = 4 * 1024 * 1024;
 
 const PROTOCOL_NOTE_CHARS: usize = 300;
@@ -407,8 +414,10 @@ pub(super) fn handle_event(
         EngineEvent::Assistant {
             mut content,
             usage,
-            model: _,
+            model,
         } => {
+            state.progressed |=
+                !content.is_empty() && model.as_deref() != Some(SYNTHETIC_ERROR_MODEL);
             let thinking = state.take_for_commit();
             if !thinking.trim().is_empty()
                 && !content
@@ -651,6 +660,7 @@ pub(super) fn handle_event(
                 runtime.apply(commit)?;
                 return Ok(());
             }
+            state.progressed |= !cancelled_result;
             let (call, started) = (call.id, call.started);
             let outcome = ToolOutcome {
                 content: content.clone(),

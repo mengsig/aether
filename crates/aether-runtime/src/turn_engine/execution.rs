@@ -333,6 +333,12 @@ pub(crate) async fn execute(
         let pending_request = !req_rx.is_empty();
         drop(registered);
         drop(req_rx);
+        // The provider answered, so whatever failed earlier is over: the retry
+        // window and the stall count bound one outage, not the turn's life.
+        if run.progressed {
+            backoff.recovered();
+            stalls = 0;
+        }
         let class = match run.stalled {
             Some(_) => super::ModelErrorClass::Timeout,
             None => crate::exhaustion::engine_error_class(
@@ -1106,6 +1112,7 @@ pub(super) fn test_run() -> DriveResult {
         usage_seen: false,
         invoked: false,
         ran_tools: false,
+        progressed: false,
         usage_before: None,
         stream_usage: Usage::default(),
         request_usage_seen: false,

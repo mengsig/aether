@@ -36,6 +36,8 @@ pub(super) struct DriveResult {
     pub(super) invoked: bool,
     /// The model called at least one tool this turn.
     pub(super) ran_tools: bool,
+    /// The provider answered this run: a real model message or a finished tool call.
+    pub(super) progressed: bool,
     /// Present only for incremental billing; previous runs must survive reconciliation.
     pub(super) usage_before: Option<(Usage, Usage)>,
     pub(super) stream_usage: Usage,
@@ -186,6 +188,7 @@ fn failed_launch(
         usage_seen: false,
         invoked: false,
         ran_tools: false,
+        progressed: false,
         usage_before: None,
         stream_usage: Usage::default(),
         request_usage_seen: false,
@@ -1016,6 +1019,7 @@ pub(super) async fn drive(
         usage_seen: state.usage_seen,
         invoked: state.invoked,
         ran_tools: state.ran_tools,
+        progressed: state.progressed,
         usage_before: state.usage_before,
         stream_usage: state.stream_usage,
         request_usage_seen: state.request_usage_seen,

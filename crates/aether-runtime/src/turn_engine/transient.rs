@@ -117,9 +117,9 @@ pub(super) fn recheck_note(class: ModelErrorClass, prompt: &str) -> String {
 pub(super) const UNCONFIRMED_CLEANUP: &str =
     "not retried: the failed engine did not exit, so its session could not be resumed safely";
 
-/// Exponential backoff under a hard wall-clock window that starts at a turn's
-/// first transient failure. Nothing resets it: an engine that makes a little
-/// progress before every failure would otherwise retry forever.
+/// Exponential backoff under a hard wall-clock window that starts at an
+/// outage's first transient failure. Only real progress ends the outage: a
+/// failure that streams Claude Code's synthetic error message is not progress.
 pub(super) struct Backoff {
     started: Option<Instant>,
     window: Duration,
@@ -140,6 +140,14 @@ impl Backoff {
     /// Starts the window at the first failure; later ones fall inside it.
     pub(super) fn failed(&mut self) {
         self.started.get_or_insert_with(Instant::now);
+    }
+
+    /// The engine made progress: the next failure opens a fresh window at
+    /// the floor delay.
+    pub(super) fn recovered(&mut self) {
+        self.started = None;
+        self.waits = 0;
+        debug_assert!(!self.spent() || self.window.is_zero());
     }
 
     fn elapsed(&self) -> Duration {
@@ -344,7 +352,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_window_starts_at_the_first_failure_and_nothing_resets_it() {
+    async fn the_window_starts_at_the_first_failure_and_only_progress_resets_it() {
         let mut backoff = Backoff::new(Duration::from_secs(60), Duration::from_secs(15));
         tokio::time::advance(Duration::from_secs(3 * 3600)).await;
         backoff.failed();
@@ -365,6 +373,15 @@ mod tests {
         assert!(
             backoff.spent(),
             "later failures fall inside the first window"
+        );
+        backoff.recovered();
+        tokio::time::advance(Duration::from_secs(3600)).await;
+        backoff.failed();
+        assert!(!backoff.spent(), "progress ended the first outage");
+        assert_eq!(
+            backoff.next_delay(),
+            Some(Duration::from_secs(15)),
+            "a new outage starts again at the floor"
         );
     }
 

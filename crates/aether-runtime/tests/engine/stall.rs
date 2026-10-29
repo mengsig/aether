@@ -253,3 +253,30 @@ async fn a_failure_the_engine_reports_itself_is_not_a_stall() {
     assert!(stalls(&h, id).is_empty());
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn progress_between_stalls_restarts_the_stall_count() {
+    let progress = EngineEvent::Assistant {
+        content: vec![ContentBlock::text("halfway there")],
+        usage: None,
+        model: None,
+    };
+    let mut finish = answered("built");
+    finish.insert(0, session("kept"));
+    let (h, engine, id) = stalling(vec![
+        (vec![session("kept")], Ending::Silent),
+        (vec![session("kept")], Ending::Silent),
+        (vec![session("kept"), progress], Ending::Silent),
+        (vec![session("kept")], Ending::Silent),
+        (finish, Ending::Finish),
+    ])
+    .await;
+    engine_turn(&h, id, "run the long build").await;
+    let attempts: Vec<_> = stalls(&h, id)
+        .iter()
+        .map(|stall| stall["attempt"].as_u64().unwrap())
+        .collect();
+    assert_eq!(attempts, [1, 2, 1, 2], "only consecutive stalls count");
+    assert_eq!(engine.prompts.lock().unwrap().len(), 5);
+    h.runtime.shutdown().await;
+}

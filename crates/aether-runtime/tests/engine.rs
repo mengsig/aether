@@ -107,6 +107,8 @@ mod temp_dir;
 mod tool_surface;
 #[path = "engine/transient_retry.rs"]
 mod transient_retry;
+#[path = "engine/transient_window.rs"]
+mod transient_window;
 #[path = "engine/ungated_engine.rs"]
 mod ungated_engine;
 #[path = "engine/usage.rs"]
