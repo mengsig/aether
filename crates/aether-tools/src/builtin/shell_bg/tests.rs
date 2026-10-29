@@ -337,21 +337,25 @@ async fn a_job_stops_on_group_sigint_although_the_daemon_ignores_it() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = ctx_in(dir.path());
     let reg = BackgroundProcesses::new();
+    // Only builtins before the exec: bash takes a SIGINT that lands while it
+    // waits for a child which then exits normally as handled, and runs on.
     let p = reg
-        .start(
-            ctx.agent_id,
-            "echo $$ > leader.tmp; mv leader.tmp leader; exec sleep 60",
-            &ctx,
-        )
+        .start(ctx.agent_id, "echo $$ > leader; exec sleep 60", &ctx)
         .unwrap();
-    wait_for("the job to record its pid", || {
-        match dir.path().join("leader").exists() {
-            true => Observed::Held,
-            false => Observed::Pending("no pid file yet".into()),
-        }
-    })
+    let pid_file = dir.path().join("leader");
+    wait_for(
+        "the job to record its pid",
+        || match std::fs::read_to_string(&pid_file) {
+            Ok(line) if line.ends_with('\n') => Observed::Held,
+            Ok(line) => Observed::Pending(format!("a partial pid line {line:?}")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Observed::Pending("no pid file yet".into())
+            }
+            Err(e) => Observed::Impossible(format!("reading the pid file: {e}")),
+        },
+    )
     .await;
-    let leader: i32 = std::fs::read_to_string(dir.path().join("leader"))
+    let leader: i32 = std::fs::read_to_string(&pid_file)
         .unwrap()
         .trim()
         .parse()
