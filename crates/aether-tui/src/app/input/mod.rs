@@ -13,6 +13,8 @@ mod view;
 #[cfg(test)]
 mod board_actions_tests;
 #[cfg(test)]
+mod double_click_tests;
+#[cfg(test)]
 mod rebinding_tests;
 #[cfg(test)]
 mod safety_tests;

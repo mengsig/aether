@@ -69,6 +69,8 @@ pub struct Selection {
     pub end_excerpt: Option<String>,
     pub dragging: bool,
     pub moved: bool,
+    /// A double click selected a whole line: drags leave it alone.
+    pub line: bool,
     pub pointer: MouseEvent,
     pub rows: Vec<String>,
     pub epoch: crate::app::transcript::TranscriptEpoch,
@@ -85,6 +87,8 @@ pub struct MouseState {
     pub selection: Option<Selection>,
     pub pending_board_click: Option<AgentId>,
     pub extend_after_scroll: bool,
+    /// Time and cell of the previous left press, for double-click detection.
+    pub last_down: Option<(std::time::Instant, u16, u16)>,
 }
 
 impl MouseState {
