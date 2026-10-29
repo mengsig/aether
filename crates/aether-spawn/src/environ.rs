@@ -25,9 +25,12 @@ enum Image {
 
 /// The environment of the process whose `/proc` directory is `process`.
 /// Inside `exec` a read comes back empty, torn or refused, so it is taken only
-/// when the same settled image shows before and after it, for up to 50 ms. A
-/// vfork child (`posix_spawn`) reads as its parent until its exec swaps images.
-/// An entry bash is splitting as it starts is joined back; see [`rejoin`].
+/// when the same settled image shows before and after it, and bash splits
+/// each variable's name from its value in turn as it starts, so a split read
+/// is taken again.
+/// One still unsettled after 50 ms is [`io::ErrorKind::ResourceBusy`]: neither
+/// a tag nor its absence is proven. A vfork child (`posix_spawn`) reads as its
+/// parent until its exec swaps images.
 pub fn read_environ(process: &Path) -> io::Result<Vec<u8>> {
     assert!(
         process
@@ -47,35 +50,36 @@ pub fn read_environ(process: &Path) -> io::Result<Vec<u8>> {
             (Image::Exec, _) | (_, Image::Exec) => false,
             _ => true,
         };
-        if stable || Instant::now() >= deadline {
-            return read.map(rejoin);
+        if stable && !read.as_deref().is_ok_and(has_split_entry) {
+            return read;
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::ResourceBusy,
+                format!(
+                    "{} did not settle within {EXEC_BUDGET:?}",
+                    process.display()
+                ),
+            ));
         }
         std::thread::sleep(EXEC_POLL);
     }
 }
 
-/// bash, as it starts, writes NUL over each entry's `=` in turn while it reads
-/// that entry; an entry without `=` is joined back to the value after it.
-fn rejoin(mut environment: Vec<u8>) -> Vec<u8> {
-    let length = environment.len();
-    let mut start = 0;
-    while let Some(len) = environment[start..].iter().position(|byte| *byte == 0) {
-        let mut end = start + len;
-        let split = len > 0 && !environment[start..end].contains(&b'=');
-        if split && end + 1 < length {
-            environment[end] = b'=';
-            end = environment[end + 1..]
-                .iter()
-                .position(|byte| *byte == 0)
-                .map_or(length, |value| end + 1 + value);
-        }
-        start = end + 1;
-        if start >= length {
-            break;
-        }
-    }
-    debug_assert_eq!(environment.len(), length, "a rejoin only rewrites bytes");
-    environment
+/// Whether an entry is a bare variable name, as one bash is reading while it
+/// starts is; a program that wrote its title over the region leaves other text.
+fn has_split_entry(environment: &[u8]) -> bool {
+    environment.split(|byte| *byte == 0).any(is_identifier)
+}
+
+fn is_identifier(entry: &[u8]) -> bool {
+    let Some((first, rest)) = entry.split_first() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || *first == b'_')
+        && rest
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
 }
 
 /// Where the environment of the process at `process` lies.
@@ -169,24 +173,33 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_split_at_its_equals_sign_is_joined_back() {
-        assert_eq!(rejoin(b"A\x001\0B=2\0".to_vec()), b"A=1\0B=2\0");
-        assert_eq!(rejoin(b"A=1\0B\0\0C=3\0".to_vec()), b"A=1\0B=\0C=3\0");
-        assert_eq!(rejoin(b"A=1\0B\0x=y\0".to_vec()), b"A=1\0B=x=y\0");
-        assert_eq!(rejoin(b"A=1\0LONE\0".to_vec()), b"A=1\0LONE\0");
-        assert_eq!(rejoin(b"A=1\0\0B=2".to_vec()), b"A=1\0\0B=2");
-        assert_eq!(rejoin(Vec::new()), b"");
+    fn an_entry_without_its_equals_sign_is_split() {
+        assert!(has_split_entry(b"A\x001\0B=2\0"));
+        assert!(has_split_entry(b"A=1\0_LONE2"));
+        assert!(!has_split_entry(b"A=1\0B=\0\0C=x=y\0"));
+        assert!(!has_split_entry(b""));
+        let title = b"-appDir /usr/lib/firefox 2 socket\0\0tPid 12940\0";
+        assert!(!has_split_entry(title), "a title written over the region");
+        assert!(!has_split_entry(b"1A\0"), "not a name bash would read");
     }
 
     #[test]
-    fn a_process_stuck_inside_exec_is_read_as_it_is_once_the_budget_is_spent() {
+    fn a_process_that_never_settles_is_unsettled_once_the_budget_is_spent() {
         let root = tempfile::tempdir().unwrap();
         let settled = process(root.path(), &stat_line("S", 0, 1024, (8, 12)), b"A=1\0");
         assert_eq!(read_environ(&settled).unwrap(), b"A=1\0");
         let stuck = process(root.path(), &stat_line("D", 0, 0, (0, 0)), b"");
         let started = Instant::now();
-        assert_eq!(read_environ(&stuck).unwrap(), b"");
+        let error = read_environ(&stuck).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::ResourceBusy);
         assert!(started.elapsed() >= EXEC_BUDGET, "gave up early");
+        let split = process(root.path(), &stat_line("S", 0, 1024, (8, 12)), b"A\x001\0");
+        let error = read_environ(&split).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::ResourceBusy,
+            "a split entry stays split"
+        );
     }
 
     #[cfg(target_os = "linux")]

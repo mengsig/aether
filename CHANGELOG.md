@@ -28,7 +28,8 @@ release is also the text of its GitHub release.
   on its own is reaped only once its group is stopped, so the group id is
   never reused under the signal. A process caught inside `exec`, whose
   environment reads empty or torn until its new program is set up, is read
-  again rather than missed, as is a bash still reading its environment.
+  again rather than missed, as is a bash still reading its environment; a
+  process forked and left behind while a sweep lists processes is found too.
   Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
   nothing changes.
 - **A delegated child that completes hands what it left running to its parent

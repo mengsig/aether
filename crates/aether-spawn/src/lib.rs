@@ -5,7 +5,8 @@
 //! and every child would inherit that, so ^C could not stop it.
 //!
 //! [`SpawnGate`] refuses new host processes once a sweep for them has begun,
-//! and [`read_environ`] reads what a sweep matches them by.
+//! [`visit_processes`] lists them for a sweep, and [`read_environ`] reads what
+//! it matches them by.
 
 #[cfg(unix)]
 #[allow(unsafe_code)]
@@ -188,6 +189,10 @@ mod spawn_gate;
 
 #[cfg(target_os = "linux")]
 pub use environ::read_environ;
+#[cfg(target_os = "linux")]
+mod processes;
+#[cfg(target_os = "linux")]
+pub use processes::visit_processes;
 pub use spawn_gate::{SpawnGate, SpawnHold, SpawnRefused};
 #[cfg(target_os = "linux")]
 pub use unix::{StartGate, gate_start};
