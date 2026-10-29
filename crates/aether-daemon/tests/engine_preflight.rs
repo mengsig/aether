@@ -1,7 +1,7 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-//! Engine preflight as a running daemon sees it: a missing CLI refuses a
+//! Engine preflight as a running daemon sees it: a CLI never found refuses a
 //! started agent up front, a CLI fixed after startup is found again without
 //! a daemon restart, and paths that do not probe again never refuse on a
 //! stale outcome.
@@ -273,12 +273,12 @@ async fn a_retried_creation_is_answered_after_its_engine_breaks() {
     daemon.stop().await;
 }
 
-/// A CLI usable at startup and removed since is probed again, so a started
-/// agent is refused before it exists rather than failing its first turn.
+/// A CLI usable at startup and removed since, as one mid-reinstall is, is
+/// suspect, not gone: a started agent is accepted and waits for it, not failed.
 #[tokio::test]
-async fn an_engine_removed_after_startup_refuses_a_started_agent() {
+async fn an_engine_removed_after_startup_still_accepts_a_started_agent() {
     if run_isolated(
-        "an_engine_removed_after_startup_refuses_a_started_agent",
+        "an_engine_removed_after_startup_still_accepts_a_started_agent",
         &[("claude", "printf '%s\\n' '2.1.269'\n")],
     )
     .await
@@ -292,23 +292,30 @@ async fn an_engine_removed_after_startup_refuses_a_started_agent() {
         .unwrap();
     detected(&client).await;
     std::fs::remove_file(Path::new(&root).join("claude")).unwrap();
-    let refused = client
+    let agent = client
         .create_agent(started_claude_agent())
         .await
-        .expect_err("a removed CLI cannot run a started agent")
-        .to_string();
-    assert!(refused.contains("install claude"), "{refused}");
+        .expect("one missing probe does not refuse an engine that was usable");
+    tokio::time::sleep(Duration::from_millis(500)).await;
     let agents = client.list_agents(AgentQuery::default()).await.unwrap();
-    assert!(agents.is_empty(), "no agent is left behind: {agents:?}");
+    assert_eq!(agents.iter().map(|a| a.id).collect::<Vec<_>>(), [agent.id]);
+    assert!(
+        !matches!(
+            agents[0].status,
+            aether_core::agent::AgentStatus::Failed { .. }
+        ),
+        "the agent waits for its engine: {:?}",
+        agents[0].status
+    );
     daemon.stop().await;
 }
 
-/// A CLI removed right after a probe found it is refused at once, not served
-/// from that probe until the next one may run.
+/// A CLI removed right after a probe found it is suspect at once rather than
+/// served from that probe, and still does not refuse a started agent.
 #[tokio::test]
-async fn an_engine_removed_right_after_a_recheck_refuses_a_started_agent() {
+async fn an_engine_removed_right_after_a_recheck_still_accepts_a_started_agent() {
     if run_isolated(
-        "an_engine_removed_right_after_a_recheck_refuses_a_started_agent",
+        "an_engine_removed_right_after_a_recheck_still_accepts_a_started_agent",
         &[("claude", FAILS_UNTIL_FIXED)],
     )
     .await
@@ -322,22 +329,25 @@ async fn an_engine_removed_right_after_a_recheck_refuses_a_started_agent() {
         .unwrap();
     detected(&client).await;
     std::fs::write(Path::new(&root).join("fixed"), "").unwrap();
-    let agent = client
+    let first = client
         .create_agent(started_claude_agent())
         .await
         .expect("the repaired CLI is probed again and accepted");
     std::fs::remove_file(Path::new(&root).join("claude")).unwrap();
-    let refused = client
+    let second = client
         .create_agent(started_claude_agent())
         .await
-        .expect_err("a CLI removed since the last probe cannot run a started agent")
-        .to_string();
-    assert!(refused.contains("install claude"), "{refused}");
-    let agents = client.list_agents(AgentQuery::default()).await.unwrap();
-    assert_eq!(
-        agents.iter().map(|a| a.id).collect::<Vec<_>>(),
-        vec![agent.id],
-        "only the first agent exists"
-    );
+        .expect("a CLI removed since the last probe is suspect, not refused");
+    let mut agents: Vec<_> = client
+        .list_agents(AgentQuery::default())
+        .await
+        .unwrap()
+        .iter()
+        .map(|a| a.id)
+        .collect();
+    agents.sort();
+    let mut expected = vec![first.id, second.id];
+    expected.sort();
+    assert_eq!(agents, expected);
     daemon.stop().await;
 }
