@@ -746,7 +746,9 @@ it before (or on an engine that was usable earlier in the daemon's life). It
 probes the CLI again under the transient retry backoff below, emitting an
 `engine.transient_retry` event with class `detection` and `waiting_for`
 `engine CLI` for each wait, and fails when the retry window ends, even
-mid-probe; cancelling the agent also ends a probe still running. A new agent
+mid-probe; cancelling the agent also ends a probe still running. A probe that
+finds the engine back just as the window ends still launches it: the window
+bounds the wait, not the use of an engine that works. A new agent
 on an engine that was never found still fails at once.
 
 A launch the OS refused for now - `EAGAIN` (fork or process limits),
