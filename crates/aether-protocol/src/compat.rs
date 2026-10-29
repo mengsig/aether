@@ -2,7 +2,7 @@
 //! this build, and its requests decode unchanged (docs/protocol.md).
 
 use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame};
-use aether_core::agent::{BlockReason, ExhaustionClass};
+use aether_core::agent::{Agent, AgentStatus, BlockReason, ExhaustionClass};
 use aether_core::model::ContentBlock;
 use aether_core::replay::{ReplayFrame, TurnOutcome};
 use serde_json::Value;
@@ -56,12 +56,12 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
     if let Some(folded) = older_error_reply(version, frame) {
         return crate::encode(&folded);
     }
-    let started = older_replay_reply(version, frame);
-    let line = crate::encode(started.as_ref().unwrap_or(frame))?;
+    let rewritten =
+        older_replay_reply(version, frame).or_else(|| older_agents_reply(version, frame));
+    let line = crate::encode(rewritten.as_ref().unwrap_or(frame))?;
     let hide_images = version < 19 && line.contains(IMAGE_REF_TAG);
     let hide_devices = version < 18 && line.contains(DEVICE_ORIGIN);
-    let hide_credentials = version < 25 && line.contains(CREDENTIALS_CLASS);
-    if !hide_images && !hide_devices && !hide_credentials {
+    if !hide_images && !hide_devices {
         return Ok(line);
     }
     let mut value: Value = serde_json::from_str(&line)?;
@@ -71,45 +71,73 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
     if hide_devices {
         hide_device_origins(&mut value);
     }
-    if hide_credentials {
-        hide_credentials_class(&mut value);
-    }
     crate::encode(&value)
 }
 
-/// The exhaustion class new in v25, as a block reason encodes it.
-const CREDENTIALS_CLASS: &str = r#""class":"credentials""#;
-
-/// Show a suspension on refused credentials as a usage limit to a client before
-/// v25, which cannot decode the class; its detail still names the refusal.
-fn hide_credentials_class(value: &mut Value) {
-    match value {
-        Value::Array(items) => items.iter_mut().for_each(hide_credentials_class),
-        Value::Object(fields) => {
-            if credentials_block(fields) {
-                let usage_limit = ExhaustionClass::UsageLimit.as_str();
-                fields.insert("class".into(), usage_limit.into());
-                debug_assert!(!credentials_block(fields));
-                return;
-            }
-            fields.values_mut().for_each(hide_credentials_class);
+/// An agent reply for a client before v25, which cannot decode the
+/// `credentials` class: those suspensions read as a usage limit, their detail
+/// still naming the refusal. Only typed agent statuses change, never opaque JSON.
+fn older_agents_reply(version: u32, frame: &ServerFrame) -> Option<ServerFrame> {
+    let ServerFrame::Reply {
+        id,
+        result: Ok(reply),
+    } = frame
+    else {
+        return None;
+    };
+    if version >= 25 || !agents_of(reply).into_iter().any(on_credentials) {
+        return None;
+    }
+    let mut reply = reply.clone();
+    for agent in agents_of_mut(&mut reply) {
+        if let AgentStatus::Blocked {
+            reason: BlockReason::Exhausted { class, .. },
+        } = &mut agent.status
+            && *class == ExhaustionClass::Credentials
+        {
+            *class = ExhaustionClass::UsageLimit;
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+    debug_assert!(!agents_of(&reply).into_iter().any(on_credentials));
+    Some(ServerFrame::Reply {
+        id: *id,
+        result: Ok(reply),
+    })
+}
+
+fn on_credentials(agent: &Agent) -> bool {
+    matches!(
+        agent.status,
+        AgentStatus::Blocked {
+            reason: BlockReason::Exhausted {
+                class: ExhaustionClass::Credentials,
+                ..
+            }
+        }
+    )
+}
+
+/// Every agent row a reply carries: the only place a block reason is typed.
+fn agents_of(reply: &Reply) -> Vec<&Agent> {
+    match reply {
+        Reply::Agent(agent) => vec![agent],
+        Reply::Agents(agents) | Reply::Paused { agents, .. } => agents.iter().collect(),
+        Reply::Tree(tree) => tree.nodes.values().map(|node| &node.agent).collect(),
+        _ => Vec::new(),
     }
 }
 
-/// Only a real block reason, not arbitrary JSON (a tool's input) that carries
-/// the same two fields.
-fn credentials_block(fields: &serde_json::Map<String, Value>) -> bool {
-    fields.get("block").and_then(Value::as_str) == Some("exhausted")
-        && fields.get("class").and_then(Value::as_str) == Some("credentials")
-        && matches!(
-            serde_json::from_value::<BlockReason>(Value::Object(fields.clone())),
-            Ok(BlockReason::Exhausted {
-                class: ExhaustionClass::Credentials,
-                ..
-            })
-        )
+fn agents_of_mut(reply: &mut Reply) -> Vec<&mut Agent> {
+    match reply {
+        Reply::Agent(agent) => vec![agent],
+        Reply::Agents(agents) | Reply::Paused { agents, .. } => agents.iter_mut().collect(),
+        Reply::Tree(tree) => tree
+            .nodes
+            .values_mut()
+            .map(|node| &mut node.agent)
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// What marks a device origin in an encoded frame. Quotes inside a JSON
@@ -928,7 +956,7 @@ mod tests {
         let current = encode_for(PROTOCOL_VERSION, &frame).unwrap();
         assert_eq!(crate::decode::<ServerFrame>(&current).unwrap(), frame);
         let older = encode_for(24, &frame).unwrap();
-        assert!(!older.contains(CREDENTIALS_CLASS), "{older}");
+        assert!(!older.contains(r#""class":"credentials""#), "{older}");
         let ServerFrame::Reply {
             result: Ok(Reply::Agent(seen)),
             ..
@@ -945,11 +973,38 @@ mod tests {
                 }
             }
         ));
-        // A tool input that only mimics the shape is left as it was.
-        let mimic = serde_json::json!({"block": "exhausted", "class": "credentials"});
-        let mut walked = mimic.clone();
-        hide_credentials_class(&mut walked);
-        assert_eq!(walked, mimic);
+        // Opaque JSON carrying a whole block reason, a tool's input here, is data.
+        let reason = serde_json::to_value(BlockReason::Exhausted {
+            model: aether_core::model::ModelRef::new("anthropic", "opus"),
+            class: aether_core::agent::ExhaustionClass::Credentials,
+            since: "2026-09-09T11:00:00Z".parse().expect("timestamp"),
+            reported_reset: None,
+            next_probe: "2026-09-09T12:00:00Z".parse().expect("timestamp"),
+            probes: 0,
+            detail: "401".into(),
+        })
+        .unwrap();
+        use aether_core::event::{Actor, Event, EventDraft, EventKind};
+        let draft = EventDraft::new(
+            Actor::user(),
+            EventKind::Custom {
+                name: "tool.input".into(),
+                payload: reason,
+            },
+        );
+        let input = ServerFrame::Event {
+            sub: 1,
+            event: Event::from_draft(
+                draft,
+                aether_core::id::EventId::new(),
+                1,
+                "2026-09-09T11:00:00Z".parse().expect("timestamp"),
+            ),
+        };
+        assert_eq!(
+            encode_for(24, &input).unwrap(),
+            encode_for(PROTOCOL_VERSION, &input).unwrap()
+        );
     }
 
     fn stored_image() -> aether_core::attachment::AttachmentRef {
