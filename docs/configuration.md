@@ -503,9 +503,9 @@ alone; the engine is already running, so this never delays or fails it. Set
 What an agent leaves running when it ends depends on how it ends.
 
 - A delegated child that completes normally under a live ancestor stops
-  nothing. What it and the ended agents beneath it left running - processes
-  carrying their tags or in their engine scopes, and their background shell
-  jobs - passes to the nearest live ancestor, usually its parent. That agent
+  nothing. What it and the agents that handed up to it left running -
+  processes carrying their tags or in their engine scopes, and their
+  background shell jobs - passes to the nearest live ancestor, usually its parent. That agent
   can read and stop the background jobs as its own, and gets a message from
   the system listing each process it took over by pid and command line. The
   child records the same as an `agent.processes_handed_up` event with `to`,
@@ -520,13 +520,19 @@ What an agent leaves running when it ends depends on how it ends.
 - Any other end stops them: a child that fails or is cancelled, the root of
   a task tree (an agent with no live ancestor) however it ends, and an agent
   that runs out of time or budget. The ending agent's processes are stopped
-  together with those of every ended agent beneath it reached through ended
-  agents only, which is what was handed up to it. A live descendant keeps its
-  own, and what was handed to it, until it ends.
+  together with what was handed up to it: the processes of each completed
+  agent that handed up to it, and of those that handed up to them in turn.
+  The daemon records each hand-up, so this follows who took what, not the
+  agents' current ancestry: a failed agent a child handed up past does not
+  take that child's processes if it is woken later.
 - An agent that has ended but whose own stop has not run yet still counts as
   live for both rules: a child completing meanwhile hands up to it, and its
-  stop decides what happens to that, while a sweep of an agent above it
+  stop decides what happens to that, while a sweep of the agent it handed to
   leaves it and what it holds to its own stop.
+- A completed agent that is woken again takes back the processes carrying its
+  tag or in its scopes, as the daemon tells processes apart by those alone;
+  the background jobs it handed up stay with their new owner. Its next end
+  hands them up or stops them again.
 
 To stop them the daemon sends `SIGTERM` to every live process in the swept
 agents' scopes or carrying one of their tags, including any forked meanwhile,

@@ -1,6 +1,6 @@
 //! What an ended agent leaves running. A child that completed under a live
 //! ancestor hands it to the nearest one; any other end stops it, together
-//! with what ended descendants handed to it. A daemon stop stops it all.
+//! with what reaped agents handed up to it. A daemon stop stops it all.
 
 use crate::commands::PendingReap;
 use crate::{CommitHold, Runtime};
@@ -103,45 +103,34 @@ impl Runtime {
         None
     }
 
-    /// `agent` and each reaped descendant reached through reaped agents alone:
-    /// what those completed with was handed up to `agent`. A live descendant,
-    /// or one whose reap is to come, keeps its own and what was handed to it.
+    /// Whether `agent` still holds what is handed to it: it is live, or it
+    /// ended and its own reap, which passes that on or stops it, is to come.
+    fn holds(&self, _hold: &CommitHold<'_>, agent: AgentId) -> bool {
+        !self.has_ended(agent) || self.awaiting_reap.lock().contains(&agent)
+    }
+
+    /// `agent` and each reaped agent whose processes were handed to it, or on
+    /// to it through other reaped agents. One woken since holds its own again.
     fn owned_agents(&self, hold: &CommitHold<'_>, agent: AgentId) -> Vec<AgentId> {
-        let subtree = match self.store.subtree_agents(agent) {
-            Ok(subtree) => subtree,
-            Err(error) => {
-                tracing::warn!(%agent, %error, "cannot list the descendants whose processes an end takes");
-                return vec![agent];
+        let mut handed_by: HashMap<AgentId, Vec<AgentId>> = HashMap::new();
+        let recorded = {
+            let handed_to = self.handed_to.lock();
+            for (from, to) in handed_to.iter() {
+                handed_by.entry(*to).or_default().push(*from);
             }
+            handed_to.len()
         };
-        let mut children: HashMap<AgentId, Vec<&Agent>> = HashMap::new();
-        for row in &subtree {
-            if let Some(parent) = row.parent {
-                children.entry(parent).or_default().push(row);
-            }
-        }
         let mut owned = vec![agent];
         let mut next = 0;
-        while let Some(parent) = owned.get(next).copied() {
+        while let Some(holder) = owned.get(next).copied() {
             next += 1;
-            // An imported agent ran elsewhere; nothing it started is ours.
-            owned.extend(
-                children
-                    .get(&parent)
-                    .into_iter()
-                    .flatten()
-                    .filter(|child| !self.holds_processes(hold, child))
-                    .filter(|child| !matches!(child.status, AgentStatus::Imported { .. }))
-                    .map(|child| child.id),
-            );
-            assert!(
-                owned.len() <= subtree.len().max(1),
-                "a parent cycle in the subtree"
-            );
+            let reaped = handed_by.remove(&holder).unwrap_or_default();
+            owned.extend(reaped.into_iter().filter(|from| !self.holds(hold, *from)));
+            assert!(owned.len() <= recorded + 1, "a cycle among the hand-ups");
         }
         debug_assert!(
             owned.iter().skip(1).all(|id| *id != agent),
-            "a parent cycle reached the ending agent"
+            "a hand-up cycle reached the ending agent"
         );
         owned
     }
@@ -156,6 +145,12 @@ impl Runtime {
     ) {
         let owned = self.owned_agents(hold, agent);
         assert_eq!(owned.first(), Some(&agent), "an end stops its own first");
+        {
+            let mut handed_to = self.handed_to.lock();
+            for id in &owned {
+                handed_to.remove(id);
+            }
+        }
         self.reap_engine_processes(handle, agent, owned.clone());
         let Some(processes) = self.tools.background() else {
             return;
@@ -213,10 +208,11 @@ impl Runtime {
             !owned.contains(&owner),
             "the owner is an ancestor, so not among what it owns"
         );
+        let previous = self.handed_to.lock().insert(agent, owner);
+        debug_assert!(previous != Some(agent), "an agent hands nothing to itself");
         let me = self.me.clone();
-        let jobs = self.tools.background().cloned();
         // Moved now: a job an agent woken meanwhile starts stays its own.
-        let handed_jobs = match &jobs {
+        let handed_jobs = match self.tools.background() {
             Some(jobs) => hand_up_jobs(jobs, &owned, owner),
             None => Vec::new(),
         };
@@ -227,7 +223,7 @@ impl Runtime {
                 return;
             };
             // With no live owner left, the ends that stopped it stopped all of this.
-            let Some(owner) = runtime.settle_owner(jobs.as_deref(), owner).await else {
+            let Some(owner) = runtime.settle_owner(owner) else {
                 return;
             };
             if processes.is_empty() && handed_jobs.is_empty() {
@@ -237,41 +233,22 @@ impl Runtime {
         });
     }
 
-    /// The live agent that holds what was handed to `owner`, to be told of it.
-    /// An owner whose reap is to come passes it on and reports it itself; one
-    /// already reaped passes it on, or stops it, here. `None` when not to tell.
-    async fn settle_owner(
-        &self,
-        jobs: Option<&BackgroundProcesses>,
-        mut owner: AgentId,
-    ) -> Option<AgentId> {
+    /// The live agent that holds what was handed to `owner`, to be told of it:
+    /// `owner`'s own reap took it along, so follow its hand-ups. `None` when
+    /// a stop took it, or a reap still to come reports it itself.
+    fn settle_owner(&self, mut owner: AgentId) -> Option<AgentId> {
+        // Held so no reap moves what `owner` holds while it is followed.
+        let hold = self.hold();
         for _ in 0..MAX_ANCESTRY {
-            let (next, stopping) = {
-                // Held so the owner cannot wake between the check and the move.
-                let hold = self.hold();
-                if !self.has_ended(owner) {
-                    return Some(owner);
-                }
-                if self.awaiting_reap.lock().contains(&owner) {
-                    return None;
-                }
-                let next = self.handed_up_to(&hold, owner);
-                assert_ne!(next, Some(owner), "an ended owner hands nothing to itself");
-                let stopping = match (next, jobs) {
-                    (Some(next), Some(jobs)) => {
-                        drop(hand_up_jobs(jobs, &[owner], next));
-                        None
-                    }
-                    (None, Some(jobs)) => Some(jobs.stop_agents(&[owner])),
-                    (_, None) => None,
-                };
-                (next, stopping)
-            };
-            if let Some(stopping) = stopping {
-                let stopped = stopping.await;
-                tracing::info!(%owner, stopped, "stopped jobs handed to an owner that had ended");
+            if !self.has_ended(owner) {
+                return Some(owner);
             }
-            owner = next?;
+            if self.holds(&hold, owner) {
+                return None;
+            }
+            let next = self.handed_to.lock().get(&owner).copied()?;
+            assert_ne!(next, owner, "an ended owner hands nothing to itself");
+            owner = next;
         }
         tracing::error!(%owner, "the hand-up walk exceeded {MAX_ANCESTRY} agents");
         None

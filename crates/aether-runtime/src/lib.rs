@@ -308,6 +308,9 @@ pub struct Runtime {
     /// Ended agents whose reap has not run yet, which still hold what is
     /// handed to them. Changed only under the commit hold.
     pub(crate) awaiting_reap: parking_lot::Mutex<std::collections::HashSet<AgentId>>,
+    /// Each completed agent whose processes were handed up, to the agent it
+    /// handed them to, until a stop takes them. Changed only under the commit hold.
+    pub(crate) handed_to: parking_lot::Mutex<std::collections::HashMap<AgentId, AgentId>>,
     pub(crate) tools: Arc<ToolRegistry>,
     /// Resource keys held by mutating tool calls in flight, across agents.
     pub(crate) resources: Arc<resources::ResourceLeases>,
@@ -463,6 +466,7 @@ impl Runtime {
             workspace_gc_active: Default::default(),
             engine_spawns: Default::default(),
             awaiting_reap: Default::default(),
+            handed_to: Default::default(),
             storage_gc_lock: parking_lot::Mutex::new(()),
             storage_last_run: parking_lot::Mutex::new(None),
             seeded_repositories: parking_lot::Mutex::new(std::collections::HashSet::new()),

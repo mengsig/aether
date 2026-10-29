@@ -38,10 +38,10 @@ fn completed() -> AgentStatus {
     AgentStatus::Completed { summary: None }
 }
 
-/// An end owns the ended agents beneath it through ended agents only: a live
-/// descendant keeps its own ended children until it ends itself.
+/// An end owns the reaped agents that handed up to it, directly or through
+/// other reaped ones; not a live one, nor what a live one holds.
 #[tokio::test]
-async fn an_end_owns_its_ended_descendants_but_not_a_live_ones() {
+async fn an_end_owns_what_reaped_agents_handed_to_it() {
     let (runtime, _config) = crate::test_runtime(|_| {}).await;
     runtime.shutdown.cancel();
     let root = idle_agent(&runtime, None).await;
@@ -49,18 +49,52 @@ async fn an_end_owns_its_ended_descendants_but_not_a_live_ones() {
     let done = idle_agent(&runtime, Some(child)).await;
     let live = idle_agent(&runtime, Some(child)).await;
     let under_live = idle_agent(&runtime, Some(live)).await;
+    let under_done = idle_agent(&runtime, Some(done)).await;
+    let stopped = idle_agent(&runtime, Some(child)).await;
     end(&runtime, done, completed());
     end(&runtime, under_live, completed());
+    end(&runtime, under_done, completed());
+    end(&runtime, stopped, AgentStatus::Failed { error: "x".into() });
     end(&runtime, child, AgentStatus::Failed { error: "x".into() });
+    runtime
+        .handed_to
+        .lock()
+        .extend([(done, child), (under_live, live), (under_done, done)]);
 
     let hold = runtime.hold();
-    let mut owned = runtime.owned_agents(&hold, child);
-    assert_eq!(owned.first(), Some(&child), "the ending agent comes first");
-    owned.sort_unstable();
-    let mut expected = vec![child, done];
-    expected.sort_unstable();
-    assert_eq!(owned, expected);
+    let owned = runtime.owned_agents(&hold, child);
+    assert_eq!(
+        owned,
+        vec![child, done, under_done],
+        "a stopped agent handed nothing"
+    );
     assert_eq!(runtime.owned_agents(&hold, live), vec![live, under_live]);
+}
+
+/// A failed agent woken after a child handed up past it does not take that
+/// child's processes, and the ancestor that took them keeps them meanwhile.
+#[tokio::test]
+async fn a_hand_up_stays_with_its_owner_when_a_skipped_agent_wakes() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let grandparent = idle_agent(&runtime, None).await;
+    let parent = idle_agent(&runtime, Some(grandparent)).await;
+    let child = idle_agent(&runtime, Some(parent)).await;
+    end(&runtime, parent, AgentStatus::Failed { error: "x".into() });
+    end(&runtime, child, completed());
+    let hold = runtime.hold();
+    assert_eq!(runtime.handed_up_to(&hold, child), Some(grandparent));
+    runtime.handed_to.lock().insert(child, grandparent);
+    drop(hold);
+
+    end(&runtime, parent, AgentStatus::Ready);
+    let hold = runtime.hold();
+    assert_eq!(runtime.owned_agents(&hold, parent), vec![parent]);
+    assert_eq!(
+        runtime.owned_agents(&hold, grandparent),
+        vec![grandparent, child],
+        "past the live parent"
+    );
 }
 
 /// A completed agent hands up to its nearest live ancestor, past ended ones;
@@ -124,6 +158,7 @@ async fn an_ancestor_awaiting_its_reap_still_owns_what_is_handed_up() {
         Some(parent),
         "the failed parent's reap is to come"
     );
+    runtime.handed_to.lock().insert(child, parent);
     assert_eq!(
         runtime.owned_agents(&hold, parent),
         vec![parent],
@@ -138,17 +173,17 @@ async fn an_ancestor_awaiting_its_reap_still_owns_what_is_handed_up() {
         Some(grandparent),
         "past the parent once it is reaped"
     );
-    drop(hold);
     runtime.awaiting_reap.lock().insert(parent);
+    drop(hold);
     assert_eq!(
-        runtime.settle_owner(None, parent).await,
+        runtime.settle_owner(parent),
         None,
         "the owner's own reap reports it"
     );
 }
 
-/// What reaches an owner that has since ended goes on to the next live one,
-/// past every ended hop, and to no one once the root has ended.
+/// What reaches an owner that has since been reaped went on with its own
+/// hand-up, past every reaped hop; to no one once a stop took it.
 #[tokio::test]
 async fn a_late_hand_up_settles_with_the_live_owner_it_would_have_reached() {
     let (runtime, _config) = crate::test_runtime(|_| {}).await;
@@ -156,18 +191,24 @@ async fn a_late_hand_up_settles_with_the_live_owner_it_would_have_reached() {
     let root = idle_agent(&runtime, None).await;
     let upper = idle_agent(&runtime, Some(root)).await;
     let middle = idle_agent(&runtime, Some(upper)).await;
-    assert_eq!(runtime.settle_owner(None, middle).await, Some(middle));
+    assert_eq!(runtime.settle_owner(middle), Some(middle));
 
     end(&runtime, middle, completed());
     end(&runtime, upper, completed());
+    runtime
+        .handed_to
+        .lock()
+        .extend([(middle, upper), (upper, root)]);
     assert_eq!(
-        runtime.settle_owner(None, middle).await,
+        runtime.settle_owner(middle),
         Some(root),
-        "past two ended owners"
+        "past two reaped owners"
     );
 
     end(&runtime, root, AgentStatus::Cancelled { reason: None });
-    assert_eq!(runtime.settle_owner(None, middle).await, None);
+    assert_eq!(runtime.settle_owner(middle), None, "the root holds nothing");
+    runtime.handed_to.lock().remove(&upper);
+    assert_eq!(runtime.settle_owner(middle), None, "a stop took it");
 }
 
 struct NoSink;
