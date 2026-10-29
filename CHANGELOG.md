@@ -15,7 +15,7 @@ clients on 17 through 24 see it as `usage_limit`.
   native engine whose OAuth token expired or whose API key was refused
   (Claude Code's `authentication_error`, "Please run /login", a result with
   `api_error_status` 401; Codex's "401 Unauthorized" or a token that could not
-  be refreshed) classed as an unknown error, so the agent failed. It is now
+  be refreshed; either CLI's bare 401 status) classed as an unknown error, so the agent failed. It is now
   suspended with the new `credentials` class: the operator is told once per
   episode and the suspension names the fix, the provider is benched, and the
   agent resumes when a probe answers after the CLI is signed in again. A
@@ -28,13 +28,16 @@ clients on 17 through 24 see it as `usage_limit`.
 - **A briefly unusable engine no longer fails agents.** A turn whose engine
   probe had just failed (`claude --version` timing out under load, a CLI
   mid-update) failed at once, and creation was refused in the same window. A
-  probe that times out now keeps the last good detection, and a usable engine
-  whose probe fails is only suspect: agents are still created on it, turns do
-  not launch it until a probe passes, and it is recorded unusable only after
-  three failed probes over at least 30 seconds. A turn on an engine that is
+  probe that times out, or whose CLI the OS could not start for now, keeps
+  the last good detection, and a usable engine whose probe fails is only
+  suspect: agents are still created on it, turns do not launch it until a
+  probe passes, and it is recorded unusable only after three failed probes
+  over at least 30 seconds. A turn on an engine that is
   not launchable probes it again under the transient retry backoff and fails
-  when the window ends, even mid-probe; an agent new to an engine never found
-  still fails at once. The CLI probe timeout is 60 seconds instead of 15.
+  when the window ends, even mid-probe. An agent new to an engine never found
+  still fails at once, unless the latest probe was such an inconclusive one;
+  creation is not refused on one either. The CLI probe timeout is 60 seconds
+  instead of 15.
 - **An engine launch the OS refused for now is retried.** A spawn that failed
   with `EAGAIN`, `ETXTBSY` (the CLI replaced by an update) or `ENOMEM` failed
   the agent; it is now a transient timeout, retried within the transient
@@ -43,11 +46,11 @@ clients on 17 through 24 see it as `usage_limit`.
   retry window started at a turn's first transient failure and was never
   cleared, so a long turn with two brief outages hours apart failed at the
   second; the third stall of a turn ended it even when hours of work came
-  between them. A model message or a tool result now restarts both the
-  window (and the backoff, from the 15-second floor) and the stall count, for
-  at most eight outages of one turn, so an engine that fails after every bit
-  of progress still gives up. Claude Code's synthetic API-error message is
-  not progress.
+  between them. A model message or a tool result now restarts the stall
+  count, so only consecutive stalls end a turn, and the window (and the
+  backoff, from the 15-second floor) for at most eight outages of one turn,
+  so an engine that fails after every bit of progress still gives up. Claude
+  Code's synthetic API-error message is not progress.
 - **`status` and `get_tree` answer while the daemon does slow work (#333).**
   A connection ran its commands one at a time, so the TUI's polls waited
   behind any slow request it had sent first. One example is a write waiting

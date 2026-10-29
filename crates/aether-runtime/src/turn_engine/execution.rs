@@ -341,10 +341,11 @@ pub(crate) async fn execute(
         let pending_request = !req_rx.is_empty();
         drop(registered);
         drop(req_rx);
-        // The provider answered, so whatever failed earlier is over: the retry
-        // window and the stall count bound one outage, up to MAX_RECOVERIES.
-        if run.progressed && backoff.recovered() {
+        // The provider answered, so whatever failed earlier is over: the stall
+        // count bounds consecutive stalls, the window one outage (MAX_RECOVERIES).
+        if run.progressed {
             stalls = 0;
+            backoff.recovered();
         }
         // A refused sign-in or spent plan the stalled engine named on its way
         // out is the cause, not the silence: suspend on it, never retry it.

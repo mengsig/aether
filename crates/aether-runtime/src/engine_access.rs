@@ -28,6 +28,9 @@ pub(crate) struct DetectedEngines {
     pub(crate) suspect: HashMap<EngineKind, String>,
     /// Engines found usable at some point since the daemon started.
     pub(crate) seen: HashSet<EngineKind>,
+    /// Engines never usable whose latest probe proved nothing either way:
+    /// it timed out, or the OS refused to start the CLI for now.
+    pub(crate) inconclusive: HashSet<EngineKind>,
 }
 
 impl DetectedEngines {
@@ -45,6 +48,12 @@ impl DetectedEngines {
         self.seen.contains(kind)
     }
 
+    /// Whether `kind` may be usable soon: it was before, or no probe has yet
+    /// shown it unusable. Only an engine for which neither holds is ruled out.
+    pub(crate) fn may_come_back(&self, kind: &EngineKind) -> bool {
+        self.was_usable(kind) || self.inconclusive.contains(kind)
+    }
+
     /// Why `kind` cannot be launched now, when a probe found a reason.
     pub(crate) fn reason(&self, kind: &EngineKind) -> Option<&str> {
         self.unavailable
@@ -56,6 +65,7 @@ impl DetectedEngines {
     /// Keep one engine's latest detection outcome, replacing the older one.
     fn record(&mut self, kind: EngineKind, found: std::result::Result<Arc<dyn Engine>, String>) {
         self.suspect.remove(&kind);
+        self.inconclusive.remove(&kind);
         match found {
             Ok(engine) => {
                 self.unavailable.remove(&kind);
@@ -86,7 +96,7 @@ impl DetectedEngines {
         let was_usable = self.usable.contains_key(&kind);
         match probe.found {
             // A slow CLI proves nothing either way: keep what was known.
-            _ if probe.timed_out && was_usable => {}
+            _ if probe.inconclusive && was_usable => {}
             Ok(engine) => {
                 *streak = None;
                 self.record(kind, Ok(engine));
@@ -108,7 +118,7 @@ impl DetectedEngines {
             }
             Err(reason) => {
                 *streak = None;
-                self.record(kind, Err(reason));
+                self.record_failure(kind, reason, probe.inconclusive);
             }
         }
         debug_assert!(
@@ -116,6 +126,21 @@ impl DetectedEngines {
                 .keys()
                 .all(|kind| self.usable.contains_key(kind)),
             "only a usable engine can be suspect"
+        );
+    }
+
+    /// Record a never-usable `kind` unusable for `reason`, and whether its
+    /// probe was `inconclusive`, so a turn may wait for it rather than fail.
+    fn record_failure(&mut self, kind: EngineKind, reason: String, inconclusive: bool) {
+        debug_assert!(!self.usable.contains_key(&kind), "a usable one is demoted");
+        self.record(kind, Err(reason));
+        if inconclusive {
+            self.inconclusive.insert(kind);
+        }
+        debug_assert!(
+            self.inconclusive
+                .iter()
+                .all(|k| self.unavailable.contains_key(k))
         );
     }
 
@@ -133,11 +158,11 @@ impl DetectedEngines {
     }
 }
 
-/// One probe's outcome. `timed_out` is set when any step of it outlived its
-/// deadline, so even a fallback it found says nothing about the engine.
+/// One probe's outcome. `inconclusive` is set when any step of it timed out
+/// or could not start for now, so even a fallback it found says nothing.
 struct Probe {
     found: std::result::Result<Arc<dyn Engine>, String>,
-    timed_out: bool,
+    inconclusive: bool,
 }
 
 /// Failed probes in a row of an engine still recorded usable.
@@ -273,6 +298,14 @@ impl EngineCatalog {
         self.detected.write().record(kind, Err(reason.to_owned()));
     }
 
+    /// Record a never-usable `kind` as an inconclusive probe would: timed out.
+    #[cfg(test)]
+    pub(crate) fn mark_inconclusive(&self, kind: EngineKind, reason: &str) {
+        self.detected
+            .write()
+            .record_failure(kind, reason.to_owned(), true);
+    }
+
     /// Record `engine` usable for `kind`, as a passing probe would.
     #[cfg(test)]
     pub(crate) fn mark_usable(&self, kind: EngineKind, engine: Arc<dyn Engine>) {
@@ -372,7 +405,7 @@ async fn detect_engines(prompt_cache_ttl: Option<PromptCacheTtl>) -> DetectedEng
     ] {
         match probe.found {
             Ok(engine) => detected.record(kind, Ok(engine)),
-            Err(reason) => detected.record(kind, Err(reason)),
+            Err(reason) => detected.record_failure(kind, reason, probe.inconclusive),
         }
     }
     debug_assert_eq!(
@@ -395,12 +428,21 @@ async fn detect_engine(kind: EngineKind, prompt_cache_ttl: Option<PromptCacheTtl
         found: Err(format!(
             "{kind} has no installed-CLI detection in this daemon"
         )),
-        timed_out: false,
+        inconclusive: false,
     }
 }
 
-fn timed_out(reason: &aether_engine::detect::DetectError) -> bool {
-    matches!(reason, aether_engine::detect::DetectError::TimedOut { .. })
+/// A probe failure that says nothing about the engine: it timed out, or the
+/// OS refused to start the CLI for now (fork limits, memory, a binary mid-update).
+fn inconclusive(reason: &aether_engine::detect::DetectError) -> bool {
+    use aether_engine::detect::DetectError;
+    match reason {
+        DetectError::TimedOut { .. } => true,
+        DetectError::NotInstalled { os_error, .. } => {
+            crate::exhaustion::transient_os_error(&os_error.to_lowercase())
+        }
+        _ => false,
+    }
 }
 
 async fn detect_claude(prompt_cache_ttl: Option<PromptCacheTtl>) -> Probe {
@@ -417,13 +459,13 @@ async fn detect_claude(prompt_cache_ttl: Option<PromptCacheTtl>) -> Probe {
             };
             Probe {
                 found: Ok(Arc::new(e)),
-                timed_out: false,
+                inconclusive: false,
             }
         }
         Err(reason) => {
             tracing::warn!(engine = "claude-code", %reason, "engine CLI unusable");
             Probe {
-                timed_out: timed_out(&reason),
+                inconclusive: inconclusive(&reason),
                 found: Err(reason.to_string()),
             }
         }
@@ -438,16 +480,16 @@ async fn detect_codex() -> Probe {
         Ok(e) => {
             return Probe {
                 found: Ok(Arc::new(e)),
-                timed_out: false,
+                inconclusive: false,
             };
         }
         Err(reason) => reason,
     };
-    let app_timed_out = timed_out(&app_reason);
+    let app_inconclusive = inconclusive(&app_reason);
     match aether_engine::CodexEngine::detect_verbose().await {
         Ok(e) => Probe {
             found: Ok(Arc::new(e)),
-            timed_out: app_timed_out,
+            inconclusive: app_inconclusive,
         },
         Err(exec_reason) => {
             tracing::warn!(
@@ -456,7 +498,7 @@ async fn detect_codex() -> Probe {
                 exec_reason = %exec_reason,
                 "engine CLI unusable"
             );
-            let timed_out = app_timed_out || timed_out(&exec_reason);
+            let inconclusive = app_inconclusive || inconclusive(&exec_reason);
             // The common case - codex simply absent - fails both probes
             // with the identical reason; do not repeat it.
             let found = if app_reason == exec_reason {
@@ -466,7 +508,10 @@ async fn detect_codex() -> Probe {
                     "{app_reason} (legacy exec fallback: {exec_reason})"
                 ))
             };
-            Probe { found, timed_out }
+            Probe {
+                found,
+                inconclusive,
+            }
         }
     }
 }
@@ -526,6 +571,11 @@ impl Runtime {
         let Some(reason) = detected.unavailable.get(&kind) else {
             return Ok(());
         };
+        // A probe that timed out or could not start the CLI for now rules nothing out.
+        if detected.inconclusive.contains(&kind) {
+            tracing::warn!(engine = kind.as_str(), %reason, "engine probe inconclusive; creating the agent");
+            return Ok(());
+        }
         debug_assert!(
             detected.get(&kind).is_none(),
             "an unusable engine has no adapter"
@@ -684,14 +734,14 @@ mod tests {
     fn found(adapter: &'static str) -> Probe {
         Probe {
             found: Ok(Arc::new(Named(adapter))),
-            timed_out: false,
+            inconclusive: false,
         }
     }
 
-    fn failed(reason: &str, timed_out: bool) -> Probe {
+    fn failed(reason: &str, inconclusive: bool) -> Probe {
         Probe {
             found: Err(reason.into()),
-            timed_out,
+            inconclusive,
         }
     }
 
@@ -746,7 +796,7 @@ mod tests {
             detected.observe(
                 KIND,
                 Probe {
-                    timed_out: true,
+                    inconclusive: true,
                     ..found("fallback")
                 },
                 &mut streak,
@@ -763,9 +813,58 @@ mod tests {
         detected.observe(KIND, failed("timed out", true), &mut streak, at);
         assert_eq!(detected.reason(&KIND), Some("timed out"));
         assert!(detected.get(&KIND).is_none() && !detected.was_usable(&KIND));
+        assert!(detected.may_come_back(&KIND), "a timeout rules nothing out");
+        detected.observe(KIND, failed("not on PATH", false), &mut streak, at);
+        assert!(!detected.may_come_back(&KIND), "a conclusive failure does");
+        detected.observe(KIND, failed("timed out", true), &mut streak, at);
         detected.observe(KIND, found("good"), &mut streak, at);
+        assert!(
+            detected.inconclusive.is_empty(),
+            "a passing probe settles it"
+        );
         assert_eq!(detected.launchable(&KIND).unwrap().adapter(), "good");
         assert!(detected.reason(&KIND).is_none());
+    }
+
+    #[test]
+    fn only_a_timeout_or_a_launch_refused_for_now_is_inconclusive() {
+        use aether_engine::detect::DetectError;
+        let not_started = |os_error: &str| DetectError::NotInstalled {
+            program: "claude".into(),
+            os_error: os_error.into(),
+        };
+        let timed_out = DetectError::TimedOut {
+            program: "claude".into(),
+            probe: "--version".into(),
+        };
+        assert!(inconclusive(&timed_out));
+        assert!(inconclusive(&not_started(
+            "Resource temporarily unavailable (os error 11)"
+        )));
+        assert!(inconclusive(&not_started("Text file busy (os error 26)")));
+        assert!(!inconclusive(&not_started(
+            "No such file or directory (os error 2)"
+        )));
+        assert!(!inconclusive(&not_started(
+            "Permission denied (os error 13)"
+        )));
+    }
+
+    #[tokio::test]
+    async fn creation_is_refused_on_a_failed_probe_but_not_an_inconclusive_one() {
+        let (runtime, _dir) = crate::test_runtime(|_| {}).await;
+        let model = ModelRef::new("claude-code", "sonnet");
+        runtime
+            .engines
+            .mark_unavailable(KIND, "claude is not on PATH");
+        let refused = runtime.check_engine_for(Some(&model), None).await;
+        assert!(refused.is_err(), "a conclusive failure refuses creation");
+        runtime
+            .engines
+            .mark_inconclusive(KIND, "claude --version timed out");
+        let created = runtime.check_engine_for(Some(&model), None).await;
+        assert!(created.is_ok(), "{created:?}");
+        runtime.shutdown().await;
     }
 
     #[test]

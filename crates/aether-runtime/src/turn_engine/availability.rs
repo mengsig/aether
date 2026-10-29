@@ -53,8 +53,8 @@ pub(super) async fn wait_for_engine(
             return Ok(Availability::Ready(engine));
         }
         let reason = crate::engine_access::unavailable_text(kind, provider, detected.reason(&kind));
-        // Never found and never run on: not installed, not briefly away.
-        if !detected.was_usable(&kind) && ctx.agent.engine_session.is_none() {
+        // Never found, never run on and shown unusable: not briefly away.
+        if !detected.may_come_back(&kind) && ctx.agent.engine_session.is_none() {
             return Ok(Availability::Unavailable(reason));
         }
         backoff.failed();
@@ -266,6 +266,34 @@ mod tests {
             matches!(found, Availability::Unavailable(ref reason) if reason.contains("not installed"))
         );
         assert_eq!(announced(&runtime, &ctx), 0, "nothing was waited for");
+        runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_new_agent_waits_for_an_engine_whose_probe_was_inconclusive() {
+        let (runtime, _dir, ctx) = waiting(Duration::from_secs(30)).await;
+        runtime
+            .engines
+            .mark_inconclusive(KIND, "claude --version timed out after 60 seconds");
+        let restoring = runtime.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            restoring.engines.mark_usable(KIND, Arc::new(Idle));
+        });
+        let found = wait_for_engine(
+            &runtime,
+            &ctx,
+            KIND,
+            "claude-code",
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(found, Availability::Ready(_)),
+            "not failed at once"
+        );
+        assert!(announced(&runtime, &ctx) >= 1, "the wait is announced");
         runtime.shutdown().await;
     }
 

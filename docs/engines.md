@@ -731,12 +731,12 @@ refused with an install hint; one usable earlier and removed since is suspect
 (below), as a CLI mid-reinstall is. Probes of one engine run at most once every two seconds, and
 callers arriving meanwhile share the latest outcome. A started agent
 (`aether run`) whose engine is still unusable is refused before it exists,
-with the probe's reason. A parked agent (`aether new`) is still created: its
+with the probe's reason, unless that probe was inconclusive (below). A parked agent (`aether new`) is still created: its
 CLI may be installed before it runs. Spawn schedules and their runs are not
 refused either: each run's first turn probes the CLI again.
 
-A usable engine is not given up on one failed probe. A probe that times out
-keeps the last good detection, and a Codex app-server probe that times out is
+A usable engine is not given up on one failed probe. A probe that times out,
+or whose CLI the OS could not start for now, keeps the last good detection, and a Codex app-server probe that times out is
 never downgraded to the exec fallback. A probe that fails outright marks the
 engine suspect: no turn launches it until a probe passes again, but agents are
 still created on it. Only three failed probes in a row, at least 30 seconds
@@ -750,7 +750,10 @@ probes the CLI again under the transient retry backoff below, emitting an
 mid-probe; cancelling the agent also ends a probe still running. A probe that
 finds the engine back just as the window ends still launches it: the window
 bounds the wait, not the use of an engine that works. A new agent
-on an engine that was never found still fails at once.
+on an engine that was never found still fails at once, unless its latest probe
+was inconclusive: one that timed out, or whose CLI the OS refused to start for
+now (`EAGAIN`, `ETXTBSY`, `ENOMEM`), proves nothing, so creation is not refused
+on it and the turn waits as above.
 
 A launch the OS refused for now - `EAGAIN` (fork or process limits),
 `ETXTBSY` (the binary being replaced by an update) or `ENOMEM` - is a
@@ -990,8 +993,8 @@ subscribe to it. Aether then stops the engine process and resumes the same
 session, like a transient failure, waiting with the same backoff. After two
 consecutive retries (the third stall in a row) the turn ends with a recorded
 error saying the engine stalled. Progress after a stall - a model message or a
-tool result - restarts that count, within the same eight-outage budget, so a
-long turn is not ended by stalls hours apart; the agent goes idle and a message resumes its session. While
+tool result - restarts that count, even after the eight outages whose window
+progress resets, so a long turn is not ended by stalls hours apart; the agent goes idle and a message resumes its session. While
 an agent is stalled, `aether status` lists it under "Needs attention", and the
 TUI and `aether run` print a notice for each stall.
 

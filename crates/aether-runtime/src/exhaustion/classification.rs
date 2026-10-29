@@ -69,10 +69,16 @@ pub(crate) fn engine_error_class(error: &str) -> ModelErrorClass {
 /// A launch the OS refused for now: fork limits or memory under load, or the
 /// binary being replaced by an update. A missing CLI or a denial is not one.
 fn transient_spawn_failure(lower: &str) -> bool {
-    lower.contains("could not start ")
-        && TRANSIENT_SPAWN_SIGNALS
-            .iter()
-            .any(|signal| lower.contains(signal))
+    lower.contains("could not start ") && transient_os_error(lower)
+}
+
+/// Whether lowercased `os_error` is one the OS clears by itself: EAGAIN,
+/// ETXTBSY or ENOMEM, as opposed to a missing file or a denial.
+pub(crate) fn transient_os_error(os_error: &str) -> bool {
+    debug_assert_eq!(os_error, os_error.to_lowercase(), "matched lowercased");
+    TRANSIENT_SPAWN_SIGNALS
+        .iter()
+        .any(|signal| os_error.contains(signal))
 }
 
 /// EAGAIN, ETXTBSY and ENOMEM, as the OS words them and as Rust names their kinds.
@@ -87,13 +93,16 @@ const TRANSIENT_SPAWN_SIGNALS: [&str; 6] = [
 
 /// A sign-in the provider refused, as Claude Code (its API error types, its
 /// `/login` hint, the 401 its result reports) and Codex word it.
-const AUTH_SIGNALS: [&str; 8] = [
+const AUTH_SIGNALS: [&str; 11] = [
     "authentication_error",
     "invalid api key",
     "invalid x-api-key",
     "please run /login",
     "oauth token has expired",
     "api_error_status: 401",
+    "api error: 401",
+    "unexpected status 401",
+    "status code 401",
     "401 unauthorized",
     "access token could not be refreshed",
 ];
@@ -279,6 +288,16 @@ mod tests {
                 "Your access token could not be refreshed because your refresh token was already used.",
                 ModelErrorClass::Auth,
             ),
+            // A bare 401 status in each CLI's own wording, with no other signal.
+            (
+                "unexpected status 401: authentication required",
+                ModelErrorClass::Auth,
+            ),
+            (
+                "API Error: 401 (stream disconnected)",
+                ModelErrorClass::Auth,
+            ),
+            ("Request failed with status code 401", ModelErrorClass::Auth),
             ("session expired: please log in", ModelErrorClass::Unknown),
         ] {
             assert_eq!(engine_error_class(error), class, "{error}");

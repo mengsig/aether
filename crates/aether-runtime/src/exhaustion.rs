@@ -769,6 +769,7 @@ mod classification;
 mod probing;
 pub(crate) use classification::{
     engine_error_class, native_suspends, native_transient, recoverable_by_fallback,
+    transient_os_error,
 };
 pub(crate) use probing::next_probe;
 use probing::{probes_after, reported_interval};

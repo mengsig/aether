@@ -292,6 +292,34 @@ async fn progress_between_stalls_restarts_the_stall_count() {
 }
 
 #[tokio::test]
+async fn progress_restarts_the_stall_count_after_the_window_stops_resetting() {
+    let progress = || EngineEvent::Assistant {
+        content: vec![ContentBlock::text("still building")],
+        usage: None,
+        model: None,
+    };
+    let mut finish = answered("built");
+    finish.insert(0, session("kept"));
+    // Ten progress-separated stalls: more outages than progress resets the window for.
+    let mut runs = vec![(vec![session("kept")], Ending::Silent)];
+    runs.extend((0..10).map(|_| (vec![session("kept"), progress()], Ending::Silent)));
+    runs.push((finish, Ending::Finish));
+    let (h, engine, id) = stalling(runs).await;
+    engine_turn(&h, id, "run the long build").await;
+    let attempts: Vec<_> = stalls(&h, id)
+        .iter()
+        .map(|stall| stall["attempt"].as_u64().unwrap())
+        .collect();
+    assert_eq!(attempts, [1; 11], "no two of these stalls were consecutive");
+    assert_eq!(
+        engine.prompts.lock().unwrap().len(),
+        12,
+        "the turn finished"
+    );
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_refused_sign_in_named_on_the_way_out_of_a_stall_suspends() {
     let refused = EngineEvent::Done(EngineOutcome {
         is_error: true,
