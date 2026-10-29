@@ -6,6 +6,43 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+Protocol version 25 (was 24): the `credentials` exhaustion class is new, and
+clients on 17 through 24 see it as `usage_limit`.
+
+### Fixed
+
+- **A refused engine sign-in suspends the agent instead of failing it.** A
+  native engine whose OAuth token expired or whose API key was refused
+  (Claude Code's `authentication_error`, "Please run /login", a result with
+  `api_error_status` 401; Codex's "401 Unauthorized" or a token that could not
+  be refreshed) classed as an unknown error, so the agent failed. It is now
+  suspended with the new `credentials` class: the operator is told once per
+  episode and the suspension names the fix, the provider is benched, and the
+  agent resumes when a probe answers after the CLI is signed in again. A
+  configured fallback still takes the turn first. Models reached over HTTP
+  keep failing on an auth error.
+- **A briefly unusable engine no longer fails agents.** A turn whose engine
+  probe had just failed (`claude --version` timing out under load, a CLI
+  mid-update) failed at once, and creation was refused in the same window. A
+  probe that times out now keeps the last good detection, and a usable engine
+  whose probe fails is only suspect: agents are still created on it, turns do
+  not launch it until a probe passes, and it is recorded unusable only after
+  three failed probes over at least 30 seconds. A turn on an engine that is
+  not launchable probes it again under the transient retry backoff and fails
+  only when the window ends; an agent new to an engine never found still
+  fails at once. The CLI probe timeout is 60 seconds instead of 15.
+- **An engine launch the OS refused for now is retried.** A spawn that failed
+  with `EAGAIN`, `ETXTBSY` (the CLI replaced by an update) or `ENOMEM` failed
+  the agent; it is now a transient timeout, retried within the transient
+  retry window. A missing CLI or a denied launch still fails at once.
+- **Progress resets the transient retry window and the stall count.** The
+  retry window started at a turn's first transient failure and was never
+  cleared, so a long turn with two brief outages hours apart failed at the
+  second; the third stall of a turn ended it even when hours of work came
+  between them. A model message or a tool result now restarts both the
+  window (and the backoff, from the 15-second floor) and the stall count.
+  Claude Code's synthetic API-error message is not progress.
+
 ## 1.2.7
 
 Released 2026-10-29. A patch release from the 2026-10-26 end-to-end sweep:
