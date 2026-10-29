@@ -504,7 +504,8 @@ async fn recovery_kills_setsid_descendants_after_the_original_group_is_gone() {
 }
 
 /// Only a live member of the group whose environment is readable and not
-/// kept is signalled: an unreadable one may carry the keep mark.
+/// kept is signalled, as an unreadable one may carry the keep mark; but the
+/// leader, the job itself, always is.
 #[test]
 fn an_exited_group_signals_only_readable_unkept_members() {
     let proc_root = tempfile::tempdir().unwrap();
@@ -524,8 +525,13 @@ fn an_exited_group_signals_only_readable_unkept_members() {
     let unreadable = member(12, 'S', 4242, None);
     let elsewhere = member(13, 'S', 4243, Some(b"PATH=/bin\0"));
     let zombie = member(14, 'Z', 4242, Some(b"PATH=/bin\0"));
+    let kept_leader = member(4242, 'S', 4242, Some(b"AETHER_KEEP_PROCESS=1\0"));
 
     assert!(signalled_in_group(&plain, group).unwrap());
+    assert!(
+        signalled_in_group(&kept_leader, group).unwrap(),
+        "the job's own leader is stopped with it, kept or not"
+    );
     for spared in [kept, unreadable, elsewhere, zombie] {
         assert!(
             !signalled_in_group(&spared, group).unwrap(),
@@ -534,7 +540,11 @@ fn an_exited_group_signals_only_readable_unkept_members() {
         );
     }
     assert_eq!(
-        pinned_group_members(proc_root.path(), group).unwrap(),
-        vec![10]
+        {
+            let mut members = pinned_group_members(proc_root.path(), group).unwrap();
+            members.sort_unstable();
+            members
+        },
+        vec![10, 4242]
     );
 }

@@ -409,6 +409,30 @@ async fn stopping_a_job_spares_a_kept_member_of_its_group() {
     assert!(survived, "the kept member of the group outlives the stop");
 }
 
+/// A job whose shell exec'd a kept program is still stopped: the keep mark
+/// spares what a job leaves behind, not the job itself.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_job_stops_its_leader_even_when_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    let job = reg
+        .start(
+            agent,
+            "echo $$ > leader.tmp && mv leader.tmp leader; exec env AETHER_KEEP_PROCESS=1 sleep 300",
+            &ctx_in(dir.path()),
+        )
+        .unwrap();
+    wait_until("the leader pid", || dir.path().join("leader").exists()).await;
+    let leader = read_pid(&dir.path().join("leader")).expect("leader pid");
+    tokio::time::timeout(STOP_GRACE * 2, reg.stop(agent, job.id))
+        .await
+        .expect("the stop does not wait on a kept leader")
+        .unwrap();
+    assert!(!alive(leader), "the kept leader is stopped with its job");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn stop_escalates_after_leader_exits_on_term() {
     let dir = tempfile::tempdir().unwrap();

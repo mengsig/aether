@@ -456,6 +456,11 @@ fn signalled_in_group(process: &Path, pgid: Pid) -> io::Result<bool> {
     if member.group != pgid.as_raw() || !member.running() {
         return Ok(false);
     }
+    // The leader is the job's own shell, or what it exec'd: stopping the job
+    // stops it, kept or not, and it is reaped only after the stop.
+    if process.file_name() == Some(pgid.as_raw().to_string().as_ref()) {
+        return Ok(true);
+    }
     Ok(readable_environ(process)?.is_some_and(|environment| !carries(&environment, &keep_entry())))
 }
 

@@ -559,7 +559,8 @@ cannot be read (a non-dumpable one) is treated as kept, as the mark cannot be
 ruled out. When a background job is stopped, or its shell exits on its own,
 what is in its process group is signalled one process at a time, sparing a
 kept one and one whose environment cannot be read; the shell is reaped only
-afterwards, so the group id cannot be reused meanwhile. Stopping a turn, the
+afterwards, so the group id cannot be reused meanwhile. The job's shell, or
+what it `exec`s, is the job and is stopped with it even if marked. Stopping a turn, the
 end of a foreground command, and recovery after a crash still signal the
 whole process group, so a kept process must also leave it, for example
 `AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept process
