@@ -9,6 +9,9 @@
 //! Descendants that left the engine's group (`setsid`, a shell tool's own
 //! group) are found by a random token the engine exports in its environment
 //! and the record also holds: any live process of this user carrying it is ours.
+//! One that also carries an agent's tag, such as a server an agent started, is
+//! left to the runtime's start sweep, which stops it only if no live agent holds
+//! it; one carrying the keep entry is never signalled.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -198,7 +201,8 @@ fn kill_matching_group(_pid: u32, _recorded: u64) -> bool {
     false
 }
 
-/// SIGKILL every live process of this user whose environment carries `token`.
+/// SIGKILL every live process of this user whose environment carries `token`,
+/// but one an agent's tag or the keep entry spares ([`spared`]).
 ///
 /// The token is random per engine spawn, so a match proves descent from that
 /// engine. A pidfd is opened before the environment is read, so the pid
@@ -211,6 +215,9 @@ fn kill_tagged(token: &str) -> io::Result<()> {
     assert!(!token.is_empty(), "an empty token would match any process");
     let entry_token = format!("{TOKEN_ENV}={token}");
     let own = std::process::id();
+    let own_agent = std::env::var(aether_core::agent::PROCESS_AGENT_ENV)
+        .ok()
+        .map(|tag| format!("{}={tag}", aether_core::agent::PROCESS_AGENT_ENV));
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
@@ -243,6 +250,7 @@ fn kill_tagged(token: &str) -> io::Result<()> {
         if !environment
             .split(|b| *b == 0)
             .any(|e| e == entry_token.as_bytes())
+            || spared(&environment, own_agent.as_deref())
         {
             continue;
         }
@@ -252,6 +260,25 @@ fn kill_tagged(token: &str) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Whether a token carrier with `environment` is left alone: it runs for an
+/// agent, whose ownership the runtime's start sweep decides, or is kept. The
+/// tag `own_agent` the daemon inherited from an agent's shell names no agent of its own.
+#[cfg(target_os = "linux")]
+fn spared(environment: &[u8], own_agent: Option<&str>) -> bool {
+    let agent = format!("{}=", aether_core::agent::PROCESS_AGENT_ENV);
+    let keep = format!("{}=1", aether_core::agent::PROCESS_KEEP_ENV);
+    debug_assert!(
+        own_agent.is_none_or(|own| own.starts_with(&agent)),
+        "the daemon's own tag is a whole entry"
+    );
+    environment.split(|b| *b == 0).any(|entry| {
+        let tagged = entry.len() > agent.len()
+            && entry.starts_with(agent.as_bytes())
+            && own_agent.is_none_or(|own| entry != own.as_bytes());
+        tagged || entry == keep.as_bytes()
+    })
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -387,6 +414,50 @@ mod tests {
         child.wait().unwrap();
         let gone = wait_for_sleep31(false);
         assert!(gone, "the setsid descendant must be killed by its token");
+    }
+
+    /// Poll up to 5s until `child` has exited.
+    #[allow(clippy::unwrap_used)]
+    fn exits_soon(child: &mut std::process::Child) -> bool {
+        for _ in 0..100 {
+            if child.try_wait().unwrap().is_some() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        false
+    }
+
+    /// A token carrier with `extra` in its environment, outside any group of ours.
+    #[allow(clippy::unwrap_used)]
+    fn carrier(token: &str, extra: Option<(&str, &str)>) -> std::process::Child {
+        let mut command = std::process::Command::new("sleep");
+        command.arg("30").env(TOKEN_ENV, token).process_group(0);
+        if let Some((key, value)) = extra {
+            command.env(key, value);
+        }
+        command.spawn().unwrap()
+    }
+
+    #[test]
+    fn spares_token_carriers_an_agent_holds_or_that_are_kept() {
+        use aether_core::agent::{PROCESS_AGENT_ENV, PROCESS_KEEP_ENV};
+        let dir = tempfile::tempdir().unwrap();
+        let token = "tok-spares-agent-servers-0001";
+        let agent = aether_core::id::AgentId::new().to_string();
+        let mut plain = carrier(token, None);
+        let mut server = carrier(token, Some((PROCESS_AGENT_ENV, &agent)));
+        let mut kept = carrier(token, Some((PROCESS_KEEP_ENV, "1")));
+        // A dead leader: only the token sweep runs.
+        std::fs::write(dir.path().join("4194300"), format!("1\n{token}")).unwrap();
+        reap(dir.path()).unwrap();
+        assert!(exits_soon(&mut plain), "a carrier no agent holds is killed");
+        assert!(alive(&mut server), "an agent's server is left to its owner");
+        assert!(alive(&mut kept), "a kept carrier is never signalled");
+        for child in [&mut server, &mut kept] {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
     }
 
     #[test]
