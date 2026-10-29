@@ -1,7 +1,9 @@
 //! Serving older protocol versions: replies are rewritten for a client behind
 //! this build, and its requests decode unchanged (docs/protocol.md).
 
-use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame};
+use crate::{
+    ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame, SubmissionResolution,
+};
 use aether_core::agent::{Agent, AgentStatus, BlockReason, ExhaustionClass};
 use aether_core::model::ContentBlock;
 use aether_core::replay::{ReplayFrame, TurnOutcome};
@@ -118,11 +120,13 @@ fn on_credentials(agent: &Agent) -> bool {
 }
 
 /// Every agent row a reply carries: the only place a block reason is typed.
+/// A resolved submission carries the reply its command was answered.
 fn agents_of(reply: &Reply) -> Vec<&Agent> {
     match reply {
         Reply::Agent(agent) => vec![agent],
         Reply::Agents(agents) | Reply::Paused { agents, .. } => agents.iter().collect(),
         Reply::Tree(tree) => tree.nodes.values().map(|node| &node.agent).collect(),
+        Reply::SubmissionResolved(SubmissionResolution::Executed { reply, .. }) => agents_of(reply),
         _ => Vec::new(),
     }
 }
@@ -136,6 +140,9 @@ fn agents_of_mut(reply: &mut Reply) -> Vec<&mut Agent> {
             .values_mut()
             .map(|node| &mut node.agent)
             .collect(),
+        Reply::SubmissionResolved(SubmissionResolution::Executed { reply, .. }) => {
+            agents_of_mut(reply)
+        }
         _ => Vec::new(),
     }
 }
@@ -952,6 +959,7 @@ mod tests {
             panic!("a suspended agent is blocked on exhaustion");
         };
         *class = aether_core::agent::ExhaustionClass::Credentials;
+        let credentials = agent.clone();
         let frame = reply(Reply::Agent(agent));
         let current = encode_for(PROTOCOL_VERSION, &frame).unwrap();
         assert_eq!(crate::decode::<ServerFrame>(&current).unwrap(), frame);
@@ -973,6 +981,19 @@ mod tests {
                 }
             }
         ));
+        // A keyed command's resolution replays its reply, agent rows and all.
+        let resolved = reply(Reply::SubmissionResolved(SubmissionResolution::Executed {
+            reply: Box::new(Reply::Agents(vec![suspended_agent(), credentials.clone()])),
+            horizon: "h1".into(),
+        }));
+        let older = encode_for(24, &resolved).unwrap();
+        assert!(!older.contains(r#""class":"credentials""#), "{older}");
+        assert!(crate::decode::<ServerFrame>(&older).is_ok());
+        assert_eq!(
+            crate::decode::<ServerFrame>(&encode_for(PROTOCOL_VERSION, &resolved).unwrap())
+                .unwrap(),
+            resolved
+        );
         // Opaque JSON carrying a whole block reason, a tool's input here, is data.
         let reason = serde_json::to_value(BlockReason::Exhausted {
             model: aether_core::model::ModelRef::new("anthropic", "opus"),
