@@ -253,7 +253,11 @@ pub(super) async fn drive(
     // cancel the process this token was given to, not just close its stdin.
     let engine_cancel = cancel.child_token();
     let mut run = match engine
-        .run_with_context(turn, ctx.launch_context(), engine_cancel.clone())
+        .run_with_context(
+            turn,
+            ctx.launch_context(&runtime.engine_spawns),
+            engine_cancel.clone(),
+        )
         .await
     {
         Ok(r) => r,

@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Clean signal state for the child processes Aether spawns"
+description = "Clean signal state for the child processes Aether spawns, and a gate that stops new ones"
 
 # The one crate allowed unsafe code: `pre_exec` is an unsafe API.
 [lints.rust]

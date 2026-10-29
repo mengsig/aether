@@ -33,6 +33,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+pub use aether_spawn::SpawnGate;
 pub use claude_code::ClaudeCodeEngine;
 pub use codex::CodexEngine;
 pub use codex_app::CodexAppEngine;
@@ -389,11 +390,13 @@ pub struct EngineRun {
 }
 
 /// Runtime identity for a launch, separate from the source-compatible turn payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineLaunchContext {
     pub run_id: aether_core::id::RunId,
     pub agent_id: aether_core::id::AgentId,
     pub task_id: Option<aether_core::id::TaskId>,
+    /// Closed when the daemon stops: the engine process then never starts.
+    pub spawns: SpawnGate,
 }
 
 #[async_trait::async_trait]
@@ -581,6 +584,21 @@ where
     .await
 }
 
+/// [`lifeline::spawn`], unless the launch's daemon has closed its spawns.
+pub(crate) fn spawn_gated(
+    command: tokio::process::Command,
+    launch: Option<&EngineLaunchContext>,
+) -> std::io::Result<(tokio::process::Child, lifeline::GroupWatch)> {
+    let Some(launch) = launch else {
+        return lifeline::spawn(command);
+    };
+    // Held until the engine has exec'd, so a daemon stop's sweep finds it.
+    launch
+        .spawns
+        .spawn(|| lifeline::spawn(command))
+        .map_err(std::io::Error::other)?
+}
+
 /// Fails before a spawn when the working directory is gone, so the OS's
 /// ENOENT is never mistaken for a missing executable.
 pub(crate) fn ensure_workspace(cwd: &Path) -> Result<(), EngineError> {
@@ -621,7 +639,7 @@ pub(crate) async fn run_process_with_env<P>(
     temp_dir: Option<&Path>,
     build_env: &[(String, PathBuf)],
     extra_env: &[(std::ffi::OsString, std::ffi::OsString)],
-    agent: Option<aether_core::id::AgentId>,
+    launch: Option<&EngineLaunchContext>,
     redactor: &aether_core::redact::Redactor,
     first_input: String,
     keep_stdin_open: bool,
@@ -636,6 +654,7 @@ where
     use tokio::io::AsyncWriteExt as _;
 
     ensure_workspace(&cwd)?;
+    let agent = launch.map(|launch| launch.agent_id);
     let mut command = scope::command(program, agent);
     command
         .args(&args)
@@ -653,7 +672,7 @@ where
     export_build_env(&mut command, build_env);
     let run_token = orphans::tag(&mut command);
     let (mut child, group_watch) =
-        lifeline::spawn(command).map_err(|e| spawn_error(program, &cwd, e))?;
+        spawn_gated(command, launch).map_err(|e| spawn_error(program, &cwd, e))?;
     let program = program.to_owned();
     let pid = child.id();
     let mut stdin = child

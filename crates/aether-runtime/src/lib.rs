@@ -302,6 +302,9 @@ pub struct Runtime {
     pub(crate) engines: engine_access::EngineCatalog,
     /// Engine turns in flight, keyed by agent, for routing bridge calls.
     pub(crate) engine_turns: parking_lot::Mutex<HashMap<AgentId, turn_engine::EngineTurnHandle>>,
+    /// Closed by [`Runtime::shutdown`] before it sweeps agent processes, so
+    /// no engine starts after that sweep.
+    pub(crate) engine_spawns: aether_engine::SpawnGate,
     pub(crate) tools: Arc<ToolRegistry>,
     /// Resource keys held by mutating tool calls in flight, across agents.
     pub(crate) resources: Arc<resources::ResourceLeases>,
@@ -455,6 +458,7 @@ impl Runtime {
             recovery_failed: std::sync::atomic::AtomicBool::new(false),
             workspace_gc_cursor: Default::default(),
             workspace_gc_active: Default::default(),
+            engine_spawns: Default::default(),
             storage_gc_lock: parking_lot::Mutex::new(()),
             storage_last_run: parking_lot::Mutex::new(None),
             seeded_repositories: parking_lot::Mutex::new(std::collections::HashSet::new()),
@@ -761,9 +765,10 @@ impl Runtime {
         }
         // Nothing this daemon started may outlive it: after exit the registry
         // is empty, so a survivor would be unreachable forever.
+        // A turn that outlived the wait above may still reach a spawn.
+        self.engine_spawns.close();
         let background_processes_stopped = match self.tools.background() {
             Some(processes) => {
-                // A turn that outlived the wait above may still reach a spawn.
                 processes.close_spawns();
                 processes.stop_all().await
             }

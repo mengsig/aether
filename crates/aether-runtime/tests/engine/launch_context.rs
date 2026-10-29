@@ -3,7 +3,7 @@ use super::*;
 use aether_core::agent::Agent;
 use aether_engine::EngineLaunchContext;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Launch {
     summary_only: bool,
     resumed: bool,
@@ -69,12 +69,14 @@ async fn launch_identity_survives_resume_and_compaction() {
         a.stats.turns > before.stats.turns + 1 && a.status.kind() == AgentStatusKind::Waiting
     })
     .await;
+    let recorded = launches.lock().unwrap().clone();
+    let spawns = recorded[0].context.spawns.clone();
     let expected = EngineLaunchContext {
         run_id: agent.run,
         agent_id: agent.id,
         task_id: Some(task.unwrap().id),
+        spawns: spawns.clone(),
     };
-    let recorded = launches.lock().unwrap().clone();
     assert!(recorded.iter().any(|launch| launch.summary_only));
     assert!(
         recorded
@@ -82,7 +84,15 @@ async fn launch_identity_survives_resume_and_compaction() {
             .any(|launch| !launch.summary_only && launch.resumed)
     );
     assert!(recorded.iter().all(|launch| launch.context == expected));
+    assert!(
+        spawns.spawn(|| ()).is_ok(),
+        "a running daemon launches engines"
+    );
     h.runtime.shutdown().await;
+    assert!(
+        spawns.spawn(|| ()).is_err(),
+        "a stopped daemon still lets its engines start"
+    );
 }
 
 fn create_task_agent(h: &Harness) -> (Agent, Option<aether_core::task::Task>) {

@@ -446,3 +446,43 @@ async fn run_process_tells_a_missing_workspace_from_a_missing_program() {
     let error = spawn_in("sh", file.clone()).await.err().unwrap();
     assert!(matches!(&error, EngineError::WorkspaceMissing { path } if path == &file));
 }
+
+/// A daemon that stopped has already swept its agents' processes: an engine
+/// launched afterwards would escape that sweep, so it never starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_engine_starts_once_its_daemon_closed_spawns() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let marker = dir.path().join("ran");
+    let launch = EngineLaunchContext {
+        run_id: aether_core::id::RunId::new(),
+        agent_id: aether_core::id::AgentId::new(),
+        task_id: None,
+        spawns: SpawnGate::default(),
+    };
+    launch.spawns.close();
+    let started = run_process_with_env(
+        "touch",
+        vec![marker.to_string_lossy().into_owned()],
+        dir.path().to_path_buf(),
+        &[],
+        None,
+        &[],
+        &[],
+        Some(&launch),
+        &aether_core::redact::Redactor::default(),
+        String::new(),
+        false,
+        None,
+        CancellationToken::new(),
+        |_| Vec::new(),
+    )
+    .await;
+    let Err(EngineError::Spawn { source, .. }) = started else {
+        panic!("a closed gate let the engine start");
+    };
+    assert!(
+        source.to_string().contains("daemon is stopping"),
+        "{source}"
+    );
+    assert!(!marker.exists(), "the engine ran after spawns closed");
+}

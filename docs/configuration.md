@@ -511,10 +511,11 @@ during the grace, the reap stops, so its next engine is spared.
 
 A daemon shutdown ends no agent, but it leaves none of their processes
 running either. It stops each running engine's process group, as for any
-interrupted turn. From then on it refuses to start any host command, letting
-one already being started finish first, and it stops every background shell.
-Then it finds every process carrying an agent's tag or in an engine scope, keeps the agents its own store
-ran (never an imported one, nor another daemon's), and stops their processes
+interrupted turn. From then on it refuses to start any host command or
+engine, letting one already being started finish first, and it stops every
+background shell. Then it finds every process carrying an agent's tag or in an
+engine scope, keeps the agents its own store ran (never an imported one, nor
+another daemon's), and stops their processes
 the same way, in one sweep, with a grace of `reap_grace_secs` but at most 10
 seconds. An agent whose turn is still running then is swept as well, so
 what that turn forks during the grace is stopped too. The daemon log records

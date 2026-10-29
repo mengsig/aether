@@ -61,7 +61,7 @@ pub(super) async fn try_engine_compaction(
         collect(
             engine.as_ref(),
             turn,
-            ctx.launch_context(),
+            ctx.launch_context(&runtime.engine_spawns),
             child.clone(),
             &mut accounting,
         ),

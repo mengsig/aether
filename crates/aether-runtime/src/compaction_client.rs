@@ -133,7 +133,7 @@ impl ModelClient for CompactionClient {
             collect_checkpoint(
                 self.engine.as_ref(),
                 turn,
-                self.context,
+                self.context.clone(),
                 child.clone(),
                 &mut accounting,
             ),
@@ -423,6 +423,7 @@ mod tests {
                 run_id: aether_core::id::RunId::new(),
                 agent_id: aether_core::id::AgentId::new(),
                 task_id: None,
+                spawns: Default::default(),
             },
             pricing: TurnPricing::default(),
             engine: Arc::new(CheckpointEngine {

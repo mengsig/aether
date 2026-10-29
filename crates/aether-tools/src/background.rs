@@ -91,8 +91,8 @@ pub struct BackgroundProcesses {
     stopped_output: Mutex<HashMap<AgentId, VecDeque<Arc<Capture>>>>,
     #[cfg(target_os = "linux")]
     journal: Mutex<Option<journal::Journal>>,
-    /// Set once the daemon stops; see [`BackgroundProcesses::close_spawns`].
-    spawns_closed: std::sync::RwLock<bool>,
+    /// Closed once the daemon stops; see [`BackgroundProcesses::close_spawns`].
+    spawns: aether_spawn::SpawnGate,
 }
 
 impl std::fmt::Debug for BackgroundProcesses {
@@ -417,24 +417,13 @@ impl BackgroundProcesses {
         &self,
         spawn: impl FnOnce() -> Result<T, ToolError>,
     ) -> Result<T, ToolError> {
-        let closed = self
-            .spawns_closed
-            .read()
-            .map_err(|_| ToolError::Internal("host spawn gate poisoned".into()))?;
-        if *closed {
-            return Err(ToolError::Cancelled);
-        }
-        spawn()
+        self.spawns.spawn(spawn).map_err(|_| ToolError::Cancelled)?
     }
 
     /// Refuse every host command from now on, once the spawns under way have
     /// finished, so a daemon stop's sweep sees every process there will be.
     pub fn close_spawns(&self) {
-        match self.spawns_closed.write() {
-            Ok(mut closed) => *closed = true,
-            // A spawn that panicked poisoned it, and a poisoned gate refuses anyway.
-            Err(poisoned) => *poisoned.into_inner() = true,
-        }
+        self.spawns.close();
     }
 
     /// Stop and forget the handle, retaining its log until eviction or agent end.
