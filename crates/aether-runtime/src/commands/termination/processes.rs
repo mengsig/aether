@@ -38,7 +38,7 @@ enum Holder {
     Live(AgentId),
     /// It ended otherwise, or no ancestor holds processes.
     Nobody,
-    /// The agent or one of its ancestors could not be read.
+    /// One of its ancestors could not be read, or is gone from the store.
     Unknown,
 }
 
@@ -86,7 +86,7 @@ impl Runtime {
     fn handed_up_to(&self, _hold: &CommitHold<'_>, agent: AgentId) -> Option<AgentId> {
         match self.holder(agent) {
             Holder::Live(owner) => Some(owner),
-            // An end with an unreadable ancestry stops what it left, as one with no owner does.
+            // An end with an unreadable or broken ancestry stops what it left, as one with no owner does.
             Holder::Nobody | Holder::Unknown => None,
         }
     }
@@ -124,7 +124,11 @@ impl Runtime {
             match self.store.agent(id) {
                 Ok(Some(row)) if self.holds_processes(&row) => return Holder::Live(id),
                 Ok(Some(row)) => next = row.parent,
-                Ok(None) => return Holder::Nobody,
+                // Its own parent, which may be live, is not known.
+                Ok(None) => {
+                    tracing::warn!(agent = %id, "an ancestor is gone from the store");
+                    return Holder::Unknown;
+                }
                 Err(error) => {
                     tracing::warn!(agent = %id, %error, "cannot read an ancestor");
                     return Holder::Unknown;

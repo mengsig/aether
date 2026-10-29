@@ -427,10 +427,9 @@ async fn a_daemon_sweep_takes_a_childs_server_back_from_an_ancestor_that_ended_a
     );
 }
 
-/// An ancestry that cannot be read proves no one holds a completed child's
-/// processes, so a daemon sweep spares them and records no owner.
-#[tokio::test]
-async fn a_daemon_sweep_spares_a_child_whose_ancestry_is_unreadable() {
+/// What a daemon sweep makes of a completed child under a root, once `sql`
+/// has changed its completed parent's row: the unheld agents and hand-ups.
+async fn sweep_after_parent_row(sql: &str) -> (Vec<AgentId>, HashMap<AgentId, AgentId>) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("state.db");
     let runtime = Runtime::start_with_engines(
@@ -456,16 +455,33 @@ async fn a_daemon_sweep_spares_a_child_whose_ancestry_is_unreadable() {
     let child = idle_agent(&runtime, Some(parent)).await;
     end(&runtime, child, completed());
     end(&runtime, parent, completed());
-    rusqlite::Connection::open(&path)
+    let changed = rusqlite::Connection::open(&path)
         .unwrap()
-        .execute(
-            "UPDATE agents SET body='{' WHERE id=?1",
-            [parent.to_string()],
-        )
+        .execute(sql, [parent.to_string()])
         .unwrap();
+    assert_eq!(changed, 1, "the parent's row changed");
 
-    assert!(runtime.unheld_agents(&[child]).is_empty(), "spared");
-    assert!(runtime.handed_to.lock().is_empty(), "no owner is known");
+    let unheld = runtime.unheld_agents(&[child]);
+    let handed = runtime.handed_to.lock().clone();
+    (unheld, handed)
+}
+
+/// An ancestry that cannot be read does not show that no one holds a completed
+/// child's processes, so a daemon sweep spares them and records no owner.
+#[tokio::test]
+async fn a_daemon_sweep_spares_a_child_whose_ancestry_is_unreadable() {
+    let (unheld, handed) = sweep_after_parent_row("UPDATE agents SET body='{' WHERE id=?1").await;
+    assert!(unheld.is_empty(), "spared");
+    assert!(handed.is_empty(), "no owner is known");
+}
+
+/// A parent gone from the store may have led to a live ancestor, so a daemon
+/// sweep spares the completed child under it.
+#[tokio::test]
+async fn a_daemon_sweep_spares_a_child_whose_parent_is_gone() {
+    let (unheld, handed) = sweep_after_parent_row("DELETE FROM agents WHERE id=?1").await;
+    assert!(unheld.is_empty(), "spared");
+    assert!(handed.is_empty(), "no owner is known");
 }
 
 /// A sweep is for one end: an agent woken since, or ended again, is spared,
