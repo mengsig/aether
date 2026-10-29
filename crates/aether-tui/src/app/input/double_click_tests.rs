@@ -158,3 +158,77 @@ fn double_click_copies_the_composer_line_across_wrapped_rows() {
     );
     assert_eq!(copied(&effects), Some("one"));
 }
+
+#[test]
+fn double_click_copies_the_transcript_line_across_its_soft_wraps() {
+    let long = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
+    let mut app = app_with_transcript(&[long]);
+    app.size = (30, 40);
+    let mut cache = ViewCache::default();
+    let screen = render_with(&app, &mut cache, 30, 40);
+    let lines: Vec<&str> = screen.lines().collect();
+    let first = lines
+        .iter()
+        .position(|l| l.contains("alpha"))
+        .expect("line on screen");
+    let tail = lines
+        .iter()
+        .position(|l| l.contains("juliet"))
+        .expect("wrapped tail on screen");
+    assert!(tail > first, "the message wraps over several rows");
+    let x = cache.regions.transcript.x + 3;
+    let t = Instant::now();
+    click(&mut app, &mut cache, x, tail as u16, t);
+    let effects = click(
+        &mut app,
+        &mut cache,
+        x,
+        tail as u16,
+        t + Duration::from_millis(50),
+    );
+    assert_eq!(copied(&effects), Some(format!("› {long}").as_str()));
+}
+
+#[test]
+fn double_click_on_an_empty_composer_copies_nothing() {
+    let (mut app, mut cache) = transcript_app();
+    assert!(app.input.text.is_empty());
+    let r = cache.regions.composer;
+    let t = Instant::now();
+    click(&mut app, &mut cache, r.x + 1, r.y, t);
+    let effects = click(
+        &mut app,
+        &mut cache,
+        r.x + 1,
+        r.y,
+        t + Duration::from_millis(50),
+    );
+    assert!(copied(&effects).is_none(), "the placeholder is not copied");
+    assert!(cache.mouse.selection.is_none());
+}
+
+#[test]
+fn a_drag_is_not_the_first_click_of_a_double_click() {
+    let (mut app, mut cache) = transcript_app();
+    let row = row_of(&mut cache, &app, "second line here");
+    let x = cache.regions.transcript.x + 1;
+    let t = Instant::now();
+    app.dispatch_mouse_at(
+        at(MouseEventKind::Down(MouseButton::Left), x, row),
+        &mut cache,
+        t,
+    );
+    app.dispatch_mouse_at(
+        at(MouseEventKind::Drag(MouseButton::Left), x + 5, row),
+        &mut cache,
+        t,
+    );
+    let dragged = app.dispatch_mouse_at(
+        at(MouseEventKind::Up(MouseButton::Left), x + 5, row),
+        &mut cache,
+        t,
+    );
+    assert!(copied(&dragged).is_some(), "the drag copies its own range");
+    let effects = click(&mut app, &mut cache, x, row, t + Duration::from_millis(50));
+    assert!(copied(&effects).is_none());
+}

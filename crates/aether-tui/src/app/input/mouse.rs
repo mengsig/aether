@@ -130,7 +130,7 @@ impl App {
                     end_excerpt: None,
                     dragging: true,
                     moved: false,
-                    line: false,
+                    line: None,
                     pointer: mouse,
                     rows: Vec::new(),
                     epoch: self
@@ -152,6 +152,8 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                // A press that became a drag is no first click.
+                cache.mouse.last_down = None;
                 cache.pending_file_hit = None;
                 self.extend_mouse(mouse, cache);
             }
@@ -200,6 +202,7 @@ impl App {
                 }
             }
             MouseEventKind::Down(_) => {
+                cache.mouse.last_down = None;
                 self.dirty |= cache.mouse.selection.take().is_some();
                 cache.mouse.pending_board_click = None;
                 cache.pending_file_hit = None;
@@ -209,42 +212,18 @@ impl App {
         Vec::new()
     }
 
-    /// Widen the fresh selection at `point` to its logical line in the composer
-    /// and to the visual row in the transcript, which keeps no wrap boundaries.
+    /// Widen the fresh selection at `point` to the source line under it and keep
+    /// that line's text to copy; a gap row or an empty draft stays a click.
     fn select_line(&self, cache: &mut ViewCache, point: selection::TextPoint) {
-        let Some(s) = cache.mouse.selection.as_mut() else {
+        let line = match cache.mouse.selection.as_ref().map(|s| s.pane) {
+            Some(Pane::Transcript) => crate::ui::transcript::line_at(self, cache, point),
+            Some(Pane::Composer) => self.composer_line(cache, point.row),
+            _ => None,
+        };
+        let (Some((first, last, text)), Some(s)) = (line, cache.mouse.selection.as_mut()) else {
             return;
         };
-        let (mut first, mut last) = (point.row, point.row);
-        if s.pane == Pane::Composer && !self.input.text.is_empty() {
-            let rows = &cache.composer.rows;
-            let scroll = cache.composer.scroll;
-            let Some(row) = rows.get(scroll + point.row) else {
-                return;
-            };
-            let text = &self.input.text;
-            let range = row.range();
-            let from = text
-                .get(..range.start)
-                .and_then(|t| t.rfind('\n'))
-                .map_or(0, |i| i + 1);
-            let to = text
-                .get(range.end..)
-                .and_then(|t| t.find('\n'))
-                .map_or(text.len(), |i| range.end + i);
-            let inside = |i: usize| {
-                rows.get(i).is_some_and(|r| {
-                    let r = r.range();
-                    r.start >= from && r.end <= to
-                })
-            };
-            while first > 0 && inside(scroll + first - 1) {
-                first -= 1;
-            }
-            while usize::from(s.rect.height) > last + 1 && inside(scroll + last + 1) {
-                last += 1;
-            }
-        }
+        debug_assert!(first <= point.row && point.row <= last);
         let column = s.rect.width.saturating_sub(1);
         s.start = selection::TextPoint {
             row: first,
@@ -258,18 +237,50 @@ impl App {
         };
         s.start_excerpt = None;
         s.end_excerpt = None;
-        s.line = true;
+        s.line = Some(text);
         s.dragging = false;
         s.moved = true;
     }
 
+    /// The visible composer rows of the draft line under screen row `row`, and
+    /// the whole line, rows scrolled out of view included.
+    fn composer_line(&self, cache: &ViewCache, row: usize) -> Option<(usize, usize, String)> {
+        let text = &self.input.text;
+        // An empty draft paints the placeholder, which is not text to copy.
+        if text.is_empty() {
+            return None;
+        }
+        let rows = &cache.composer.rows;
+        let scroll = cache.composer.scroll;
+        let range = rows.get(scroll + row)?.range();
+        let from = text
+            .get(..range.start)
+            .and_then(|t| t.rfind('\n'))
+            .map_or(0, |i| i + 1);
+        let to = text
+            .get(range.end..)
+            .and_then(|t| t.find('\n'))
+            .map_or(text.len(), |i| range.end + i);
+        debug_assert!(from <= range.start && range.end <= to);
+        let inside = |i: usize| {
+            rows.get(i).is_some_and(|r| {
+                let r = r.range();
+                r.start >= from && r.end <= to
+            })
+        };
+        let height = usize::from(cache.regions.composer.height);
+        let (mut first, mut last) = (row, row);
+        while first > 0 && inside(scroll + first - 1) {
+            first -= 1;
+        }
+        while last + 1 < height && inside(scroll + last + 1) {
+            last += 1;
+        }
+        Some((first, last, text.get(from..to)?.trim_end().to_owned()))
+    }
+
     fn extend_mouse(&mut self, mouse: MouseEvent, cache: &mut ViewCache) {
-        let Some(s) = cache
-            .mouse
-            .selection
-            .as_ref()
-            .filter(|s| s.dragging && !s.line)
-        else {
+        let Some(s) = cache.mouse.selection.as_ref().filter(|s| s.dragging) else {
             return;
         };
         let pane = s.pane;

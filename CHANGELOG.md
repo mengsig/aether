@@ -6,6 +6,20 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **Double-click a line in the TUI to select and copy it (#331).**
+  Contributed by @AmmarBattah. A second left press within 400 ms and one
+  cell of the first highlights the line under the pointer and copies it the
+  way a drag selection does. A line the renderer wrapped is copied whole:
+  in the transcript, its soft-wrapped rows are joined back into one line,
+  and in the composer, the draft line is copied, rows scrolled out of view
+  included. Rows whose wrapping the renderer does not track, such as a
+  streaming reply's, copy on their own. A double click on a file link or an
+  agent-board row keeps its click. On an empty composer it copies nothing.
+  Single clicks and drag selection are unchanged, and a drag does not count
+  as the first click of a double click.
+
 ### Fixed
 
 - **`status` and `get_tree` answer while the daemon does slow work (#333).**
