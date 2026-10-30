@@ -7,7 +7,7 @@ mod selection;
 pub mod stream;
 mod window;
 pub(crate) use selection::{
-    selected_text, selection_order, selection_point, selection_resolves, selection_rows,
+    line_at, selected_text, selection_order, selection_point, selection_resolves, selection_rows,
 };
 
 use std::collections::HashMap;
