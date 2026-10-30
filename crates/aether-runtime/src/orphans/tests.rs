@@ -262,9 +262,14 @@ async fn recovery_leaves_an_agent_written_to_while_it_read() {
         .expect("a pause lands meanwhile");
     let lease = Lease::new(read.id, "unknown", read.stats.turns, now(), Duration::ZERO);
 
-    let outcome =
-        crate::recovery::recover_agent(&runtime, lease, read.clone(), false, Some(REASON_NO_TURN))
-            .expect("recover");
+    let outcome = crate::recovery::recover_agent(
+        &runtime,
+        lease,
+        read.clone(),
+        crate::recovery::Restart::Live,
+        Some(REASON_NO_TURN),
+    )
+    .expect("recover");
 
     assert_eq!(outcome, crate::recovery::Outcome::Changed);
     let after = runtime.store.agent(read.id).expect("read").expect("agent");

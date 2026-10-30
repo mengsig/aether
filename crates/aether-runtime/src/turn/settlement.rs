@@ -35,7 +35,7 @@ pub(super) async fn settle_resolved_approvals(
         .store
         .tool_events(ctx.agent.id, aether_store::ToolEventScope::Calls(&call_ids))?;
     let requested = requested_calls(&events);
-    let settled = settled_calls(&events);
+    let settled = settled_calls(&events, &BTreeMap::new());
     let mut runnable = Vec::new();
     let mut commit = Commit::new();
     for (approval, decision) in approvals {
@@ -197,8 +197,34 @@ fn requested_calls(events: &[aether_core::event::Event]) -> BTreeMap<ToolCallId,
         .collect()
 }
 
+/// The notes of cancelled calls an interruption cut short, such as a restart
+/// that left their outcome unknown.
+fn interruption_notes(
+    runtime: &Runtime,
+    agent: AgentId,
+    events: &[aether_core::event::Event],
+) -> Result<BTreeMap<ToolCallId, String>> {
+    let cancelled: BTreeSet<ToolCallId> = events
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EventKind::ToolCancelled { call } => Some(*call),
+            _ => None,
+        })
+        .collect();
+    let Some(first) = events.iter().map(|e| e.seq).min() else {
+        return Ok(BTreeMap::new());
+    };
+    if cancelled.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    crate::tool_interruption::notes_for(runtime, agent, first, &cancelled)
+}
+
 /// Outcomes for settled calls: (model-facing text, is_error).
-fn settled_calls(events: &[aether_core::event::Event]) -> BTreeMap<ToolCallId, (String, bool)> {
+fn settled_calls(
+    events: &[aether_core::event::Event],
+    notes: &BTreeMap<ToolCallId, String>,
+) -> BTreeMap<ToolCallId, (String, bool)> {
     let mut out = BTreeMap::new();
     for e in events {
         let (call, text, err) = match &e.kind {
@@ -208,7 +234,12 @@ fn settled_calls(events: &[aether_core::event::Event]) -> BTreeMap<ToolCallId, (
             EventKind::ToolFailed { call, error, .. } => {
                 (*call, format!("Tool failed: {error}"), true)
             }
-            EventKind::ToolCancelled { call } => (*call, "Tool call was cancelled.".into(), true),
+            EventKind::ToolCancelled { call } => {
+                let text = notes
+                    .get(call)
+                    .map_or("Tool call was cancelled.", String::as_str);
+                (*call, text.to_owned(), true)
+            }
             EventKind::ToolDenied { call, reason } => {
                 (*call, format!("Tool call denied: {reason}"), true)
             }
@@ -261,7 +292,8 @@ pub(super) fn compose_tool_results(runtime: &Runtime, ctx: &TurnCtx) -> Result<(
         aether_store::ToolEventScope::Invocation(*invocation),
     )?;
     let requested = requested_calls(&events);
-    let settled = settled_calls(&events);
+    let notes = interruption_notes(runtime, ctx.agent.id, &events)?;
+    let settled = settled_calls(&events, &notes);
     let by_provider_id: BTreeMap<_, _> = requested
         .values()
         .map(|call| (call.provider_call_id.as_str(), call))

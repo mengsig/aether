@@ -146,6 +146,12 @@ fn choosing_a_model_without_an_agent_waits_for_a_message() {
         [Effect::Request { command: Command::CreateAgent(c), .. }]
             if c.model.as_ref() == Some(&model)
     ));
+    // A person watches a TUI root, so restart recovery may park it for inspection.
+    assert!(matches!(
+        &effects[..],
+        [Effect::Request { command: Command::CreateAgent(c), .. }]
+            if c.config.as_ref().is_some_and(|c| c.interactive == Some(true))
+    ));
 }
 
 #[test]

@@ -148,8 +148,12 @@ fn recover(runtime: &Arc<Runtime>, agent: &Agent) -> Result<bool> {
         ),
     };
     let id = agent.id;
-    let recovered =
-        crate::recovery::recover_leases(runtime, vec![lease], false, Some(REASON_NO_TURN))?;
+    let recovered = crate::recovery::recover_leases(
+        runtime,
+        vec![lease],
+        crate::recovery::Restart::Live,
+        Some(REASON_NO_TURN),
+    )?;
     Ok(!recovered.changed.contains(&id))
 }
 

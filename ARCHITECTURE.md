@@ -93,10 +93,25 @@ delegation guard does not retroactively stop running turns.
 
 SQLite stores authoritative state/history. On restart, read-only calls and
 registered retry-safe tools can be retried. Native shell and file writes with
-no outcome require inspection when the host stayed up: a tool process may
-still be writing, and its resource keys stay quarantined until `aether resume`
-or cancellation. Engine-native read tools and Aether MCP names are resolved
-alongside the side-effect class recorded in `tool.requested`.
+no outcome require inspection when the host stayed up and a person watches the
+tree (`config.interactive`, set by the TUI on its roots and inherited; an agent
+stored before the field existed counts as watched): a tool
+process may still be writing, and its resource keys stay quarantined until
+`aether resume` or cancellation. A headless agent (an orchestrator's, a script's)
+has nobody to inspect it, so after a daemon restart on Linux it resumes at
+once as a person's `aether resume` would: its keys are released, and its wake and the interrupted call's result
+name the calls and say their outcome is unknown, so it checks the state before
+repeating them. Its `agent.resumed` event records that it resumed without
+inspection. Its children stay its own. No process outlives the daemon that
+ran it: a stop ends them, and on Linux the next start stops what a crashed
+daemon's agents left running before any turn starts, so the resumed turn never
+races the call it was told about. Where nothing stops that call first (a turn a
+live daemon lost, a restart elsewhere than Linux), a headless agent parks too.
+A process started with `AETHER_KEEP_PROCESS=1` is the exception: no sweep stops
+it, here or at an agent's end, which releases the agent's keys just the same,
+so the resumed agent runs beside it. A process that outlives SIGKILL is
+logged as an error. Engine-native read tools and Aether MCP names
+are resolved alongside the side-effect class recorded in `tool.requested`.
 
 On Linux, recovery persists `/proc/sys/kernel/random/boot_id` in store metadata
 only after the recovery pass succeeds. A changed boot id proves local tool

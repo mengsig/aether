@@ -202,8 +202,11 @@ Closing the TUI (`/quit`, Ctrl+D on an empty composer, or Ctrl+C once there is
 nothing left to close or interrupt) disconnects the client and leaves agents
 running. `aether stop` stops the daemon and
 interrupts its attached processes. The next start retries interrupted turns
-whose tools are safe to retry. Turns with uncertain tool effects wait for
-inspection and `aether resume AGENT_ID`. These are deliberately different actions.
+whose tools are safe to retry. In a tree started from the TUI, turns with
+uncertain tool effects wait for inspection and `aether resume AGENT_ID`. A
+headless agent, such as one an orchestrator or `aether run` started, resumes
+on its own on Linux and is told to check the state before repeating those calls. These
+are deliberately different actions.
 
 ## Work that starts from events
 

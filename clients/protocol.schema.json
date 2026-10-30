@@ -450,6 +450,13 @@
             "null"
           ]
         },
+        "interactive": {
+          "description": "Whether a person watches this tree in the TUI; children inherit it. Creation\nalways stores it, so `None` is a row stored before it existed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "leaf": {
           "default": false,
           "description": "A leaf cannot create children and receives fewer coordination instructions and tools.",
