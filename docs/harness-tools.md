@@ -192,8 +192,8 @@ and bounded engine parking apply.
 
 An interrupted `mcp__aether__wait_for` is safe to retry after restart. Mutating
 native calls require inspection on the same host boot when a person watches the
-tree (one the TUI started); a headless agent, and any agent after a confirmed
-Linux host reboot, is instead woken to re-check partial effects before retrying,
+tree (one the TUI started); a headless agent after a Linux daemon restart, and
+any agent after a confirmed Linux host reboot, is instead woken to re-check partial effects before retrying,
 and its quarantine keys are released. See [restart recovery](../ARCHITECTURE.md#safety-accounting-and-storage).
 
 ## Bounded state retrieval

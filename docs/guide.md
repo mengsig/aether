@@ -205,7 +205,7 @@ interrupts its attached processes. The next start retries interrupted turns
 whose tools are safe to retry. In a tree started from the TUI, turns with
 uncertain tool effects wait for inspection and `aether resume AGENT_ID`. A
 headless agent, such as one an orchestrator or `aether run` started, resumes
-on its own and is told to check the state before repeating those calls. These
+on its own on Linux and is told to check the state before repeating those calls. These
 are deliberately different actions.
 
 ## Work that starts from events

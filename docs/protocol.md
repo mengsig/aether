@@ -339,10 +339,13 @@ agent, so an agent reads `null` only when it was stored before the field
 existed. After a daemon restart (not a host reboot) or a lost turn cut a
 mutating tool call short, recovery parks an agent that is `true` or `null` as
 `blocked: inspection` until someone runs `aether resume`. An agent that is
-`false` is headless: it resumes at once, told which calls have an unknown
-outcome and to check the state before repeating them, and its `agent.resumed`
-event says it resumed without inspection. A new child of a `null` parent is
-headless. An older daemon ignores the field and parks every such agent, which
+`false` is headless: after a daemon restart on Linux, where the start stops
+the processes the old daemon's agents left, it resumes at once, told which
+calls have an unknown outcome and to check the state before repeating them,
+and its `agent.resumed` event says it resumed without inspection. Where the
+command may still run (a turn a live daemon lost, or a restart elsewhere than
+Linux) it parks like any other agent. A new child of a `null` parent, and the
+successor `restart_agent` makes of a `null` agent, are headless. An older daemon ignores the field and parks every such agent, which
 was its behaviour before, so no feature gates it.
 
 ## Repository aliases
