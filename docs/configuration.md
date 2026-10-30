@@ -576,7 +576,13 @@ afterwards; that is up to whoever started it.
 A daemon shutdown ends no agent, and it leaves what a live agent holds
 running, so a server an agent started is still up when a restart's recovery
 resumes the agent. It stops each running engine's process group, as for any
-interrupted turn. From then on it refuses to start any host command or
+interrupted turn. On Linux it then stops what those engines left outside
+their groups, as a start after a crash would: each process carrying an
+interrupted engine's token that runs for no agent or for the agent whose
+turn the stop cut short, such as the command Claude Code was running in a
+session of its own, unless it is kept. A server that engine started for its
+agent goes with it, since the stop cannot tell it from the command; start
+one with `AETHER_KEEP_PROCESS=1` to keep it. From then on it refuses to start any host command or
 engine, letting one already being started finish first, and it stops every
 background shell. Then it finds every process carrying an agent's tag or in an
 engine scope, keeps the agents its own store ran (never an imported one, nor
@@ -633,8 +639,12 @@ the process group of each one a crash cut short, as the call's end would
 have: through its leader, held stopped while the group is signalled, while
 that leader still has the recorded pid and start time, or, once the leader
 is gone, each process of the daemon's user left in the group while the group
-is still in the session it was recorded in; a group id another session took
-since is left alone. A process in the group that runs as another user (a
+is still in the session it was recorded in and a process in it carries the
+call's id. A group id another session took since is left alone. A group in
+that session in which no process carries the id may be the call's, its id
+cleared, or a later group that took the id: it is left alone too, and the
+call's agent waits for inspection, even a headless one, so it never resumes
+beside what may be its command. A process in the group that runs as another user (a
 `sudo` child) cannot be signalled and is skipped; the rest of the group is
 still stopped. A call that cannot be recorded is not started, and a start
 that cannot stop a recorded call refuses to run, naming the process group to

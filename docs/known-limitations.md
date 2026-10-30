@@ -342,14 +342,20 @@ isolation depend on the installed engine version and the platform; see
   stops with it. A server an agent needs across a restart should be detached
   from an engine's own shell or a shell command that is not a background job,
   where the sweeps treat it as the agent's.
-- A start after a crash cannot tell a tool command an engine ran outside its
-  own process group from a server the agent detached under the same engine
-  process. When the crash cut that agent's turn short, it stops both, so a
-  server the engine started during that engine process is gone when the
-  agent resumes; one started under an earlier engine process, or by an agent
-  with no turn in flight, is spared. A process a foreground call of Aether's
-  own shell tool moved out of the call's process group is spared like any
-  agent's server, and runs until that agent ends.
+- A daemon stop, or a start after a crash, cannot tell a tool command an
+  engine ran outside its own process group from a server the agent detached
+  under the same engine process. When the stop or crash cut that agent's turn
+  short, it stops both, so a server the engine started during that engine
+  process is gone when the agent resumes; one started under an earlier engine
+  process, or by an agent with no turn in flight, is spared. A process a
+  foreground call of Aether's own shell tool moved out of the call's process
+  group is spared like any agent's server, and runs until that agent ends.
+- When a crash cut a foreground shell call short and its shell is gone, the
+  start stops what is left of its process group only if a process in it
+  still carries the call's id. If every one cleared it (`env -i`, `env -u`),
+  the start cannot tell the group from a later one that took the same id:
+  it leaves the group running, and the call's agent waits for inspection
+  even when headless.
 - The start's sweep of containers an earlier daemon left is bounded in time
   and does not stop the start when Docker cannot list or kill them, as with
   an unreachable remote Docker service: a resumed agent may then run beside

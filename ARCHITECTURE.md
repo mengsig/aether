@@ -107,11 +107,12 @@ it: a stop ends the calls in flight, and on Linux the next start stops what a
 crashed daemon's calls left in flight (each engine's process group and each
 recorded foreground shell call's) before any turn starts, so the resumed turn
 never races the call it was told about. Where nothing stops that call first (a
-turn a live daemon lost, a restart elsewhere than Linux), a headless agent
-parks too. A server the call detached is the agent's, not the call's: a
+turn a live daemon lost, a restart elsewhere than Linux, a call group the
+start finds leaderless with nothing in it proving it the call's), a headless
+agent parks too. A server the call detached is the agent's, not the call's: a
 restart spares it while the agent is live, so the resumed agent finds it up,
-unless an engine started it in the engine process the crash cut short, where
-the start cannot tell it from the call and stops it too (see
+unless an engine started it in the engine process the crash or stop cut
+short, where the sweep cannot tell it from the call and stops it too (see
 [agent processes](docs/configuration.md#agent-processes)). A process
 started with `AETHER_KEEP_PROCESS=1` is never stopped by any sweep, here or at
 an agent's end, which releases the agent's keys just the same, so the resumed

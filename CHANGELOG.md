@@ -103,15 +103,22 @@ clients on 17 through 24 see it as `usage_limit`.
   command starts), so an agent recovery resumes never
   races its own interrupted command; what the call detached is spared like
   any agent's server. Once the call's shell is gone, what is left in its
-  process group is proven the call's by the session the group was recorded
-  in, so a command that cleared the call's id is stopped too, and a process
-  of another user in the group (a `sudo` child) no longer makes the start
-  give up on the rest. A call that cannot be recorded is not started, and a
+  process group is the call's only if a process in it carries the call's id:
+  a later group can take the same id. A group none proves is spared, and the
+  call's agent waits for inspection, even a headless one, rather than resume
+  beside what may be its command. A process of another user in the group (a
+  `sudo` child) no longer makes the start give up on the rest. A call that cannot be recorded is not started, and a
   start that cannot stop a recorded call refuses to run and says which process
   group to stop. Engines are now recorded before they start, and one that
   cannot be recorded is not started; a start that cannot stop a recorded
   engine refuses to run the same way, and its sweep for the engine's token
-  carriers repeats until no new one appears. Linux only.
+  carriers repeats until no new one appears. A daemon stop now does the
+  same for the engines it interrupts: it stops the processes outside their
+  groups that carry their tokens and run for no agent or for one whose turn
+  the stop cut short, such as the command Claude Code was running in a
+  session of its own, which nothing would find once the engine was gone.
+  As at a start after a crash, this includes a server such an engine started
+  for that agent unless it is kept with `AETHER_KEEP_PROCESS=1`. Linux only.
 - **A restart sweeps an earlier daemon's containers before any turn
   starts.** The sweep of containers that Aether's container backend left
   running ran after the scheduler had started, so a resumed turn could run
