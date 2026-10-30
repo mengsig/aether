@@ -370,7 +370,7 @@ impl ClaudeCodeEngine {
         let cwd: PathBuf = turn.cwd.clone();
         let mut state = ParseState::for_turn(&turn);
         let outstanding = state.outstanding.clone();
-        let environment = telemetry::environment(context, &turn.hidden_env);
+        let environment = telemetry::environment(context.as_ref(), &turn.hidden_env);
         let mut process = run_process_with_env(
             &self.program,
             args,
@@ -379,7 +379,7 @@ impl ClaudeCodeEngine {
             turn.temp_dir.as_deref(),
             &turn.build_env,
             &environment,
-            context.map(|context| context.agent_id),
+            context.as_ref(),
             &turn.redactor,
             user_message_line(&turn.prompt, &turn.images),
             true,

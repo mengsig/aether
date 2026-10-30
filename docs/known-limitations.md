@@ -306,9 +306,29 @@ isolation depend on the installed engine version and the platform; see
   or reaped, so the engines of a killed daemon keep running and must be
   stopped by hand. A graceful stop
   leaves no engine running.
-- When an agent ends, its engines' leftover processes are found by their
-  environment tag and, with a user systemd, their scope
+- When an agent ends or the daemon stops, the processes its engines and its
+  shell commands left are found by their environment tag and, with a user
+  systemd, their engines' scope
   ([agent processes](configuration.md#agent-processes)). This needs Linux. A
-  process that cleared its environment is found only through a scope, so
-  without a user systemd it keeps running. On macOS a process left behind
-  after a turn keeps running.
+  process that cleared its environment is found only through an engine's
+  scope, so one detached from Aether's own shell tool, or from an engine
+  without a user systemd, keeps running: `env -i setsid server` escapes both.
+  An engine joins its scope asynchronously, after it has started, so that a
+  launch never waits on a slow or missing user manager; what it detaches
+  before it has joined is found by its tag alone. A sweep reads a process
+  caught inside `exec` again once its new image is set up, for up to 50 ms,
+  and one that does not settle is neither its agent's nor proven unkept; a
+  `vfork` child (`posix_spawn`) reads as its parent until its exec, so a keep
+  mark set only for that child is not seen until then. A sweep lists processes
+  one at a time, so a child forked as it runs is found past its parent; one
+  given a lower pid, as the pid counter wraps around, is missed by that pass.
+  A non-dumpable process, whose environment cannot be read, is spared in a
+  scope, and in the group of a background job that is stopped or whose shell
+  exited, as it may carry the keep mark; one a browser sandboxed this way
+  exits with the browser, but another keeps running. On macOS a process left
+  behind after a turn keeps running.
+- What a delegated child that completed left running passes to its nearest
+  live ancestor and runs until that ancestor's tree ends, so a long-lived root
+  keeps every server and browser its completed children left until it ends,
+  is cancelled or the daemon stops. It is told each one's pid and command,
+  and can stop them sooner.

@@ -123,6 +123,44 @@ async fn stopping_an_agent_kills_its_processes_and_leaves_others_alone() {
     reg.stop(other, b.id).await.unwrap();
 }
 
+/// A completed child's jobs pass to its parent, which can then read and
+/// stop them; the child no longer holds them.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handed_up_process_belongs_to_its_new_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let (child, parent) = (AgentId::new(), AgentId::new());
+    let job = reg.start(child, "sleep 60", &ctx_in(dir.path())).unwrap();
+    let finished = reg.start(child, "true", &ctx_in(dir.path())).unwrap();
+    wait_until("the short job to finish", || {
+        !reg.read(child, finished.id).unwrap().status.running
+    })
+    .await;
+
+    let handed = reg.hand_up(child, parent).unwrap();
+
+    assert_eq!(
+        handed.iter().map(|status| status.id).collect::<Vec<_>>(),
+        vec![job.id],
+        "only what still runs is listed"
+    );
+    assert!(
+        reg.list(child).unwrap().is_empty(),
+        "the child holds nothing"
+    );
+    assert!(reg.read(parent, job.id).unwrap().status.running);
+    assert_eq!(
+        reg.stop_agent(child).await,
+        0,
+        "the child's end stops nothing"
+    );
+    assert_eq!(
+        reg.stop_agent(parent).await,
+        2,
+        "the parent's end stops both"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_agent_cannot_reach_another_agents_process() {
     let dir = tempfile::tempdir().unwrap();
@@ -298,6 +336,144 @@ async fn leader_exit_kills_descendants_and_preserves_written_output() {
     assert!(!p.output_path.parent().unwrap().exists());
 }
 
+/// A shell that exits while its group outlives SIGTERM stays unreaped until
+/// the group is killed, so the group id cannot be reused meanwhile.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_exited_shell_pins_its_group_until_the_group_is_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    reg.start(agent,
+        "echo $$ > leader; bash -c 'trap \"\" TERM; echo $BASHPID > held.tmp && mv held.tmp held; while :; do sleep 1; done' & while [ ! -s held ]; do sleep 0.01; done",
+        &ctx_in(dir.path())).unwrap();
+    let held_path = dir.path().join("held");
+    wait_until("the member to start", || read_pid(&held_path).is_some()).await;
+    let held = read_pid(&held_path).expect("held pid");
+    let leader = read_pid(&dir.path().join("leader")).expect("leader pid");
+    let leader_listed = || std::path::Path::new(&format!("/proc/{leader}")).exists();
+    // Checked at every look, not only when one lands inside the grace: the
+    // leader is looked up first, so a member alive after it was alive then too.
+    let mut unpinned = false;
+    wait_for("the job to settle", || {
+        let listed = leader_listed();
+        unpinned |= !listed && alive(held);
+        if reg.list(agent).unwrap()[0].running {
+            Observed::Pending("still running".into())
+        } else {
+            Observed::Held
+        }
+    })
+    .await;
+    assert!(
+        !unpinned,
+        "the shell was reaped while a member of its group lived"
+    );
+    assert!(!alive(held), "the group is killed after the grace");
+    assert!(
+        !leader_listed(),
+        "the shell is reaped once its group is stopped"
+    );
+}
+
+/// A self-exiting job's group is not signalled while a member is kept: the
+/// kept member survives and the rest are still stopped one by one.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn leader_exit_spares_a_kept_member_of_its_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    reg.start(agent,
+        "AETHER_KEEP_PROCESS=1 sleep 300 & echo $! > kept; sleep 301 & echo $! > swept.tmp && mv swept.tmp swept",
+        &ctx_in(dir.path())).unwrap();
+    wait_until("leader exit", || !reg.list(agent).unwrap()[0].running).await;
+    let kept = read_pid(&dir.path().join("kept")).expect("kept pid");
+    let swept = read_pid(&dir.path().join("swept")).expect("swept pid");
+    wait_until("the unkept member to stop", || !alive(swept)).await;
+    let survived = alive(kept);
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(kept), Signal::SIGKILL).ok();
+    assert!(survived, "the kept member of the group outlives the job");
+}
+
+/// Stopping a running job spares a member marked to be kept, and still stops
+/// the rest of its group.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_job_spares_a_kept_member_of_its_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    let job = reg.start(agent,
+        "AETHER_KEEP_PROCESS=1 sleep 300 & echo $! > kept; sleep 301 & echo $! > swept.tmp && mv swept.tmp swept; wait",
+        &ctx_in(dir.path())).unwrap();
+    wait_until("both members", || dir.path().join("swept").exists()).await;
+    let kept = read_pid(&dir.path().join("kept")).expect("kept pid");
+    let swept = read_pid(&dir.path().join("swept")).expect("swept pid");
+    reg.stop(agent, job.id).await.unwrap();
+    wait_until("the unkept member to stop", || !alive(swept)).await;
+    let survived = alive(kept);
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(kept), Signal::SIGKILL).ok();
+    assert!(survived, "the kept member of the group outlives the stop");
+}
+
+/// A job whose shell exec'd a kept program is still stopped: the keep mark
+/// spares what a job leaves behind, not the job itself.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn stopping_a_job_stops_its_leader_even_when_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    let job = reg
+        .start(
+            agent,
+            "echo $$ > leader.tmp && mv leader.tmp leader; exec env AETHER_KEEP_PROCESS=1 sleep 300",
+            &ctx_in(dir.path()),
+        )
+        .unwrap();
+    wait_until("the leader pid", || dir.path().join("leader").exists()).await;
+    let leader = read_pid(&dir.path().join("leader")).expect("leader pid");
+    tokio::time::timeout(STOP_GRACE * 2, reg.stop(agent, job.id))
+        .await
+        .expect("the stop does not wait on a kept leader")
+        .unwrap();
+    assert!(!alive(leader), "the kept leader is stopped with its job");
+}
+
+/// A member that forks a cleanup worker on SIGTERM: the worker, new to the
+/// group during the grace, is sent SIGTERM too before any SIGKILL.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_forked_during_the_grace_is_sent_sigterm() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("worker.sh"),
+        "trap 'echo termed > worker-termed; exit 0' TERM\n\
+         echo $$ > worker.tmp && mv worker.tmp worker\n\
+         while :; do sleep 0.05; done\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("cleanup.sh"),
+        "trap 'sh ./worker.sh & wait; exit 0' TERM\n\
+         echo $$ > ready.tmp && mv ready.tmp ready\n\
+         while :; do sleep 0.05; done\n",
+    )
+    .unwrap();
+    let reg = BackgroundProcesses::new();
+    let agent = AgentId::new();
+    let job = reg
+        .start(agent, "sh ./cleanup.sh & wait", &ctx_in(dir.path()))
+        .unwrap();
+    wait_until("cleanup ready", || dir.path().join("ready").exists()).await;
+    reg.stop(agent, job.id).await.unwrap();
+    assert!(
+        dir.path().join("worker-termed").exists(),
+        "the worker forked during the grace got SIGTERM"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn stop_escalates_after_leader_exits_on_term() {
     let dir = tempfile::tempdir().unwrap();
@@ -405,6 +581,7 @@ async fn background_and_terminal_processes_get_the_agent_temp_dir() {
                 r#"printf '%s|%s|%s' "$TMPDIR" "$TMP" "$TEMP""#,
                 &ctx,
                 terminal,
+                &tokio_util::sync::CancellationToken::new(),
             )
             .unwrap();
         let mut seen = String::new();

@@ -36,6 +36,8 @@ pub(super) struct DriveResult {
     pub(super) invoked: bool,
     /// The model called at least one tool this turn.
     pub(super) ran_tools: bool,
+    /// The provider answered this run: a real model message or a finished tool call.
+    pub(super) progressed: bool,
     /// Present only for incremental billing; previous runs must survive reconciliation.
     pub(super) usage_before: Option<(Usage, Usage)>,
     pub(super) stream_usage: Usage,
@@ -186,6 +188,7 @@ fn failed_launch(
         usage_seen: false,
         invoked: false,
         ran_tools: false,
+        progressed: false,
         usage_before: None,
         stream_usage: Usage::default(),
         request_usage_seen: false,
@@ -253,7 +256,11 @@ pub(super) async fn drive(
     // cancel the process this token was given to, not just close its stdin.
     let engine_cancel = cancel.child_token();
     let mut run = match engine
-        .run_with_context(turn, ctx.launch_context(), engine_cancel.clone())
+        .run_with_context(
+            turn,
+            ctx.launch_context(&runtime.engine_spawns),
+            engine_cancel.clone(),
+        )
         .await
     {
         Ok(r) => r,
@@ -1016,6 +1023,7 @@ pub(super) async fn drive(
         usage_seen: state.usage_seen,
         invoked: state.invoked,
         ran_tools: state.ran_tools,
+        progressed: state.progressed,
         usage_before: state.usage_before,
         stream_usage: state.stream_usage,
         request_usage_seen: state.request_usage_seen,
@@ -1148,7 +1156,7 @@ fn merge_cleanup_receipt(outcome: &mut EngineOutcome, receipt: EngineOutcome) {
         outcome.cost_usage = receipt.cost_usage;
     }
     let class = crate::exhaustion::engine_error_class(receipt.error.as_deref().unwrap_or(""));
-    if crate::exhaustion::recoverable_by_fallback(class) {
+    if crate::exhaustion::native_suspends(class) {
         outcome.error = receipt.error;
     }
     if receipt.text.as_deref().is_some_and(|text| !text.is_empty()) {

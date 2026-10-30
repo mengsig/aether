@@ -46,7 +46,7 @@ first when the order matters.
 
 ## Versions
 
-The protocol is version 23 and the daemon serves versions 17 through 23. The window is
+The protocol is version 25 and the daemon serves versions 17 through 25. The window is
 `MIN_PROTOCOL_VERSION` to `PROTOCOL_VERSION` in `aether-protocol`; the
 `compat` module translates replies for the older versions.
 A hello outside the window is refused with `incompatible`, naming both bounds.
@@ -57,6 +57,11 @@ Only the daemon's answers are rewritten. Every field a newer version added to
 a command is optional, so an older client's requests decode unchanged; the
 test `no_command_requires_a_field_an_older_client_would_not_send` holds that
 against the live schema.
+
+Version 25 adds the `credentials` exhaustion class: an agent suspended because
+the provider refused its engine CLI's sign-in. Clients on versions 17 through 24
+cannot decode it, so they receive that block reason as `usage_limit`; its
+`detail` still names the refusal.
 
 Version 24 adds a `level` to `append_note`: `info` (the default), `applied`
 or `refused`. A level other than `info` needs a daemon on version 24 or later;

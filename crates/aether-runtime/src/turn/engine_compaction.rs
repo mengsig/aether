@@ -45,7 +45,7 @@ pub(super) async fn try_engine_compaction(
         .engines
         .recheck(kind)
         .await
-        .get(&kind)
+        .launchable(&kind)
         .filter(|engine| engine.compacts_natively())
     else {
         return Ok(false);
@@ -61,7 +61,7 @@ pub(super) async fn try_engine_compaction(
         collect(
             engine.as_ref(),
             turn,
-            ctx.launch_context(),
+            ctx.launch_context(&runtime.engine_spawns),
             child.clone(),
             &mut accounting,
         ),

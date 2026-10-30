@@ -24,15 +24,23 @@ pub(crate) async fn execute(
     let Some(kind) = engine_kind(resolved.provider.protocol) else {
         return Err(RuntimeError::Internal("not an engine provider".into()));
     };
-    // An engine found unusable is probed again here, so the reason is current.
-    let detected = runtime.engines.recheck(kind).await;
-    let Some(engine) = detected.get(&kind) else {
-        let reason = crate::engine_access::unavailable_text(
-            kind,
-            &resolved.provider.id,
-            detected.unavailable.get(&kind).map(String::as_str),
-        );
-        return Ok(EngineLink::Done(Next::Failed(reason)));
+    // An engine found unusable is probed again, and waited for, here.
+    let engine = match super::availability::wait_for_engine(
+        runtime,
+        ctx,
+        kind,
+        &resolved.provider.id,
+        &cancel,
+    )
+    .await?
+    {
+        super::availability::Availability::Ready(engine) => engine,
+        super::availability::Availability::Unavailable(reason) => {
+            return Ok(EngineLink::Done(Next::Failed(reason)));
+        }
+        super::availability::Availability::Cancelled => {
+            return Ok(EngineLink::Done(Next::Cancelled(Some("cancelled".into()))));
+        }
     };
     if let Some(reason) = ungated_refusal(runtime, &ctx.agent, engine.as_ref()) {
         return Ok(EngineLink::Done(Next::Failed(reason)));
@@ -333,6 +341,19 @@ pub(crate) async fn execute(
         let pending_request = !req_rx.is_empty();
         drop(registered);
         drop(req_rx);
+        // The provider answered, so whatever failed earlier is over: the stall
+        // count bounds consecutive stalls, the window one outage (MAX_RECOVERIES).
+        if run.progressed {
+            stalls = 0;
+            backoff.recovered();
+        }
+        // A refused sign-in or spent plan the stalled engine named on its way
+        // out is the cause, not the silence: suspend on it, never retry it.
+        let named =
+            crate::exhaustion::engine_error_class(run.outcome.error.as_deref().unwrap_or(""));
+        if run.stalled.is_some() && crate::exhaustion::native_suspends(named) {
+            run.stalled = None;
+        }
         let class = match run.stalled {
             Some(_) => super::ModelErrorClass::Timeout,
             None => crate::exhaustion::engine_error_class(
@@ -365,7 +386,7 @@ pub(crate) async fn execute(
             && !cancel.is_cancelled()
             && !run.outcome.interrupted
             && run.outcome.session_lost
-            && !crate::exhaustion::recoverable_by_fallback(class)
+            && !crate::exhaustion::native_suspends(class)
             && !crate::exhaustion::native_transient(class)
             && run.unanswered()
             && !pending_request
@@ -661,7 +682,7 @@ pub(crate) async fn execute(
         if stalled.is_some() {
             return Ok(EngineLink::Done(Next::Interrupted));
         }
-        if crate::exhaustion::recoverable_by_fallback(class) {
+        if crate::exhaustion::native_suspends(class) {
             return Ok(EngineLink::Exhausted { class, error });
         }
         return Ok(EngineLink::Done(Next::Failed(error)));
@@ -1106,6 +1127,7 @@ pub(super) fn test_run() -> DriveResult {
         usage_seen: false,
         invoked: false,
         ran_tools: false,
+        progressed: false,
         usage_before: None,
         stream_usage: Usage::default(),
         request_usage_seen: false,

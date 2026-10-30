@@ -10,7 +10,7 @@ use super::{
 };
 
 /// Recorded before every wait, so clients can show what the agent waits on.
-const TRANSIENT_RETRY_EVENT: &str = "engine.transient_retry";
+pub(super) const TRANSIENT_RETRY_EVENT: &str = "engine.transient_retry";
 
 /// Longest single wait between attempts.
 const MAX_DELAY: Duration = Duration::from_secs(5 * 60);
@@ -117,14 +117,19 @@ pub(super) fn recheck_note(class: ModelErrorClass, prompt: &str) -> String {
 pub(super) const UNCONFIRMED_CLEANUP: &str =
     "not retried: the failed engine did not exit, so its session could not be resumed safely";
 
-/// Exponential backoff under a hard wall-clock window that starts at a turn's
-/// first transient failure. Nothing resets it: an engine that makes a little
-/// progress before every failure would otherwise retry forever.
+/// Outages a turn's progress may end before its window stops being reset: an
+/// engine that answers a little and then fails every attempt is not recovering.
+pub(super) const MAX_RECOVERIES: u32 = 8;
+
+/// Exponential backoff under a hard wall-clock window that starts at an
+/// outage's first transient failure. Only real progress ends the outage: a
+/// failure that streams Claude Code's synthetic error message is not progress.
 pub(super) struct Backoff {
     started: Option<Instant>,
     window: Duration,
     floor: Duration,
     waits: u32,
+    recoveries: u32,
 }
 
 impl Backoff {
@@ -134,6 +139,7 @@ impl Backoff {
             window,
             floor,
             waits: 0,
+            recoveries: 0,
         }
     }
 
@@ -142,9 +148,39 @@ impl Backoff {
         self.started.get_or_insert_with(Instant::now);
     }
 
-    fn elapsed(&self) -> Duration {
+    /// The engine made progress: the next failure opens a fresh window at the
+    /// floor delay, at most [`MAX_RECOVERIES`] times a turn. False once spent.
+    /// Progress before any failure ends no outage and spends nothing.
+    pub(super) fn recovered(&mut self) -> bool {
+        if self.started.is_none() {
+            debug_assert_eq!(self.waits, 0, "waits follow a failure");
+            return true;
+        }
+        if self.recoveries >= MAX_RECOVERIES {
+            return false;
+        }
+        self.recoveries += 1;
+        self.started = None;
+        self.waits = 0;
+        debug_assert!(!self.spent() || self.window.is_zero());
+        true
+    }
+
+    pub(super) fn elapsed(&self) -> Duration {
         self.started
             .map_or(Duration::ZERO, |started| started.elapsed())
+    }
+
+    pub(super) fn started(&self) -> bool {
+        self.started.is_some()
+    }
+
+    pub(super) fn waits(&self) -> u32 {
+        self.waits
+    }
+
+    pub(super) fn window(&self) -> Duration {
+        self.window
     }
 
     pub(super) fn spent(&self) -> bool {
@@ -152,7 +188,7 @@ impl Backoff {
     }
 
     /// The next wait, never past the window; `None` once it is spent.
-    fn next_delay(&mut self) -> Option<Duration> {
+    pub(super) fn next_delay(&mut self) -> Option<Duration> {
         let remaining = self.window.checked_sub(self.elapsed())?;
         if remaining.is_zero() {
             return None;
@@ -344,7 +380,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn the_window_starts_at_the_first_failure_and_nothing_resets_it() {
+    async fn the_window_starts_at_the_first_failure_and_only_progress_resets_it() {
         let mut backoff = Backoff::new(Duration::from_secs(60), Duration::from_secs(15));
         tokio::time::advance(Duration::from_secs(3 * 3600)).await;
         backoff.failed();
@@ -366,6 +402,32 @@ mod tests {
             backoff.spent(),
             "later failures fall inside the first window"
         );
+        assert!(backoff.recovered());
+        tokio::time::advance(Duration::from_secs(3600)).await;
+        backoff.failed();
+        assert!(!backoff.spent(), "progress ended the first outage");
+        assert_eq!(
+            backoff.next_delay(),
+            Some(Duration::from_secs(15)),
+            "a new outage starts again at the floor"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn progress_ends_only_so_many_outages_of_one_turn() {
+        let mut backoff = Backoff::new(Duration::from_secs(60), Duration::from_secs(15));
+        assert!(backoff.recovered(), "progress before any failure is free");
+        for _ in 1..MAX_RECOVERIES {
+            backoff.failed();
+            assert!(backoff.recovered());
+        }
+        backoff.failed();
+        assert!(backoff.recovered(), "the last outage progress may end");
+        backoff.failed();
+        tokio::time::advance(Duration::from_secs(61)).await;
+        assert!(!backoff.recovered(), "the reset budget is spent");
+        assert!(backoff.spent(), "so the window runs out as it would have");
+        assert_eq!(backoff.next_delay(), None);
     }
 
     #[test]

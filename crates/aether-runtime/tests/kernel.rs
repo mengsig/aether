@@ -215,6 +215,8 @@ mod parent_waits;
 mod pause_recovery;
 #[path = "kernel/peers.rs"]
 mod peers;
+#[path = "kernel/process_handover.rs"]
+mod process_handover;
 #[path = "kernel/prompt_integrity.rs"]
 mod prompt_integrity;
 #[path = "kernel/provider_probes.rs"]

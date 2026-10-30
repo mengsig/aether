@@ -116,7 +116,8 @@ pub(crate) fn engine_kind(protocol: Protocol) -> Option<EngineKind> {
 
 /// How a native link ended, for the model chain walk in `turn::run_link`.
 pub(crate) enum EngineLink {
-    /// A recorded provider failure a configured fallback may recover from.
+    /// A recorded provider failure - spent credits or a refused sign-in - a
+    /// configured fallback may recover from, or a suspension waits out.
     /// Never produced once the turn committed its task outcome or was cancelled.
     Exhausted {
         class: ModelErrorClass,
@@ -144,6 +145,7 @@ mod outcome;
 use outcome::{
     EngineVerdict, Uncommitted, engine_verdict, record_engine_failure, record_unanswered_prompt,
 };
+mod availability;
 mod driver;
 mod native_wait;
 mod stall;

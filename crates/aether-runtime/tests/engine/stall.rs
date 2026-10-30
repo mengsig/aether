@@ -13,6 +13,8 @@ enum Ending {
     Silent,
     /// Stay silent for this long, then send the rest and finish.
     Pause(Duration, Vec<EngineEvent>),
+    /// Stay silent until stopped, then send these on the way out.
+    Stopped(Vec<EngineEvent>),
 }
 
 struct StallEngine {
@@ -61,6 +63,14 @@ impl Engine for StallEngine {
                 Ending::Silent => cancel.cancelled().await,
                 Ending::Pause(pause, rest) => {
                     tokio::time::sleep(pause).await;
+                    for event in rest {
+                        if tx.send(event).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+                Ending::Stopped(rest) => {
+                    cancel.cancelled().await;
                     for event in rest {
                         if tx.send(event).await.is_err() {
                             return;
@@ -251,5 +261,92 @@ async fn a_failure_the_engine_reports_itself_is_not_a_stall() {
     })
     .await;
     assert!(stalls(&h, id).is_empty());
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn progress_between_stalls_restarts_the_stall_count() {
+    let progress = EngineEvent::Assistant {
+        content: vec![ContentBlock::text("halfway there")],
+        usage: None,
+        model: None,
+    };
+    let mut finish = answered("built");
+    finish.insert(0, session("kept"));
+    let (h, engine, id) = stalling(vec![
+        (vec![session("kept")], Ending::Silent),
+        (vec![session("kept")], Ending::Silent),
+        (vec![session("kept"), progress], Ending::Silent),
+        (vec![session("kept")], Ending::Silent),
+        (finish, Ending::Finish),
+    ])
+    .await;
+    engine_turn(&h, id, "run the long build").await;
+    let attempts: Vec<_> = stalls(&h, id)
+        .iter()
+        .map(|stall| stall["attempt"].as_u64().unwrap())
+        .collect();
+    assert_eq!(attempts, [1, 2, 1, 2], "only consecutive stalls count");
+    assert_eq!(engine.prompts.lock().unwrap().len(), 5);
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn progress_restarts_the_stall_count_after_the_window_stops_resetting() {
+    let progress = || EngineEvent::Assistant {
+        content: vec![ContentBlock::text("still building")],
+        usage: None,
+        model: None,
+    };
+    let mut finish = answered("built");
+    finish.insert(0, session("kept"));
+    // Ten progress-separated stalls: more outages than progress resets the window for.
+    let mut runs = vec![(vec![session("kept")], Ending::Silent)];
+    runs.extend((0..10).map(|_| (vec![session("kept"), progress()], Ending::Silent)));
+    runs.push((finish, Ending::Finish));
+    let (h, engine, id) = stalling(runs).await;
+    engine_turn(&h, id, "run the long build").await;
+    let attempts: Vec<_> = stalls(&h, id)
+        .iter()
+        .map(|stall| stall["attempt"].as_u64().unwrap())
+        .collect();
+    assert_eq!(attempts, [1; 11], "no two of these stalls were consecutive");
+    assert_eq!(
+        engine.prompts.lock().unwrap().len(),
+        12,
+        "the turn finished"
+    );
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_refused_sign_in_named_on_the_way_out_of_a_stall_suspends() {
+    let refused = EngineEvent::Done(EngineOutcome {
+        is_error: true,
+        interrupted: true,
+        error: Some(super::auth_suspension::REFUSED.into()),
+        ..Default::default()
+    });
+    let (h, engine, id) = stalling(vec![(
+        vec![session("kept")],
+        Ending::Stopped(vec![refused]),
+    )])
+    .await;
+    h.runtime
+        .send_message(id, vec![ContentBlock::text("go")], Actor::user())
+        .unwrap();
+    let ended = wait_for(h.store.as_ref(), id, |a| {
+        a.status.kind() != AgentStatusKind::Running && a.stats.turns > 0
+    })
+    .await;
+    let AgentStatus::Blocked {
+        reason: BlockReason::Exhausted { class, .. },
+    } = &ended.status
+    else {
+        panic!("the refusal, not the silence, decides: {:?}", ended.status);
+    };
+    assert_eq!(*class, ExhaustionClass::Credentials);
+    assert!(stalls(&h, id).is_empty(), "no stall retry is announced");
+    assert_eq!(engine.prompts.lock().unwrap().len(), 1);
     h.runtime.shutdown().await;
 }
