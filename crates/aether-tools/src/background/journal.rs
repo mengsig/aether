@@ -114,19 +114,27 @@ impl Journal {
                 format!("invalid background record {}: {e}", path.display()),
             )
         })?;
-        match self.matches(&record, proc_root) {
-            Ok(true) => {
+        let stopped = self.matches(&record, proc_root).and_then(|ours| {
+            if ours {
                 tracing::warn!(pgid = record.pgid, record = %path.display(), "killing orphan host process group");
-                if let Err(error) = kill_recorded_group(&record, proc_root) {
-                    tracing::warn!(pgid = record.pgid, %error, "cannot kill orphan group; retaining record");
-                    return Ok(());
-                }
+                kill_recorded_group(&record, proc_root)?;
             }
-            Ok(false) => {}
-            Err(error) => {
-                tracing::warn!(pgid = record.pgid, %error, "cannot prove background group ownership; retaining record");
-                return Ok(());
+            Ok(())
+        });
+        if let Err(error) = stopped {
+            // An agent resumes only once its interrupted call is stopped: refuse the start.
+            if record.call.is_some() {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "cannot stop the foreground call a crashed daemon left in process group {pgid}: {error}; \
+                         an agent resumed beside it could race it. Stop that group (kill -KILL -- -{pgid}) and start again",
+                        pgid = record.pgid
+                    ),
+                ));
             }
+            tracing::warn!(pgid = record.pgid, %error, "cannot stop orphan background group; retaining record");
+            return Ok(());
         }
         if record.boot_id == self.boot_id
             && record.uid == geteuid().as_raw()
@@ -206,6 +214,7 @@ impl Journal {
             };
         let token = record.token();
         let mut found = false;
+        let mut unproven = false;
         for entry in std::fs::read_dir(proc_root)? {
             let entry = entry?;
             if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
@@ -228,45 +237,56 @@ impl Journal {
                 return Ok(false);
             }
             // A vanished leader could belong to a reused group: only a member
-            // carrying this job's or call's token is proven ours and signalled.
+            // carrying this job's or call's token proves it ours.
             if leader_missing && member.running() {
-                let environment = match aether_spawn::read_environ(&entry.path()) {
-                    Ok(environment) => environment,
-                    Err(e) if disappeared(&e) => continue,
-                    Err(e) => return Err(e),
-                };
-                if token
-                    .as_ref()
-                    .is_none_or(|token| !carries(&environment, token))
-                {
-                    tracing::warn!(pgid = record.pgid, member = %entry.path().display(), "sparing a group member without its token");
-                    continue;
+                match carries_token(&entry.path(), token.as_deref())? {
+                    Some(true) => {}
+                    Some(false) => {
+                        unproven = true;
+                        continue;
+                    }
+                    None => continue,
                 }
             }
             found |= member.running();
+        }
+        if unproven && !found {
+            tracing::warn!(
+                pgid = record.pgid,
+                "sparing a leaderless group no member of which carries its token"
+            );
         }
         Ok(found)
     }
 }
 
+/// Whether `process` carries `token`; None once it is gone.
+fn carries_token(process: &Path, token: Option<&str>) -> io::Result<Option<bool>> {
+    let environment = match aether_spawn::read_environ(process) {
+        Ok(environment) => environment,
+        Err(e) if disappeared(&e) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    Ok(Some(
+        token.is_some_and(|token| carries(&environment, token)),
+    ))
+}
+
 /// SIGKILL the group of a `record` recovery proved ours. Through its leader,
 /// stopped first so the group id stays its own until the signal lands, or,
-/// once that leader is gone, member by member through the record's token.
+/// once that leader is gone, member by member: a group id is not reused while
+/// a member lives, and the proof was a member carrying the record's token.
 fn kill_recorded_group(record: &Record, proc_root: &Path) -> io::Result<()> {
     assert!(record.pgid > 1, "not a recorded group: {}", record.pgid);
     if kill_through_leader(record, proc_root)? {
         return Ok(());
     }
-    let Some(token) = record.token() else {
-        // Without a token a leaderless group is not proven ours.
-        return Ok(());
-    };
     let pgid = Pid::from_raw(record.pgid);
     for _ in 0..KILL_ROUNDS {
         let mut found = false;
         for_each_candidate(proc_root, |pid, _| {
             found |= signal_pinned(proc_root, pid, rustix::process::Signal::KILL, |process| {
-                group_member_carrying(process, pgid, &token)
+                running_member(process, pgid)
             })?;
             Ok(())
         })?;
@@ -357,17 +377,14 @@ fn wait_recorded_leader_stopped(record: &Record, proc_root: &Path) -> io::Result
     Ok(false)
 }
 
-/// Whether `process` is a live member of `pgid` carrying `token`.
-fn group_member_carrying(process: &Path, pgid: Pid, token: &str) -> io::Result<bool> {
+/// Whether `process` is a live member of `pgid`.
+fn running_member(process: &Path, pgid: Pid) -> io::Result<bool> {
     let member = match std::fs::read(process.join("stat")) {
         Ok(stat) => identity(&stat)?,
         Err(e) if disappeared(&e) => return Ok(false),
         Err(e) => return Err(e),
     };
-    if member.group != pgid.as_raw() || !member.running() {
-        return Ok(false);
-    }
-    Ok(readable_environ(process)?.is_some_and(|environment| carries(&environment, token)))
+    Ok(member.group == pgid.as_raw() && member.running())
 }
 
 pub(crate) fn kill_job(job: ProcessId) -> io::Result<()> {

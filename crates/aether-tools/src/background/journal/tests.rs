@@ -238,6 +238,35 @@ fn unreadable_proc_entries_preserve_the_record_without_failing_recovery() {
     assert!(path.exists(), "an inconclusive check must remain retryable");
 }
 
+/// An agent resumes only once its interrupted call is stopped, so a start
+/// that cannot tell whether that call still runs refuses to go on.
+#[test]
+fn an_inconclusive_foreground_record_refuses_the_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let record = Record {
+        pgid: 12345,
+        start_time: 1,
+        boot_id: journal.boot_id.clone(),
+        uid: geteuid().as_raw(),
+        job: None,
+        call: Some(ProcessId::new()),
+    };
+    let path = journal.directory.join("call.json");
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let proc_root = dir.path().join("proc");
+    // A directory in place of stat is unreadable even when tests run as root.
+    std::fs::create_dir_all(proc_root.join("12345/stat")).unwrap();
+    let error = journal.recover_record(&path, &proc_root).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cannot stop the foreground call"),
+        "{error}"
+    );
+    assert!(path.exists(), "the record stays for the next start");
+}
+
 #[test]
 fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
     use std::os::unix::fs::PermissionsExt;
@@ -625,7 +654,7 @@ async fn foreground_crash_fixture() {
 /// start stops that through the call's token, but not what the call detached,
 /// nor a member without the token, which is not proven the call's.
 #[tokio::test]
-async fn recovery_stops_a_leaderless_foreground_group_by_its_call_token() {
+async fn recovery_stops_a_leaderless_foreground_group_its_call_token_proves() {
     let dir = tempfile::tempdir().unwrap();
     let call = ProcessId::new();
     let mut child = tokio::process::Command::new("bash")
@@ -672,14 +701,18 @@ async fn recovery_stops_a_leaderless_foreground_group_by_its_call_token() {
         tokio::time::sleep(Duration::from_secs(2)).await;
         !alive(member)
     };
-    let (unproven_survived, server_survived) = (alive(unproven), alive(server));
+    let tokenless_stopped = !alive(unproven) || {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        !alive(unproven)
+    };
+    let server_survived = alive(server);
     for pid in [member, unproven, server] {
         let _ = nix::sys::signal::kill(Pid::from_raw(pid), Signal::SIGKILL);
     }
     assert!(member_stopped, "the call's command outlived the start");
     assert!(
-        unproven_survived,
-        "a member without the token was signalled"
+        tokenless_stopped,
+        "a member that cleared the token outlived the start of a group the token proved"
     );
     assert!(server_survived, "the server the call detached was stopped");
     assert!(!registration.0.exists());
