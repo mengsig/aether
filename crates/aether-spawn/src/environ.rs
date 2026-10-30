@@ -212,9 +212,10 @@ mod tests {
         );
     }
 
-    /// Every read of a process that execs over and over, as a sweep may
-    /// catch one, shows its environment. It is spawned as Aether spawns
-    /// tagged children, through `pre_exec`, so not by vfork.
+    /// Every settled read of a process that execs over and over, as a sweep
+    /// may catch one, shows its environment; a busy one proves nothing and is
+    /// taken again. It is spawned as Aether spawns tagged children, through
+    /// `pre_exec`, so not by vfork.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_process_read_as_it_execs_shows_its_environment() {
@@ -228,22 +229,36 @@ mod tests {
         let mut child = command.spawn().unwrap();
         let dir = Path::new("/proc").join(child.id().to_string());
         let deadline = Instant::now() + Duration::from_secs(20);
-        let mut reads = 0;
+        let (mut settled, mut busy) = (0, 0);
         let missed = loop {
-            let environment = read_environ(&dir).unwrap();
-            reads += 1;
-            let tagged = environment
-                .split(|byte| *byte == 0)
-                .any(|entry| entry == b"AETHER_ENVIRON_PROBE=1");
+            match read_environ(&dir) {
+                Err(error) if error.kind() == io::ErrorKind::ResourceBusy => busy += 1,
+                read => {
+                    let environment = read.unwrap();
+                    settled += 1;
+                    let tagged = environment
+                        .split(|byte| *byte == 0)
+                        .any(|entry| entry == b"AETHER_ENVIRON_PROBE=1");
+                    if !tagged {
+                        break Some(String::from_utf8_lossy(&environment).into_owned());
+                    }
+                }
+            }
             let done =
                 std::fs::read_to_string(dir.join("comm")).is_ok_and(|comm| comm == "sleep\n");
-            if !tagged || done || Instant::now() >= deadline {
-                break (!tagged).then(|| String::from_utf8_lossy(&environment).into_owned());
+            if done || Instant::now() >= deadline {
+                break None;
             }
         };
         child.kill().unwrap();
         child.wait().unwrap();
-        assert_eq!(missed, None, "the tag was missed mid-exec on read {reads}");
-        assert!(reads > 1, "the child stopped exec'ing before a second read");
+        assert_eq!(
+            missed, None,
+            "the tag was missed mid-exec on settled read {settled} ({busy} busy)"
+        );
+        assert!(
+            settled > 1,
+            "only {settled} read(s) settled ({busy} busy) before the child stopped exec'ing"
+        );
     }
 }
