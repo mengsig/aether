@@ -86,16 +86,24 @@ EOF
 
 python3 scripts/mock_openai.py "$PORT" > "$ROOT/mock.log" 2>&1 &
 MOCK=$!
+# A process's kernel start time: with its pid, what no reused pid can match.
+started_at() {
+  local stat fields
+  stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  # Fields after the command name, which may hold spaces; start time is the 20th.
+  read -ra fields <<< "${stat##*) }"
+  printf '%s\n' "${fields[19]}"
+}
 # The crash drill's servers outlive the daemon by design, and a failed drill
-# leaves its call running too; stop them here.
+# leaves its call running too: each was listed as "pid start-time" while it
+# ran, and is stopped here only while that pid still has that start time.
 stop_drill_processes() {
-  local pid
-  # shellcheck disable=SC2013 # call.pids holds two pids on one line
-  for pid in $(cat "$ROOT"/crash-drill/*.pid* 2>/dev/null); do
-    case $(cat "/proc/$pid/comm" 2>/dev/null) in
-      sleep | bash) kill -KILL "$pid" 2>/dev/null || true ;;
-    esac
-  done
+  local list="$ROOT/crash-drill/processes" pid started
+  [ -s "$list" ] || return 0
+  while read -r pid started; do
+    if [ "$(started_at "$pid")" = "$started" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+  done < "$list"
+  rm -f "$list"
 }
 cleanup() {
   if [ -n "${DAEMON:-}" ]; then stop_test_child "$DAEMON"; fi
@@ -321,6 +329,10 @@ if [ "$(uname -s)" = Linux ]; then
   read -r CALL_SHELL CALL_CHILD < "$DRILL/call.pids"
   HELD=$(cat "$DRILL/held.pid")
   KEPT=$(cat "$DRILL/kept.pid")
+  for pid in "$CALL_SHELL" "$CALL_CHILD" "$HELD" "$KEPT"; do
+    started=$(started_at "$pid") || { echo "the drill's process $pid is not running"; exit 1; }
+    echo "$pid $started" >> "$DRILL/processes"
+  done
   kill -KILL "$DAEMON"
   wait "$DAEMON" 2>/dev/null || true
   DAEMON=
@@ -334,8 +346,6 @@ if [ "$(uname -s)" = Linux ]; then
     done
     if running "$pid"; then echo "the interrupted call's process $pid still runs"; exit 1; fi
   done
-  # Gone, so its pids may be reused: the cleanup must not signal them.
-  rm "$DRILL/call.pids"
   running "$HELD" || { echo "the server the agent holds was stopped"; exit 1; }
   running "$KEPT" || { echo "the AETHER_KEEP_PROCESS=1 server was stopped"; exit 1; }
   for ((attempt = 0; attempt < 300; attempt++)); do
