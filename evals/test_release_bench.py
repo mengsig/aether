@@ -7,7 +7,7 @@ from pathlib import Path
 
 import release_bench_stats as stats
 from harness_bench_treatments import native_command
-from release_bench import _band, carried
+from release_bench import _band, _release, _releases, carried
 from release_bench_arms import build_arm, parse_arms
 from release_bench_calibrate import (
     SELECTION_DEFAULTS,
@@ -436,6 +436,30 @@ class ArmTests(unittest.TestCase):
         self.assertEqual(build_arm("haiku", "old")["condition"]["budget"], {"cost_budget": 0.5})
         self.assertIn("token_budget", build_arm("luna", "new")["condition"]["budget"])
         self.assertEqual(build_arm("luna", "new")["binary_role"], "new")
+
+    def test_a_release_arm_runs_its_own_binary_under_the_aether_caps(self):
+        self.assertEqual(parse_arms("haiku/old,haiku/v1.0.10"), ["haiku/old", "haiku/v1.0.10"])
+        arm, old = build_arm("luna", "v1.0.10"), build_arm("luna", "old")
+        self.assertEqual(arm["binary_role"], "v1.0.10")
+        self.assertEqual((arm["condition"], arm["max_agents"]), (old["condition"], old["max_agents"]))
+        for bad in ("haiku/1.0.0", "haiku/v1.0", "haiku/vx"):
+            with self.assertRaises(AssertionError):
+                parse_arms(bad)
+
+    def test_release_tags_and_release_arms_must_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp, "aether")
+            binary.write_text("#!/bin/sh\n")
+            args = argparse.Namespace(release=[_release(f"v1.0.0={binary}")])
+            pinned = _releases(args, ["haiku/new", "haiku/v1.0.0"], Path(tmp, "run"))
+            self.assertEqual(set(pinned), {"v1.0.0"})
+            self.assertTrue(Path(pinned["v1.0.0"][0]).is_file())
+            for arms in (["haiku/new"], ["haiku/v1.0.0", "haiku/v1.0.5"]):
+                with self.assertRaises(SystemExit):
+                    _releases(args, arms, Path(tmp, "run"))
+            self.assertEqual(_releases(argparse.Namespace(release=[]), ["haiku/new"], Path(tmp, "run")), {})
+        with self.assertRaises(argparse.ArgumentTypeError):
+            _release("old=/bin/aether")
 
 
 class TaskSetTests(unittest.TestCase):
