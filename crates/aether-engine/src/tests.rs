@@ -322,7 +322,7 @@ async fn a_recorded_engine_is_reaped_by_the_next_start() {
         std::os::unix::fs::PermissionsExt::from_mode(0o700),
     )
     .unwrap();
-    orphans::init(dir.path()).unwrap();
+    orphans::init(dir.path(), &Default::default()).unwrap();
     let mut run = run_process(
         "sleep",
         vec!["60".into()],
@@ -340,7 +340,7 @@ async fn a_recorded_engine_is_reaped_by_the_next_start() {
     .await
     .expect("spawn sleep");
     assert!(std::fs::read_dir(dir.path()).unwrap().count() >= 1);
-    let reaped = orphans::reap(dir.path()).unwrap();
+    let reaped = orphans::reap(dir.path(), &Default::default()).unwrap();
     assert_eq!(reaped.len(), 1, "{reaped:?}");
     let done = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while let Some(event) = run.events.recv().await {

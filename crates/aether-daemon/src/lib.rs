@@ -109,6 +109,24 @@ fn storage_artifact_policy(
 /// compile and ship; `the_provider_copy_keeps_every_field_in_place` stops it.
 /// The configured root, else `aether.build-cache` beside the store. A
 /// relative default would resolve inside each agent's workspace, so none.
+/// Agents whose turn the previous daemon left in flight: marked running, or
+/// holding its lease. What their engines still run is stopped at the start.
+fn interrupted_agents(
+    store: &dyn aether_store::Store,
+) -> anyhow::Result<std::collections::HashSet<aether_core::id::AgentId>> {
+    let running = aether_store::AgentFilter {
+        statuses: vec![aether_core::agent::AgentStatusKind::Running],
+        ..Default::default()
+    };
+    let mut agents: std::collections::HashSet<_> = store
+        .leases()?
+        .into_iter()
+        .map(|lease| lease.agent_id)
+        .collect();
+    agents.extend(store.agents(&running)?.into_iter().map(|agent| agent.id));
+    Ok(agents)
+}
+
 fn build_cache_root(configured: Option<&Path>, store_path: &Path) -> Option<PathBuf> {
     if let Some(root) = configured {
         debug_assert!(root.is_absolute(), "config load refuses a relative root");
@@ -321,7 +339,8 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     let mut engine_registry = store_path.clone().into_os_string();
     engine_registry.push(".engines");
     let engine_registry = std::path::PathBuf::from(engine_registry);
-    let reaped = aether_engine::orphans::init(&engine_registry)
+    let interrupted = interrupted_agents(store.as_ref())?;
+    let reaped = aether_engine::orphans::init(&engine_registry, &interrupted)
         .map_err(|error| anyhow::anyhow!("preparing {}: {error}", engine_registry.display()))?;
     if !reaped.is_empty() {
         tracing::warn!(pids = ?reaped, "killed engine processes a previous daemon left running");

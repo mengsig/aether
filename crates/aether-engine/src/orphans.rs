@@ -11,12 +11,17 @@
 //! and the record also holds: any live process of this user carrying it is ours.
 //! One that also carries an agent's tag, such as a server an agent started, is
 //! left to the runtime's start sweep, which stops it only if no live agent holds
-//! it; one carrying the keep entry is never signalled.
+//! it, unless that agent's turn was in flight: then it may be the tool command
+//! the engine ran outside its group (Claude Code runs each in its own session),
+//! which the resumed turn must not race. One carrying the keep entry is never
+//! signalled.
 
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use aether_core::id::AgentId;
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::{Pid, getpgid};
 
@@ -69,10 +74,11 @@ fn start_time(_pid: u32) -> Option<u64> {
 }
 
 /// Reap engines recorded in `dir` by a previous daemon, then record the
-/// engines this process spawns there. Returns the leader pids it killed.
-pub fn init(dir: &Path) -> io::Result<Vec<u32>> {
+/// engines this process spawns there. `interrupted` names the agents whose
+/// turn that daemon left in flight. Returns the leader pids it killed.
+pub fn init(dir: &Path, interrupted: &HashSet<AgentId>) -> io::Result<Vec<u32>> {
     prepare_dir(dir)?;
-    let reaped = reap(dir)?;
+    let reaped = reap(dir, interrupted)?;
     // A second init in one process keeps the first directory.
     let _ = REGISTRY.set(dir.to_owned());
     Ok(reaped)
@@ -99,8 +105,9 @@ fn prepare_dir(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Kill every recorded group whose leader still matches, and clear the records.
-pub fn reap(dir: &Path) -> io::Result<Vec<u32>> {
+/// Kill every recorded group whose leader still matches, and its token
+/// carriers but those [`spared`] given `interrupted`, and clear the records.
+pub fn reap(dir: &Path, interrupted: &HashSet<AgentId>) -> io::Result<Vec<u32>> {
     let mut reaped = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
@@ -134,7 +141,7 @@ pub fn reap(dir: &Path) -> io::Result<Vec<u32>> {
             reaped.push(pid);
         }
         if let Some(token) = token {
-            kill_tagged(token)
+            kill_tagged(token, interrupted)
                 .map_err(|e| io::Error::new(e.kind(), format!("sweeping engine {pid}: {e}")))?;
         }
         // A killed engine's own run may already have dropped its record.
@@ -209,7 +216,7 @@ fn kill_matching_group(_pid: u32, _recorded: u64) -> bool {
 /// cannot be reused between the check and the signal. Unexpected errors are
 /// returned so the caller keeps the record and the next start retries.
 #[cfg(target_os = "linux")]
-fn kill_tagged(token: &str) -> io::Result<()> {
+fn kill_tagged(token: &str, interrupted: &HashSet<AgentId>) -> io::Result<()> {
     use rustix::process::{Pid as RustixPid, PidfdFlags, Signal as RustixSignal};
 
     assert!(!token.is_empty(), "an empty token would match any process");
@@ -247,7 +254,7 @@ fn kill_tagged(token: &str) -> io::Result<()> {
         if !environment
             .split(|b| *b == 0)
             .any(|e| e == entry_token.as_bytes())
-            || spared(&environment)
+            || spared(&environment, interrupted)
         {
             continue;
         }
@@ -259,22 +266,36 @@ fn kill_tagged(token: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// Whether a token carrier with `environment` is left alone: it runs for an
-/// agent, whose ownership the runtime's start sweep decides, or is kept. A tag
-/// the daemon inherited from an agent's shell spares too: that agent's end,
-/// under the daemon that runs it, stops what carries it.
+/// Whether a token carrier with `environment` is left alone: it is kept, or
+/// runs for an agent whose turn was not `interrupted`, so the runtime's start
+/// sweep decides its ownership. A tag the daemon inherited from an agent's
+/// shell spares too: that agent's end, under the daemon that runs it, stops it.
 #[cfg(target_os = "linux")]
-fn spared(environment: &[u8]) -> bool {
+fn spared(environment: &[u8], interrupted: &HashSet<AgentId>) -> bool {
     let agent = format!("{}=", aether_core::agent::PROCESS_AGENT_ENV);
     let keep = format!("{}=1", aether_core::agent::PROCESS_KEEP_ENV);
-    environment.split(|b| *b == 0).any(|entry| {
-        let tagged = entry.len() > agent.len() && entry.starts_with(agent.as_bytes());
-        tagged || entry == keep.as_bytes()
+    let entries = || environment.split(|b| *b == 0);
+    if entries().any(|entry| entry == keep.as_bytes()) {
+        return true;
+    }
+    entries().any(|entry| {
+        let Some(tag) = entry
+            .strip_prefix(agent.as_bytes())
+            .filter(|tag| !tag.is_empty())
+        else {
+            return false;
+        };
+        // An unreadable tag is no agent of this store, so none whose turn was cut short.
+        let cut_short = std::str::from_utf8(tag)
+            .ok()
+            .and_then(|tag| tag.parse::<AgentId>().ok())
+            .is_some_and(|agent| interrupted.contains(&agent));
+        !cut_short
     })
 }
 
 #[cfg(not(target_os = "linux"))]
-fn kill_tagged(_token: &str) -> io::Result<()> {
+fn kill_tagged(_token: &str, _interrupted: &HashSet<AgentId>) -> io::Result<()> {
     Ok(())
 }
 
@@ -360,7 +381,7 @@ mod tests {
             start_time(pid).unwrap().to_string(),
         )
         .unwrap();
-        assert_eq!(reap(dir.path()).unwrap(), vec![pid]);
+        assert_eq!(reap(dir.path(), &HashSet::new()).unwrap(), vec![pid]);
         child.wait().expect("killed child is reaped");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
@@ -404,7 +425,7 @@ mod tests {
             wait_for_sleep31(true),
             "the setsid sleep must be running before the reap"
         );
-        reap(dir.path()).unwrap();
+        reap(dir.path(), &HashSet::new()).unwrap();
         child.wait().unwrap();
         let gone = wait_for_sleep31(false);
         assert!(gone, "the setsid descendant must be killed by its token");
@@ -424,7 +445,7 @@ mod tests {
 
     /// A token carrier with `extra` in its environment, outside any group of ours.
     #[allow(clippy::unwrap_used)]
-    fn carrier(token: &str, extra: Option<(&str, &str)>) -> std::process::Child {
+    fn carrier(token: &str, extra: &[(&str, &str)]) -> std::process::Child {
         let mut command = std::process::Command::new("sleep");
         command
             .arg("30")
@@ -432,7 +453,7 @@ mod tests {
             .env_remove(aether_core::agent::PROCESS_AGENT_ENV)
             .env_remove(aether_core::agent::PROCESS_KEEP_ENV)
             .process_group(0);
-        if let Some((key, value)) = extra {
+        for (key, value) in extra {
             command.env(key, value);
         }
         command.spawn().unwrap()
@@ -444,12 +465,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let token = "tok-spares-agent-servers-0001";
         let agent = aether_core::id::AgentId::new().to_string();
-        let mut plain = carrier(token, None);
-        let mut server = carrier(token, Some((PROCESS_AGENT_ENV, &agent)));
-        let mut kept = carrier(token, Some((PROCESS_KEEP_ENV, "1")));
+        let mut plain = carrier(token, &[]);
+        let mut server = carrier(token, &[(PROCESS_AGENT_ENV, &agent)]);
+        let mut kept = carrier(token, &[(PROCESS_KEEP_ENV, "1")]);
         // A dead leader: only the token sweep runs.
         std::fs::write(dir.path().join("4194300"), format!("1\n{token}")).unwrap();
-        reap(dir.path()).unwrap();
+        reap(dir.path(), &HashSet::new()).unwrap();
         assert!(exits_soon(&mut plain), "a carrier no agent holds is killed");
         assert!(alive(&mut server), "an agent's server is left to its owner");
         assert!(alive(&mut kept), "a kept carrier is never signalled");
@@ -460,18 +481,21 @@ mod tests {
     }
 
     /// A recovered agent must not race the tool command its engine was running
-    /// when the daemon died, while the server it detached stays up for it.
+    /// when the daemon died, in the engine's group or, as Claude Code runs it,
+    /// in a session of its own; its kept server and an idle agent's stay up.
     #[test]
-    fn stops_an_agents_interrupted_engine_group_but_spares_its_detached_server() {
+    fn stops_an_interrupted_agents_engine_commands_but_spares_kept_and_idle_servers() {
         use aether_core::agent::{PROCESS_AGENT_ENV, PROCESS_KEEP_ENV};
         let dir = tempfile::tempdir().unwrap();
         let token = "tok-interrupted-engine-group-0001";
-        let agent = aether_core::id::AgentId::new().to_string();
+        let interrupted = AgentId::new();
+        let cut_short = interrupted.to_string();
+        let idle = AgentId::new().to_string();
         let in_group = |group: i32| {
             std::process::Command::new("sleep")
                 .arg("30")
                 .env(TOKEN_ENV, token)
-                .env(PROCESS_AGENT_ENV, &agent)
+                .env(PROCESS_AGENT_ENV, &cut_short)
                 .env_remove(PROCESS_KEEP_ENV)
                 .process_group(group)
                 .spawn()
@@ -479,7 +503,12 @@ mod tests {
         };
         let mut engine = in_group(0);
         let mut tool = in_group(engine.id() as i32);
-        let mut server = carrier(token, Some((PROCESS_AGENT_ENV, &agent)));
+        let mut own_session_tool = carrier(token, &[(PROCESS_AGENT_ENV, &cut_short)]);
+        let mut kept = carrier(
+            token,
+            &[(PROCESS_AGENT_ENV, &cut_short), (PROCESS_KEEP_ENV, "1")],
+        );
+        let mut idle_server = carrier(token, &[(PROCESS_AGENT_ENV, &idle)]);
         let pid = engine.id();
         let started = start_time(pid).unwrap();
         std::fs::write(
@@ -487,16 +516,28 @@ mod tests {
             format!("{started}\n{token}"),
         )
         .unwrap();
-        assert_eq!(reap(dir.path()).unwrap(), vec![pid]);
-        assert!(exits_soon(&mut engine), "the engine is stopped");
-        assert!(
-            exits_soon(&mut tool),
-            "its in-flight tool command is stopped"
+        let reaped = reap(dir.path(), &HashSet::from([interrupted])).unwrap();
+        let stopped = [&mut engine, &mut tool, &mut own_session_tool].map(exits_soon);
+        let survived = [&mut kept, &mut idle_server].map(alive);
+        for child in [
+            &mut engine,
+            &mut tool,
+            &mut own_session_tool,
+            &mut kept,
+            &mut idle_server,
+        ] {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        assert_eq!(reaped, vec![pid]);
+        assert_eq!(
+            stopped, [true; 3],
+            "the engine and both its tool commands are stopped"
         );
-        let survived = alive(&mut server);
-        server.kill().unwrap();
-        server.wait().unwrap();
-        assert!(survived, "the agent's detached server is left to its owner");
+        assert_eq!(
+            survived, [true; 2],
+            "a kept server and an idle agent's server stay up"
+        );
     }
 
     /// Runs the named test of this binary again with the daemon tagged `tag`.
@@ -521,9 +562,9 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let token = "tok-spares-the-daemon-tag-0001";
-        let mut server = carrier(token, Some((PROCESS_AGENT_ENV, TAG)));
+        let mut server = carrier(token, &[(PROCESS_AGENT_ENV, TAG)]);
         std::fs::write(dir.path().join("4194300"), format!("1\n{token}")).unwrap();
-        reap(dir.path()).unwrap();
+        reap(dir.path(), &HashSet::new()).unwrap();
         let killed = exits_soon(&mut server);
         if !killed {
             server.kill().unwrap();
@@ -539,11 +580,11 @@ mod tests {
     fn spares_a_tagged_process_marked_kept() {
         let dir = tempfile::tempdir().unwrap();
         let token = "tok-spares-kept-0001";
-        let mut swept = carrier(token, None);
-        let mut kept = carrier(token, Some((aether_core::agent::PROCESS_KEEP_ENV, "1")));
+        let mut swept = carrier(token, &[]);
+        let mut kept = carrier(token, &[(aether_core::agent::PROCESS_KEEP_ENV, "1")]);
         // No start time: only the token sweep runs for this record.
         std::fs::write(dir.path().join("4194301"), format!("-\n{token}")).unwrap();
-        reap(dir.path()).unwrap();
+        reap(dir.path(), &HashSet::new()).unwrap();
         assert!(
             !swept.wait().unwrap().success(),
             "the unmarked process is killed"
@@ -557,7 +598,7 @@ mod tests {
     fn keeps_a_record_it_cannot_read() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("4194300"), [0xff, 0xfe]).unwrap();
-        assert!(reap(dir.path()).is_err());
+        assert!(reap(dir.path(), &HashSet::new()).is_err());
         assert!(dir.path().join("4194300").exists());
     }
 
@@ -568,7 +609,7 @@ mod tests {
         let pid = child.id();
         let stale = start_time(pid).unwrap() + 1;
         std::fs::write(dir.path().join(pid.to_string()), stale.to_string()).unwrap();
-        assert!(reap(dir.path()).unwrap().is_empty());
+        assert!(reap(dir.path(), &HashSet::new()).unwrap().is_empty());
         assert!(
             alive(&mut child),
             "mismatched start time must not be signalled"
@@ -591,7 +632,7 @@ mod tests {
             start_time(pid).unwrap().to_string(),
         )
         .unwrap();
-        assert!(reap(dir.path()).unwrap().is_empty());
+        assert!(reap(dir.path(), &HashSet::new()).unwrap().is_empty());
         assert!(alive(&mut child));
         child.kill().unwrap();
         child.wait().unwrap();
@@ -602,7 +643,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().unwrap();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
-        assert!(init(dir.path()).is_err());
+        assert!(init(dir.path(), &HashSet::new()).is_err());
     }
 
     #[test]
@@ -610,7 +651,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("notes.txt"), "x").unwrap();
         std::fs::write(dir.path().join("4194300"), "1").unwrap();
-        assert!(reap(dir.path()).unwrap().is_empty());
+        assert!(reap(dir.path(), &HashSet::new()).unwrap().is_empty());
         assert!(dir.path().join("notes.txt").exists());
     }
 }
