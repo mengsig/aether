@@ -86,18 +86,20 @@ EOF
 
 python3 scripts/mock_openai.py "$PORT" > "$ROOT/mock.log" 2>&1 &
 MOCK=$!
-# The crash drill's servers outlive the daemon by design; stop them here.
-stop_drill_servers() {
-  local file pid
-  for file in "$ROOT"/crash-drill/kept.pid "$ROOT"/crash-drill/held.pid; do
-    [ -s "$file" ] || continue
-    pid=$(cat "$file")
-    if [ "$(cat "/proc/$pid/comm" 2>/dev/null)" = sleep ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+# The crash drill's servers outlive the daemon by design, and a failed drill
+# leaves its call running too; stop them here.
+stop_drill_processes() {
+  local pid
+  # shellcheck disable=SC2013 # call.pids holds two pids on one line
+  for pid in $(cat "$ROOT"/crash-drill/*.pid* 2>/dev/null); do
+    case $(cat "/proc/$pid/comm" 2>/dev/null) in
+      sleep | bash) kill -KILL "$pid" 2>/dev/null || true ;;
+    esac
   done
 }
 cleanup() {
   if [ -n "${DAEMON:-}" ]; then stop_test_child "$DAEMON"; fi
-  stop_drill_servers
+  stop_drill_processes
   kill "$MOCK" 2>/dev/null || true
   wait "$MOCK" 2>/dev/null || true
   echo "artifacts in $ROOT"
@@ -332,6 +334,8 @@ if [ "$(uname -s)" = Linux ]; then
     done
     if running "$pid"; then echo "the interrupted call's process $pid still runs"; exit 1; fi
   done
+  # Gone, so its pids may be reused: the cleanup must not signal them.
+  rm "$DRILL/call.pids"
   running "$HELD" || { echo "the server the agent holds was stopped"; exit 1; }
   running "$KEPT" || { echo "the AETHER_KEEP_PROCESS=1 server was stopped"; exit 1; }
   for ((attempt = 0; attempt < 300; attempt++)); do
@@ -341,7 +345,7 @@ if [ "$(uname -s)" = Linux ]; then
   done
   grep -q 'without inspection' "$DRILL/resumed.jsonl" \
     || { echo "the headless agent was not resumed: $("$BIN" agents --all)"; exit 1; }
-  stop_drill_servers
+  stop_drill_processes
 fi
 step "agents / tasks"
 "$BIN" agents --all
