@@ -48,16 +48,13 @@ impl<S: Stream<Item = io::Result<Event>> + Unpin> TerminalInput<S> {
                 *self.escape_until.insert(Instant::now() + ESC_JOIN)
             }
         };
-        let escape = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        // A read resumed past the window: `timeout_at` would still take a ready key.
-        if Instant::now() >= until {
-            self.escape_until = None;
-            return Some(Ok(escape));
-        }
         let next = tokio::time::timeout_at(until, self.events.next()).await;
         self.escape_until = None;
+        // `timeout_at` takes a ready key even past the window, as after a stall.
+        let late = Instant::now() >= until;
+        let escape = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         Some(Ok(match next {
-            Ok(Some(Ok(Event::Key(key)))) if joins_escape(key) => {
+            Ok(Some(Ok(Event::Key(key)))) if !late && joins_escape(key) => {
                 Event::Key(KeyEvent::new_with_kind_and_state(
                     key.code,
                     key.modifiers | KeyModifiers::ALT,
@@ -88,6 +85,7 @@ fn joins_escape(key: KeyEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::FutureExt;
     use futures::channel::mpsc;
 
     type Sender = mpsc::UnboundedSender<io::Result<Event>>;
@@ -190,6 +188,25 @@ mod tests {
         let n = key(KeyCode::Char('n'), KeyModifiers::NONE);
         tx.unbounded_send(Ok(n.clone())).unwrap();
         assert_eq!(next(&mut input).await, esc, "the window closed before n");
+        assert_eq!(next(&mut input).await, n);
+    }
+
+    /// A read left pending past the window, as a stalled loop leaves it.
+    #[tokio::test(start_paused = true)]
+    async fn a_read_polled_again_after_the_window_keeps_the_escape_alone() {
+        let (tx, mut input) = input();
+        let esc = key(KeyCode::Esc, KeyModifiers::NONE);
+        tx.unbounded_send(Ok(esc.clone())).unwrap();
+        let mut pending = Box::pin(input.next());
+        assert!((&mut pending).now_or_never().is_none(), "waiting to join");
+        tokio::time::sleep(ESC_JOIN * 2).await;
+        let n = key(KeyCode::Char('n'), KeyModifiers::NONE);
+        tx.unbounded_send(Ok(n.clone())).unwrap();
+        assert_eq!(
+            pending.await.unwrap().unwrap(),
+            esc,
+            "n came after the window"
+        );
         assert_eq!(next(&mut input).await, n);
     }
 }
