@@ -494,9 +494,9 @@ fork) still carries its agent's id after it leaves the command's process group.
 Containers run by the Docker daemon do not, and are not Aether's to stop,
 except that a daemon start kills the containers of Aether's own container
 backend that an earlier daemon on the same store left running, before any
-turn starts. If that sweep times out or cannot run `docker kill`, each agent
+turn starts. If that sweep times out or a `docker kill` fails, each agent
 whose mutating call was in flight waits for inspection, even a headless one,
-since its container may still run. On Linux, once the engine is running, the daemon asks the
+since its container may still run, after a host reboot too. On Linux, once the engine is running, the daemon asks the
 user systemd manager to move it into a transient scope named
 `aether-engine-<agent>-<id>.scope`, whose cgroup then holds every descendant,
 even one that cleared its environment or started its own session. A process
