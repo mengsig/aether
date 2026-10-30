@@ -459,6 +459,46 @@ mod tests {
         }
     }
 
+    /// A recovered agent must not race the tool command its engine was running
+    /// when the daemon died, while the server it detached stays up for it.
+    #[test]
+    fn stops_an_agents_interrupted_engine_group_but_spares_its_detached_server() {
+        use aether_core::agent::{PROCESS_AGENT_ENV, PROCESS_KEEP_ENV};
+        let dir = tempfile::tempdir().unwrap();
+        let token = "tok-interrupted-engine-group-0001";
+        let agent = aether_core::id::AgentId::new().to_string();
+        let in_group = |group: i32| {
+            std::process::Command::new("sleep")
+                .arg("30")
+                .env(TOKEN_ENV, token)
+                .env(PROCESS_AGENT_ENV, &agent)
+                .env_remove(PROCESS_KEEP_ENV)
+                .process_group(group)
+                .spawn()
+                .unwrap()
+        };
+        let mut engine = in_group(0);
+        let mut tool = in_group(engine.id() as i32);
+        let mut server = carrier(token, Some((PROCESS_AGENT_ENV, &agent)));
+        let pid = engine.id();
+        let started = start_time(pid).unwrap();
+        std::fs::write(
+            dir.path().join(pid.to_string()),
+            format!("{started}\n{token}"),
+        )
+        .unwrap();
+        assert_eq!(reap(dir.path()).unwrap(), vec![pid]);
+        assert!(exits_soon(&mut engine), "the engine is stopped");
+        assert!(
+            exits_soon(&mut tool),
+            "its in-flight tool command is stopped"
+        );
+        let survived = alive(&mut server);
+        server.kill().unwrap();
+        server.wait().unwrap();
+        assert!(survived, "the agent's detached server is left to its owner");
+    }
+
     /// Runs the named test of this binary again with the daemon tagged `tag`.
     #[allow(clippy::unwrap_used)]
     fn rerun_tagged(test: &str, tag: &str) -> std::process::ExitStatus {
