@@ -154,8 +154,8 @@ async fn an_unresponsive_docker_sweep_is_bounded_and_its_client_is_reaped() {
 }
 
 /// A container sweep that kills what it lists says it finished; one whose kill
-/// hangs past its bound says a container may still run, so the start parks the
-/// interrupted agents rather than resume one beside its container.
+/// hangs past its bound or fails says a container may still run, so the start
+/// parks the interrupted agents rather than resume one beside its container.
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_container_sweep_says_whether_it_stopped_every_container() {
@@ -164,8 +164,10 @@ async fn a_container_sweep_says_whether_it_stopped_every_container() {
     if std::env::var_os(PROBE_ROOT).is_none() {
         let killed = format!("{LIST}printf killed > \"$AETHER_TEST_STARTUP_PROBE_ROOT/stopped\"\n");
         let hung = format!("{LIST}exec /bin/sleep 300\n");
+        let refused = format!("{LIST}exit 1\n");
         assert!(run_isolated(NAME, FAST_ENGINE, &killed).await);
         assert!(run_isolated(NAME, FAST_ENGINE, &hung).await);
+        assert!(run_isolated(NAME, FAST_ENGINE, &refused).await);
         return;
     }
     let probes = std::env::var_os(PROBE_ROOT).unwrap();

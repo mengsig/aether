@@ -814,11 +814,8 @@ fn decide(
     );
     if !unsure.is_empty() {
         let calls = unsure.join(", ");
-        return if restart == Restart::Reboot {
-            (RecoveryClass::Retry, reboot_detail(&calls))
-        } else if restart.stops_processes() && calls_stopped && !agent.config.awaits_inspection() {
-            (RecoveryClass::Retry, restart_detail(&calls))
-        } else if !calls_stopped {
+        // A reboot ends host processes, not a container on a remote Docker host.
+        return if !calls_stopped {
             (
                 RecoveryClass::Inspect,
                 format!(
@@ -826,6 +823,10 @@ fn decide(
                      the restart could not prove their shell command stopped, so it may still run"
                 ),
             )
+        } else if restart == Restart::Reboot {
+            (RecoveryClass::Retry, reboot_detail(&calls))
+        } else if restart.stops_processes() && !agent.config.awaits_inspection() {
+            (RecoveryClass::Retry, restart_detail(&calls))
         } else {
             (
                 RecoveryClass::Inspect,

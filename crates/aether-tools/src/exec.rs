@@ -380,9 +380,16 @@ async fn sweep_orphan_containers_inner(instance_id: &str) -> bool {
             .kill_on_drop(true)
             .status()
             .await;
-        if let Err(e) = killed {
-            tracing::error!(container = %id, error = %e, "cannot kill an orphaned container");
-            swept = false;
+        match killed {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                tracing::error!(container = %id, %status, "docker could not kill an orphaned container");
+                swept = false;
+            }
+            Err(e) => {
+                tracing::error!(container = %id, error = %e, "cannot kill an orphaned container");
+                swept = false;
+            }
         }
     }
     swept

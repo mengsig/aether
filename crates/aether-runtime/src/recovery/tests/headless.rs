@@ -137,6 +137,19 @@ async fn a_headless_agent_waits_when_the_start_could_not_prove_its_call_stopped(
     assert!(detail.contains(&call.to_string()), "{detail}");
 }
 
+/// A reboot ends host processes but not a container on a remote Docker host,
+/// so a call the start could not prove stopped parks the agent there too.
+#[tokio::test]
+async fn a_reboot_parks_an_agent_whose_call_the_start_could_not_prove_stopped() {
+    let (_runtime, _dir, agent) = headless_fixture().await;
+    let unsure = vec!["call-1".to_owned()];
+    let (stopped, _) = decide(&agent, Restart::Reboot, &unsure, true, true);
+    let (unproven, detail) = decide(&agent, Restart::Reboot, &unsure, true, false);
+    assert_eq!(stopped, RecoveryClass::Retry);
+    assert_eq!(unproven, RecoveryClass::Inspect);
+    assert!(detail.contains("could not prove"), "{detail}");
+}
+
 #[tokio::test]
 async fn a_restarted_agent_keeps_saying_whether_a_person_watches_it() {
     for (stored, successor) in [(Some(true), Some(true)), (None, Some(false))] {
