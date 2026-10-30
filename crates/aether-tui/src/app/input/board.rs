@@ -1,11 +1,13 @@
-//! Stage 2: board keys while it has focus (↑↓ ←→ Home End Enter `.` Esc;
-//! Ctrl+G, Ctrl+B and other keys pass to global dispatch). Owner: W6 (board model helpers: W3).
+//! Stage 2: board keys while it has focus (↑↓ ←→ Home End Enter `.` Esc, and the
+//! viewer's Alt+- / Alt+= / Alt+Z sizing it; Ctrl+G, Ctrl+B and other keys pass to
+//! global dispatch). Owner: W6 (board model helpers: W3).
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
 use super::Dispatch;
 use crate::app::{App, Effect};
 use crate::keys::KeyAction;
+use crate::ui::layout::{self, BOARD_DOCK_MIN_COLS};
 
 impl App {
     pub(super) fn board_key(&mut self, key: KeyEvent) -> Dispatch {
@@ -33,6 +35,9 @@ impl App {
         {
             self.leave_board();
             return Dispatch::Pass;
+        }
+        if let Some(effects) = self.board_size_key(key) {
+            return Dispatch::Handled(effects);
         }
         if !key.modifiers.is_empty() {
             return Dispatch::Pass;
@@ -71,6 +76,34 @@ impl App {
             _ => return Dispatch::Pass,
         };
         Dispatch::Handled(effects)
+    }
+
+    /// The viewer's size keys narrow, widen or fill the screen with the focused board.
+    fn board_size_key(&mut self, key: KeyEvent) -> Option<Vec<Effect>> {
+        let less = self.keys.matches(KeyAction::ViewerLess, key);
+        let more = self.keys.matches(KeyAction::ViewerMore, key);
+        if !(less || more || self.keys.matches(KeyAction::ViewerFull, key)) {
+            return None;
+        }
+        let cols = self.size.0;
+        if cols < BOARD_DOCK_MIN_COLS {
+            self.flash(format!(
+                "the board already fills the screen; it resizes at {BOARD_DOCK_MIN_COLS} columns or wider"
+            ));
+            return Some(Vec::new());
+        }
+        if !(less || more) {
+            self.board.full = !self.board.full;
+        } else if self.board.full {
+            // Narrowing a full screen board docks it again; it cannot get wider.
+            self.board.full = !less;
+        } else {
+            let current = layout::chosen_board_width(cols, self.board.width);
+            self.board.width = Some(layout::step_board_width(cols, current, more));
+        }
+        debug_assert!(self.board.focused());
+        debug_assert!(self.board.full == self.board_fullscreen_at(cols));
+        Some(Vec::new())
     }
 
     /// Enter: view the cursor's agent; docked hands focus back, the overlay closes.

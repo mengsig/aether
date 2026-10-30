@@ -63,9 +63,10 @@ impl App {
         {
             return;
         }
-        if self.board_mode() == BoardMode::Overlay {
+        if self.board_is_overlay() {
             self.board.open = false;
         }
+        self.board.full = false;
         self.board.focus = BoardFocus::BottomPane;
         self.dirty = true;
     }
@@ -98,6 +99,7 @@ impl App {
                 self.size = (w, h);
                 if docked && self.board_mode() == BoardMode::Overlay {
                     self.board.open = false;
+                    self.board.full = false;
                     self.board.focus = BoardFocus::BottomPane;
                 }
                 self.dirty = true;

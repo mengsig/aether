@@ -123,6 +123,15 @@ it focused and Ctrl+G, Ctrl+B or Esc closes it.
 - At 100 columns or wider the board docks on the right, about 30 % of the
   width (40–56 columns). Below 100 columns it covers the screen instead, and
   Esc or Enter closes it.
+- While the board has focus, the file viewer's size keys size the board:
+  **Alt+-** narrows it and **Alt+=** widens it by 5 % of the terminal width,
+  between 40 columns and the width that leaves the transcript and composer 40
+  columns. **Alt+Z** fills the screen with the board; Alt+Z again, Alt+- or
+  leaving the board (Esc, Enter, Ctrl+G) docks it again. The chosen width
+  lasts for the session, across Ctrl+B, and is clamped again whenever the
+  terminal is resized; it is not saved. Below 100 columns the keys only say
+  that the board already fills the screen. With focus anywhere else they
+  size the file viewer as before.
 - On a terminal at least 140 columns wide the board starts open.
 - The top is the agent tree, two rows per agent: status glyph, name,
   role, elapsed time and cost, then model and effort. A root's second row
@@ -523,10 +532,10 @@ These removals are intentional. The daemon capabilities remain available:
 | Memory curation Activity tab | `aether events`; `/memory` Enter opens full record details |
 | `/show` in plain mode | `aether agents --all`; `.` remains available in the interactive board |
 
-Vim cursor/selection, divider dragging/sidebar resizing, fullscreen panel keys,
+Vim cursor/selection, divider dragging, the old fullscreen panel keys,
 and the old Ctrl+P/Ctrl+X×2/Ctrl+↑↓/Ctrl+O bindings were also removed
 (Ctrl+O now opens the workspace picker, where Ctrl+P pins a workspace).
-Use terminal selection or `/copy`, the automatic board layout, the slash popup,
+Use terminal selection or `/copy`, Alt+- / Alt+= on the focused board, the slash popup,
 `/cancel`, board navigation, and Ctrl+T respectively. Ctrl+G now goes to the
 agents board. High-contrast
 `contrast`/`hc` themes and the saved `high_contrast` setting were removed; choose
@@ -658,6 +667,8 @@ List, popup, board navigation and approval keys stay fixed.
 | `Shift+P` | pause or resume the agent subtree |
 | `Shift+I` | interrupt only the current turn; keep the agent |
 | `.` | show or hide archived agents |
+| `Alt+- / Alt+=` | narrow / widen the docked board; the width stays for the session |
+| `Alt+Z` | toggle the board full screen |
 | `Esc / Ctrl+G` | back to the composer |
 
 **In an approval or a list**
@@ -934,7 +945,7 @@ Reference discovery examines the first 256 KiB of each message, with a shared
 trigger repeated unbounded scans while output streams.
 
 The viewer starts at half width. **Alt+- / Alt+=** resize it, **Alt+Z** toggles
-full screen, and **Esc** (with the viewer focused) or **Alt+W** closes it. Narrow terminals show it full width.
+full screen (while the board has focus these keys size the board instead), and **Esc** (with the viewer focused) or **Alt+W** closes it. Narrow terminals show it full width.
 **Tab** switches focus and leaves full screen when returning to chat; arrows and PageUp/PageDown scroll while focused, and
 **Alt+E** opens the selected file through `xdg-open` (Linux) or `open` (macOS).
 Approvals retain priority. Closing the viewer does not stop the agent.
