@@ -239,6 +239,12 @@ Each engine run gets the agent's own temp directory (see
   inherit them. In sandbox mode Claude Code sets `TMPDIR` to its own
   `claude-<uid>` subdirectory inside that directory. Network-denied runs are
   sandboxed, and their sandbox may also write to the agent's temp directory.
+  When the workspace is a linked Git worktree, that sandbox may also write the
+  repository's shared Git directory (`git rev-parse --git-common-dir`), where
+  a commit writes the worktree's index, refs and objects. Nothing wider is
+  added: a plain checkout's `.git` is already inside the workspace. Claude Code
+  2.1.312 also allows that directory by itself; the explicit entry keeps
+  commits working on versions that do not.
 - **Codex** gets the variables in the app-server's environment, the loopback
   sandbox's environment, and `shell_environment_policy.set`. Codex applies
   `include_only` after `set`, so if your `shell_environment_policy` allowlists

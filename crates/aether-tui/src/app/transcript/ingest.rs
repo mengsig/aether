@@ -1608,6 +1608,12 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
             );
             notice(t, at, NoticeKind::Engine, text);
         }
+        EventKind::Custom { name, payload } if name == "deadline.warning" => {
+            let left = payload["minutes_left"].as_u64().unwrap_or(0);
+            let deadline = payload["deadline"].as_str().unwrap_or("its deadline");
+            let text = format!("Deadline in {left} min ({deadline}): told to commit what works");
+            notice(t, at, NoticeKind::BudgetWarning, text.into());
+        }
         EventKind::Custom { name, payload } if name == "agent.stalled" => {
             let engine = payload["engine"].as_str().unwrap_or("engine");
             let silent = payload["silent_secs"].as_u64().unwrap_or(0);

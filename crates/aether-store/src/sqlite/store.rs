@@ -305,6 +305,24 @@ impl Store for SqliteStore {
         Ok(event)
     }
 
+    fn latest_agent_custom_event(&self, agent: AgentId, name: &str) -> Result<Option<Event>> {
+        let conn = self.read_conn()?;
+        // The `(agent_id, type, seq)` index walks the agent's custom events
+        // newest first.
+        let sql = "SELECT body FROM events WHERE agent_id = ?1 AND type = 'custom' \
+                   AND json_extract(body, '$.kind.name') = ?2 \
+                   ORDER BY seq DESC LIMIT 1";
+        let mut events = super::event_blobs::read_events(&conn, sql, &[&agent.to_string(), &name])?;
+        debug_assert!(events.len() <= 1, "the query is limited to one row");
+        let event = events.pop();
+        debug_assert!(
+            event.as_ref().is_none_or(|event| event.agent_id == Some(agent)
+                && matches!(&event.kind, aether_core::event::EventKind::Custom { name: found, .. } if found == name)),
+            "the query matches only the agent and name asked for"
+        );
+        Ok(event)
+    }
+
     fn event_by_seq(&self, seq: u64) -> Result<Option<Event>> {
         if seq == 0 || seq > i64::MAX as u64 {
             return Ok(None);

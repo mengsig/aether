@@ -157,6 +157,13 @@ impl Store for CountingStore {
     fn latest_custom_event(&self, names: &[&str]) -> aether_store::Result<Option<Event>> {
         self.inner.latest_custom_event(names)
     }
+    fn latest_agent_custom_event(
+        &self,
+        agent: AgentId,
+        name: &str,
+    ) -> aether_store::Result<Option<Event>> {
+        self.inner.latest_agent_custom_event(agent, name)
+    }
     fn agent(&self, id: AgentId) -> StoreResult<Option<Agent>> {
         self.reads.lock().expect("reads").agent_reads += 1;
         self.inner.agent(id)

@@ -6,7 +6,7 @@
 //! echo is the acknowledgement the runtime waits for before recording the
 //! message as consumed.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -113,6 +113,17 @@ impl ClaudeCodeEngine {
     }
 
     pub fn args(&self, turn: &EngineTurn) -> Vec<String> {
+        self.args_with_git_dir(turn, None)
+    }
+
+    /// `args`, with `git_dir` (the repository's shared Git directory outside
+    /// the workspace) writable in the network-denied sandbox, so a linked
+    /// worktree can commit.
+    fn args_with_git_dir(&self, turn: &EngineTurn, git_dir: Option<&Path>) -> Vec<String> {
+        debug_assert!(
+            git_dir.is_none_or(|dir| dir.is_absolute() && sandboxed(turn)),
+            "only a sandboxed turn is given an absolute Git directory"
+        );
         let mut args: Vec<String> = vec![
             "-p".into(),
             "--input-format".into(),
@@ -155,7 +166,7 @@ impl ClaudeCodeEngine {
         if toolless || !turn.network_access {
             settings["disableAllHooks"] = json!(true);
         }
-        if !toolless && !turn.network_access {
+        if sandboxed(turn) {
             // Inherited exclusions and MCP servers can escape the sandbox.
             args.extend([
                 "--setting-sources".into(),
@@ -172,6 +183,8 @@ impl ClaudeCodeEngine {
                 .temp_dir
                 .iter()
                 .chain(turn.build_env.iter().map(|(_, dir)| dir))
+                .map(PathBuf::as_path)
+                .chain(git_dir)
                 .map(|dir| dir.to_string_lossy())
                 .collect();
             if !writable.is_empty() {
@@ -248,6 +261,20 @@ impl ClaudeCodeEngine {
         }
         args
     }
+}
+
+/// Whether the turn runs its tools in Claude Code's network-denied sandbox.
+fn sandboxed(turn: &EngineTurn) -> bool {
+    !turn.network_access && !turn.summary_only && !turn.compact_session
+}
+
+/// The Git directory outside the workspace a sandboxed turn must write to
+/// commit: its repository's, when the workspace is a linked worktree.
+async fn sandbox_git_dir(turn: &EngineTurn) -> Option<PathBuf> {
+    if !sandboxed(turn) {
+        return None;
+    }
+    git_dir::outside_common_dir(&turn.cwd).await
 }
 
 /// Claude Code compacts this many tokens below `CLAUDE_CODE_AUTO_COMPACT_WINDOW`
@@ -366,7 +393,8 @@ impl ClaudeCodeEngine {
         } else if !turn.summary_only {
             self.validate_network_policy(turn.network_access)?;
         }
-        let args = self.args(&turn);
+        let git_dir = sandbox_git_dir(&turn).await;
+        let args = self.args_with_git_dir(&turn, git_dir.as_deref());
         let cwd: PathBuf = turn.cwd.clone();
         let mut state = ParseState::for_turn(&turn);
         let outstanding = state.outstanding.clone();
@@ -411,6 +439,7 @@ impl ClaudeCodeEngine {
     }
 }
 
+mod git_dir;
 mod input;
 mod ownership;
 mod telemetry;
