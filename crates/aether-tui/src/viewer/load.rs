@@ -9,6 +9,8 @@ pub struct ReadRequest {
     pub id: u64,
     pub target: String,
     pub workspace: PathBuf,
+    /// The daemon's image store, where a sent image's target is read from.
+    pub stored_images: Option<PathBuf>,
     pub approved_outside: Option<PathBuf>,
     pub width: u16,
     pub height: u16,
@@ -59,6 +61,9 @@ pub enum Preview {
 
 pub fn read(request: &ReadRequest, documents: &mut Documents) -> anyhow::Result<Preview> {
     ensure!(request.width > 0 && request.height > 0, "pane is too small");
+    if super::sent_images::is_sent_image(&request.target) {
+        return super::sent_images::preview(request);
+    }
     let workspace = request
         .workspace
         .canonicalize()

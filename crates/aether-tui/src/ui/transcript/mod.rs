@@ -232,11 +232,13 @@ fn file_row_matches(
             let ambiguous = refs
                 .iter()
                 .any(|other| other.label == reference.label && other.target != reference.target);
+            // A sent image's line is its link, though nothing styles it as one.
+            let image = crate::viewer::sent_images::is_sent_image(&reference.target);
             if reference.label != reference.target && !ambiguous {
                 ranges.extend(
                     row_hits(lines, row, &reference.label)
                         .into_iter()
-                        .filter(|range| styled_link(line, *range, theme.link())),
+                        .filter(|range| image || styled_link(line, *range, theme.link())),
                 );
             }
             (!ranges.is_empty()).then(|| (reference.clone(), ranges))

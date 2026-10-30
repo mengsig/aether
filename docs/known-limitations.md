@@ -186,6 +186,10 @@ looks like a boundary and is not one.
   which it can open with a tool but no longer sees.
 - An image over 3.75 MiB is refused, not shrunk; a full-screen capture of a
   4K display can exceed that as PNG. Crop it or save it as JPEG.
+- A sent image opens in the viewer pane only in a TUI on the daemon's own
+  machine and data directory. The TUI reads the image from the daemon's
+  store. Over SSH, or with a daemon started under another `AETHER_DATA_DIR`,
+  the TUI says where the image is, or says that it is no longer stored.
 - Only people attach images. Agents cannot send images to each other or in
   replies, the terminal does not draw them, and the picker for other file
   types is not shipped.

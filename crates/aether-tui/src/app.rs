@@ -249,7 +249,7 @@ pub use helpers::{
     subscription_query, tool_input_hint,
 };
 use helpers::{decode_artifact, eviction_notice, explain, names_version, then_operation};
-pub(crate) use images::{image_label, with_image_lines};
+pub(crate) use images::{image_label, image_lines, with_image_lines};
 mod accounting;
 mod agents;
 pub mod approval_flow;

@@ -25,6 +25,19 @@ clients on 17 through 24 see it as `usage_limit`.
 
 ### Fixed
 
+- **A sent image opens from its transcript line in the TUI (#345).** A click
+  on `[image: shot.png, 1.2 MB]` used to look up `shot.png` in the agent's
+  workspace. That lookup failed for a pasted image, which has no file, and
+  for an attached file that had since been moved, and it said "File not
+  found … ask the agent to create it". The line now opens, in the viewer
+  pane, the copy the daemon stored when the message was sent, checked
+  against its digest. This also works after the file is gone, after the
+  TUI restarts, and in a second TUI on the same machine. The file picker
+  (Alt+O) lists the line too. An image the daemon no longer holds says
+  "This image is no longer stored.". A TUI connected over SSH says that
+  the image is on the remote host. When one message carries images with
+  the same name and size, every line after the first is numbered
+  (`[image 2: …]`), so each line opens its own image.
 - **An agent is warned before its deadline stops it.** A deadline was a hard
   stop with no warning: an agent saw it only by calling `inspect_state`, and
   at the deadline it was failed mid-edit with its uncommitted work left

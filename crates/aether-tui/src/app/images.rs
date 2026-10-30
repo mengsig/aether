@@ -37,14 +37,32 @@ pub(crate) fn image_label(image: &ImageAttachment) -> String {
     format!("[image: {}]", image.summary())
 }
 
-/// `text`, then one line per image label.
-pub(crate) fn with_image_lines(text: &str, labels: impl Iterator<Item = String>) -> String {
+/// One transcript line per image, from each image's summary. A summary seen
+/// before is numbered, so every line names exactly one image.
+pub(crate) fn image_lines(summaries: impl Iterator<Item = String>) -> Vec<String> {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let lines: Vec<String> = summaries
+        .map(|summary| {
+            let count = seen.entry(summary.clone()).or_default();
+            *count += 1;
+            match *count {
+                1 => format!("[image: {summary}]"),
+                n => format!("[image {n}: {summary}]"),
+            }
+        })
+        .collect();
+    debug_assert_eq!(seen.values().sum::<usize>(), lines.len());
+    lines
+}
+
+/// `text`, then one line per image summary.
+pub(crate) fn with_image_lines(text: &str, summaries: impl Iterator<Item = String>) -> String {
     let mut lines: Vec<String> = Vec::new();
     let text = text.trim();
     if !text.is_empty() {
         lines.push(text.to_owned());
     }
-    lines.extend(labels);
+    lines.extend(image_lines(summaries));
     lines.join("\n")
 }
 

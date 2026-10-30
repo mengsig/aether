@@ -16,7 +16,7 @@ pub fn display_lines(cell: &CellModel, width: u16, theme: &Theme) -> Vec<Line<'s
 }
 
 pub fn layout(cell: &CellModel, width: u16, _detail: bool, theme: &Theme) -> Layout {
-    let CellModel::User { from, text } = cell else {
+    let CellModel::User { from, text, .. } = cell else {
         return Layout::default();
     };
     let first = lead(from, theme);
@@ -40,7 +40,7 @@ pub fn layout(cell: &CellModel, width: u16, _detail: bool, theme: &Theme) -> Lay
 
 /// The pinned header row: the prompt on one tinted row, cut with an ellipsis.
 pub fn pinned_line(cell: &CellModel, width: u16, theme: &Theme) -> Option<Line<'static>> {
-    let CellModel::User { from, text } = cell else {
+    let CellModel::User { from, text, .. } = cell else {
         return None;
     };
     let mut spans = lead(from, theme);

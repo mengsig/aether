@@ -419,7 +419,8 @@ fn filtering_never_suppresses_decisions_or_failures() {
             from: UserFrom::Message {
                 from: "tester".into()
             },
-            text: "done".into()
+            text: "done".into(),
+            images: Vec::new(),
         }),
         Category::AgentMessage
     );
@@ -436,6 +437,7 @@ fn every_category_can_be_selected_independently() {
             CellModel::User {
                 from: UserFrom::Operator,
                 text: "hello".into(),
+                images: Vec::new(),
             },
         ),
         (
@@ -1380,6 +1382,7 @@ fn compact_coordination_snapshot() {
                 from: "tester".into(),
             },
             text: "Isolated test passed; full CI next".into(),
+            images: Vec::new(),
         },
         CellModel::ChildResult {
             agent,

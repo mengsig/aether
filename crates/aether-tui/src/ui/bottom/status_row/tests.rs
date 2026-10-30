@@ -15,6 +15,7 @@ fn busy() -> Fleet {
     let user = CellModel::User {
         from: UserFrom::Operator,
         text: "Add a --json flag".to_owned(),
+        images: Vec::new(),
     };
     push_cell(&mut f.app, f.root, at(-72_000), user);
     f

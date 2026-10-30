@@ -17,10 +17,12 @@ pub fn line(model: &CellModel, width: u16, theme: &Theme) -> Option<Line<'static
         CellModel::User {
             from: UserFrom::Message { from },
             text,
+            ..
         } => parts.extend(["From ", from, ": ", text]),
         CellModel::User {
             from: UserFrom::Task { from },
             text,
+            ..
         } => parts.extend(["Task from ", from, ": ", text]),
         CellModel::ChildResult {
             name,

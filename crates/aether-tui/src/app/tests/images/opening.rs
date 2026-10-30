@@ -1,0 +1,279 @@
+//! A sent image's transcript line opens the copy the daemon stored, however
+//! the image arrived and whichever client shows the transcript (#345).
+use super::*;
+use crate::testing::render_with;
+use crate::ui::transcript::ViewCache;
+use crate::viewer::{Documents, Preview, graphics, sent_images, tools};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+/// A decodable PNG whose pixels depend on `seed`.
+fn picture(seed: u8) -> Vec<u8> {
+    let pixels = image::RgbaImage::from_fn(6, 4, |x, y| {
+        image::Rgba([seed.wrapping_add(x as u8 * 40), y as u8 * 60, 200, 255])
+    });
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgba8(pixels)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("encode a png");
+    bytes
+}
+
+fn clipboard_image(bytes: &[u8]) -> ImageAttachment {
+    ImageAttachment {
+        media_type: "image/png".into(),
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+        name: None,
+    }
+}
+
+/// What the daemon does with a sent message's images: store each under its
+/// digest in `store`, and deliver the message naming the stored copies.
+fn daemon_stores(store: &std::path::Path, images: &[ImageAttachment]) -> Vec<ContentBlock> {
+    images
+        .iter()
+        .map(|image| {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&image.data)
+                .expect("base64");
+            let reference = aether_core::attachment::check_image(
+                &bytes,
+                &image.media_type,
+                image.name.as_deref(),
+                "1",
+            )
+            .expect("the daemon takes the image");
+            std::fs::write(store.join(reference.file_name()), &bytes).expect("store");
+            ContentBlock::ImageRef(reference)
+        })
+        .collect()
+}
+
+/// An app viewing a ready agent, reading images from `store`.
+fn app_with_store(store: &std::path::Path) -> App {
+    let (mut app, _) = app_viewing(AgentStatus::Ready);
+    app.options.attachment_dir = Some(store.to_owned());
+    app.size = (160, 40);
+    app.board.open = false;
+    app
+}
+
+/// Click the transcript line that reads `line`, and load what it asks for.
+fn click_line<'a>(app: &'a mut App, line: &str) -> &'a Result<Preview, String> {
+    let mut cache = ViewCache::default();
+    let screen = render_with(app, &mut cache, 160, 40);
+    assert!(screen.contains(line), "{screen}");
+    let hit = cache
+        .file_hits
+        .iter()
+        .find(|hit| hit.reference.label == line)
+        .unwrap_or_else(|| panic!("`{line}` is clickable: {:?}", cache.file_hits))
+        .clone();
+    let mouse = |kind| MouseEvent {
+        kind,
+        column: hit.area.x + 1,
+        row: hit.area.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.dispatch_mouse(mouse(MouseEventKind::Down(MouseButton::Left)), &mut cache);
+    let effects = app.dispatch_mouse(mouse(MouseEventKind::Up(MouseButton::Left)), &mut cache);
+    load(app, effects)
+}
+
+/// Read the preview `effects` ask for, as the viewer worker does; the viewer shows it.
+fn load(app: &mut App, effects: Vec<Effect>) -> &Result<Preview, String> {
+    let [Effect::PreviewFile(request)] = &effects[..] else {
+        panic!("one preview asked for: {effects:?}");
+    };
+    assert!(sent_images::is_sent_image(&request.target), "{request:?}");
+    let mut documents = Documents::new(tools::Tools::default());
+    let result = crate::viewer::read(request, &mut documents).map_err(|e| format!("{e:#}"));
+    let id = request.id;
+    app.reduce(AppEvent::PreviewReady { id, result });
+    assert!(app.viewer.open);
+    assert_eq!(app.viewer.pending.as_ref().map(|r| r.id), Some(id));
+    app.viewer.preview.as_ref().expect("the preview landed")
+}
+
+/// The half-block rows `bytes` paint in the pane `preview` was drawn for.
+fn assert_shows(preview: &Result<Preview, String>, bytes: &[u8]) {
+    let Ok(Preview::Image { rows, path, .. }) = preview else {
+        panic!("an image preview: {preview:?}");
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let original = dir.path().join("original.png");
+    std::fs::write(&original, bytes).expect("write");
+    let decoded = graphics::load(&original).expect("decode the original");
+    let width = rows.iter().map(|row| row.width()).max().unwrap_or(0);
+    let expected = graphics::render_half_blocks(&decoded, width as u16, rows.len() as u16);
+    assert_eq!(*rows, expected, "the stored pixels, not another file's");
+    assert_eq!(std::fs::read(path).expect("the stored file"), bytes);
+}
+
+#[test]
+fn a_pasted_image_opens_from_its_transcript_line() {
+    let store = tempfile::tempdir().expect("store");
+    let mut app = app_with_store(store.path());
+    let bytes = picture(1);
+    attach(&mut app, clipboard_image(&bytes));
+    let (_, _, images) = sent(&app.reduce(key(KeyCode::Enter)));
+    push_user_content(&mut app, daemon_stores(store.path(), &images));
+
+    let line = format!("[image: image/png, {} B]", bytes.len());
+    assert_shows(click_line(&mut app, &line), &bytes);
+    let screen = render_to(&app, 160, 40);
+    assert!(screen.contains("Sent image"), "{screen}");
+    assert!(!screen.contains("File not found"), "{screen}");
+}
+
+#[test]
+fn an_attached_file_opens_after_it_was_deleted_not_a_workspace_namesake() {
+    let store = tempfile::tempdir().expect("store");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut app = app_with_store(store.path());
+    app.options.cwd = Some(workspace.path().to_owned());
+    std::fs::write(workspace.path().join("shot.png"), picture(9)).expect("namesake");
+    let (_dir, path) = png_file("shot.png");
+    let bytes = picture(2);
+    std::fs::write(&path, &bytes).expect("write");
+
+    assert_eq!(
+        app.run_image_command(ImageArg::File(path.display().to_string())),
+        vec![Effect::AttachImage(ImageSource::File(path.clone()))]
+    );
+    let read = aether_client::images::read_image_file(&path).map_err(|e| e.to_string());
+    app.reduce(AppEvent::ImageRead(read));
+    let (_, _, images) = sent(&app.reduce(key(KeyCode::Enter)));
+    std::fs::remove_file(&path).expect("the file goes away");
+    push_user_content(&mut app, daemon_stores(store.path(), &images));
+
+    let line = format!("[image: shot.png, {} B]", bytes.len());
+    assert_shows(click_line(&mut app, &line), &bytes);
+}
+
+#[test]
+fn another_client_opens_the_image_until_it_is_no_longer_stored() {
+    let store = tempfile::tempdir().expect("store");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut sender = app_with_store(store.path());
+    let bytes = picture(3);
+    attach(&mut sender, clipboard_image(&bytes));
+    let (_, _, images) = sent(&sender.reduce(key(KeyCode::Enter)));
+    let delivered = daemon_stores(store.path(), &images);
+    drop(sender);
+
+    // A restarted TUI, or a second one, sees the message as the daemon replays it.
+    let mut viewer = app_with_store(store.path());
+    viewer.options.cwd = Some(workspace.path().to_owned());
+    push_user_content(&mut viewer, delivered.clone());
+    let line = format!("[image: image/png, {} B]", bytes.len());
+    assert_shows(click_line(&mut viewer, &line), &bytes);
+
+    // The file picker, the keyboard's way in, lists the line and opens it too.
+    viewer.reduce(AppEvent::Key(KeyEvent::new(
+        KeyCode::Char('o'),
+        KeyModifiers::ALT,
+    )));
+    let listed: Vec<_> = viewer
+        .viewer
+        .picker
+        .iter()
+        .map(sent_images::picker_name)
+        .collect();
+    assert_eq!(listed, [line.as_str()]);
+    let effects = viewer.reduce(key(KeyCode::Enter));
+    assert_shows(load(&mut viewer, effects), &bytes);
+
+    let ContentBlock::ImageRef(stored) = &delivered[0] else {
+        panic!("a stored image");
+    };
+    std::fs::remove_file(store.path().join(stored.file_name())).expect("pruned");
+    let Some(message) = click_line(&mut viewer, &line).as_ref().err().cloned() else {
+        panic!("a missing image is an error");
+    };
+    assert_eq!(message, sent_images::NOT_STORED);
+    let screen = render_to(&viewer, 160, 40);
+    assert!(screen.contains(sent_images::NOT_STORED), "{screen}");
+    assert!(!screen.contains("ask the agent"), "{screen}");
+}
+
+#[test]
+fn a_stored_file_that_is_not_the_image_is_refused() {
+    let store = tempfile::tempdir().expect("store");
+    let mut app = app_with_store(store.path());
+    let bytes = picture(4);
+    let delivered = daemon_stores(store.path(), &[clipboard_image(&bytes)]);
+    let ContentBlock::ImageRef(stored) = &delivered[0] else {
+        panic!("a stored image");
+    };
+    std::fs::write(store.path().join(stored.file_name()), picture(5)).expect("swap");
+    push_user_content(&mut app, delivered);
+    let line = format!("[image: image/png, {} B]", bytes.len());
+    let Err(message) = click_line(&mut app, &line) else {
+        panic!("another image's bytes are not shown");
+    };
+    assert!(message.starts_with(sent_images::NOT_STORED), "{message}");
+}
+
+#[test]
+fn a_remote_client_says_where_the_image_is_and_reads_nothing() {
+    let store = tempfile::tempdir().expect("store");
+    let mut app = app_with_store(store.path());
+    let delivered = daemon_stores(store.path(), &[clipboard_image(&picture(6))]);
+    push_user_content(&mut app, delivered);
+    let remote = aether_client::SshRemote::new("box", "user@example.com").expect("a remote");
+    app.options.endpoint = Some(aether_client::Endpoint::Ssh(remote));
+    assert!(app.options.is_remote());
+    let reference = sent_images::cell_references(
+        &app.transcripts[&app.selected.expect("viewed")]
+            .cells
+            .last()
+            .expect("the message")
+            .model,
+    )
+    .pop()
+    .expect("the image line");
+    assert!(app.open_reference(reference).is_empty());
+    assert!(!app.viewer.open);
+    let flash = app.live_flash().expect("said why");
+    assert!(flash.contains("remote host"), "{flash}");
+}
+
+#[test]
+fn images_with_one_summary_get_lines_of_their_own() {
+    let image = |seed: u8| AttachmentRef {
+        id: AttachmentId::of(&[seed]),
+        media_type: "image/png".into(),
+        size_bytes: 1_300_000,
+        name: None,
+    };
+    let images = vec![image(1), image(2)];
+    let model = crate::app::transcript::CellModel::User {
+        from: crate::app::transcript::UserFrom::Operator,
+        text: crate::app::with_image_lines(
+            "see image/png",
+            images.iter().map(AttachmentRef::summary),
+        ),
+        images: images.clone(),
+    };
+    let references = sent_images::cell_references(&model);
+    let labels: Vec<_> = references.iter().map(|r| r.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        [
+            "image/png",
+            "[image: image/png, 1.2 MB]",
+            "[image 2: image/png, 1.2 MB]"
+        ]
+    );
+    assert_eq!(
+        references[0].target, "image/png",
+        "the words keep their file links"
+    );
+    for (reference, image) in references[1..].iter().zip(&images) {
+        assert!(sent_images::is_sent_image(&reference.target));
+        assert!(reference.target.ends_with(&image.file_name()));
+    }
+}

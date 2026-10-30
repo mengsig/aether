@@ -61,6 +61,7 @@ fn fixtures() -> Vec<(&'static str, CellModel)> {
             CellModel::User {
                 from: UserFrom::Operator,
                 text: "Fix the flaky shell_bg test and explain the root cause in `store.rs` before touching anything else in the crate.".into(),
+                images: Vec::new(),
             },
         ),
         (
@@ -68,6 +69,7 @@ fn fixtures() -> Vec<(&'static str, CellModel)> {
             CellModel::User {
                 from: UserFrom::Task { from: "aether".into() },
                 text: "Map the WAL sync path".into(),
+                images: Vec::new(),
             },
         ),
         (
@@ -976,6 +978,7 @@ fn a_pinned_prompt_is_dim_and_ends_in_an_ellipsis() {
         let cell = CellModel::User {
             from: UserFrom::Operator,
             text: text.into(),
+            images: Vec::new(),
         };
         user::pinned_line(&cell, width, &theme).expect("a user cell pins")
     };
@@ -1005,6 +1008,7 @@ fn pinned_prompt_uses_a_bounded_unicode_prefix() {
         let prompt = |text| CellModel::User {
             from: UserFrom::Operator,
             text,
+            images: Vec::new(),
         };
         let baseline = user::pinned_line(&prompt(prefix.clone()), width, &theme).unwrap();
         let large = user::pinned_line(

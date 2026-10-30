@@ -110,6 +110,7 @@ fn operator_cells(app: &App, agent: AgentId) -> Vec<String> {
             CellModel::User {
                 from: crate::app::transcript::UserFrom::Operator,
                 text,
+                ..
             } => Some(text.clone()),
             _ => None,
         })
