@@ -75,11 +75,14 @@ fn lone_escape(key: KeyEvent) -> bool {
     key.code == KeyCode::Esc && key.modifiers.is_empty() && key.kind == KeyEventKind::Press
 }
 
-/// The keys crossterm itself prefixes with Alt when ESC arrives with them.
+/// Keys an Alt shortcut can end in. No shortcut is Ctrl+Alt, so a quick Esc
+/// then Ctrl+C stays both keys rather than one chord nothing answers.
 fn joins_escape(key: KeyEvent) -> bool {
     key.kind == KeyEventKind::Press
         && key.code != KeyCode::Esc
-        && !key.modifiers.contains(KeyModifiers::ALT)
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
 }
 
 #[cfg(test)]
@@ -146,10 +149,11 @@ mod tests {
         let started = Instant::now();
         assert_eq!(next(&mut input).await, esc);
         assert_eq!(started.elapsed(), ESC_JOIN, "waits exactly the join window");
-        // A second Esc, an Alt chord or a paste is not joined, and still arrives.
+        // A second Esc, an Alt or Ctrl chord or a paste is not joined, and still arrives.
         for follower in [
             esc.clone(),
             key(KeyCode::Char('o'), KeyModifiers::ALT),
+            key(KeyCode::Char('c'), KeyModifiers::CONTROL),
             Event::Paste("text".into()),
         ] {
             tx.unbounded_send(Ok(esc.clone())).unwrap();
