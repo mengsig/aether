@@ -68,8 +68,8 @@ def viewer(field, changed):
 # Per binding: (keys typed first, key, what the binding visibly did). The
 # fixture daemon has no notification center, so Alt+N shows that notice.
 BINDINGS = {
-    "alt+o": (b"", "o", lambda after, before, _: after["viewer"]["picker"] == 2
-              and not before["viewer"]["open"]),
+    "alt+o": (b"", "o", lambda after, before, _: not before["viewer"]["open"]
+              and after["viewer"]["open"] and after["viewer"]["picker"] == 2),
     "alt+e": (OPEN_NOTES, "e", lambda after, before, _: after["opened"] == before["opened"] + 1),
     "alt+w": (OPEN_NOTES, "w", viewer("open", lambda was, now: was and not now)),
     "alt+z": (OPEN_NOTES, "z", viewer("fullscreen", lambda was, now: now != was)),

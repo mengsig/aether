@@ -329,13 +329,6 @@ pub const KEYS: &[KeySpec] = &[
     )
     .bound(&[KeyAction::LessEffort, KeyAction::MoreEffort])
     .shown_as("Alt+,/."),
-    // #351: Option types characters (√ for Option+V) unless sent as Meta.
-    key(
-        Session,
-        "macOS Option",
-        "Alt shortcuts need Option sent as Meta: iTerm2 Profiles > Keys > Option key: Esc+; Terminal.app Profiles > Keyboard > Use Option as Meta key",
-        "send as Meta for Alt",
-    ),
     key(
         Session,
         "PgUp / PgDn",

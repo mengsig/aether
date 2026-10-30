@@ -621,7 +621,6 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+R` | search message history |
 | `Ctrl+F` | find in the transcript |
 | `Alt+, / Alt+.` | less / more reasoning effort |
-| `macOS Option` | Alt shortcuts need Option sent as Meta: iTerm2 Profiles > Keys > Option key: Esc+; Terminal.app Profiles > Keyboard > Use Option as Meta key |
 | `PgUp / PgDn` | scroll the transcript |
 | `Shift+↑ / Shift+↓` | scroll the transcript a line |
 | `Ctrl+Home / Ctrl+End` | top of the transcript / latest, following again |

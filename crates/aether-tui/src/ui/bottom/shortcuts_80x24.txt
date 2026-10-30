@@ -19,7 +19,7 @@ ascii=false
   Alt+T          PDF/HTML text or image   Agents board (Ctrl+G)
   Alt+N          notification center      ↑/↓         move between agents
   Alt+↑          view the parent agent    ←/→         fold / unfold
-  ↓ 18 more · ↑↓ pgup pgdn scroll · ? or esc to close
+  ↓ 17 more · ↑↓ pgup pgdn scroll · ? or esc to close
 
 
 
@@ -45,7 +45,7 @@ ascii=true
   Alt+T          PDF/HTML text or image
   Alt+N          notification center
   Alt+Up         view the parent agent
-  v 48 more | up/down pgup/pgdn scroll | ? or esc to close
+  v 47 more | up/down pgup/pgdn scroll | ? or esc to close
 
 
 
