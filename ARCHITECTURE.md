@@ -102,14 +102,18 @@ has nobody to inspect it, so after a daemon restart on Linux it resumes at
 once as a person's `aether resume` would: its keys are released, and its wake and the interrupted call's result
 name the calls and say their outcome is unknown, so it checks the state before
 repeating them. Its `agent.resumed` event records that it resumed without
-inspection. Its children stay its own. No process outlives the daemon that
-ran it: a stop ends them, and on Linux the next start stops what a crashed
-daemon's agents left running before any turn starts, so the resumed turn never
-races the call it was told about. Where nothing stops that call first (a turn a
-live daemon lost, a restart elsewhere than Linux), a headless agent parks too.
-A process started with `AETHER_KEEP_PROCESS=1` is the exception: no sweep stops
-it, here or at an agent's end, which releases the agent's keys just the same,
-so the resumed agent runs beside it. A process that outlives SIGKILL is
+inspection. Its children stay its own. No call outlives the daemon that ran
+it: a stop ends the calls in flight, and on Linux the next start stops what a
+crashed daemon's calls left in flight (each engine's process group and each
+recorded foreground shell call's) before any turn starts, so the resumed turn
+never races the call it was told about. Where nothing stops that call first (a
+turn a live daemon lost, a restart elsewhere than Linux), a headless agent
+parks too. A server the call detached is the agent's, not the call's: a
+restart spares it while the agent is live, so the resumed agent finds it up
+(see [agent processes](docs/configuration.md#agent-processes)). A process
+started with `AETHER_KEEP_PROCESS=1` is never stopped by any sweep, here or at
+an agent's end, which releases the agent's keys just the same, so the resumed
+agent runs beside it. A process that outlives SIGKILL is
 logged as an error. Engine-native read tools and Aether MCP names
 are resolved alongside the side-effect class recorded in `tool.requested`.
 

@@ -32,8 +32,8 @@ clients on 17 through 24 see it as `usage_limit`.
   such as Archon saw a held agent and waited for its stage deadline. Only a
   tree a person watches now waits: the TUI marks the roots it starts with the
   new `config.interactive`, and children inherit it. Every other agent resumes
-  at once on Linux, where the start stops what the old daemon's agents left
-  running, as a person's `aether resume` would. Its keys are released, and its
+  at once on Linux, where the start stops the commands the old daemon's agents
+  left in flight, as a person's `aether resume` would. Its keys are released, and its
   wake and the interrupted call's result say its turn was cut short while
   those calls ran, so their outcome is unknown and it should check the state
   before repeating them. Its `agent.resumed` event says it resumed without
