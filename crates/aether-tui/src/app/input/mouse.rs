@@ -67,17 +67,7 @@ impl App {
                 cache.pending_file_hit = if !self.bottom_covered()
                     && cache.regions.hit(mouse.column, mouse.row) == Some(Pane::Transcript)
                 {
-                    cache
-                        .file_hits
-                        .iter()
-                        .filter(|h| h.area.contains((mouse.column, mouse.row).into()))
-                        // A sent image's line outranks a file named inside it.
-                        .max_by_key(|h| {
-                            let image =
-                                crate::viewer::sent_images::is_sent_image(&h.reference.target);
-                            (image, h.reference.target.len())
-                        })
-                        .cloned()
+                    pressed_file_hit(&cache.file_hits, mouse.column, mouse.row)
                         .map(|h| (self.selected, h))
                 } else {
                     None
@@ -378,4 +368,31 @@ impl App {
         }
         Vec::new()
     }
+}
+
+/// The hit a press opens: a sent image's whole line beats any file or other image line
+/// quoted inside it; otherwise the longest target wins.
+fn pressed_file_hit(
+    hits: &[crate::viewer::Hit],
+    column: u16,
+    row: u16,
+) -> Option<crate::viewer::Hit> {
+    let rank = |hit: &crate::viewer::Hit| {
+        let image = crate::viewer::sent_images::is_sent_image(&hit.reference.target);
+        let reach = if image {
+            hit.reference.label.len()
+        } else {
+            hit.reference.target.len()
+        };
+        (image, reach)
+    };
+    let pressed = hits
+        .iter()
+        .filter(|hit| hit.area.contains((column, row).into()))
+        .max_by_key(|hit| rank(hit))?;
+    debug_assert!(
+        !pressed.reference.target.is_empty(),
+        "a hit names what it opens"
+    );
+    Some(pressed.clone())
 }

@@ -60,6 +60,18 @@ fn app_with_store(store: &std::path::Path) -> App {
     app
 }
 
+/// Press and release the left button on `hit`.
+fn click(app: &mut App, cache: &mut ViewCache, hit: &crate::viewer::Hit) -> Vec<Effect> {
+    let mouse = |kind| MouseEvent {
+        kind,
+        column: hit.area.x + 1,
+        row: hit.area.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.dispatch_mouse(mouse(MouseEventKind::Down(MouseButton::Left)), cache);
+    app.dispatch_mouse(mouse(MouseEventKind::Up(MouseButton::Left)), cache)
+}
+
 /// Click the transcript line that reads `line`, and load what it asks for.
 fn click_line<'a>(app: &'a mut App, line: &str) -> &'a Result<Preview, String> {
     let mut cache = ViewCache::default();
@@ -71,14 +83,7 @@ fn click_line<'a>(app: &'a mut App, line: &str) -> &'a Result<Preview, String> {
         .find(|hit| hit.reference.label == line)
         .unwrap_or_else(|| panic!("`{line}` is clickable: {:?}", cache.file_hits))
         .clone();
-    let mouse = |kind| MouseEvent {
-        kind,
-        column: hit.area.x + 1,
-        row: hit.area.y,
-        modifiers: KeyModifiers::NONE,
-    };
-    app.dispatch_mouse(mouse(MouseEventKind::Down(MouseButton::Left)), &mut cache);
-    let effects = app.dispatch_mouse(mouse(MouseEventKind::Up(MouseButton::Left)), &mut cache);
+    let effects = click(app, &mut cache, &hit);
     load(app, effects)
 }
 
@@ -323,14 +328,7 @@ fn a_file_named_in_the_words_still_opens_the_image_from_its_line() {
         .expect("the name is a link inside the image line")
         .clone();
     assert!(inside.reference.target.len() > image.reference.target.len());
-    let mouse = |kind| MouseEvent {
-        kind,
-        column: inside.area.x,
-        row: inside.area.y,
-        modifiers: KeyModifiers::NONE,
-    };
-    app.dispatch_mouse(mouse(MouseEventKind::Down(MouseButton::Left)), &mut cache);
-    let effects = app.dispatch_mouse(mouse(MouseEventKind::Up(MouseButton::Left)), &mut cache);
+    let effects = click(&mut app, &mut cache, &inside);
     assert_shows(load(&mut app, effects), &bytes);
 }
 
@@ -388,14 +386,7 @@ fn words_quoting_an_image_line_keep_their_file_link() {
         .expect("the file named in the words")
         .clone();
     assert!(quoted.area.y < images[0].area.y);
-    let mouse = |kind| MouseEvent {
-        kind,
-        column: quoted.area.x,
-        row: quoted.area.y,
-        modifiers: KeyModifiers::NONE,
-    };
-    app.dispatch_mouse(mouse(MouseEventKind::Down(MouseButton::Left)), &mut cache);
-    let effects = app.dispatch_mouse(mouse(MouseEventKind::Up(MouseButton::Left)), &mut cache);
+    let effects = click(&mut app, &mut cache, &quoted);
     let [Effect::PreviewFile(request)] = &effects[..] else {
         panic!("one preview asked for: {effects:?}");
     };
@@ -429,4 +420,51 @@ fn names_differing_only_in_case_open_their_own_images() {
     );
     let line = format!("[image 2: SHOT.png, {size} B]");
     assert_shows(click_line(&mut app, &line), &second);
+}
+
+#[test]
+fn a_name_quoting_another_image_line_opens_its_own_image() {
+    let store = tempfile::tempdir().expect("store");
+    let mut app = app_with_store(store.path());
+    let (outer, inner) = (picture(30), picture(31));
+    let quoted = format!("[image: b.png, {} B]", inner.len());
+    let name = format!("outer {quoted}.png");
+    for (name, bytes) in [(name.as_str(), &outer), ("b.png", &inner)] {
+        let (_dir, path) = png_file(name);
+        std::fs::write(&path, bytes).expect("write");
+        app.run_image_command(ImageArg::File(path.display().to_string()));
+        let read = aether_client::images::read_image_file(&path).map_err(|e| e.to_string());
+        app.reduce(AppEvent::ImageRead(read));
+    }
+    let (_, _, images) = sent(&app.reduce(key(KeyCode::Enter)));
+    push_user_content(&mut app, daemon_stores(store.path(), &images));
+
+    let mut cache = ViewCache::default();
+    render_with(&app, &mut cache, 160, 40);
+    let line = format!("[image: {name}, {} B]", outer.len());
+    let own = cache
+        .file_hits
+        .iter()
+        .find(|h| h.reference.label == line)
+        .expect("its line")
+        .clone();
+    // A click on the quoted line inside the name, where both images' labels match.
+    let inside = cache
+        .file_hits
+        .iter()
+        .find(|h| h.reference.label == quoted && h.area.y == own.area.y)
+        .expect("the quoted line matches too")
+        .clone();
+    let effects = click(&mut app, &mut cache, &inside);
+    assert_shows(load(&mut app, effects), &outer);
+    let below = cache
+        .file_hits
+        .iter()
+        .filter(|h| h.reference.label == quoted)
+        .max_by_key(|h| h.area.y)
+        .expect("the second image's line")
+        .clone();
+    assert!(below.area.y > own.area.y);
+    let effects = click(&mut app, &mut cache, &below);
+    assert_shows(load(&mut app, effects), &inner);
 }
