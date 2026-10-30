@@ -146,9 +146,10 @@ clients on 17 through 24 see it as `usage_limit`.
   running ran after the scheduler had started, so a resumed turn could run
   beside its interrupted call's container, and the sweep could kill a
   container a new turn had just started. It now finishes first. A sweep
-  that times out or whose `docker kill` fails makes each agent with a
-  mutating call in flight wait for inspection, even a headless one, since
-  its container may still run.
+  that times out, or whose `docker ps` or `docker kill` fails, makes each
+  agent with a mutating call in flight wait for inspection, even a headless
+  one, since its container may still run. A host with no `docker` client
+  skips the sweep.
 - **A refused engine sign-in suspends the agent instead of failing it.** A
   native engine whose OAuth token expired or whose API key was refused
   (Claude Code's `authentication_error`, "Please run /login", a result with

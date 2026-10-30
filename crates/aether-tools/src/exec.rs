@@ -309,8 +309,8 @@ fn validate_extra_mount(root: &std::path::Path) -> Result<(), ToolError> {
 /// across restarts on one data directory, so a daemon still finds its own
 /// predecessors.
 ///
-/// False when the sweep timed out or could not run a kill, so a container an
-/// interrupted call left may still run.
+/// False when the sweep timed out or a listing or kill failed, so a container
+/// an interrupted call left may still run; true with no docker client at all.
 pub async fn sweep_orphan_containers(instance_id: &str) -> bool {
     debug_assert!(
         !instance_id.is_empty(),
@@ -346,14 +346,21 @@ async fn sweep_orphan_containers_inner(instance_id: &str) -> bool {
         .kill_on_drop(true)
         .output()
         .await;
+    // Neither failure is a reason not to start; only a missing client proves
+    // no container of ours runs, as none could have been started.
     let listed = match listed {
         Ok(output) if output.status.success() => output.stdout,
-        // No docker, or docker refused: there is nothing this daemon can do
-        // about containers it cannot see, and it is not a reason not to start.
-        Ok(_) => return true,
-        Err(e) => {
+        Ok(output) => {
+            tracing::warn!(status = %output.status, "docker could not list orphaned containers; some may still be running");
+            return false;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             tracing::debug!(error = %e, "no docker to sweep orphaned containers with");
             return true;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot run docker to sweep orphaned containers; some may still be running");
+            return false;
         }
     };
     let orphans: Vec<String> = String::from_utf8_lossy(&listed)
