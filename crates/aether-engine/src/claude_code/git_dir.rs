@@ -40,8 +40,8 @@ pub(super) async fn outside_common_dir(cwd: &Path) -> Option<PathBuf> {
     resolve_outside(cwd, &named_path(output.stdout)?)
 }
 
-/// The path git printed, exactly: only its line end is dropped, so a name
-/// ending in a space names that directory and no neighbour.
+/// The path git printed, exactly: only its closing `\n` is dropped, so a
+/// name ending in a space or a `\r` names that directory and no neighbour.
 fn named_path(stdout: Vec<u8>) -> Option<PathBuf> {
     let Ok(text) = String::from_utf8(stdout) else {
         tracing::warn!(
@@ -50,7 +50,6 @@ fn named_path(stdout: Vec<u8>) -> Option<PathBuf> {
         return None;
     };
     let path = text.strip_suffix('\n')?;
-    let path = path.strip_suffix('\r').unwrap_or(path);
     debug_assert!(!path.contains('\n'), "one path per line: {path:?}");
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
@@ -148,7 +147,8 @@ mod tests {
         );
         assert_eq!(
             named_path(b"/a/b\r\n".to_vec()),
-            Some(PathBuf::from("/a/b"))
+            Some(PathBuf::from("/a/b\r")),
+            "a carriage return is part of the name"
         );
         assert_eq!(named_path(b"/a/\xff\n".to_vec()), None, "not UTF-8");
         assert_eq!(named_path(b"/a/b".to_vec()), None, "cut short");
