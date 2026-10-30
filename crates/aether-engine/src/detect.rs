@@ -12,7 +12,13 @@
 use std::path::Path;
 use std::time::Duration;
 
-const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Generous: a loaded machine can take many seconds to start a CLI, and a
+/// usable engine keeps its last good detection when a later probe times out.
+const PROBE_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(2)
+} else {
+    Duration::from_secs(60)
+};
 
 /// Bound on CLI output kept in an error: enough to show what went wrong,
 /// never enough to flood a log with a runaway or garbled process.
@@ -250,10 +256,10 @@ pub(crate) async fn probe_capability(
             program: program.to_owned(),
             probe: capability_args.join(" "),
         })?
-        .map_err(|e| DetectError::MissingCapability {
+        // A CLI the OS could not start says nothing about its capabilities.
+        .map_err(|e| DetectError::NotInstalled {
             program: program.to_owned(),
-            capability: capability.to_owned(),
-            detail: e.to_string(),
+            os_error: e.to_string(),
         })?;
     if !output.status.success() {
         return Err(DetectError::MissingCapability {

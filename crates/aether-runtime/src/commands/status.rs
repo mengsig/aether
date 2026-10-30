@@ -34,16 +34,22 @@ fn count_live(status: &mut RuntimeStatus, live: &[Agent]) {
     }
 }
 
+/// A status section this slow is logged at warn: it names what a slow `status` waited on.
+const SLOW_SECTION: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Runs one status section and logs how long it took, so a slow section on a
-/// real daemon shows up under `RUST_LOG=aether_runtime=debug`.
+/// real daemon shows up under `RUST_LOG=aether_runtime=debug`, and at warn
+/// once it takes [`SLOW_SECTION`].
 fn timed<T>(section: &'static str, f: impl FnOnce() -> T) -> T {
     let started = std::time::Instant::now();
     let out = f();
-    tracing::debug!(
-        section,
-        elapsed_ms = started.elapsed().as_millis() as u64,
-        "status section"
-    );
+    let elapsed = started.elapsed();
+    let elapsed_ms = elapsed.as_millis() as u64;
+    if elapsed >= SLOW_SECTION {
+        tracing::warn!(section, elapsed_ms, "slow status section");
+    } else {
+        tracing::debug!(section, elapsed_ms, "status section");
+    }
     out
 }
 

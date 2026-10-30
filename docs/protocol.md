@@ -26,9 +26,27 @@ This policy uses the existing reply shape and reserved ID-zero/closure contract;
 it does not introduce an incompatible wire change. It applies to every served
 protocol version.
 
+### Reply order
+
+A connection may carry many requests at once, and replies can arrive in a
+different order from their requests; match each reply to its request by `id`.
+Reads (commands of the `observe` class in
+[Authorization](remote.md#authorization), such as `status`, `get_tree` and
+`get_transcript`) start as soon as they are read and run side by side, up to
+16 per connection, so one slow read or write does not hold the next poll.
+Further reads wait for a free slot, in order. Every other command runs one at
+a time in the order it arrived, as it did before. `hello`, `subscribe` and
+`unsubscribe` are answered before the daemon reads the next frame. `shutdown`
+is answered once every command sent before it has run; after 30 seconds it
+gives up the replies its client has not read. A client that reads no replies
+at all is no longer read once its replies back up, as before, so a
+`shutdown` it sends behind them is never read. A read sent before an earlier
+command's reply arrived may not see that command's effects; wait for the reply
+first when the order matters.
+
 ## Versions
 
-The protocol is version 23 and the daemon serves versions 17 through 23. The window is
+The protocol is version 25 and the daemon serves versions 17 through 25. The window is
 `MIN_PROTOCOL_VERSION` to `PROTOCOL_VERSION` in `aether-protocol`; the
 `compat` module translates replies for the older versions.
 A hello outside the window is refused with `incompatible`, naming both bounds.
@@ -39,6 +57,11 @@ Only the daemon's answers are rewritten. Every field a newer version added to
 a command is optional, so an older client's requests decode unchanged; the
 test `no_command_requires_a_field_an_older_client_would_not_send` holds that
 against the live schema.
+
+Version 25 adds the `credentials` exhaustion class: an agent suspended because
+the provider refused its engine CLI's sign-in. Clients on versions 17 through 24
+cannot decode it, so they receive that block reason as `usage_limit`; its
+`detail` still names the refusal.
 
 Version 24 adds a `level` to `append_note`: `info` (the default), `applied`
 or `refused`. A level other than `info` needs a daemon on version 24 or later;

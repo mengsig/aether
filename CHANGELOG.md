@@ -6,6 +6,9 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+Protocol version 25 (was 24): the `credentials` exhaustion class is new, and
+clients on 17 through 24 see it as `usage_limit`.
+
 ### Fixed
 
 - **Browsers and helpers an agent detached no longer outlive it (#332).**
@@ -26,7 +29,10 @@ release is also the text of its GitHub release.
   `SIGKILL`, and what it forks during the grace gets `SIGTERM` within 50 ms;
   one forked as the grace ends gets `SIGKILL` alone; the shell of a job that exits
   on its own is reaped only once its group is stopped, so the group id is
-  never reused under the signal.
+  never reused under the signal. A process caught inside `exec`, whose
+  environment reads empty or torn until its new program is set up, is read
+  again rather than missed, as is a bash still reading its environment; a
+  process forked and left behind while a sweep lists processes is found too.
   Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
   nothing changes.
 - **A delegated child that completes hands what it left running to its parent
@@ -55,6 +61,65 @@ release is also the text of its GitHub release.
   since-failed ancestor held a completed child's processes, leaves them with
   the nearest live ancestor. Background shell jobs still stop with the daemon,
   whose pipes carry their output. Linux only.
+- **A refused engine sign-in suspends the agent instead of failing it.** A
+  native engine whose OAuth token expired or whose API key was refused
+  (Claude Code's `authentication_error`, "Please run /login", a result with
+  `api_error_status` 401; Codex's "401 Unauthorized" or a token that could not
+  be refreshed; either CLI's bare 401 status) classed as an unknown error, so the agent failed. It is now
+  suspended with the new `credentials` class: the operator is told once per
+  episode and the suspension names the fix, the provider is benched, and the
+  agent resumes when a probe answers after the CLI is signed in again. A
+  configured fallback still takes the turn first, and a native engine left for
+  one, on a refused sign-in or a spent plan, is now benched for a minute as an
+  HTTP provider already was, so other turns go straight to their fallback
+  instead of relaunching the refused CLI. A stalled engine that names
+  the refusal as it is stopped suspends the same way instead of being retried
+  as a stall. Models reached over HTTP keep failing on an auth error.
+- **A briefly unusable engine no longer fails agents.** A turn whose engine
+  probe had just failed (`claude --version` timing out under load, a CLI
+  mid-update) failed at once, and creation was refused in the same window. A
+  probe that times out, or whose CLI the OS could not start for now, keeps
+  the last good detection, and a usable engine whose probe fails is only
+  suspect: agents are still created on it, turns do not launch it until a
+  probe passes, and it is recorded unusable only after three failed probes
+  over at least 30 seconds. A turn on an engine that is
+  not launchable probes it again under the transient retry backoff and fails
+  when the window ends, even mid-probe. An agent new to an engine never found
+  still fails at once, unless the latest probe was such an inconclusive one;
+  creation is not refused on one either. The CLI probe timeout is 60 seconds
+  instead of 15.
+- **An engine launch the OS refused for now is retried.** A spawn that failed
+  with `EAGAIN`, `ETXTBSY` (the CLI replaced by an update) or `ENOMEM` failed
+  the agent; it is now a transient timeout, retried within the transient
+  retry window. A missing CLI or a denied launch still fails at once.
+- **Progress resets the transient retry window and the stall count.** The
+  retry window started at a turn's first transient failure and was never
+  cleared, so a long turn with two brief outages hours apart failed at the
+  second; the third stall of a turn ended it even when hours of work came
+  between them. A model message or a tool result now restarts the stall
+  count, so only consecutive stalls end a turn, and the window (and the
+  backoff, from the 15-second floor) for at most eight outages of one turn,
+  so an engine that fails after every bit of progress still gives up. Claude
+  Code's synthetic API-error message is not progress.
+- **`status` and `get_tree` answer while the daemon does slow work (#333).**
+  A connection ran its commands one at a time, so the TUI's polls waited
+  behind any slow request it had sent first. One example is a write waiting
+  out a database lock. Every read in the daemon also shared one store
+  connection, so a long transcript read held every other client's `status`.
+  The client then gave up with "the daemon did not answer `status` within
+  60s". Reads on a connection now run side by side as soon as they are read,
+  off the threads that answer sockets; other commands still run one at a
+  time, in order, and `shutdown` still waits for them. The store reads on a
+  pool of up to 32 connections. A request over two seconds is logged with
+  its command and with where its time went, as are a slow `status` section
+  and a long wait for a store connection. The timeout message points at
+  that log. On a 1.8 GB store with seven clients reading 25 MB transcripts,
+  the slowest `get_tree` went from 2.0 s to 0.7 s and the slowest `status`
+  from 2.4 s to 1.6 s. Behind a write held by a database lock, they now
+  answer in milliseconds instead of waiting for that write. Replies on one
+  connection can now arrive out of request order; every Aether client
+  already matches them by `id` (see
+  [Reply order](docs/protocol.md#reply-order)).
 
 ## 1.2.7
 

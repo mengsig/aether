@@ -289,6 +289,7 @@ pub(super) async fn run_link(
         return match crate::turn_engine::execute(runtime, ctx, &resolved, model, cancel).await? {
             EngineLink::Exhausted { class, error } => match rest.first() {
                 Some(fallback) => {
+                    super::failure::bench_left_link(runtime, &model.provider, class, None)?;
                     announce_fallback(runtime, ctx, model, fallback, error, Some(class))?;
                     Ok(LinkOutcome::FellBack)
                 }

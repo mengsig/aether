@@ -73,8 +73,9 @@ pub enum ClientError {
     #[error("invalid client usage: {0}")]
     InvalidUsage(String),
     #[error(
-        "the daemon did not answer `{command}` within {}s; it may be busy, for example with \
-         its database locked by another process",
+        "the daemon did not answer `{command}` within {}s, though it is still connected; \
+         its log (`logs/aetherd.log` in its data directory) names each request slower \
+         than 2s and what it waited on",
         timeout.as_secs()
     )]
     TimedOut { command: String, timeout: Duration },

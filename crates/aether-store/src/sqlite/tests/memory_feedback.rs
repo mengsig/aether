@@ -254,7 +254,7 @@ fn the_query_agrees_with_the_rule_on_mixed_history() {
 #[test]
 fn the_tally_query_reads_feedback_through_the_ranked_index() {
     let store = SqliteStore::open_in_memory().unwrap();
-    let conn = store.read_conn();
+    let conn = store.read_conn().expect("a read connection");
     let mut plan = conn
         .prepare(&format!(
             "EXPLAIN QUERY PLAN {}",
@@ -290,7 +290,7 @@ fn the_tally_query_reads_feedback_through_the_ranked_index() {
 #[test]
 fn the_ranked_index_covers_the_read_without_fetching_table_columns() {
     let store = SqliteStore::open_in_memory().unwrap();
-    let conn = store.read_conn();
+    let conn = store.read_conn().expect("a read connection");
     let table_root: i64 = conn
         .query_row(
             "SELECT rootpage FROM sqlite_master WHERE name = 'memory_feedback'",
@@ -330,7 +330,7 @@ fn the_ranked_index_covers_the_read_without_fetching_table_columns() {
 fn ranked_sql_evidence_literals_match_the_core_rule() {
     use std::collections::BTreeSet;
     let store = SqliteStore::open_in_memory().unwrap();
-    let conn = store.read_conn();
+    let conn = store.read_conn().expect("a read connection");
     let index: String = conn
         .query_row(
             "SELECT sql FROM sqlite_master WHERE name = 'memory_feedback_ranked'",
@@ -380,7 +380,7 @@ fn feedback_columns_match_the_full_record_for_every_verdict_and_evidence() {
             MemoryEvidence::Outcome,
         ] {
             let record = votes.cast_as(MemoryId::new(), TaskId::new(), verdict, evidence, 0);
-            let conn = votes.store.read_conn();
+            let conn = votes.store.read_conn().expect("a read connection");
             let (task, verdict, evidence, body): (String, String, String, String) = conn
                 .query_row(
                     "SELECT task_id, verdict, evidence, body FROM memory_feedback WHERE id = ?1",

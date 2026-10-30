@@ -507,7 +507,8 @@ What an agent leaves running when it ends depends on how it ends.
   processes carrying their tags or in their engine scopes, and their
   background shell jobs - passes to the nearest live ancestor, usually its parent. That agent
   can read and stop the background jobs as its own, and gets a message from
-  the system listing each process it took over by pid and command line. The
+  the system listing each process it took over by pid and command line, past
+  the first 50 by pid alone. The
   child records the same as an `agent.processes_handed_up` event with `to`,
   `pids`, `processes` and `jobs`. A child that delegated a server to run on
   thus leaves it running for its parent to use. The message arrives once the

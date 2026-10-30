@@ -36,7 +36,7 @@ impl SqliteStore {
         task: TaskId,
         through: Option<Timestamp>,
     ) -> Result<bool> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let found: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM events AS e INDEXED BY events_task
              JOIN snapshots AS s ON s.id = json_extract(e.body, '$.kind.snapshot')
@@ -66,7 +66,7 @@ impl SqliteStore {
         memory: MemoryId,
         limit: usize,
     ) -> Result<Vec<MemoryFeedback>> {
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let records: Vec<MemoryFeedback> = Self::read_many(
             &conn,
             "SELECT body FROM memory_feedback WHERE memory_id = ?1
@@ -95,7 +95,7 @@ impl SqliteStore {
         }
         let ids: Vec<String> = memories.iter().map(ToString::to_string).collect();
         let params = params![serde_json::to_string(&ids)?, RANKING_WINDOW as i64];
-        let conn = self.read_conn();
+        let conn = self.read_conn()?;
         let mut stmt = conn.prepare_cached(TALLIES)?;
         let rows = stmt.query_map(params, |row| {
             Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?))

@@ -419,9 +419,12 @@ mod linux {
             tags.iter().all(|tag| tag.contains('=')),
             "a tag is a whole environment entry: {tags:?}"
         );
-        let mut pids: Vec<u32> = candidates(proc_root, own)
-            .filter(|pid| carries(proc_root, *pid, tags, uid))
-            .collect();
+        let mut pids = Vec::new();
+        for_each_candidate(proc_root, own, |pid| {
+            if carries(proc_root, pid, tags, uid) {
+                pids.push(pid);
+            }
+        });
         pids.sort_unstable();
         pids
     }
@@ -430,35 +433,33 @@ mod linux {
     /// `proc_root`, sorted and deduplicated, except `own`'s.
     pub(super) fn tagged_agents(proc_root: &Path, own: u32, uid: u32) -> Vec<AgentId> {
         let key = format!("{AGENT_ENV}=");
-        let mut agents: Vec<AgentId> = candidates(proc_root, own)
-            .filter_map(|pid| environment(proc_root, pid, uid))
-            .filter_map(|environment| {
-                let value = environment
-                    .split(|byte| *byte == 0)
-                    .find_map(|entry| entry.strip_prefix(key.as_bytes()))?;
-                std::str::from_utf8(value).ok()?.parse().ok()
-            })
-            .collect();
+        let named = |environment: Vec<u8>| -> Option<AgentId> {
+            let value = environment
+                .split(|byte| *byte == 0)
+                .find_map(|entry| entry.strip_prefix(key.as_bytes()))?;
+            std::str::from_utf8(value).ok()?.parse().ok()
+        };
+        let mut agents = Vec::new();
+        for_each_candidate(proc_root, own, |pid| {
+            agents.extend(environment(proc_root, pid, uid).and_then(named));
+        });
         agents.sort_unstable();
         agents.dedup();
         agents
     }
 
-    /// The pids listed under `proc_root`, without init and `own`.
-    fn candidates(proc_root: &Path, own: u32) -> impl Iterator<Item = u32> {
-        let listed = match std::fs::read_dir(proc_root) {
-            Ok(dir) => Some(dir),
-            Err(error) => {
-                tracing::warn!(root = %proc_root.display(), %error, "cannot list processes to reap");
-                None
+    /// Visit each pid listed under `proc_root`, without init and `own`, as it
+    /// is listed: one forked meanwhile is still visited.
+    fn for_each_candidate(proc_root: &Path, own: u32, mut visit: impl FnMut(u32)) {
+        let listed = aether_spawn::visit_processes(proc_root, |pid| {
+            if pid > 1 && pid != own {
+                visit(pid);
             }
-        };
-        listed
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
-            .filter(move |pid| *pid > 1 && *pid != own)
+            Ok(())
+        });
+        if let Err(error) = listed {
+            tracing::warn!(root = %proc_root.display(), %error, "cannot list processes to reap");
+        }
     }
 
     /// Whether live `pid` sets the keep entry exactly, or may: an environment
@@ -510,21 +511,43 @@ mod linux {
         if !is_live(proc_root, pid) {
             return None;
         }
-        // Gone or not readable: not one to signal.
-        std::fs::read(dir.join("environ")).ok()
+        // Gone, unreadable or never settled out of `exec`: not proven tagged, nor unkept.
+        aether_spawn::read_environ(&dir).ok()
     }
 
-    /// Live pids listed in a cgroup's `cgroup.procs`, except `own`. A cgroup
-    /// that is gone has none.
+    /// Live pids listed in a cgroup's `cgroup.procs` and its descendant
+    /// cgroups', except `own`. A cgroup that is gone has none.
     pub(super) fn cgroup_members(proc_root: &Path, procs: &Path, own: u32) -> Vec<u32> {
-        let Ok(listed) = std::fs::read_to_string(procs) else {
+        assert!(
+            procs.ends_with("cgroup.procs"),
+            "not a cgroup listing: {procs:?}"
+        );
+        let Some(top) = procs.parent() else {
             return Vec::new();
         };
-        listed
-            .lines()
-            .filter_map(|line| line.trim().parse::<u32>().ok())
-            .filter(|pid| *pid > 1 && *pid != own && is_live(proc_root, *pid))
-            .collect()
+        let mut members = Vec::new();
+        let mut cgroups = vec![top.to_path_buf()];
+        while let Some(cgroup) = cgroups.pop() {
+            // Gone meanwhile, or a plain directory of the tree: nothing listed.
+            if let Ok(listed) = std::fs::read_to_string(cgroup.join("cgroup.procs")) {
+                members.extend(
+                    listed
+                        .lines()
+                        .filter_map(|line| line.trim().parse::<u32>().ok())
+                        .filter(|pid| *pid > 1 && *pid != own && is_live(proc_root, *pid)),
+                );
+            }
+            let Ok(children) = std::fs::read_dir(&cgroup) else {
+                continue;
+            };
+            cgroups.extend(
+                children
+                    .filter_map(Result::ok)
+                    .filter(|child| child.file_type().is_ok_and(|kind| kind.is_dir()))
+                    .map(|child| child.path()),
+            );
+        }
+        members
     }
 
     /// Whether `pid` exists and is not a zombie, which no signal can end.

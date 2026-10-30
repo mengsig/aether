@@ -190,7 +190,7 @@ impl Journal {
             // A vanished leader could belong to a reused group. Every live
             // member must still carry this job's token before we signal it.
             if leader_missing && member.running() {
-                let environment = match std::fs::read(entry.path().join("environ")) {
+                let environment = match aether_spawn::read_environ(&entry.path()) {
                     Ok(environment) => environment,
                     Err(e) if disappeared(&e) => continue,
                     Err(e) => return Err(e),
@@ -281,27 +281,37 @@ fn signal_job_at(
 fn job_members(proc_root: &Path, token: &str) -> io::Result<Vec<i32>> {
     assert!(token.starts_with(JOB_ENV), "not a job token: {token}");
     let mut members = Vec::new();
-    for entry in std::fs::read_dir(proc_root)? {
-        let entry = entry?;
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
-            continue;
-        };
-        if pid <= 1 || pid == std::process::id() as i32 {
-            continue;
-        }
-        let metadata = match entry.metadata() {
+    for_each_candidate(proc_root, |pid, process| {
+        let metadata = match std::fs::symlink_metadata(process) {
             Ok(metadata) => metadata,
-            Err(error) if disappeared(&error) => continue,
+            Err(error) if disappeared(&error) => return Ok(()),
             Err(error) => return Err(error),
         };
-        if metadata.uid() != geteuid().as_raw() {
-            continue;
-        }
-        if readable_environ(&entry.path())?.is_some_and(|environment| swept(&environment, token)) {
+        if metadata.uid() == geteuid().as_raw()
+            && readable_environ(process)?.is_some_and(|environment| swept(&environment, token))
+        {
             members.push(pid);
         }
-    }
+        Ok(())
+    })?;
     Ok(members)
+}
+
+/// Visit each process under `proc_root` with its /proc entry, but init and
+/// this daemon, as it is listed: one forked meanwhile is still visited.
+fn for_each_candidate(
+    proc_root: &Path,
+    mut visit: impl FnMut(i32, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    let own = std::process::id();
+    aether_spawn::visit_processes(proc_root, |pid| {
+        if pid <= 1 || pid == own {
+            return Ok(());
+        }
+        let pid =
+            i32::try_from(pid).map_err(|_| io::Error::other(format!("pid {pid} out of range")))?;
+        visit(pid, &proc_root.join(pid.to_string()))
+    })
 }
 
 /// Signal `pid` through a pidfd opened before its `token` is checked again,
@@ -352,12 +362,14 @@ fn signal_pinned(
 
 /// A scanned process's environment, or None once it is gone or unreadable.
 fn readable_environ(process: &Path) -> io::Result<Option<Vec<u8>>> {
-    match std::fs::read(process.join("environ")) {
+    match aether_spawn::read_environ(process) {
         Ok(environment) => Ok(Some(environment)),
         Err(error) if disappeared(&error) => Ok(None),
         // Same-uid non-dumpable processes are unreadable and aren't proven ours. Before
         // Linux 7.2 an exiting process's environ is root-owned too, so this also means gone.
         Err(error) if error.kind() == io::ErrorKind::PermissionDenied => Ok(None),
+        // Still inside `exec`: neither the token nor the keep mark is proven.
+        Err(error) if error.kind() == io::ErrorKind::ResourceBusy => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -442,18 +454,12 @@ fn signal_members(
 /// The live members of `pgid` that may be signalled, without init and this daemon.
 fn pinned_group_members(proc_root: &Path, pgid: Pid) -> io::Result<Vec<i32>> {
     let mut members = Vec::new();
-    for entry in std::fs::read_dir(proc_root)? {
-        let entry = entry?;
-        let Ok(pid) = entry.file_name().to_string_lossy().parse::<i32>() else {
-            continue;
-        };
-        if pid <= 1 || pid == std::process::id() as i32 {
-            continue;
-        }
-        if signalled_in_group(&entry.path(), pgid)? {
+    for_each_candidate(proc_root, |pid, process| {
+        if signalled_in_group(process, pgid)? {
             members.push(pid);
         }
-    }
+        Ok(())
+    })?;
     Ok(members)
 }
 

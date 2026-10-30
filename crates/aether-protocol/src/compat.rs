@@ -1,7 +1,10 @@
 //! Serving older protocol versions: replies are rewritten for a client behind
 //! this build, and its requests decode unchanged (docs/protocol.md).
 
-use crate::{ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame};
+use crate::{
+    ErrorCode, ErrorReply, Hello, PROTOCOL_VERSION, Reply, ServerFrame, SubmissionResolution,
+};
+use aether_core::agent::{Agent, AgentStatus, BlockReason, ExhaustionClass};
 use aether_core::model::ContentBlock;
 use aether_core::replay::{ReplayFrame, TurnOutcome};
 use serde_json::Value;
@@ -55,8 +58,9 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
     if let Some(folded) = older_error_reply(version, frame) {
         return crate::encode(&folded);
     }
-    let started = older_replay_reply(version, frame);
-    let line = crate::encode(started.as_ref().unwrap_or(frame))?;
+    let rewritten =
+        older_replay_reply(version, frame).or_else(|| older_agents_reply(version, frame));
+    let line = crate::encode(rewritten.as_ref().unwrap_or(frame))?;
     let hide_images = version < 19 && line.contains(IMAGE_REF_TAG);
     let hide_devices = version < 18 && line.contains(DEVICE_ORIGIN);
     if !hide_images && !hide_devices {
@@ -70,6 +74,77 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
         hide_device_origins(&mut value);
     }
     crate::encode(&value)
+}
+
+/// An agent reply for a client before v25, which cannot decode the
+/// `credentials` class: those suspensions read as a usage limit, their detail
+/// still naming the refusal. Only typed agent statuses change, never opaque JSON.
+fn older_agents_reply(version: u32, frame: &ServerFrame) -> Option<ServerFrame> {
+    let ServerFrame::Reply {
+        id,
+        result: Ok(reply),
+    } = frame
+    else {
+        return None;
+    };
+    if version >= 25 || !agents_of(reply).into_iter().any(on_credentials) {
+        return None;
+    }
+    let mut reply = reply.clone();
+    for agent in agents_of_mut(&mut reply) {
+        if let AgentStatus::Blocked {
+            reason: BlockReason::Exhausted { class, .. },
+        } = &mut agent.status
+            && *class == ExhaustionClass::Credentials
+        {
+            *class = ExhaustionClass::UsageLimit;
+        }
+    }
+    debug_assert!(!agents_of(&reply).into_iter().any(on_credentials));
+    Some(ServerFrame::Reply {
+        id: *id,
+        result: Ok(reply),
+    })
+}
+
+fn on_credentials(agent: &Agent) -> bool {
+    matches!(
+        agent.status,
+        AgentStatus::Blocked {
+            reason: BlockReason::Exhausted {
+                class: ExhaustionClass::Credentials,
+                ..
+            }
+        }
+    )
+}
+
+/// Every agent row a reply carries: the only place a block reason is typed.
+/// A resolved submission carries the reply its command was answered.
+fn agents_of(reply: &Reply) -> Vec<&Agent> {
+    match reply {
+        Reply::Agent(agent) => vec![agent],
+        Reply::Agents(agents) | Reply::Paused { agents, .. } => agents.iter().collect(),
+        Reply::Tree(tree) => tree.nodes.values().map(|node| &node.agent).collect(),
+        Reply::SubmissionResolved(SubmissionResolution::Executed { reply, .. }) => agents_of(reply),
+        _ => Vec::new(),
+    }
+}
+
+fn agents_of_mut(reply: &mut Reply) -> Vec<&mut Agent> {
+    match reply {
+        Reply::Agent(agent) => vec![agent],
+        Reply::Agents(agents) | Reply::Paused { agents, .. } => agents.iter_mut().collect(),
+        Reply::Tree(tree) => tree
+            .nodes
+            .values_mut()
+            .map(|node| &mut node.agent)
+            .collect(),
+        Reply::SubmissionResolved(SubmissionResolution::Executed { reply, .. }) => {
+            agents_of_mut(reply)
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// What marks a device origin in an encoded frame. Quotes inside a JSON
@@ -609,7 +684,7 @@ mod tests {
 
     #[test]
     fn the_window_retains_existing_versions() {
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 24));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 25));
         for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
             let mut hello = Hello::new("t", "0");
             hello.protocol_version = version;
@@ -852,7 +927,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 24));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 25));
     }
 
     #[test]
@@ -872,6 +947,85 @@ mod tests {
         let mut hello = Hello::new("v16", "test");
         hello.protocol_version = 16;
         assert!(negotiate(&hello).is_err());
+    }
+
+    #[test]
+    fn a_credentials_suspension_reads_as_a_usage_limit_before_v25() {
+        let mut agent = suspended_agent();
+        let AgentStatus::Blocked {
+            reason: BlockReason::Exhausted { class, .. },
+        } = &mut agent.status
+        else {
+            panic!("a suspended agent is blocked on exhaustion");
+        };
+        *class = aether_core::agent::ExhaustionClass::Credentials;
+        let credentials = agent.clone();
+        let frame = reply(Reply::Agent(agent));
+        let current = encode_for(PROTOCOL_VERSION, &frame).unwrap();
+        assert_eq!(crate::decode::<ServerFrame>(&current).unwrap(), frame);
+        let older = encode_for(24, &frame).unwrap();
+        assert!(!older.contains(r#""class":"credentials""#), "{older}");
+        let ServerFrame::Reply {
+            result: Ok(Reply::Agent(seen)),
+            ..
+        } = crate::decode::<ServerFrame>(&older).unwrap()
+        else {
+            panic!("an agent reply stays an agent reply");
+        };
+        assert!(matches!(
+            seen.status,
+            AgentStatus::Blocked {
+                reason: BlockReason::Exhausted {
+                    class: aether_core::agent::ExhaustionClass::UsageLimit,
+                    ..
+                }
+            }
+        ));
+        // A keyed command's resolution replays its reply, agent rows and all.
+        let resolved = reply(Reply::SubmissionResolved(SubmissionResolution::Executed {
+            reply: Box::new(Reply::Agents(vec![suspended_agent(), credentials.clone()])),
+            horizon: "h1".into(),
+        }));
+        let older = encode_for(24, &resolved).unwrap();
+        assert!(!older.contains(r#""class":"credentials""#), "{older}");
+        assert!(crate::decode::<ServerFrame>(&older).is_ok());
+        assert_eq!(
+            crate::decode::<ServerFrame>(&encode_for(PROTOCOL_VERSION, &resolved).unwrap())
+                .unwrap(),
+            resolved
+        );
+        // Opaque JSON carrying a whole block reason, a tool's input here, is data.
+        let reason = serde_json::to_value(BlockReason::Exhausted {
+            model: aether_core::model::ModelRef::new("anthropic", "opus"),
+            class: aether_core::agent::ExhaustionClass::Credentials,
+            since: "2026-09-09T11:00:00Z".parse().expect("timestamp"),
+            reported_reset: None,
+            next_probe: "2026-09-09T12:00:00Z".parse().expect("timestamp"),
+            probes: 0,
+            detail: "401".into(),
+        })
+        .unwrap();
+        use aether_core::event::{Actor, Event, EventDraft, EventKind};
+        let draft = EventDraft::new(
+            Actor::user(),
+            EventKind::Custom {
+                name: "tool.input".into(),
+                payload: reason,
+            },
+        );
+        let input = ServerFrame::Event {
+            sub: 1,
+            event: Event::from_draft(
+                draft,
+                aether_core::id::EventId::new(),
+                1,
+                "2026-09-09T11:00:00Z".parse().expect("timestamp"),
+            ),
+        };
+        assert_eq!(
+            encode_for(24, &input).unwrap(),
+            encode_for(PROTOCOL_VERSION, &input).unwrap()
+        );
     }
 
     fn stored_image() -> aether_core::attachment::AttachmentRef {

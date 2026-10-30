@@ -22,6 +22,7 @@ use futures::StreamExt as _;
 
 mod dispatch;
 mod host_services;
+mod lanes;
 mod messages;
 mod providers;
 mod push;
@@ -191,6 +192,8 @@ where
             {
                 return;
             }
+            let mut lanes =
+                lanes::Lanes::new(daemon.clone(), out_tx.clone(), connection_cancel.clone());
             loop {
                 // An un-greeted peer is on the short handshake deadline, whatever the
                 // idle timeout is: until it presents a token it is holding a slot on
@@ -200,6 +203,10 @@ where
                 } else {
                     Some(policy.handshake_timeout)
                 };
+                // A connection waiting on its own commands is not idle: its idle
+                // clock starts once they have all answered.
+                let awaiting_replies = limit.is_some() && lanes.busy();
+                let limit = limit.filter(|_| !awaiting_replies);
                 let line = match pipelined_lines.pop_front() {
                     Some(Ok(line)) => line,
                     Some(Err(error)) => {
@@ -250,6 +257,7 @@ where
                                 break
                             }
                         },
+                        () = lanes.until_idle(), if awaiting_replies => continue,
                         }
                     }
                 };
@@ -424,6 +432,14 @@ where
                     }
                     continue;
                 };
+                if !runs_inline(&frame.command) {
+                    if let Err(error) = reap_subscriptions(&mut subscriptions).await {
+                        tracing::error!(%error, "subscription task failed; closing its connection");
+                        break;
+                    }
+                    lanes.run(id, frame.command, operator, auth).await;
+                    continue;
+                }
                 if let Err(refusal) =
                     starting::await_startup_probes(&daemon, &frame.command, &connection_cancel)
                         .await
@@ -520,19 +536,11 @@ where
                         Ok(Reply::Ok)
                     }
                     Command::Shutdown => {
-                        let _ = send_frame(
-                            &out_tx,
-                            ServerFrame::Reply {
-                                id,
-                                result: Ok(Reply::Ok),
-                            },
-                            &connection_cancel,
-                        )
-                        .await;
+                        shut_down(&mut lanes, &out_tx, id, &connection_cancel).await;
                         shutdown.cancel();
                         break;
                     }
-                    other => dispatch_version(&daemon, other, operator.clone(), auth).await,
+                    other => unreachable!("{} runs in a lane", other.name()),
                 };
                 if !send_frame(
                     &out_tx,
@@ -544,6 +552,8 @@ where
                     break;
                 }
             }
+            // Replies the client is not reading would hold the connection open for good.
+            lanes.finish(lanes::DRAIN_PATIENCE).await;
         };
         tokio::pin!(reading);
         tokio::select! {
@@ -571,6 +581,37 @@ where
         tracing::debug!("closed a connection whose writer did not drain in time");
     }
     Ok(ended)
+}
+
+/// Answer `shutdown` once every command sent before it has run, as when they
+/// ran in turn. Replies its client does not read hold it for at most
+/// [`lanes::DRAIN_PATIENCE`], so they cannot keep the daemon running.
+async fn shut_down(
+    lanes: &mut lanes::Lanes,
+    out: &mpsc::Sender<ServerFrame>,
+    id: u64,
+    cancel: &CancellationToken,
+) {
+    if !lanes.finish(lanes::DRAIN_PATIENCE).await {
+        tracing::warn!("shutting down after giving up the replies its client did not read");
+    }
+    let reply = ServerFrame::Reply {
+        id,
+        result: Ok(Reply::Ok),
+    };
+    let sent = tokio::time::timeout(lanes::DRAIN_PATIENCE, send_frame(out, reply, cancel)).await;
+    if !matches!(sent, Ok(true)) {
+        tracing::warn!("shutting down without answering `shutdown`: its client reads no replies");
+    }
+}
+
+/// Commands that change the connection itself, run by its read loop between
+/// frames. Every other command runs in a [`lanes::Lanes`].
+fn runs_inline(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Subscribe { .. } | Command::Unsubscribe { .. } | Command::Shutdown
+    )
 }
 
 async fn reap_subscriptions(

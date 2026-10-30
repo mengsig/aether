@@ -84,7 +84,7 @@ impl SqliteStore {
         if let Some(kept) = &screen.blocker {
             return Ok(kept.clone());
         }
-        let mut conn = self.conn.lock();
+        let mut conn = self.write_conn();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let id = screen.run.to_string();
         if let Some(kept) = self.recheck(&tx, screen, &id)? {

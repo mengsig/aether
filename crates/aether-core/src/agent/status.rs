@@ -53,11 +53,13 @@ pub enum BlockReason {
 
 /// The subset of [`ModelErrorClass`] a probe can recover from. `ContextLimit`
 /// is deliberately unrepresentable: it is not credits, and waiting cannot fix it.
+/// `Credentials` is a sign-in the provider refused, which an operator renews.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExhaustionClass {
     QuotaExhausted,
     UsageLimit,
+    Credentials,
 }
 
 impl ExhaustionClass {
@@ -66,15 +68,18 @@ impl ExhaustionClass {
         match class {
             ModelErrorClass::QuotaExhausted => Some(Self::QuotaExhausted),
             ModelErrorClass::UsageLimit => Some(Self::UsageLimit),
+            ModelErrorClass::Auth => Some(Self::Credentials),
             _ => None,
         }
     }
 
-    /// The wire name, matching [`ModelErrorClass::as_str`].
+    /// The wire name, matching [`ModelErrorClass::as_str`] except for
+    /// `credentials`, which is `auth` there.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::QuotaExhausted => "quota_exhausted",
             Self::UsageLimit => "usage_limit",
+            Self::Credentials => "credentials",
         }
     }
 }

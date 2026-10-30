@@ -347,25 +347,33 @@ async fn an_exited_shell_pins_its_group_until_the_group_is_stopped() {
     reg.start(agent,
         "echo $$ > leader; bash -c 'trap \"\" TERM; echo $BASHPID > held.tmp && mv held.tmp held; while :; do sleep 1; done' & while [ ! -s held ]; do sleep 0.01; done",
         &ctx_in(dir.path())).unwrap();
-    let held = loop {
-        if let Some(pid) = read_pid(&dir.path().join("held")) {
-            break pid;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    };
+    let held_path = dir.path().join("held");
+    wait_until("the member to start", || read_pid(&held_path).is_some()).await;
+    let held = read_pid(&held_path).expect("held pid");
     let leader = read_pid(&dir.path().join("leader")).expect("leader pid");
-    let zombie = || {
-        std::fs::read_to_string(format!("/proc/{leader}/stat")).is_ok_and(|s| s.contains(") Z "))
-    };
-    wait_until("the shell to exit unreaped", zombie).await;
+    let leader_listed = || std::path::Path::new(&format!("/proc/{leader}")).exists();
+    // Checked at every look, not only when one lands inside the grace: the
+    // leader is looked up first, so a member alive after it was alive then too.
+    let mut unpinned = false;
+    wait_for("the job to settle", || {
+        let listed = leader_listed();
+        unpinned |= !listed && alive(held);
+        if reg.list(agent).unwrap()[0].running {
+            Observed::Pending("still running".into())
+        } else {
+            Observed::Held
+        }
+    })
+    .await;
     assert!(
-        alive(held),
-        "the member ignoring SIGTERM outlives the grace's start"
+        !unpinned,
+        "the shell was reaped while a member of its group lived"
     );
-
-    wait_until("the job to settle", || !reg.list(agent).unwrap()[0].running).await;
     assert!(!alive(held), "the group is killed after the grace");
-    assert!(!zombie(), "the shell is reaped once its group is stopped");
+    assert!(
+        !leader_listed(),
+        "the shell is reaped once its group is stopped"
+    );
 }
 
 /// A self-exiting job's group is not signalled while a member is kept: the

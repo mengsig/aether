@@ -496,6 +496,24 @@ mod tests {
     }
 
     #[test]
+    fn spares_a_tagged_process_marked_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = "tok-spares-kept-0001";
+        let mut swept = carrier(token, None);
+        let mut kept = carrier(token, Some((aether_core::agent::PROCESS_KEEP_ENV, "1")));
+        // No start time: only the token sweep runs for this record.
+        std::fs::write(dir.path().join("4194301"), format!("-\n{token}")).unwrap();
+        reap(dir.path()).unwrap();
+        assert!(
+            !swept.wait().unwrap().success(),
+            "the unmarked process is killed"
+        );
+        assert!(alive(&mut kept), "the kept process is spared");
+        kept.kill().unwrap();
+        kept.wait().unwrap();
+    }
+
+    #[test]
     fn keeps_a_record_it_cannot_read() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("4194300"), [0xff, 0xfe]).unwrap();

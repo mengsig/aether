@@ -1,7 +1,7 @@
 // Generated from clients/protocol.schema.json by scripts/generate_clients.py.
 // Do not edit: change the Rust types and regenerate.
 
-export const PROTOCOL_VERSION = 24;
+export const PROTOCOL_VERSION = 25;
 export const MIN_PROTOCOL_VERSION = 17;
 
 export * from "./protocol/commands/accept.ts";
