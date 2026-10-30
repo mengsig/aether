@@ -153,6 +153,27 @@ async fn an_unresponsive_docker_sweep_is_bounded_and_its_client_is_reaped() {
     .expect("a timed-out Docker client must be killed and reaped");
 }
 
+/// A container sweep that kills what it lists says it finished; one whose kill
+/// hangs past its bound says a container may still run, so the start parks the
+/// interrupted agents rather than resume one beside its container.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_container_sweep_says_whether_it_stopped_every_container() {
+    const NAME: &str = "a_container_sweep_says_whether_it_stopped_every_container";
+    const LIST: &str = "if [ \"$1\" = ps ]; then printf '%s\\n' fixture-orphan; exit 0; fi\n";
+    if std::env::var_os(PROBE_ROOT).is_none() {
+        let killed = format!("{LIST}printf killed > \"$AETHER_TEST_STARTUP_PROBE_ROOT/stopped\"\n");
+        let hung = format!("{LIST}exec /bin/sleep 300\n");
+        assert!(run_isolated(NAME, FAST_ENGINE, &killed).await);
+        assert!(run_isolated(NAME, FAST_ENGINE, &hung).await);
+        return;
+    }
+    let probes = std::env::var_os(PROBE_ROOT).unwrap();
+    let swept = aether_tools::exec::sweep_orphan_containers("inst-fixture").await;
+    let killed = Path::new(&probes).join("stopped").exists();
+    assert_eq!(swept, killed, "the sweep reports whether its kill ran");
+}
+
 /// Containers an earlier daemon left are swept before the runtime starts, so
 /// a resumed turn never runs beside its interrupted call's container and the
 /// sweep never kills a container a new turn started.

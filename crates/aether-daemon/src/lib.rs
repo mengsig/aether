@@ -324,7 +324,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     // channel is created before it and drained after it starts.
     let (mcp_tx, mcp_rx) = tokio::sync::mpsc::unbounded_channel();
     let builtins = tool_registry(models.config(), models.registry(), tcp.as_ref());
-    let unstopped_calls = match builtins.background() {
+    let mut unstopped_calls = match builtins.background() {
         Some(background) => background.recover_host_jobs(&store_path)?,
         None => Default::default(),
     };
@@ -360,7 +360,10 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     clock.finished("config");
     // Before any turn can start a container of its own, and before a resumed
     // turn can race one its interrupted call left running.
-    aether_tools::exec::sweep_orphan_containers(&instance_id).await;
+    if !aether_tools::exec::sweep_orphan_containers(&instance_id).await {
+        // Any of them may have run its call in a container still running.
+        unstopped_calls.extend(interrupted.iter().copied());
+    }
     clock.finished("containers");
     let runtime = Runtime::start(
         RuntimeConfig {
