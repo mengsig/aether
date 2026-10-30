@@ -154,6 +154,85 @@ async fn claude_builds_into_the_agents_build_cache() {
     );
 }
 
+/// A linked worktree commits into its repository's shared Git directory,
+/// outside the workspace; the sandbox may write there and nowhere wider.
+#[test]
+fn a_sandboxed_claude_may_write_its_worktrees_git_directory() {
+    let engine = ClaudeCodeEngine::new("claude", "2.1.265");
+    let git_dir = Path::new("/srv/repo/.git");
+    let settings = |t: &EngineTurn| -> Value {
+        let args = engine.args_with_git_dir(t, Some(git_dir));
+        serde_json::from_str(&args[args.iter().position(|a| a == "--settings").unwrap() + 1])
+            .unwrap()
+    };
+    let mut t = turn();
+    t.network_access = false;
+    assert_eq!(
+        settings(&t)["sandbox"]["filesystem"],
+        json!({"allowWrite": ["/srv/repo/.git"]})
+    );
+    t.temp_dir = Some(PathBuf::from("/var/t/0123456789AB"));
+    t.build_env = vec![(
+        "CARGO_TARGET_DIR".into(),
+        "/var/cache/r/run/cargo-target".into(),
+    )];
+    assert_eq!(
+        settings(&t)["sandbox"]["filesystem"],
+        json!({"allowWrite": [
+            "/var/t/0123456789AB",
+            "/var/cache/r/run/cargo-target",
+            "/srv/repo/.git"
+        ]}),
+        "beside the temp dir and build cache"
+    );
+}
+
+/// Launching resolves the Git directory itself: a network-denied turn in a
+/// linked worktree is handed its repository's shared directory, and only then.
+#[tokio::test]
+async fn only_a_sandboxed_turn_in_a_linked_worktree_gets_a_git_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let main = root.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    let git = |dir: &Path, args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&main, &["init", "-q"]);
+    git(&main, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    let linked = root.path().join("linked");
+    git(&main, &["worktree", "add", "-q", linked.to_str().unwrap()]);
+
+    let mut t = turn();
+    t.cwd = linked;
+    t.network_access = false;
+    let common = std::fs::canonicalize(main.join(".git")).unwrap();
+    assert_eq!(sandbox_git_dir(&t).await, Some(common));
+    t.network_access = true;
+    assert_eq!(
+        sandbox_git_dir(&t).await,
+        None,
+        "an online turn is not sandboxed"
+    );
+    t.network_access = false;
+    t.summary_only = true;
+    assert_eq!(sandbox_git_dir(&t).await, None, "a summary runs no tools");
+    t.summary_only = false;
+    t.cwd = main;
+    assert_eq!(
+        sandbox_git_dir(&t).await,
+        None,
+        "a checkout's own .git is inside it"
+    );
+}
+
 #[test]
 fn a_sandboxed_claude_may_write_only_its_own_temp_dir_beyond_the_defaults() {
     let engine = ClaudeCodeEngine::new("claude", "2.1.265");

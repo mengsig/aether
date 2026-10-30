@@ -302,6 +302,40 @@ impl Agent {
         (at >= deadline).then(|| format!("deadline of {}", deadline.to_rfc3339()))
     }
 
+    /// Whole minutes left (at least 1) once the agent is due its warning
+    /// before the deadline: whichever comes first of 80 % of the span since it
+    /// was created and ten minutes before the deadline. `None` before that,
+    /// and once the deadline has passed.
+    pub fn deadline_warning(&self, at: Timestamp) -> Option<i64> {
+        let deadline = self.config.deadline?;
+        if at >= deadline {
+            return None;
+        }
+        let span = (deadline - self.created_at).max(chrono::Duration::zero());
+        let share_left = span.num_milliseconds() as f64 * (1.0 - DEADLINE_WARN_FRACTION);
+        let window_ms = (share_left.round() as i64).max(DEADLINE_WARN_MINUTES * 60_000);
+        debug_assert!(window_ms >= DEADLINE_WARN_MINUTES * 60_000);
+        if deadline - at > chrono::Duration::milliseconds(window_ms) {
+            return None;
+        }
+        self.deadline_minutes_left(at)
+    }
+
+    /// Whole minutes left before the deadline, rounded up so that any time
+    /// left at all reads as at least 1; 0 once it has passed.
+    pub fn deadline_minutes_left(&self, at: Timestamp) -> Option<i64> {
+        let deadline = self.config.deadline?;
+        if at >= deadline {
+            return Some(0);
+        }
+        let left = deadline - at;
+        let seconds = left.num_seconds() + i64::from(left.subsec_nanos() > 0);
+        let minutes = (seconds + 59) / 60;
+        debug_assert!(seconds >= 1 && minutes >= 1);
+        debug_assert!(chrono::Duration::minutes(minutes) >= left);
+        Some(minutes)
+    }
+
     fn budget_reason(&self, subtree: &Usage, fraction: f64) -> Option<String> {
         if let Some(limit) = self.config.token_budget {
             let used = subtree.total_tokens();
@@ -361,6 +395,13 @@ pub const COST_FLOOR_NOTE: &str = "cost is a lower bound";
 
 /// How much of a budget may be spent before the person is warned (§3.1).
 pub const BUDGET_WARN_FRACTION: f64 = 0.8;
+
+/// How much of the span to its deadline may pass before the agent is warned,
+/// unless [`DEADLINE_WARN_MINUTES`] before the deadline comes first.
+pub const DEADLINE_WARN_FRACTION: f64 = 0.8;
+
+/// The latest an agent is warned before its deadline, in minutes.
+pub const DEADLINE_WARN_MINUTES: i64 = 10;
 
 /// Environment variable naming the agent a process runs for: set on every
 /// engine and host shell command, and inherited by what they start.

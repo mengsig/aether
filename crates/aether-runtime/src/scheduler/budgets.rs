@@ -4,6 +4,7 @@ use aether_core::{
     agent::{Agent, AgentStatus},
     event::{Actor, EventDraft, EventKind},
     id::AgentId,
+    inbox::InboxKind,
     time::now,
 };
 use aether_store::{AgentFilter, Commit, EventFilter};
@@ -126,8 +127,9 @@ fn still_live(runtime: &Runtime, id: AgentId) -> Result<Option<Agent>> {
     Ok(runtime.store.agent(id)?.filter(|a| a.is_live()))
 }
 
-/// VISION §3.1: `deadline` is a hard stop like a budget. The coarse tick is
-/// the clock, so an agent stops within a second of its instant.
+/// VISION §3.1: `deadline` is a hard stop like a budget, warned about before
+/// it. The coarse tick is the clock, so an agent stops within a second of its
+/// instant.
 pub(super) fn enforce_deadlines(
     runtime: &Arc<Runtime>,
     live: &[Agent],
@@ -156,6 +158,9 @@ fn check_deadline(
     at: aether_core::time::Timestamp,
 ) -> Result<()> {
     debug_assert!(agent.is_live());
+    if let Some(minutes_left) = agent.deadline_warning(at) {
+        return warn_deadline_once(runtime, agent, minutes_left);
+    }
     if agent.deadline_passed(at).is_none() {
         return Ok(());
     }
@@ -179,6 +184,84 @@ fn check_deadline(
     );
     stop_and_cancel_subtree(runtime, &agent, &mut commit, reason)?;
     Ok(())
+}
+
+/// Tell the agent once per deadline value how long it has left, so it can
+/// commit what works before the stop. Through its inbox, so no tool call is
+/// cut short: a running engine reads it at its next step, a waiting agent
+/// when its wait ends. A moved deadline is a new value and is warned again.
+fn warn_deadline_once(runtime: &Arc<Runtime>, agent: &Agent, minutes_left: i64) -> Result<()> {
+    debug_assert!(minutes_left > 0, "a warning comes before the deadline");
+    let Some(deadline) = agent.config.deadline else {
+        return Err(crate::RuntimeError::Internal(format!(
+            "deadline warning for agent {} without a deadline",
+            agent.id
+        )));
+    };
+    if deadline_already_warned(runtime, agent.id, deadline)? {
+        return Ok(());
+    }
+    // Re-read under the hold: a stop or a new deadline committed since the
+    // pass read the row must not be followed by a warning for the old one.
+    let hold = runtime.hold();
+    let Some(fresh) =
+        still_live(runtime, agent.id)?.filter(|a| a.config.deadline == Some(deadline))
+    else {
+        return Ok(());
+    };
+    let left = match minutes_left {
+        1 => "1 minute".to_owned(),
+        n => format!("{n} minutes"),
+    };
+    let at = deadline.to_rfc3339();
+    let sent = now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    tracing::info!(agent = %fresh.id, deadline = %at, %left, "deadline warning");
+    // Read after a long tool call, the count is stale: say when it held, and
+    // where the time left now is.
+    let note = format!(
+        "{left} left before your deadline ({at}) as of {sent}: commit what works now. \
+         `inspect_state` gives `deadline_minutes_left` as it stands. At the deadline you \
+         are stopped as failed and your delegated agents are cancelled; uncommitted \
+         changes are left behind."
+    );
+    let kind = EventKind::Custom {
+        name: DEADLINE_WARNING_EVENT.into(),
+        payload: serde_json::json!({"deadline": at, "minutes_left": minutes_left}),
+    };
+    let mut commit = Commit::new().event(
+        EventDraft::new(Actor::Scheduler, kind)
+            .agent(fresh.id)
+            .run(fresh.run),
+    );
+    runtime.push_inbox(
+        &hold,
+        &mut commit,
+        &fresh,
+        InboxKind::Wake { reason: note },
+        Actor::Scheduler,
+    )?;
+    runtime.apply_held(hold, commit)?;
+    Ok(())
+}
+
+/// A custom event, so every client version a daemon serves decodes it.
+const DEADLINE_WARNING_EVENT: &str = "deadline.warning";
+
+/// Whether the agent's latest deadline warning was for this deadline. A
+/// deadline moved back to the one last warned about is not warned again.
+fn deadline_already_warned(
+    runtime: &Runtime,
+    agent: AgentId,
+    deadline: aether_core::time::Timestamp,
+) -> Result<bool> {
+    let latest = runtime
+        .store
+        .latest_agent_custom_event(agent, DEADLINE_WARNING_EVENT)?;
+    let at = deadline.to_rfc3339();
+    Ok(latest.is_some_and(|e| match &e.kind {
+        EventKind::Custom { payload, .. } => payload["deadline"].as_str() == Some(at.as_str()),
+        _ => false,
+    }))
 }
 
 /// What a budget warning is about. The two are said once each: a soft limit

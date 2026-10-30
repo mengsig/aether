@@ -670,3 +670,46 @@ fn the_latest_custom_event_is_the_newest_with_a_wanted_name() {
     assert_eq!(step(&["never.written"]), None);
     assert_eq!(step(&[]), None);
 }
+
+#[test]
+fn the_latest_agent_custom_event_is_the_agents_own_newest_with_that_name() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let (mine, other) = (AgentId::new(), AgentId::new());
+    let custom = |agent: AgentId, name: &str, step: u64| {
+        let kind = EventKind::Custom {
+            name: name.into(),
+            payload: serde_json::json!({"step": step}),
+        };
+        EventDraft::new(Actor::System, kind).agent(agent)
+    };
+    assert!(
+        store
+            .latest_agent_custom_event(mine, "deadline.warning")
+            .expect("read")
+            .is_none()
+    );
+    let commit = Commit::new()
+        .event(custom(mine, "deadline.warning", 1))
+        .event(custom(mine, "workspace.head", 2))
+        .event(custom(other, "deadline.warning", 3));
+    store.commit(commit).expect("commit");
+
+    let step = |agent: AgentId, name: &str| {
+        let event = store
+            .latest_agent_custom_event(agent, name)
+            .expect("read")?;
+        assert_eq!(event.agent_id, Some(agent));
+        match event.kind {
+            EventKind::Custom { payload, .. } => payload["step"].as_u64(),
+            other => panic!("not a custom event: {other:?}"),
+        }
+    };
+    assert_eq!(
+        step(mine, "deadline.warning"),
+        Some(1),
+        "not the other agent's"
+    );
+    assert_eq!(step(other, "deadline.warning"), Some(3));
+    assert_eq!(step(mine, "workspace.head"), Some(2));
+    assert_eq!(step(other, "workspace.head"), None);
+}

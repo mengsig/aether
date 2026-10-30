@@ -303,6 +303,26 @@ descendant's limits to the named agent's new ones:
 - The reply is the named agent, as for a plain update. The command needs the
   same access as updating the named agent.
 
+## Deadline warnings
+
+An agent's `deadline` stops it as failed and cancels its live subtree. Before
+that, the daemon warns the agent once: when 80 % of the time from its creation
+to the deadline has passed, or ten minutes before the deadline, whichever
+comes first. The warning is an inbox wake that reads "N minutes left before
+your deadline (…) as of (…): commit what works now", and points to
+`inspect_state` for the time left when it is read. It never cuts a tool call
+short: a running engine reads it at its next step. Like any inbox item, it
+ends a wait for any inbox item, which is where an idle agent sits; a wait on
+tasks, a named sender or an approval goes on, and the agent reads it after. The daemon records it as a `deadline.warning` custom event on
+the agent, with `deadline` (RFC 3339) and `minutes_left` in its payload, so
+every served client version decodes it.
+
+A moved deadline is a new one: an extension (or a shortening) warns again once
+the new deadline is near. A deadline moved back to the one last warned about
+before the new one was warned is not warned again. Each descendant has its own deadline, inherited at
+delegation or set later, and gets its own warning. `inspect_state` reports
+`deadline_minutes_left` beside `deadline`.
+
 ## Naming a checkout
 
 An agent's memory is scoped by `scope.repository`. Left unset, the daemon

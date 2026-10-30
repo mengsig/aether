@@ -164,6 +164,28 @@ fn a_kill_switch_bypass_reason_reaches_the_chat_transcript() {
     );
 }
 
+/// The warning an agent got before its deadline shows to the person too.
+#[test]
+fn a_deadline_warning_reaches_the_chat_transcript() {
+    let (mut app, id) = app_with_agent();
+    app.reduce(AppEvent::Frame(SubscriptionFrame::Event(Box::new(event(
+        5,
+        id,
+        EventKind::Custom {
+            name: "deadline.warning".into(),
+            payload: serde_json::json!({
+                "deadline": "2026-10-30T12:00:00+00:00",
+                "minutes_left": 9,
+            }),
+        },
+    )))));
+    let shown = models(&app).iter().any(|m| {
+        matches!(m, CellModel::Notice { kind: NoticeKind::BudgetWarning, text }
+            if text.contains("Deadline in 9 min (2026-10-30T12:00:00+00:00)"))
+    });
+    assert!(shown, "{:?}", models(&app));
+}
+
 #[test]
 fn a_model_call_sets_the_context_in_use_and_its_reply_lands() {
     let (mut app, id) = app_with_agent();
