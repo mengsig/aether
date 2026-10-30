@@ -29,17 +29,27 @@ fn expire_history(path: &std::path::Path, retained: usize) {
     tx.commit().expect("commit");
 }
 
-pub(super) async fn connect_when_ready(socket: &std::path::Path) -> Client {
-    tokio::time::timeout(Duration::from_secs(20), async {
+pub(super) type DaemonTask = tokio::task::JoinHandle<anyhow::Result<()>>;
+
+/// Connect once `daemon` serves `socket`; `None` when it stopped before serving.
+pub(super) async fn connect_when_ready(
+    socket: &std::path::Path,
+    daemon: &DaemonTask,
+) -> Option<Client> {
+    // A backstop only: a start that cannot finish ends the task, which ends the wait.
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             match Client::connect(socket).await {
-                Ok(client) => return client,
+                Ok(client) => return Some(client),
                 Err(ClientError::Io(error))
                     if matches!(
                         error.kind(),
                         std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
                     ) =>
                 {
+                    if daemon.is_finished() {
+                        return None;
+                    }
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
                 Err(error) => panic!("connect: {error}"),
@@ -69,7 +79,9 @@ async fn replay_expired_history(retained: usize) {
         },
         shutdown.clone(),
     ));
-    let client = connect_when_ready(&socket).await;
+    let Some(client) = connect_when_ready(&socket, &daemon).await else {
+        panic!("daemon stopped before serving: {:?}", daemon.await);
+    };
     let mut app = consume_expired_replay(&client, retained).await;
     let fresh = Client::connect(&socket).await.expect("fresh connection");
     assert!(
