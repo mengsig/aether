@@ -57,6 +57,10 @@ show. Reports are never pooled across protocol versions. To run a comparison
 yourself, see the [evaluation tooling](../evals/README.md) and its
 [protocol](../evals/harness_bench_protocol.md).
 
+- [Release bench 1.2.8](release-bench/1.2.8.md): Aether 1.2.8 against 1.2.7
+  on set v2, 440 trials; Haiku +0.9 points and Luna -5.5 (p = 0.392), cost
+  x0.84 and x1.10: no decrease; Luna's estimate is within the set's A/A
+  noise. The verdict is INCONCLUSIVE because v2 is off target.
 - [Release bench 1.2.7](release-bench/1.2.7.md): Aether 1.2.7 against 1.2.6
   on set v2, 440 trials; Haiku +0.0 points and Luna -8.2 (p = 0.175), cost
   x0.98 and x0.99: no decrease; Luna's estimate is within the set's A/A
