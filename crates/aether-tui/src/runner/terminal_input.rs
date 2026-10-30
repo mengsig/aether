@@ -48,9 +48,14 @@ impl<S: Stream<Item = io::Result<Event>> + Unpin> TerminalInput<S> {
                 *self.escape_until.insert(Instant::now() + ESC_JOIN)
             }
         };
+        let escape = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        // A read resumed past the window: `timeout_at` would still take a ready key.
+        if Instant::now() >= until {
+            self.escape_until = None;
+            return Some(Ok(escape));
+        }
         let next = tokio::time::timeout_at(until, self.events.next()).await;
         self.escape_until = None;
-        let escape = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         Some(Ok(match next {
             Ok(Some(Ok(Event::Key(key)))) if joins_escape(key) => {
                 Event::Key(KeyEvent::new_with_kind_and_state(
@@ -172,5 +177,19 @@ mod tests {
             next(&mut input).await,
             key(KeyCode::Char('n'), KeyModifiers::ALT)
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_read_resumed_after_the_window_keeps_the_escape_alone() {
+        let (tx, mut input) = input();
+        let esc = key(KeyCode::Esc, KeyModifiers::NONE);
+        tx.unbounded_send(Ok(esc.clone())).unwrap();
+        let cancelled = tokio::time::timeout(Duration::from_millis(10), input.next()).await;
+        assert!(cancelled.is_err(), "still waiting for the join window");
+        tokio::time::sleep(ESC_JOIN * 2).await;
+        let n = key(KeyCode::Char('n'), KeyModifiers::NONE);
+        tx.unbounded_send(Ok(n.clone())).unwrap();
+        assert_eq!(next(&mut input).await, esc, "the window closed before n");
+        assert_eq!(next(&mut input).await, n);
     }
 }

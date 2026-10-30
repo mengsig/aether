@@ -127,7 +127,8 @@ impl TerminalReplyFilter {
         self.last_held_at = Some(now);
     }
 
-    fn release(&mut self) -> Vec<KeyEvent> {
+    /// Every held key now: input of another kind arrived, so no reply is in progress.
+    pub fn release(&mut self) -> Vec<KeyEvent> {
         self.expect = None;
         self.last_held_at = None;
         std::mem::take(&mut self.held)

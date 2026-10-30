@@ -48,6 +48,12 @@ impl App {
         self.dispatch_typed_keys(typed)
     }
 
+    /// Keys held as a possible reply, typed before a paste or click overtakes them.
+    pub(in crate::app) fn type_held_keys(&mut self) -> Vec<Effect> {
+        let typed = self.terminal_replies.release();
+        self.dispatch_typed_keys(typed)
+    }
+
     fn dispatch_typed_keys(&mut self, keys: Vec<KeyEvent>) -> Vec<Effect> {
         let mut effects = Vec::new();
         for key in keys {

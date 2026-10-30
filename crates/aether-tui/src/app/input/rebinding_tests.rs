@@ -371,3 +371,33 @@ fn a_rebound_reply_opener_fires_once_no_reply_follows() {
     app.dispatch_key(plain(KeyCode::Char('i')));
     assert_eq!(app.input.text, "hi");
 }
+
+/// Keys held as a possible reply are typed before a paste or click that follows.
+#[test]
+fn held_keys_type_before_a_paste_or_click_overtakes_them() {
+    let mut app = crate::testing::app_with_transcript(&[]);
+    let opener = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT);
+    assert!(app.dispatch_key(opener).is_empty());
+    app.dispatch_key(plain(KeyCode::Char('1')));
+    assert_eq!(app.input.text, "", "held as a possible OSC reply");
+    app.reduce(crate::app::AppEvent::Paste("X".into()));
+    app.dispatch_key(plain(KeyCode::Char('h')));
+    assert_eq!(app.input.text, "1Xh");
+
+    app.input.set_text("");
+    app.dispatch_key(plain(KeyCode::Char('a')));
+    app.dispatch_key(KeyEvent::new(
+        KeyCode::Char('P'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    app.dispatch_key(plain(KeyCode::Char('1')));
+    let click = crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::ScrollUp,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.dispatch_mouse(click, &mut crate::ui::transcript::ViewCache::default());
+    assert_eq!(app.terminal_replies.deadline(), None, "nothing left held");
+    assert_eq!(app.input.text, "a1");
+}

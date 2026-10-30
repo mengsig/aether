@@ -16,6 +16,18 @@ fn key_name(key: &crossterm::event::KeyEvent) -> String {
     format!("{:?} {:?}", key.modifiers, key.code)
 }
 
+fn viewer_state(app: &App) -> Value {
+    let viewer = &app.viewer;
+    json!({
+        "open": viewer.open,
+        "fullscreen": viewer.fullscreen,
+        "share": viewer.share,
+        "picker": viewer.picker.len(),
+        "mode": viewer.pending.as_ref().map(|request| format!("{:?}", request.view)),
+        "loaded": viewer.preview.is_some(),
+    })
+}
+
 impl Observer {
     pub(super) fn new(output: File) -> Self {
         Self {
@@ -75,6 +87,7 @@ impl Observer {
             record["draft"] = json!(app.input.text);
             record["caret"] = json!(app.input.cursor);
             record["view"] = json!(app.bottom.top_view().map(|v| format!("{:?}", v.kind())));
+            record["viewer"] = viewer_state(app);
             record["images"] = json!(app.input.images.len());
             record["flash"] = json!(app.live_flash());
             record["flash_until"] = json!(app.flash.as_ref().map(|f| f.until.to_string()));

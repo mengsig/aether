@@ -31,6 +31,16 @@ case "$*" in
     *) exit 64 ;;
 esac
 """
+# Alt+E records what it opens; Alt+T on HTML must not start a real browser.
+FAKE_XDG_OPEN = """#!/bin/sh
+printf '%s\\n' "$1" >> "$FAKE_CLIPBOARD/opened"
+"""
+FAKE_CHROMIUM = "#!/bin/sh\nexit 1\n"
+# The fixture's one message: Alt+O lists these files for the viewer.
+MESSAGE = "Read [notes](notes.md) and page.html."
+# Legacy Alt+O, then Enter on notes.md or, one row down, page.html.
+OPEN_NOTES = b"\x1bo\r"
+OPEN_PAGE = b"\x1bo\x1b[B\r"
 # Ctrl+E, Ctrl+U: erase the line; Backspace then joins the line above.
 CLEAR = b"\x05\x15"
 
@@ -50,10 +60,23 @@ def edited(draft, caret):
     return lambda after, _before, _keys: after["draft"] == draft and after["caret"] == caret
 
 
-# Per binding: (draft typed first, key, what the binding visibly did). The
+def viewer(field, changed):
+    """The viewer's `field` went from before to after as `changed` says."""
+    return lambda after, before, _keys: changed(before["viewer"][field], after["viewer"][field])
+
+
+# Per binding: (keys typed first, key, what the binding visibly did). The
 # fixture daemon has no notification center, so Alt+N shows that notice.
 BINDINGS = {
-    "alt+o": (b"", "o", flashed("No local file references")),
+    "alt+o": (b"", "o", lambda after, before, _: after["viewer"]["picker"] == 2
+              and not before["viewer"]["open"]),
+    "alt+e": (OPEN_NOTES, "e", lambda after, before, _: after["opened"] == before["opened"] + 1),
+    "alt+w": (OPEN_NOTES, "w", viewer("open", lambda was, now: was and not now)),
+    "alt+z": (OPEN_NOTES, "z", viewer("fullscreen", lambda was, now: now != was)),
+    # Widened or narrowed first with legacy Alt, so the share has room to move.
+    "alt+-": (OPEN_NOTES + b"\x1b=", "-", viewer("share", lambda was, now: now < was)),
+    "alt+=": (OPEN_NOTES + b"\x1b-", "=", viewer("share", lambda was, now: now > was)),
+    "alt+t": (OPEN_PAGE, "t", viewer("mode", lambda was, now: was is not None and now != was)),
     "alt+n": (b"", "n", lambda after, before, _: notices(after) == notices(before) + 1),
     "alt+v": (b"", "v", lambda after, before, _: after["images"] == before["images"] + 1),
     "alt+enter": (b"ab", "\r", edited("ab\n", 3)),
@@ -167,6 +190,7 @@ def fixture_env(root):
     env.update(AETHER_CONFIG_DIR=str(root / "config"), AETHER_DATA_DIR=str(root / "data"),
                AETHER_SOCKET=str(root / "unused.sock"), AETHER_LOOP_RECEIPT=str(root / "receipt.jsonl"),
                AETHER_TEST_FAKE_CLIPBOARD="1", FAKE_CLIPBOARD=str(root / "clipboard"),
+               AETHER_LOOP_MESSAGE=MESSAGE,
                PATH=f"{root / 'bin'}{os.pathsep}{env.get('PATH', '')}",
                WAYLAND_DISPLAY="aether-alt-test", TERM="xterm-256color")
     return env
@@ -180,16 +204,37 @@ def escape(tui):
 
 def reset(tui):
     """Close any view, empty the draft and the flash, from a known state."""
-    before = tui.settle("reset")
-    if before["view"] is not None:
-        escape(tui)
     state = tui.settle("reset")
     for _ in range(4):
-        if state["view"] is None and state["draft"] == "":
+        if state["view"] is not None or state["viewer"]["open"]:
+            escape(tui)
+        elif state["draft"] == "":
             return state
-        tui.send(CLEAR + b"\x7f")
+        else:
+            tui.send(CLEAR + b"\x7f")
         state = tui.settle("reset")
     raise AssertionError(("could not reset", state))
+
+
+def opened(tui, more_than=None):
+    """Files the fake opener was given; waits up to 3 s for more than `more_than`."""
+    path = tui.root / "clipboard" / "opened"
+    deadline = time.monotonic() + 3
+    while True:
+        count = len(path.read_text().splitlines()) if path.exists() else 0
+        if more_than is None or count > more_than or time.monotonic() >= deadline:
+            return count
+        time.sleep(.05)
+
+
+def ready(tui, binding, state):
+    """The state once a viewer the setup keys opened has its file loaded."""
+    for _ in range(100):
+        if not state["viewer"]["open"] or state["viewer"]["loaded"]:
+            return state
+        time.sleep(.05)
+        state = tui.settle(binding)
+    raise AssertionError(("viewer never loaded", binding, state))
 
 
 def run_case(tui, binding, encoding):
@@ -201,13 +246,15 @@ def run_case(tui, binding, encoding):
     reset(tui)
     if draft:
         tui.send(draft)
-    before = tui.settle(binding)
+    before = ready(tui, binding, tui.settle(binding))
+    before["opened"] = opened(tui)
     start = len(tui.records())
     tui.send(keys)
     after = tui.settle(binding)
     if binding == "alt+v":
         found = tui.wait_for(lambda r: r["images"] > before["images"], binding, start, 3)
         after = found or after
+    after["opened"] = opened(tui, before["opened"] if binding == "alt+e" else None)
     keys = [r["key"] for r in tui.records()[start:]
             if "key" in r and r["key"] != "KeyModifiers(0x0) F(12)"]
     return fired(after, before, keys), keys
@@ -273,9 +320,13 @@ def check(executable, report):
         for name in ("config", "data", "bin", "clipboard"):
             (root / name).mkdir()
         (root / "clipboard" / "image.png").write_bytes(PNG)
-        helper = root / "bin" / "wl-paste"
-        helper.write_text(FAKE_WL_PASTE)
-        helper.chmod(0o755)
+        for name, script in (("wl-paste", FAKE_WL_PASTE), ("xdg-open", FAKE_XDG_OPEN),
+                             ("chromium", FAKE_CHROMIUM)):
+            helper = root / "bin" / name
+            helper.write_text(script)
+            helper.chmod(0o755)
+        (root / "notes.md").write_text("# Notes\n\nalt keys\n")
+        (root / "page.html").write_text("<html><body><p>alt keys</p></body></html>\n")
         tui = Tui(executable, root)
         try:
             assert tui.wait_for(lambda r: r["kind"] == "backfill", "history loaded"), "no backfill"
