@@ -261,8 +261,9 @@ impl App {
         }
     }
 
-    /// Esc in the board: docked hands focus back and stays; the overlay closes.
+    /// Esc in the board: docked (full screen too) hands focus back and stays; the overlay closes.
     pub(in crate::app) fn leave_board(&mut self) {
+        self.board.full = false;
         if self.board_is_overlay() {
             self.close_board();
         } else {
@@ -272,6 +273,7 @@ impl App {
 
     pub(super) fn close_board(&mut self) {
         self.board.open = false;
+        self.board.full = false;
         self.board.focus = BoardFocus::BottomPane;
         self.save_board_open();
     }
@@ -283,8 +285,9 @@ impl App {
         }
     }
 
-    pub(super) fn board_is_overlay(&self) -> bool {
-        self.board_mode() == BoardMode::Overlay
+    /// The narrow-terminal overlay; a full screen board is docked underneath.
+    pub(in crate::app) fn board_is_overlay(&self) -> bool {
+        self.board_mode() == BoardMode::Overlay && !self.board_fullscreen_at(self.size.0)
     }
 
     fn view_parent(&mut self) -> Vec<Effect> {

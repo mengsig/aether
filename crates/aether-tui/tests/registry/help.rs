@@ -7,7 +7,7 @@ fn shortcuts_at(width: u16) -> Vec<Vec<char>> {
     let mut app = App::new(TuiOptions::default());
     type_text(&mut app, "?");
     assert!(app.bottom.shortcuts, "? on an empty draft opens the panel");
-    let rows = screen_rows(&app, width, 70);
+    let rows = screen_rows(&app, width, 72);
     assert!(
         rows.iter().any(|row| find_in(row, TITLE).is_some()),
         "no shortcuts panel at {width} columns"

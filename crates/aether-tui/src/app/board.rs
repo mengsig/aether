@@ -47,6 +47,10 @@ pub struct BoardState {
     pub(crate) confirmation_pending: Option<AgentId>,
     /// Accepted stop-and-remove requests waiting for a terminal tree snapshot.
     pub(crate) pending_removals: std::collections::BTreeSet<AgentId>,
+    /// Docked width chosen with Alt+- / Alt+= for this session; `None` keeps the default share.
+    pub width: Option<u16>,
+    /// Alt+Z: the focused board covers the screen as the overlay does.
+    pub full: bool,
 }
 
 impl BoardState {

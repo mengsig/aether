@@ -137,6 +137,8 @@ pub(super) fn cases() -> Vec<KeyCase> {
         case("Shift+P", Panel, KeyCode::Char('P'), shift, Board),
         case("Shift+I", Panel, KeyCode::Char('i'), shift, Board),
         case(".", Panel, KeyCode::Char('.'), none, Board),
+        case("Alt+- / Alt+=", Panel, KeyCode::Char('='), alt, Board),
+        case("Alt+Z", Panel, KeyCode::Char('z'), alt, Board),
         case("Esc / Ctrl+G", Panel, KeyCode::Esc, none, Board),
         case("Esc / Ctrl+G", Panel, KeyCode::Char('g'), ctrl, Board),
         case("y / p / n", Overlay, KeyCode::Char('y'), none, Approval),

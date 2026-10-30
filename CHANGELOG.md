@@ -6,6 +6,18 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Added
+
+- **The agent board can be resized from the keyboard (#346).** While the
+  board has focus, the file viewer's size keys apply to it: Alt+- and Alt+=
+  narrow and widen the docked board by 5 % of the terminal width, keeping it
+  at least 40 columns wide and the transcript and composer at least 40
+  columns, and Alt+Z toggles the board full screen. The width lasts for the
+  session, also when Ctrl+B hides and shows the board, and is clamped again
+  when the terminal is resized. Below 100 columns, where the board already
+  covers the screen, the keys only say so. With focus anywhere else they
+  still size the file viewer.
+
 ### Fixed
 
 - **Alt shortcuts no longer stop the TUI from taking keys (#351).** Alt+] and

@@ -415,6 +415,21 @@ pub const KEYS: &[KeySpec] = &[
     ),
     key(
         Board,
+        "Alt+- / Alt+=",
+        "narrow / widen the docked board; the width stays for the session",
+        "narrow / widen the board",
+    )
+    .bound(&[KeyAction::ViewerLess, KeyAction::ViewerMore])
+    .shown_as("Alt+-/="),
+    key(
+        Board,
+        "Alt+Z",
+        "toggle the board full screen",
+        "full screen board",
+    )
+    .bound(&[KeyAction::ViewerFull]),
+    key(
+        Board,
         "Esc / Ctrl+G",
         "back to the composer",
         "back to the composer",
