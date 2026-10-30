@@ -142,7 +142,8 @@ impl BashTool {
                     let Some(pid) = gate.child_pid()? else {
                         return Ok(None);
                     };
-                    let record = self.record_foreground(call, pid);
+                    // Unrecorded, the gate is dropped shut and the command never runs.
+                    let record = self.record_foreground(call, pid)?;
                     gate.open()?;
                     Ok(record)
                 });
@@ -152,38 +153,43 @@ impl BashTool {
                 let recorded = recording.join().map_err(|_| {
                     ToolError::Internal("recording a foreground call panicked".into())
                 })?;
-                match spawned {
-                    Ok(child) => {
-                        debug_assert!(
-                            recorded.is_ok(),
-                            "a child execs only through an opened gate"
-                        );
-                        Ok((child, recorded.ok().flatten()))
+                match (spawned, recorded) {
+                    (Ok(child), Ok(record)) => Ok((child, record)),
+                    (Ok(_), Err(error)) => {
+                        unreachable!("a child execs only through an opened gate: {error}")
                     }
-                    Err(error) => {
-                        if let Ok(Some(record)) = recorded {
+                    (Err(error), Ok(record)) => {
+                        if let Some(record) = record {
                             clear_record(record);
                         }
                         Err(error.into())
                     }
+                    (Err(_), Err(error)) => Err(error.into()),
                 }
             })
         })
     }
 
-    /// Record the call's group so a start after a daemon crash stops it. The
-    /// call runs on unrecorded when that fails: refusing it would stop the agent.
+    /// Record the call's group so a start after a daemon crash stops it before
+    /// the agent resumes. Unrecorded, a crash would leave the agent racing it.
     #[cfg(target_os = "linux")]
-    fn record_foreground(&self, call: aether_core::id::ProcessId, pid: u32) -> Option<CallRecord> {
+    fn record_foreground(
+        &self,
+        call: aether_core::id::ProcessId,
+        pid: u32,
+    ) -> std::io::Result<Option<CallRecord>> {
         #[cfg(test)]
         tests::delay_record(pid);
-        match self.processes.register_foreground(call, pid) {
-            Ok(record) => record,
-            Err(error) => {
-                tracing::warn!(pid, %error, "cannot record a foreground call; a daemon crash would leave it running");
-                None
-            }
-        }
+        self.processes
+            .register_foreground(call, pid)
+            .map_err(|error| {
+                std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "the command was not started: recording it so a daemon crash cannot leave it running failed: {error}"
+                    ),
+                )
+            })
     }
 }
 
@@ -823,5 +829,39 @@ mod tests {
             0,
             "the record is cleared once the call ends"
         );
+    }
+
+    /// A call that cannot be recorded never runs: a daemon crash would leave
+    /// it running beside the agent the next start resumes.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_foreground_call_that_cannot_be_recorded_never_runs() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let processes = Arc::new(BackgroundProcesses::new());
+        processes
+            .recover_host_jobs(&dir.path().join("store"))
+            .unwrap();
+        let journal = dir.path().join("store.background-processes");
+        let mode = |bits| std::fs::set_permissions(&journal, std::fs::Permissions::from_mode(bits));
+        mode(0o500).unwrap();
+        if std::fs::write(journal.join("probe"), b"").is_ok() {
+            // Root writes through any mode: nothing here can make recording fail.
+            mode(0o700).unwrap();
+            return;
+        }
+        let work = dir.path().join("work");
+        std::fs::create_dir(&work).unwrap();
+        let outcome = BashTool::new(processes)
+            .execute(
+                json!({ "command": "touch ran" }),
+                &ctx_in(&work),
+                CancellationToken::new(),
+            )
+            .await;
+        mode(0o700).unwrap();
+        let error = outcome.expect_err("an unrecorded call fails");
+        assert!(error.to_string().contains("was not started"), "{error}");
+        assert!(!work.join("ran").exists(), "the command never ran");
     }
 }
