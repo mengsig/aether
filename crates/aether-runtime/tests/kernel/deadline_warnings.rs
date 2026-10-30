@@ -124,3 +124,35 @@ async fn a_near_deadline_warns_each_agent_once_per_deadline() {
         "only the parent moved"
     );
 }
+
+/// A wait for something other than the inbox (here, one sender) is not cut
+/// short: the warning waits in the inbox and no turn is spent on it.
+#[tokio::test]
+async fn a_warning_does_not_end_a_wait_for_a_named_sender() {
+    let h = harness(vec![]).await;
+    let mut idle = spec("stay on call");
+    idle.objective = None;
+    idle.config.as_mut().expect("config").long_lived = true;
+    let (sender, _) = h.runtime.create_agent(idle, Actor::user()).expect("sender");
+    h.client.push(ScriptedClient::tool_call(
+        "wait_for",
+        json!({"message_from": sender.id.to_string()}),
+    ));
+    let (waiter, _) = h
+        .runtime
+        .create_agent(spec("wait for the sender"), Actor::user())
+        .expect("waiter");
+    h.wait_until(waiter.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    let parked = h.store.agent(waiter.id).expect("read").expect("agent");
+    let requests = h.client.requests().len();
+
+    set_deadline(&h, waiter.id, now() + chrono::Duration::minutes(5));
+    warned(&h, waiter.id, 1).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let after = h.store.agent(waiter.id).expect("read").expect("agent");
+    assert_eq!(after.status, parked.status, "still waiting on the sender");
+    assert_eq!(h.client.requests().len(), requests, "no turn was spent");
+    assert_eq!(inbox_warnings(&h, waiter.id).len(), 1, "queued for later");
+}

@@ -311,8 +311,9 @@ to the deadline has passed, or ten minutes before the deadline, whichever
 comes first. The warning is an inbox wake that reads "N minutes left before
 your deadline (…) as of (…): commit what works now", and points to
 `inspect_state` for the time left when it is read. It never cuts a tool call
-short: a running engine reads it at its next step, and an agent in a wait
-reads it when the wait ends. The daemon records it as a `deadline.warning` custom event on
+short: a running engine reads it at its next step. Like any inbox item, it
+ends a wait for any inbox item, which is where an idle agent sits; a wait on
+tasks, a named sender or an approval goes on, and the agent reads it after. The daemon records it as a `deadline.warning` custom event on
 the agent, with `deadline` (RFC 3339) and `minutes_left` in its payload, so
 every served client version decodes it.
 
