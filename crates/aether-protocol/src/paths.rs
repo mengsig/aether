@@ -34,6 +34,12 @@ pub fn store_path() -> PathBuf {
     data_dir().join(STORE_FILE_NAME)
 }
 
+/// Where the daemon keeps the images sent with messages: beside its store,
+/// resolved as the daemon resolves it.
+pub fn attachment_dir_for(store: &Path) -> PathBuf {
+    store.with_extension("attachments")
+}
+
 pub fn log_dir() -> PathBuf {
     data_dir().join("logs")
 }

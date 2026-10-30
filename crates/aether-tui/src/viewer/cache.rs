@@ -1,8 +1,5 @@
-use super::references::{Reference, parse};
-use crate::{
-    app::transcript::{Cell, CellId, CellRevision, TranscriptEpoch},
-    ui::cells::ChatCell,
-};
+use super::references::Reference;
+use crate::app::transcript::{Cell, CellId, CellRevision, TranscriptEpoch};
 use aether_core::id::AgentId;
 use std::{collections::HashMap, sync::Arc};
 
@@ -21,12 +18,7 @@ impl ReferenceCache {
         if let Some(found) = self.entries.get(&key) {
             return found.clone();
         }
-        let refs: Arc<[Reference]> = cell
-            .model
-            .copy_source()
-            .map(parse)
-            .unwrap_or_default()
-            .into();
+        let refs: Arc<[Reference]> = super::sent_images::cell_references(&cell.model).into();
         let bytes: usize = refs
             .iter()
             .map(|r| r.target.len() + r.label.len() + size_of::<Reference>())

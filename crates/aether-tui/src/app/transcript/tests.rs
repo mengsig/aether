@@ -205,7 +205,8 @@ fn operator_task_and_reply_become_user_and_assistant_cells() {
         vec![
             &CellModel::User {
                 from: UserFrom::Operator,
-                text: "aether: do the thing\nwith detail".into()
+                text: "aether: do the thing\nwith detail".into(),
+                images: Vec::new(),
             },
             &CellModel::Assistant {
                 text: "Done.".into()
@@ -672,7 +673,8 @@ fn steering_preview_retires_into_a_user_cell_on_consume() {
         t.cells.last().unwrap().model,
         CellModel::User {
             from: UserFrom::Operator,
-            text: "use the other API".into()
+            text: "use the other API".into(),
+            images: Vec::new(),
         }
     );
 }

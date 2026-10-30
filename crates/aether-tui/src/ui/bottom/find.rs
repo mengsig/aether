@@ -334,7 +334,7 @@ pub(crate) fn occurrences(text: &str, query: &str) -> Vec<(usize, usize)> {
 }
 
 /// Lowercase char by char, as the text is: `str::to_lowercase` turns a final `Σ` into `ς`.
-fn fold(text: &str) -> String {
+pub(crate) fn fold(text: &str) -> String {
     text.chars()
         .flat_map(char::to_lowercase)
         .map(fold_sigma)

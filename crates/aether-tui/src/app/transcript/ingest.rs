@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use aether_core::agent::{AgentStatusKind, WaitCondition};
 use aether_core::approval::RuleScope;
+use aether_core::attachment::AttachmentRef;
 use aether_core::event::{Actor, Event, EventKind};
 use aether_core::id::{
     AgentId, ApprovalId, ArtifactId, InboxItemId, InvocationId, ScheduleId, TaskId, ToolCallId,
@@ -74,6 +75,7 @@ struct Unconsumed {
     id: InboxItemId,
     from: UserFrom,
     text: String,
+    images: Vec<AttachmentRef>,
     pending: Option<CellId>,
     at: Timestamp,
 }
@@ -651,11 +653,19 @@ fn thinking_of(content: &[ContentBlock]) -> String {
 
 /// A delivered message as its cell reads: the text, then a line per image.
 fn message_text(content: &[ContentBlock]) -> String {
-    let labels = content.iter().filter_map(|block| match block {
-        ContentBlock::ImageRef(image) => Some(image.label()),
-        _ => None,
-    });
-    crate::app::with_image_lines(&text_of(content), labels)
+    let summaries = message_images(content).into_iter().map(|i| i.summary());
+    crate::app::with_image_lines(&text_of(content), summaries)
+}
+
+/// The stored images a delivered message carries, in the order it lists them.
+fn message_images(content: &[ContentBlock]) -> Vec<AttachmentRef> {
+    content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ImageRef(image) => Some(image.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 // ----- routing --------------------------------------------------------------------
@@ -1262,6 +1272,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                 CellModel::User {
                     from,
                     text: objective.trim().to_owned(),
+                    images: Vec::new(),
                 },
             );
         }
@@ -1280,12 +1291,14 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                     return;
                 }
                 let text = message_text(content);
+                let images = message_images(content);
                 let pending = if matches!(sender, UserFrom::Message { .. }) && !text.is_empty() {
                     let cell = t.mint(
                         at,
                         CellModel::User {
                             from: sender.clone(),
                             text: text.clone(),
+                            images: images.clone(),
                         },
                     );
                     let id = cell.id;
@@ -1299,6 +1312,7 @@ fn own_event(t: &mut AgentTranscript, agent: AgentId, event: &Event, look: &Look
                     id: item.id,
                     from: sender,
                     text,
+                    images,
                     pending,
                     at,
                 });
@@ -1856,6 +1870,7 @@ fn consume_inbox(t: &mut AgentTranscript, at: Timestamp, items: &[InboxItemId]) 
         let Unconsumed {
             from,
             text,
+            images,
             pending,
             ..
         } = t.private.inbox.remove(pos);
@@ -1871,7 +1886,7 @@ fn consume_inbox(t: &mut AgentTranscript, at: Timestamp, items: &[InboxItemId]) 
                 t.changed(Some(id));
             }
         } else if !text.is_empty() {
-            t.push(at, CellModel::User { from, text });
+            t.push(at, CellModel::User { from, text, images });
         }
     }
 }

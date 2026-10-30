@@ -335,6 +335,7 @@ fn the_turn_clock_pauses_over_open_and_answered_approvals() {
         CellModel::User {
             from: crate::app::transcript::UserFrom::Operator,
             text: "go".to_owned(),
+            images: Vec::new(),
         },
     );
     let started = turn_started_at(&f.app, tester).expect("a turn");

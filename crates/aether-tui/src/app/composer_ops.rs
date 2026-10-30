@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use aether_core::agent::AgentStatusKind;
+use aether_core::attachment::ImageAttachment;
 use aether_core::id::AgentId;
 
 use super::transcript::{ScrollIntent, Steer};
-use super::{App, ClientError, Command, Effect, InputState, Then, image_label, with_image_lines};
+use super::{App, ClientError, Command, Effect, InputState, Then, with_image_lines};
 use crate::commands::InputAction;
 use crate::ui::bottom::composer::{
     Killed, PASTE_PLACEHOLDER_CHARS, PastedText, paste_placeholder, paste_spans,
@@ -244,7 +245,10 @@ impl App {
             }
         };
         // The preview reads as the transcript will: the text, then a line per image.
-        let preview = with_image_lines(&text, self.input.images.iter().map(image_label));
+        let preview = with_image_lines(
+            &text,
+            self.input.images.iter().map(ImageAttachment::summary),
+        );
         let steer = self.viewed_running().filter(|_| !preview.is_empty());
         let effects = self.submit_input();
         if let Some(agent) = steer {

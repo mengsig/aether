@@ -2,10 +2,10 @@ use super::{App, Effect};
 use crate::ui::layout::BOARD_DOCK_MIN_COLS;
 use crate::{
     keys::KeyAction,
-    ui::cells::ChatCell,
     viewer::{Preview, ReadRequest, View, references::Reference},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::path::PathBuf;
 
 impl App {
     pub(crate) fn viewer_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
@@ -29,9 +29,7 @@ impl App {
             return;
         };
         let references = |cell: &super::transcript::Cell| {
-            cell.model
-                .copy_source()
-                .map(crate::viewer::references::parse)
+            Some(crate::viewer::sent_images::cell_references(&cell.model))
                 .filter(|refs| !refs.is_empty())
         };
         let focused = self
@@ -72,6 +70,9 @@ impl App {
     }
 
     pub(crate) fn open_reference(&mut self, reference: Reference) -> Vec<Effect> {
+        if crate::viewer::sent_images::is_sent_image(&reference.target) {
+            return self.open_sent_image(reference);
+        }
         if self.options.is_remote() {
             self.flash("Remote files need a local copy; no files fetched");
             return Vec::new();
@@ -85,10 +86,36 @@ impl App {
             self.flash_error("Cannot preview a file without the agent workspace");
             return Vec::new();
         };
-        let request = ReadRequest {
+        let request = self.read_request(reference.target, workspace, None);
+        self.viewer.focused = true;
+        self.request_preview(request)
+    }
+
+    /// A sent image opens the daemon's stored copy, never a workspace file.
+    fn open_sent_image(&mut self, reference: Reference) -> Vec<Effect> {
+        debug_assert!(crate::viewer::sent_images::is_sent_image(&reference.target));
+        if self.options.is_remote() {
+            self.flash("This image is stored on the remote host; it cannot be shown here");
+            return Vec::new();
+        }
+        let store = self.options.attachment_dir.clone();
+        let request = self.read_request(reference.target, PathBuf::new(), store);
+        debug_assert!(request.workspace.as_os_str().is_empty());
+        self.viewer.focused = true;
+        self.request_preview(request)
+    }
+
+    fn read_request(
+        &self,
+        target: String,
+        workspace: PathBuf,
+        stored_images: Option<PathBuf>,
+    ) -> ReadRequest {
+        ReadRequest {
             id: 0,
-            target: reference.target,
+            target,
             workspace,
+            stored_images,
             approved_outside: None,
             width: 1,
             height: 1,
@@ -97,9 +124,7 @@ impl App {
             theme: self.theme,
             page: 1,
             view: View::Auto,
-        };
-        self.viewer.focused = true;
-        self.request_preview(request)
+        }
     }
 
     fn request_preview(&mut self, mut request: ReadRequest) -> Vec<Effect> {

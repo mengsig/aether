@@ -211,6 +211,14 @@ pub async fn tui(
         } else {
             aether_tui::workspace::home_dir()
         },
+        // The daemon resolves a symlinked store before it puts images beside it.
+        attachment_dir: if socket.is_remote() {
+            None
+        } else {
+            std::fs::canonicalize(aether_protocol::paths::store_path())
+                .ok()
+                .map(|store| aether_protocol::paths::attachment_dir_for(&store))
+        },
         recent_workspaces: prefs.recent_workspaces.clone(),
         pinned_workspaces: prefs.pinned_workspaces.clone(),
         workspace_roots: prefs.workspace_roots.clone(),

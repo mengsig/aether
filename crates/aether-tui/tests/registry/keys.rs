@@ -147,6 +147,7 @@ fn stage_document(app: &mut App) {
         id: app.viewer.request,
         target: "report.pdf".into(),
         workspace: "/workspace".into(),
+        stored_images: None,
         approved_outside: None,
         width: 40,
         height: 20,

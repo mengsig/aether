@@ -401,7 +401,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             default_model: None,
             workspace_root: config.workspace_root.clone(),
             // Beside the resolved store: an engine opens the file from its agent's workspace.
-            attachment_dir: Some(store_path.with_extension("attachments")),
+            attachment_dir: Some(aether_protocol::paths::attachment_dir_for(&store_path)),
             github_checkout_root: Some(config.store_path.with_extension("github-workspaces")),
             github_review_sweep_prs: models
                 .config()
