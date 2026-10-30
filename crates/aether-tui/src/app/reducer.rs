@@ -20,7 +20,16 @@ impl App {
         // Compact search previews also change when the terminal resizes.
         let track_find = !matches!(event, AppEvent::Tick { .. } | AppEvent::Focus(_));
         let selection = self.selected;
-        let mut effects = self.reduce_inner(event);
+        let pasted = matches!(
+            event,
+            AppEvent::Paste(_) | AppEvent::TerminalImagePaste | AppEvent::ImagePathPasted { .. }
+        );
+        let mut effects = if pasted {
+            self.type_held_keys()
+        } else {
+            Vec::new()
+        };
+        effects.extend(self.reduce_inner(event));
         self.end_orphaned_theme_preview();
         if track_find {
             self.track_find();
@@ -526,7 +535,7 @@ impl App {
     pub(super) fn on_tick(&mut self, frames: u64) -> Vec<Effect> {
         self.tick += frames.max(1);
         self.now = now();
-        let mut effects = Vec::new();
+        let mut effects = self.release_held_keys();
         // A frame for what moves on its own, then the next one booked from now.
         if self.animation_due.is_none_or(|at| self.tick >= at) {
             self.animation_due = self

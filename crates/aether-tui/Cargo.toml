@@ -48,6 +48,7 @@ html2text = { version = "0.17.4", default-features = false }
 html5ever = { version = "0.40.1", default-features = false }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 aether-daemon = { workspace = true }
 rusqlite = { workspace = true }
 aether-store = { workspace = true }

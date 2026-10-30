@@ -8,6 +8,18 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **Alt shortcuts no longer stop the TUI from taking keys (#351).** Alt+] and
+  Alt+Shift+P were read as the start of a terminal reply, and every key after
+  them was dropped until the next Esc, Alt shortcuts included. Such a key is
+  now held only while what follows still looks like a reply, at most 250 ms,
+  and is typed otherwise, ahead of any paste or click after it; late replies to the startup probes, kitty graphics
+  replies (Alt+_) included, still never reach the draft. An Alt chord whose
+  Esc and key arrive in two reads is now read as Alt instead of Esc and the
+  bare key, which used to close a view or interrupt the agent and then type
+  the letter. Every documented Alt shortcut was checked in the real input
+  loop with legacy, kitty-protocol and split encodings. `docs/tui.md` now
+  says how to make macOS Option send Alt, and which encodings cannot carry
+  Alt shortcuts.
 - **A sent image opens from its transcript line in the TUI (#345).** A click
   on `[image: shot.png, 1.2 MB]` used to look up `shot.png` in the agent's
   workspace. That lookup failed for a pasted image, which has no file, and

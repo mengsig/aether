@@ -270,7 +270,7 @@ impl App {
     /// release. `None` when
     /// nothing is pending, so an idle TUI sleeps until an event (§9.7, §9.8).
     pub fn next_tick_in(&self) -> Option<u64> {
-        let mut due = Vec::with_capacity(5);
+        let mut due = Vec::with_capacity(6);
         match self.animation_due {
             Some(at) => due.push(at.saturating_sub(self.tick)),
             None => due.extend(self.animation_in_ms().map(ticks_in)),
@@ -283,6 +283,10 @@ impl App {
             due.push((self.status_requested_at + STATUS_REFRESH_TICKS).saturating_sub(self.tick));
         }
         due.extend(self.approval_guard_ends_in_ms().map(ticks_in));
+        if let Some(deadline) = self.terminal_replies.deadline() {
+            let ms = (deadline - self.now).num_milliseconds();
+            due.push(ticks_in(u64::try_from(ms).unwrap_or(0)));
+        }
         // At least one frame ahead: a deadline already passed is the next frame.
         due.into_iter().min().map(|frames| frames.max(1))
     }

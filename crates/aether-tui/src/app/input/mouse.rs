@@ -17,7 +17,9 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 impl App {
     pub fn dispatch_mouse(&mut self, mouse: MouseEvent, cache: &mut ViewCache) -> Vec<Effect> {
-        self.dispatch_mouse_at(mouse, cache, Instant::now())
+        let mut effects = self.type_held_keys();
+        effects.extend(self.dispatch_mouse_at(mouse, cache, Instant::now()));
+        effects
     }
 
     /// `dispatch_mouse` with the time of the event, so tests control the clock.
