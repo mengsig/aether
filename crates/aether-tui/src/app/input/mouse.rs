@@ -215,9 +215,16 @@ impl App {
     /// Widen the fresh selection at `point` to the source line under it and keep
     /// that line's text to copy; a gap row or an empty draft stays a click.
     fn select_line(&self, cache: &mut ViewCache, point: selection::TextPoint) {
-        let line = match cache.mouse.selection.as_ref().map(|s| s.pane) {
-            Some(Pane::Transcript) => crate::ui::transcript::line_at(self, cache, point),
-            Some(Pane::Composer) => self.composer_line(cache, point.row),
+        let Some(s) = cache.mouse.selection.as_ref() else {
+            return;
+        };
+        let line = match (s.pane, s.start_excerpt.as_deref()) {
+            // The pinned prompt row copies the excerpt it shows, as a drag over it does.
+            (Pane::Transcript, Some(pinned)) => {
+                Some((point.row, point.row, pinned.trim_end().to_owned()))
+            }
+            (Pane::Transcript, None) => crate::ui::transcript::line_at(self, cache, point),
+            (Pane::Composer, _) => self.composer_line(cache, point.row),
             _ => None,
         };
         let (Some((first, last, text)), Some(s)) = (line, cache.mouse.selection.as_mut()) else {

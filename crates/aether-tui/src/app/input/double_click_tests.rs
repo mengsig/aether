@@ -232,3 +232,32 @@ fn a_drag_is_not_the_first_click_of_a_double_click() {
     let effects = click(&mut app, &mut cache, x, row, t + Duration::from_millis(50));
     assert!(copied(&effects).is_none());
 }
+
+#[test]
+fn double_click_on_the_pinned_prompt_copies_its_displayed_excerpt() {
+    let reply = "a long reply row\n\n".repeat(100);
+    let mut app = app_with_transcript(&["first prompt line\nsecond prompt line", &reply]);
+    app.size = (100, 40);
+    let agent = app.selected.expect("an agent is selected");
+    let reply_cell = app.transcripts[&agent].cells[1].id;
+    app.scroll_log.push(
+        agent,
+        crate::app::transcript::ScrollIntent::Reveal(reply_cell),
+    );
+    let mut cache = ViewCache::default();
+    let screen = render_with(&app, &mut cache, 100, 40);
+    assert!(cache.mouse.pinned.is_some(), "the prompt is pinned");
+    let r = cache.regions.transcript;
+    let shown = screen.lines().nth(usize::from(r.y)).expect("pinned row");
+    assert!(shown.contains("second prompt line"), "{shown}");
+    let t = Instant::now();
+    click(&mut app, &mut cache, r.x + 1, r.y, t);
+    let effects = click(
+        &mut app,
+        &mut cache,
+        r.x + 1,
+        r.y,
+        t + Duration::from_millis(50),
+    );
+    assert_eq!(copied(&effects), Some(shown.trim()));
+}
