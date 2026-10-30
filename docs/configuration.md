@@ -622,9 +622,12 @@ over even if it failed after the child completed: the start cannot tell
 whether it held them, and spares them. A live agent's own processes, and what a
 completed child handed up to it, are spared, so the agents recovery resumes
 find their servers up. A foreground call of Aether's own shell tool is
-recorded while it runs, and the start kills the process group of each one a
-crash cut short, while its leader still has the recorded pid and start time,
-as the call's end would have: an agent that recovery resumes never races its
+recorded before its command starts and until it ends, and the start kills
+the process group of each one a crash cut short, as the call's end would
+have: through its leader, held stopped while the group is signalled, while
+that leader still has the recorded pid and start time, or, once the leader
+is gone, each process left in the group that carries the call's id
+(`AETHER_FOREGROUND_CALL`). An agent that recovery resumes never races its
 own interrupted command, and what the call detached is spared as above. It
 never signals a process it cannot tie to an engine it started or an agent it
 ran.

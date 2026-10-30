@@ -76,7 +76,8 @@ clients on 17 through 24 see it as `usage_limit`.
   the nearest live ancestor. Background shell jobs still stop with the daemon,
   whose pipes carry their output. A foreground call of Aether's own shell
   tool that a daemon crash cut short is stopped by the next start, its process
-  group as the call's end would have, so an agent recovery resumes never
+  group as the call's end would have (the call is recorded before its
+  command starts), so an agent recovery resumes never
   races its own interrupted command; what the call detached is spared like
   any agent's server. Linux only.
 - **A refused engine sign-in suspends the agent instead of failing it.** A
