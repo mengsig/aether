@@ -6,22 +6,6 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
-### Fixed
-
-- **A sent image opens from its transcript line in the TUI (#345).** A click
-  on `[image: shot.png, 1.2 MB]` used to look up `shot.png` in the agent's
-  workspace. That lookup failed for a pasted image, which has no file, and
-  for an attached file that had since been moved, and it said "File not
-  found … ask the agent to create it". The line now opens, in the viewer
-  pane, the copy the daemon stored when the message was sent, checked
-  against its digest. This also works after the file is gone, after the
-  TUI restarts, and in a second TUI on the same machine. The file picker
-  (Alt+O) lists the line too. An image the daemon no longer holds says
-  "This image is no longer stored.". A TUI connected over SSH says that
-  the image is on the remote host. When one message carries images of
-  the same size whose names differ at most in case, every line after the
-  first is numbered (`[image 2: …]`), so each line opens its own image.
-
 ## 1.2.8
 
 Released 2026-10-30. A patch release about agents' lifecycles: a browser or
@@ -262,6 +246,19 @@ schema 28, unchanged.
   the offline sandbox's `allowWrite`, and nothing wider. Claude Code 2.1.312
   already allowed it by itself (checked with a real sandboxed commit), so this
   stops relying on the engine to notice the worktree.
+- **A sent image opens from its transcript line in the TUI (#345).** A click
+  on `[image: shot.png, 1.2 MB]` used to look up `shot.png` in the agent's
+  workspace. That lookup failed for a pasted image, which has no file, and
+  for an attached file that had since been moved, and it said "File not
+  found … ask the agent to create it". The line now opens, in the viewer
+  pane, the copy the daemon stored when the message was sent, checked
+  against its digest. This also works after the file is gone, after the
+  TUI restarts, and in a second TUI on the same machine. The file picker
+  (Alt+O) lists the line too. An image the daemon no longer holds says
+  "This image is no longer stored.". A TUI connected over SSH says that
+  the image is on the remote host. When one message carries images of
+  the same size whose names differ at most in case, every line after the
+  first is numbered (`[image 2: …]`), so each line opens its own image.
 
 ## 1.2.7
 
