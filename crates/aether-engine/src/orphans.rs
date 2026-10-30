@@ -31,7 +31,7 @@ static REGISTRY: OnceLock<PathBuf> = OnceLock::new();
 const TOKEN_ENV: &str = "AETHER_ENGINE_RUN";
 
 /// Export a fresh token to `command`'s child, if engines are being recorded.
-/// Pass the result to [`EngineRecord::register`].
+/// Pass the result to [`crate::lifeline::spawn_recorded`].
 pub(crate) fn tag(command: &mut tokio::process::Command) -> Option<String> {
     REGISTRY.get()?;
     let token = aether_core::id::ProcessId::new().to_string();
@@ -323,20 +323,31 @@ fn write_record(path: &Path, started: u64, token: Option<&str>) -> io::Result<()
 pub(crate) struct EngineRecord(PathBuf);
 
 impl EngineRecord {
-    /// Record `pid` and its [`tag`] token, if a registry is set and its start
-    /// time is readable.
-    pub(crate) fn register(pid: Option<u32>, token: Option<&str>) -> Option<Self> {
-        let dir = REGISTRY.get()?;
-        let pid = pid?;
-        let path = dir.join(pid.to_string());
-        let started = start_time(pid)?;
-        match write_record(&path, started, token) {
-            Ok(()) => Some(Self(path)),
-            Err(error) => {
-                tracing::warn!(pid, %error, "could not record the engine process");
-                None
+    /// Record engine `pid`, held before its exec, with its [`tag`] token. None
+    /// when no registry is set or no start time exists (off Linux); an error
+    /// when a set registry cannot hold it, so the engine never runs unrecorded.
+    pub(crate) fn register(pid: u32, token: &str) -> io::Result<Option<Self>> {
+        let Some(dir) = REGISTRY.get() else {
+            return Ok(None);
+        };
+        assert!(pid > 1, "not an engine pid: {pid}");
+        assert!(!token.is_empty(), "an empty token would match any process");
+        let Some(started) = start_time(pid) else {
+            if cfg!(target_os = "linux") {
+                return Err(io::Error::other(format!(
+                    "engine {pid} has no readable start time"
+                )));
             }
-        }
+            return Ok(None);
+        };
+        let path = dir.join(pid.to_string());
+        write_record(&path, started, Some(token)).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("recording engine {pid} in {}: {error}", dir.display()),
+            )
+        })?;
+        Ok(Some(Self(path)))
     }
 }
 
@@ -653,5 +664,63 @@ mod tests {
         std::fs::write(dir.path().join("4194300"), "1").unwrap();
         assert!(reap(dir.path(), &HashSet::new()).unwrap().is_empty());
         assert!(dir.path().join("notes.txt").exists());
+    }
+
+    /// Runs [`unrecordable_engine_helper`] in its own process: the registry
+    /// it sets is process-wide.
+    const UNRECORDABLE_ENV: &str = "AETHER_TEST_UNRECORDABLE_ENGINE";
+
+    /// An engine whose record cannot be written never runs: a daemon crash
+    /// would leave its commands where the next start cannot find them.
+    #[test]
+    fn an_engine_that_cannot_be_recorded_never_runs() {
+        let work = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "orphans::tests::unrecordable_engine_helper",
+                "--nocapture",
+            ])
+            .env(UNRECORDABLE_ENV, work.path())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stdout.contains("skipped: the registry stays writable") {
+            return;
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stdout}{stderr}");
+        assert!(stdout.contains("refused: "), "{stdout}");
+        assert!(
+            !work.path().join("ran").exists(),
+            "the unrecorded engine ran"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unrecordable_engine_helper() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let Some(work) = std::env::var_os(UNRECORDABLE_ENV) else {
+            return;
+        };
+        let work = PathBuf::from(work);
+        let registry = work.join("registry");
+        init(&registry, &HashSet::new()).unwrap();
+        std::fs::set_permissions(&registry, std::fs::Permissions::from_mode(0o500)).unwrap();
+        if std::fs::write(registry.join("probe"), "").is_ok() {
+            println!("skipped: the registry stays writable");
+            return;
+        }
+        let mut command = tokio::process::Command::new("touch");
+        command.arg(work.join("ran"));
+        let token = tag(&mut command).expect("the registry is set");
+        match crate::lifeline::spawn_recorded(command, Some(&token)) {
+            Ok((mut child, _watch, _record)) => {
+                let _ = child.wait().await;
+                panic!("an engine ran unrecorded");
+            }
+            Err(error) => println!("refused: {error}"),
+        }
     }
 }

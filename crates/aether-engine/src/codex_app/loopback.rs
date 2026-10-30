@@ -287,8 +287,9 @@ pub(super) async fn start(
     crate::strip_hidden(&mut command, hidden_env);
     crate::export_temp_dir(&mut command, temp_dir);
     crate::export_build_env(&mut command, build_env);
-    let (mut child, watch, adoption) = crate::spawn_gated(command, launch, cancel)
-        .map_err(|e| unsupported(format!("cannot start bwrap: {e}")))?;
+    let (mut child, watch, adoption, _unrecorded) =
+        crate::spawn_gated(command, launch, cancel, None)
+            .map_err(|e| unsupported(format!("cannot start bwrap: {e}")))?;
     crate::scope::adopt(child.id(), adoption).await;
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
