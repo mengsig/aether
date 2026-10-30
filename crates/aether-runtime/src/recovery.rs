@@ -318,7 +318,17 @@ fn interruption_commit(
     commit
 }
 
+/// Cancel the calls still open and tell the model why each interrupted call
+/// stopped, including a mutating one the stop cancelled before recovery ran.
 fn record_open_calls(commit: &mut Commit, agent: &aether_core::agent::Agent, found: &Interrupted) {
+    assert!(
+        found
+            .cancelled_unsure
+            .iter()
+            .all(|id| !found.open_calls.contains(id)),
+        "a cancelled call is no longer open"
+    );
+    let cause = format!("recovery.classified ({:?}): {}", found.class, found.detail);
     for id in &found.open_calls {
         let call = found.calls.get(id);
         crate::tool_interruption::record(
@@ -327,7 +337,18 @@ fn record_open_calls(commit: &mut Commit, agent: &aether_core::agent::Agent, fou
             *id,
             call.map_or("unknown tool", |call| call.name.as_str()),
             &call.map_or(serde_json::Value::Null, |call| call.input.clone()),
-            &format!("recovery.classified ({:?}): {}", found.class, found.detail),
+            &cause,
+        );
+    }
+    for id in &found.cancelled_unsure {
+        let call = found.calls.get(id);
+        crate::tool_interruption::push_note(
+            commit,
+            agent,
+            *id,
+            call.map_or("unknown tool", |call| call.name.as_str()),
+            &call.map_or(serde_json::Value::Null, |call| call.input.clone()),
+            &cause,
         );
     }
 }
@@ -497,6 +518,8 @@ struct Interrupted {
     class: RecoveryClass,
     detail: String,
     open_calls: Vec<ToolCallId>,
+    /// Mutating calls the stop already cancelled, whose outcome is unknown.
+    cancelled_unsure: Vec<ToolCallId>,
     cancelled_keys: Vec<ResourceKey>,
     open_invocation: Option<(aether_core::id::InvocationId, aether_core::id::SnapshotId)>,
     /// Approvals the turn raised while an engine ran it, answered or not.
@@ -613,6 +636,7 @@ fn classify_or_inspect(
                 class: RecoveryClass::Inspect,
                 detail,
                 open_calls: Vec::new(),
+                cancelled_unsure: Vec::new(),
                 cancelled_keys: Vec::new(),
                 open_invocation: None,
                 engine_approvals,
@@ -683,6 +707,7 @@ fn classify(
     })?;
     let open_calls: Vec<ToolCallId> = open_tools.into_iter().collect();
     let mut needs_inspection = Vec::new();
+    let mut cancelled_unsure = Vec::new();
     let mut cancelled_keys = Vec::new();
     // Cancellation stops execution but cannot roll back effects already applied.
     for call in open_calls.iter().chain(&cancelled_tools) {
@@ -695,6 +720,9 @@ fn classify(
         }
         let name = requested.map_or("unknown tool", |(requested, _)| requested.name.as_str());
         needs_inspection.push(format!("{name} ({call})"));
+        if cancelled_tools.contains(call) {
+            cancelled_unsure.push(*call);
+        }
         if cancelled_tools.contains(call)
             && let Some((requested, _)) = requested
         {
@@ -722,6 +750,7 @@ fn classify(
         class,
         detail,
         open_calls,
+        cancelled_unsure,
         cancelled_keys,
         open_invocation: invocation_open,
         engine_approvals,

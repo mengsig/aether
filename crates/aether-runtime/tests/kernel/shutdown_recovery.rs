@@ -138,8 +138,25 @@ async fn a_daemon_stop_mid_mutating_tool_resumes_a_headless_agent() {
         "operators see the agent resumed without inspection"
     );
     let request = &h2.client.requests()[0];
-    let sent = format!("{:?}", request.messages);
-    assert!(sent.contains("outcome is unknown"), "{sent}");
+    let results: Vec<&str> = request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult { content, .. } => Some(content),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|block| match block {
+            aether_core::model::ToolResultBlock::Text { text } => Some(text.as_str()),
+            aether_core::model::ToolResultBlock::Image { .. } => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 1, "one interrupted call: {results:?}");
+    assert!(
+        results[0].contains("outcome is unknown") && results[0].contains("check the state"),
+        "the interrupted call's own result warns the model: {results:?}"
+    );
     assert_eq!(
         std::fs::read_to_string(marker).expect("partial effect"),
         "applied\n",
