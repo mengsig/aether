@@ -32,8 +32,12 @@ impl<S: Stream<Item = io::Result<Event>> + Unpin> TerminalInput<S> {
         }
     }
 
-    /// The next event. Cancel-safe: an Esc already read survives a dropped call.
-    pub(crate) async fn next(&mut self) -> Option<io::Result<Event>> {
+    /// The next event; `bound` says which chords the TUI answers. Cancel-safe:
+    /// an Esc already read survives a dropped call.
+    pub(crate) async fn next(
+        &mut self,
+        bound: impl Fn(KeyEvent) -> bool,
+    ) -> Option<io::Result<Event>> {
         if let Some(event) = self.queued.take() {
             debug_assert!(self.escape_until.is_none(), "queued only after an Esc");
             return Some(event);
@@ -54,13 +58,8 @@ impl<S: Stream<Item = io::Result<Event>> + Unpin> TerminalInput<S> {
         let late = Instant::now() >= until;
         let escape = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         Some(Ok(match next {
-            Ok(Some(Ok(Event::Key(key)))) if !late && joins_escape(key) => {
-                Event::Key(KeyEvent::new_with_kind_and_state(
-                    key.code,
-                    key.modifiers | KeyModifiers::ALT,
-                    key.kind,
-                    key.state,
-                ))
+            Ok(Some(Ok(Event::Key(key)))) if !late && joins_escape(key, &bound) => {
+                Event::Key(with_alt(key))
             }
             Ok(Some(event)) => {
                 self.queued = Some(event);
@@ -75,14 +74,25 @@ fn lone_escape(key: KeyEvent) -> bool {
     key.code == KeyCode::Esc && key.modifiers.is_empty() && key.kind == KeyEventKind::Press
 }
 
-/// Keys an Alt shortcut can end in. No shortcut is Ctrl+Alt, so a quick Esc
-/// then Ctrl+C stays both keys rather than one chord nothing answers.
-fn joins_escape(key: KeyEvent) -> bool {
-    key.kind == KeyEventKind::Press
-        && key.code != KeyCode::Esc
-        && !key
-            .modifiers
-            .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL)
+fn with_alt(key: KeyEvent) -> KeyEvent {
+    KeyEvent::new_with_kind_and_state(
+        key.code,
+        key.modifiers | KeyModifiers::ALT,
+        key.kind,
+        key.state,
+    )
+}
+
+/// Keys an Alt chord can end in. A Ctrl key joins only a bound Ctrl+Alt chord,
+/// so a quick Esc then Ctrl+C stays both keys rather than one nothing answers.
+fn joins_escape(key: KeyEvent, bound: impl Fn(KeyEvent) -> bool) -> bool {
+    if key.kind != KeyEventKind::Press
+        || key.code == KeyCode::Esc
+        || key.modifiers.contains(KeyModifiers::ALT)
+    {
+        return false;
+    }
+    !key.modifiers.contains(KeyModifiers::CONTROL) || bound(with_alt(key))
 }
 
 #[cfg(test)]
@@ -103,8 +113,12 @@ mod tests {
         (tx, TerminalInput::new(rx))
     }
 
+    fn unbound(_: KeyEvent) -> bool {
+        false
+    }
+
     async fn next(input: &mut TerminalInput<Receiver>) -> Event {
-        match input.next().await {
+        match input.next(unbound).await {
             Some(Ok(event)) => event,
             other => panic!("expected an event, got {other:?}"),
         }
@@ -161,6 +175,16 @@ mod tests {
             assert_eq!(next(&mut input).await, esc);
             assert_eq!(next(&mut input).await, follower);
         }
+        // A bound Ctrl+Alt chord split after its Esc still joins.
+        let ctrl_u = key(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        let ctrl_alt_u = key(
+            KeyCode::Char('u'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        );
+        tx.unbounded_send(Ok(esc.clone())).unwrap();
+        tx.unbounded_send(Ok(ctrl_u)).unwrap();
+        let bound = |key: KeyEvent| Event::Key(key) == ctrl_alt_u;
+        assert_eq!(input.next(bound).await.unwrap().unwrap(), ctrl_alt_u);
         let plain = key(KeyCode::Char('o'), KeyModifiers::NONE);
         tx.unbounded_send(Ok(plain.clone())).unwrap();
         assert_eq!(next(&mut input).await, plain);
@@ -171,7 +195,7 @@ mod tests {
         let (tx, mut input) = input();
         tx.unbounded_send(Ok(key(KeyCode::Esc, KeyModifiers::NONE)))
             .unwrap();
-        let cancelled = tokio::time::timeout(Duration::from_millis(10), input.next()).await;
+        let cancelled = tokio::time::timeout(Duration::from_millis(10), input.next(unbound)).await;
         assert!(cancelled.is_err(), "still waiting for the join window");
         tx.unbounded_send(Ok(key(KeyCode::Char('n'), KeyModifiers::NONE)))
             .unwrap();
@@ -186,7 +210,7 @@ mod tests {
         let (tx, mut input) = input();
         let esc = key(KeyCode::Esc, KeyModifiers::NONE);
         tx.unbounded_send(Ok(esc.clone())).unwrap();
-        let cancelled = tokio::time::timeout(Duration::from_millis(10), input.next()).await;
+        let cancelled = tokio::time::timeout(Duration::from_millis(10), input.next(unbound)).await;
         assert!(cancelled.is_err(), "still waiting for the join window");
         tokio::time::sleep(ESC_JOIN * 2).await;
         let n = key(KeyCode::Char('n'), KeyModifiers::NONE);
@@ -201,7 +225,7 @@ mod tests {
         let (tx, mut input) = input();
         let esc = key(KeyCode::Esc, KeyModifiers::NONE);
         tx.unbounded_send(Ok(esc.clone())).unwrap();
-        let mut pending = Box::pin(input.next());
+        let mut pending = Box::pin(input.next(unbound));
         assert!((&mut pending).now_or_never().is_none(), "waiting to join");
         tokio::time::sleep(ESC_JOIN * 2).await;
         let n = key(KeyCode::Char('n'), KeyModifiers::NONE);

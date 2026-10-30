@@ -714,8 +714,8 @@ Alt shortcuts work as terminals send them by default: Esc followed by the key
 (xterm, GNOME Terminal, Konsole, Alacritty, tmux) or the kitty keyboard
 protocol (kitty, foot, Ghostty, WezTerm with `enable_kitty_keyboard`). An Esc
 arriving up to 50 ms before its key, as over a busy link, still counts as
-Alt (a Ctrl key stays a key of its own), so a lone Esc acts 50 ms after it is
-pressed. Alt+], Alt+Shift+P and Alt+_ also
+Alt (a Ctrl key only when that Ctrl+Alt chord is bound), so a lone Esc acts
+50 ms after it is pressed. Alt+], Alt+Shift+P and Alt+_ also
 begin the terminal's replies to Aether's colour and graphics probes. Aether
 holds such a key until what follows shows whether it is a reply, at most
 250 ms, and types it otherwise.

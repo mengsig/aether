@@ -260,6 +260,13 @@ impl KeyBindings {
         KeyChord::from_event(key).is_ok_and(|chord| self.bindings[&action].contains(&chord))
     }
 
+    /// Whether any action answers `key`.
+    pub fn binds(&self, key: KeyEvent) -> bool {
+        KeyAction::ALL
+            .iter()
+            .any(|action| self.matches(*action, key))
+    }
+
     pub fn customised(&self, action: KeyAction) -> bool {
         if action == KeyAction::PasteImage && self.paste_image_fallback {
             debug_assert_eq!(self.bindings[&action], defaults(action)[1..]);

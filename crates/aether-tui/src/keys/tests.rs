@@ -330,3 +330,17 @@ fn alt_chords_match_in_every_decoded_form() {
     let plain_alt = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT);
     assert!(!keys.matches(KeyAction::Notifications, plain_alt));
 }
+
+/// The Esc join asks this before turning Esc then a Ctrl key into Ctrl+Alt.
+#[test]
+fn binds_answers_for_any_action_only() {
+    let ctrl_alt = KeyModifiers::CONTROL | KeyModifiers::ALT;
+    let ctrl_alt_u = KeyEvent::new(KeyCode::Char('u'), ctrl_alt);
+    let mut keys = KeyBindings::default();
+    assert!(keys.binds(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT)));
+    assert!(!keys.binds(KeyEvent::new(KeyCode::Char('c'), ctrl_alt)));
+    assert!(!keys.binds(ctrl_alt_u));
+    keys.assign(KeyAction::Details, "ctrl+alt+u".parse().unwrap())
+        .unwrap();
+    assert!(keys.binds(ctrl_alt_u));
+}

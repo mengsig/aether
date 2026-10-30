@@ -406,7 +406,7 @@ async fn run_inner(
             let event = tokio::select! {
                 biased;
                 _ = exit_signals.recv() => break,
-                term = term_events.next() => match term {
+                term = term_events.next(|key| app.keys.binds(key)) => match term {
                     Some(Ok(Event::Mouse(mouse))) => LoopEvent::Mouse(mouse),
                     Some(Ok(ev)) => match map_terminal_event(ev) {
                         Some(ev) => LoopEvent::App(ev),
