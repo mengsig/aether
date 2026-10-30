@@ -18,6 +18,10 @@ use crate::{Result, Runtime};
 /// leave the previous boot available to the next attempt.
 const BOOT_ID_META: &str = "runtime.daemon_boot_id";
 
+/// The `agent.resumed` reason of a headless agent recovered with mutating
+/// calls of unknown outcome, which an interactive one would wait on.
+const HEADLESS_RESUME: &str = "resumed after restart without inspection: no person watches this agent; calls in flight have an unknown outcome";
+
 fn host_boot_id() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
@@ -175,7 +179,7 @@ pub(crate) fn recover_agent(
 ) -> Result<Outcome> {
     debug_assert_eq!(lease.agent_id, agent.id, "the lease is the agent's");
     let found = classify_or_inspect(runtime, &agent, rebooted)?;
-    let held = if found.class == RecoveryClass::Inspect || rebooted {
+    let held = if found.class == RecoveryClass::Inspect || rebooted || found.headless_resume {
         let mut keys = unreleased_keys(runtime, agent.id)?;
         keys.extend(found.cancelled_keys.iter().cloned());
         keys.sort();
@@ -379,7 +383,7 @@ fn resume_recovered(
         commit.push_event(recovery_event(
             agent,
             EventKind::AgentResumed {
-                reason: "recovered after restart".into(),
+                reason: resumed_reason(agent, found).into(),
                 via: None,
             },
         ));
@@ -396,6 +400,25 @@ fn resume_recovered(
         )?;
     }
     Ok(())
+}
+
+/// Why `agent.resumed` says recovery resumed the agent. A headless resume
+/// is logged too: it replaces an inspection an interactive tree would wait on.
+fn resumed_reason(agent: &aether_core::agent::Agent, found: &Interrupted) -> &'static str {
+    if !found.headless_resume {
+        return "recovered after restart";
+    }
+    assert_eq!(
+        found.class,
+        RecoveryClass::Retry,
+        "a headless resume retries"
+    );
+    assert!(
+        !agent.config.interactive,
+        "an interactive tree waits for inspection"
+    );
+    tracing::warn!(agent = %agent.id, detail = %found.detail, "headless agent resumed instead of waiting for inspection");
+    HEADLESS_RESUME
 }
 
 /// The inspection hold outlives daemon restarts on the same host boot.
@@ -478,6 +501,9 @@ struct Interrupted {
     open_invocation: Option<(aether_core::id::InvocationId, aether_core::id::SnapshotId)>,
     /// Approvals the turn raised while an engine ran it, answered or not.
     engine_approvals: Vec<ApprovalId>,
+    /// Mutating calls of unknown outcome were in flight, and a headless
+    /// agent resumes rather than wait for an inspection nobody would do.
+    headless_resume: bool,
 }
 
 /// Events the agent's own turn wrote, oldest first, read a page at a time.
@@ -590,6 +616,7 @@ fn classify_or_inspect(
                 cancelled_keys: Vec::new(),
                 open_invocation: None,
                 engine_approvals,
+                headless_resume: false,
             })
         }
         Err(error) => Err(error),
@@ -680,40 +707,13 @@ fn classify(
             );
         }
     }
-    let (class, detail) = if rebooted && !needs_inspection.is_empty() {
-        (
-            RecoveryClass::Retry,
-            reboot_detail(&needs_inspection.join(", ")),
-        )
-    } else if !needs_inspection.is_empty() {
-        (
-            RecoveryClass::Inspect,
-            format!(
-                "mutating tool calls were in flight when the daemon stopped: {}",
-                needs_inspection.join(", ")
-            ),
-        )
-    } else if !open_calls.is_empty()
+    let interrupted = !open_calls.is_empty()
         || invocation_open.is_some()
         || !cancelled_tools.is_empty()
-        || cancelled_invocation
-    {
-        (
-            RecoveryClass::Retry,
-            "turn interrupted; safe to retry from the last committed step".into(),
-        )
-    } else if agent.status.kind() == AgentStatusKind::Running {
-        // An engine keeps the turn inside its own process and commits nothing
-        // between the start and the reply, so the log alone reads as idle.
-        // The Running status is the evidence that a turn was lost.
-        (
-            RecoveryClass::Retry,
-            "the turn in flight was lost when the daemon stopped; nothing it produced was committed"
-                .into(),
-        )
-    } else {
-        (RecoveryClass::Resume, "no work in flight".into())
-    };
+        || cancelled_invocation;
+    let (class, detail) = decide(agent, rebooted, &needs_inspection, interrupted);
+    let headless_resume =
+        !rebooted && !needs_inspection.is_empty() && class != RecoveryClass::Inspect;
     Ok(Interrupted {
         calls: calls
             .into_iter()
@@ -725,7 +725,51 @@ fn classify(
         cancelled_keys,
         open_invocation: invocation_open,
         engine_approvals,
+        headless_resume,
     })
+}
+
+/// The class of a turn `classify` read. `unsure` names the mutating calls
+/// whose outcome is unknown; only an interactive tree waits for a person.
+fn decide(
+    agent: &aether_core::agent::Agent,
+    rebooted: bool,
+    unsure: &[String],
+    interrupted: bool,
+) -> (RecoveryClass, String) {
+    assert!(
+        unsure.is_empty() || interrupted,
+        "an unsure call was in flight, so the turn was interrupted"
+    );
+    if !unsure.is_empty() {
+        let calls = unsure.join(", ");
+        return if rebooted {
+            (RecoveryClass::Retry, reboot_detail(&calls))
+        } else if agent.config.interactive {
+            (
+                RecoveryClass::Inspect,
+                format!("mutating tool calls were in flight when the daemon stopped: {calls}"),
+            )
+        } else {
+            (RecoveryClass::Retry, restart_detail(&calls))
+        };
+    }
+    if interrupted {
+        return (
+            RecoveryClass::Retry,
+            "turn interrupted; safe to retry from the last committed step".into(),
+        );
+    }
+    if agent.status.kind() == AgentStatusKind::Running {
+        // An engine keeps the turn inside its own process and commits nothing
+        // between the start and the reply, so the log alone reads as idle.
+        return (
+            RecoveryClass::Retry,
+            "the turn in flight was lost when the daemon stopped; nothing it produced was committed"
+                .into(),
+        );
+    }
+    (RecoveryClass::Resume, "no work in flight".into())
 }
 
 /// Native edits can be idempotent once complete, but retrying alongside a
@@ -760,6 +804,12 @@ fn recovery_side_effect(
         | "apply_patch" | "file_change" => SideEffectClass::Mutation,
         _ => recorded,
     }
+}
+
+fn restart_detail(calls: &str) -> String {
+    format!(
+        "the daemon restarted while these calls ran: {calls}; their outcome is unknown, so check the state before repeating them"
+    )
 }
 
 fn reboot_detail(calls: &str) -> String {

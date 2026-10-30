@@ -21,6 +21,7 @@ export interface AgentConfig {
   "effort"?: Effort | null;
   "host_context"?: HostContext;
   "instructions"?: string | null;
+  "interactive"?: boolean;
   "leaf"?: boolean;
   "long_lived"?: boolean;
   "max_output_tokens"?: number | null;

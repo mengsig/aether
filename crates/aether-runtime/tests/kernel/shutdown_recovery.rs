@@ -14,7 +14,7 @@ fn task_of(h: &Harness, id: AgentId) -> aether_core::task::Task {
     h.store.task(task).expect("task").expect("exists")
 }
 
-/// A stopped shell can have partial effects; restart requires inspection.
+/// A stopped shell can have partial effects; a watched tree waits for inspection.
 #[tokio::test]
 async fn a_daemon_stop_mid_mutating_tool_requires_inspection() {
     let h = harness(vec![ScriptedClient::tool_call(
@@ -24,7 +24,7 @@ async fn a_daemon_stop_mid_mutating_tool_requires_inspection() {
     .await;
     let (agent, _) = h
         .runtime
-        .create_agent(spec("slow command"), Actor::user())
+        .create_agent(interactive(spec("slow command")), Actor::user())
         .expect("create");
     let marker = h.workspace_root.join("partial.txt");
     h.wait_for("the shell applied its effect", || marker.exists())
@@ -82,6 +82,69 @@ async fn a_daemon_stop_mid_mutating_tool_requires_inspection() {
     }
     assert!(seen.iter().any(|t| t == "tool.cancelled"), "{seen:?}");
     assert_eq!(seen.iter().filter(|t| *t == "tool.cancelled").count(), 1);
+    h2.runtime.shutdown().await;
+}
+
+/// Nobody inspects a headless agent, so it resumes on its own after the
+/// restart, told that the stopped command's outcome is unknown.
+#[tokio::test]
+async fn a_daemon_stop_mid_mutating_tool_resumes_a_headless_agent() {
+    let h = harness(vec![ScriptedClient::tool_call(
+        "bash",
+        json!({"command": "echo applied >> partial.txt; sleep 3600"}),
+    )])
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(spec("slow command"), Actor::user())
+        .expect("create");
+    assert!(!agent.config.interactive);
+    let marker = h.workspace_root.join("partial.txt");
+    h.wait_for("the shell applied its effect", || marker.exists())
+        .await;
+
+    let h2 = restart_over(
+        &h,
+        vec![ScriptedClient::tool_call(
+            "complete_task",
+            json!({"summary": "checked the state and finished"}),
+        )],
+    )
+    .await;
+    let status = h2.wait_until(agent.id, |s| s.is_terminal()).await;
+    let seen = types(h2.store.as_ref(), agent.id);
+    assert_eq!(status.kind(), AgentStatusKind::Completed, "{seen:?}");
+    assert_eq!(
+        task_of(&h2, agent.id).status.kind(),
+        TaskStatusKind::Completed
+    );
+    assert_eq!(
+        recovery_class(h2.store.as_ref(), agent.id),
+        Some(aether_core::event::RecoveryClass::Retry)
+    );
+    assert!(!seen.iter().any(|t| t == "agent.blocked"), "{seen:?}");
+    assert!(h2.runtime.resource_holdings().is_empty());
+    let resumed = h2
+        .store
+        .events(0, 1000, &EventFilter::own_events(agent.id))
+        .expect("events")
+        .into_iter()
+        .any(|event| {
+            matches!(&event.kind,
+            EventKind::AgentResumed { reason, .. } if reason.contains("without inspection"))
+        });
+    assert!(
+        resumed,
+        "operators see the agent resumed without inspection"
+    );
+    let request = &h2.client.requests()[0];
+    let sent = format!("{:?}", request.messages);
+    assert!(sent.contains("outcome is unknown"), "{sent}");
+    assert_eq!(
+        std::fs::read_to_string(marker).expect("partial effect"),
+        "applied\n",
+        "the stopped command is not run again"
+    );
     h2.runtime.shutdown().await;
 }
 
@@ -331,13 +394,13 @@ async fn an_approved_call_stopped_while_waiting_for_keys_never_started() {
     .await;
     let (holder, _) = h
         .runtime
-        .create_agent(spec("hold keys"), Actor::user())
+        .create_agent(interactive(spec("hold keys")), Actor::user())
         .expect("holder");
     h.wait_for("holder running", || {
         h.workspace_root.join("held.txt").exists()
     })
     .await;
-    let mut request = spec("wait for approved tool");
+    let mut request = interactive(spec("wait for approved tool"));
     request.config.as_mut().expect("config").approval = ApprovalPolicy {
         require_for: [SideEffectClass::Mutation].into(),
     };

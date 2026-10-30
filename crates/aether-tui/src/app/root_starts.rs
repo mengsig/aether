@@ -188,8 +188,9 @@ impl App {
                     network,
                     ..Default::default()
                 }),
-                config: self.default_effort.map(|effort| AgentConfig {
-                    effort: Some(effort),
+                config: Some(AgentConfig {
+                    effort: self.default_effort,
+                    interactive: true,
                     ..Default::default()
                 }),
                 // Absent leaves it to the daemon's configured default.

@@ -58,6 +58,20 @@ fn types(store: &dyn Store, id: AgentId) -> Vec<String> {
         .collect()
 }
 
+/// The config of a tree a person watches in the TUI: recovery may park it for inspection.
+fn interactive_config() -> AgentConfig {
+    AgentConfig {
+        interactive: true,
+        ..Default::default()
+    }
+}
+
+/// `spec` marked as a tree a person watches; see [`interactive_config`].
+fn interactive(mut spec: CreateAgentSpec) -> CreateAgentSpec {
+    spec.config.get_or_insert_with(Default::default).interactive = true;
+    spec
+}
+
 fn spec(objective: &str) -> CreateAgentSpec {
     CreateAgentSpec {
         role: "worker".into(),

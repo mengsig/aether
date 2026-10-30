@@ -450,6 +450,10 @@
             "null"
           ]
         },
+        "interactive": {
+          "description": "A person watches this tree in the TUI, so restart recovery may park it for\ninspection; headless agents resume instead. Children inherit it.",
+          "type": "boolean"
+        },
         "leaf": {
           "default": false,
           "description": "A leaf cannot create children and receives fewer coordination instructions and tools.",

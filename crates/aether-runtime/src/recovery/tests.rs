@@ -4,7 +4,17 @@ use aether_core::inbox::InboxKind;
 use aether_core::lease::Lease;
 use aether_core::tool::ToolCall;
 
+/// An interactive agent mid-turn: a person may inspect what recovery parks.
 async fn fixture() -> (Arc<Runtime>, tempfile::TempDir, Agent) {
+    fixture_with(true).await
+}
+
+/// A headless agent mid-turn, as an orchestrator such as Archon starts one.
+async fn headless_fixture() -> (Arc<Runtime>, tempfile::TempDir, Agent) {
+    fixture_with(false).await
+}
+
+async fn fixture_with(interactive: bool) -> (Arc<Runtime>, tempfile::TempDir, Agent) {
     let (runtime, dir) = crate::test_runtime(|_| {}).await;
     runtime.shutdown().await;
     let (mut agent, _) = runtime
@@ -12,6 +22,10 @@ async fn fixture() -> (Arc<Runtime>, tempfile::TempDir, Agent) {
             crate::CreateAgentSpec {
                 role: "worker".into(),
                 start: false,
+                config: Some(aether_core::agent::AgentConfig {
+                    interactive,
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             Actor::user(),
@@ -610,3 +624,4 @@ async fn a_restart_leaves_an_api_links_approval_pending() {
 }
 
 mod corrupt;
+mod headless;
