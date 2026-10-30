@@ -314,10 +314,26 @@ impl Agent {
         let span = (deadline - self.created_at).max(chrono::Duration::zero());
         let share_left = span.num_milliseconds() as f64 * (1.0 - DEADLINE_WARN_FRACTION);
         let window_ms = (share_left.round() as i64).max(DEADLINE_WARN_MINUTES * 60_000);
-        // Less than a millisecond left still counts as time left.
-        let left_ms = (deadline - at).num_milliseconds().max(1);
         debug_assert!(window_ms >= DEADLINE_WARN_MINUTES * 60_000);
-        (left_ms <= window_ms).then(|| ((left_ms + 59_999) / 60_000).max(1))
+        if deadline - at > chrono::Duration::milliseconds(window_ms) {
+            return None;
+        }
+        self.deadline_minutes_left(at)
+    }
+
+    /// Whole minutes left before the deadline, rounded up so that any time
+    /// left at all reads as at least 1; 0 once it has passed.
+    pub fn deadline_minutes_left(&self, at: Timestamp) -> Option<i64> {
+        let deadline = self.config.deadline?;
+        if at >= deadline {
+            return Some(0);
+        }
+        let left = deadline - at;
+        let seconds = left.num_seconds() + i64::from(left.subsec_nanos() > 0);
+        let minutes = (seconds + 59) / 60;
+        debug_assert!(seconds >= 1 && minutes >= 1);
+        debug_assert!(chrono::Duration::minutes(minutes) >= left);
+        Some(minutes)
     }
 
     fn budget_reason(&self, subtree: &Usage, fraction: f64) -> Option<String> {

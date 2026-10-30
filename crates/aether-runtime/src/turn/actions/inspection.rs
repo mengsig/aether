@@ -55,7 +55,7 @@ fn inspect_state(runtime: &Arc<Runtime>, ctx: &TurnCtx) -> Result<ToolOutcome> {
         "max_turns": agent.config.max_turns,
         "turns_taken": agent.stats.turns,
         "deadline": agent.config.deadline.map(|at| at.to_rfc3339()),
-        "deadline_minutes_left": agent.config.deadline.map(|at| ((at - aether_core::time::now()).num_milliseconds().max(0) + 59_999) / 60_000),
+        "deadline_minutes_left": agent.deadline_minutes_left(aether_core::time::now()),
         "concurrency": {
             "global_max_concurrent_turns": runtime.config.max_concurrent_turns,
             "own_subtree_max_concurrent_turns": agent.config.concurrency,

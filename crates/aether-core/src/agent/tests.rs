@@ -150,6 +150,28 @@ fn a_deadline_warns_at_whichever_threshold_comes_first() {
     );
 }
 
+/// What `inspect_state` reports: rounded up to the nanosecond, so time left
+/// never reads as less than it is, and 0 only once the deadline is reached.
+#[test]
+fn deadline_minutes_left_round_up_and_reach_zero_only_at_the_deadline() {
+    let mut agent = agent_with(None);
+    let start = agent.created_at;
+    assert_eq!(agent.deadline_minutes_left(start), None, "no deadline");
+    let deadline = start + chrono::Duration::minutes(30);
+    agent.config.deadline = Some(deadline);
+    let left = |d: chrono::Duration| agent.deadline_minutes_left(deadline - d);
+    assert_eq!(left(chrono::Duration::zero()), Some(0));
+    assert_eq!(left(-chrono::Duration::minutes(1)), Some(0), "passed");
+    assert_eq!(left(chrono::Duration::microseconds(500)), Some(1));
+    assert_eq!(left(chrono::Duration::nanoseconds(1)), Some(1));
+    assert_eq!(left(chrono::Duration::minutes(1)), Some(1));
+    assert_eq!(
+        left(chrono::Duration::minutes(1) + chrono::Duration::microseconds(500)),
+        Some(2)
+    );
+    assert_eq!(left(chrono::Duration::minutes(30)), Some(30));
+}
+
 /// An API-equivalent estimate is not money anyone was charged, so no cap
 /// may fire on it. A subtree of nothing but estimated spend
 /// is still $0 billed, and stays runnable.
