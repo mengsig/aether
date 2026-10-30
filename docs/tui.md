@@ -242,15 +242,16 @@ while a paste or image is still being read keeps the draft and says so. The
 queue (Tab) holds text only, so a draft with images is not queued; send it with
 Enter.
 
-A sent image is one line of the transcript under the message's text,
-`[image: shot.png, 1.2 MB]`, in every view mode. The picture itself is not
+A sent image is one muted, italic line of the transcript under the
+message's text, `[image: shot.png, 1.2 MB]`, in every view mode. The picture itself is not
 drawn in the transcript. Click the line, or pick it in the file picker
 (Alt+O), to open the image in the viewer pane. The pane shows the copy the
 daemon stored when the message was sent, so a pasted image opens too, as
 does a file that was moved or deleted since. The image still opens after
 the TUI restarts, and in another TUI on the same machine. When the daemon no
 longer holds the image, the pane says "This image is no longer stored.". Two
-images in one message with the same name and size get their own lines:
+images in one message with the same size and names that differ at most in
+case get their own lines:
 `[image: …]`, then `[image 2: …]`.
 
 A message takes at most 10 images, each at most 3.75 MiB and 10 MiB together,

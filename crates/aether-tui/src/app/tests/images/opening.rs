@@ -354,3 +354,79 @@ fn an_image_line_is_drawn_and_clicked_as_written() {
     let line = format!("[image: shot`one`.png, {} B]", bytes.len());
     assert_shows(click_line(&mut app, &line), &bytes);
 }
+
+#[test]
+fn words_quoting_an_image_line_keep_their_file_link() {
+    let store = tempfile::tempdir().expect("store");
+    let workspace = tempfile::tempdir().expect("workspace");
+    let mut app = app_with_store(store.path());
+    app.options.cwd = Some(workspace.path().to_owned());
+    std::fs::write(workspace.path().join("shot.png"), picture(9)).expect("namesake");
+    let bytes = picture(10);
+    let line = format!("[image: shot.png, {} B]", bytes.len());
+    send_file(
+        &mut app,
+        store.path(),
+        "shot.png",
+        &format!("see {line}"),
+        &bytes,
+    );
+
+    let mut cache = ViewCache::default();
+    render_with(&app, &mut cache, 160, 40);
+    let images: Vec<_> = cache
+        .file_hits
+        .iter()
+        .filter(|h| sent_images::is_sent_image(&h.reference.target))
+        .collect();
+    assert_eq!(images.len(), 1, "only the drawn image line: {images:?}");
+    let quoted = cache
+        .file_hits
+        .iter()
+        .filter(|h| h.reference.target == "shot.png")
+        .min_by_key(|h| h.area.y)
+        .expect("the file named in the words")
+        .clone();
+    assert!(quoted.area.y < images[0].area.y);
+    let mouse = |kind| MouseEvent {
+        kind,
+        column: quoted.area.x,
+        row: quoted.area.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.dispatch_mouse(mouse(MouseEventKind::Down(MouseButton::Left)), &mut cache);
+    let effects = app.dispatch_mouse(mouse(MouseEventKind::Up(MouseButton::Left)), &mut cache);
+    let [Effect::PreviewFile(request)] = &effects[..] else {
+        panic!("one preview asked for: {effects:?}");
+    };
+    assert_eq!(request.target, "shot.png");
+    assert_shows(click_line(&mut app, &line), &bytes);
+}
+
+#[test]
+fn names_differing_only_in_case_open_their_own_images() {
+    let store = tempfile::tempdir().expect("store");
+    let mut app = app_with_store(store.path());
+    let first = picture(20);
+    let second = (21..=255)
+        .map(picture)
+        .find(|other| other.len() == first.len() && *other != first)
+        .expect("another picture of the same size");
+    for (name, bytes) in [("shot.png", &first), ("SHOT.png", &second)] {
+        let (_dir, path) = png_file(name);
+        std::fs::write(&path, bytes).expect("write");
+        app.run_image_command(ImageArg::File(path.display().to_string()));
+        let read = aether_client::images::read_image_file(&path).map_err(|e| e.to_string());
+        app.reduce(AppEvent::ImageRead(read));
+    }
+    let (_, _, images) = sent(&app.reduce(key(KeyCode::Enter)));
+    push_user_content(&mut app, daemon_stores(store.path(), &images));
+
+    let size = first.len();
+    assert_shows(
+        click_line(&mut app, &format!("[image: shot.png, {size} B]")),
+        &first,
+    );
+    let line = format!("[image 2: SHOT.png, {size} B]");
+    assert_shows(click_line(&mut app, &line), &second);
+}

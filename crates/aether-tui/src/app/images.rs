@@ -43,7 +43,10 @@ pub(crate) fn image_lines(summaries: impl Iterator<Item = String>) -> Vec<String
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let lines: Vec<String> = summaries
         .map(|summary| {
-            let count = seen.entry(summary.clone()).or_default();
+            // Keyed as a click searches, ignoring case, so no two lines match each other.
+            let count = seen
+                .entry(crate::ui::bottom::find::fold(&summary))
+                .or_default();
             *count += 1;
             match *count {
                 1 => format!("[image: {summary}]"),
