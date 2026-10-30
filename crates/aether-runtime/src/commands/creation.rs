@@ -221,7 +221,11 @@ impl Runtime {
             config.instructions.clone_from(&p.config.instructions);
         }
         crate::build_cache::settle(&mut config, parent.as_ref(), by)?;
-        config.interactive |= parent.as_ref().is_some_and(|p| p.config.interactive);
+        // Only a stated `true` passes down: a parent stored before the field
+        // existed cannot say a person watches it, so its new children run headless.
+        let watched = |c: &aether_core::agent::AgentConfig| c.interactive == Some(true);
+        config.interactive =
+            Some(watched(&config) || parent.as_ref().is_some_and(|p| watched(&p.config)));
         // §3.2 for approvals: a child inherits its parent's policy and may
         // only gate more than it, never less. A root with nothing asked for
         // gets the daemon's configured default.

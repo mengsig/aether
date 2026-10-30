@@ -190,7 +190,7 @@ impl App {
                 }),
                 config: Some(AgentConfig {
                     effort: self.default_effort,
-                    interactive: true,
+                    interactive: Some(true),
                     ..Default::default()
                 }),
                 // Absent leaves it to the daemon's configured default.

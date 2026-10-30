@@ -451,8 +451,11 @@
           ]
         },
         "interactive": {
-          "description": "A person watches this tree in the TUI, so restart recovery may park it for\ninspection; headless agents resume instead. Children inherit it.",
-          "type": "boolean"
+          "description": "Whether a person watches this tree in the TUI; children inherit it. Creation\nalways stores it, so `None` is a row stored before it existed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
         "leaf": {
           "default": false,

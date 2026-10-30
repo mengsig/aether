@@ -18,7 +18,7 @@ class AgentConfig(TypedDict, total=False):
     effort: _protocol.Effort | None  # optional
     host_context: _protocol.HostContext  # optional
     instructions: str | None  # optional
-    interactive: bool  # optional
+    interactive: bool | None  # optional
     leaf: bool  # optional
     long_lived: bool  # optional
     max_output_tokens: int | None  # optional

@@ -23,7 +23,7 @@ async fn fixture_with(interactive: bool) -> (Arc<Runtime>, tempfile::TempDir, Ag
                 role: "worker".into(),
                 start: false,
                 config: Some(aether_core::agent::AgentConfig {
-                    interactive,
+                    interactive: Some(interactive),
                     ..Default::default()
                 }),
                 ..Default::default()

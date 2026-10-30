@@ -20,7 +20,7 @@ const BOOT_ID_META: &str = "runtime.daemon_boot_id";
 
 /// The `agent.resumed` reason of a headless agent recovered with mutating
 /// calls of unknown outcome, which an interactive one would wait on.
-const HEADLESS_RESUME: &str = "resumed after restart without inspection: no person watches this agent; calls in flight have an unknown outcome";
+const HEADLESS_RESUME: &str = "resumed without inspection: no person watches this agent; the calls its interrupted turn ran have an unknown outcome";
 
 fn host_boot_id() -> Option<String> {
     #[cfg(target_os = "linux")]
@@ -414,7 +414,7 @@ fn resumed_reason(agent: &aether_core::agent::Agent, found: &Interrupted) -> &'s
         "a headless resume retries"
     );
     assert!(
-        !agent.config.interactive,
+        !agent.config.awaits_inspection(),
         "an interactive tree waits for inspection"
     );
     tracing::warn!(agent = %agent.id, detail = %found.detail, "headless agent resumed instead of waiting for inspection");
@@ -745,7 +745,7 @@ fn decide(
         let calls = unsure.join(", ");
         return if rebooted {
             (RecoveryClass::Retry, reboot_detail(&calls))
-        } else if agent.config.interactive {
+        } else if agent.config.awaits_inspection() {
             (
                 RecoveryClass::Inspect,
                 format!("mutating tool calls were in flight when the daemon stopped: {calls}"),
@@ -808,7 +808,7 @@ fn recovery_side_effect(
 
 fn restart_detail(calls: &str) -> String {
     format!(
-        "the daemon restarted while these calls ran: {calls}; their outcome is unknown, so check the state before repeating them"
+        "the turn running these calls was cut short (a daemon restart or a lost turn): {calls}; their outcome is unknown, so check the state before repeating them"
     )
 }
 

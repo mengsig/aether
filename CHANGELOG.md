@@ -22,8 +22,10 @@ clients on 17 through 24 see it as `usage_limit`.
   wake and the interrupted call's result say the daemon restarted while those
   calls ran, so their outcome is unknown and it should check the state before
   repeating them. Its `agent.resumed` event says it resumed without
-  inspection. Agents already parked before the upgrade stay parked until
-  resumed. See [interactive trees](docs/protocol.md#interactive-trees).
+  inspection. An agent stored before the upgrade cannot say whether a person
+  watches it, so it still parks, and one already parked stays parked until
+  resumed; its new children are headless. See
+  [interactive trees](docs/protocol.md#interactive-trees).
 - **A refused engine sign-in suspends the agent instead of failing it.** A
   native engine whose OAuth token expired or whose API key was refused
   (Claude Code's `authentication_error`, "Please run /login", a result with

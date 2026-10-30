@@ -94,7 +94,8 @@ delegation guard does not retroactively stop running turns.
 SQLite stores authoritative state/history. On restart, read-only calls and
 registered retry-safe tools can be retried. Native shell and file writes with
 no outcome require inspection when the host stayed up and a person watches the
-tree (`config.interactive`, set by the TUI on its roots and inherited): a tool
+tree (`config.interactive`, set by the TUI on its roots and inherited; an agent
+stored before the field existed counts as watched): a tool
 process may still be writing, and its resource keys stay quarantined until
 `aether resume` or cancellation. A headless agent (an orchestrator's, a script's)
 has nobody to inspect it, so it resumes at once as a person's `aether resume`

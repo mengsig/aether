@@ -98,7 +98,7 @@ async fn a_daemon_stop_mid_mutating_tool_resumes_a_headless_agent() {
         .runtime
         .create_agent(spec("slow command"), Actor::user())
         .expect("create");
-    assert!(!agent.config.interactive);
+    assert_eq!(agent.config.interactive, Some(false), "stored as headless");
     let marker = h.workspace_root.join("partial.txt");
     h.wait_for("the shell applied its effect", || marker.exists())
         .await;

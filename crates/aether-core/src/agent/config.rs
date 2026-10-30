@@ -323,10 +323,18 @@ pub struct AgentConfig {
     /// Aether's own per-repository partition. Children inherit it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build_cache: Option<PathBuf>,
-    /// A person watches this tree in the TUI, so restart recovery may park it for
-    /// inspection; headless agents resume instead. Children inherit it.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub interactive: bool,
+    /// Whether a person watches this tree in the TUI; children inherit it. Creation
+    /// always stores it, so `None` is a row stored before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interactive: Option<bool>,
+}
+
+impl AgentConfig {
+    /// Whether restart recovery may park this agent for a person to inspect:
+    /// an interactive tree's, or one stored too early to say it is headless.
+    pub fn awaits_inspection(&self) -> bool {
+        self.interactive != Some(false)
+    }
 }
 
 impl Default for AgentConfig {
@@ -347,7 +355,7 @@ impl Default for AgentConfig {
             concurrency: None,
             host_context: HostContext::Full,
             build_cache: None,
-            interactive: false,
+            interactive: None,
         }
     }
 }
