@@ -74,7 +74,11 @@ clients on 17 through 24 see it as `usage_limit`.
   to stop what it holds. A start after a crash, which cannot tell whether a
   since-failed ancestor held a completed child's processes, leaves them with
   the nearest live ancestor. Background shell jobs still stop with the daemon,
-  whose pipes carry their output. Linux only.
+  whose pipes carry their output. A foreground call of Aether's own shell
+  tool that a daemon crash cut short is stopped by the next start, its process
+  group as the call's end would have, so an agent recovery resumes never
+  races its own interrupted command; what the call detached is spared like
+  any agent's server. Linux only.
 - **A refused engine sign-in suspends the agent instead of failing it.** A
   native engine whose OAuth token expired or whose API key was refused
   (Claude Code's `authentication_error`, "Please run /login", a result with

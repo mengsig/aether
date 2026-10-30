@@ -341,6 +341,11 @@ isolation depend on the installed engine version and the platform; see
   stops with it. A server an agent needs across a restart should be detached
   from an engine's own shell or a shell command that is not a background job,
   where the sweeps treat it as the agent's.
+- A start after a crash cannot tell a tool command an engine ran outside its
+  own process group from a server the agent detached: for a live agent it is
+  spared and runs until that agent ends. A foreground call of Aether's own
+  shell tool whose leader had exited when the daemon died is not stopped
+  either; a command that leader left in its group runs on the same way.
 - The daemon records hand-ups only in memory, so a start after a crash
   cannot tell whether an ancestor that has since failed or been cancelled
   held a completed child's processes, which its end would have stopped, or
