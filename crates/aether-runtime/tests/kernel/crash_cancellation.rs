@@ -17,7 +17,7 @@ async fn a_kill_mid_tool_cancels_the_open_call_and_keeps_the_settled_one() {
     std::fs::write(h.workspace_root.join("note.txt"), "already indexed").expect("seed a file");
     let (agent, _) = h
         .runtime
-        .create_agent(spec("index the repository"), Actor::user())
+        .create_agent(interactive(spec("index the repository")), Actor::user())
         .expect("create");
 
     // The turn is now parked on a call that will not come back: the shell is

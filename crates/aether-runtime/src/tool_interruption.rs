@@ -18,6 +18,26 @@ pub(crate) fn record(
     input: &serde_json::Value,
     cause: &str,
 ) {
+    // The projection consumes the cause before the generic closing event.
+    push_note(commit, agent, call, tool, input, cause);
+    commit.push_event(
+        EventDraft::new(Actor::System, EventKind::ToolCancelled { call })
+            .agent(agent.id)
+            .parent(agent.parent)
+            .run(agent.run),
+    );
+}
+
+/// The model-facing note on why `call` stopped, for a call whose closing
+/// event is or will be its cancellation.
+pub(crate) fn push_note(
+    commit: &mut Commit,
+    agent: &Agent,
+    call: ToolCallId,
+    tool: &str,
+    input: &serde_json::Value,
+    cause: &str,
+) {
     let tool = aether_model::http::safe_provider_text(tool, 64);
     let cause = aether_model::http::safe_provider_text(cause, 1024);
     let short_input = aether_model::http::safe_provider_text(&input.to_string(), 200);
@@ -25,18 +45,56 @@ pub(crate) fn record(
         "Your previous tool call {tool:?} ({short_input}) was interrupted by {cause} before it finished. \
          It was not denied. Re-run it if you still need it, after checking for partial side effects."
     );
-    let draft = |kind| {
-        EventDraft::new(Actor::System, kind)
-            .agent(agent.id)
-            .parent(agent.parent)
-            .run(agent.run)
+    commit.push_event(
+        EventDraft::new(
+            Actor::System,
+            EventKind::Custom {
+                name: EVENT.into(),
+                payload: serde_json::json!({"call": call, "tool": tool, "cause": cause, "note": note}),
+            },
+        )
+        .agent(agent.id)
+        .parent(agent.parent)
+        .run(agent.run),
+    );
+}
+
+/// The note [`record`] left for each of `calls` after event `after`, so the
+/// model reads why a call stopped instead of a bare cancellation.
+pub(crate) fn notes_for(
+    runtime: &Runtime,
+    agent: aether_core::id::AgentId,
+    after: u64,
+    calls: &std::collections::BTreeSet<ToolCallId>,
+) -> Result<std::collections::BTreeMap<ToolCallId, String>> {
+    assert!(!calls.is_empty(), "only cancelled calls have notes to read");
+    let filter = EventFilter {
+        types: vec!["custom".into()],
+        ..EventFilter::own_events(agent)
     };
-    // The projection consumes the cause before the generic closing event.
-    commit.push_event(draft(EventKind::Custom {
-        name: EVENT.into(),
-        payload: serde_json::json!({"call": call, "tool": tool, "cause": cause, "note": note}),
-    }));
-    commit.push_event(draft(EventKind::ToolCancelled { call }));
+    let mut notes = std::collections::BTreeMap::new();
+    let mut cursor = after;
+    loop {
+        let events = runtime.store.events(cursor, 500, &filter)?;
+        let Some(last) = events.last() else { break };
+        assert!(last.seq > cursor, "event pages move forward");
+        cursor = last.seq;
+        for event in &events {
+            let EventKind::Custom { name, payload } = &event.kind else {
+                continue;
+            };
+            let call = serde_json::from_value::<ToolCallId>(payload["call"].clone()).ok();
+            if let (true, Some(call), Some(note)) = (name == EVENT, call, payload["note"].as_str())
+                && calls.contains(&call)
+            {
+                notes.insert(call, note.to_owned());
+            }
+        }
+        if events.len() < 500 || notes.len() == calls.len() {
+            break;
+        }
+    }
+    Ok(notes)
 }
 
 /// A retained native session does not read Aether's transcript. Carry corrections

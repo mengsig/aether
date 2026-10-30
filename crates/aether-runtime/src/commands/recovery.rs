@@ -212,6 +212,8 @@ impl Runtime {
                 // Carrying a deadline that has already passed would fail the
                 // successor on the very next tick.
                 deadline: old.config.deadline.filter(|d| at < *d),
+                // As creation stores it: a predecessor too old to say is headless.
+                interactive: Some(old.config.interactive == Some(true)),
                 ..old.config.clone()
             },
             stats: AgentStats::default(),

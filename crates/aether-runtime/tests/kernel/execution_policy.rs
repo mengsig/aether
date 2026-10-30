@@ -31,6 +31,7 @@ async fn every_config_knob_persists_at_creation_and_mutable_knobs_update_live() 
         concurrency: Some(3),
         host_context: HostContext::Lean,
         build_cache: Some("/srv/cache/items/one".into()),
+        interactive: Some(true),
     };
     let scope = Scope {
         workspace_root: Some(h.workspace_root.clone()),

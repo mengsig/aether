@@ -25,6 +25,27 @@ clients on 17 through 24 see it as `usage_limit`.
 
 ### Fixed
 
+- **A headless agent resumes after a daemon restart instead of waiting for an
+  inspection nobody does.** A daemon stopped while an agent ran a mutating
+  call (a `docker compose up` in Bash, a file write) left the agent
+  `blocked: inspection` until someone ran `aether resume`. An orchestrator
+  such as Archon saw a held agent and waited for its stage deadline. Only a
+  tree a person watches now waits: the TUI marks the roots it starts with the
+  new `config.interactive`, and children inherit it. Every other agent resumes
+  at once on Linux, where the start stops what the old daemon's agents left
+  running, as a person's `aether resume` would. Its keys are released, and its
+  wake and the interrupted call's result say its turn was cut short while
+  those calls ran, so their outcome is unknown and it should check the state
+  before repeating them. Its `agent.resumed` event says it resumed without
+  inspection. An agent stored before the upgrade cannot say whether a person
+  watches it, so it still parks, and one already parked stays parked until
+  resumed; its new children and a restarted successor are headless. Where the
+  interrupted command may still run (a turn a live daemon lost, a restart
+  elsewhere than Linux) a headless agent still parks. See
+  [interactive trees](docs/protocol.md#interactive-trees). A model reached
+  over HTTP reads this as the result of each call a restart cut short, where
+  it read only "Tool call was cancelled.", whether it resumes at once or after
+  an inspection.
 - **Browsers and helpers an agent detached no longer outlive it (#332).**
   Aether's own shell tool now tags every host command with its agent's id
   (`AETHER_ENGINE_AGENT`), as engines already were, so a Chromium, Firefox,
