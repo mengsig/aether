@@ -53,7 +53,10 @@ Every task in the set runs once (by default) on six arms:
 The native arms do not depend on Aether. They are the drift reference: when the
 native pass rate moves between two runs, the provider or CLI changed, not
 Aether. Pass `ARMS=haiku`, `ARMS=luna` or explicit keys such as
-`ARMS=haiku/old,haiku/new` to run fewer arms.
+`ARMS=haiku/old,haiku/new` to run fewer arms. A history run puts more releases
+side by side: each `--release v1.0.0=<aether 1.0.0>` (through `EXTRA`) adds a
+binary that arms such as `haiku/v1.0.0` run exactly as they run `old`
+([history](release-bench/history.md)).
 
 Each trial gets a fresh git workspace with the task's files. The workspace
 sits under the work root, outside the repository, so no solver can read the
