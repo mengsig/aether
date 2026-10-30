@@ -112,7 +112,7 @@ async fn recovery_rejects_reused_pid_wrong_uid_and_previous_boot() {
         .spawn()
         .unwrap();
     let pid = child.id().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     for mismatch in ["start", "uid", "boot"] {
         let (registration, durability) = journal.register(ProcessId::new(), pid).unwrap();
         durability.sync().unwrap();
@@ -146,7 +146,7 @@ async fn recovery_kills_a_group_whose_leader_was_reaped() {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let (registration, durability) = journal.register(id, child.id().unwrap()).unwrap();
     durability.sync().unwrap();
     ready(&dir.path().join("descendant")).await;
@@ -166,7 +166,7 @@ async fn recovery_kills_a_group_whose_leader_was_reaped() {
 #[test]
 fn malformed_record_refuses_recovery_and_remains_visible() {
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let path = journal.directory.join("bad.json");
     std::fs::write(&path, b"incomplete").unwrap();
     let error = Journal::recover(journal.directory).unwrap_err();
@@ -185,7 +185,7 @@ async fn recovery_spares_a_leaderless_group_in_another_session() {
         .args(["-c", "env -u AETHER_BACKGROUND_JOB sleep 60 & echo $! > descendant.tmp && mv descendant.tmp descendant; while [ ! -e exit ]; do sleep 0.01; done"])
         .current_dir(dir.path()).process_group(0).kill_on_drop(true).spawn().unwrap();
     let pgid = child.id().unwrap() as i32;
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let (registration, durability) = journal.register(id, pgid as u32).unwrap();
     durability.sync().unwrap();
     ready(&dir.path().join("descendant")).await;
@@ -226,19 +226,21 @@ async fn recovery_spares_a_leaderless_group_in_another_session() {
     assert!(!registration.0.exists());
 }
 
-/// A foreground call whose shell exited and whose remaining command cleared
-/// the call's token is still stopped: its session proves the group.
+/// A leaderless group in the recorded session none of whose members carries
+/// the call's token may be the call's, its token cleared, or a later group that
+/// reused the id: it is spared, and the call's agent waits for inspection.
 #[tokio::test]
-async fn recovery_stops_a_leaderless_call_group_whose_members_all_cleared_the_token() {
+async fn a_leaderless_call_group_without_the_token_is_spared_and_its_agent_reported() {
     let dir = tempfile::tempdir().unwrap();
     let call = ProcessId::new();
     let mut child = tokio::process::Command::new("bash")
         .env(CALL_ENV, call.to_string())
         .args(["-c", "env -u AETHER_FOREGROUND_CALL sleep 300 & echo $! > tokenless.tmp && mv tokenless.tmp tokenless; while [ ! -e exit ]; do sleep 0.01; done"])
         .current_dir(dir.path()).process_group(0).kill_on_drop(true).spawn().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
+    let agent = AgentId::new();
     let registration = journal
-        .register_foreground(call, child.id().unwrap())
+        .register_foreground(call, child.id().unwrap(), agent)
         .unwrap();
     ready(&dir.path().join("tokenless")).await;
     let tokenless = pid_in(&dir.path().join("tokenless"));
@@ -256,13 +258,15 @@ async fn recovery_stops_a_leaderless_call_group_whose_members_all_cleared_the_to
     child.wait().await.unwrap();
     assert!(alive(tokenless), "the call's command outlives its shell");
     let recovered = Journal::recover(journal.directory);
-    let stopped = !alive(tokenless) || {
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        !alive(tokenless)
-    };
+    let spared = alive(tokenless);
     let _ = nix::sys::signal::kill(Pid::from_raw(tokenless), Signal::SIGKILL);
-    recovered.unwrap();
-    assert!(stopped, "the interrupted call's command outlived the start");
+    let (_, unstopped) = recovered.unwrap();
+    assert!(spared, "a group no member proves the call's was stopped");
+    assert_eq!(
+        unstopped,
+        HashSet::from([agent]),
+        "its agent must wait for inspection"
+    );
     assert!(!registration.0.exists());
 }
 
@@ -285,7 +289,7 @@ fn another_users_member_does_not_disown_the_recorded_group() {
     };
     let (foreign, foreign_group) = foreign;
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let proc_root = dir.path().join("proc");
     // The recorded leader is ours; the other entry is the other user's
     // process, whose group the fake leader's stat claims.
@@ -305,9 +309,11 @@ fn another_users_member_does_not_disown_the_recorded_group() {
         job: None,
         call: Some(ProcessId::new()),
         session: Some(7),
+        agent: None,
     };
-    assert!(
+    assert_eq!(
         journal.matches(&record, &proc_root).unwrap(),
+        Found::Recorded,
         "another user's member disowned a group whose recorded leader runs"
     );
 }
@@ -315,7 +321,7 @@ fn another_users_member_does_not_disown_the_recorded_group() {
 #[test]
 fn unreadable_proc_entries_preserve_the_record_without_failing_recovery() {
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let record = Record {
         pgid: 12345,
         start_time: 1,
@@ -324,6 +330,7 @@ fn unreadable_proc_entries_preserve_the_record_without_failing_recovery() {
         job: Some(ProcessId::new()),
         call: None,
         session: None,
+        agent: None,
     };
     let path = journal.directory.join("owned.json");
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -339,7 +346,7 @@ fn unreadable_proc_entries_preserve_the_record_without_failing_recovery() {
 #[test]
 fn an_inconclusive_foreground_record_refuses_the_start() {
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let record = Record {
         pgid: 12345,
         start_time: 1,
@@ -348,6 +355,7 @@ fn an_inconclusive_foreground_record_refuses_the_start() {
         job: None,
         call: Some(ProcessId::new()),
         session: None,
+        agent: None,
     };
     let path = journal.directory.join("call.json");
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -372,7 +380,7 @@ fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let job = ProcessId::new();
     let mut child = std::process::Command::new("sleep")
         .arg("60")
@@ -386,6 +394,7 @@ fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
         job: Some(job),
         call: None,
         session: None,
+        agent: None,
     };
     let path = journal.directory.join(format!("{job}.json"));
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -422,7 +431,7 @@ fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
 #[test]
 fn recovery_removes_unpublished_temporary_records() {
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let path = journal.directory.join(".tmp-crashed");
     std::fs::write(&path, "unfinished").unwrap();
     Journal::recover(journal.directory).unwrap();
@@ -432,7 +441,7 @@ fn recovery_removes_unpublished_temporary_records() {
 #[test]
 fn recovery_removes_empty_records_published_before_their_fsync() {
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let path = journal.directory.join(format!("{}.json", ProcessId::new()));
     std::fs::write(&path, b"").unwrap();
     Journal::recover(journal.directory).unwrap();
@@ -615,7 +624,7 @@ async fn recovery_kills_setsid_descendants_after_the_original_group_is_gone() {
         .env(JOB_ENV, id.to_string())
         .args(["-c", "setsid bash -c 'echo $$ > escaped.tmp; mv escaped.tmp escaped; exec sleep 60' </dev/null >/dev/null 2>&1 & while [ ! -e exit ]; do sleep 0.01; done"])
         .current_dir(dir.path()).process_group(0).kill_on_drop(true).spawn().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let (registration, durability) = journal.register(id, child.id().unwrap()).unwrap();
     durability.sync().unwrap();
     ready(&dir.path().join("escaped")).await;
@@ -748,9 +757,9 @@ async fn foreground_crash_fixture() {
     panic!("fixture should have been killed mid call; it ended: {ended}");
 }
 
-/// A foreground call whose shell exited leaves what it ran in its group: the
-/// start stops that through the call's token, but not what the call detached,
-/// nor a member without the token, which is not proven the call's.
+/// A foreground call whose shell exited leaves what it ran in its group: a
+/// member carrying the call's token proves the group, so the start stops all
+/// of it, a member that cleared the token too, but not what the call detached.
 #[tokio::test]
 async fn recovery_stops_a_leaderless_foreground_group_its_call_token_proves() {
     let dir = tempfile::tempdir().unwrap();
@@ -769,9 +778,9 @@ async fn recovery_stops_a_leaderless_foreground_group_its_call_token_proves() {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let registration = journal
-        .register_foreground(call, child.id().unwrap())
+        .register_foreground(call, child.id().unwrap(), AgentId::new())
         .unwrap();
     for marker in ["member", "unproven", "server"] {
         ready(&dir.path().join(marker)).await;
@@ -794,7 +803,11 @@ async fn recovery_stops_a_leaderless_foreground_group_its_call_token_proves() {
     std::fs::write(dir.path().join("exit"), "exit").unwrap();
     child.wait().await.unwrap();
     assert!(alive(member), "the call's command outlives its shell");
-    Journal::recover(journal.directory).unwrap();
+    let (_, unstopped) = Journal::recover(journal.directory).unwrap();
+    assert!(
+        unstopped.is_empty(),
+        "a proven call was stopped, not left to inspect"
+    );
     let member_stopped = !alive(member) || {
         tokio::time::sleep(Duration::from_secs(2)).await;
         !alive(member)
@@ -855,6 +868,7 @@ fn a_leader_that_cannot_be_read_after_its_stop_is_resumed() {
         job: None,
         call: Some(ProcessId::new()),
         session: None,
+        agent: None,
     };
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let proc_root = dir.path().to_owned();

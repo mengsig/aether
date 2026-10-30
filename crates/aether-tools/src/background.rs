@@ -112,7 +112,12 @@ impl BackgroundProcesses {
 
     /// Recover this store's host jobs before the runtime resumes agents.
     /// The caller must hold the daemon's exclusive store lock throughout use.
-    pub fn recover_host_jobs(&self, store_path: &std::path::Path) -> Result<(), ToolError> {
+    /// Returns the agents a foreground call of which may still run: neither
+    /// stopped nor proven another's, so they must wait for inspection.
+    pub fn recover_host_jobs(
+        &self,
+        store_path: &std::path::Path,
+    ) -> Result<std::collections::HashSet<aether_core::id::AgentId>, ToolError> {
         #[cfg(target_os = "linux")]
         {
             let processes = self.lock()?;
@@ -127,11 +132,15 @@ impl BackgroundProcesses {
                 .map_err(|_| ToolError::Internal("background journal poisoned".into()))?;
             let mut directory = store_path.as_os_str().to_owned();
             directory.push(".background-processes");
-            *journal = Some(journal::Journal::recover(directory.into())?);
+            let (recovered, unstopped) = journal::Journal::recover(directory.into())?;
+            *journal = Some(recovered);
+            Ok(unstopped)
         }
         #[cfg(not(target_os = "linux"))]
-        tracing::warn!(store = %store_path.display(), "host background crash recovery requires Linux");
-        Ok(())
+        {
+            tracing::warn!(store = %store_path.display(), "host background crash recovery requires Linux");
+            Ok(Default::default())
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -159,6 +168,7 @@ impl BackgroundProcesses {
         &self,
         call: ProcessId,
         pid: u32,
+        agent: aether_core::id::AgentId,
     ) -> std::io::Result<Option<journal::Registration>> {
         let journal = self
             .journal
@@ -166,7 +176,7 @@ impl BackgroundProcesses {
             .map_err(|_| std::io::Error::other("background journal poisoned"))?;
         journal
             .as_ref()
-            .map(|journal| journal.register_foreground(call, pid))
+            .map(|journal| journal.register_foreground(call, pid, agent))
             .transpose()
     }
 

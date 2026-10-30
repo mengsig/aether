@@ -3,7 +3,9 @@ use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
 
-use aether_core::id::ProcessId;
+use std::collections::HashSet;
+
+use aether_core::id::{AgentId, ProcessId};
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::{Pid, geteuid};
 use serde::{Deserialize, Serialize};
@@ -31,9 +33,25 @@ struct Record {
     #[serde(default)]
     call: Option<ProcessId>,
     /// The group's session: a group never leaves it, so once the leader is
-    /// gone a member in it proves the group, token or not.
+    /// gone a member in another session is not the recorded group's.
     #[serde(default)]
     session: Option<i32>,
+    /// The agent that ran a foreground call: it waits for inspection when
+    /// recovery cannot prove what is left of the call its own.
+    #[serde(default)]
+    agent: Option<AgentId>,
+}
+
+/// What recovery found of a recorded group.
+#[derive(Debug, PartialEq, Eq)]
+enum Found {
+    /// Its leader, or a member carrying its token, runs.
+    Recorded,
+    /// Leaderless members run in its session but none carries its token: the
+    /// call's, its token cleared, or a later group that reused the id.
+    Unproven,
+    /// Nothing of it runs.
+    Nothing,
 }
 
 impl Record {
@@ -68,7 +86,9 @@ impl Registration {
 }
 
 impl Journal {
-    pub fn recover(directory: PathBuf) -> io::Result<Self> {
+    /// Stop what a crashed daemon's recorded groups left running. Returns the
+    /// agents whose foreground call could not be proven stopped or spared.
+    pub fn recover(directory: PathBuf) -> io::Result<(Self, HashSet<AgentId>)> {
         match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
@@ -89,6 +109,7 @@ impl Journal {
                 .trim()
                 .to_owned(),
         };
+        let mut unstopped = HashSet::new();
         for entry in std::fs::read_dir(&journal.directory)? {
             let path = entry?.path();
             if path
@@ -97,20 +118,23 @@ impl Journal {
             {
                 std::fs::remove_file(path)?;
             } else if path.extension().is_some_and(|ext| ext == "json") {
-                journal.recover_record(&path, Path::new("/proc"))?;
+                unstopped.extend(journal.recover_record(&path, Path::new("/proc"))?);
             }
         }
-        Ok(journal)
+        Ok((journal, unstopped))
     }
 
-    fn recover_record(&self, path: &Path, proc_root: &Path) -> io::Result<()> {
+    /// Recover the group recorded at `path`; the agent of a foreground call
+    /// whose leftovers recovery spared unproven, which must not resume beside them.
+    fn recover_record(&self, path: &Path, proc_root: &Path) -> io::Result<Option<AgentId>> {
         let bytes = std::fs::read(path)
             .map_err(|e| io::Error::new(e.kind(), format!("reading {}: {e}", path.display())))?;
         // Only a host crash between publish and the deferred fsync leaves this,
         // and that crash killed the group too.
         if bytes.is_empty() {
             tracing::warn!(record = %path.display(), "removing empty background record left by a host crash");
-            return std::fs::remove_file(path);
+            std::fs::remove_file(path)?;
+            return Ok(None);
         }
         let record: Record = serde_json::from_slice(&bytes).map_err(|e| {
             io::Error::new(
@@ -118,50 +142,74 @@ impl Journal {
                 format!("invalid background record {}: {e}", path.display()),
             )
         })?;
-        let stopped = self.matches(&record, proc_root).and_then(|ours| {
-            if ours {
+        let stopped = self.matches(&record, proc_root).and_then(|found| {
+            if found == Found::Recorded {
                 tracing::warn!(pgid = record.pgid, record = %path.display(), "killing orphan host process group");
                 kill_recorded_group(&record, proc_root)?;
             }
-            Ok(())
+            Ok(found)
         });
-        if let Err(error) = stopped {
-            // An agent resumes only once its interrupted call is stopped: refuse the start.
-            if record.call.is_some() {
-                return Err(io::Error::new(
-                    error.kind(),
-                    format!(
-                        "cannot stop the foreground call a crashed daemon left in process group {pgid}: {error}; \
-                         an agent resumed beside it could race it. Stop that group (kill -KILL -- -{pgid}) and start again",
-                        pgid = record.pgid
-                    ),
-                ));
-            }
-            tracing::warn!(pgid = record.pgid, %error, "cannot stop orphan background group; retaining record");
-            return Ok(());
-        }
+        let found = match stopped {
+            Ok(found) => found,
+            Err(error) => return Self::unstoppable(&record, error),
+        };
         if record.boot_id == self.boot_id
             && record.uid == geteuid().as_raw()
             && let Some(job) = record.job
             && let Err(error) = kill_job_at(job, proc_root)
         {
             tracing::warn!(%job, %error, "cannot kill escaped background descendants; retaining record");
-            return Ok(());
+            return Ok(None);
         }
-        std::fs::remove_file(path)
+        std::fs::remove_file(path)?;
+        let parked = record
+            .agent
+            .filter(|_| found == Found::Unproven && record.call.is_some());
+        if let Some(agent) = parked {
+            tracing::warn!(pgid = record.pgid, %agent, "its interrupted call may still run: the agent waits for inspection");
+        }
+        Ok(parked)
+    }
+
+    /// Refuse the start over a foreground call that could not be stopped; keep
+    /// a job's record for the next start.
+    fn unstoppable(record: &Record, error: io::Error) -> io::Result<Option<AgentId>> {
+        assert!(record.pgid > 1, "not a recorded group: {}", record.pgid);
+        assert!(
+            record.job.is_none() || record.call.is_none(),
+            "a record is a job's or a call's"
+        );
+        // An agent resumes only once its interrupted call is stopped: refuse the start.
+        if record.call.is_some() {
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "cannot stop the foreground call a crashed daemon left in process group {pgid}: {error}; \
+                     an agent resumed beside it could race it. Stop that group (kill -KILL -- -{pgid}) and start again",
+                    pgid = record.pgid
+                ),
+            ));
+        }
+        tracing::warn!(pgid = record.pgid, %error, "cannot stop orphan background group; retaining record");
+        Ok(None)
     }
 
     pub fn register(&self, id: ProcessId, pgid: u32) -> io::Result<(Registration, Durability)> {
-        let (registration, file) = self.publish(id, pgid, Some(id), None)?;
+        let (registration, file) = self.publish(id, pgid, Some(id), None, None)?;
         let directory = std::fs::File::open(&self.directory)?;
         Ok((registration, Durability { file, directory }))
     }
 
-    /// Record the group of foreground `call`, whose processes carry
+    /// Record the group of `agent`'s foreground `call`, whose processes carry
     /// [`CALL_ENV`], so a start after a crash stops the call but not what it
     /// detached. Unsynced: a host crash ends the group too.
-    pub fn register_foreground(&self, call: ProcessId, pgid: u32) -> io::Result<Registration> {
-        let (registration, _file) = self.publish(call, pgid, None, Some(call))?;
+    pub fn register_foreground(
+        &self,
+        call: ProcessId,
+        pgid: u32,
+        agent: AgentId,
+    ) -> io::Result<Registration> {
+        let (registration, _file) = self.publish(call, pgid, None, Some(call), Some(agent))?;
         Ok(registration)
     }
 
@@ -173,6 +221,7 @@ impl Journal {
         pgid: u32,
         job: Option<ProcessId>,
         call: Option<ProcessId>,
+        agent: Option<AgentId>,
     ) -> io::Result<(Registration, std::fs::File)> {
         assert!(
             job.is_none() || call.is_none(),
@@ -193,6 +242,7 @@ impl Journal {
             job,
             call,
             session: Some(identity.session),
+            agent,
         };
         let path = self.directory.join(format!("{name}.json"));
         let mut file = tempfile::NamedTempFile::new_in(&self.directory)?;
@@ -201,12 +251,12 @@ impl Journal {
         Ok((Registration(path), file))
     }
 
-    fn matches(&self, record: &Record, proc_root: &Path) -> io::Result<bool> {
+    fn matches(&self, record: &Record, proc_root: &Path) -> io::Result<Found> {
         if record.pgid <= 1 || record.boot_id != self.boot_id || record.uid != geteuid().as_raw() {
-            return Ok(false);
+            return Ok(Found::Nothing);
         }
         let Some(leader_missing) = leader_missing(record, proc_root)? else {
-            return Ok(false);
+            return Ok(Found::Nothing);
         };
         let token = record.token();
         let mut found = false;
@@ -227,15 +277,15 @@ impl Journal {
                 continue;
             }
             // A vanished leader could belong to a reused group: only a member
-            // in the recorded session or carrying the token proves it ours.
+            // carrying the token proves it ours.
             if leader_missing && member.running() {
                 match proves_leaderless(record, &entry.path(), &member, token.as_deref())? {
-                    Some(true) => {}
-                    Some(false) => {
+                    Some(Found::Recorded) => {}
+                    Some(Found::Unproven) => {
                         unproven = true;
                         continue;
                     }
-                    None => continue,
+                    Some(Found::Nothing) | None => continue,
                 }
             }
             found |= member.running();
@@ -243,7 +293,7 @@ impl Journal {
         if unproven && !found {
             tracing::warn!(
                 pgid = record.pgid,
-                "sparing a leaderless group none of whose members proves it recorded"
+                "sparing a leaderless group in the recorded session none of whose members carries its token"
             );
         }
         if foreign && !found {
@@ -252,7 +302,11 @@ impl Journal {
                 "a member of a recorded group runs as another user and cannot be stopped"
             );
         }
-        Ok(found)
+        Ok(match (found, unproven) {
+            (true, _) => Found::Recorded,
+            (false, true) => Found::Unproven,
+            (false, false) => Found::Nothing,
+        })
     }
 }
 
@@ -289,23 +343,34 @@ fn group_member(process: &Path, pgid: i32) -> io::Result<Option<(Identity, u32)>
     }
 }
 
-/// Whether a running member of a group whose leader is gone proves it
-/// `record`'s; None once it is gone. A record without a session needs the token.
+/// What a running member of a group whose leader is gone proves of it: one
+/// carrying the token, `record`'s group; one in another session, a later group
+/// that reused the id; one in its session without the token, neither. None
+/// once it is gone.
 fn proves_leaderless(
     record: &Record,
     process: &Path,
     member: &Identity,
     token: Option<&str>,
-) -> io::Result<Option<bool>> {
+) -> io::Result<Option<Found>> {
     assert!(member.running(), "only a running member proves a group");
     assert_eq!(
         member.group, record.pgid,
         "not a member of the recorded group"
     );
-    match record.session {
-        Some(session) => Ok(Some(member.session == session)),
-        None => carries_token(process, token),
+    if record
+        .session
+        .is_some_and(|session| member.session != session)
+    {
+        return Ok(Some(Found::Nothing));
     }
+    Ok(carries_token(process, token)?.map(|carries| {
+        if carries {
+            Found::Recorded
+        } else {
+            Found::Unproven
+        }
+    }))
 }
 
 /// Whether `process` carries `token`; None once it is gone.

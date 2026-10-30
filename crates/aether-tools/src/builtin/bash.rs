@@ -131,6 +131,7 @@ impl BashTool {
     fn spawn_recorded(
         &self,
         mut cmd: tokio::process::Command,
+        agent: aether_core::id::AgentId,
         cancel: &CancellationToken,
     ) -> Result<(tokio::process::Child, Option<CallRecord>), ToolError> {
         let call = aether_core::id::ProcessId::new();
@@ -143,7 +144,7 @@ impl BashTool {
                         return Ok(None);
                     };
                     // Unrecorded, the gate is dropped shut and the command never runs.
-                    let record = self.record_foreground(call, pid)?;
+                    let record = self.record_foreground(call, pid, agent)?;
                     gate.open()?;
                     Ok(record)
                 });
@@ -177,11 +178,12 @@ impl BashTool {
         &self,
         call: aether_core::id::ProcessId,
         pid: u32,
+        agent: aether_core::id::AgentId,
     ) -> std::io::Result<Option<CallRecord>> {
         #[cfg(test)]
         tests::delay_record(pid);
         self.processes
-            .register_foreground(call, pid)
+            .register_foreground(call, pid, agent)
             .map_err(|error| {
                 std::io::Error::new(
                     error.kind(),
@@ -295,7 +297,7 @@ impl Tool for BashTool {
         let prepared = prepare(&command, ctx)?;
         let capture = Capture::new(ctx, self.capture_limit)?;
         #[cfg(target_os = "linux")]
-        let (mut child, record) = self.spawn_recorded(prepared.command, &cancel)?;
+        let (mut child, record) = self.spawn_recorded(prepared.command, ctx.agent_id, &cancel)?;
         #[cfg(not(target_os = "linux"))]
         let mut child = {
             let mut cmd = prepared.command;

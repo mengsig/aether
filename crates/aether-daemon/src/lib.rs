@@ -324,9 +324,10 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     // channel is created before it and drained after it starts.
     let (mcp_tx, mcp_rx) = tokio::sync::mpsc::unbounded_channel();
     let builtins = tool_registry(models.config(), models.registry(), tcp.as_ref());
-    if let Some(background) = builtins.background() {
-        background.recover_host_jobs(&store_path)?;
-    }
+    let unstopped_calls = match builtins.background() {
+        Some(background) => background.recover_host_jobs(&store_path)?,
+        None => Default::default(),
+    };
     let mcp = McpManager::with_background(
         mcp::specs(&models.config().mcp),
         Some(mcp_tx),
@@ -383,6 +384,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             engine_stall_timeout,
             orphan_sweep_interval,
             orphan_idle,
+            unstopped_calls,
             yolo,
             approval_default: models.config().approval.default,
             network_default: models.config().network.default,
