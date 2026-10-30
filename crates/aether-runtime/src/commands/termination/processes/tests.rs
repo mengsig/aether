@@ -297,7 +297,7 @@ async fn an_agent_woken_before_its_reap_keeps_its_jobs() {
 }
 
 #[test]
-fn the_message_names_each_job_and_process_and_caps_the_list() {
+fn the_message_names_each_job_and_process_and_the_rest_by_pid() {
     let processes: Vec<AgentProcess> = (2..=(HANDED_UP_LISTED as u32 + 3))
         .map(|pid| AgentProcess {
             pid,
@@ -312,5 +312,9 @@ fn the_message_names_each_job_and_process_and_caps_the_list() {
         !text.contains(&format!("server {}", HANDED_UP_LISTED as u32 + 2)),
         "{text}"
     );
-    assert!(text.ends_with("- and 2 more"), "{text}");
+    let last = HANDED_UP_LISTED as u32 + 3;
+    assert!(
+        text.ends_with(&format!("- and 2 more, by pid: {} {last}", last - 1)),
+        "{text}"
+    );
 }

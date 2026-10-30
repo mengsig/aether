@@ -515,17 +515,39 @@ mod linux {
         aether_spawn::read_environ(&dir).ok()
     }
 
-    /// Live pids listed in a cgroup's `cgroup.procs`, except `own`. A cgroup
-    /// that is gone has none.
+    /// Live pids listed in a cgroup's `cgroup.procs` and its descendant
+    /// cgroups', except `own`. A cgroup that is gone has none.
     pub(super) fn cgroup_members(proc_root: &Path, procs: &Path, own: u32) -> Vec<u32> {
-        let Ok(listed) = std::fs::read_to_string(procs) else {
+        assert!(
+            procs.ends_with("cgroup.procs"),
+            "not a cgroup listing: {procs:?}"
+        );
+        let Some(top) = procs.parent() else {
             return Vec::new();
         };
-        listed
-            .lines()
-            .filter_map(|line| line.trim().parse::<u32>().ok())
-            .filter(|pid| *pid > 1 && *pid != own && is_live(proc_root, *pid))
-            .collect()
+        let mut members = Vec::new();
+        let mut cgroups = vec![top.to_path_buf()];
+        while let Some(cgroup) = cgroups.pop() {
+            // Gone meanwhile, or a plain directory of the tree: nothing listed.
+            if let Ok(listed) = std::fs::read_to_string(cgroup.join("cgroup.procs")) {
+                members.extend(
+                    listed
+                        .lines()
+                        .filter_map(|line| line.trim().parse::<u32>().ok())
+                        .filter(|pid| *pid > 1 && *pid != own && is_live(proc_root, *pid)),
+                );
+            }
+            let Ok(children) = std::fs::read_dir(&cgroup) else {
+                continue;
+            };
+            cgroups.extend(
+                children
+                    .filter_map(Result::ok)
+                    .filter(|child| child.file_type().is_ok_and(|kind| kind.is_dir()))
+                    .map(|child| child.path()),
+            );
+        }
+        members
     }
 
     /// Whether `pid` exists and is not a zombie, which no signal can end.

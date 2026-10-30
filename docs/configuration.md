@@ -507,7 +507,8 @@ What an agent leaves running when it ends depends on how it ends.
   processes carrying their tags or in their engine scopes, and their
   background shell jobs - passes to the nearest live ancestor, usually its parent. That agent
   can read and stop the background jobs as its own, and gets a message from
-  the system listing each process it took over by pid and command line. The
+  the system listing each process it took over by pid and command line, past
+  the first 50 by pid alone. The
   child records the same as an `agent.processes_handed_up` event with `to`,
   `pids`, `processes` and `jobs`. A child that delegated a server to run on
   thus leaves it running for its parent to use. The message arrives once the
@@ -602,7 +603,7 @@ version probe's group is killed as soon as the probe ends. The MCP bridge
 exits when its engine's pipe closes. The next daemon start kills what left
 the group: every recorded engine process group whose leader still has the
 recorded pid and kernel start time, and every process of
-the daemon's user carrying a recorded engine's random token. Before it runs
+the daemon's user carrying a recorded engine's random token but a kept one. Before it runs
 any turn it then stops, as a clean stop would have, every process carrying
 the tag of one of its own agents or in one of their engine scopes, whatever
 the agent's state: a server a child detached, or one handed up. It never

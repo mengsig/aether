@@ -155,6 +155,17 @@ fn cgroup_members_are_the_live_listed_pids() {
     std::fs::write(&procs, "20\n21\n22\n23\n").unwrap();
 
     assert_eq!(cgroup_members(root.path(), &procs, 22), vec![20]);
+    let nested = root.path().join("cgroup").join("helper");
+    std::fs::create_dir_all(&nested).unwrap();
+    fake_process(root.path(), 24, "S", &[]);
+    std::fs::write(nested.join("cgroup.procs"), "24\n").unwrap();
+    let mut members = cgroup_members(root.path(), &procs, 22);
+    members.sort_unstable();
+    assert_eq!(
+        members,
+        vec![20, 24],
+        "a nested cgroup's members are the scope's"
+    );
     let gone = root.path().join("gone/cgroup.procs");
     assert!(cgroup_members(root.path(), &gone, 0).is_empty());
 }

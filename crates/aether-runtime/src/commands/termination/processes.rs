@@ -22,7 +22,8 @@ pub(crate) const PROCESSES_HANDED_UP_EVENT: &str = "agent.processes_handed_up";
 /// The longest a daemon stop waits between SIGTERM and SIGKILL to its agents'
 /// processes, whatever `reap_grace_secs` says: a stop must not hang for minutes.
 const SHUTDOWN_REAP_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
-/// The most processes a hand-up message names; its event records them all.
+/// The most processes a hand-up message names with their command; the rest
+/// are named by pid alone, and its event records them all.
 const HANDED_UP_LISTED: usize = 50;
 /// The deepest ancestry walked for an owner; a parent cycle must not spin.
 const MAX_ANCESTRY: usize = 10_000;
@@ -504,8 +505,12 @@ fn hand_up_message(
         for process in processes.iter().take(HANDED_UP_LISTED) {
             let _ = write!(text, "\n- {}: {}", process.pid, process.command);
         }
-        if processes.len() > HANDED_UP_LISTED {
-            let _ = write!(text, "\n- and {} more", processes.len() - HANDED_UP_LISTED);
+        let rest = processes.get(HANDED_UP_LISTED..).unwrap_or_default();
+        if !rest.is_empty() {
+            let _ = write!(text, "\n- and {} more, by pid:", rest.len());
+            for process in rest {
+                let _ = write!(text, " {}", process.pid);
+            }
         }
     }
     text
