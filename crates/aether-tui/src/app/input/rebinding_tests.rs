@@ -344,3 +344,60 @@ fn key_capture_keeps_configured_global_chords_and_esc_cancels_it() {
         assert!(app.bottom.view_stack.is_empty());
     }
 }
+
+/// #351: Alt+Shift+P may open a terminal reply, so it is held; bound by the
+/// user, it fires once no reply follows, and a following key types both.
+#[test]
+fn a_rebound_reply_opener_fires_once_no_reply_follows() {
+    let mut app = crate::testing::app_with_transcript(&[]);
+    rebind(&mut app, KeyAction::Details, "alt+shift+p");
+    let details = app.details;
+    let opener = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+    // Pressed in the past: the tick reads the wall clock, already past the gap.
+    app.now -= chrono::Duration::milliseconds(300);
+    assert!(app.dispatch_key(opener).is_empty());
+    assert_eq!(app.details, details, "held as a possible reply");
+    let ticks = app.next_tick_in().unwrap();
+    assert!(ticks <= super::super::view_state::ticks_in(250), "{ticks}");
+    app.reduce(crate::app::AppEvent::Tick { frames: ticks });
+    assert_eq!(app.details, !details, "fired once no reply followed");
+
+    app.dispatch_key(opener);
+    app.dispatch_key(plain(KeyCode::Char('h')));
+    assert_eq!(
+        app.details, details,
+        "fired before the key that followed it"
+    );
+    app.dispatch_key(plain(KeyCode::Char('i')));
+    assert_eq!(app.input.text, "hi");
+}
+
+/// Keys held as a possible reply are typed before a paste or click that follows.
+#[test]
+fn held_keys_type_before_a_paste_or_click_overtakes_them() {
+    let mut app = crate::testing::app_with_transcript(&[]);
+    let opener = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::ALT);
+    assert!(app.dispatch_key(opener).is_empty());
+    app.dispatch_key(plain(KeyCode::Char('1')));
+    assert_eq!(app.input.text, "", "held as a possible OSC reply");
+    app.reduce(crate::app::AppEvent::Paste("X".into()));
+    app.dispatch_key(plain(KeyCode::Char('h')));
+    assert_eq!(app.input.text, "1Xh");
+
+    app.input.set_text("");
+    app.dispatch_key(plain(KeyCode::Char('a')));
+    app.dispatch_key(KeyEvent::new(
+        KeyCode::Char('P'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
+    ));
+    app.dispatch_key(plain(KeyCode::Char('1')));
+    let click = crossterm::event::MouseEvent {
+        kind: crossterm::event::MouseEventKind::ScrollUp,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.dispatch_mouse(click, &mut crate::ui::transcript::ViewCache::default());
+    assert_eq!(app.terminal_replies.deadline(), None, "nothing left held");
+    assert_eq!(app.input.text, "a1");
+}
