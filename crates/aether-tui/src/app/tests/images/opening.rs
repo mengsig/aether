@@ -477,3 +477,40 @@ fn quoting_line_opens_its_own_image(inner: &str, quoted: &str) {
     let effects = click(&mut app, &mut cache, &below);
     assert_shows(load(&mut app, effects), &inner_bytes);
 }
+
+#[test]
+fn a_name_spelling_another_images_reference_opens_its_own_image() {
+    let store = tempfile::tempdir().expect("store");
+    let mut app = app_with_store(store.path());
+    let (spelled, other) = (picture(40), picture(41));
+    let digest = aether_core::attachment::AttachmentId::of(&other);
+    let name = format!("aether-image:{digest}.png");
+    let long = format!("{}.png", "b".repeat(110));
+    for (name, bytes) in [(&name, &spelled), (&long, &other)] {
+        let (_dir, path) = png_file(name);
+        std::fs::write(&path, bytes).expect("write");
+        app.run_image_command(ImageArg::File(path.display().to_string()));
+        let read = aether_client::images::read_image_file(&path).map_err(|e| e.to_string());
+        app.reduce(AppEvent::ImageRead(read));
+    }
+    let (_, _, images) = sent(&app.reduce(key(KeyCode::Enter)));
+    push_user_content(&mut app, daemon_stores(store.path(), &images));
+
+    let mut cache = ViewCache::default();
+    render_with(&app, &mut cache, 160, 40);
+    let line = format!("[image: {name}, {} B]", spelled.len());
+    let mut on_name = cache
+        .file_hits
+        .iter()
+        .find(|h| h.reference.label == line)
+        .expect("its line")
+        .clone();
+    // Press on the name, which spells the other image's target; its label is longer.
+    on_name.area.x += "[image: ".len() as u16 + 10;
+    assert!(
+        on_name.area.width > 30,
+        "the line is on one row: {on_name:?}"
+    );
+    let effects = click(&mut app, &mut cache, &on_name);
+    assert_shows(load(&mut app, effects), &spelled);
+}

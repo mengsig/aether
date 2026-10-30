@@ -228,15 +228,17 @@ fn file_row_matches(
 ) -> Vec<(crate::viewer::references::Reference, Vec<(usize, usize)>)> {
     refs.iter()
         .filter_map(|reference| {
-            let mut ranges = row_hits(lines, row, &reference.target);
-            let ambiguous = refs
-                .iter()
-                .any(|other| other.label == reference.label && other.target != reference.target);
-            // A sent image's line is drawn as an aside, a link as a link.
-            let style = if crate::viewer::sent_images::is_sent_image(&reference.target) {
-                theme.aside()
+            let image = crate::viewer::sent_images::is_sent_image(&reference.target);
+            // An image line's label is unique among images and only matches its aside style.
+            let ambiguous = !image
+                && refs.iter().any(|other| {
+                    other.label == reference.label && other.target != reference.target
+                });
+            // A sent image is found only by its line; a file also by its target.
+            let (mut ranges, style) = if image {
+                (Vec::new(), theme.aside())
             } else {
-                theme.link()
+                (row_hits(lines, row, &reference.target), theme.link())
             };
             if reference.label != reference.target && !ambiguous {
                 ranges.extend(
