@@ -106,7 +106,11 @@ inspection. Its children stay its own. No process outlives the daemon that
 ran it: a stop ends them, and on Linux the next start stops what a crashed
 daemon's agents left running before any turn starts, so the resumed turn never
 races the call it was told about. Where nothing stops that call first (a turn a
-live daemon lost, a restart elsewhere than Linux), a headless agent parks too. Engine-native read tools and Aether MCP names
+live daemon lost, a restart elsewhere than Linux), a headless agent parks too.
+A process started with `AETHER_KEEP_PROCESS=1` is the exception: no sweep stops
+it, here or at an agent's end, which releases the agent's keys just the same,
+so the resumed agent runs beside it. A process that outlives SIGKILL is
+logged as an error. Engine-native read tools and Aether MCP names
 are resolved alongside the side-effect class recorded in `tool.requested`.
 
 On Linux, recovery persists `/proc/sys/kernel/random/boot_id` in store metadata

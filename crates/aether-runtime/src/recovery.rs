@@ -58,8 +58,8 @@ pub(crate) enum Restart {
 }
 
 impl Restart {
-    /// Whether nothing an interrupted call started is still running once
-    /// recovered agents can run again, so retrying cannot overlap it.
+    /// Whether nothing an interrupted call started still runs once its agent can
+    /// retry, a process kept with `AETHER_KEEP_PROCESS=1` aside, as at any end.
     fn stops_processes(self) -> bool {
         match self {
             Restart::Reboot => true,
