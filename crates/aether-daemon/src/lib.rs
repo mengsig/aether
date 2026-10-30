@@ -109,6 +109,24 @@ fn storage_artifact_policy(
 /// compile and ship; `the_provider_copy_keeps_every_field_in_place` stops it.
 /// The configured root, else `aether.build-cache` beside the store. A
 /// relative default would resolve inside each agent's workspace, so none.
+/// Agents whose turn the previous daemon left in flight: marked running, or
+/// holding its lease. What their engines still run is stopped at the start.
+fn interrupted_agents(
+    store: &dyn aether_store::Store,
+) -> anyhow::Result<std::collections::HashSet<aether_core::id::AgentId>> {
+    let running = aether_store::AgentFilter {
+        statuses: vec![aether_core::agent::AgentStatusKind::Running],
+        ..Default::default()
+    };
+    let mut agents: std::collections::HashSet<_> = store
+        .leases()?
+        .into_iter()
+        .map(|lease| lease.agent_id)
+        .collect();
+    agents.extend(store.agents(&running)?.into_iter().map(|agent| agent.id));
+    Ok(agents)
+}
+
 fn build_cache_root(configured: Option<&Path>, store_path: &Path) -> Option<PathBuf> {
     if let Some(root) = configured {
         debug_assert!(root.is_absolute(), "config load refuses a relative root");
@@ -306,9 +324,10 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     // channel is created before it and drained after it starts.
     let (mcp_tx, mcp_rx) = tokio::sync::mpsc::unbounded_channel();
     let builtins = tool_registry(models.config(), models.registry(), tcp.as_ref());
-    if let Some(background) = builtins.background() {
-        background.recover_host_jobs(&store_path)?;
-    }
+    let mut unstopped_calls = match builtins.background() {
+        Some(background) => background.recover_host_jobs(&store_path)?,
+        None => Default::default(),
+    };
     let mcp = McpManager::with_background(
         mcp::specs(&models.config().mcp),
         Some(mcp_tx),
@@ -321,7 +340,8 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     let mut engine_registry = store_path.clone().into_os_string();
     engine_registry.push(".engines");
     let engine_registry = std::path::PathBuf::from(engine_registry);
-    let reaped = aether_engine::orphans::init(&engine_registry)
+    let interrupted = interrupted_agents(store.as_ref())?;
+    let reaped = aether_engine::orphans::init(&engine_registry, &interrupted)
         .map_err(|error| anyhow::anyhow!("preparing {}: {error}", engine_registry.display()))?;
     if !reaped.is_empty() {
         tracing::warn!(pids = ?reaped, "killed engine processes a previous daemon left running");
@@ -338,6 +358,13 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         |name| std::env::var(name).ok(),
     )?;
     clock.finished("config");
+    // Before any turn can start a container of its own, and before a resumed
+    // turn can race one its interrupted call left running.
+    if !aether_tools::exec::sweep_orphan_containers(&instance_id).await {
+        // Any of them may have run its call in a container still running.
+        unstopped_calls.extend(interrupted.iter().copied());
+    }
+    clock.finished("containers");
     let runtime = Runtime::start(
         RuntimeConfig {
             holder: format!("aetherd-{}-{}", instance_id, std::process::id()),
@@ -360,6 +387,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             engine_stall_timeout,
             orphan_sweep_interval,
             orphan_idle,
+            unstopped_calls,
             yolo,
             approval_default: models.config().approval.default,
             network_default: models.config().network.default,
@@ -412,9 +440,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     let mut socket_published = None;
     let mut pid_published = None;
     let result = async {
-        aether_tools::exec::sweep_orphan_containers(&instance_id).await;
-        clock.finished("containers");
-
         mcp::spawn_recorder(&runtime, mcp_rx, &mut connections, &shutdown);
         if !mcp.is_empty() {
             // Discovery talks to other processes; do not hold up the socket for it.

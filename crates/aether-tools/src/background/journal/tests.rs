@@ -112,7 +112,7 @@ async fn recovery_rejects_reused_pid_wrong_uid_and_previous_boot() {
         .spawn()
         .unwrap();
     let pid = child.id().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     for mismatch in ["start", "uid", "boot"] {
         let (registration, durability) = journal.register(ProcessId::new(), pid).unwrap();
         durability.sync().unwrap();
@@ -146,7 +146,7 @@ async fn recovery_kills_a_group_whose_leader_was_reaped() {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let (registration, durability) = journal.register(id, child.id().unwrap()).unwrap();
     durability.sync().unwrap();
     ready(&dir.path().join("descendant")).await;
@@ -166,7 +166,7 @@ async fn recovery_kills_a_group_whose_leader_was_reaped() {
 #[test]
 fn malformed_record_refuses_recovery_and_remains_visible() {
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let path = journal.directory.join("bad.json");
     std::fs::write(&path, b"incomplete").unwrap();
     let error = Journal::recover(journal.directory).unwrap_err();
@@ -174,8 +174,10 @@ fn malformed_record_refuses_recovery_and_remains_visible() {
     assert!(path.exists());
 }
 
+/// A group id another session took since the record was written is not the
+/// recorded group, even with the recorded id and no leader.
 #[tokio::test]
-async fn recovery_does_not_kill_a_leaderless_group_without_the_job_token() {
+async fn recovery_spares_a_leaderless_group_in_another_session() {
     let dir = tempfile::tempdir().unwrap();
     let id = ProcessId::new();
     let mut child = tokio::process::Command::new("bash")
@@ -183,7 +185,7 @@ async fn recovery_does_not_kill_a_leaderless_group_without_the_job_token() {
         .args(["-c", "env -u AETHER_BACKGROUND_JOB sleep 60 & echo $! > descendant.tmp && mv descendant.tmp descendant; while [ ! -e exit ]; do sleep 0.01; done"])
         .current_dir(dir.path()).process_group(0).kill_on_drop(true).spawn().unwrap();
     let pgid = child.id().unwrap() as i32;
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let (registration, durability) = journal.register(id, pgid as u32).unwrap();
     durability.sync().unwrap();
     ready(&dir.path().join("descendant")).await;
@@ -207,26 +209,165 @@ async fn recovery_does_not_kill_a_leaderless_group_without_the_job_token() {
     .await;
     std::fs::write(dir.path().join("exit"), "exit").unwrap();
     child.wait().await.unwrap();
+    let mut record: Record =
+        serde_json::from_slice(&std::fs::read(&registration.0).unwrap()).unwrap();
+    let session = record
+        .session
+        .expect("a published record names its session");
+    record.session = Some(session + 1);
+    std::fs::write(&registration.0, serde_json::to_vec(&record).unwrap()).unwrap();
     Journal::recover(journal.directory).unwrap();
     let survived = alive(pid);
     killpg(Pid::from_raw(pgid), Signal::SIGKILL).unwrap();
     assert!(
         survived,
-        "a same-user group without the token is not proven ours"
+        "a group outside the recorded session is not proven ours"
     );
     assert!(!registration.0.exists());
+}
+
+/// A leaderless group in the recorded session none of whose members carries
+/// the call's token may be the call's, its token cleared, or a later group that
+/// reused the id: it is spared, and the call's agent waits for inspection.
+#[tokio::test]
+async fn a_leaderless_call_group_without_the_token_is_spared_and_its_agent_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let call = ProcessId::new();
+    let mut child = tokio::process::Command::new("bash")
+        .env(CALL_ENV, call.to_string())
+        .args(["-c", "env -u AETHER_FOREGROUND_CALL sleep 300 & echo $! > tokenless.tmp && mv tokenless.tmp tokenless; while [ ! -e exit ]; do sleep 0.01; done"])
+        .current_dir(dir.path()).process_group(0).kill_on_drop(true).spawn().unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
+    let agent = AgentId::new();
+    let registration = journal
+        .register_foreground(call, child.id().unwrap(), agent)
+        .unwrap();
+    ready(&dir.path().join("tokenless")).await;
+    let tokenless = pid_in(&dir.path().join("tokenless"));
+    wait_for("the member's token cleared", || {
+        let cleared = std::fs::read(format!("/proc/{tokenless}/environ"))
+            .is_ok_and(|environment| !carries(&environment, &format!("{CALL_ENV}={call}")));
+        if cleared {
+            Observed::Held
+        } else {
+            Observed::Pending("token still present".into())
+        }
+    })
+    .await;
+    std::fs::write(dir.path().join("exit"), "exit").unwrap();
+    child.wait().await.unwrap();
+    assert!(alive(tokenless), "the call's command outlives its shell");
+    let recovered = Journal::recover(journal.directory);
+    let spared = alive(tokenless);
+    let _ = nix::sys::signal::kill(Pid::from_raw(tokenless), Signal::SIGKILL);
+    let (_, unstopped) = recovered.unwrap();
+    assert!(spared, "a group no member proves the call's was stopped");
+    assert_eq!(
+        unstopped,
+        HashSet::from([agent]),
+        "its agent must wait for inspection"
+    );
+    assert!(!registration.0.exists());
+}
+
+/// A visible process of another user and its process group, if any.
+fn another_users_process() -> Option<(std::path::PathBuf, i32)> {
+    let own = geteuid().as_raw();
+    std::fs::read_dir("/proc").unwrap().find_map(|entry| {
+        let entry = entry.ok()?;
+        entry.file_name().to_str()?.parse::<u32>().ok()?;
+        let owner = entry.metadata().ok()?.uid();
+        let group = identity(&std::fs::read(entry.path().join("stat")).ok()?)
+            .ok()?
+            .group;
+        (owner != own && group > 1).then(|| (entry.path(), group))
+    })
+}
+
+/// Another user's process (a `sudo` child) in a recorded group does not
+/// disown the rest of the group, which recovery still stops.
+#[test]
+fn another_users_member_does_not_disown_the_recorded_group() {
+    let own = geteuid().as_raw();
+    let Some((foreign, foreign_group)) = another_users_process() else {
+        eprintln!("skipping: no process of another user is visible");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
+    let proc_root = dir.path().join("proc");
+    // The recorded leader is ours; the other entry is the other user's
+    // process, whose group the fake leader's stat claims.
+    let leader = proc_root.join(foreign_group.to_string());
+    std::fs::create_dir_all(&leader).unwrap();
+    let fields = format!(
+        "{foreign_group} (sh) S 1 {foreign_group} 7{}",
+        " 0".repeat(15)
+    );
+    std::fs::write(leader.join("stat"), format!("{fields} 42 0")).unwrap();
+    std::os::unix::fs::symlink(&foreign, proc_root.join("999999")).unwrap();
+    let record = Record {
+        pgid: foreign_group,
+        start_time: 42,
+        boot_id: journal.boot_id.clone(),
+        uid: own,
+        job: None,
+        call: Some(ProcessId::new()),
+        session: Some(7),
+        agent: None,
+    };
+    assert_eq!(
+        journal.matches(&record, &proc_root).unwrap(),
+        (Found::Recorded, true),
+        "another user's member disowned a group whose recorded leader runs"
+    );
+}
+
+/// No kill of ours stops another user's member (a `sudo` child) of an
+/// interrupted call's group, so the call's agent waits for inspection.
+#[test]
+fn another_users_member_left_in_a_calls_group_parks_its_agent() {
+    let Some((foreign, foreign_group)) = another_users_process() else {
+        eprintln!("skipping: no process of another user is visible");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
+    let proc_root = dir.path().join("proc");
+    // The call's shell is gone; only the other user's member is left.
+    std::fs::create_dir_all(&proc_root).unwrap();
+    std::os::unix::fs::symlink(&foreign, proc_root.join("999999")).unwrap();
+    let agent = AgentId::new();
+    let record = Record {
+        pgid: foreign_group,
+        start_time: 42,
+        boot_id: journal.boot_id.clone(),
+        uid: geteuid().as_raw(),
+        job: None,
+        call: Some(ProcessId::new()),
+        session: Some(7),
+        agent: Some(agent),
+    };
+    let path = journal.directory.join("call.json");
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let parked = journal.recover_record(&path, &proc_root).unwrap();
+    assert_eq!(parked, Some(agent), "its agent resumes beside the member");
+    assert!(!path.exists(), "a decided record is cleared");
 }
 
 #[test]
 fn unreadable_proc_entries_preserve_the_record_without_failing_recovery() {
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let record = Record {
         pgid: 12345,
         start_time: 1,
         boot_id: journal.boot_id.clone(),
         uid: geteuid().as_raw(),
         job: Some(ProcessId::new()),
+        call: None,
+        session: None,
+        agent: None,
     };
     let path = journal.directory.join("owned.json");
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -237,6 +378,37 @@ fn unreadable_proc_entries_preserve_the_record_without_failing_recovery() {
     assert!(path.exists(), "an inconclusive check must remain retryable");
 }
 
+/// An agent resumes only once its interrupted call is stopped, so a start
+/// that cannot tell whether that call still runs refuses to go on.
+#[test]
+fn an_inconclusive_foreground_record_refuses_the_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
+    let record = Record {
+        pgid: 12345,
+        start_time: 1,
+        boot_id: journal.boot_id.clone(),
+        uid: geteuid().as_raw(),
+        job: None,
+        call: Some(ProcessId::new()),
+        session: None,
+        agent: None,
+    };
+    let path = journal.directory.join("call.json");
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let proc_root = dir.path().join("proc");
+    // A directory in place of stat is unreadable even when tests run as root.
+    std::fs::create_dir_all(proc_root.join("12345/stat")).unwrap();
+    let error = journal.recover_record(&path, &proc_root).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("cannot stop the foreground call"),
+        "{error}"
+    );
+    assert!(path.exists(), "the record stays for the next start");
+}
+
 #[test]
 fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
     use std::os::unix::fs::PermissionsExt;
@@ -245,7 +417,7 @@ fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let job = ProcessId::new();
     let mut child = std::process::Command::new("sleep")
         .arg("60")
@@ -257,6 +429,9 @@ fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
         boot_id: journal.boot_id.clone(),
         uid: geteuid().as_raw(),
         job: Some(job),
+        call: None,
+        session: None,
+        agent: None,
     };
     let path = journal.directory.join(format!("{job}.json"));
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -293,7 +468,7 @@ fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
 #[test]
 fn recovery_removes_unpublished_temporary_records() {
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let path = journal.directory.join(".tmp-crashed");
     std::fs::write(&path, "unfinished").unwrap();
     Journal::recover(journal.directory).unwrap();
@@ -303,7 +478,7 @@ fn recovery_removes_unpublished_temporary_records() {
 #[test]
 fn recovery_removes_empty_records_published_before_their_fsync() {
     let dir = tempfile::tempdir().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let path = journal.directory.join(format!("{}.json", ProcessId::new()));
     std::fs::write(&path, b"").unwrap();
     Journal::recover(journal.directory).unwrap();
@@ -486,7 +661,7 @@ async fn recovery_kills_setsid_descendants_after_the_original_group_is_gone() {
         .env(JOB_ENV, id.to_string())
         .args(["-c", "setsid bash -c 'echo $$ > escaped.tmp; mv escaped.tmp escaped; exec sleep 60' </dev/null >/dev/null 2>&1 & while [ ! -e exit ]; do sleep 0.01; done"])
         .current_dir(dir.path()).process_group(0).kill_on_drop(true).spawn().unwrap();
-    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let (registration, durability) = journal.register(id, child.id().unwrap()).unwrap();
     durability.sync().unwrap();
     ready(&dir.path().join("escaped")).await;
@@ -546,5 +721,206 @@ fn an_exited_group_signals_only_readable_unkept_members() {
             members
         },
         vec![10, 4242]
+    );
+}
+
+/// A daemon that dies mid foreground call leaves that call's command running;
+/// the next start stops it, so a resumed agent never races it, but spares
+/// the server it detached.
+#[tokio::test]
+async fn recovery_stops_an_interrupted_foreground_call_but_not_what_it_detached() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut fixture = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "background::journal::tests::foreground_crash_fixture",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("AETHER_BACKGROUND_TEST_DIR", dir.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    ready(&dir.path().join("ready")).await;
+    let (leader, member, server) = (
+        pid_in(&dir.path().join("leader")),
+        pid_in(&dir.path().join("member")),
+        pid_in(&dir.path().join("server")),
+    );
+    fixture.kill().await.unwrap();
+    assert!(
+        alive(leader),
+        "the fixture's death must leave its call running"
+    );
+    BackgroundProcesses::new()
+        .recover_host_jobs(&dir.path().join("store"))
+        .unwrap();
+    dead(leader).await;
+    dead(member).await;
+    let server_survived = alive(server);
+    nix::sys::signal::kill(Pid::from_raw(server), Signal::SIGKILL).unwrap();
+    assert!(server_survived, "the server the call detached was stopped");
+}
+
+#[tokio::test]
+#[ignore = "subprocess fixture for recovery_stops_an_interrupted_foreground_call_but_not_what_it_detached"]
+async fn foreground_crash_fixture() {
+    use crate::tool::{Tool as _, ToolExecution};
+
+    let dir = PathBuf::from(std::env::var_os("AETHER_BACKGROUND_TEST_DIR").unwrap());
+    let registry = std::sync::Arc::new(BackgroundProcesses::new());
+    registry.recover_host_jobs(&dir.join("store")).unwrap();
+    let script = "setsid sh -c 'echo $$ > server.tmp; mv server.tmp server; exec sleep 60' \
+                  </dev/null >/dev/null 2>&1 & \
+                  sleep 60 & echo $! > member.tmp; mv member.tmp member; \
+                  echo $$ > leader.tmp; mv leader.tmp leader; wait";
+    let tool = crate::builtin::bash::BashTool::new(registry);
+    let ctx = ctx_in(&dir);
+    let call = tokio::spawn(async move {
+        let input = serde_json::json!({ "command": script });
+        let cancel = tokio_util::sync::CancellationToken::new();
+        match tool.execute(input, &ctx, cancel).await {
+            Ok(ToolExecution::Outcome(outcome)) => outcome.content,
+            other => format!("{other:?}"),
+        }
+    });
+    for marker in ["server", "member", "leader"] {
+        ready(&dir.join(marker)).await;
+    }
+    std::fs::write(dir.join("ready"), "ready").unwrap();
+    let ended = call.await.unwrap();
+    panic!("fixture should have been killed mid call; it ended: {ended}");
+}
+
+/// A foreground call whose shell exited leaves what it ran in its group: a
+/// member carrying the call's token proves the group, so the start stops all
+/// of it, a member that cleared the token too, but not what the call detached.
+#[tokio::test]
+async fn recovery_stops_a_leaderless_foreground_group_its_call_token_proves() {
+    let dir = tempfile::tempdir().unwrap();
+    let call = ProcessId::new();
+    let mut child = tokio::process::Command::new("bash")
+        .env(CALL_ENV, call.to_string())
+        .args([
+            "-c",
+            "sleep 300 & echo $! > member.tmp && mv member.tmp member; \
+             env -u AETHER_FOREGROUND_CALL sleep 300 & echo $! > unproven.tmp && mv unproven.tmp unproven; \
+             setsid sleep 300 </dev/null >/dev/null 2>&1 & echo $! > server.tmp && mv server.tmp server; \
+             while [ ! -e exit ]; do sleep 0.01; done",
+        ])
+        .current_dir(dir.path())
+        .process_group(0)
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
+    let registration = journal
+        .register_foreground(call, child.id().unwrap(), AgentId::new())
+        .unwrap();
+    for marker in ["member", "unproven", "server"] {
+        ready(&dir.path().join(marker)).await;
+    }
+    let (member, unproven, server) = (
+        pid_in(&dir.path().join("member")),
+        pid_in(&dir.path().join("unproven")),
+        pid_in(&dir.path().join("server")),
+    );
+    wait_for("the unproven member's token cleared", || {
+        let cleared = std::fs::read(format!("/proc/{unproven}/environ"))
+            .is_ok_and(|environment| !carries(&environment, &format!("{CALL_ENV}={call}")));
+        if cleared {
+            Observed::Held
+        } else {
+            Observed::Pending("token still present".into())
+        }
+    })
+    .await;
+    std::fs::write(dir.path().join("exit"), "exit").unwrap();
+    child.wait().await.unwrap();
+    assert!(alive(member), "the call's command outlives its shell");
+    let (_, unstopped) = Journal::recover(journal.directory).unwrap();
+    assert!(
+        unstopped.is_empty(),
+        "a proven call was stopped, not left to inspect"
+    );
+    let member_stopped = !alive(member) || {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        !alive(member)
+    };
+    let tokenless_stopped = !alive(unproven) || {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        !alive(unproven)
+    };
+    let server_survived = alive(server);
+    for pid in [member, unproven, server] {
+        let _ = nix::sys::signal::kill(Pid::from_raw(pid), Signal::SIGKILL);
+    }
+    assert!(member_stopped, "the call's command outlived the start");
+    assert!(
+        tokenless_stopped,
+        "a member that cleared the token outlived the start of a group the token proved"
+    );
+    assert!(server_survived, "the server the call detached was stopped");
+    assert!(!registration.0.exists());
+}
+
+/// A leader whose state cannot be read once it is stopped is resumed, not
+/// left stopped, and its record kept for the next start.
+#[test]
+fn a_leader_that_cannot_be_read_after_its_stop_is_resumed() {
+    use std::os::unix::process::CommandExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pid = child.id() as i32;
+    let stat = dir.path().join(pid.to_string()).join("stat");
+    std::fs::create_dir_all(stat.parent().unwrap()).unwrap();
+    nix::unistd::mkfifo(&stat, nix::sys::stat::Mode::S_IRWXU).unwrap();
+    let mut fields = vec!["0".to_owned(); 20];
+    fields[0] = "S".into();
+    fields[2] = pid.to_string();
+    fields[19] = "456".into();
+    let valid = format!("{pid} (sleep) {}", fields.join(" "));
+    // The first read finds the recorded leader; the one after its stop fails.
+    std::thread::spawn({
+        let stat = stat.clone();
+        move || {
+            std::fs::write(&stat, valid).unwrap();
+            // Past the first reader's close, so the second write starts a read of its own.
+            std::thread::sleep(Duration::from_millis(100));
+            std::fs::write(&stat, "garbage").unwrap();
+        }
+    });
+    let record = Record {
+        pgid: pid,
+        start_time: 456,
+        boot_id: String::new(),
+        uid: geteuid().as_raw(),
+        job: None,
+        call: Some(ProcessId::new()),
+        session: None,
+        agent: None,
+    };
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let proc_root = dir.path().to_owned();
+    std::thread::spawn(move || {
+        let _ = done_tx.send(kill_through_leader(&record, &proc_root).is_err());
+    });
+    let failed = done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the pinned kill returns within seconds");
+    let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(failed, "an unreadable stopped leader is an error");
+    assert!(
+        !state.contains(") T "),
+        "the leader was left stopped: {state}"
     );
 }

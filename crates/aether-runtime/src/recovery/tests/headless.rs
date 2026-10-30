@@ -98,6 +98,58 @@ async fn a_headless_agent_waits_when_its_command_may_still_run() {
     assert_eq!(unreleased_keys(&runtime, agent.id).unwrap(), vec![key]);
 }
 
+/// A start that could not prove a headless agent's interrupted shell call
+/// stopped, nor another's, parks the agent rather than resume it beside it.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_headless_agent_waits_when_the_start_could_not_prove_its_call_stopped() {
+    let (runtime, _dir, agent) = headless_fixture().await;
+    let call = request(&runtime, &agent, "Bash", SideEffectClass::Mutation);
+    let key = acquire(&runtime, agent.id);
+    let restarted = Runtime::start_with_engines(
+        crate::RuntimeConfig {
+            holder: "restarted".into(),
+            unstopped_calls: std::collections::HashSet::from([agent.id]),
+            ..Default::default()
+        },
+        runtime.store.clone(),
+        runtime.models.clone(),
+        Arc::new(aether_tools::ToolRegistry::with_builtins()),
+        None,
+        Default::default(),
+    )
+    .await
+    .expect("restart");
+    restarted.shutdown().await;
+
+    assert_parked(&restarted, agent.id);
+    assert_eq!(unreleased_keys(&restarted, agent.id).unwrap(), vec![key]);
+    let events = restarted
+        .store
+        .events(0, 100, &EventFilter::own_events(agent.id))
+        .unwrap();
+    let blocked = events.iter().find_map(|event| match &event.kind {
+        EventKind::AgentBlocked { reason, .. } => Some(reason.clone()),
+        _ => None,
+    });
+    let detail = blocked.expect("blocked for inspection");
+    assert!(detail.contains("could not prove"), "{detail}");
+    assert!(detail.contains(&call.to_string()), "{detail}");
+}
+
+/// A reboot ends host processes but not a container on a remote Docker host,
+/// so a call the start could not prove stopped parks the agent there too.
+#[tokio::test]
+async fn a_reboot_parks_an_agent_whose_call_the_start_could_not_prove_stopped() {
+    let (_runtime, _dir, agent) = headless_fixture().await;
+    let unsure = vec!["call-1".to_owned()];
+    let (stopped, _) = decide(&agent, Restart::Reboot, &unsure, true, true);
+    let (unproven, detail) = decide(&agent, Restart::Reboot, &unsure, true, false);
+    assert_eq!(stopped, RecoveryClass::Retry);
+    assert_eq!(unproven, RecoveryClass::Inspect);
+    assert!(detail.contains("could not prove"), "{detail}");
+}
+
 #[tokio::test]
 async fn a_restarted_agent_keeps_saying_whether_a_person_watches_it() {
     for (stored, successor) in [(Some(true), Some(true)), (None, Some(false))] {

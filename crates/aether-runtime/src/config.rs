@@ -107,6 +107,10 @@ pub struct RuntimeConfig {
     pub orphan_sweep_interval: Duration,
     /// Silence after which the sweep recovers a running agent with no turn.
     pub orphan_idle: Duration,
+    /// Agents whose shell call a crashed daemon left in flight that the start
+    /// could neither stop nor prove another's: recovery parks them for
+    /// inspection, even headless, rather than resume them beside it.
+    pub unstopped_calls: std::collections::HashSet<aether_core::id::AgentId>,
     /// `host:port` targets probed before relaunching an engine after a
     /// network failure. `None` probes the engine's provider host; empty skips
     /// the probe.
@@ -183,6 +187,7 @@ impl Default for RuntimeConfig {
             engine_stall_timeout: DEFAULT_ENGINE_STALL_TIMEOUT,
             orphan_sweep_interval: DEFAULT_ORPHAN_SWEEP_INTERVAL,
             orphan_idle: DEFAULT_ORPHAN_IDLE,
+            unstopped_calls: Default::default(),
             engine_probe_targets: None,
             yolo: false,
             approval_default: aether_core::agent::ApprovalDefault::default(),

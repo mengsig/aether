@@ -771,7 +771,14 @@ fn classify(
         || invocation_open.is_some()
         || !cancelled_tools.is_empty()
         || cancelled_invocation;
-    let (class, detail) = decide(agent, restart, &needs_inspection, interrupted);
+    let calls_stopped = !runtime.config.unstopped_calls.contains(&agent.id);
+    let (class, detail) = decide(
+        agent,
+        restart,
+        &needs_inspection,
+        interrupted,
+        calls_stopped,
+    );
     let headless_resume = restart != Restart::Reboot
         && !needs_inspection.is_empty()
         && class != RecoveryClass::Inspect;
@@ -792,12 +799,14 @@ fn classify(
 }
 
 /// The class of a turn `classify` read. `unsure` names the mutating calls whose
-/// outcome is unknown; a headless agent retries them once nothing of them runs.
+/// outcome is unknown; a headless agent retries them once nothing of them runs,
+/// which `calls_stopped` false says the start could not establish.
 fn decide(
     agent: &aether_core::agent::Agent,
     restart: Restart,
     unsure: &[String],
     interrupted: bool,
+    calls_stopped: bool,
 ) -> (RecoveryClass, String) {
     assert!(
         unsure.is_empty() || interrupted,
@@ -805,7 +814,16 @@ fn decide(
     );
     if !unsure.is_empty() {
         let calls = unsure.join(", ");
-        return if restart == Restart::Reboot {
+        // A reboot ends host processes, not a container on a remote Docker host.
+        return if !calls_stopped {
+            (
+                RecoveryClass::Inspect,
+                format!(
+                    "mutating tool calls were in flight when the daemon stopped: {calls}; \
+                     the restart could not prove their shell command stopped, so it may still run"
+                ),
+            )
+        } else if restart == Restart::Reboot {
             (RecoveryClass::Retry, reboot_detail(&calls))
         } else if restart.stops_processes() && !agent.config.awaits_inspection() {
             (RecoveryClass::Retry, restart_detail(&calls))

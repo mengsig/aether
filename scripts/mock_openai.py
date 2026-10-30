@@ -16,6 +16,7 @@ import base64
 import hashlib
 import json
 import re
+import shlex
 import sys
 import time
 import uuid
@@ -155,6 +156,23 @@ def after_tool(user, tool_result):
     return "Done."
 
 
+def crash_drill_command(directory):
+    """Two detached servers and a long foreground call, with their pids in `directory`.
+
+    The e2e kills the daemon while the call runs: the next start must stop the
+    call and leave both servers, one held by the agent and one kept."""
+    d = shlex.quote(directory)
+    return (
+        "AETHER_KEEP_PROCESS=1 setsid sleep 600 </dev/null >/dev/null 2>&1 &\n"
+        f"echo $! > {d}/kept.pid\n"
+        "setsid sleep 600 </dev/null >/dev/null 2>&1 &\n"
+        f"echo $! > {d}/held.pid\n"
+        "sleep 600 &\n"
+        f"echo \"$$ $!\" > {d}/call.pids.tmp && mv {d}/call.pids.tmp {d}/call.pids\n"
+        "wait $!\n"
+    )
+
+
 def decide(messages, names):
     """Return (text, tool_calls) for this turn."""
     system = " ".join(m.get("content", "") if isinstance(m.get("content"), str) else "" for m in messages if m.get("role") == "system")
@@ -218,6 +236,9 @@ def decide(messages, names):
     # only such tool: without this branch nothing can drive an approval card.
     if "fetch" in user and "web_fetch" in names:
         return ("Fetching the page.", [("web_fetch", {"url": "https://example.com/changelog"})])
+    drill = re.search(r"crash drill in (\S+)", last_user_text(messages))
+    if drill and "bash" in names:
+        return ("Starting the servers and a long command.", [("bash", {"command": crash_drill_command(drill.group(1))})])
     if "big output" in user and "bash" in names:
         return ("Producing a large output.", [("bash", {"command": "for i in $(seq 1 4000); do echo 'aether artifact line'; done"})])
     if "background" in user and "bash" in names:

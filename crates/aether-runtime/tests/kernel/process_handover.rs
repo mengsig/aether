@@ -9,13 +9,20 @@ use aether_core::inbox::InboxKind;
 
 /// A parent that is never scheduled, so the script drives its child alone.
 fn idle_parent(h: &Harness) -> AgentId {
-    let (root, _) = h
+    idle_agent(h, None)
+}
+
+/// An agent under `parent` that is never scheduled.
+fn idle_agent(h: &Harness, parent: Option<AgentId>) -> AgentId {
+    let (agent, _) = h
         .runtime
         .create_agent(
             CreateAgentSpec {
                 role: "root".into(),
+                parent,
                 config: Some(AgentConfig {
                     approval: ApprovalPolicy::none(),
+                    effort: Some(aether_core::model::Effort::Low),
                     ..Default::default()
                 }),
                 start: false,
@@ -23,8 +30,8 @@ fn idle_parent(h: &Harness) -> AgentId {
             },
             Actor::user(),
         )
-        .expect("create the parent");
-    root.id
+        .expect("create the agent");
+    agent.id
 }
 
 fn child_of(parent: AgentId, objective: &str, long_lived: bool) -> CreateAgentSpec {
@@ -152,16 +159,38 @@ async fn a_cancelled_childs_server_stops_with_it() {
     assert!(sibling.alive(), "a process outside the tree survives");
 }
 
-/// A daemon that died left a process its agent detached; the next start over
-/// the same store stops it, as a clean stop would have, and spares one of an
-/// agent it never ran.
+/// Write `agent` as ended with `status`, as a daemon that died before the
+/// agent's reap ran left it.
+fn ended_without_reap(h: &Harness, agent: AgentId, status: AgentStatus) {
+    let mut row = h.store.agent(agent).expect("read").expect("exists");
+    if matches!(status, AgentStatus::Completed { .. }) {
+        row.transition(AgentStatus::Ready, now()).expect("ready");
+        row.transition(AgentStatus::Running, now())
+            .expect("running");
+    }
+    row.transition(status, now()).expect("end it");
+    h.store
+        .commit(Commit::new().mutate(Mutation::UpsertAgent(row)))
+        .expect("write the end");
+}
+
+/// A daemon that died left processes its agents detached. The next start over
+/// the same store stops a failed agent's, keeps a live agent's own for its
+/// recovery, and keeps a completed child's with its live parent, whose end
+/// then stops them; one of an agent it never ran is spared throughout.
 #[tokio::test]
-async fn a_start_after_a_crash_stops_what_its_agents_left_running() {
+async fn a_start_after_a_crash_stops_only_what_no_live_agent_holds() {
     let h = harness(vec![]).await;
     let sibling = Sibling::start();
-    let agent = idle_parent(&h);
-    let leftover = Sibling::tagged(agent);
-    assert!(leftover.alive(), "the leftover is running before the start");
+    let parent = idle_parent(&h);
+    let child = idle_agent(&h, Some(parent));
+    let failed = idle_parent(&h);
+    ended_without_reap(&h, child, AgentStatus::Completed { summary: None });
+    ended_without_reap(&h, failed, AgentStatus::Failed { error: "x".into() });
+    let parents = Sibling::tagged(parent);
+    let childs = Sibling::tagged(child);
+    let faileds = Sibling::tagged(failed);
+    assert!(faileds.alive(), "the leftover is running before the start");
 
     let restarted = harness_full(
         vec![],
@@ -173,7 +202,27 @@ async fn a_start_after_a_crash_stops_what_its_agents_left_running() {
         |_| {},
     )
     .await;
-    wait_gone(&restarted, leftover.pid(), "the dead daemon's leftover").await;
+    wait_gone(&restarted, faileds.pid(), "the failed agent's leftover").await;
+    assert!(
+        parents.alive(),
+        "a live agent keeps its server across the restart"
+    );
+    assert!(
+        childs.alive(),
+        "a completed child's server stays with its live parent"
+    );
+
+    restarted
+        .runtime
+        .cancel_agent(parent, Some("done".into()), Actor::user())
+        .expect("end the parent");
+    wait_gone(
+        &restarted,
+        childs.pid(),
+        "the server handed back to the parent",
+    )
+    .await;
+    wait_gone(&restarted, parents.pid(), "the parent's own server").await;
     assert!(
         sibling.alive(),
         "a process of an agent never ran here survives"

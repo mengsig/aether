@@ -255,11 +255,12 @@ pub(super) async fn wait_custom_event(
     .await
 }
 
-/// A daemon stop does not end its agents, but nothing they detached may
-/// outlive it; a process outside them runs on.
+/// A daemon stop ends no agent and leaves what a waiting agent detached
+/// running, as its recovery after a restart expects; what an ended agent no
+/// live agent holds left is stopped, and a process outside them runs on.
 #[cfg(target_os = "linux")]
 #[tokio::test]
-async fn a_daemon_stop_takes_what_its_waiting_agents_detached() {
+async fn a_daemon_stop_leaves_what_its_waiting_agents_detached() {
     let marker_name = "detached-at-stop.pid";
     let h = harness(vec![
         ScriptedClient::tool_call("bash", json!({ "command": detach_sleep(marker_name) })),
@@ -278,10 +279,36 @@ async fn a_daemon_stop_takes_what_its_waiting_agents_detached() {
         .await;
     let pid = wait_for_marker(&h.workspace_root, marker_name).await;
     assert!(process_alive(pid), "the detached process outlives its turn");
+    let (ended, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "worker".into(),
+                start: false,
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("create");
+    let mut row = h.store.agent(ended.id).expect("read").expect("exists");
+    row.transition(AgentStatus::Failed { error: "x".into() }, now())
+        .expect("fail it");
+    // Written past the runtime, so its own reap never ran.
+    h.store
+        .commit(Commit::new().mutate(Mutation::UpsertAgent(row)))
+        .expect("write the end");
+    let leftover = Sibling::tagged(ended.id);
 
     h.runtime.shutdown().await;
 
-    wait_gone(&h, pid, "the detached process").await;
+    wait_gone(&h, leftover.pid(), "the ended agent's leftover").await;
+    let survived = process_alive(pid);
+    // Not a child of this test, so it is killed by hand.
+    let _ = std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status();
+    assert!(survived, "a waiting agent's server survives the stop");
     assert!(
         sibling.alive(),
         "a process outside the agents survives the stop"

@@ -594,8 +594,9 @@ signal is the whole of the containment. Aether sends `SIGTERM` to your process
 group, then `SIGKILL` two seconds later, so the real bound on work after a park
 is the grace plus those two seconds plus the reap - and a grandchild you
 `setsid` into its own process group is not reached by either signal. It lives
-until your agent ends or the daemon stops, when Aether stops everything its
-engines left running (see [agent processes](configuration.md#agent-processes)).
+until your agent ends, when Aether stops everything its engines left running;
+a daemon stop or restart leaves it to your agent while that agent is live
+(see [agent processes](configuration.md#agent-processes)).
 
 Strip `turn.hidden_env` from the child's environment. The engine drives its
 own shell, so a credential left there is one `printenv` away.

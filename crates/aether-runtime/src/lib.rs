@@ -512,9 +512,9 @@ impl Runtime {
                 "Startup artifact cleanup failed: {error}; periodic maintenance will retry. Run `aether doctor` and `aether diagnose`."
             )),
         }
-        // A daemon that died left its agents' detached processes and what they
-        // handed up running; a stop would have taken them, so this start does.
-        let reaped = runtime.reap_all_agent_processes().await;
+        // A daemon that died left what its ended agents detached or handed up
+        // running; a stop would have taken what no live agent holds, so this start does.
+        let reaped = runtime.reap_unheld_agent_processes().await;
         if reaped > 0 {
             tracing::info!(
                 reaped,
@@ -766,13 +766,13 @@ impl Runtime {
     /// Stop scheduling, cancel running turns, and record the stop.
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
-        let tokens: Vec<CancellationToken> = self
-            .sched
-            .lock()
-            .running
-            .values()
-            .map(|r| r.cancel.clone())
-            .collect();
+        let (tokens, interrupted): (Vec<CancellationToken>, HashSet<AgentId>) = {
+            let sched = self.sched.lock();
+            let tokens = sched.running.values().map(|r| r.cancel.clone()).collect();
+            (tokens, sched.running.keys().copied().collect())
+        };
+        // Taken first: a stopped engine's record goes with it.
+        let mut engines = Self::recorded_engines();
         for token in tokens {
             token.cancel();
         }
@@ -784,6 +784,8 @@ impl Runtime {
         // is empty, so a survivor would be unreachable forever.
         // A turn that outlived the wait above may still reach a spawn.
         self.engine_spawns.close();
+        engines.extend(Self::recorded_engines());
+        Self::stop_interrupted_engine_commands(engines, interrupted).await;
         let background_processes_stopped = match self.tools.background() {
             Some(processes) => {
                 processes.close_spawns();
@@ -791,8 +793,9 @@ impl Runtime {
             }
             None => 0,
         };
-        // What left those groups, and what engines detached, is found by agent.
-        let reaped = self.reap_all_agent_processes().await;
+        // What left those groups, and what engines detached, is found by agent;
+        // a live agent's stays up for its recovery after a restart.
+        let reaped = self.reap_unheld_agent_processes().await;
         if reaped > 0 {
             tracing::info!(reaped, "stopped agent processes with the daemon");
         }

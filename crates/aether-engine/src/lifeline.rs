@@ -17,11 +17,23 @@ use std::io;
 
 use tokio::process::{Child, Command};
 
+use crate::orphans::EngineRecord;
+
 /// Spawn `command` leading a process group of its own, so neither it nor its
 /// group can outlive this process. Keep the [`GroupWatch`] for as long as the
 /// engine runs. Must be called inside a tokio runtime.
+pub(crate) fn spawn(command: Command) -> io::Result<(Child, GroupWatch)> {
+    spawn_recorded(command, None).map(|(child, watch, _)| (child, watch))
+}
+
+/// [`spawn`], and with the [`crate::orphans::tag`] `token`, record the engine
+/// before it execs, so a daemon crash never leaves an engine the next start
+/// cannot find. Keep the record for as long as the engine runs.
 #[cfg(target_os = "linux")]
-pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
+pub(crate) fn spawn_recorded(
+    mut command: Command,
+    token: Option<&str>,
+) -> io::Result<(Child, GroupWatch, Option<EngineRecord>)> {
     use std::os::unix::process::CommandExt as _;
 
     let runtime = tokio::runtime::Handle::try_current().map_err(io::Error::other)?;
@@ -44,6 +56,12 @@ pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
             format!("reading the engine's pid at its start gate: {error}"),
         )
     })?;
+    let record = match (pid, token) {
+        (Some(pid), Some(token)) => EngineRecord::register(pid, token).map_err(|error| {
+            io::Error::new(error.kind(), format!("the engine was not started: {error}"))
+        })?,
+        _ => None,
+    };
     let watch = match pid {
         Some(pid) => {
             #[cfg(test)]
@@ -63,15 +81,19 @@ pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
     let child = reply_rx.recv().map_err(|_| spawner_gone())??;
     debug_assert!(opened.is_ok(), "a child execs only through an opened gate");
     opened?;
-    Ok((child, watch))
+    Ok((child, watch, record))
 }
 
+/// No start time is readable off Linux, so nothing is recorded.
 #[cfg(not(target_os = "linux"))]
-pub(crate) fn spawn(mut command: Command) -> io::Result<(Child, GroupWatch)> {
+pub(crate) fn spawn_recorded(
+    mut command: Command,
+    _token: Option<&str>,
+) -> io::Result<(Child, GroupWatch, Option<EngineRecord>)> {
     use std::os::unix::process::CommandExt as _;
 
     command.as_std_mut().process_group(0);
-    Ok((command.spawn()?, GroupWatch))
+    Ok((command.spawn()?, GroupWatch, None))
 }
 
 #[cfg(not(target_os = "linux"))]

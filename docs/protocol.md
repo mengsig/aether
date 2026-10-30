@@ -360,13 +360,14 @@ existed. After a daemon restart (not a host reboot) or a lost turn cut a
 mutating tool call short, recovery parks an agent that is `true` or `null` as
 `blocked: inspection` until someone runs `aether resume`. An agent that is
 `false` is headless: after a daemon restart on Linux, where the start stops
-the processes the old daemon's agents left, it resumes at once, told which
+the commands the old daemon's agents left in flight, it resumes at once, told which
 calls have an unknown outcome and to check the state before repeating them,
 and its `agent.resumed` event says it resumed without inspection. Where the
 command may still run (a turn a live daemon lost, or a restart elsewhere than
-Linux) it parks like any other agent. A process kept with
-`AETHER_KEEP_PROCESS=1` is never stopped, so it may still run beside the
-resumed agent, as it would after the agent ended. A new child of a `null` parent, and the
+Linux) it parks like any other agent. A server the agent detached is spared
+while the agent is live (but one its engine started in the engine process the
+crash cut short), and a process kept with `AETHER_KEEP_PROCESS=1` is never
+stopped, so either may still run beside the resumed agent. A new child of a `null` parent, and the
 successor `restart_agent` makes of a `null` agent, are headless. An older daemon ignores the field and parks every such agent, which
 was its behaviour before, so no feature gates it.
 

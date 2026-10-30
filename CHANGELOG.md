@@ -54,8 +54,8 @@ clients on 17 through 24 see it as `usage_limit`.
   such as Archon saw a held agent and waited for its stage deadline. Only a
   tree a person watches now waits: the TUI marks the roots it starts with the
   new `config.interactive`, and children inherit it. Every other agent resumes
-  at once on Linux, where the start stops what the old daemon's agents left
-  running, as a person's `aether resume` would. Its keys are released, and its
+  at once on Linux, where the start stops the commands the old daemon's agents
+  left in flight, as a person's `aether resume` would. Its keys are released, and its
   wake and the interrupted call's result say its turn was cut short while
   those calls ran, so their outcome is unknown and it should check the state
   before repeating them. Its `agent.resumed` event says it resumed without
@@ -75,9 +75,9 @@ clients on 17 through 24 see it as `usage_limit`.
   fork is stopped when the agent fails or is cancelled, or completes with no
   live ancestor to hand it to (see below). A daemon
   stop now also sends `SIGTERM`, then `SIGKILL` after `reap_grace_secs` (at
-  most 10 s), to every process tagged with, or in an engine scope of, an agent
-  its own store ran; agents of another daemon and imported agents are never
-  touched. Once the stop begins no new host shell command or engine starts,
+  most 10 s), to every process tagged with, or in an engine scope of, an
+  ended agent its own store ran that no live agent holds; agents of another
+  daemon and imported agents are never touched. Once the stop begins no new host shell command or engine starts,
   nor one for a cancelled turn whose agent's reap has begun. The bwrap
   sandbox of a network-denied Codex turn is tagged, scoped and gated like its
   engine, and a reap waits for an engine still joining its scope. What a
@@ -97,11 +97,60 @@ clients on 17 through 24 see it as `usage_limit`.
   completes normally: it and the child's background shell jobs pass to the
   nearest live ancestor, which is sent their pids and command lines and can
   read and stop the jobs. They are stopped when the agent holding them ends
-  with no live ancestor, fails or is cancelled, or when the daemon stops. A
+  with no live ancestor, fails or is cancelled. A
   child that fails or is cancelled stops its own at once. A process started
   with `AETHER_KEEP_PROCESS=1` is never signalled by these sweeps, so one
   meant to outlive the tree can. A daemon start after a crash stops what the
-  dead daemon's agents left running, as a clean stop would have.
+  dead daemon's ended agents left running that no live agent holds, as a
+  clean stop would have.
+- **A daemon restart no longer kills the servers its agents started.** The
+  start after a stop or crash killed every process carrying a recorded
+  engine's token, so a dev server, database or `docker compose` client an
+  agent had up was dead when recovery resumed that agent. The start now kills
+  the recorded engine process groups themselves, the CLIs and the tool
+  commands in them, and of the token carriers outside them those that run for
+  no agent or for one whose turn the crash cut short, which may be the tool
+  command its engine ran in a session of its own as Claude Code does, but none
+  kept with `AETHER_KEEP_PROCESS=1`. What runs
+  for an agent is stopped at a daemon stop or start only when that agent has
+  ended and no live ancestor holds it; a completed child's processes go back
+  to its nearest live ancestor and stop with its end. Such processes now run
+  on while the daemon is down: end or cancel an agent before `aether stop`
+  to stop what it holds. A start after a crash, which cannot tell whether a
+  since-failed ancestor held a completed child's processes, leaves them with
+  the nearest live ancestor. Background shell jobs still stop with the daemon,
+  whose pipes carry their output. A foreground call of Aether's own shell
+  tool that a daemon crash cut short is stopped by the next start, its process
+  group as the call's end would have (the call is recorded before its
+  command starts), so an agent recovery resumes never
+  races its own interrupted command; what the call detached is spared like
+  any agent's server. Once the call's shell is gone, what is left in its
+  process group is the call's only if a process in it carries the call's id:
+  a later group can take the same id. A group none proves is spared, and the
+  call's agent waits for inspection, even a headless one, rather than resume
+  beside what may be its command. A process of another user in the group (a
+  `sudo` child) no longer makes the start give up on the rest; as it
+  cannot be stopped, the call's agent waits for inspection. A call that cannot be recorded is not started, and a
+  start that cannot stop a recorded call refuses to run and says which process
+  group to stop. Engines are now recorded before they start, and one that
+  cannot be recorded is not started; a start that cannot stop a recorded
+  engine refuses to run the same way, and its sweep for the engine's token
+  carriers repeats until no new one appears. A daemon stop now does the
+  same for the engines it interrupts: it stops the processes outside their
+  groups that carry their tokens and run for no agent or for one whose turn
+  the stop cut short, such as the command Claude Code was running in a
+  session of its own, which nothing would find once the engine was gone.
+  As at a start after a crash, this includes a server such an engine started
+  for that agent unless it is kept with `AETHER_KEEP_PROCESS=1`. Linux only.
+- **A restart sweeps an earlier daemon's containers before any turn
+  starts.** The sweep of containers that Aether's container backend left
+  running ran after the scheduler had started, so a resumed turn could run
+  beside its interrupted call's container, and the sweep could kill a
+  container a new turn had just started. It now finishes first. A sweep
+  that times out, or whose `docker ps` or `docker kill` fails, makes each
+  agent with a mutating call in flight wait for inspection, even a headless
+  one, since its container may still run. A host with no `docker` client
+  skips the sweep.
 - **A refused engine sign-in suspends the agent instead of failing it.** A
   native engine whose OAuth token expired or whose API key was refused
   (Claude Code's `authentication_error`, "Please run /login", a result with

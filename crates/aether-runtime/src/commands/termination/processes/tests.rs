@@ -211,6 +211,293 @@ async fn a_late_hand_up_settles_with_the_live_owner_it_would_have_reached() {
     assert_eq!(runtime.settle_owner(middle), None, "a stop took it");
 }
 
+/// A daemon stop or start sweeps an ended agent no live agent holds; a live
+/// one keeps its own, a completed one's stay with its nearest live ancestor,
+/// recorded as holding them, and an agent this store never ran is left alone.
+#[tokio::test]
+async fn a_daemon_sweep_takes_only_what_no_live_agent_holds() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let root = idle_agent(&runtime, None).await;
+    let middle = idle_agent(&runtime, Some(root)).await;
+    let leaf = idle_agent(&runtime, Some(middle)).await;
+    let failed = idle_agent(&runtime, Some(root)).await;
+    let done_root = idle_agent(&runtime, None).await;
+    let under_done = idle_agent(&runtime, Some(done_root)).await;
+    for agent in [middle, leaf, done_root, under_done] {
+        end(&runtime, agent, completed());
+    }
+    end(&runtime, failed, AgentStatus::Failed { error: "x".into() });
+    let mut found = vec![
+        root,
+        middle,
+        leaf,
+        failed,
+        done_root,
+        under_done,
+        AgentId::new(),
+    ];
+    found.sort_unstable();
+
+    let mut expected = vec![failed, done_root, under_done];
+    expected.sort_unstable();
+    assert_eq!(runtime.unheld_agents(&found), expected);
+    let handed = runtime.handed_to.lock().clone();
+    assert_eq!(
+        handed,
+        HashMap::from([(middle, root), (leaf, root)]),
+        "past the completed middle"
+    );
+}
+
+/// A start after a crash cannot tell whether a parent that failed, before or
+/// after its child completed, held what the child left, so it leaves it with
+/// the live grandparent rather than stop what that agent may still hold.
+#[tokio::test]
+async fn a_daemon_sweep_spares_what_a_failed_parent_may_not_have_held() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let grandparent = idle_agent(&runtime, None).await;
+    let parent = idle_agent(&runtime, Some(grandparent)).await;
+    let before = idle_agent(&runtime, Some(parent)).await;
+    let after = idle_agent(&runtime, Some(parent)).await;
+    let pause = || std::thread::sleep(std::time::Duration::from_millis(5));
+    end(&runtime, before, completed());
+    pause();
+    end(&runtime, parent, AgentStatus::Failed { error: "x".into() });
+    pause();
+    end(&runtime, after, completed());
+    let mut found = vec![parent, before, after];
+    found.sort_unstable();
+
+    assert_eq!(runtime.unheld_agents(&found), vec![parent]);
+    assert_eq!(
+        runtime.handed_to.lock().clone(),
+        HashMap::from([(before, grandparent), (after, grandparent)]),
+        "past the failed parent, whenever it failed"
+    );
+}
+
+/// A detached process tagged with `agent`, as one its engine left would be.
+#[cfg(target_os = "linux")]
+fn tagged_leftover(agent: AgentId) -> std::process::Child {
+    std::process::Command::new("setsid")
+        .args(["sleep", "30"])
+        .env(aether_core::agent::PROCESS_AGENT_ENV, agent.to_string())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+/// Hold a spawn in the engine gate for a second, then wake `agent` from it:
+/// a sweep that reaches its first round meanwhile waits for the spawn.
+#[cfg(target_os = "linux")]
+fn wake_from_a_held_spawn(runtime: &Runtime, agent: AgentId) -> std::thread::JoinHandle<bool> {
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let (gate, store) = (runtime.engine_spawns.clone(), runtime.store.clone());
+    let spawning = std::thread::spawn(move || {
+        gate.spawn(
+            || false,
+            || {
+                started_tx.send(()).unwrap();
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                let mut row = store.agent(agent).unwrap().unwrap();
+                row.transition(AgentStatus::Ready, now()).unwrap();
+                store
+                    .commit(Commit::new().mutate(Mutation::UpsertAgent(row)))
+                    .unwrap();
+            },
+        )
+        .is_ok()
+    });
+    started_rx.recv().unwrap();
+    spawning
+}
+
+/// Whether `child` still runs; it is killed and reaped either way.
+#[cfg(target_os = "linux")]
+fn still_running(mut child: std::process::Child) -> bool {
+    let alive = child.try_wait().unwrap().is_none();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    alive
+}
+
+/// A daemon sweep holds the spawn gates through each round, so a wake that
+/// lands while the round waits for them spares the woken agent's processes.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_daemon_sweep_spares_an_agent_woken_before_its_round() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let agent = idle_agent(&runtime, None).await;
+    end(&runtime, agent, AgentStatus::Failed { error: "x".into() });
+    let leftover = tagged_leftover(agent);
+    let waking = wake_from_a_held_spawn(&runtime, agent);
+
+    runtime.reap_unheld_agent_processes().await;
+    assert!(waking.join().unwrap(), "the held spawn ran");
+    assert!(
+        still_running(leftover),
+        "the agent woken before the round keeps its server"
+    );
+}
+
+/// A completed child swept for want of a live ancestor is spared once that
+/// ancestor wakes before the round, and is recorded as handed up to it.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_daemon_sweep_spares_a_child_whose_ancestor_wakes_before_its_round() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let parent = idle_agent(&runtime, None).await;
+    let child = idle_agent(&runtime, Some(parent)).await;
+    end(&runtime, child, completed());
+    end(&runtime, parent, AgentStatus::Failed { error: "x".into() });
+    let leftover = tagged_leftover(child);
+    let waking = wake_from_a_held_spawn(&runtime, parent);
+
+    runtime.reap_unheld_agent_processes().await;
+    assert!(waking.join().unwrap(), "the held spawn ran");
+    assert!(
+        still_running(leftover),
+        "the woken parent holds its child's server"
+    );
+    assert_eq!(runtime.handed_to.lock().get(&child), Some(&parent));
+}
+
+/// A parent woken before the round spares its child, but if it fails again
+/// before the sweep records the hand-up, the sweep goes back for the child.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_daemon_sweep_takes_a_childs_server_back_from_an_ancestor_that_ended_again() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    let parent = idle_agent(&runtime, None).await;
+    let child = idle_agent(&runtime, Some(parent)).await;
+    end(&runtime, child, completed());
+    end(&runtime, parent, AgentStatus::Failed { error: "x".into() });
+    let mut leftover = tagged_leftover(child);
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let owner = runtime.clone();
+    let waking = std::thread::spawn(move || {
+        let set = |status: AgentStatus| {
+            let mut row = owner.store.agent(parent).unwrap().unwrap();
+            row.transition(status, now()).unwrap();
+            owner
+                .store
+                .commit(Commit::new().mutate(Mutation::UpsertAgent(row)))
+                .unwrap();
+        };
+        let hold = owner
+            .engine_spawns
+            .spawn(
+                || false,
+                || {
+                    started_tx.send(()).unwrap();
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    set(AgentStatus::Ready);
+                    // Kept past the round, so the sweep records nothing before the end below.
+                    owner.hold()
+                },
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        set(AgentStatus::Failed {
+            error: "again".into(),
+        });
+        drop(hold);
+    });
+    started_rx.recv().unwrap();
+
+    runtime.reap_unheld_agent_processes().await;
+    waking.join().unwrap();
+    let stopped = (0..100).any(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        leftover.try_wait().unwrap().is_some()
+    });
+    if !stopped {
+        leftover.kill().unwrap();
+        leftover.wait().unwrap();
+    }
+    assert!(stopped, "no live agent holds the child's server any more");
+    assert!(
+        runtime.handed_to.lock().is_empty(),
+        "no hand-up outlived its holder"
+    );
+}
+
+/// What a daemon sweep makes of a completed child under a root, once `sql`
+/// has changed its completed parent's row: the unheld agents and hand-ups.
+async fn sweep_after_parent_row(sql: &str) -> (Vec<AgentId>, HashMap<AgentId, AgentId>) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.db");
+    let runtime = Runtime::start_with_engines(
+        crate::RuntimeConfig {
+            max_concurrent_turns: 0,
+            default_model: Some(aether_core::model::ModelRef::new(
+                "anthropic",
+                "claude-sonnet-5-5",
+            )),
+            ..Default::default()
+        },
+        std::sync::Arc::new(aether_store::SqliteStore::open(&path).unwrap()),
+        std::sync::Arc::new(aether_model::Models::load(Some(dir.path().into())).unwrap()),
+        std::sync::Arc::new(aether_tools::ToolRegistry::with_builtins()),
+        None,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    runtime.shutdown.cancel();
+    let root = idle_agent(&runtime, None).await;
+    let parent = idle_agent(&runtime, Some(root)).await;
+    let child = idle_agent(&runtime, Some(parent)).await;
+    end(&runtime, child, completed());
+    end(&runtime, parent, completed());
+    let changed = rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute(sql, [parent.to_string()])
+        .unwrap();
+    assert_eq!(changed, 1, "the parent's row changed");
+
+    let unheld = runtime.unheld_agents(&[child]);
+    let handed = runtime.handed_to.lock().clone();
+    (unheld, handed)
+}
+
+/// An ancestry that cannot be read does not show that no one holds a completed
+/// child's processes, so a daemon sweep spares them and records no owner.
+#[tokio::test]
+async fn a_daemon_sweep_spares_a_child_whose_ancestry_is_unreadable() {
+    let (unheld, handed) = sweep_after_parent_row("UPDATE agents SET body='{' WHERE id=?1").await;
+    assert!(unheld.is_empty(), "spared");
+    assert!(handed.is_empty(), "no owner is known");
+}
+
+/// An agent gone from the store since it was found has no ancestry to read.
+#[tokio::test]
+async fn an_agent_gone_from_the_store_has_no_known_holder() {
+    let (runtime, _config) = crate::test_runtime(|_| {}).await;
+    runtime.shutdown.cancel();
+    assert_eq!(runtime.holder(AgentId::new()), Holder::Unknown);
+    let hold = runtime.hold();
+    assert_eq!(
+        runtime.handed_up_to(&hold, AgentId::new()),
+        None,
+        "an end with no known owner stops what it left"
+    );
+}
+
+/// A parent gone from the store may have led to a live ancestor, so a daemon
+/// sweep spares the completed child under it.
+#[tokio::test]
+async fn a_daemon_sweep_spares_a_child_whose_parent_is_gone() {
+    let (unheld, handed) = sweep_after_parent_row("DELETE FROM agents WHERE id=?1").await;
+    assert!(unheld.is_empty(), "spared");
+    assert!(handed.is_empty(), "no owner is known");
+}
+
 /// A sweep is for one end: an agent woken since, or ended again, is spared,
 /// as what that later end left is its own to stop or hand up.
 #[tokio::test]
