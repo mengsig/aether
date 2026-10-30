@@ -152,11 +152,12 @@ impl BackgroundProcesses {
         Ok(Some(registration))
     }
 
-    /// Record the group foreground call `pid` leads until the registration is
-    /// cleared, so a start after a crash stops it; `None` without a journal.
+    /// Record the group foreground `call`'s `pid` leads until the registration
+    /// is cleared, so a start after a crash stops it; `None` without a journal.
     #[cfg(target_os = "linux")]
     pub(crate) fn register_foreground(
         &self,
+        call: ProcessId,
         pid: u32,
     ) -> std::io::Result<Option<journal::Registration>> {
         let journal = self
@@ -165,7 +166,7 @@ impl BackgroundProcesses {
             .map_err(|_| std::io::Error::other("background journal poisoned"))?;
         journal
             .as_ref()
-            .map(|journal| journal.register_foreground(pid))
+            .map(|journal| journal.register_foreground(call, pid))
             .transpose()
     }
 

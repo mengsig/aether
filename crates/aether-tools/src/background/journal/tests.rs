@@ -227,6 +227,7 @@ fn unreadable_proc_entries_preserve_the_record_without_failing_recovery() {
         boot_id: journal.boot_id.clone(),
         uid: geteuid().as_raw(),
         job: Some(ProcessId::new()),
+        call: None,
     };
     let path = journal.directory.join("owned.json");
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -257,6 +258,7 @@ fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
         boot_id: journal.boot_id.clone(),
         uid: geteuid().as_raw(),
         job: Some(job),
+        call: None,
     };
     let path = journal.directory.join(format!("{job}.json"));
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -617,4 +619,50 @@ async fn foreground_crash_fixture() {
     std::fs::write(dir.join("ready"), "ready").unwrap();
     let ended = call.await.unwrap();
     panic!("fixture should have been killed mid call; it ended: {ended}");
+}
+
+/// A foreground call whose shell exited leaves what it ran in its group: the
+/// start stops that through the call's token, but not what the call detached.
+#[tokio::test]
+async fn recovery_stops_a_leaderless_foreground_group_by_its_call_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let call = ProcessId::new();
+    let mut child = tokio::process::Command::new("bash")
+        .env(CALL_ENV, call.to_string())
+        .args([
+            "-c",
+            "sleep 300 & echo $! > member.tmp && mv member.tmp member; \
+             setsid sleep 300 </dev/null >/dev/null 2>&1 & echo $! > server.tmp && mv server.tmp server; \
+             while [ ! -e exit ]; do sleep 0.01; done",
+        ])
+        .current_dir(dir.path())
+        .process_group(0)
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let registration = journal
+        .register_foreground(call, child.id().unwrap())
+        .unwrap();
+    ready(&dir.path().join("member")).await;
+    ready(&dir.path().join("server")).await;
+    let (member, server) = (
+        pid_in(&dir.path().join("member")),
+        pid_in(&dir.path().join("server")),
+    );
+    std::fs::write(dir.path().join("exit"), "exit").unwrap();
+    child.wait().await.unwrap();
+    assert!(alive(member), "the call's command outlives its shell");
+    Journal::recover(journal.directory).unwrap();
+    let member_stopped = !alive(member) || {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        !alive(member)
+    };
+    let server_survived = alive(server);
+    for pid in [member, server] {
+        let _ = nix::sys::signal::kill(Pid::from_raw(pid), Signal::SIGKILL);
+    }
+    assert!(member_stopped, "the call's command outlived the start");
+    assert!(server_survived, "the server the call detached was stopped");
+    assert!(!registration.0.exists());
 }

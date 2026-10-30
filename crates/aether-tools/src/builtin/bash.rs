@@ -86,7 +86,7 @@ struct GroupGuard {
     teardown: Option<Teardown>,
     /// The group's crash record, cleared once the group is killed.
     #[cfg(target_os = "linux")]
-    record: Option<crate::background::journal::Registration>,
+    record: Option<CallRecord>,
 }
 
 impl GroupGuard {
@@ -106,11 +106,8 @@ impl GroupGuard {
             let _ = killpg(pid, Signal::SIGKILL);
         }
         #[cfg(target_os = "linux")]
-        if let Some(record) = self.record.take()
-            && let Err(error) = record.clear()
-        {
-            // Harmless: the next start finds the recorded leader gone and drops it.
-            tracing::warn!(%error, "cannot clear a foreground call's crash record");
+        if let Some(record) = self.record.take() {
+            clear_record(record);
         }
         if let Some(teardown) = self.teardown.take() {
             teardown.run();
@@ -124,18 +121,78 @@ impl Drop for GroupGuard {
     }
 }
 
+#[cfg(target_os = "linux")]
+type CallRecord = crate::background::journal::Registration;
+
 impl BashTool {
+    /// Spawn the call's command, its group recorded while the child waits
+    /// before exec, so a daemon crash at any point after leaves it on record.
+    #[cfg(target_os = "linux")]
+    fn spawn_recorded(
+        &self,
+        mut cmd: tokio::process::Command,
+        cancel: &CancellationToken,
+    ) -> Result<(tokio::process::Child, Option<CallRecord>), ToolError> {
+        let call = aether_core::id::ProcessId::new();
+        cmd.env(crate::background::journal::CALL_ENV, call.to_string());
+        let mut gate = aether_spawn::gate_start(cmd.as_std_mut())?;
+        self.processes.spawn_host(cancel, move || {
+            std::thread::scope(|scope| {
+                let recording = scope.spawn(move || -> std::io::Result<Option<CallRecord>> {
+                    let Some(pid) = gate.child_pid()? else {
+                        return Ok(None);
+                    };
+                    let record = self.record_foreground(call, pid);
+                    gate.open()?;
+                    Ok(record)
+                });
+                let spawned = cmd.spawn();
+                // Its copies of the gate's pipes must close, or a failed fork never reads as one.
+                drop(cmd);
+                let recorded = recording.join().map_err(|_| {
+                    ToolError::Internal("recording a foreground call panicked".into())
+                })?;
+                match spawned {
+                    Ok(child) => {
+                        debug_assert!(
+                            recorded.is_ok(),
+                            "a child execs only through an opened gate"
+                        );
+                        Ok((child, recorded.ok().flatten()))
+                    }
+                    Err(error) => {
+                        if let Ok(Some(record)) = recorded {
+                            clear_record(record);
+                        }
+                        Err(error.into())
+                    }
+                }
+            })
+        })
+    }
+
     /// Record the call's group so a start after a daemon crash stops it. The
     /// call runs on unrecorded when that fails: refusing it would stop the agent.
     #[cfg(target_os = "linux")]
-    fn record_foreground(&self, pid: u32) -> Option<crate::background::journal::Registration> {
-        match self.processes.register_foreground(pid) {
+    fn record_foreground(&self, call: aether_core::id::ProcessId, pid: u32) -> Option<CallRecord> {
+        #[cfg(test)]
+        tests::delay_record(pid);
+        match self.processes.register_foreground(call, pid) {
             Ok(record) => record,
             Err(error) => {
                 tracing::warn!(pid, %error, "cannot record a foreground call; a daemon crash would leave it running");
                 None
             }
         }
+    }
+}
+
+/// Drop a call's crash record once its group is gone.
+#[cfg(target_os = "linux")]
+fn clear_record(record: CallRecord) {
+    if let Err(error) = record.clear() {
+        // Harmless: the next start finds the recorded leader gone and drops it.
+        tracing::warn!(%error, "cannot clear a foreground call's crash record");
     }
 }
 
@@ -230,19 +287,20 @@ impl Tool for BashTool {
             }));
         }
         let prepared = prepare(&command, ctx)?;
-        let mut cmd = prepared.command;
         let capture = Capture::new(ctx, self.capture_limit)?;
-        let mut child = self.processes.spawn_host(&cancel, || Ok(cmd.spawn()?))?;
+        #[cfg(target_os = "linux")]
+        let (mut child, record) = self.spawn_recorded(prepared.command, &cancel)?;
+        #[cfg(not(target_os = "linux"))]
+        let mut child = {
+            let mut cmd = prepared.command;
+            self.processes.spawn_host(&cancel, || Ok(cmd.spawn()?))?
+        };
         let mut guard = GroupGuard {
             pgid: child.id().map(|p| Pid::from_raw(p as i32)),
             teardown: prepared.teardown,
             #[cfg(target_os = "linux")]
-            record: None,
+            record,
         };
-        #[cfg(target_os = "linux")]
-        if let Some(pid) = child.id() {
-            guard.record = self.record_foreground(pid);
-        }
 
         let mut readers = Vec::with_capacity(2);
         if let Some(out) = child.stdout.take() {
@@ -709,5 +767,61 @@ mod tests {
         }
         assert!(!dir.path().join("ran").exists(), "nothing ran");
         assert!(processes.list(ctx.agent_id).unwrap().is_empty());
+    }
+
+    /// The working directory whose foreground calls are recorded slowly.
+    #[cfg(target_os = "linux")]
+    static SLOW_RECORDS_IN: std::sync::Mutex<Option<std::path::PathBuf>> =
+        std::sync::Mutex::new(None);
+
+    /// Hold the recording of a call started in [`SLOW_RECORDS_IN`].
+    #[cfg(target_os = "linux")]
+    pub(super) fn delay_record(pid: u32) {
+        let slow = SLOW_RECORDS_IN.lock().unwrap().clone();
+        let cwd = std::fs::read_link(format!("/proc/{pid}/cwd"));
+        if slow.is_some_and(|dir| cwd.is_ok_and(|cwd| cwd == dir)) {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+
+    /// A daemon crash at any point of a call finds it on record, however long
+    /// recording it takes: the command runs only once it is.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_foreground_call_is_recorded_before_its_command_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let processes = Arc::new(BackgroundProcesses::new());
+        processes
+            .recover_host_jobs(&dir.path().join("store"))
+            .unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir(&work).unwrap();
+        *SLOW_RECORDS_IN.lock().unwrap() = Some(work.canonicalize().unwrap());
+        let journal = dir.path().join("store.background-processes");
+        let command = format!(
+            "cat {}/*.json | grep -c \"\\\"pgid\\\":$$,\"",
+            journal.display()
+        );
+        let outcome = BashTool::new(processes)
+            .execute(
+                json!({ "command": command }),
+                &ctx_in(&work),
+                CancellationToken::new(),
+            )
+            .await;
+        *SLOW_RECORDS_IN.lock().unwrap() = None;
+        let ToolExecution::Outcome(outcome) = outcome.unwrap() else {
+            panic!("a foreground call returns an outcome");
+        };
+        assert!(
+            outcome.content.starts_with('1'),
+            "the call's group was not on record when it ran: {}",
+            outcome.content
+        );
+        assert_eq!(
+            std::fs::read_dir(&journal).unwrap().count(),
+            0,
+            "the record is cleared once the call ends"
+        );
     }
 }
