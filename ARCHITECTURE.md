@@ -102,8 +102,11 @@ has nobody to inspect it, so it resumes at once as a person's `aether resume`
 would: its keys are released, and its wake and the interrupted call's result
 name the calls and say their outcome is unknown, so it checks the state before
 repeating them. Its `agent.resumed` event records that it resumed without
-inspection. Its children and processes stay its own, as for any live agent. Engine-native read tools and Aether MCP names are resolved
-alongside the side-effect class recorded in `tool.requested`.
+inspection. Its children stay its own. No process outlives the daemon that
+ran it: a stop ends them, and on Linux the next start stops what a crashed
+daemon's agents left running before any turn starts, so the resumed turn never
+races the call it was told about. Engine-native read tools and Aether MCP names
+are resolved alongside the side-effect class recorded in `tool.requested`.
 
 On Linux, recovery persists `/proc/sys/kernel/random/boot_id` in store metadata
 only after the recovery pass succeeds. A changed boot id proves local tool

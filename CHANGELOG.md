@@ -25,7 +25,10 @@ clients on 17 through 24 see it as `usage_limit`.
   inspection. An agent stored before the upgrade cannot say whether a person
   watches it, so it still parks, and one already parked stays parked until
   resumed; its new children are headless. See
-  [interactive trees](docs/protocol.md#interactive-trees).
+  [interactive trees](docs/protocol.md#interactive-trees). A model reached
+  over HTTP reads this as the result of each call a restart cut short, where
+  it read only "Tool call was cancelled.", whether it resumes at once or after
+  an inspection.
 - **Browsers and helpers an agent detached no longer outlive it (#332).**
   Aether's own shell tool now tags every host command with its agent's id
   (`AETHER_ENGINE_AGENT`), as engines already were, so a Chromium, Firefox,
