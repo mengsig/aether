@@ -424,12 +424,21 @@ fn names_differing_only_in_case_open_their_own_images() {
 
 #[test]
 fn a_name_quoting_another_image_line_opens_its_own_image() {
+    quoting_line_opens_its_own_image("b.png", "b.png");
+    // Kelvin signs fold to `k`: the inner line is longer in bytes, not as matched.
+    quoting_line_opens_its_own_image(&"\u{212A}".repeat(30), &"k".repeat(30));
+}
+
+/// Send an image named after `quoted`'s line, then one named `inner`; a click on
+/// the quoted line inside the first opens the first, and the second's own line the second.
+fn quoting_line_opens_its_own_image(inner: &str, quoted: &str) {
     let store = tempfile::tempdir().expect("store");
     let mut app = app_with_store(store.path());
-    let (outer, inner) = (picture(30), picture(31));
-    let quoted = format!("[image: b.png, {} B]", inner.len());
-    let name = format!("outer {quoted}.png");
-    for (name, bytes) in [(name.as_str(), &outer), ("b.png", &inner)] {
+    let (outer_bytes, inner_bytes) = (picture(30), picture(31));
+    let size = inner_bytes.len();
+    let name = format!("outer [image: {quoted}.png, {size} B].png");
+    let inner_name = format!("{inner}.png");
+    for (name, bytes) in [(&name, &outer_bytes), (&inner_name, &inner_bytes)] {
         let (_dir, path) = png_file(name);
         std::fs::write(&path, bytes).expect("write");
         app.run_image_command(ImageArg::File(path.display().to_string()));
@@ -441,30 +450,30 @@ fn a_name_quoting_another_image_line_opens_its_own_image() {
 
     let mut cache = ViewCache::default();
     render_with(&app, &mut cache, 160, 40);
-    let line = format!("[image: {name}, {} B]", outer.len());
-    let own = cache
-        .file_hits
+    let line = format!("[image: {name}, {} B]", outer_bytes.len());
+    let inner_line = format!("[image: {inner_name}, {size} B]");
+    let hits_of = |label: &str| -> Vec<crate::viewer::Hit> {
+        let mut hits: Vec<_> = cache
+            .file_hits
+            .iter()
+            .filter(|h| h.reference.label == label)
+            .cloned()
+            .collect();
+        hits.sort_by_key(|h| h.area.y);
+        hits
+    };
+    let own = hits_of(&line).first().expect("its line").clone();
+    let inner_hits = hits_of(&inner_line);
+    // Inside the first line, where both images' labels match.
+    let inside = inner_hits
         .iter()
-        .find(|h| h.reference.label == line)
-        .expect("its line")
+        .find(|h| h.area.y == own.area.y)
+        .expect("the quoted line matches")
         .clone();
-    // A click on the quoted line inside the name, where both images' labels match.
-    let inside = cache
-        .file_hits
-        .iter()
-        .find(|h| h.reference.label == quoted && h.area.y == own.area.y)
-        .expect("the quoted line matches too")
-        .clone();
+    let below = inner_hits.last().expect("the second image's line").clone();
+    assert!(below.area.y > own.area.y, "{inner_hits:?}");
     let effects = click(&mut app, &mut cache, &inside);
-    assert_shows(load(&mut app, effects), &outer);
-    let below = cache
-        .file_hits
-        .iter()
-        .filter(|h| h.reference.label == quoted)
-        .max_by_key(|h| h.area.y)
-        .expect("the second image's line")
-        .clone();
-    assert!(below.area.y > own.area.y);
+    assert_shows(load(&mut app, effects), &outer_bytes);
     let effects = click(&mut app, &mut cache, &below);
-    assert_shows(load(&mut app, effects), &inner);
+    assert_shows(load(&mut app, effects), &inner_bytes);
 }

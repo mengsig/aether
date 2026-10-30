@@ -371,7 +371,7 @@ impl App {
 }
 
 /// The hit a press opens: a sent image's whole line beats any file or other image line
-/// quoted inside it; otherwise the longest target wins.
+/// quoted inside it, measured case-folded as matched; otherwise the longest target wins.
 fn pressed_file_hit(
     hits: &[crate::viewer::Hit],
     column: u16,
@@ -380,7 +380,7 @@ fn pressed_file_hit(
     let rank = |hit: &crate::viewer::Hit| {
         let image = crate::viewer::sent_images::is_sent_image(&hit.reference.target);
         let reach = if image {
-            hit.reference.label.len()
+            crate::ui::bottom::find::fold(&hit.reference.label).len()
         } else {
             hit.reference.target.len()
         };
