@@ -300,9 +300,10 @@ isolation depend on the installed engine version and the platform; see
   `setsid`, for one) keeps running until the next daemon start. That start
   kills the process group of every engine it recorded, but only while the
   recorded pid and start time still match a live group leader, plus every
-  process carrying a recorded engine's token that runs for no agent. What runs
-  for an agent is stopped then only when that agent has ended and no live
-  ancestor holds it; a live agent's server keeps running for its recovery. A
+  process carrying a recorded engine's token that runs for no agent or for one
+  whose turn the crash cut short. What runs for any other agent is stopped
+  then only when that agent has ended and no live ancestor holds it; a live
+  agent's server keeps running for its recovery. A
   descendant that cleared its environment and left the group is reaped only
   when its agent ends. On macOS
   there is no parent-death signal, no group watchdog, and nothing is recorded
@@ -342,9 +343,13 @@ isolation depend on the installed engine version and the platform; see
   from an engine's own shell or a shell command that is not a background job,
   where the sweeps treat it as the agent's.
 - A start after a crash cannot tell a tool command an engine ran outside its
-  own process group from a server the agent detached: for a live agent it is
-  spared and runs until that agent ends. So is a process a foreground call of
-  Aether's own shell tool moved out of the call's process group.
+  own process group from a server the agent detached under the same engine
+  process. When the crash cut that agent's turn short, it stops both, so a
+  server the engine started during that engine process is gone when the
+  agent resumes; one started under an earlier engine process, or by an agent
+  with no turn in flight, is spared. A process a foreground call of Aether's
+  own shell tool moved out of the call's process group is spared like any
+  agent's server, and runs until that agent ends.
 - The daemon records hand-ups only in memory, so a start after a crash
   cannot tell whether an ancestor that has since failed or been cancelled
   held a completed child's processes, which its end would have stopped, or

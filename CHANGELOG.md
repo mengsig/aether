@@ -86,8 +86,10 @@ clients on 17 through 24 see it as `usage_limit`.
   engine's token, so a dev server, database or `docker compose` client an
   agent had up was dead when recovery resumed that agent. The start now kills
   the recorded engine process groups themselves, the CLIs and the tool
-  commands in them, and of the token carriers outside them only those that
-  run for no agent and are not kept with `AETHER_KEEP_PROCESS=1`. What runs
+  commands in them, and of the token carriers outside them those that run for
+  no agent or for one whose turn the crash cut short, which may be the tool
+  command its engine ran in a session of its own as Claude Code does, but none
+  kept with `AETHER_KEEP_PROCESS=1`. What runs
   for an agent is stopped at a daemon stop or start only when that agent has
   ended and no live ancestor holds it; a completed child's processes go back
   to its nearest live ancestor and stop with its end. Such processes now run
@@ -100,7 +102,9 @@ clients on 17 through 24 see it as `usage_limit`.
   group as the call's end would have (the call is recorded before its
   command starts), so an agent recovery resumes never
   races its own interrupted command; what the call detached is spared like
-  any agent's server. Linux only.
+  any agent's server. A call that cannot be recorded is not started, and a
+  start that cannot stop a recorded call refuses to run and says which process
+  group to stop. Linux only.
 - **A refused engine sign-in suspends the agent instead of failing it.** A
   native engine whose OAuth token expired or whose API key was refused
   (Claude Code's `authentication_error`, "Please run /login", a result with

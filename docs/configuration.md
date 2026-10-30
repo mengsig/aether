@@ -610,9 +610,12 @@ exits when its engine's pipe closes. The next daemon start kills
 the engines themselves: every recorded engine process group whose leader
 still has the recorded pid and kernel start time, with the tool commands in
 it, and every process of the daemon's user carrying a recorded engine's random
-token that runs for no agent. A token carrier that also carries an agent's tag
-(a dev server, a database, a `docker compose` client an agent started) or the
-keep entry is left alone there. Before it runs any turn the start then stops,
+token that runs for no agent, or for an agent whose turn the crash cut short:
+that may be the tool command the engine was running in a session of its own,
+as Claude Code runs each, which the resumed turn must not race. A token
+carrier that carries the tag of an agent with no turn in flight (a dev server,
+a database, a `docker compose` client an agent started), or the keep entry, is
+left alone there. Before it runs any turn the start then stops,
 as a clean stop would have, what no live agent holds: the processes tagged
 with, or in an engine scope of, each of its own agents that has ended, unless
 it completed under a live ancestor. That ancestor then holds them again, as
@@ -626,9 +629,13 @@ recorded before its command starts and until it ends, and the start kills
 the process group of each one a crash cut short, as the call's end would
 have: through its leader, held stopped while the group is signalled, while
 that leader still has the recorded pid and start time, or, once the leader
-is gone, each process left in the group that carries the call's id
-(`AETHER_FOREGROUND_CALL`). An agent that recovery resumes never races its
-own interrupted command, and what the call detached is spared as above. It
+is gone, each process left in the group, as long as one of them carries the
+call's id (`AETHER_FOREGROUND_CALL`): a group none of whose processes does is
+not proven the call's, and is left alone. A call that cannot be recorded is
+not started, and a start that cannot stop a recorded call refuses to run,
+naming the process group to stop by hand. An agent that recovery resumes
+never races its own interrupted command, and what the call detached is
+spared as above. It
 never signals a process it cannot tie to an engine it started or an agent it
 ran.
 macOS has neither a
