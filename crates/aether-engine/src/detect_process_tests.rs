@@ -63,7 +63,7 @@ async fn a_capability_probe_that_cannot_start_reports_the_os_error() {
     let dir = tempfile::tempdir().unwrap();
     let program = dir.path().join("codex");
     let mut writing = std::fs::OpenOptions::new()
-        .create(true)
+        .create_new(true)
         .write(true)
         .mode(0o755)
         .open(&program)
