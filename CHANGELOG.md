@@ -129,7 +129,8 @@ clients on 17 through 24 see it as `usage_limit`.
   a later group can take the same id. A group none proves is spared, and the
   call's agent waits for inspection, even a headless one, rather than resume
   beside what may be its command. A process of another user in the group (a
-  `sudo` child) no longer makes the start give up on the rest. A call that cannot be recorded is not started, and a
+  `sudo` child) no longer makes the start give up on the rest; as it
+  cannot be stopped, the call's agent waits for inspection. A call that cannot be recorded is not started, and a
   start that cannot stop a recorded call refuses to run and says which process
   group to stop. Engines are now recorded before they start, and one that
   cannot be recorded is not started; a start that cannot stop a recorded

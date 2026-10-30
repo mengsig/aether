@@ -649,7 +649,7 @@ cleared, or a later group that took the id: it is left alone too, and the
 call's agent waits for inspection, even a headless one, so it never resumes
 beside what may be its command. A process in the group that runs as another user (a
 `sudo` child) cannot be signalled and is skipped; the rest of the group is
-still stopped. A call that cannot be recorded is not started, and a start
+still stopped, and the call's agent waits for inspection, even a headless one. A call that cannot be recorded is not started, and a start
 that cannot stop a recorded call refuses to run, naming the process group to
 stop by hand. Engines are recorded the same way, while held before they
 start: one that cannot be recorded is not started, a start that cannot stop

@@ -142,15 +142,15 @@ impl Journal {
                 format!("invalid background record {}: {e}", path.display()),
             )
         })?;
-        let stopped = self.matches(&record, proc_root).and_then(|found| {
+        let stopped = self.matches(&record, proc_root).and_then(|(found, foreign)| {
             if found == Found::Recorded {
                 tracing::warn!(pgid = record.pgid, record = %path.display(), "killing orphan host process group");
                 kill_recorded_group(&record, proc_root)?;
             }
-            Ok(found)
+            Ok((found, foreign))
         });
-        let found = match stopped {
-            Ok(found) => found,
+        let (found, foreign) = match stopped {
+            Ok(stopped) => stopped,
             Err(error) => return Self::unstoppable(&record, error),
         };
         if record.boot_id == self.boot_id
@@ -162,9 +162,10 @@ impl Journal {
             return Ok(None);
         }
         std::fs::remove_file(path)?;
+        // Another user's member (a `sudo` child) outlives any kill of ours.
         let parked = record
             .agent
-            .filter(|_| found == Found::Unproven && record.call.is_some());
+            .filter(|_| (found == Found::Unproven || foreign) && record.call.is_some());
         if let Some(agent) = parked {
             tracing::warn!(pgid = record.pgid, %agent, "its interrupted call may still run: the agent waits for inspection");
         }
@@ -251,12 +252,14 @@ impl Journal {
         Ok((Registration(path), file))
     }
 
-    fn matches(&self, record: &Record, proc_root: &Path) -> io::Result<Found> {
+    /// What runs of `record`'s group, and whether a member of another user,
+    /// which no kill of ours can stop, runs in it.
+    fn matches(&self, record: &Record, proc_root: &Path) -> io::Result<(Found, bool)> {
         if record.pgid <= 1 || record.boot_id != self.boot_id || record.uid != geteuid().as_raw() {
-            return Ok(Found::Nothing);
+            return Ok((Found::Nothing, false));
         }
         let Some(leader_missing) = leader_missing(record, proc_root)? else {
-            return Ok(Found::Nothing);
+            return Ok((Found::Nothing, false));
         };
         let token = record.token();
         let mut found = false;
@@ -302,11 +305,12 @@ impl Journal {
                 "a member of a recorded group runs as another user and cannot be stopped"
             );
         }
-        Ok(match (found, unproven) {
+        let found = match (found, unproven) {
             (true, _) => Found::Recorded,
             (false, true) => Found::Unproven,
             (false, false) => Found::Nothing,
-        })
+        };
+        Ok((found, foreign))
     }
 }
 

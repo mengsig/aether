@@ -270,12 +270,10 @@ async fn a_leaderless_call_group_without_the_token_is_spared_and_its_agent_repor
     assert!(!registration.0.exists());
 }
 
-/// Another user's process (a `sudo` child) in a recorded group does not
-/// disown the rest of the group, which recovery still stops.
-#[test]
-fn another_users_member_does_not_disown_the_recorded_group() {
+/// A visible process of another user and its process group, if any.
+fn another_users_process() -> Option<(std::path::PathBuf, i32)> {
     let own = geteuid().as_raw();
-    let Some(foreign) = std::fs::read_dir("/proc").unwrap().find_map(|entry| {
+    std::fs::read_dir("/proc").unwrap().find_map(|entry| {
         let entry = entry.ok()?;
         entry.file_name().to_str()?.parse::<u32>().ok()?;
         let owner = entry.metadata().ok()?.uid();
@@ -283,11 +281,18 @@ fn another_users_member_does_not_disown_the_recorded_group() {
             .ok()?
             .group;
         (owner != own && group > 1).then(|| (entry.path(), group))
-    }) else {
+    })
+}
+
+/// Another user's process (a `sudo` child) in a recorded group does not
+/// disown the rest of the group, which recovery still stops.
+#[test]
+fn another_users_member_does_not_disown_the_recorded_group() {
+    let own = geteuid().as_raw();
+    let Some((foreign, foreign_group)) = another_users_process() else {
         eprintln!("skipping: no process of another user is visible");
         return;
     };
-    let (foreign, foreign_group) = foreign;
     let dir = tempfile::tempdir().unwrap();
     let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
     let proc_root = dir.path().join("proc");
@@ -313,9 +318,41 @@ fn another_users_member_does_not_disown_the_recorded_group() {
     };
     assert_eq!(
         journal.matches(&record, &proc_root).unwrap(),
-        Found::Recorded,
+        (Found::Recorded, true),
         "another user's member disowned a group whose recorded leader runs"
     );
+}
+
+/// No kill of ours stops another user's member (a `sudo` child) of an
+/// interrupted call's group, so the call's agent waits for inspection.
+#[test]
+fn another_users_member_left_in_a_calls_group_parks_its_agent() {
+    let Some((foreign, foreign_group)) = another_users_process() else {
+        eprintln!("skipping: no process of another user is visible");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (journal, _) = Journal::recover(dir.path().join("journal")).unwrap();
+    let proc_root = dir.path().join("proc");
+    // The call's shell is gone; only the other user's member is left.
+    std::fs::create_dir_all(&proc_root).unwrap();
+    std::os::unix::fs::symlink(&foreign, proc_root.join("999999")).unwrap();
+    let agent = AgentId::new();
+    let record = Record {
+        pgid: foreign_group,
+        start_time: 42,
+        boot_id: journal.boot_id.clone(),
+        uid: geteuid().as_raw(),
+        job: None,
+        call: Some(ProcessId::new()),
+        session: Some(7),
+        agent: Some(agent),
+    };
+    let path = journal.directory.join("call.json");
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let parked = journal.recover_record(&path, &proc_root).unwrap();
+    assert_eq!(parked, Some(agent), "its agent resumes beside the member");
+    assert!(!path.exists(), "a decided record is cleared");
 }
 
 #[test]
