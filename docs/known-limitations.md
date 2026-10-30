@@ -309,7 +309,13 @@ isolation depend on the installed engine version and the platform; see
   process carrying a recorded engine's token that runs for no agent or for one
   whose turn the crash cut short. What runs for any other agent is stopped
   then only when that agent has ended and no live ancestor holds it; a live
-  agent's server keeps running for its recovery. A
+  agent's server keeps running for its recovery. A server started inside the
+  very turn the crash (or a stop) cut short, outside the engine's group and
+  without `AETHER_KEEP_PROCESS=1`, is killed with that turn's in-flight
+  command: Claude Code runs each command in a session of its own, and nothing
+  yet tells such a server from the command. The resumed agent is told to
+  check state before it repeats anything, so it can start the server again;
+  start it with `AETHER_KEEP_PROCESS=1` to keep it. A
   descendant that cleared its environment and left the group is reaped only
   when its agent ends. On macOS
   there is no parent-death signal, no group watchdog, and nothing is recorded
