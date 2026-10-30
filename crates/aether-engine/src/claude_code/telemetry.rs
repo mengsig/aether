@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use crate::EngineLaunchContext;
 
 pub(super) fn environment(
-    context: Option<EngineLaunchContext>,
+    context: Option<&EngineLaunchContext>,
     hidden: &[String],
 ) -> Vec<(OsString, OsString)> {
     let visible = |name: &str| !hidden.iter().any(|entry| entry == name);
@@ -40,7 +40,7 @@ pub(super) fn environment(
     env
 }
 
-fn traceparent(context: EngineLaunchContext) -> String {
+fn traceparent(context: &EngineLaunchContext) -> String {
     let run = u128::from(context.run_id.ulid());
     let trace = run.max(1);
     let parent = ((run >> 64) as u64 ^ run as u64).max(1);

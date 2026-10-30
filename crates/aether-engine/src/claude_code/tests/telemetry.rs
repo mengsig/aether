@@ -7,6 +7,7 @@ fn context() -> EngineLaunchContext {
         run_id: RunId::from_ulid(ulid::Ulid::from(0x123456789abcdef_u128)),
         agent_id: AgentId::from_ulid(ulid::Ulid::from(2_u128)),
         task_id: Some(TaskId::from_ulid(ulid::Ulid::from(3_u128))),
+        spawns: crate::SpawnGate::default(),
     }
 }
 
@@ -90,7 +91,7 @@ async fn child_environment_probe() {
             engine.run(turn, CancellationToken::new()).await.unwrap()
         } else {
             engine
-                .run_with_context(turn, identity, CancellationToken::new())
+                .run_with_context(turn, identity.clone(), CancellationToken::new())
                 .await
                 .unwrap()
         };
@@ -100,7 +101,7 @@ async fn child_environment_probe() {
         .await
         .unwrap();
         let environment = std::fs::read_to_string(dir.path().join("child-env")).unwrap();
-        check_environment(&case, &environment, &inherited, identity);
+        check_environment(&case, &environment, &inherited, &identity);
     }
     assert_eq!(
         std::env::var("OTEL_RESOURCE_ATTRIBUTES").unwrap_or_default(),
@@ -109,7 +110,7 @@ async fn child_environment_probe() {
     assert_eq!(std::env::var("TRACEPARENT").unwrap(), "user-parent");
 }
 
-fn check_environment(case: &str, env: &str, inherited: &str, context: EngineLaunchContext) {
+fn check_environment(case: &str, env: &str, inherited: &str, context: &EngineLaunchContext) {
     let value = |key: &str| {
         env.lines()
             .find_map(|line| line.strip_prefix(&format!("{key}=")))

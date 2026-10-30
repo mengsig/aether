@@ -198,7 +198,8 @@ fn kill_matching_group(_pid: u32, _recorded: u64) -> bool {
     false
 }
 
-/// SIGKILL every live process of this user whose environment carries `token`.
+/// SIGKILL every live process of this user whose environment carries `token`,
+/// but one kept past its owner with `AETHER_KEEP_PROCESS=1`.
 ///
 /// The token is random per engine spawn, so a match proves descent from that
 /// engine. A pidfd is opened before the environment is read, so the pid
@@ -210,6 +211,7 @@ fn kill_tagged(token: &str) -> io::Result<()> {
 
     assert!(!token.is_empty(), "an empty token would match any process");
     let entry_token = format!("{TOKEN_ENV}={token}");
+    let keep_entry = format!("{}=1", aether_core::agent::PROCESS_KEEP_ENV);
     let own = std::process::id();
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
@@ -240,9 +242,9 @@ fn kill_tagged(token: &str) -> io::Result<()> {
             }
             Err(error) => return Err(error),
         };
-        if !environment
-            .split(|b| *b == 0)
-            .any(|e| e == entry_token.as_bytes())
+        let mut entries = environment.split(|b| *b == 0);
+        if !entries.clone().any(|e| e == entry_token.as_bytes())
+            || entries.any(|e| e == keep_entry.as_bytes())
         {
             continue;
         }
@@ -387,6 +389,32 @@ mod tests {
         child.wait().unwrap();
         let gone = wait_for_sleep31(false);
         assert!(gone, "the setsid descendant must be killed by its token");
+    }
+
+    #[test]
+    fn spares_a_tagged_process_marked_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = "tok-spares-kept-0001";
+        let spawn = |kept: bool| {
+            let mut command = std::process::Command::new("sleep");
+            command.arg("30").env(TOKEN_ENV, token);
+            if kept {
+                command.env(aether_core::agent::PROCESS_KEEP_ENV, "1");
+            }
+            command.spawn().unwrap()
+        };
+        let mut swept = spawn(false);
+        let mut kept = spawn(true);
+        // No start time: only the token sweep runs for this record.
+        std::fs::write(dir.path().join("4194301"), format!("-\n{token}")).unwrap();
+        reap(dir.path()).unwrap();
+        assert!(
+            !swept.wait().unwrap().success(),
+            "the unmarked process is killed"
+        );
+        assert!(alive(&mut kept), "the kept process is spared");
+        kept.kill().unwrap();
+        kept.wait().unwrap();
     }
 
     #[test]

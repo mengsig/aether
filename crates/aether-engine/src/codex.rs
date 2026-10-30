@@ -238,7 +238,7 @@ impl Engine for CodexEngine {
         context: EngineLaunchContext,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
-        self.launch(turn, Some(context.agent_id), cancel).await
+        self.launch(turn, Some(context), cancel).await
     }
 }
 
@@ -246,7 +246,7 @@ impl CodexEngine {
     async fn launch(
         &self,
         turn: EngineTurn,
-        agent: Option<aether_core::id::AgentId>,
+        context: Option<EngineLaunchContext>,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
         use std::io::Write as _;
@@ -300,7 +300,7 @@ impl CodexEngine {
             turn.temp_dir.as_deref(),
             &turn.build_env,
             &[],
-            agent,
+            context.as_ref(),
             &turn.redactor,
             turn.prompt.clone(),
             false,
