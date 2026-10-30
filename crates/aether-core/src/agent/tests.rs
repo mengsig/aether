@@ -112,6 +112,39 @@ fn a_deadline_passes_on_the_instant_it_names() {
     );
 }
 
+/// The warning comes at 80 % of the span or ten minutes before the deadline,
+/// whichever is earlier, and never once the deadline has passed.
+#[test]
+fn a_deadline_warns_at_whichever_threshold_comes_first() {
+    let minutes = chrono::Duration::minutes;
+    let mut agent = agent_with(None);
+    let start = agent.created_at;
+    assert_eq!(agent.deadline_warning(start), None, "no deadline");
+
+    // One hour: 80 % (12 minutes left) comes before 10 minutes left.
+    agent.config.deadline = Some(start + minutes(60));
+    assert_eq!(agent.deadline_warning(start + minutes(47)), None);
+    assert_eq!(agent.deadline_warning(start + minutes(48)), Some(12));
+    assert_eq!(
+        agent.deadline_warning(start + minutes(58) + chrono::Duration::seconds(30)),
+        Some(2),
+        "minutes left round up"
+    );
+
+    // Thirty minutes: 80 % (6 minutes left) comes after 10 minutes left.
+    agent.config.deadline = Some(start + minutes(30));
+    assert_eq!(agent.deadline_warning(start + minutes(19)), None);
+    assert_eq!(agent.deadline_warning(start + minutes(20)), Some(10));
+
+    let deadline = start + minutes(30);
+    assert_eq!(agent.deadline_warning(deadline), None, "passed: the stop");
+    assert_eq!(
+        agent.deadline_warning(deadline - chrono::Duration::milliseconds(1)),
+        Some(1),
+        "the last instant still says a minute, never zero"
+    );
+}
+
 /// An API-equivalent estimate is not money anyone was charged, so no cap
 /// may fire on it. A subtree of nothing but estimated spend
 /// is still $0 billed, and stays runnable.

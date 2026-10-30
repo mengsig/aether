@@ -400,6 +400,13 @@ impl Store for CommitsMidPass {
     fn latest_custom_event(&self, names: &[&str]) -> aether_store::Result<Option<Event>> {
         self.inner.latest_custom_event(names)
     }
+    fn latest_agent_custom_event(
+        &self,
+        agent: AgentId,
+        name: &str,
+    ) -> aether_store::Result<Option<Event>> {
+        self.inner.latest_agent_custom_event(agent, name)
+    }
     fn agent(&self, id: AgentId) -> Result<Option<Agent>> {
         let agent = self.inner.agent(id)?;
         self.fire(Hook::AgentRead)?;

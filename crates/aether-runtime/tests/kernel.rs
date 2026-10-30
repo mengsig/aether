@@ -163,6 +163,8 @@ mod completion_artifacts;
 mod crash_cancellation;
 #[path = "kernel/crash_recovery.rs"]
 mod crash_recovery;
+#[path = "kernel/deadline_warnings.rs"]
+mod deadline_warnings;
 #[path = "kernel/delegation.rs"]
 mod delegation;
 #[path = "kernel/dispatch_priority.rs"]
