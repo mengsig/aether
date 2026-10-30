@@ -242,6 +242,11 @@ looks like a boundary and is not one.
   is no TUI or phone view of it yet (roadmap).
 - A background PTY shell has been seen to ignore Ctrl-C on a heavily
   oversubscribed host (roadmap).
+- The [deadline warning](protocol.md#deadline-warnings) never interrupts a
+  `wait_for` or other tool call. An agent that waits until past its deadline
+  is stopped without having read it. An engine blocked on a native question
+  when the warning arrives receives the warning as its answer, as it would
+  any other inbox item.
 
 ## Measurement and compatibility
 
