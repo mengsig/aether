@@ -21,6 +21,26 @@ fn files(dir: &Path) -> Vec<String> {
     names
 }
 
+/// Wait until no process holds `lock`: a child another test forks keeps a
+/// dropped publisher's lock until it execs.
+fn wait_until_released(lock: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let probe = File::open(lock).expect("the dropped publisher's lock");
+    loop {
+        match probe.try_lock_shared() {
+            Ok(()) => return,
+            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::Error(error)) => panic!("probing {}: {error}", lock.display()),
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} stayed locked after its publisher was dropped",
+            lock.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn the_viewed_agent_is_published_followed_and_withdrawn() {
     let (_scratch, dir) = scratch();
@@ -60,8 +80,10 @@ fn a_crashed_tuis_record_is_stale_whatever_its_pid_became() {
     live.sync(Some(live_view)).expect("live");
     let mut crashed = Publisher::new(dir.clone());
     crashed.sync(Some(crashed_view)).expect("crashed");
+    let crashed_lock = lock_path(&dir, &crashed.slot.as_ref().expect("slot").id);
     // Dropping without `finish` releases the lock as a dying process does.
     drop(crashed);
+    wait_until_released(&crashed_lock);
     assert_eq!(files(&dir).len(), 4, "the crashed TUI left its files");
     assert_eq!(read(&dir).expect("read"), Some(live_view));
     assert_eq!(files(&dir).len(), 2, "the reader removed the stale record");
