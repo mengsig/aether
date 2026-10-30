@@ -357,6 +357,10 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         |name| std::env::var(name).ok(),
     )?;
     clock.finished("config");
+    // Before any turn can start a container of its own, and before a resumed
+    // turn can race one its interrupted call left running.
+    aether_tools::exec::sweep_orphan_containers(&instance_id).await;
+    clock.finished("containers");
     let runtime = Runtime::start(
         RuntimeConfig {
             holder: format!("aetherd-{}-{}", instance_id, std::process::id()),
@@ -431,9 +435,6 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     let mut socket_published = None;
     let mut pid_published = None;
     let result = async {
-        aether_tools::exec::sweep_orphan_containers(&instance_id).await;
-        clock.finished("containers");
-
         mcp::spawn_recorder(&runtime, mcp_rx, &mut connections, &shutdown);
         if !mcp.is_empty() {
             // Discovery talks to other processes; do not hold up the socket for it.
