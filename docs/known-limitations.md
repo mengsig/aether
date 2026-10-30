@@ -334,7 +334,7 @@ isolation depend on the installed engine version and the platform; see
   live ancestor and runs until that ancestor's tree ends, so a long-lived root
   keeps every server and browser its completed children left until it ends
   or is cancelled; a daemon stop or restart leaves them running. It is told
-  each one's pid and command, and can stop them sooner.
+  each one's pid, with the command for the first 50, and can stop them sooner.
 - A background shell job of Aether's own shell tool still stops with the
   daemon, even for a live agent: its output, input and terminal run through
   the daemon, which a restart cannot hand back, and what the job detached
