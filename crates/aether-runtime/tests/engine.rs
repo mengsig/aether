@@ -103,6 +103,9 @@ mod spawn_guard;
 mod stall;
 #[path = "engine/steering.rs"]
 mod steering;
+#[cfg(target_os = "linux")]
+#[path = "engine/stop_sweep.rs"]
+mod stop_sweep;
 #[path = "engine/telemetry.rs"]
 mod telemetry;
 #[path = "engine/temp_dir.rs"]

@@ -766,13 +766,13 @@ impl Runtime {
     /// Stop scheduling, cancel running turns, and record the stop.
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
-        let tokens: Vec<CancellationToken> = self
-            .sched
-            .lock()
-            .running
-            .values()
-            .map(|r| r.cancel.clone())
-            .collect();
+        let (tokens, interrupted): (Vec<CancellationToken>, HashSet<AgentId>) = {
+            let sched = self.sched.lock();
+            let tokens = sched.running.values().map(|r| r.cancel.clone()).collect();
+            (tokens, sched.running.keys().copied().collect())
+        };
+        // Taken first: a stopped engine's record goes with it.
+        let mut engines = Self::recorded_engines();
         for token in tokens {
             token.cancel();
         }
@@ -784,6 +784,8 @@ impl Runtime {
         // is empty, so a survivor would be unreachable forever.
         // A turn that outlived the wait above may still reach a spawn.
         self.engine_spawns.close();
+        engines.extend(Self::recorded_engines());
+        Self::stop_interrupted_engine_commands(engines, interrupted).await;
         let background_processes_stopped = match self.tools.background() {
             Some(processes) => {
                 processes.close_spawns();

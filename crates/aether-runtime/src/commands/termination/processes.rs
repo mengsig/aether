@@ -13,7 +13,7 @@ use aether_core::time::Timestamp;
 use aether_engine::reap::AgentProcess;
 use aether_store::Commit;
 use aether_tools::background::{BackgroundProcesses, ProcessStatus};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The custom event naming what an ended agent's engines left running.
 pub(crate) const PROCESSES_REAPED_EVENT: &str = "agent.processes_reaped";
@@ -372,6 +372,47 @@ impl Runtime {
             ),
         )?;
         Ok(())
+    }
+
+    /// The tokens of the engines recorded now, for a daemon stop; none when
+    /// the registry cannot be read, which is logged.
+    pub(crate) fn recorded_engines() -> Vec<String> {
+        match aether_engine::orphans::recorded_tokens() {
+            Ok(tokens) => tokens,
+            Err(error) => {
+                tracing::error!(%error, "cannot read the engine records; a stop may leave interrupted commands running");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Stop what the engines with `tokens` left outside their process groups
+    /// for the `interrupted` agents, whose turns this stop cut short: their
+    /// in-flight commands, such as one Claude Code ran in a session of its
+    /// own, which no record names once those engines are gone. Kept processes
+    /// and what runs for any other agent are spared.
+    pub(crate) async fn stop_interrupted_engine_commands(
+        mut tokens: Vec<String>,
+        interrupted: HashSet<AgentId>,
+    ) {
+        tokens.sort_unstable();
+        tokens.dedup();
+        if tokens.is_empty() {
+            return;
+        }
+        let swept = tokio::task::spawn_blocking(move || {
+            aether_engine::orphans::kill_carriers(&tokens, &interrupted)
+        })
+        .await;
+        match swept {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::error!(%error, "could not stop the commands of the engines this stop interrupted");
+            }
+            Err(error) => {
+                tracing::error!(%error, "the sweep of the interrupted engines' commands did not finish");
+            }
+        }
     }
 
     /// Stop what this daemon's agents left running that no live agent holds:

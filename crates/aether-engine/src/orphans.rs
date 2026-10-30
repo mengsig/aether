@@ -152,6 +152,43 @@ pub fn reap(dir: &Path, interrupted: &HashSet<AgentId>) -> io::Result<Vec<u32>> 
     Ok(reaped)
 }
 
+/// The tokens of the engines recorded now; none without a registry. A daemon
+/// stop takes them before it stops its engines, whose records then go.
+pub fn recorded_tokens() -> io::Result<Vec<String>> {
+    let Some(dir) = REGISTRY.get() else {
+        return Ok(Vec::new());
+    };
+    let mut tokens = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let named_by_pid = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.parse::<u32>().is_ok());
+        if !named_by_pid {
+            continue;
+        }
+        if let Some((_, Some(token))) = read_record(&path)? {
+            tokens.push(token);
+        }
+    }
+    Ok(tokens)
+}
+
+/// At a daemon stop, once its engines are stopped, kill what the engines with
+/// `tokens` left outside their groups, as the next start would after a crash:
+/// what runs for no agent or for one of the `interrupted`, whose turn the stop
+/// cut short, but kept processes. Every token is swept; the first error is returned.
+pub fn kill_carriers(tokens: &[String], interrupted: &HashSet<AgentId>) -> io::Result<()> {
+    let mut first_error = None;
+    for token in tokens {
+        if let Err(error) = kill_tagged(token, interrupted) {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
 /// The engine start time and token recorded at `path`, each if readable;
 /// None once the engine's own run dropped the record.
 fn read_record(path: &Path) -> io::Result<Option<(Option<u64>, Option<String>)>> {
