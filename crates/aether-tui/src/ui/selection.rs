@@ -69,6 +69,9 @@ pub struct Selection {
     pub end_excerpt: Option<String>,
     pub dragging: bool,
     pub moved: bool,
+    /// A double click selected a whole line: the text to copy, which may run
+    /// past the rows on screen.
+    pub line: Option<String>,
     pub pointer: MouseEvent,
     pub rows: Vec<String>,
     pub epoch: crate::app::transcript::TranscriptEpoch,
@@ -85,6 +88,8 @@ pub struct MouseState {
     pub selection: Option<Selection>,
     pub pending_board_click: Option<AgentId>,
     pub extend_after_scroll: bool,
+    /// Time and cell of the previous left press, for double-click detection.
+    pub last_down: Option<(std::time::Instant, u16, u16)>,
 }
 
 impl MouseState {
@@ -164,6 +169,12 @@ pub fn extract(app: &App, cache: &mut ViewCache) -> Result<String, String> {
     let Some(selection) = cache.mouse.selection.as_ref() else {
         return Ok(String::new());
     };
+    if let Some(line) = selection.line.as_ref() {
+        if line.len() > MAX_COPY_BYTES {
+            return Err("selection exceeds the 1 MiB clipboard limit".into());
+        }
+        return Ok(line.clone());
+    }
     if selection.pane == Pane::Transcript {
         return transcript::selected_text(app, cache);
     }
