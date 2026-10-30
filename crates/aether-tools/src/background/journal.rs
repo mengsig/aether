@@ -227,21 +227,20 @@ impl Journal {
             if metadata.uid() != record.uid {
                 return Ok(false);
             }
-            // A vanished leader could belong to a reused group. Every live
-            // member must still carry this job's or call's token before we signal it.
+            // A vanished leader could belong to a reused group: only a member
+            // carrying this job's or call's token is proven ours and signalled.
             if leader_missing && member.running() {
                 let environment = match aether_spawn::read_environ(&entry.path()) {
                     Ok(environment) => environment,
                     Err(e) if disappeared(&e) => continue,
                     Err(e) => return Err(e),
                 };
-                if token.as_ref().is_none_or(|token| {
-                    !environment
-                        .split(|b| *b == 0)
-                        .any(|entry| entry == token.as_bytes())
-                }) {
-                    tracing::warn!(pgid = record.pgid, member = %entry.path().display(), "skipping group: its token is missing");
-                    return Ok(false);
+                if token
+                    .as_ref()
+                    .is_none_or(|token| !carries(&environment, token))
+                {
+                    tracing::warn!(pgid = record.pgid, member = %entry.path().display(), "sparing a group member without its token");
+                    continue;
                 }
             }
             found |= member.running();
@@ -304,13 +303,20 @@ fn kill_through_leader(record: &Record, proc_root: &Path) -> io::Result<bool> {
         Err(rustix::io::Errno::SRCH) => return Ok(false),
         Err(error) => return Err(error.into()),
     }
-    if !wait_recorded_leader_stopped(record, proc_root)? {
-        // It may still be ours: keep the record for the next start.
-        pidfd_send_signal(&leader, LeaderSignal::CONT)?;
-        return Err(io::Error::other(format!(
-            "group {} leader did not stop",
-            record.pgid
-        )));
+    let stopped = wait_recorded_leader_stopped(record, proc_root);
+    if !matches!(stopped, Ok(true)) {
+        // It may still be ours: resume it and keep the record for the next start.
+        let resumed = pidfd_send_signal(&leader, LeaderSignal::CONT);
+        let error = stopped.err().unwrap_or_else(|| {
+            io::Error::other(format!("group {} leader did not stop", record.pgid))
+        });
+        return match resumed {
+            Ok(()) | Err(rustix::io::Errno::SRCH) => Err(error),
+            Err(errno) => Err(io::Error::other(format!(
+                "{error}; resuming the stopped leader {} failed: {errno}",
+                record.pgid
+            ))),
+        };
     }
     let killed = killpg(Pid::from_raw(record.pgid), Signal::SIGKILL);
     // The group's SIGKILL took the leader already; this covers a failed killpg.

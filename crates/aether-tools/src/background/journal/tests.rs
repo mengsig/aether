@@ -622,7 +622,8 @@ async fn foreground_crash_fixture() {
 }
 
 /// A foreground call whose shell exited leaves what it ran in its group: the
-/// start stops that through the call's token, but not what the call detached.
+/// start stops that through the call's token, but not what the call detached,
+/// nor a member without the token, which is not proven the call's.
 #[tokio::test]
 async fn recovery_stops_a_leaderless_foreground_group_by_its_call_token() {
     let dir = tempfile::tempdir().unwrap();
@@ -632,6 +633,7 @@ async fn recovery_stops_a_leaderless_foreground_group_by_its_call_token() {
         .args([
             "-c",
             "sleep 300 & echo $! > member.tmp && mv member.tmp member; \
+             env -u AETHER_FOREGROUND_CALL sleep 300 & echo $! > unproven.tmp && mv unproven.tmp unproven; \
              setsid sleep 300 </dev/null >/dev/null 2>&1 & echo $! > server.tmp && mv server.tmp server; \
              while [ ! -e exit ]; do sleep 0.01; done",
         ])
@@ -644,12 +646,24 @@ async fn recovery_stops_a_leaderless_foreground_group_by_its_call_token() {
     let registration = journal
         .register_foreground(call, child.id().unwrap())
         .unwrap();
-    ready(&dir.path().join("member")).await;
-    ready(&dir.path().join("server")).await;
-    let (member, server) = (
+    for marker in ["member", "unproven", "server"] {
+        ready(&dir.path().join(marker)).await;
+    }
+    let (member, unproven, server) = (
         pid_in(&dir.path().join("member")),
+        pid_in(&dir.path().join("unproven")),
         pid_in(&dir.path().join("server")),
     );
+    wait_for("the unproven member's token cleared", || {
+        let cleared = std::fs::read(format!("/proc/{unproven}/environ"))
+            .is_ok_and(|environment| !carries(&environment, &format!("{CALL_ENV}={call}")));
+        if cleared {
+            Observed::Held
+        } else {
+            Observed::Pending("token still present".into())
+        }
+    })
+    .await;
     std::fs::write(dir.path().join("exit"), "exit").unwrap();
     child.wait().await.unwrap();
     assert!(alive(member), "the call's command outlives its shell");
@@ -658,11 +672,72 @@ async fn recovery_stops_a_leaderless_foreground_group_by_its_call_token() {
         tokio::time::sleep(Duration::from_secs(2)).await;
         !alive(member)
     };
-    let server_survived = alive(server);
-    for pid in [member, server] {
+    let (unproven_survived, server_survived) = (alive(unproven), alive(server));
+    for pid in [member, unproven, server] {
         let _ = nix::sys::signal::kill(Pid::from_raw(pid), Signal::SIGKILL);
     }
     assert!(member_stopped, "the call's command outlived the start");
+    assert!(
+        unproven_survived,
+        "a member without the token was signalled"
+    );
     assert!(server_survived, "the server the call detached was stopped");
     assert!(!registration.0.exists());
+}
+
+/// A leader whose state cannot be read once it is stopped is resumed, not
+/// left stopped, and its record kept for the next start.
+#[test]
+fn a_leader_that_cannot_be_read_after_its_stop_is_resumed() {
+    use std::os::unix::process::CommandExt as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pid = child.id() as i32;
+    let stat = dir.path().join(pid.to_string()).join("stat");
+    std::fs::create_dir_all(stat.parent().unwrap()).unwrap();
+    nix::unistd::mkfifo(&stat, nix::sys::stat::Mode::S_IRWXU).unwrap();
+    let mut fields = vec!["0".to_owned(); 20];
+    fields[0] = "S".into();
+    fields[2] = pid.to_string();
+    fields[19] = "456".into();
+    let valid = format!("{pid} (sleep) {}", fields.join(" "));
+    // The first read finds the recorded leader; the one after its stop fails.
+    std::thread::spawn({
+        let stat = stat.clone();
+        move || {
+            std::fs::write(&stat, valid).unwrap();
+            // Past the first reader's close, so the second write starts a read of its own.
+            std::thread::sleep(Duration::from_millis(100));
+            std::fs::write(&stat, "garbage").unwrap();
+        }
+    });
+    let record = Record {
+        pgid: pid,
+        start_time: 456,
+        boot_id: String::new(),
+        uid: geteuid().as_raw(),
+        job: None,
+        call: Some(ProcessId::new()),
+    };
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let proc_root = dir.path().to_owned();
+    std::thread::spawn(move || {
+        let _ = done_tx.send(kill_through_leader(&record, &proc_root).is_err());
+    });
+    let failed = done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the pinned kill returns within seconds");
+    let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(failed, "an unreadable stopped leader is an error");
+    assert!(
+        !state.contains(") T "),
+        "the leader was left stopped: {state}"
+    );
 }
