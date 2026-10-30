@@ -152,6 +152,23 @@ impl BackgroundProcesses {
         Ok(Some(registration))
     }
 
+    /// Record the group foreground call `pid` leads until the registration is
+    /// cleared, so a start after a crash stops it; `None` without a journal.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn register_foreground(
+        &self,
+        pid: u32,
+    ) -> std::io::Result<Option<journal::Registration>> {
+        let journal = self
+            .journal
+            .lock()
+            .map_err(|_| std::io::Error::other("background journal poisoned"))?;
+        journal
+            .as_ref()
+            .map(|journal| journal.register_foreground(pid))
+            .transpose()
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<ProcessId, Process>>, ToolError> {
         self.processes
             .lock()

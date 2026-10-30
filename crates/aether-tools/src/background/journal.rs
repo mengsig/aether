@@ -126,11 +126,31 @@ impl Journal {
     }
 
     pub fn register(&self, id: ProcessId, pgid: u32) -> io::Result<(Registration, Durability)> {
+        let (registration, file) = self.publish(id, pgid, Some(id))?;
+        let directory = std::fs::File::open(&self.directory)?;
+        Ok((registration, Durability { file, directory }))
+    }
+
+    /// Record a foreground call's group, so a start after a crash stops the
+    /// call but not what it detached. Unsynced: a host crash ends the group too.
+    pub fn register_foreground(&self, pgid: u32) -> io::Result<Registration> {
+        let (registration, _file) = self.publish(ProcessId::new(), pgid, None)?;
+        Ok(registration)
+    }
+
+    /// Publish the record of group `pgid` as `name`; with no `job`, recovery
+    /// stops only the group and only while its leader is the one recorded.
+    fn publish(
+        &self,
+        name: ProcessId,
+        pgid: u32,
+        job: Option<ProcessId>,
+    ) -> io::Result<(Registration, std::fs::File)> {
         let stat = std::fs::read(format!("/proc/{pgid}/stat"))?;
         let identity = identity(&stat)?;
         if identity.group != pgid as i32 || identity.group <= 1 {
             return Err(io::Error::other(
-                "background child is not its process group leader",
+                "host command is not its process group leader",
             ));
         }
         let record = Record {
@@ -138,14 +158,13 @@ impl Journal {
             start_time: identity.start_time,
             boot_id: self.boot_id.clone(),
             uid: geteuid().as_raw(),
-            job: Some(id),
+            job,
         };
-        let path = self.directory.join(format!("{id}.json"));
+        let path = self.directory.join(format!("{name}.json"));
         let mut file = tempfile::NamedTempFile::new_in(&self.directory)?;
         file.write_all(&serde_json::to_vec(&record)?)?;
         let file = file.persist_noclobber(&path).map_err(|e| e.error)?;
-        let directory = std::fs::File::open(&self.directory)?;
-        Ok((Registration(path), Durability { file, directory }))
+        Ok((Registration(path), file))
     }
 
     fn matches(&self, record: &Record, proc_root: &Path) -> io::Result<bool> {

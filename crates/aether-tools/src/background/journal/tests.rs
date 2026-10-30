@@ -548,3 +548,73 @@ fn an_exited_group_signals_only_readable_unkept_members() {
         vec![10, 4242]
     );
 }
+
+/// A daemon that dies mid foreground call leaves that call's command running;
+/// the next start stops it, so a resumed agent never races it, but spares
+/// the server it detached.
+#[tokio::test]
+async fn recovery_stops_an_interrupted_foreground_call_but_not_what_it_detached() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut fixture = tokio::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "background::journal::tests::foreground_crash_fixture",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("AETHER_BACKGROUND_TEST_DIR", dir.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    ready(&dir.path().join("ready")).await;
+    let (leader, member, server) = (
+        pid_in(&dir.path().join("leader")),
+        pid_in(&dir.path().join("member")),
+        pid_in(&dir.path().join("server")),
+    );
+    fixture.kill().await.unwrap();
+    assert!(
+        alive(leader),
+        "the fixture's death must leave its call running"
+    );
+    BackgroundProcesses::new()
+        .recover_host_jobs(&dir.path().join("store"))
+        .unwrap();
+    dead(leader).await;
+    dead(member).await;
+    let server_survived = alive(server);
+    nix::sys::signal::kill(Pid::from_raw(server), Signal::SIGKILL).unwrap();
+    assert!(server_survived, "the server the call detached was stopped");
+}
+
+#[tokio::test]
+#[ignore = "subprocess fixture for recovery_stops_an_interrupted_foreground_call_but_not_what_it_detached"]
+async fn foreground_crash_fixture() {
+    use crate::tool::{Tool as _, ToolExecution};
+
+    let dir = PathBuf::from(std::env::var_os("AETHER_BACKGROUND_TEST_DIR").unwrap());
+    let registry = std::sync::Arc::new(BackgroundProcesses::new());
+    registry.recover_host_jobs(&dir.join("store")).unwrap();
+    let script = "setsid sh -c 'echo $$ > server.tmp; mv server.tmp server; exec sleep 60' \
+                  </dev/null >/dev/null 2>&1 & \
+                  sleep 60 & echo $! > member.tmp; mv member.tmp member; \
+                  echo $$ > leader.tmp; mv leader.tmp leader; wait";
+    let tool = crate::builtin::bash::BashTool::new(registry);
+    let ctx = ctx_in(&dir);
+    let call = tokio::spawn(async move {
+        let input = serde_json::json!({ "command": script });
+        let cancel = tokio_util::sync::CancellationToken::new();
+        match tool.execute(input, &ctx, cancel).await {
+            Ok(ToolExecution::Outcome(outcome)) => outcome.content,
+            other => format!("{other:?}"),
+        }
+    });
+    for marker in ["server", "member", "leader"] {
+        ready(&dir.join(marker)).await;
+    }
+    std::fs::write(dir.join("ready"), "ready").unwrap();
+    let ended = call.await.unwrap();
+    panic!("fixture should have been killed mid call; it ended: {ended}");
+}

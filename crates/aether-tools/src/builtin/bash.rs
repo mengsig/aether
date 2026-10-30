@@ -84,6 +84,9 @@ fn is_read_only(input: &Value) -> bool {
 struct GroupGuard {
     pgid: Option<Pid>,
     teardown: Option<Teardown>,
+    /// The group's crash record, cleared once the group is killed.
+    #[cfg(target_os = "linux")]
+    record: Option<crate::background::journal::Registration>,
 }
 
 impl GroupGuard {
@@ -102,6 +105,13 @@ impl GroupGuard {
             // ESRCH means the group is already gone; nothing else is actionable here.
             let _ = killpg(pid, Signal::SIGKILL);
         }
+        #[cfg(target_os = "linux")]
+        if let Some(record) = self.record.take()
+            && let Err(error) = record.clear()
+        {
+            // Harmless: the next start finds the recorded leader gone and drops it.
+            tracing::warn!(%error, "cannot clear a foreground call's crash record");
+        }
         if let Some(teardown) = self.teardown.take() {
             teardown.run();
         }
@@ -111,6 +121,21 @@ impl GroupGuard {
 impl Drop for GroupGuard {
     fn drop(&mut self) {
         self.kill();
+    }
+}
+
+impl BashTool {
+    /// Record the call's group so a start after a daemon crash stops it. The
+    /// call runs on unrecorded when that fails: refusing it would stop the agent.
+    #[cfg(target_os = "linux")]
+    fn record_foreground(&self, pid: u32) -> Option<crate::background::journal::Registration> {
+        match self.processes.register_foreground(pid) {
+            Ok(record) => record,
+            Err(error) => {
+                tracing::warn!(pid, %error, "cannot record a foreground call; a daemon crash would leave it running");
+                None
+            }
+        }
     }
 }
 
@@ -211,7 +236,13 @@ impl Tool for BashTool {
         let mut guard = GroupGuard {
             pgid: child.id().map(|p| Pid::from_raw(p as i32)),
             teardown: prepared.teardown,
+            #[cfg(target_os = "linux")]
+            record: None,
         };
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = child.id() {
+            guard.record = self.record_foreground(pid);
+        }
 
         let mut readers = Vec::with_capacity(2);
         if let Some(out) = child.stdout.take() {
