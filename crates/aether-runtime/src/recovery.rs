@@ -45,6 +45,31 @@ pub(crate) fn recover(runtime: &Arc<Runtime>) -> Result<()> {
     recover_with_boot_id(runtime, host_boot_id().as_deref())
 }
 
+/// What may still run of the turns a recovery finds interrupted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Restart {
+    /// The host rebooted: nothing the old daemon started survived.
+    Reboot,
+    /// The daemon started again; its start sweep stops what the old one's
+    /// agents left running before any turn runs, where processes can be found.
+    Daemon,
+    /// A live daemon recovers a turn whose processes may still run.
+    Live,
+}
+
+impl Restart {
+    /// Whether nothing an interrupted call started is still running once
+    /// recovered agents can run again, so retrying cannot overlap it.
+    fn stops_processes(self) -> bool {
+        match self {
+            Restart::Reboot => true,
+            // Only Linux finds an agent's processes again (`aether_engine::reap`).
+            Restart::Daemon => cfg!(target_os = "linux"),
+            Restart::Live => false,
+        }
+    }
+}
+
 fn host_restarted(previous: Option<&str>, current: Option<&str>) -> bool {
     matches!((previous, current), (Some(previous), Some(current))
         if !previous.is_empty() && !current.is_empty() && previous != current)
@@ -52,7 +77,11 @@ fn host_restarted(previous: Option<&str>, current: Option<&str>) -> bool {
 
 fn recover_with_boot_id(runtime: &Arc<Runtime>, current_boot: Option<&str>) -> Result<()> {
     let previous_boot = runtime.store.meta(BOOT_ID_META)?;
-    let rebooted = host_restarted(previous_boot.as_deref(), current_boot);
+    let restart = if host_restarted(previous_boot.as_deref(), current_boot) {
+        Restart::Reboot
+    } else {
+        Restart::Daemon
+    };
     let mut stale = runtime.store.leases()?;
     // Agents marked running without a lease are just as interrupted.
     for agent in runtime.store.agents(&AgentFilter {
@@ -88,8 +117,8 @@ fn recover_with_boot_id(runtime: &Arc<Runtime>, current_boot: Option<&str>) -> R
             stale.retain(|lease| lease.agent_id != id);
         }
     }
-    let recovered = recover_leases(runtime, stale, rebooted, None)?;
-    requarantine_inspected(runtime, &recovered.quarantined, rebooted)?;
+    let recovered = recover_leases(runtime, stale, restart, None)?;
+    requarantine_inspected(runtime, &recovered.quarantined, restart == Restart::Reboot)?;
     validation::validate_live(runtime)?;
     runtime.apply(Commit::new().mutate(Mutation::SetMeta {
         key: BOOT_ID_META.into(),
@@ -110,12 +139,12 @@ pub(crate) struct Recovered {
 }
 
 /// Classify each stale lease's turn and put its agent where that leaves it.
-/// `rebooted` only when the host boot changed since the last recovery.
+/// `restart` says what may still run of the turns they interrupted.
 /// `reason`, when given, is recorded with each recovery as `agent.recovered`.
 pub(crate) fn recover_leases(
     runtime: &Arc<Runtime>,
     stale: Vec<aether_core::lease::Lease>,
-    rebooted: bool,
+    restart: Restart,
     reason: Option<&str>,
 ) -> Result<Recovered> {
     let mut done = Recovered::default();
@@ -126,7 +155,7 @@ pub(crate) fn recover_leases(
         }
         let id = lease.agent_id;
         let recovered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            recover_lease(runtime, lease, rebooted, reason)
+            recover_lease(runtime, lease, restart, reason)
         }))
         .unwrap_or_else(|panic| {
             Err(crate::RuntimeError::Invalid(format!(
@@ -158,14 +187,14 @@ pub(crate) enum Outcome {
 fn recover_lease(
     runtime: &Arc<Runtime>,
     lease: aether_core::lease::Lease,
-    rebooted: bool,
+    restart: Restart,
     reason: Option<&str>,
 ) -> Result<Outcome> {
     let Some(agent) = runtime.store.agent(lease.agent_id)? else {
         runtime.apply(Commit::new().mutate(Mutation::ClearLease(lease.agent_id)))?;
         return Ok(Outcome::Done);
     };
-    recover_agent(runtime, lease, agent, rebooted, reason)
+    recover_agent(runtime, lease, agent, restart, reason)
 }
 
 /// Recover `agent` as read before the commit lock. A live daemon may write it
@@ -174,12 +203,15 @@ pub(crate) fn recover_agent(
     runtime: &Arc<Runtime>,
     lease: aether_core::lease::Lease,
     mut agent: aether_core::agent::Agent,
-    rebooted: bool,
+    restart: Restart,
     reason: Option<&str>,
 ) -> Result<Outcome> {
     debug_assert_eq!(lease.agent_id, agent.id, "the lease is the agent's");
-    let found = classify_or_inspect(runtime, &agent, rebooted)?;
-    let held = if found.class == RecoveryClass::Inspect || rebooted || found.headless_resume {
+    let found = classify_or_inspect(runtime, &agent, restart)?;
+    let held = if found.class == RecoveryClass::Inspect
+        || restart == Restart::Reboot
+        || found.headless_resume
+    {
         let mut keys = unreleased_keys(runtime, agent.id)?;
         keys.extend(found.cancelled_keys.iter().cloned());
         keys.sort();
@@ -613,9 +645,9 @@ fn turn_start_seq(runtime: &Runtime, agent: AgentId) -> Result<u64> {
 fn classify_or_inspect(
     runtime: &Runtime,
     agent: &aether_core::agent::Agent,
-    rebooted: bool,
+    restart: Restart,
 ) -> Result<Interrupted> {
-    match classify(runtime, agent, rebooted) {
+    match classify(runtime, agent, restart) {
         Ok(found) => Ok(found),
         Err(
             error @ crate::RuntimeError::Store(
@@ -651,7 +683,7 @@ fn classify_or_inspect(
 fn classify(
     runtime: &Runtime,
     agent: &aether_core::agent::Agent,
-    rebooted: bool,
+    restart: Restart,
 ) -> Result<Interrupted> {
     // Open work as the turn left it. Walking forward, each event either opens
     // something or closes what an earlier one opened.
@@ -739,9 +771,10 @@ fn classify(
         || invocation_open.is_some()
         || !cancelled_tools.is_empty()
         || cancelled_invocation;
-    let (class, detail) = decide(agent, rebooted, &needs_inspection, interrupted);
-    let headless_resume =
-        !rebooted && !needs_inspection.is_empty() && class != RecoveryClass::Inspect;
+    let (class, detail) = decide(agent, restart, &needs_inspection, interrupted);
+    let headless_resume = restart != Restart::Reboot
+        && !needs_inspection.is_empty()
+        && class != RecoveryClass::Inspect;
     Ok(Interrupted {
         calls: calls
             .into_iter()
@@ -758,11 +791,11 @@ fn classify(
     })
 }
 
-/// The class of a turn `classify` read. `unsure` names the mutating calls
-/// whose outcome is unknown; only an interactive tree waits for a person.
+/// The class of a turn `classify` read. `unsure` names the mutating calls whose
+/// outcome is unknown; a headless agent retries them once nothing of them runs.
 fn decide(
     agent: &aether_core::agent::Agent,
-    rebooted: bool,
+    restart: Restart,
     unsure: &[String],
     interrupted: bool,
 ) -> (RecoveryClass, String) {
@@ -772,15 +805,15 @@ fn decide(
     );
     if !unsure.is_empty() {
         let calls = unsure.join(", ");
-        return if rebooted {
+        return if restart == Restart::Reboot {
             (RecoveryClass::Retry, reboot_detail(&calls))
-        } else if agent.config.awaits_inspection() {
+        } else if restart.stops_processes() && !agent.config.awaits_inspection() {
+            (RecoveryClass::Retry, restart_detail(&calls))
+        } else {
             (
                 RecoveryClass::Inspect,
                 format!("mutating tool calls were in flight when the daemon stopped: {calls}"),
             )
-        } else {
-            (RecoveryClass::Retry, restart_detail(&calls))
         };
     }
     if interrupted {

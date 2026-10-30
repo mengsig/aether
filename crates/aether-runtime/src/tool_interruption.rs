@@ -90,7 +90,7 @@ pub(crate) fn notes_for(
                 notes.insert(call, note.to_owned());
             }
         }
-        if events.len() < 500 {
+        if events.len() < 500 || notes.len() == calls.len() {
             break;
         }
     }

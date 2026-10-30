@@ -12,6 +12,8 @@ fn wake_reason(runtime: &Runtime, agent: AgentId) -> Option<String> {
         })
 }
 
+// Only Linux finds the stopped command's processes again to stop them.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_headless_agent_resumes_after_a_restart_told_its_calls_have_an_unknown_outcome() {
     let (runtime, _dir, agent) = headless_fixture().await;
@@ -65,6 +67,56 @@ async fn a_headless_agent_resumes_after_a_restart_told_its_calls_have_an_unknown
         wakes,
         "no duplicate wake"
     );
+}
+
+fn assert_parked(runtime: &Runtime, agent: AgentId) {
+    let row = runtime.store.agent(agent).unwrap().unwrap();
+    assert!(
+        matches!(
+            row.status,
+            AgentStatus::Blocked {
+                reason: BlockReason::Inspection { .. }
+            }
+        ),
+        "{:?}",
+        row.status
+    );
+    assert!(wake_reason(runtime, agent).is_none(), "no retry wake");
+}
+
+/// A live daemon recovering a lost turn stops none of its processes, so a
+/// retry could overlap the command still running: the agent waits instead.
+#[tokio::test]
+async fn a_headless_agent_waits_when_its_command_may_still_run() {
+    let (runtime, _dir, agent) = headless_fixture().await;
+    request(&runtime, &agent, "Bash", SideEffectClass::Mutation);
+    let key = acquire(&runtime, agent.id);
+    let lease = runtime.store.lease(agent.id).unwrap().expect("lease");
+    let recovered = recover_leases(&runtime, vec![lease], Restart::Live, None).expect("recover");
+    assert_eq!(recovered.quarantined, vec![agent.id]);
+    assert_parked(&runtime, agent.id);
+    assert_eq!(unreleased_keys(&runtime, agent.id).unwrap(), vec![key]);
+}
+
+#[tokio::test]
+async fn a_restarted_agent_keeps_saying_whether_a_person_watches_it() {
+    for (stored, successor) in [(Some(true), Some(true)), (None, Some(false))] {
+        let (runtime, _dir, agent) = fixture().await;
+        let mut failed = store_as_legacy(&runtime, &agent);
+        failed.config.interactive = stored;
+        failed.status = AgentStatus::Failed {
+            error: "stopped".into(),
+        };
+        runtime
+            .apply(Commit::new().mutate(Mutation::UpsertAgent(failed)))
+            .expect("failed agent");
+        let next = runtime
+            .restart_agent(agent.id, Actor::user())
+            .expect("restart");
+        assert_eq!(next.config.interactive, successor, "after {stored:?}");
+        let row = runtime.store.agent(next.id).unwrap().unwrap();
+        assert_eq!(row.config.interactive, successor, "stored as returned");
+    }
 }
 
 #[tokio::test]

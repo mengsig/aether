@@ -87,6 +87,8 @@ async fn a_daemon_stop_mid_mutating_tool_requires_inspection() {
 
 /// Nobody inspects a headless agent, so it resumes on its own after the
 /// restart, told that the stopped command's outcome is unknown.
+// Only Linux finds the stopped command's processes again to stop them.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_daemon_stop_mid_mutating_tool_resumes_a_headless_agent() {
     let h = harness(vec![ScriptedClient::tool_call(

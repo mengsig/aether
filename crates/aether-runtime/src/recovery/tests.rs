@@ -176,7 +176,7 @@ async fn native_reads_and_waits_retry_but_native_writes_and_unknown_mcp_require_
     ] {
         let id = request(&runtime, &agent, name, recorded);
         assert_eq!(
-            classify(&runtime, &agent, false)
+            classify(&runtime, &agent, Restart::Daemon)
                 .expect("classification")
                 .class,
             expected,
@@ -428,12 +428,12 @@ async fn cancelled_unsafe_calls_stay_quarantined_on_the_same_boot_and_retry_afte
 async fn running_turns_without_events_retry_and_idle_ready_turns_resume() {
     let (runtime, _dir, mut agent) = fixture().await;
     assert_eq!(
-        classify(&runtime, &agent, false).unwrap().class,
+        classify(&runtime, &agent, Restart::Daemon).unwrap().class,
         RecoveryClass::Retry
     );
     agent.status = AgentStatus::Ready;
     assert_eq!(
-        classify(&runtime, &agent, false).unwrap().class,
+        classify(&runtime, &agent, Restart::Daemon).unwrap().class,
         RecoveryClass::Resume
     );
     let call = ToolCallId::new();
@@ -447,11 +447,11 @@ async fn running_turns_without_events_retry_and_idle_ready_turns_resume() {
         )
         .expect("legacy unnamed started call");
     assert_eq!(
-        classify(&runtime, &agent, false).unwrap().class,
+        classify(&runtime, &agent, Restart::Daemon).unwrap().class,
         RecoveryClass::Inspect
     );
     assert_eq!(
-        classify(&runtime, &agent, true).unwrap().class,
+        classify(&runtime, &agent, Restart::Reboot).unwrap().class,
         RecoveryClass::Retry
     );
 }
