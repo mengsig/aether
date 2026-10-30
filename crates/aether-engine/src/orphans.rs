@@ -118,29 +118,27 @@ pub fn reap(dir: &Path, interrupted: &HashSet<AgentId>) -> io::Result<Vec<u32>> 
         else {
             continue;
         };
-        let text = match std::fs::read_to_string(&path) {
-            Ok(text) => text,
-            // The engine's own run already dropped its record.
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(io::Error::new(
-                    error.kind(),
-                    format!(
-                        "reading engine record {}: {error}; fix its permissions or remove it, then restart",
-                        path.display()
-                    ),
-                ));
-            }
+        let Some((recorded, token)) = read_record(&path)? else {
+            continue;
         };
-        let mut lines = text.lines();
-        let recorded = lines
-            .next()
-            .and_then(|line| line.trim().parse::<u64>().ok());
-        let token = lines.next().map(str::trim).filter(|t| !t.is_empty());
-        if recorded.is_some_and(|started| kill_matching_group(pid, started)) {
+        // Kept on an error: a resumed agent must not run beside its engine.
+        let killed = match recorded {
+            Some(started) => kill_matching_group(pid, started).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!(
+                        "cannot stop the engine a crashed daemon left in process group {pid}: {e}; \
+                         an agent resumed beside it could race it. Stop that group \
+                         (kill -KILL -- -{pid}) and start again"
+                    ),
+                )
+            })?,
+            None => false,
+        };
+        if killed {
             reaped.push(pid);
         }
-        if let Some(token) = token {
+        if let Some(token) = token.as_deref() {
             kill_tagged(token, interrupted)
                 .map_err(|e| io::Error::new(e.kind(), format!("sweeping engine {pid}: {e}")))?;
         }
@@ -154,12 +152,37 @@ pub fn reap(dir: &Path, interrupted: &HashSet<AgentId>) -> io::Result<Vec<u32>> 
     Ok(reaped)
 }
 
+/// The engine start time and token recorded at `path`, each if readable;
+/// None once the engine's own run dropped the record.
+fn read_record(path: &Path) -> io::Result<Option<(Option<u64>, Option<String>)>> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "reading engine record {}: {error}; fix its permissions or remove it, then restart",
+                    path.display()
+                ),
+            ));
+        }
+    };
+    let mut lines = text.lines();
+    let recorded = lines
+        .next()
+        .and_then(|line| line.trim().parse::<u64>().ok());
+    let token = lines.next().map(str::trim).filter(|t| !t.is_empty());
+    Ok(Some((recorded, token.map(str::to_owned))))
+}
+
 /// SIGKILL the group `pid` leads, if `pid` still has start time `recorded`.
 ///
 /// A pidfd pins the process and SIGSTOP keeps it from exiting, so its pid
-/// cannot be reused between the identity check and the group signal.
+/// cannot be reused between the identity check and the group signal. An error
+/// means the recorded engine still runs: it did not stop or its group's kill failed.
 #[cfg(target_os = "linux")]
-fn kill_matching_group(pid: u32, recorded: u64) -> bool {
+fn kill_matching_group(pid: u32, recorded: u64) -> io::Result<bool> {
     use rustix::process::{Pid as RustixPid, PidfdFlags, Signal as RustixSignal};
 
     assert!(
@@ -167,32 +190,25 @@ fn kill_matching_group(pid: u32, recorded: u64) -> bool {
         "not an engine pid: {pid}"
     );
     let Some(raw) = RustixPid::from_raw(pid as i32) else {
-        return false;
+        return Ok(false);
     };
-    let Ok(pidfd) = rustix::process::pidfd_open(raw, PidfdFlags::empty()) else {
-        return false;
+    let pidfd = match rustix::process::pidfd_open(raw, PidfdFlags::empty()) {
+        Ok(pidfd) => pidfd,
+        Err(rustix::io::Errno::SRCH) => return Ok(false),
+        Err(errno) => return Err(errno.into()),
     };
-    if start_time(pid) != Some(recorded) {
-        return false;
+    if !runs_as_recorded(pid, recorded) {
+        return Ok(false);
     }
     // Once stopped it cannot exit, so its pid stays ours until the group is signalled.
-    if rustix::process::pidfd_send_signal(&pidfd, RustixSignal::STOP).is_err() {
-        return false;
+    match rustix::process::pidfd_send_signal(&pidfd, RustixSignal::STOP) {
+        Ok(()) => {}
+        Err(rustix::io::Errno::SRCH) => return Ok(false),
+        Err(errno) => return Err(errno.into()),
     }
-    let stopped = wait_stopped(pid) && start_time(pid) == Some(recorded);
-    let group = Pid::from_raw(pid as i32);
-    // Engines are spawned as their own group leaders; anything else is not ours.
-    let killed = stopped
-        && getpgid(Some(group)) == Ok(group)
-        && match killpg(group, Signal::SIGKILL) {
-            Ok(()) => true,
-            Err(errno) => {
-                tracing::warn!(pid, %errno, "could not kill an orphaned engine process group");
-                false
-            }
-        };
+    let killed = kill_stopped_group(pid, recorded);
     // A leader that was not ours is resumed; a killed one dies with its group.
-    let resume = if killed {
+    let resume = if matches!(killed, Ok(true)) {
         RustixSignal::KILL
     } else {
         RustixSignal::CONT
@@ -203,34 +219,98 @@ fn kill_matching_group(pid: u32, recorded: u64) -> bool {
     killed
 }
 
-#[cfg(not(target_os = "linux"))]
-fn kill_matching_group(_pid: u32, _recorded: u64) -> bool {
-    false
+/// SIGKILL the group `pid` leads once that leader, sent SIGSTOP, shows stopped
+/// with start time `recorded`; false when it is gone or leads no group.
+#[cfg(target_os = "linux")]
+fn kill_stopped_group(pid: u32, recorded: u64) -> io::Result<bool> {
+    let stopped = wait_stopped(pid);
+    if !runs_as_recorded(pid, recorded) {
+        return Ok(false);
+    }
+    if !stopped {
+        return Err(io::Error::other(format!("engine {pid} did not stop")));
+    }
+    let group = Pid::from_raw(pid as i32);
+    // Engines are spawned as their own group leaders; anything else is not ours.
+    if getpgid(Some(group)) != Ok(group) {
+        return Ok(false);
+    }
+    killpg(group, Signal::SIGKILL)
+        .map_err(|errno| io::Error::other(format!("killing engine group {pid}: {errno}")))?;
+    Ok(true)
 }
 
+/// Whether `pid` is alive, not a zombie, and has start time `recorded`.
+#[cfg(target_os = "linux")]
+fn runs_as_recorded(pid: u32, recorded: u64) -> bool {
+    let Some(fields) = stat_fields(pid) else {
+        return false;
+    };
+    let exited = matches!(fields.first().map(String::as_str), Some("Z" | "X"));
+    let started = fields.get(19).and_then(|field| field.parse::<u64>().ok());
+    !exited && started == Some(recorded)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kill_matching_group(_pid: u32, _recorded: u64) -> io::Result<bool> {
+    Ok(false)
+}
+
+/// How many sweeps for an engine's token carriers may each find a new one,
+/// forked by a carrier the sweep before had not reached yet.
+#[cfg(target_os = "linux")]
+const TAGGED_SWEEPS: usize = 10;
+
 /// SIGKILL every live process of this user whose environment carries `token`,
-/// but one an agent's tag or the keep entry spares ([`spared`]).
+/// but one an agent's tag or the keep entry spares ([`spared`]), sweeping
+/// again until a sweep finds no carrier it had not signalled.
 ///
 /// The token is random per engine spawn, so a match proves descent from that
-/// engine. A pidfd is opened before the environment is read, so the pid
-/// cannot be reused between the check and the signal. Unexpected errors are
-/// returned so the caller keeps the record and the next start retries.
+/// engine. A killed carrier cannot fork, so the sweeps end unless carriers
+/// keep appearing. Unexpected errors are returned so the caller keeps the
+/// record and the next start retries.
 #[cfg(target_os = "linux")]
 fn kill_tagged(token: &str, interrupted: &HashSet<AgentId>) -> io::Result<()> {
-    use rustix::process::{Pid as RustixPid, PidfdFlags, Signal as RustixSignal};
-
     assert!(!token.is_empty(), "an empty token would match any process");
     let entry_token = format!("{TOKEN_ENV}={token}");
+    let mut signalled = HashSet::new();
+    for _ in 0..TAGGED_SWEEPS {
+        if !sweep_tagged(&entry_token, interrupted, &mut signalled)? {
+            return Ok(());
+        }
+        // Time for a carrier forked as the last one died to show in /proc.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Err(io::Error::other(format!(
+        "processes carrying {entry_token} kept appearing through {TAGGED_SWEEPS} sweeps"
+    )))
+}
+
+/// One pass of [`kill_tagged`]: SIGKILL each unspared carrier of `entry_token`
+/// not yet in `signalled` (pid and start time) and add it; true if any was.
+///
+/// A pidfd is opened before the environment is read, so the pid cannot be
+/// reused between the check and the signal.
+#[cfg(target_os = "linux")]
+fn sweep_tagged(
+    entry_token: &str,
+    interrupted: &HashSet<AgentId>,
+    signalled: &mut HashSet<(u32, u64)>,
+) -> io::Result<bool> {
+    use rustix::process::{Pid as RustixPid, PidfdFlags, Signal as RustixSignal};
+
+    assert!(
+        entry_token.starts_with(TOKEN_ENV),
+        "not a token entry: {entry_token}"
+    );
     let own = std::process::id();
+    let mut found = false;
     for entry in std::fs::read_dir("/proc")? {
         let entry = entry?;
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
             continue;
         };
-        if pid <= 1 || pid == own {
-            continue;
-        }
-        let Some(raw) = RustixPid::from_raw(pid as i32) else {
+        let Some(raw) = RustixPid::from_raw(pid as i32).filter(|_| pid > 1 && pid != own) else {
             continue;
         };
         let pidfd = match rustix::process::pidfd_open(raw, PidfdFlags::empty()) {
@@ -238,32 +318,45 @@ fn kill_tagged(token: &str, interrupted: &HashSet<AgentId>) -> io::Result<()> {
             Err(rustix::io::Errno::SRCH) => continue,
             Err(errno) => return Err(errno.into()),
         };
-        // Gone, or not ours to inspect (another user, non-dumpable): skip.
-        let environment = match std::fs::read(entry.path().join("environ")) {
-            Ok(environment) => environment,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
-                ) || error.raw_os_error() == Some(nix::libc::ESRCH) =>
-            {
-                continue;
-            }
-            Err(error) => return Err(error),
+        let Some(environment) = carrier_environment(&entry.path())? else {
+            continue;
         };
-        if !environment
+        let carries = environment
             .split(|b| *b == 0)
-            .any(|e| e == entry_token.as_bytes())
-            || spared(&environment, interrupted)
-        {
+            .any(|e| e == entry_token.as_bytes());
+        let Some(started) =
+            start_time(pid).filter(|_| carries && !spared(&environment, interrupted))
+        else {
+            continue;
+        };
+        if !signalled.insert((pid, started)) {
             continue;
         }
+        found = true;
         match rustix::process::pidfd_send_signal(&pidfd, RustixSignal::KILL) {
             Ok(()) | Err(rustix::io::Errno::SRCH) => {}
             Err(errno) => return Err(errno.into()),
         }
     }
-    Ok(())
+    Ok(found)
+}
+
+/// `process`'s environment; None when it is gone or not ours to inspect
+/// (another user's, non-dumpable).
+#[cfg(target_os = "linux")]
+fn carrier_environment(process: &Path) -> io::Result<Option<Vec<u8>>> {
+    match std::fs::read(process.join("environ")) {
+        Ok(environment) => Ok(Some(environment)),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+            ) || error.raw_os_error() == Some(nix::libc::ESRCH) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Whether a token carrier with `environment` is left alone: it is kept, or
@@ -664,6 +757,109 @@ mod tests {
         std::fs::write(dir.path().join("4194300"), "1").unwrap();
         assert!(reap(dir.path(), &HashSet::new()).unwrap().is_empty());
         assert!(dir.path().join("notes.txt").exists());
+    }
+
+    /// A carrier that appears once the sweep has passed it, here a waiter that
+    /// takes the token when the carrier it watched is killed, is caught by the
+    /// next sweep.
+    #[test]
+    fn a_carrier_forked_behind_the_sweep_is_caught_by_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = "tok-forked-behind-the-sweep-0001";
+        let script = format!(
+            "{TOKEN_ENV}={token} sleep 34 & echo $! > watched.tmp && mv watched.tmp watched; \
+             wait $!; export {TOKEN_ENV}={token}; exec sleep 35"
+        );
+        let mut waiter = std::process::Command::new("sh")
+            .args(["-c", &script])
+            .current_dir(dir.path())
+            .env_remove(TOKEN_ENV)
+            .env_remove(aether_core::agent::PROCESS_AGENT_ENV)
+            .env_remove(aether_core::agent::PROCESS_KEEP_ENV)
+            .spawn()
+            .unwrap();
+        let watched = dir.path().join("watched");
+        for _ in 0..100 {
+            if watched.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let watched: u32 = std::fs::read_to_string(&watched)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let entry = format!("{TOKEN_ENV}={token}");
+        for _ in 0..100 {
+            let environment = std::fs::read(format!("/proc/{watched}/environ")).unwrap_or_default();
+            if environment
+                .split(|b| *b == 0)
+                .any(|e| e == entry.as_bytes())
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let records = dir.path().join("records");
+        prepare_dir(&records).unwrap();
+        std::fs::write(records.join(waiter.id().to_string()), format!("1\n{token}")).unwrap();
+        reap(&records, &HashSet::new()).unwrap();
+        let caught = exits_soon(&mut waiter);
+        let _ = waiter.kill();
+        let _ = waiter.wait();
+        assert!(start_time(watched).is_none() || stat_fields(watched).unwrap()[0] == "Z");
+        assert!(
+            caught,
+            "the carrier that appeared behind the sweep outlived it"
+        );
+    }
+
+    /// A recorded engine that never shows stopped, here because a tracer takes
+    /// its SIGSTOP, fails the reap and keeps its record for the next start.
+    #[test]
+    fn an_engine_that_does_not_stop_fails_the_reap_and_keeps_its_record() {
+        use std::io::BufRead as _;
+
+        let tracer_script = "import ctypes, os, time\n\
+            libc = ctypes.CDLL(None, use_errno=True)\n\
+            pid = os.fork()\n\
+            if pid == 0:\n    os.setpgid(0, 0)\n    libc.ptrace(0, 0, None, None)\n    \
+            os.execvp('sleep', ['sleep', '30'])\n\
+            os.waitpid(pid, os.WUNTRACED)\n\
+            print(pid, flush=True)\n\
+            time.sleep(30)\n";
+        let Ok(mut tracer) = std::process::Command::new("python3")
+            .args(["-c", tracer_script])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+        else {
+            eprintln!("skipping: no python3 to trace the engine");
+            return;
+        };
+        let mut line = String::new();
+        std::io::BufReader::new(tracer.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let engine: u32 = line.trim().parse().unwrap();
+        let traced = stat_fields(engine).is_some_and(|fields| fields[0] == "t");
+        let dir = tempfile::tempdir().unwrap();
+        let record = dir.path().join(engine.to_string());
+        std::fs::write(&record, start_time(engine).unwrap().to_string()).unwrap();
+        let reaped = traced.then(|| reap(dir.path(), &HashSet::new()));
+        let _ = nix::sys::signal::kill(Pid::from_raw(engine as i32), Signal::SIGKILL);
+        let _ = tracer.kill();
+        let _ = tracer.wait();
+        let Some(reaped) = reaped else {
+            eprintln!("skipping: the engine could not be traced");
+            return;
+        };
+        let error = reaped.expect_err("an engine that did not stop was counted as reaped");
+        assert!(
+            error.to_string().contains("cannot stop the engine"),
+            "{error}"
+        );
+        assert!(record.exists(), "the record stays for the next start");
     }
 
     /// Runs [`unrecordable_engine_helper`] in its own process: the registry
