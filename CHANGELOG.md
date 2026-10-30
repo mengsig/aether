@@ -37,6 +37,14 @@ clients on 17 through 24 see it as `usage_limit`.
   `deadline.warning` custom event and shown in the TUI, and `inspect_state`
   reports `deadline_minutes_left`.
 
+- **A network-denied Claude Code agent can commit in a linked Git worktree on
+  every supported Claude Code version.** A commit in a linked worktree writes
+  to the repository's shared Git directory, outside the workspace. Aether now
+  adds that directory, from `git rev-parse --git-common-dir`, to the offline
+  sandbox's `allowWrite`, and nothing wider. Claude Code 2.1.312 already
+  allowed it by itself (checked with a real sandboxed commit), so this stops
+  relying on the engine to notice the worktree.
+
 - **A headless agent resumes after a daemon restart instead of waiting for an
   inspection nobody does.** A daemon stopped while an agent ran a mutating
   call (a `docker compose up` in Bash, a file write) left the agent
