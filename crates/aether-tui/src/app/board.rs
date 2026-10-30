@@ -803,6 +803,7 @@ fn quota_line(app: &App, agent: &Agent) -> Option<String> {
             let what = match class {
                 ExhaustionClass::QuotaExhausted => "quota exhausted",
                 ExhaustionClass::UsageLimit => "usage limit reached",
+                ExhaustionClass::Credentials => "sign-in refused",
             };
             let dot = app.theme.glyphs().dot;
             Some(format!(

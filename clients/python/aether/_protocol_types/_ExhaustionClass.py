@@ -7,4 +7,5 @@ from typing import Any, Literal, TypedDict
 
 # The subset of [`ModelErrorClass`] a probe can recover from. `ContextLimit`
 # is deliberately unrepresentable: it is not credits, and waiting cannot fix it.
-ExhaustionClass = Literal["quota_exhausted", "usage_limit"]
+# `Credentials` is a sign-in the provider refused, which an operator renews.
+ExhaustionClass = Literal["quota_exhausted", "usage_limit", "credentials"]

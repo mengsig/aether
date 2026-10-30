@@ -31,6 +31,8 @@ use scripted::{Reply, ScriptedEngine};
 mod approval_expiry;
 #[path = "engine/attachments.rs"]
 mod attachments;
+#[path = "engine/auth_suspension.rs"]
+mod auth_suspension;
 #[path = "engine/bridge_build.rs"]
 mod bridge_build;
 #[path = "engine/budgets.rs"]
@@ -51,6 +53,8 @@ mod completion_waits;
 mod cost_gap;
 #[path = "engine/effort.rs"]
 mod effort;
+#[path = "engine/engine_availability.rs"]
+mod engine_availability;
 #[path = "engine/exhaustion.rs"]
 mod exhaustion;
 #[path = "engine/extended_context.rs"]
@@ -107,6 +111,8 @@ mod temp_dir;
 mod tool_surface;
 #[path = "engine/transient_retry.rs"]
 mod transient_retry;
+#[path = "engine/transient_window.rs"]
+mod transient_window;
 #[path = "engine/ungated_engine.rs"]
 mod ungated_engine;
 #[path = "engine/usage.rs"]

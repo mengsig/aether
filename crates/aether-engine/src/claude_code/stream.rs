@@ -331,26 +331,7 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
                     .or_else(|| v.get("duration_ms"))
                     .and_then(Value::as_u64),
                 is_error,
-                error: is_error.then(|| {
-                    let mut details: Vec<&str> = text
-                        .as_deref()
-                        .filter(|text| !text.trim().is_empty())
-                        .into_iter()
-                        .collect();
-                    if let Some(errors) = v.get("errors").and_then(Value::as_array) {
-                        details.extend(
-                            errors
-                                .iter()
-                                .filter_map(Value::as_str)
-                                .filter(|error| !error.trim().is_empty()),
-                        );
-                    }
-                    if details.is_empty() {
-                        subtype.to_owned()
-                    } else {
-                        details.join("\n")
-                    }
-                }),
+                error: is_error.then(|| result_error(&v, text.as_deref(), subtype)),
                 session: v
                     .get("session_id")
                     .and_then(Value::as_str)
@@ -365,6 +346,34 @@ pub fn parse_line(line: &str, state: &mut ParseState) -> Vec<EngineEvent> {
         }
         _ => Vec::new(),
     }
+}
+
+/// A failed result's text and `errors`, joined. A 401 is named outright so the
+/// runtime can tell a refused sign-in from prose that merely mentions one.
+fn result_error(v: &Value, text: Option<&str>, subtype: &str) -> String {
+    debug_assert_eq!(v.get("type").and_then(Value::as_str), Some("result"));
+    let mut details: Vec<&str> = text
+        .filter(|text| !text.trim().is_empty())
+        .into_iter()
+        .collect();
+    if let Some(errors) = v.get("errors").and_then(Value::as_array) {
+        details.extend(
+            errors
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|error| !error.trim().is_empty()),
+        );
+    }
+    if v.get("api_error_status").and_then(Value::as_u64) == Some(401) {
+        details.push("api_error_status: 401");
+    }
+    let joined = if details.is_empty() {
+        subtype.to_owned()
+    } else {
+        details.join("\n")
+    };
+    debug_assert!(!joined.is_empty() || subtype.is_empty());
+    joined
 }
 
 /// `compact_boundary`: the session now continues from Claude Code's summary.
