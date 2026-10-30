@@ -276,6 +276,7 @@ async fn terminal_stop_kills_the_session_and_pipe_processes_reject_input() {
             "echo $$ > terminal.pid.tmp && mv terminal.pid.tmp terminal.pid; read -r answer",
             &ctx,
             true,
+            &CancellationToken::new(),
         )
         .unwrap();
     let pid_path = dir.path().join("terminal.pid");
@@ -319,7 +320,7 @@ async fn terminal_control_input_and_hidden_environment_are_preserved() {
     let reg = BackgroundProcesses::new();
     let p = reg.start_with_terminal(ctx.agent_id,
         r#"test -z "${AETHER_PTY_SECRET+x}" || exit 9; trap 'printf INTERRUPTED; exit 0' INT; printf ENV_HIDDEN_READY; while :; do read -r answer; done"#,
-        &ctx, true).unwrap();
+        &ctx, true, &CancellationToken::new()).unwrap();
     wait_for_output(&reg, &ctx, p.id, "ENV_HIDDEN_READY").await;
     reg.write_stdin(ctx.agent_id, p.id, "\u{3}", CancellationToken::new())
         .await

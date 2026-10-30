@@ -362,6 +362,14 @@ pub const COST_FLOOR_NOTE: &str = "cost is a lower bound";
 /// How much of a budget may be spent before the person is warned (§3.1).
 pub const BUDGET_WARN_FRACTION: f64 = 0.8;
 
+/// Environment variable naming the agent a process runs for: set on every
+/// engine and host shell command, and inherited by what they start.
+pub const PROCESS_AGENT_ENV: &str = "AETHER_ENGINE_AGENT";
+
+/// Environment entry that keeps a process past its owner's end: set to `1`, no
+/// agent-end, job-end or daemon-stop sweep signals the process or what inherits it.
+pub const PROCESS_KEEP_ENV: &str = "AETHER_KEEP_PROCESS";
+
 /// `root` and every descendant of it within `agents`, breadth-first, each
 /// exactly once; empty when `root` is not in the set. One walk shared by
 /// everything that acts on a subtree, so a fan-out can never reach the same

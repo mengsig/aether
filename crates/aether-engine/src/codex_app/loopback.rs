@@ -234,6 +234,8 @@ pub(super) async fn start(
     hidden_env: &[String],
     temp_dir: Option<&Path>,
     build_env: &[(String, std::path::PathBuf)],
+    launch: Option<&crate::EngineLaunchContext>,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Result<Sandbox, EngineError> {
     use std::os::unix::process::CommandExt as _;
 
@@ -271,7 +273,8 @@ pub(super) async fn start(
     let token = hex::encode(raw);
     let digest = hex::encode(Sha256::digest(token.as_bytes()));
 
-    let mut command = tokio::process::Command::new("bwrap");
+    // Tagged, gated and scoped as an engine, so its agent's reap finds it.
+    let mut command = crate::scope::command("bwrap", launch.map(|launch| launch.agent_id));
     command
         .args(bwrap_args(&socket, program, &digest, &seccomp))
         .current_dir(cwd)
@@ -284,8 +287,9 @@ pub(super) async fn start(
     crate::strip_hidden(&mut command, hidden_env);
     crate::export_temp_dir(&mut command, temp_dir);
     crate::export_build_env(&mut command, build_env);
-    let (mut child, watch) = crate::lifeline::spawn(command)
+    let (mut child, watch, adoption) = crate::spawn_gated(command, launch, cancel)
         .map_err(|e| unsupported(format!("cannot start bwrap: {e}")))?;
+    crate::scope::adopt(child.id(), adoption).await;
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {

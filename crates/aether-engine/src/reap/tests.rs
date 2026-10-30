@@ -10,8 +10,8 @@ use tokio::io::AsyncWriteExt as _;
 
 use aether_core::id::AgentId;
 
-use super::linux::{carries, cgroup_members, is_live, tagged};
-use super::reap_agent;
+use super::linux::{carries, cgroup_members, command_line, is_live, kept, tagged, tagged_agents};
+use super::{agents_with_processes, live_processes, reap_agent, reap_agents};
 
 const UID: u32 = 4242;
 
@@ -45,7 +45,45 @@ fn selects_live_processes_carrying_the_exact_tag() {
     std::fs::create_dir(root.path().join("self")).unwrap();
     std::fs::write(root.path().join("uptime"), "1 1").unwrap();
 
-    assert_eq!(tagged(root.path(), tag, 15, own_uid()), vec![10, 11]);
+    assert_eq!(
+        tagged(root.path(), &tags(&[tag]), 15, own_uid()),
+        vec![10, 11]
+    );
+}
+
+fn tags(entries: &[&str]) -> Vec<String> {
+    entries.iter().map(|entry| (*entry).to_owned()).collect()
+}
+
+#[test]
+fn selects_the_processes_of_every_swept_agent_and_no_other() {
+    let root = tempfile::tempdir().unwrap();
+    fake_process(root.path(), 10, "S", &["AETHER_ENGINE_AGENT=agt_A"]);
+    fake_process(root.path(), 11, "S", &["AETHER_ENGINE_AGENT=agt_B"]);
+    fake_process(root.path(), 12, "S", &["AETHER_ENGINE_AGENT=agt_C"]);
+    fake_process(root.path(), 13, "S", &["HOME=/home/user"]);
+    let swept = tags(&["AETHER_ENGINE_AGENT=agt_A", "AETHER_ENGINE_AGENT=agt_B"]);
+    assert_eq!(tagged(root.path(), &swept, 0, own_uid()), vec![10, 11]);
+}
+
+#[test]
+fn names_the_agents_live_processes_are_tagged_with() {
+    let root = tempfile::tempdir().unwrap();
+    let a = AgentId::new();
+    let b = AgentId::new();
+    let tag_a = format!("AETHER_ENGINE_AGENT={a}");
+    let tag_b = format!("AETHER_ENGINE_AGENT={b}");
+    fake_process(root.path(), 10, "S", &["HOME=/home/user", &tag_a]);
+    fake_process(root.path(), 11, "S", &[&tag_a]);
+    fake_process(root.path(), 12, "Z", &[&tag_b]);
+    fake_process(root.path(), 13, "S", &["AETHER_ENGINE_AGENT=not-an-id"]);
+    fake_process(root.path(), 14, "S", &[&tag_b]);
+    assert_eq!(tagged_agents(root.path(), 14, own_uid()), vec![a]);
+    let mut both = vec![a, b];
+    both.sort_unstable();
+    fake_process(root.path(), 15, "S", &[&tag_b]);
+    assert_eq!(tagged_agents(root.path(), 14, own_uid()), both);
+    assert!(tagged_agents(root.path(), 0, UID).is_empty());
 }
 
 #[test]
@@ -53,9 +91,46 @@ fn never_selects_another_users_process() {
     let root = tempfile::tempdir().unwrap();
     let tag = "AETHER_ENGINE_AGENT=agt_A";
     fake_process(root.path(), 10, "S", &[tag]);
-    assert!(carries(root.path(), 10, tag, own_uid()));
-    assert!(!carries(root.path(), 10, tag, UID));
-    assert!(tagged(root.path(), tag, 0, UID).is_empty());
+    assert!(carries(root.path(), 10, &tags(&[tag]), own_uid()));
+    assert!(!carries(root.path(), 10, &tags(&[tag]), UID));
+    assert!(tagged(root.path(), &tags(&[tag]), 0, UID).is_empty());
+}
+
+#[test]
+fn only_the_exact_keep_entry_keeps_a_process() {
+    let root = tempfile::tempdir().unwrap();
+    fake_process(root.path(), 10, "S", &["AETHER_KEEP_PROCESS=1"]);
+    fake_process(root.path(), 11, "S", &["AETHER_KEEP_PROCESS=0"]);
+    fake_process(root.path(), 12, "S", &["X=AETHER_KEEP_PROCESS=1"]);
+    assert!(kept(root.path(), 10, own_uid()));
+    assert!(!kept(root.path(), 11, own_uid()));
+    assert!(!kept(root.path(), 12, own_uid()));
+    assert!(
+        !kept(root.path(), 13, own_uid()),
+        "a gone process is not kept"
+    );
+    fake_process(root.path(), 14, "S", &[]);
+    std::fs::remove_file(root.path().join("14/environ")).unwrap();
+    assert!(
+        kept(root.path(), 14, own_uid()),
+        "an unreadable environment may hold the entry"
+    );
+}
+
+#[test]
+fn names_a_process_by_its_command_line_or_its_name() {
+    let root = tempfile::tempdir().unwrap();
+    fake_process(root.path(), 10, "S", &[]);
+    std::fs::write(root.path().join("10/cmdline"), b"node\0server.js\0").unwrap();
+    fake_process(root.path(), 11, "S", &[]);
+    std::fs::write(root.path().join("11/cmdline"), b"").unwrap();
+    std::fs::write(root.path().join("11/comm"), "chrome\n").unwrap();
+    assert_eq!(
+        command_line(root.path(), 10).as_deref(),
+        Some("node server.js")
+    );
+    assert_eq!(command_line(root.path(), 11).as_deref(), Some("[chrome]"));
+    assert_eq!(command_line(root.path(), 12), None);
 }
 
 #[test]
@@ -67,7 +142,7 @@ fn a_process_without_a_readable_stat_or_environment_is_not_selected() {
     fake_process(root.path(), 11, "S", &[tag]);
     std::fs::remove_file(root.path().join("11/environ")).unwrap();
     assert!(!is_live(root.path(), 10));
-    assert!(tagged(root.path(), tag, 0, own_uid()).is_empty());
+    assert!(tagged(root.path(), &tags(&[tag]), 0, own_uid()).is_empty());
 }
 
 #[test]
@@ -80,6 +155,17 @@ fn cgroup_members_are_the_live_listed_pids() {
     std::fs::write(&procs, "20\n21\n22\n23\n").unwrap();
 
     assert_eq!(cgroup_members(root.path(), &procs, 22), vec![20]);
+    let nested = root.path().join("cgroup").join("helper");
+    std::fs::create_dir_all(&nested).unwrap();
+    fake_process(root.path(), 24, "S", &[]);
+    std::fs::write(nested.join("cgroup.procs"), "24\n").unwrap();
+    let mut members = cgroup_members(root.path(), &procs, 22);
+    members.sort_unstable();
+    assert_eq!(
+        members,
+        vec![20, 24],
+        "a nested cgroup's members are the scope's"
+    );
     let gone = root.path().join("gone/cgroup.procs");
     assert!(cgroup_members(root.path(), &gone, 0).is_empty());
 }
@@ -94,7 +180,7 @@ async fn start_detached(agent: AgentId, script: &str) -> u32 {
         .stdout(std::process::Stdio::piped());
     command.as_std_mut().process_group(0);
     let mut child = command.spawn().unwrap();
-    crate::scope::adopt(child.id(), Some(agent)).await;
+    crate::scope::adopt(child.id(), crate::scope::Adoption::begin(Some(agent))).await;
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(b"go\n").await.unwrap();
     drop(stdin);
@@ -122,7 +208,7 @@ async fn wait_gone(pid: u32) -> bool {
 
 fn still_tagged(agent: AgentId) -> Vec<u32> {
     let tag = format!("AETHER_ENGINE_AGENT={agent}");
-    tagged(Path::new("/proc"), &tag, std::process::id(), own_uid())
+    tagged(Path::new("/proc"), &[tag], std::process::id(), own_uid())
 }
 
 fn scopes_available() -> bool {
@@ -227,7 +313,7 @@ async fn the_scope_reaps_a_descendant_that_cleared_its_environment() {
         "setsid env -i sleep 39 </dev/null >/dev/null 2>&1 & echo $!",
     )
     .await;
-    assert_eq!(crate::scope::agent_units(agent).await.len(), 1);
+    assert_eq!(crate::scope::agent_units(&[agent]).await.len(), 1);
 
     let report = reap_agent(agent, Duration::from_secs(5), || true).await;
 
@@ -266,4 +352,133 @@ async fn a_restarted_agent_keeps_its_next_engine() {
     let cleanup = reap_agent(agent, Duration::from_millis(300), || true).await;
     assert!(cleanup.terminated.contains(&next), "{cleanup:?}");
     assert!(cleanup.killed.contains(&stubborn), "{cleanup:?}");
+}
+
+#[tokio::test]
+async fn a_daemon_stop_reaps_every_agent_it_names_in_one_sweep() {
+    let a = AgentId::new();
+    let b = AgentId::new();
+    let spared = AgentId::new();
+    let pid_a = start_detached(a, "setsid sleep 46 </dev/null >/dev/null 2>&1 & echo $!").await;
+    let pid_b = start_detached(
+        b,
+        "setsid sh -c 'trap \"\" TERM; exec sleep 47' </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    let other = start_detached(
+        spared,
+        "setsid sleep 48 </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let found = agents_with_processes().await;
+    assert!(
+        [a, b, spared].iter().all(|agent| found.contains(agent)),
+        "{found:?}"
+    );
+
+    let report = reap_agents(&[a, b], Duration::from_millis(300), |_| true, &[]).await;
+
+    assert!(report.terminated.contains(&pid_a), "{report:?}");
+    assert!(report.killed.contains(&pid_b), "{report:?}");
+    assert!(!report.terminated.contains(&other), "{report:?}");
+    assert!(
+        wait_gone(pid_a).await && wait_gone(pid_b).await,
+        "{report:?}"
+    );
+    assert!(
+        is_live(Path::new("/proc"), other),
+        "an agent not named runs on"
+    );
+    let cleanup = reap_agent(spared, Duration::from_secs(5), || true).await;
+    assert!(cleanup.terminated.contains(&other), "{cleanup:?}");
+}
+
+/// One agent of a sweep that restarts keeps its processes; the others named
+/// in the same sweep are still stopped.
+#[tokio::test]
+async fn a_restarted_agent_is_dropped_from_a_sweep_without_sparing_the_rest() {
+    let ended = AgentId::new();
+    let restarted = AgentId::new();
+    let stopped = start_detached(
+        ended,
+        "setsid sleep 51 </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    let spared = start_detached(
+        restarted,
+        "setsid sleep 52 </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let gates = [aether_spawn::SpawnGate::default()];
+    let report = reap_agents(
+        &[ended, restarted],
+        Duration::from_secs(5),
+        |id| id == ended,
+        &gates,
+    )
+    .await;
+
+    assert!(report.terminated.contains(&stopped), "{report:?}");
+    assert!(!report.terminated.contains(&spared), "{report:?}");
+    assert!(
+        wait_gone(stopped).await,
+        "the ended agent's process is gone"
+    );
+    assert!(
+        is_live(Path::new("/proc"), spared),
+        "the restarted agent's process runs on"
+    );
+    let cleanup = reap_agent(restarted, Duration::from_secs(5), || true).await;
+    assert!(cleanup.terminated.contains(&spared), "{cleanup:?}");
+}
+
+/// A process marked to be kept is listed by no sweep and signalled by none,
+/// in a scope or by its tag; one beside it without the mark is stopped.
+#[tokio::test]
+async fn a_process_marked_to_be_kept_outlives_its_agent() {
+    let agent = AgentId::new();
+    let kept = start_detached(
+        agent,
+        "AETHER_KEEP_PROCESS=1 setsid sleep 49 </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    let swept = start_detached(
+        agent,
+        "setsid sleep 50 </dev/null >/dev/null 2>&1 & echo $!",
+    )
+    .await;
+    let listed: Vec<u32> = live_processes(&[agent])
+        .await
+        .iter()
+        .map(|p| p.pid)
+        .collect();
+
+    let report = reap_agent(agent, Duration::from_secs(5), || true).await;
+
+    let kept_alive = is_live(Path::new("/proc"), kept);
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(kept as i32),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .unwrap();
+    assert!(
+        listed.contains(&swept) && !listed.contains(&kept),
+        "{listed:?}"
+    );
+    assert!(report.terminated.contains(&swept), "{report:?}");
+    assert!(!report.terminated.contains(&kept), "{report:?}");
+    assert!(kept_alive, "the kept process was signalled");
+    assert!(wait_gone(swept).await, "the unmarked process is gone");
+}
+
+#[tokio::test]
+async fn reaping_no_agents_signals_nothing() {
+    assert!(
+        reap_agents(&[], Duration::ZERO, |_| true, &[])
+            .await
+            .is_empty()
+    );
 }

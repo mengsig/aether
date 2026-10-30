@@ -358,6 +358,126 @@ async fn stop_kills_setsid_descendants_without_touching_other_jobs() {
     registry.stop_all().await;
 }
 
+/// A browser or server a job detached gets SIGTERM, and time to act on it,
+/// before any SIGKILL.
+#[tokio::test]
+async fn stop_terms_setsid_descendants_before_killing_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = BackgroundProcesses::new();
+    let ctx = ctx_in(dir.path());
+    let script = "setsid bash -c 'trap \"touch termed; exit 0\" TERM; echo $$ > escaped.tmp; \
+                  mv escaped.tmp escaped; while :; do sleep 0.1; done' </dev/null >/dev/null 2>&1 & wait";
+    let job = registry.start(ctx.agent_id, script, &ctx).unwrap();
+    ready(&dir.path().join("escaped")).await;
+    let pid = std::fs::read_to_string(dir.path().join("escaped"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(alive(pid));
+    registry.stop(ctx.agent_id, job.id).await.unwrap();
+    dead(pid).await;
+    assert!(
+        dir.path().join("termed").exists(),
+        "the detached process was killed without a SIGTERM first"
+    );
+}
+
+/// A process the command marks to be kept outlives its job's stop; one it
+/// detached without the mark does not.
+#[tokio::test]
+async fn stop_spares_a_detached_process_marked_to_be_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = BackgroundProcesses::new();
+    let ctx = ctx_in(dir.path());
+    let script = "AETHER_KEEP_PROCESS=1 setsid sh -c 'echo $$ > kept.tmp; mv kept.tmp kept; \
+                  exec sleep 60' </dev/null >/dev/null 2>&1 & \
+                  setsid sh -c 'echo $$ > swept.tmp; mv swept.tmp swept; exec sleep 60' \
+                  </dev/null >/dev/null 2>&1 & wait";
+    let job = registry.start(ctx.agent_id, script, &ctx).unwrap();
+    ready(&dir.path().join("kept")).await;
+    ready(&dir.path().join("swept")).await;
+    let (kept, swept) = (
+        pid_in(&dir.path().join("kept")),
+        pid_in(&dir.path().join("swept")),
+    );
+    registry.stop(ctx.agent_id, job.id).await.unwrap();
+    dead(swept).await;
+    let alive_after_stop = alive(kept);
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(kept),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .unwrap();
+    assert!(
+        alive_after_stop,
+        "the kept process was stopped with its job"
+    );
+}
+
+fn pid_in(path: &Path) -> i32 {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+/// What a detached process forks from its SIGTERM handler, during the grace,
+/// is part of the job too and does not outlive it.
+#[tokio::test]
+async fn stop_catches_what_a_detached_process_forks_as_it_terminates() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("parent.sh"),
+        "trap 'touch parent-termed; setsid sh -c \"trap \\\"\\\" TERM; while :; do sleep 0.1; done\" \
+         </dev/null >/dev/null 2>&1 & echo $! > child.tmp; mv child.tmp child; exit 0' TERM\n\
+         echo $$ > parent.tmp; mv parent.tmp parent\n\
+         while :; do sleep 0.1; done\n",
+    )
+    .unwrap();
+    let registry = BackgroundProcesses::new();
+    let ctx = ctx_in(dir.path());
+    let script = "setsid sh ./parent.sh </dev/null >/dev/null 2>&1 & wait";
+    let job = registry.start(ctx.agent_id, script, &ctx).unwrap();
+    ready(&dir.path().join("parent")).await;
+    let parent = pid_in(&dir.path().join("parent"));
+    registry.stop(ctx.agent_id, job.id).await.unwrap();
+    dead(parent).await;
+    assert!(
+        dir.path().join("parent-termed").exists(),
+        "the detached process got no SIGTERM"
+    );
+    let child = pid_in(&dir.path().join("child"));
+    dead(child).await;
+}
+
+/// A job whose shell exits on its own leaves a helper in its group: the
+/// helper gets SIGTERM, and time to act on it, before any SIGKILL.
+#[tokio::test]
+async fn a_finished_job_terms_what_its_group_left_running() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("helper.sh"),
+        "trap 'touch termed; exit 0' TERM\n\
+         echo $$ > helper.tmp; mv helper.tmp helper\n\
+         while :; do sleep 0.1; done\n",
+    )
+    .unwrap();
+    let registry = BackgroundProcesses::new();
+    let ctx = ctx_in(dir.path());
+    let script = "sh ./helper.sh </dev/null >/dev/null 2>&1 & \
+                  until [ -e helper ]; do sleep 0.05; done";
+    registry.start(ctx.agent_id, script, &ctx).unwrap();
+    ready(&dir.path().join("helper")).await;
+    let helper = pid_in(&dir.path().join("helper"));
+    dead(helper).await;
+    assert!(
+        dir.path().join("termed").exists(),
+        "the helper was killed without a SIGTERM first"
+    );
+}
+
 #[tokio::test]
 async fn recovery_kills_setsid_descendants_after_the_original_group_is_gone() {
     let dir = tempfile::tempdir().unwrap();
@@ -381,4 +501,50 @@ async fn recovery_kills_setsid_descendants_after_the_original_group_is_gone() {
     Journal::recover(journal.directory).unwrap();
     dead(pid).await;
     assert!(!registration.0.exists());
+}
+
+/// Only a live member of the group whose environment is readable and not
+/// kept is signalled, as an unreadable one may carry the keep mark; but the
+/// leader, the job itself, always is.
+#[test]
+fn an_exited_group_signals_only_readable_unkept_members() {
+    let proc_root = tempfile::tempdir().unwrap();
+    let group = Pid::from_raw(4242);
+    let member = |pid: u32, state: char, pgid: i32, environ: Option<&[u8]>| {
+        let dir = proc_root.path().join(pid.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        let fields = format!("{pid} (sleep) {state} 1 {pgid}{}", " 0".repeat(18));
+        std::fs::write(dir.join("stat"), fields).unwrap();
+        if let Some(environ) = environ {
+            std::fs::write(dir.join("environ"), environ).unwrap();
+        }
+        dir
+    };
+    let plain = member(10, 'S', 4242, Some(b"PATH=/bin\0"));
+    let kept = member(11, 'S', 4242, Some(b"AETHER_KEEP_PROCESS=1\0"));
+    let unreadable = member(12, 'S', 4242, None);
+    let elsewhere = member(13, 'S', 4243, Some(b"PATH=/bin\0"));
+    let zombie = member(14, 'Z', 4242, Some(b"PATH=/bin\0"));
+    let kept_leader = member(4242, 'S', 4242, Some(b"AETHER_KEEP_PROCESS=1\0"));
+
+    assert!(signalled_in_group(&plain, group).unwrap());
+    assert!(
+        signalled_in_group(&kept_leader, group).unwrap(),
+        "the job's own leader is stopped with it, kept or not"
+    );
+    for spared in [kept, unreadable, elsewhere, zombie] {
+        assert!(
+            !signalled_in_group(&spared, group).unwrap(),
+            "{}",
+            spared.display()
+        );
+    }
+    assert_eq!(
+        {
+            let mut members = pinned_group_members(proc_root.path(), group).unwrap();
+            members.sort_unstable();
+            members
+        },
+        vec![10, 4242]
+    );
 }

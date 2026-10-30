@@ -11,6 +11,40 @@ clients on 17 through 24 see it as `usage_limit`.
 
 ### Fixed
 
+- **Browsers and helpers an agent detached no longer outlive it (#332).**
+  Aether's own shell tool now tags every host command with its agent's id
+  (`AETHER_ENGINE_AGENT`), as engines already were, so a Chromium, Firefox,
+  `node` server or other helper a command detaches with `setsid` or a double
+  fork is stopped when the agent fails or is cancelled, or completes with no
+  live ancestor to hand it to (see below). A daemon
+  stop now also sends `SIGTERM`, then `SIGKILL` after `reap_grace_secs` (at
+  most 10 s), to every process tagged with, or in an engine scope of, an agent
+  its own store ran; agents of another daemon and imported agents are never
+  touched. Once the stop begins no new host shell command or engine starts,
+  nor one for a cancelled turn whose agent's reap has begun. The bwrap
+  sandbox of a network-denied Codex turn is tagged, scoped and gated like its
+  engine, and a reap waits for an engine still joining its scope. What a
+  background shell job leaves running when it ends or is stopped, in its
+  process group or detached, gets `SIGTERM` and a 2 s grace before
+  `SIGKILL`, and what it forks during the grace gets `SIGTERM` within 50 ms;
+  one forked as the grace ends gets `SIGKILL` alone; the shell of a job that exits
+  on its own is reaped only once its group is stopped, so the group id is
+  never reused under the signal. A process caught inside `exec`, whose
+  environment reads empty or torn until its new program is set up, is read
+  again rather than missed, as is a bash still reading its environment; a
+  process forked and left behind while a sweep lists processes is found too.
+  Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
+  nothing changes.
+- **A delegated child that completes hands what it left running to its parent
+  (#332).** A server or browser a child started is not stopped when the child
+  completes normally: it and the child's background shell jobs pass to the
+  nearest live ancestor, which is sent their pids and command lines and can
+  read and stop the jobs. They are stopped when the agent holding them ends
+  with no live ancestor, fails or is cancelled, or when the daemon stops. A
+  child that fails or is cancelled stops its own at once. A process started
+  with `AETHER_KEEP_PROCESS=1` is never signalled by these sweeps, so one
+  meant to outlive the tree can. A daemon start after a crash stops what the
+  dead daemon's agents left running, as a clean stop would have.
 - **A refused engine sign-in suspends the agent instead of failing it.** A
   native engine whose OAuth token expired or whose API key was refused
   (Claude Code's `authentication_error`, "Please run /login", a result with

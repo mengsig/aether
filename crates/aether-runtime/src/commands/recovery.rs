@@ -381,7 +381,10 @@ impl Runtime {
             by.clone(),
         )?;
         commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
-        self.apply_held(hold, commit)?;
+        // Not inside a sweep round: one that found the agent ended has signalled
+        // before this lands, and one after spares it, as it ends again or not.
+        self.engine_spawns
+            .outside_holds(|| self.apply_held(hold, commit))?;
         Ok(agent)
     }
 
