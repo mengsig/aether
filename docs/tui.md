@@ -621,6 +621,7 @@ List, popup, board navigation and approval keys stay fixed.
 | `Ctrl+R` | search message history |
 | `Ctrl+F` | find in the transcript |
 | `Alt+, / Alt+.` | less / more reasoning effort |
+| `macOS Option` | Alt shortcuts need Option sent as Meta: iTerm2 Profiles > Keys > Option key: Esc+; Terminal.app Profiles > Keyboard > Use Option as Meta key |
 | `PgUp / PgDn` | scroll the transcript |
 | `Shift+↑ / Shift+↓` | scroll the transcript a line |
 | `Ctrl+Home / Ctrl+End` | top of the transcript / latest, following again |
@@ -707,6 +708,33 @@ combinations are refused. Function keys F1–F24, navigation names such as
 `up` and `pageup`, and Ctrl/Alt/Shift combinations are supported. Some
 terminals intercept chords before Aether receives them; capture only binds
 keys that arrive at the TUI.
+
+### Alt shortcuts and your terminal
+
+Alt shortcuts work as terminals send them by default: Esc followed by the key
+(xterm, GNOME Terminal, Konsole, Alacritty, tmux) or the kitty keyboard
+protocol (kitty, foot, Ghostty, WezTerm with `enable_kitty_keyboard`). An Esc
+arriving up to 50 ms before its key, as over a busy link, still counts as
+Alt, so a lone Esc acts 50 ms after it is pressed. Alt+], Alt+Shift+P and Alt+_ also
+begin the terminal's replies to Aether's colour and graphics probes. Aether
+holds such a key until what follows shows whether it is a reply, at most
+250 ms, and types it otherwise.
+
+On macOS, Option types characters (`√` for Option+V, `ø` for Option+O) unless
+the terminal sends it as Meta. Aether does not reinterpret them, since they
+are letters in some layouts. To use Alt shortcuts:
+
+- iTerm2: Settings > Profiles > Keys > General, Left Option key: **Esc+**.
+- Terminal.app: Settings > Profiles > Keyboard, **Use Option as Meta key**.
+- Ghostty `macos-option-as-alt = true`; kitty `macos_option_as_alt yes`;
+  Alacritty `option_as_alt = "Both"` under `[window]`; WezTerm
+  `send_composed_key_when_left_alt_is_pressed = false`.
+
+Some encodings cannot carry Alt shortcuts to Aether: 8-bit meta (xterm sends
+`ï` for Alt+O unless `XTerm*metaSendsEscape: true`), xterm's
+`modifyOtherKeys: 2`, whose `CSI 27;…~` sequences the input library drops, and
+rxvt-unicode's Alt+arrows. Legacy terminals send Alt+Shift+O and Alt+[ as the
+start of an escape sequence, so bind those only in a kitty-protocol terminal.
 
 An unknown action, invalid chord or conflicting override in the file gives a
 startup notice naming the entry and uses that action's defaults. Invalid

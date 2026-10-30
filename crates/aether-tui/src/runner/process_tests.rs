@@ -12,6 +12,10 @@ pub(super) struct Observer {
     event: Option<Value>,
 }
 
+fn key_name(key: &crossterm::event::KeyEvent) -> String {
+    format!("{:?} {:?}", key.modifiers, key.code)
+}
+
 impl Observer {
     pub(super) fn new(output: File) -> Self {
         Self {
@@ -24,9 +28,11 @@ impl Observer {
         self.event = match event {
             #[cfg(unix)]
             LoopEvent::Suspend => Some(json!({"kind": "resumed"})),
+            LoopEvent::App(AppEvent::Key(key)) => {
+                Some(json!({"kind": "input", "key": key_name(key)}))
+            }
             LoopEvent::App(
-                AppEvent::Key(_)
-                | AppEvent::Paste(_)
+                AppEvent::Paste(_)
                 | AppEvent::ImagePathPasted { .. }
                 | AppEvent::Resize(_, _)
                 | AppEvent::Focus(_),
@@ -67,8 +73,11 @@ impl Observer {
             Some("input" | "resumed" | "backfill" | "pasted")
         ) {
             record["draft"] = json!(app.input.text);
+            record["caret"] = json!(app.input.cursor);
+            record["view"] = json!(app.bottom.top_view().map(|v| format!("{:?}", v.kind())));
             record["images"] = json!(app.input.images.len());
             record["flash"] = json!(app.live_flash());
+            record["flash_until"] = json!(app.flash.as_ref().map(|f| f.until.to_string()));
             record["selected"] = json!(app.selected);
             record["size"] = json!(app.size);
             record["transcript"] = json!(

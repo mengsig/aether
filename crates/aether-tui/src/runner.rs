@@ -19,7 +19,6 @@ use crossterm::terminal::{
     SetTitle, disable_raw_mode, enable_raw_mode,
 };
 use crossterm::{execute, queue};
-use futures::StreamExt;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, CrosstermBackend};
 use tokio::sync::mpsc;
@@ -33,10 +32,12 @@ use crate::viewed::Publisher;
 use crate::voice::control::{self, ControlRequest, Listener};
 
 mod frames;
+mod terminal_input;
 mod viewer;
 #[cfg(test)]
 mod viewer_tests;
 use frames::Frames;
+use terminal_input::TerminalInput;
 
 /// Back off while offline, but leave time within §9.8's second for handshake and replay.
 const RECONNECT_FIRST: Duration = Duration::from_millis(100);
@@ -348,7 +349,7 @@ async fn run_inner(
     let mut link = Link::new(client);
     let (tx, mut rx) = mpsc::unbounded_channel::<LoopEvent>();
     let viewer_reader = viewer::Reader::new(tx.clone());
-    let mut term_events = EventStream::new();
+    let mut term_events = TerminalInput::new(EventStream::new());
     let mut frames = Frames::new(Instant::now());
     let mut reconnecting = false;
     let mut title = String::new();
@@ -685,6 +686,8 @@ fn handle_voice_control(
     effects
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod alt_keys_tests;
 #[cfg(test)]
 mod frames_tests;
 #[cfg(all(test, target_os = "linux"))]

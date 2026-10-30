@@ -526,7 +526,7 @@ impl App {
     pub(super) fn on_tick(&mut self, frames: u64) -> Vec<Effect> {
         self.tick += frames.max(1);
         self.now = now();
-        let mut effects = Vec::new();
+        let mut effects = self.release_held_keys();
         // A frame for what moves on its own, then the next one booked from now.
         if self.animation_due.is_none_or(|at| self.tick >= at) {
             self.animation_due = self

@@ -35,13 +35,31 @@ pub(crate) enum Dispatch {
 }
 
 impl App {
+    /// Late terminal replies never reach a stage; keys held as a possible
+    /// reply are dispatched once they turn out to be typed.
     pub fn dispatch_key(&mut self, key: KeyEvent) -> Vec<Effect> {
+        let typed = self.terminal_replies.feed(key, self.now);
+        self.dispatch_typed_keys(typed)
+    }
+
+    /// Keys held as a possible reply that nothing followed: they were typed.
+    pub(in crate::app) fn release_held_keys(&mut self) -> Vec<Effect> {
+        let typed = self.terminal_replies.expire(self.now);
+        self.dispatch_typed_keys(typed)
+    }
+
+    fn dispatch_typed_keys(&mut self, keys: Vec<KeyEvent>) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        for key in keys {
+            effects.extend(self.dispatch_typed_key(key));
+        }
+        effects
+    }
+
+    fn dispatch_typed_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         #[cfg(unix)]
         if ctrl(key, 'z') {
             return vec![Effect::Suspend];
-        }
-        if self.terminal_replies.consume(key) {
-            return Vec::new();
         }
         if self.flash.as_ref().is_some_and(|flash| flash.until_key()) {
             self.flash = None;
