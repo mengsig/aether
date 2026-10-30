@@ -330,6 +330,19 @@ derived from the path given, so a subdirectory of a checkout with no `origin`
 names a different scope than the checkout itself. Check the
 `repository_root` feature first.
 
+## Interactive trees
+
+`config.interactive` on `create_agent` says a person watches this tree in an
+interactive client. The TUI sets it on every root it starts, and children
+inherit it. After a daemon restart (not a host reboot) cut a mutating tool call
+short, recovery parks an interactive agent as `blocked: inspection` until
+someone runs `aether resume`. Any other agent is headless: it resumes at once,
+told which calls have an unknown outcome and to check the state before
+repeating them, and its `agent.resumed` event says it resumed without
+inspection. The field is left off the wire when false. An older daemon ignores
+it and parks every such agent, which was its behaviour before, so no feature
+gates it.
+
 ## Repository aliases
 
 An agent created with a bare `scope.repository`, such as `archon`, files its

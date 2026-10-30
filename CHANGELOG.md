@@ -11,6 +11,19 @@ clients on 17 through 24 see it as `usage_limit`.
 
 ### Fixed
 
+- **A headless agent resumes after a daemon restart instead of waiting for an
+  inspection nobody does.** A daemon stopped while an agent ran a mutating
+  call (a `docker compose up` in Bash, a file write) left the agent
+  `blocked: inspection` until someone ran `aether resume`. An orchestrator
+  such as Archon saw a held agent and waited for its stage deadline. Only a
+  tree a person watches now waits: the TUI marks the roots it starts with the
+  new `config.interactive`, and children inherit it. Every other agent resumes
+  at once, as a person's `aether resume` would. Its keys are released, and its
+  wake and the interrupted call's result say the daemon restarted while those
+  calls ran, so their outcome is unknown and it should check the state before
+  repeating them. Its `agent.resumed` event says it resumed without
+  inspection. Agents already parked before the upgrade stay parked until
+  resumed. See [interactive trees](docs/protocol.md#interactive-trees).
 - **A refused engine sign-in suspends the agent instead of failing it.** A
   native engine whose OAuth token expired or whose API key was refused
   (Claude Code's `authentication_error`, "Please run /login", a result with
