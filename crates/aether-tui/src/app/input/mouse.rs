@@ -1,5 +1,7 @@
 //! Mouse input uses the geometry of the last painted frame.
 
+use std::time::{Duration, Instant};
+
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::app::board::BoardFocus;
@@ -10,9 +12,21 @@ use crate::ui::selection::{self, Pane, Selection};
 use crate::ui::transcript::ViewCache;
 
 const WHEEL_LINES: u16 = 3;
+/// A second press within this long and one cell of the first selects a line.
+const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 impl App {
     pub fn dispatch_mouse(&mut self, mouse: MouseEvent, cache: &mut ViewCache) -> Vec<Effect> {
+        self.dispatch_mouse_at(mouse, cache, Instant::now())
+    }
+
+    /// `dispatch_mouse` with the time of the event, so tests control the clock.
+    pub(crate) fn dispatch_mouse_at(
+        &mut self,
+        mouse: MouseEvent,
+        cache: &mut ViewCache,
+        now: Instant,
+    ) -> Vec<Effect> {
         if self.mouse == MouseMode::Off || mouse.modifiers.contains(KeyModifiers::SHIFT) {
             return Vec::new();
         }
@@ -41,6 +55,15 @@ impl App {
                 return effects;
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                let double = cache.mouse.last_down.take().is_some_and(|(at, x, y)| {
+                    now.saturating_duration_since(at) <= DOUBLE_CLICK
+                        && x.abs_diff(mouse.column) <= 1
+                        && y.abs_diff(mouse.row) <= 1
+                });
+                // A double click does not start a triple.
+                if !double {
+                    cache.mouse.last_down = Some((now, mouse.column, mouse.row));
+                }
                 cache.pending_file_hit = if !self.bottom_covered()
                     && cache.regions.hit(mouse.column, mouse.row) == Some(Pane::Transcript)
                 {
@@ -107,6 +130,7 @@ impl App {
                     end_excerpt: None,
                     dragging: true,
                     moved: false,
+                    line: None,
                     pointer: mouse,
                     rows: Vec::new(),
                     epoch: self
@@ -118,8 +142,18 @@ impl App {
                     board_revision: self.board.revision,
                     details: self.details,
                 });
+                // Links and board rows keep their click; elsewhere a line is selected
+                // and copied when the button is released.
+                if double
+                    && cache.pending_file_hit.is_none()
+                    && matches!(pane, Pane::Transcript | Pane::Composer)
+                {
+                    self.select_line(cache, point);
+                }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
+                // A press that became a drag is no first click.
+                cache.mouse.last_down = None;
                 cache.pending_file_hit = None;
                 self.extend_mouse(mouse, cache);
             }
@@ -168,6 +202,7 @@ impl App {
                 }
             }
             MouseEventKind::Down(_) => {
+                cache.mouse.last_down = None;
                 self.dirty |= cache.mouse.selection.take().is_some();
                 cache.mouse.pending_board_click = None;
                 cache.pending_file_hit = None;
@@ -175,6 +210,80 @@ impl App {
             _ => {}
         }
         Vec::new()
+    }
+
+    /// Widen the fresh selection at `point` to the source line under it and keep
+    /// that line's text to copy; a gap row or an empty draft stays a click.
+    fn select_line(&self, cache: &mut ViewCache, point: selection::TextPoint) {
+        let Some(s) = cache.mouse.selection.as_ref() else {
+            return;
+        };
+        let line = match (s.pane, s.start_excerpt.as_deref()) {
+            // The pinned prompt row copies the excerpt it shows, as a drag over it does.
+            (Pane::Transcript, Some(pinned)) => {
+                Some((point.row, point.row, pinned.trim_end().to_owned()))
+            }
+            (Pane::Transcript, None) => crate::ui::transcript::line_at(self, cache, point),
+            (Pane::Composer, _) => self.composer_line(cache, point.row),
+            _ => None,
+        };
+        let (Some((first, last, text)), Some(s)) = (line, cache.mouse.selection.as_mut()) else {
+            return;
+        };
+        debug_assert!(first <= point.row && point.row <= last);
+        let column = s.rect.width.saturating_sub(1);
+        s.start = selection::TextPoint {
+            row: first,
+            column: 0,
+            ..point
+        };
+        s.end = selection::TextPoint {
+            row: last,
+            column,
+            ..point
+        };
+        s.start_excerpt = None;
+        s.end_excerpt = None;
+        s.line = Some(text);
+        s.dragging = false;
+        s.moved = true;
+    }
+
+    /// The visible composer rows of the draft line under screen row `row`, and
+    /// the whole line, rows scrolled out of view included.
+    fn composer_line(&self, cache: &ViewCache, row: usize) -> Option<(usize, usize, String)> {
+        let text = &self.input.text;
+        // An empty draft paints the placeholder, which is not text to copy.
+        if text.is_empty() {
+            return None;
+        }
+        let rows = &cache.composer.rows;
+        let scroll = cache.composer.scroll;
+        let range = rows.get(scroll + row)?.range();
+        let from = text
+            .get(..range.start)
+            .and_then(|t| t.rfind('\n'))
+            .map_or(0, |i| i + 1);
+        let to = text
+            .get(range.end..)
+            .and_then(|t| t.find('\n'))
+            .map_or(text.len(), |i| range.end + i);
+        debug_assert!(from <= range.start && range.end <= to);
+        let inside = |i: usize| {
+            rows.get(i).is_some_and(|r| {
+                let r = r.range();
+                r.start >= from && r.end <= to
+            })
+        };
+        let height = usize::from(cache.regions.composer.height);
+        let (mut first, mut last) = (row, row);
+        while first > 0 && inside(scroll + first - 1) {
+            first -= 1;
+        }
+        while last + 1 < height && inside(scroll + last + 1) {
+            last += 1;
+        }
+        Some((first, last, text.get(from..to)?.trim_end().to_owned()))
     }
 
     fn extend_mouse(&mut self, mouse: MouseEvent, cache: &mut ViewCache) {
