@@ -256,10 +256,10 @@ pub(crate) async fn probe_capability(
             program: program.to_owned(),
             probe: capability_args.join(" "),
         })?
-        .map_err(|e| DetectError::MissingCapability {
+        // A CLI the OS could not start says nothing about its capabilities.
+        .map_err(|e| DetectError::NotInstalled {
             program: program.to_owned(),
-            capability: capability.to_owned(),
-            detail: e.to_string(),
+            os_error: e.to_string(),
         })?;
     if !output.status.success() {
         return Err(DetectError::MissingCapability {

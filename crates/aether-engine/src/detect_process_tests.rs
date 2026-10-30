@@ -54,6 +54,38 @@ async fn capability_probe_times_out_and_reaps_child() {
     assert_probe_timeout(true).await;
 }
 
+/// A capability probe whose CLI the OS would not start (here a binary still
+/// open for writing, as one mid-update is) reports the launch, not the capability.
+#[tokio::test]
+async fn a_capability_probe_that_cannot_start_reports_the_os_error() {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join("codex");
+    let mut writing = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .mode(0o755)
+        .open(&program)
+        .unwrap();
+    writing.write_all(b"#!/bin/sh\nexit 0\n").unwrap();
+    let error = probe_capability(
+        program.to_str().unwrap(),
+        &["--help"],
+        "app-server",
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
+    drop(writing);
+    assert!(
+        matches!(&error, DetectError::NotInstalled { os_error, .. }
+        if os_error.to_lowercase().contains("text file busy")),
+        "{error:?}"
+    );
+}
+
 /// Codex writes state on every start; the probe must leave none behind.
 #[tokio::test]
 async fn a_state_writing_cli_is_probed_in_a_scratch_directory_it_removes() {

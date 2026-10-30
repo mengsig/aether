@@ -709,7 +709,10 @@ and the remedy; `aether doctor`'s engines check and the daemon's startup log
 Each version or capability probe has a 60-second deadline and no terminal input,
 so a CLI that is slow to start on a loaded machine is not taken for a broken one.
 A timeout reports which probe failed; timeout or caller cancellation kills the
-direct child instead of leaving the probe running. These are local CLI checks,
+direct child instead of leaving the probe running. A CLI the OS cannot start is
+`NotInstalled` with the OS error, from the capability probe too, so a launch
+refused for now (`EAGAIN`, `ETXTBSY`, `ENOMEM`) is never taken for a missing
+`app-server`. These are local CLI checks,
 not model calls. The bound is per probe, not a deadline for total daemon startup.
 
 The probes leave the user's home as they found it. Codex creates files
