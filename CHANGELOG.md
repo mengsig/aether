@@ -31,7 +31,9 @@ clients on 17 through 24 see it as `usage_limit`.
   behind. The daemon now tells the agent once, in its inbox, "N minutes left
   before your deadline: commit what works now", when 80 % of its time has
   passed or ten minutes before the deadline, whichever comes first. The
-  warning waits for the running tool call instead of interrupting it. An
+  warning waits for the running tool call instead of interrupting it, so it
+  says when the count held and points to `inspect_state` for the time left
+  when it is read. An
   extended deadline warns again when it nears, and each delegated agent is
   warned about its own deadline. The warning is recorded as a
   `deadline.warning` custom event and shown in the TUI, and `inspect_state`

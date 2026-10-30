@@ -214,10 +214,14 @@ fn warn_deadline_once(runtime: &Arc<Runtime>, agent: &Agent, minutes_left: i64) 
         n => format!("{n} minutes"),
     };
     let at = deadline.to_rfc3339();
+    let sent = now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     tracing::info!(agent = %fresh.id, deadline = %at, %left, "deadline warning");
+    // Read after a long tool call, the count is stale: say when it held, and
+    // where the time left now is.
     let note = format!(
-        "{left} left before your deadline ({at}): commit what works now. At the deadline \
-         you are stopped as failed and your delegated agents are cancelled; uncommitted \
+        "{left} left before your deadline ({at}) as of {sent}: commit what works now. \
+         `inspect_state` gives `deadline_minutes_left` as it stands. At the deadline you \
+         are stopped as failed and your delegated agents are cancelled; uncommitted \
          changes are left behind."
     );
     let kind = EventKind::Custom {
@@ -241,10 +245,10 @@ fn warn_deadline_once(runtime: &Arc<Runtime>, agent: &Agent, minutes_left: i64) 
 }
 
 /// A custom event, so every client version a daemon serves decodes it.
-pub(crate) const DEADLINE_WARNING_EVENT: &str = "deadline.warning";
+const DEADLINE_WARNING_EVENT: &str = "deadline.warning";
 
-/// Whether the agent's latest deadline warning was for this deadline. Only
-/// the latest counts: a deadline moved away and back is a new one to hear.
+/// Whether the agent's latest deadline warning was for this deadline. A
+/// deadline moved back to the one last warned about is not warned again.
 fn deadline_already_warned(
     runtime: &Runtime,
     agent: AgentId,

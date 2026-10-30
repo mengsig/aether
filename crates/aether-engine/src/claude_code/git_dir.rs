@@ -16,13 +16,18 @@ pub(super) async fn outside_common_dir(cwd: &Path) -> Option<PathBuf> {
         .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
         .current_dir(cwd)
         .stdin(Stdio::null())
-        .stderr(Stdio::null())
         .kill_on_drop(true)
         .output();
     let output = match tokio::time::timeout(GIT_QUERY_TIMEOUT, query).await {
         Ok(Ok(output)) if output.status.success() => output,
-        // Not a repository: there is nothing to commit to.
-        Ok(Ok(_)) => return None,
+        Ok(Ok(output)) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Not a repository: there is nothing to commit to.
+            if !stderr.contains("not a git repository") {
+                tracing::warn!(cwd = %cwd.display(), stderr = %stderr.trim(), "git did not name the workspace's Git directory; a sandboxed commit may fail");
+            }
+            return None;
+        }
         Ok(Err(error)) => {
             tracing::warn!(cwd = %cwd.display(), %error, "cannot ask git for the workspace's Git directory; a sandboxed commit may fail");
             return None;

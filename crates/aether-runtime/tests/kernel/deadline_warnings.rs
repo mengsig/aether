@@ -84,7 +84,9 @@ async fn a_near_deadline_warns_each_agent_once_per_deadline() {
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(
         notes[0].starts_with("5 minutes left before your deadline")
-            && notes[0].contains("commit what works now"),
+            && notes[0].contains(" as of ")
+            && notes[0].contains("commit what works now")
+            && notes[0].contains("deadline_minutes_left"),
         "{}",
         notes[0]
     );

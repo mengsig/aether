@@ -143,6 +143,11 @@ fn a_deadline_warns_at_whichever_threshold_comes_first() {
         Some(1),
         "the last instant still says a minute, never zero"
     );
+    assert_eq!(
+        agent.deadline_warning(deadline - chrono::Duration::microseconds(1)),
+        Some(1),
+        "nor does less than a millisecond"
+    );
 }
 
 /// An API-equivalent estimate is not money anyone was charged, so no cap

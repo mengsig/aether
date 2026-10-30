@@ -314,8 +314,9 @@ impl Agent {
         let span = (deadline - self.created_at).max(chrono::Duration::zero());
         let share_left = span.num_milliseconds() as f64 * (1.0 - DEADLINE_WARN_FRACTION);
         let window_ms = (share_left.round() as i64).max(DEADLINE_WARN_MINUTES * 60_000);
-        let left_ms = (deadline - at).num_milliseconds();
-        debug_assert!(left_ms > 0, "a deadline still ahead leaves time");
+        // Less than a millisecond left still counts as time left.
+        let left_ms = (deadline - at).num_milliseconds().max(1);
+        debug_assert!(window_ms >= DEADLINE_WARN_MINUTES * 60_000);
         (left_ms <= window_ms).then(|| ((left_ms + 59_999) / 60_000).max(1))
     }
 
