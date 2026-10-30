@@ -30,6 +30,10 @@ struct Record {
     /// A foreground call's id: recovery stops its group, not what it detached.
     #[serde(default)]
     call: Option<ProcessId>,
+    /// The group's session: a group never leaves it, so once the leader is
+    /// gone a member in it proves the group, token or not.
+    #[serde(default)]
+    session: Option<i32>,
 }
 
 impl Record {
@@ -188,6 +192,7 @@ impl Journal {
             uid: geteuid().as_raw(),
             job,
             call,
+            session: Some(identity.session),
         };
         let path = self.directory.join(format!("{name}.json"));
         let mut file = tempfile::NamedTempFile::new_in(&self.directory)?;
@@ -200,46 +205,31 @@ impl Journal {
         if record.pgid <= 1 || record.boot_id != self.boot_id || record.uid != geteuid().as_raw() {
             return Ok(false);
         }
-        let leader_missing =
-            match std::fs::read(proc_root.join(record.pgid.to_string()).join("stat")) {
-                Ok(stat) => {
-                    let identity = identity(&stat)?;
-                    if identity.group != record.pgid || identity.start_time != record.start_time {
-                        return Ok(false);
-                    }
-                    false
-                }
-                Err(e) if disappeared(&e) => true,
-                Err(e) => return Err(e),
-            };
+        let Some(leader_missing) = leader_missing(record, proc_root)? else {
+            return Ok(false);
+        };
         let token = record.token();
         let mut found = false;
         let mut unproven = false;
+        let mut foreign = false;
         for entry in std::fs::read_dir(proc_root)? {
             let entry = entry?;
             if entry.file_name().to_string_lossy().parse::<u32>().is_err() {
                 continue;
             }
-            let member = match std::fs::read(entry.path().join("stat")) {
-                Ok(stat) => identity(&stat)?,
-                Err(e) if disappeared(&e) => continue,
-                Err(e) => return Err(e),
+            let Some((member, owner)) = group_member(&entry.path(), record.pgid)? else {
+                continue;
             };
-            if member.group != record.pgid {
+            // Another user's member (a `sudo` child) cannot be signalled, but
+            // the rest of the group is still ours to stop.
+            if owner != record.uid {
+                foreign |= member.running();
                 continue;
             }
-            let metadata = match entry.metadata() {
-                Ok(metadata) => metadata,
-                Err(e) if disappeared(&e) => continue,
-                Err(e) => return Err(e),
-            };
-            if metadata.uid() != record.uid {
-                return Ok(false);
-            }
             // A vanished leader could belong to a reused group: only a member
-            // carrying this job's or call's token proves it ours.
+            // in the recorded session or carrying the token proves it ours.
             if leader_missing && member.running() {
-                match carries_token(&entry.path(), token.as_deref())? {
+                match proves_leaderless(record, &entry.path(), &member, token.as_deref())? {
                     Some(true) => {}
                     Some(false) => {
                         unproven = true;
@@ -253,10 +243,68 @@ impl Journal {
         if unproven && !found {
             tracing::warn!(
                 pgid = record.pgid,
-                "sparing a leaderless group no member of which carries its token"
+                "sparing a leaderless group none of whose members proves it recorded"
+            );
+        }
+        if foreign && !found {
+            tracing::error!(
+                pgid = record.pgid,
+                "a member of a recorded group runs as another user and cannot be stopped"
             );
         }
         Ok(found)
+    }
+}
+
+/// Whether `record`'s leader is gone; None when its pid now names another
+/// process, so the group is not the recorded one.
+fn leader_missing(record: &Record, proc_root: &Path) -> io::Result<Option<bool>> {
+    assert!(record.pgid > 1, "not a recorded group: {}", record.pgid);
+    let leader = match std::fs::read(proc_root.join(record.pgid.to_string()).join("stat")) {
+        Ok(stat) => identity(&stat)?,
+        Err(e) if disappeared(&e) => return Ok(Some(true)),
+        Err(e) => return Err(e),
+    };
+    let recorded = leader.group == record.pgid && leader.start_time == record.start_time;
+    Ok(recorded.then_some(false))
+}
+
+/// `process`'s identity and owner when it is in group `pgid`; None otherwise
+/// or once it is gone. The owner is followed, so a test's proc root can name
+/// another user's process.
+fn group_member(process: &Path, pgid: i32) -> io::Result<Option<(Identity, u32)>> {
+    assert!(pgid > 1, "not a recorded group: {pgid}");
+    let member = match std::fs::read(process.join("stat")) {
+        Ok(stat) => identity(&stat)?,
+        Err(e) if disappeared(&e) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if member.group != pgid {
+        return Ok(None);
+    }
+    match std::fs::metadata(process) {
+        Ok(metadata) => Ok(Some((member, metadata.uid()))),
+        Err(e) if disappeared(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Whether a running member of a group whose leader is gone proves it
+/// `record`'s; None once it is gone. A record without a session needs the token.
+fn proves_leaderless(
+    record: &Record,
+    process: &Path,
+    member: &Identity,
+    token: Option<&str>,
+) -> io::Result<Option<bool>> {
+    assert!(member.running(), "only a running member proves a group");
+    assert_eq!(
+        member.group, record.pgid,
+        "not a member of the recorded group"
+    );
+    match record.session {
+        Some(session) => Ok(Some(member.session == session)),
+        None => carries_token(process, token),
     }
 }
 
@@ -274,8 +322,8 @@ fn carries_token(process: &Path, token: Option<&str>) -> io::Result<Option<bool>
 
 /// SIGKILL the group of a `record` recovery proved ours. Through its leader,
 /// stopped first so the group id stays its own until the signal lands, or,
-/// once that leader is gone, member by member: a group id is not reused while
-/// a member lives, and the proof was a member carrying the record's token.
+/// once that leader is gone, member by member: each pinned and checked to be
+/// this user's and, when recorded, in the group's session.
 fn kill_recorded_group(record: &Record, proc_root: &Path) -> io::Result<()> {
     assert!(record.pgid > 1, "not a recorded group: {}", record.pgid);
     if kill_through_leader(record, proc_root)? {
@@ -286,7 +334,7 @@ fn kill_recorded_group(record: &Record, proc_root: &Path) -> io::Result<()> {
         let mut found = false;
         for_each_candidate(proc_root, |pid, _| {
             found |= signal_pinned(proc_root, pid, rustix::process::Signal::KILL, |process| {
-                running_member(process, pgid)
+                running_member(process, record)
             })?;
             Ok(())
         })?;
@@ -377,14 +425,16 @@ fn wait_recorded_leader_stopped(record: &Record, proc_root: &Path) -> io::Result
     Ok(false)
 }
 
-/// Whether `process` is a live member of `pgid`.
-fn running_member(process: &Path, pgid: Pid) -> io::Result<bool> {
-    let member = match std::fs::read(process.join("stat")) {
-        Ok(stat) => identity(&stat)?,
-        Err(e) if disappeared(&e) => return Ok(false),
-        Err(e) => return Err(e),
+/// Whether `process` is a live member of `record`'s group this user can stop,
+/// in the recorded session when there is one.
+fn running_member(process: &Path, record: &Record) -> io::Result<bool> {
+    let Some((member, owner)) = group_member(process, record.pgid)? else {
+        return Ok(false);
     };
-    Ok(member.group == pgid.as_raw() && member.running())
+    let in_session = record
+        .session
+        .is_none_or(|session| member.session == session);
+    Ok(member.running() && owner == record.uid && in_session)
 }
 
 pub(crate) fn kill_job(job: ProcessId) -> io::Result<()> {
@@ -665,6 +715,7 @@ fn disappeared(error: &io::Error) -> bool {
 
 struct Identity {
     group: i32,
+    session: i32,
     start_time: u64,
     state: char,
 }
@@ -684,11 +735,13 @@ fn identity(stat: &[u8]) -> io::Result<Identity> {
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let fields: Vec<_> = tail.split_whitespace().collect();
     let group = fields.get(2).and_then(|s| s.parse().ok());
+    let session = fields.get(3).and_then(|s| s.parse().ok());
     let start_time = fields.get(19).and_then(|s| s.parse().ok());
     let state = fields.first().and_then(|s| s.chars().next());
-    match (group, start_time, state) {
-        (Some(group), Some(start_time), Some(state)) => Ok(Identity {
+    match (group, session, start_time, state) {
+        (Some(group), Some(session), Some(start_time), Some(state)) => Ok(Identity {
             group,
+            session,
             start_time,
             state,
         }),

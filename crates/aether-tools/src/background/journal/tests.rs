@@ -174,8 +174,10 @@ fn malformed_record_refuses_recovery_and_remains_visible() {
     assert!(path.exists());
 }
 
+/// A group id another session took since the record was written is not the
+/// recorded group, even with the recorded id and no leader.
 #[tokio::test]
-async fn recovery_does_not_kill_a_leaderless_group_without_the_job_token() {
+async fn recovery_spares_a_leaderless_group_in_another_session() {
     let dir = tempfile::tempdir().unwrap();
     let id = ProcessId::new();
     let mut child = tokio::process::Command::new("bash")
@@ -207,14 +209,107 @@ async fn recovery_does_not_kill_a_leaderless_group_without_the_job_token() {
     .await;
     std::fs::write(dir.path().join("exit"), "exit").unwrap();
     child.wait().await.unwrap();
+    let mut record: Record =
+        serde_json::from_slice(&std::fs::read(&registration.0).unwrap()).unwrap();
+    let session = record
+        .session
+        .expect("a published record names its session");
+    record.session = Some(session + 1);
+    std::fs::write(&registration.0, serde_json::to_vec(&record).unwrap()).unwrap();
     Journal::recover(journal.directory).unwrap();
     let survived = alive(pid);
     killpg(Pid::from_raw(pgid), Signal::SIGKILL).unwrap();
     assert!(
         survived,
-        "a same-user group without the token is not proven ours"
+        "a group outside the recorded session is not proven ours"
     );
     assert!(!registration.0.exists());
+}
+
+/// A foreground call whose shell exited and whose remaining command cleared
+/// the call's token is still stopped: its session proves the group.
+#[tokio::test]
+async fn recovery_stops_a_leaderless_call_group_whose_members_all_cleared_the_token() {
+    let dir = tempfile::tempdir().unwrap();
+    let call = ProcessId::new();
+    let mut child = tokio::process::Command::new("bash")
+        .env(CALL_ENV, call.to_string())
+        .args(["-c", "env -u AETHER_FOREGROUND_CALL sleep 300 & echo $! > tokenless.tmp && mv tokenless.tmp tokenless; while [ ! -e exit ]; do sleep 0.01; done"])
+        .current_dir(dir.path()).process_group(0).kill_on_drop(true).spawn().unwrap();
+    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let registration = journal
+        .register_foreground(call, child.id().unwrap())
+        .unwrap();
+    ready(&dir.path().join("tokenless")).await;
+    let tokenless = pid_in(&dir.path().join("tokenless"));
+    wait_for("the member's token cleared", || {
+        let cleared = std::fs::read(format!("/proc/{tokenless}/environ"))
+            .is_ok_and(|environment| !carries(&environment, &format!("{CALL_ENV}={call}")));
+        if cleared {
+            Observed::Held
+        } else {
+            Observed::Pending("token still present".into())
+        }
+    })
+    .await;
+    std::fs::write(dir.path().join("exit"), "exit").unwrap();
+    child.wait().await.unwrap();
+    assert!(alive(tokenless), "the call's command outlives its shell");
+    let recovered = Journal::recover(journal.directory);
+    let stopped = !alive(tokenless) || {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        !alive(tokenless)
+    };
+    let _ = nix::sys::signal::kill(Pid::from_raw(tokenless), Signal::SIGKILL);
+    recovered.unwrap();
+    assert!(stopped, "the interrupted call's command outlived the start");
+    assert!(!registration.0.exists());
+}
+
+/// Another user's process (a `sudo` child) in a recorded group does not
+/// disown the rest of the group, which recovery still stops.
+#[test]
+fn another_users_member_does_not_disown_the_recorded_group() {
+    let own = geteuid().as_raw();
+    let Some(foreign) = std::fs::read_dir("/proc").unwrap().find_map(|entry| {
+        let entry = entry.ok()?;
+        entry.file_name().to_str()?.parse::<u32>().ok()?;
+        let owner = entry.metadata().ok()?.uid();
+        let group = identity(&std::fs::read(entry.path().join("stat")).ok()?)
+            .ok()?
+            .group;
+        (owner != own && group > 1).then(|| (entry.path(), group))
+    }) else {
+        eprintln!("skipping: no process of another user is visible");
+        return;
+    };
+    let (foreign, foreign_group) = foreign;
+    let dir = tempfile::tempdir().unwrap();
+    let journal = Journal::recover(dir.path().join("journal")).unwrap();
+    let proc_root = dir.path().join("proc");
+    // The recorded leader is ours; the other entry is the other user's
+    // process, whose group the fake leader's stat claims.
+    let leader = proc_root.join(foreign_group.to_string());
+    std::fs::create_dir_all(&leader).unwrap();
+    let fields = format!(
+        "{foreign_group} (sh) S 1 {foreign_group} 7{}",
+        " 0".repeat(15)
+    );
+    std::fs::write(leader.join("stat"), format!("{fields} 42 0")).unwrap();
+    std::os::unix::fs::symlink(&foreign, proc_root.join("999999")).unwrap();
+    let record = Record {
+        pgid: foreign_group,
+        start_time: 42,
+        boot_id: journal.boot_id.clone(),
+        uid: own,
+        job: None,
+        call: Some(ProcessId::new()),
+        session: Some(7),
+    };
+    assert!(
+        journal.matches(&record, &proc_root).unwrap(),
+        "another user's member disowned a group whose recorded leader runs"
+    );
 }
 
 #[test]
@@ -228,6 +323,7 @@ fn unreadable_proc_entries_preserve_the_record_without_failing_recovery() {
         uid: geteuid().as_raw(),
         job: Some(ProcessId::new()),
         call: None,
+        session: None,
     };
     let path = journal.directory.join("owned.json");
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -251,6 +347,7 @@ fn an_inconclusive_foreground_record_refuses_the_start() {
         uid: geteuid().as_raw(),
         job: None,
         call: Some(ProcessId::new()),
+        session: None,
     };
     let path = journal.directory.join("call.json");
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -288,6 +385,7 @@ fn recovery_clears_the_record_when_a_job_process_exits_mid_scan() {
         uid: geteuid().as_raw(),
         job: Some(job),
         call: None,
+        session: None,
     };
     let path = journal.directory.join(format!("{job}.json"));
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -756,6 +854,7 @@ fn a_leader_that_cannot_be_read_after_its_stop_is_resumed() {
         uid: geteuid().as_raw(),
         job: None,
         call: Some(ProcessId::new()),
+        session: None,
     };
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let proc_root = dir.path().to_owned();
