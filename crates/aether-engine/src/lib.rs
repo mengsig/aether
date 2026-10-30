@@ -594,6 +594,8 @@ pub(crate) fn ensure_workspace(cwd: &Path) -> Result<(), EngineError> {
 
 /// Names the real cause of a failed spawn: ENOENT means a missing
 /// working directory or a missing executable, and only `cwd` tells them apart.
+/// Any other errno stays in the `Spawn` text, which the runtime reads to wait
+/// out EAGAIN, ETXTBSY and ENOMEM rather than fail the agent.
 pub(crate) fn spawn_error(program: &str, cwd: &Path, error: std::io::Error) -> EngineError {
     if error.kind() != std::io::ErrorKind::NotFound {
         return EngineError::Spawn {

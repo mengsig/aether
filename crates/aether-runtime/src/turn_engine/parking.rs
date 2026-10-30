@@ -72,9 +72,10 @@ pub(super) const MAX_ENGINE_ERROR: usize = 1_024;
 /// the pattern.
 const MAX_PARKED_NAMES: usize = 8;
 
-/// A provider or context limit named in native engine prose: no retry can answer it.
+/// A provider or context limit, or a refused sign-in, named in native engine
+/// prose: no retry can answer it.
 pub(super) fn names_exhaustion(error: &str) -> bool {
-    crate::exhaustion::recoverable_by_fallback(crate::exhaustion::engine_error_class(error))
+    crate::exhaustion::native_suspends(crate::exhaustion::engine_error_class(error))
 }
 
 /// Engine-chosen text, cut to a length the runtime is willing to hold.

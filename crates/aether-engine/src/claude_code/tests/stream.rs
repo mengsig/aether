@@ -675,3 +675,24 @@ fn recorded_rate_limit_event_retains_resets_through_normalization() {
         assert_eq!(usage.windows[1].quota.used_percent, 73);
     }
 }
+
+#[test]
+fn a_refused_sign_in_is_named_in_the_failed_result() {
+    let error_of = |line: &str| {
+        let events = parse_line(line, &mut ParseState::default());
+        events
+            .into_iter()
+            .find_map(|event| match event {
+                EngineEvent::Done(outcome) => Some(outcome.error),
+                _ => None,
+            })
+            .expect("a result ends the turn")
+    };
+    let refused = r#"{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Failed to authenticate."}"#;
+    assert_eq!(
+        error_of(refused).as_deref(),
+        Some("Failed to authenticate.\napi_error_status: 401")
+    );
+    let other = r#"{"type":"result","subtype":"success","is_error":true,"api_error_status":400,"result":"bad request"}"#;
+    assert_eq!(error_of(other).as_deref(), Some("bad request"));
+}

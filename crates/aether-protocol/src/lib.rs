@@ -168,7 +168,10 @@ use serde::{Deserialize, Serialize};
 /// 24: `append_note` takes a `level` (`info`, `applied` or `refused`) and
 /// records it in the note event. Older clients ignore the field and show the
 /// note as plain; a level other than `info` is refused to a daemon below 24.
-pub const PROTOCOL_VERSION: u32 = 24;
+///
+/// 25: the `credentials` exhaustion class, for an agent suspended on an engine
+/// sign-in the provider refused. `compat` shows it to older clients as `usage_limit`.
+pub const PROTOCOL_VERSION: u32 = 25;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
