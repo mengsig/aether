@@ -1,3 +1,4 @@
+use super::super::history_tests::{DaemonTask, connect_when_ready};
 use super::*;
 use std::collections::VecDeque;
 use tokio_util::sync::CancellationToken;
@@ -7,7 +8,7 @@ pub(super) struct Fixture {
     pub agent: Agent,
     pub store: SqliteStore,
     shutdown: CancellationToken,
-    daemon: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    daemon: Option<DaemonTask>,
 }
 
 impl Fixture {
@@ -66,9 +67,36 @@ impl Fixture {
     async fn start(&mut self) {
         assert!(self.daemon.is_none());
         self.shutdown = CancellationToken::new();
-        self.daemon = Some(tokio::spawn(aether_daemon::run(
+        // A child another test forks holds the stopped daemon's lock until it
+        // execs, so a restart retries a busy lock; anything else fails at once.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let daemon = self.spawn_daemon();
+            if let Some(client) = connect_when_ready(&self.socket(), &daemon).await {
+                assert!(client.welcome().is_some());
+                self.daemon = Some(daemon);
+                return;
+            }
+            let error = daemon
+                .await
+                .expect("daemon task")
+                .expect_err("a daemon stops before serving only by failing");
+            assert!(
+                error.downcast_ref::<aether_daemon::LockBusy>().is_some(),
+                "daemon start: {error:#}"
+            );
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the daemon lock stayed busy: {error:#}"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    fn spawn_daemon(&self) -> DaemonTask {
+        tokio::spawn(aether_daemon::run(
             aether_daemon::DaemonConfig {
-                socket: self.directory.path().join("d.sock"),
+                socket: self.socket(),
                 store_path: self.directory.path().join("store.db"),
                 config_dir: Some(self.directory.path().join("config")),
                 workspace_root: Some(self.directory.path().into()),
@@ -78,13 +106,14 @@ impl Fixture {
                 allow_remote: false,
             },
             self.shutdown.clone(),
-        )));
-        let client = self.client().await;
-        assert!(client.welcome().is_some());
+        ))
     }
 
     pub async fn client(&self) -> Client {
-        super::super::history_tests::connect_when_ready(&self.directory.path().join("d.sock")).await
+        let daemon = self.daemon.as_ref().expect("a running daemon");
+        connect_when_ready(&self.socket(), daemon)
+            .await
+            .expect("the running daemon serves")
     }
 
     pub fn socket(&self) -> std::path::PathBuf {
