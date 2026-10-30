@@ -26,16 +26,24 @@ schema 28, unchanged.
   store stays at schema 28, so there is no migration and no pre-migration
   backup.
 - A server, database or browser an agent started now keeps running while the
-  daemon is stopped, as long as that agent has not ended: the restart's
-  recovery resumes the agent beside it. End or cancel an agent before
-  `aether stop` to stop what it holds. What an ended agent left running, with
-  no live ancestor to hold it, is stopped at the agent's end, at a daemon stop
-  and at the next start. A process started with `AETHER_KEEP_PROCESS=1` is
-  never stopped by these sweeps. Linux only.
+  daemon is stopped, as long as that agent has not ended, so recovery can
+  resume the agent beside it. End or cancel an agent before `aether stop` to
+  stop what it holds. Not everything survives: background shell jobs still
+  stop with the daemon, and a stop or crash that cuts an engine's turn short
+  stops what that engine ran for the turn, a server it started included. A
+  process started with `AETHER_KEEP_PROCESS=1` is never stopped by these
+  sweeps. What an ended agent left running, with no live ancestor to hold it,
+  is stopped at the agent's end, at a daemon stop and at the next start.
+  Linux only.
 - An agent the TUI did not start (an `aether run` agent, one an orchestrator
   such as Archon created, and their children) now resumes after a restart on
-  Linux without `aether resume`. Agents stored before the update, and agents
-  already parked for inspection, still wait for it.
+  Linux without `aether resume`, once the start has stopped the commands its
+  interrupted turn left running. It still waits for inspection when the start
+  cannot show that: a foreground call whose process group no process proves
+  is the call's, a process in it the daemon cannot stop (such as a `sudo`
+  child), a container sweep that failed or timed out, or a turn a live daemon
+  lost. Agents stored before the update, and agents already parked for
+  inspection, wait for it too.
 - Replies on one connection can arrive out of request order. Every Aether
   client already matches them by `id`; a client of your own must too (see
   [Reply order](docs/protocol.md#reply-order)).
