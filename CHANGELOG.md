@@ -102,9 +102,21 @@ clients on 17 through 24 see it as `usage_limit`.
   group as the call's end would have (the call is recorded before its
   command starts), so an agent recovery resumes never
   races its own interrupted command; what the call detached is spared like
-  any agent's server. A call that cannot be recorded is not started, and a
+  any agent's server. Once the call's shell is gone, what is left in its
+  process group is proven the call's by the session the group was recorded
+  in, so a command that cleared the call's id is stopped too, and a process
+  of another user in the group (a `sudo` child) no longer makes the start
+  give up on the rest. A call that cannot be recorded is not started, and a
   start that cannot stop a recorded call refuses to run and says which process
-  group to stop. Linux only.
+  group to stop. Engines are now recorded before they start, and one that
+  cannot be recorded is not started; a start that cannot stop a recorded
+  engine refuses to run the same way, and its sweep for the engine's token
+  carriers repeats until no new one appears. Linux only.
+- **A restart sweeps an earlier daemon's containers before any turn
+  starts.** The sweep of containers that Aether's container backend left
+  running ran after the scheduler had started, so a resumed turn could run
+  beside its interrupted call's container, and the sweep could kill a
+  container a new turn had just started. It now finishes first.
 - **A refused engine sign-in suspends the agent instead of failing it.** A
   native engine whose OAuth token expired or whose API key was refused
   (Claude Code's `authentication_error`, "Please run /login", a result with

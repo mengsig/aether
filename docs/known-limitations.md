@@ -350,6 +350,10 @@ isolation depend on the installed engine version and the platform; see
   with no turn in flight, is spared. A process a foreground call of Aether's
   own shell tool moved out of the call's process group is spared like any
   agent's server, and runs until that agent ends.
+- The start's sweep of containers an earlier daemon left is bounded in time
+  and does not stop the start when Docker cannot list or kill them, as with
+  an unreachable remote Docker service: a resumed agent may then run beside
+  its interrupted call's container.
 - The daemon records hand-ups only in memory, so a start after a crash
   cannot tell whether an ancestor that has since failed or been cancelled
   held a completed child's processes, which its end would have stopped, or

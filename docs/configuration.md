@@ -491,7 +491,10 @@ descendants inherit. Aether's own shell tool sets the same variable on every
 command it runs on the host, in the foreground or the background, so a browser,
 dev server or other helper that a command detaches (a new session, a double
 fork) still carries its agent's id after it leaves the command's process group.
-Containers run by the Docker daemon do not, and are not Aether's to stop. On Linux, once the engine is running, the daemon asks the
+Containers run by the Docker daemon do not, and are not Aether's to stop,
+except that a daemon start kills the containers of Aether's own container
+backend that an earlier daemon on the same store left running, before any
+turn starts. On Linux, once the engine is running, the daemon asks the
 user systemd manager to move it into a transient scope named
 `aether-engine-<agent>-<id>.scope`, whose cgroup then holds every descendant,
 even one that cleared its environment or started its own session. A process
@@ -629,11 +632,17 @@ recorded before its command starts and until it ends, and the start kills
 the process group of each one a crash cut short, as the call's end would
 have: through its leader, held stopped while the group is signalled, while
 that leader still has the recorded pid and start time, or, once the leader
-is gone, each process left in the group, as long as one of them carries the
-call's id (`AETHER_FOREGROUND_CALL`): a group none of whose processes does is
-not proven the call's, and is left alone. A call that cannot be recorded is
-not started, and a start that cannot stop a recorded call refuses to run,
-naming the process group to stop by hand. An agent that recovery resumes
+is gone, each process of the daemon's user left in the group while the group
+is still in the session it was recorded in; a group id another session took
+since is left alone. A process in the group that runs as another user (a
+`sudo` child) cannot be signalled and is skipped; the rest of the group is
+still stopped. A call that cannot be recorded is not started, and a start
+that cannot stop a recorded call refuses to run, naming the process group to
+stop by hand. Engines are recorded the same way, while held before they
+start: one that cannot be recorded is not started, a start that cannot stop
+a recorded engine refuses to run and names its group, and the sweep for an
+engine's token carriers repeats until a pass finds none it had not
+signalled, so one forked behind it is caught. An agent that recovery resumes
 never races its own interrupted command, and what the call detached is
 spared as above. It
 never signals a process it cannot tie to an engine it started or an agent it
