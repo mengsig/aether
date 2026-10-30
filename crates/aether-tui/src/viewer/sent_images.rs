@@ -4,13 +4,14 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use aether_core::attachment::{AttachmentId, AttachmentRef, IMAGE_MEDIA_TYPES, MAX_IMAGE_BYTES};
+use aether_core::attachment::{AttachmentId, IMAGE_MEDIA_TYPES, MAX_IMAGE_BYTES};
 use anyhow::{Context, Result, bail, ensure};
 
 use super::references::{Reference, parse};
 use super::{Preview, ReadRequest, files, graphics, load};
 use crate::app::transcript::CellModel;
 use crate::ui::cells::ChatCell;
+use crate::ui::cells::text::clean;
 
 /// Marks a sent image's reference. `references::parse` refuses any scheme
 /// but `file:`, so no link in a message can carry it.
@@ -41,17 +42,12 @@ pub fn cell_references(model: &CellModel) -> Vec<Reference> {
     if images.is_empty() {
         return parse(text);
     }
-    let lines = crate::app::image_lines(images.iter().map(AttachmentRef::summary));
-    debug_assert_eq!(lines.len(), images.len());
-    let words = text
-        .lines()
-        .filter(|line| !lines.iter().any(|image_line| image_line == line))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let (words, lines) = crate::app::split_image_lines(text, images);
     let mut references = parse(&words);
+    // Labelled as `ui::cells::user` draws the line, so the click finds it.
     references.extend(images.iter().zip(lines).map(|(image, line)| Reference {
         target: format!("{SCHEME}{}", image.file_name()),
-        label: line,
+        label: clean(&line),
     }));
     debug_assert!(references.iter().all(|r| !r.target.is_empty()));
     references

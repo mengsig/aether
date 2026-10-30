@@ -277,3 +277,80 @@ fn images_with_one_summary_get_lines_of_their_own() {
         assert!(reference.target.ends_with(&image.file_name()));
     }
 }
+
+/// Send the file `name` holding `bytes` with `words`, as the daemon stores it.
+fn send_file(app: &mut App, store: &std::path::Path, name: &str, words: &str, bytes: &[u8]) {
+    let (_dir, path) = png_file(name);
+    std::fs::write(&path, bytes).expect("write");
+    app.run_image_command(ImageArg::File(path.display().to_string()));
+    let read = aether_client::images::read_image_file(&path).map_err(|e| e.to_string());
+    app.reduce(AppEvent::ImageRead(read));
+    app.reduce(AppEvent::Paste(words.into()));
+    let (_, text, images) = sent(&app.reduce(key(KeyCode::Enter)));
+    assert_eq!((text.as_str(), images.len()), (words, 1));
+    let mut content = vec![ContentBlock::text(words)];
+    content.extend(daemon_stores(store, &images));
+    push_user_content(app, content);
+}
+
+#[test]
+fn a_file_named_in_the_words_still_opens_the_image_from_its_line() {
+    let store = tempfile::tempdir().expect("store");
+    let mut app = app_with_store(store.path());
+    let name = format!("{}.png", "a".repeat(90));
+    let bytes = picture(7);
+    send_file(
+        &mut app,
+        store.path(),
+        &name,
+        &format!("see {name}"),
+        &bytes,
+    );
+
+    let mut cache = ViewCache::default();
+    render_with(&app, &mut cache, 160, 40);
+    let line = format!("[image: {name}, {} B]", bytes.len());
+    let image = cache
+        .file_hits
+        .iter()
+        .find(|h| h.reference.label == line)
+        .expect("the image line");
+    // The longer workspace link sits inside the image line; the image wins it.
+    let inside = cache
+        .file_hits
+        .iter()
+        .find(|h| h.reference.target == name && h.area.y == image.area.y)
+        .expect("the name is a link inside the image line")
+        .clone();
+    assert!(inside.reference.target.len() > image.reference.target.len());
+    let mouse = |kind| MouseEvent {
+        kind,
+        column: inside.area.x,
+        row: inside.area.y,
+        modifiers: KeyModifiers::NONE,
+    };
+    app.dispatch_mouse(mouse(MouseEventKind::Down(MouseButton::Left)), &mut cache);
+    let effects = app.dispatch_mouse(mouse(MouseEventKind::Up(MouseButton::Left)), &mut cache);
+    assert_shows(load(&mut app, effects), &bytes);
+}
+
+#[test]
+fn an_image_line_is_drawn_and_clicked_as_written() {
+    let store = tempfile::tempdir().expect("store");
+    let mut app = app_with_store(store.path());
+    let bytes = picture(8);
+    send_file(
+        &mut app,
+        store.path(),
+        "shot`one`.png",
+        "look `here`",
+        &bytes,
+    );
+    let screen = render_to(&app, 160, 40);
+    assert!(
+        screen.contains("look here"),
+        "the words keep inline code: {screen}"
+    );
+    let line = format!("[image: shot`one`.png, {} B]", bytes.len());
+    assert_shows(click_line(&mut app, &line), &bytes);
+}

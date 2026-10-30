@@ -71,7 +71,12 @@ impl App {
                         .file_hits
                         .iter()
                         .filter(|h| h.area.contains((mouse.column, mouse.row).into()))
-                        .max_by_key(|h| h.reference.target.len())
+                        // A sent image's line outranks a file named inside it.
+                        .max_by_key(|h| {
+                            let image =
+                                crate::viewer::sent_images::is_sent_image(&h.reference.target);
+                            (image, h.reference.target.len())
+                        })
                         .cloned()
                         .map(|h| (self.selected, h))
                 } else {

@@ -2,7 +2,7 @@
 //! the clipboard), the list the chips show, and the message they leave with.
 
 use aether_core::attachment::{
-    ImageAttachment, MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_IMAGE_BYTES, human_size,
+    AttachmentRef, ImageAttachment, MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_IMAGE_BYTES, human_size,
 };
 
 use super::{App, Effect};
@@ -64,6 +64,31 @@ pub(crate) fn with_image_lines(text: &str, summaries: impl Iterator<Item = Strin
     }
     lines.extend(image_lines(summaries));
     lines.join("\n")
+}
+
+/// A user cell's text split back into its words and the image lines
+/// `with_image_lines` put after them, one per image.
+pub(crate) fn split_image_lines(text: &str, images: &[AttachmentRef]) -> (String, Vec<String>) {
+    let lines = image_lines(images.iter().map(AttachmentRef::summary));
+    if lines.is_empty() {
+        return (text.to_owned(), lines);
+    }
+    let tail = lines.join("\n");
+    debug_assert!(
+        text.ends_with(&tail),
+        "a user cell ends with its image lines"
+    );
+    let words = match text.strip_suffix(tail.as_str()) {
+        Some(words) => words.strip_suffix('\n').unwrap_or(words).to_owned(),
+        // Never a workspace link: drop whatever line reads as an image line.
+        None => text
+            .lines()
+            .filter(|line| !lines.iter().any(|image_line| image_line == line))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    };
+    debug_assert_eq!(lines.len(), images.len());
+    (words, lines)
 }
 
 impl App {

@@ -16,11 +16,17 @@ pub fn display_lines(cell: &CellModel, width: u16, theme: &Theme) -> Vec<Line<'s
 }
 
 pub fn layout(cell: &CellModel, width: u16, _detail: bool, theme: &Theme) -> Layout {
-    let CellModel::User { from, text, .. } = cell else {
+    let CellModel::User { from, text, images } = cell else {
         return Layout::default();
     };
     let first = lead(from, theme);
-    let body = inline_code(&clean(text), theme.text(), theme);
+    // Image lines are drawn verbatim: a click finds them by their text.
+    let (words, image_lines) = crate::app::split_image_lines(text, images);
+    let mut body = inline_code(&clean(&words), theme.text(), theme);
+    for line in image_lines {
+        let gap = if body.is_empty() { "" } else { "\n" };
+        body.push(span(format!("{gap}{}", clean(&line)), theme.text()));
+    }
     // The block keeps a 2-column right margin inside its tint (mock h).
     let wrap_width = usize::from(width).saturating_sub(2);
     let mut rows = Layout::default();
