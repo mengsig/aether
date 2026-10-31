@@ -183,6 +183,13 @@ async fn inspect_state_reports_cost_budget_turn_limit_and_deadline() {
     assert_eq!(state["cost_budget"], 0.5);
     assert_eq!(state["max_turns"], 7);
     assert_eq!(state["deadline"], deadline.to_rfc3339());
+    let left = state["deadline_minutes_left"]
+        .as_i64()
+        .expect("minutes left");
+    assert!(
+        (365 * 24 * 60 - 5..=365 * 24 * 60).contains(&left),
+        "a year out, read moments ago: {left}"
+    );
     assert!(state["turns_taken"].is_u64());
     assert!(state["subtree_cost_spent_usd"].is_number());
     assert!(state["subtree_cost_is_a_floor"].is_boolean());

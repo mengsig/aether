@@ -31,7 +31,7 @@ impl SqliteStore {
                 &mut args,
             )
         };
-        let mut conn = self.read_conn();
+        let mut conn = self.read_conn()?;
         // Both reads must see the same history, even if another connection is
         // pruning between statements. No write is performed by this transaction.
         let tx = conn.transaction()?;

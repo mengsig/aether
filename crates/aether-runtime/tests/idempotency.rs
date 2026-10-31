@@ -380,6 +380,13 @@ impl Store for CommitLog {
     fn latest_custom_event(&self, names: &[&str]) -> aether_store::Result<Option<Event>> {
         self.inner.latest_custom_event(names)
     }
+    fn latest_agent_custom_event(
+        &self,
+        agent: AgentId,
+        name: &str,
+    ) -> aether_store::Result<Option<Event>> {
+        self.inner.latest_agent_custom_event(agent, name)
+    }
     fn schedule(&self, id: ScheduleId) -> StoreResult<Option<Schedule>> {
         self.inner.schedule(id)
     }

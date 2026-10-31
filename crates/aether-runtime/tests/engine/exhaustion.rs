@@ -226,11 +226,7 @@ async fn engine_exhaustion_uses_fallback_without_crossing_native_sessions() {
         tools: vec![],
     }];
     second.extend(answered("fallback answered"));
-    let engine = QueuedEngine::new(vec![
-        first,
-        second,
-        answered("new primary session answered"),
-    ]);
+    let engine = QueuedEngine::new(vec![first, second, answered("the fallback answered again")]);
     let h = harness_with_engine(
         engine.clone(),
         Arc::new(Mutex::new(vec![])),
@@ -275,10 +271,12 @@ async fn engine_exhaustion_uses_fallback_without_crossing_native_sessions() {
         agent.stats.turns == 2 && matches!(agent.status, AgentStatus::Waiting { .. })
     })
     .await;
+    // The spent primary is benched, so the next turn stays on the fallback
+    // and resumes the fallback's own session, never the primary's.
     assert_eq!(
         *engine.sessions.lock().unwrap(),
-        vec![None, None, None],
-        "primary must not resume the fallback's session"
+        vec![None, None, Some("codex-session".to_owned())],
+        "a fallback must not resume the primary's session"
     );
     assert_eq!(engine.prompts.lock().unwrap().len(), 3);
     h.runtime.shutdown().await;
@@ -625,6 +623,82 @@ async fn native_context_limit_overrides_an_open_wait_and_interruption() {
     assert!(
         matches!(task.status, aether_core::task::TaskStatus::Failed { error, .. }
         if error.contains("context_length_exceeded"))
+    );
+    h.runtime.shutdown().await;
+}
+
+/// A refused sign-in is as final as a spent quota: it overrides an open wait
+/// and the adapter's interruption, and suspends the agent on `credentials`.
+#[tokio::test]
+async fn a_refused_sign_in_overrides_an_open_wait_and_interruption() {
+    let (handover, ready) = tokio::sync::oneshot::channel();
+    let (finish, finished) = tokio::sync::oneshot::channel();
+    let engine = Arc::new(SilentBridgeEngine {
+        handover: Mutex::new(Some(handover)),
+        finish: Mutex::new(Some(finished)),
+        outcome: EngineOutcome {
+            is_error: true,
+            interrupted: true,
+            error: Some("OAuth token has expired · Please run /login".into()),
+            ..Default::default()
+        },
+    });
+    let h = harness_with_engine(
+        engine,
+        Arc::new(Mutex::new(vec![])),
+        Arc::new(Mutex::new(vec![])),
+    )
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "worker".into(),
+                objective: Some("keep work".into()),
+                start: true,
+                config: Some(AgentConfig {
+                    approval: ApprovalPolicy::none(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .unwrap();
+    let (id, token) = ready.await.unwrap();
+    let (reply, is_error) = h
+        .runtime
+        .engine_tool(
+            id,
+            &token,
+            "wait_for".into(),
+            serde_json::json!({"timeout_seconds":3600}),
+        )
+        .await
+        .unwrap();
+    assert!(!is_error, "{reply}");
+    finish.send(()).unwrap();
+    let ended = wait_for(h.store.as_ref(), agent.id, |agent| {
+        agent.status.kind() == AgentStatusKind::Blocked || agent.status.is_terminal()
+    })
+    .await;
+    assert!(
+        matches!(
+            ended.status,
+            AgentStatus::Blocked {
+                reason: BlockReason::Exhausted {
+                    class: ExhaustionClass::Credentials,
+                    ..
+                }
+            }
+        ),
+        "{:?}",
+        ended.status
+    );
+    let task = h.store.task(agent.current_task.unwrap()).unwrap().unwrap();
+    assert!(
+        !task.status.is_terminal(),
+        "a suspended agent keeps its task"
     );
     h.runtime.shutdown().await;
 }

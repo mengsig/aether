@@ -10,10 +10,11 @@
 use aether_core::id::AgentId;
 
 /// Environment variable naming the agent an engine and its descendants run for.
-pub(crate) const AGENT_ENV: &str = "AETHER_ENGINE_AGENT";
+pub(crate) const AGENT_ENV: &str = aether_core::agent::PROCESS_AGENT_ENV;
 
 /// The command to spawn `program` as an engine of `agent`. The caller still
-/// puts it in its own process group and passes the child to [`adopt`].
+/// puts it in its own process group, spawns it with [`crate::spawn_gated`]
+/// and passes the child to [`adopt`].
 pub(crate) fn command(program: &str, agent: Option<AgentId>) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(program);
     if let Some(agent) = agent {
@@ -22,19 +23,84 @@ pub(crate) fn command(program: &str, agent: Option<AgentId>) -> tokio::process::
     command
 }
 
-/// Move the running engine `pid` of `agent` into a scope of its own, where
-/// systemd can make one. A failure is logged; the engine runs on regardless.
-pub(crate) async fn adopt(pid: Option<u32>, agent: Option<AgentId>) {
+/// The longest a sweep waits for its agents' engines to settle into their
+/// scopes: both of an adoption's systemd waits, and a margin.
+#[cfg(target_os = "linux")]
+pub(crate) const ADOPTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(11);
+
+/// Agents with an engine spawned but not yet in its scope, once per engine.
+static ADOPTING: std::sync::Mutex<Vec<AgentId>> = std::sync::Mutex::new(Vec::new());
+static ADOPTED: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+fn adopting() -> std::sync::MutexGuard<'static, Vec<AgentId>> {
+    // The list stays valid whatever panicked while holding it.
+    ADOPTING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// An engine of an agent spawned but not yet moved into its scope. Begun
+/// under the spawn gate, so a sweep after a fence waits for it ([`settled`]).
+#[derive(Debug)]
+pub(crate) struct Adoption(Option<AgentId>);
+
+impl Adoption {
+    pub(crate) fn begin(agent: Option<AgentId>) -> Self {
+        if let Some(agent) = agent {
+            adopting().push(agent);
+        }
+        Self(agent)
+    }
+}
+
+impl Drop for Adoption {
+    fn drop(&mut self) {
+        let Some(agent) = self.0 else {
+            return;
+        };
+        let mut adopting = adopting();
+        match adopting.iter().position(|pending| *pending == agent) {
+            Some(at) => drop(adopting.swap_remove(at)),
+            None => tracing::error!(%agent, "an engine adoption was not recorded"),
+        }
+        drop(adopting);
+        ADOPTED.notify_waiters();
+    }
+}
+
+/// Wait until no engine of `agents` is between its spawn and its scope, at
+/// most `budget`; false when one still is.
+#[cfg(target_os = "linux")]
+pub(crate) async fn settled(agents: &[AgentId], budget: std::time::Duration) -> bool {
+    assert!(!agents.is_empty(), "no agent to wait for");
+    let deadline = tokio::time::Instant::now() + budget;
+    loop {
+        let notified = ADOPTED.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if !adopting().iter().any(|pending| agents.contains(pending)) {
+            return true;
+        }
+        if tokio::time::timeout_at(deadline, notified).await.is_err() {
+            return false;
+        }
+    }
+}
+
+/// Move the running engine `pid` of `adoption`'s agent into a scope of its
+/// own, where systemd can make one. A failure is logged; the engine runs on.
+pub(crate) async fn adopt(pid: Option<u32>, adoption: Adoption) {
     #[cfg(target_os = "linux")]
-    if let (Some(pid), Some(agent)) = (pid, agent) {
+    if let (Some(pid), Some(agent)) = (pid, adoption.0) {
         linux::adopt(pid, agent).await;
     }
     #[cfg(not(target_os = "linux"))]
-    let _ = (pid, agent);
+    let _ = pid;
+    drop(adoption);
 }
 
 #[cfg(target_os = "linux")]
-pub(crate) use linux::{Unit, agent_units, signal_units};
+pub(crate) use linux::{Unit, agent_units, agents_with_units, belongs_to, in_unit};
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -44,7 +110,6 @@ mod linux {
     use std::time::Duration;
 
     use aether_core::id::AgentId;
-    use nix::sys::signal::Signal;
 
     /// Set to `0` to run engines in their process group alone.
     const DISABLE_ENV: &str = "AETHER_ENGINE_SCOPE";
@@ -60,8 +125,16 @@ mod linux {
         pub procs: PathBuf,
     }
 
+    /// What every engine scope's name starts with.
+    const UNIT_STEM: &str = "aether-engine-";
+
     fn unit_prefix(agent: AgentId) -> String {
-        format!("aether-engine-{agent}-")
+        format!("{UNIT_STEM}{agent}-")
+    }
+
+    /// Whether `unit` is a scope of `agent`'s engines.
+    pub(crate) fn belongs_to(unit: &Unit, agent: AgentId) -> bool {
+        unit.name.starts_with(&unit_prefix(agent))
     }
 
     fn disabled() -> bool {
@@ -135,32 +208,21 @@ mod linux {
         ))
     }
 
-    /// The live scopes of `agent`'s engines, but none holding this process:
+    /// The live scopes of `agents`' engines, but none holding this process:
     /// a daemon started from an agent's shell must not stop itself.
-    pub(crate) async fn agent_units(agent: AgentId) -> Vec<Unit> {
-        if disabled() {
+    pub(crate) async fn agent_units(agents: &[AgentId]) -> Vec<Unit> {
+        if disabled() || agents.is_empty() {
             return Vec::new();
         }
-        let pattern = format!("{}*", unit_prefix(agent));
-        let listed = systemctl(&[
-            "list-units",
-            "--type=scope",
-            "--all",
-            "--plain",
-            "--no-legend",
-            "--full",
-            &pattern,
-        ])
-        .await;
-        // Without a user manager there are no scopes to look for.
-        let listed = match listed {
-            Ok(listed) => listed,
-            Err(error) => {
-                tracing::debug!(%agent, %error, "no engine scopes listed");
-                return Vec::new();
-            }
+        let prefixes: Vec<String> = agents.iter().map(|agent| unit_prefix(*agent)).collect();
+        let pattern = match prefixes.as_slice() {
+            [one] => format!("{one}*"),
+            _ => format!("{UNIT_STEM}*"),
         };
-        let names = unit_names(&listed, &unit_prefix(agent));
+        let Some(listed) = list_scopes(&pattern).await else {
+            return Vec::new();
+        };
+        let names = unit_names(&listed, &prefixes);
         if names.is_empty() {
             return Vec::new();
         }
@@ -169,7 +231,7 @@ mod linux {
         let shown = match systemctl(&args).await {
             Ok(shown) => shown,
             Err(error) => {
-                tracing::warn!(%agent, %error, "cannot read the agent's engine scopes");
+                tracing::warn!(?agents, %error, "cannot read the agents' engine scopes");
                 return Vec::new();
             }
         };
@@ -177,42 +239,91 @@ mod linux {
         let own = match std::fs::read_to_string("/proc/self/cgroup") {
             Ok(own) => own,
             Err(error) => {
-                tracing::warn!(%agent, %error, "cannot read the daemon's own cgroup; sparing engine scopes");
+                tracing::warn!(?agents, %error, "cannot read the daemon's own cgroup; sparing engine scopes");
                 return Vec::new();
             }
         };
         units_from_show(&shown, Path::new(CGROUP_ROOT))
             .into_iter()
-            .filter(|unit| !holds_own_cgroup(unit, &own))
+            .filter(|unit| !in_unit(unit, &own))
             .collect()
     }
 
-    /// Signal every process of `units`. A scope that ended since it was
-    /// listed fails the call; any process truly left shows as a survivor.
-    pub(crate) async fn signal_units(units: &[Unit], signal: Signal) {
-        if units.is_empty() {
-            return;
+    /// The agents any engine scope of this user manager is named after, of
+    /// this daemon or another.
+    pub(crate) async fn agents_with_units() -> Vec<AgentId> {
+        if disabled() {
+            return Vec::new();
         }
-        let flag = format!("--signal={}", signal.as_str());
-        let mut args = vec!["kill", "--kill-whom=all", flag.as_str()];
-        args.extend(units.iter().map(|unit| unit.name.as_str()));
-        if let Err(error) = systemctl(&args).await {
-            tracing::debug!(?signal, %error, "systemctl kill of engine scopes");
+        let Some(listed) = list_scopes(&format!("{UNIT_STEM}*")).await else {
+            return Vec::new();
+        };
+        unit_agents(&listed)
+    }
+
+    /// `list-units` output for the scopes matching `pattern`; none without a
+    /// user manager.
+    async fn list_scopes(pattern: &str) -> Option<String> {
+        assert!(
+            pattern.starts_with(UNIT_STEM),
+            "not an engine scope pattern: {pattern}"
+        );
+        let listed = systemctl(&[
+            "list-units",
+            "--type=scope",
+            "--all",
+            "--plain",
+            "--no-legend",
+            "--full",
+            pattern,
+        ])
+        .await;
+        match listed {
+            Ok(listed) => Some(listed),
+            Err(error) => {
+                tracing::debug!(%error, "no engine scopes listed");
+                None
+            }
         }
     }
 
-    /// The scope names of `list-units --plain --no-legend` output that carry `prefix`.
-    pub(super) fn unit_names(listed: &str, prefix: &str) -> Vec<String> {
+    /// The scope names of `list-units --plain --no-legend` output that carry one of `prefixes`.
+    pub(super) fn unit_names(listed: &str, prefixes: &[String]) -> Vec<String> {
         assert!(
-            !prefix.is_empty(),
-            "an empty prefix would match every scope"
+            prefixes.iter().all(|prefix| prefix.starts_with(UNIT_STEM)),
+            "a prefix that is not an engine's would match foreign scopes: {prefixes:?}"
         );
         listed
             .lines()
             .filter_map(|line| line.split_whitespace().next())
-            .filter(|name| name.starts_with(prefix) && name.ends_with(".scope"))
+            .filter(|name| name.ends_with(".scope"))
+            .filter(|name| {
+                prefixes
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix.as_str()))
+            })
             .map(str::to_owned)
             .collect()
+    }
+
+    /// The agents the engine scopes of `list-units` output are named after,
+    /// sorted and deduplicated.
+    pub(super) fn unit_agents(listed: &str) -> Vec<AgentId> {
+        let mut agents: Vec<AgentId> = listed
+            .lines()
+            .filter_map(|line| line.split_whitespace().next())
+            .filter(|name| name.ends_with(".scope"))
+            .filter_map(|name| {
+                name.strip_prefix(UNIT_STEM)?
+                    .split('-')
+                    .next()?
+                    .parse()
+                    .ok()
+            })
+            .collect();
+        agents.sort_unstable();
+        agents.dedup();
+        agents
     }
 
     /// Units of `show --property=Id,ControlGroup` output that still have a cgroup.
@@ -242,9 +353,10 @@ mod linux {
         units
     }
 
-    /// Whether this process's cgroup v2 path (from `/proc/self/cgroup`) lies in `unit`'s.
-    pub(super) fn holds_own_cgroup(unit: &Unit, own_cgroup: &str) -> bool {
-        let Some(own) = own_cgroup.lines().find_map(|line| line.strip_prefix("0::")) else {
+    /// Whether the process whose `/proc/<pid>/cgroup` reads `cgroup` lies in
+    /// `unit`'s cgroup v2 tree. Signalled one by one, a kept process is spared.
+    pub(crate) fn in_unit(unit: &Unit, cgroup: &str) -> bool {
+        let Some(own) = cgroup.lines().find_map(|line| line.strip_prefix("0::")) else {
             return false;
         };
         let Some(unit_dir) = unit.procs.parent() else {
@@ -281,19 +393,71 @@ mod linux {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::linux::{Unit, holds_own_cgroup, unit_names, units_from_show};
+    use super::linux::{Unit, in_unit, unit_agents, unit_names, units_from_show};
+    use super::{Adoption, settled};
+    use aether_core::id::AgentId;
     use std::path::Path;
+    use std::time::Duration;
+
+    /// A sweep waits for its own agents' engines to join their scopes, and
+    /// for no other agent's.
+    #[tokio::test]
+    async fn a_sweep_waits_for_its_agents_adoptions_alone() {
+        let (agent, other) = (AgentId::new(), AgentId::new());
+        let adoption = Adoption::begin(Some(agent));
+        assert!(
+            !settled(&[agent], Duration::from_millis(50)).await,
+            "settled while an engine was joining its scope"
+        );
+        assert!(
+            settled(&[other], Duration::from_millis(50)).await,
+            "waited for another agent's engine"
+        );
+        let finished = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            drop(adoption);
+        });
+        assert!(
+            settled(&[agent], Duration::from_secs(30)).await,
+            "never settled once the engine joined its scope"
+        );
+        finished.await.unwrap();
+        drop(Adoption::begin(None));
+        assert!(settled(&[agent], Duration::ZERO).await);
+    }
 
     #[test]
     fn lists_only_the_agents_scopes() {
         let listed = "aether-engine-agt_A-prc_1.scope loaded active running aether-engine-agt_A-prc_1.scope\n\
                       aether-engine-agt_AB-prc_2.scope loaded active running x\n\
                       other.scope loaded active running y\n";
+        let a = "aether-engine-agt_A-".to_owned();
         assert_eq!(
-            unit_names(listed, "aether-engine-agt_A-"),
+            unit_names(listed, std::slice::from_ref(&a)),
             vec!["aether-engine-agt_A-prc_1.scope".to_owned()]
         );
-        assert!(unit_names("", "aether-engine-agt_A-").is_empty());
+        assert_eq!(
+            unit_names(listed, &[a.clone(), "aether-engine-agt_AB-".to_owned()]).len(),
+            2
+        );
+        assert!(unit_names("", &[a]).is_empty());
+    }
+
+    #[test]
+    fn names_the_agents_of_engine_scopes_only() {
+        let a = aether_core::id::AgentId::new();
+        let b = aether_core::id::AgentId::new();
+        let listed = format!(
+            "aether-engine-{a}-prc_1.scope loaded active running x\n\
+             aether-engine-{a}-prc_2.scope loaded active running x\n\
+             aether-engine-{b}-prc_3.scope loaded inactive dead x\n\
+             aether-engine-garbage-prc_4.scope loaded active running x\n\
+             other-{a}.scope loaded active running y\n"
+        );
+        let mut expected = vec![a, b];
+        expected.sort_unstable();
+        assert_eq!(unit_agents(&listed), expected);
+        assert!(unit_agents("").is_empty());
     }
 
     #[test]
@@ -317,9 +481,9 @@ mod tests {
             name: "a.scope".into(),
             procs: "/sys/fs/cgroup/user.slice/a.scope/cgroup.procs".into(),
         };
-        assert!(holds_own_cgroup(&unit, "0::/user.slice/a.scope\n"));
-        assert!(holds_own_cgroup(&unit, "0::/user.slice/a.scope/sub\n"));
-        assert!(!holds_own_cgroup(&unit, "0::/user.slice/a.scope2\n"));
-        assert!(!holds_own_cgroup(&unit, "0::/user.slice/b.scope\n"));
+        assert!(in_unit(&unit, "0::/user.slice/a.scope\n"));
+        assert!(in_unit(&unit, "0::/user.slice/a.scope/sub\n"));
+        assert!(!in_unit(&unit, "0::/user.slice/a.scope2\n"));
+        assert!(!in_unit(&unit, "0::/user.slice/b.scope\n"));
     }
 }

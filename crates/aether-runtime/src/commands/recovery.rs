@@ -212,6 +212,8 @@ impl Runtime {
                 // Carrying a deadline that has already passed would fail the
                 // successor on the very next tick.
                 deadline: old.config.deadline.filter(|d| at < *d),
+                // As creation stores it: a predecessor too old to say is headless.
+                interactive: Some(old.config.interactive == Some(true)),
                 ..old.config.clone()
             },
             stats: AgentStats::default(),
@@ -381,7 +383,10 @@ impl Runtime {
             by.clone(),
         )?;
         commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
-        self.apply_held(hold, commit)?;
+        // Not inside a sweep round: one that found the agent ended has signalled
+        // before this lands, and one after spares it, as it ends again or not.
+        self.engine_spawns
+            .outside_holds(|| self.apply_held(hold, commit))?;
         Ok(agent)
     }
 

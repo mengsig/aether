@@ -10,6 +10,7 @@ mod pdf;
 pub mod probe;
 pub mod references;
 mod render;
+pub mod sent_images;
 pub mod tools;
 pub use documents::Documents;
 pub use load::{Pages, Preview, ReadRequest, View, read};

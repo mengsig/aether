@@ -58,6 +58,20 @@ fn types(store: &dyn Store, id: AgentId) -> Vec<String> {
         .collect()
 }
 
+/// The config of a tree a person watches in the TUI: recovery may park it for inspection.
+fn interactive_config() -> AgentConfig {
+    AgentConfig {
+        interactive: Some(true),
+        ..Default::default()
+    }
+}
+
+/// `spec` marked as a tree a person watches; see [`interactive_config`].
+fn interactive(mut spec: CreateAgentSpec) -> CreateAgentSpec {
+    spec.config.get_or_insert_with(Default::default).interactive = Some(true);
+    spec
+}
+
 fn spec(objective: &str) -> CreateAgentSpec {
     CreateAgentSpec {
         role: "worker".into(),
@@ -149,6 +163,8 @@ mod completion_artifacts;
 mod crash_cancellation;
 #[path = "kernel/crash_recovery.rs"]
 mod crash_recovery;
+#[path = "kernel/deadline_warnings.rs"]
+mod deadline_warnings;
 #[path = "kernel/delegation.rs"]
 mod delegation;
 #[path = "kernel/dispatch_priority.rs"]
@@ -215,6 +231,8 @@ mod parent_waits;
 mod pause_recovery;
 #[path = "kernel/peers.rs"]
 mod peers;
+#[path = "kernel/process_handover.rs"]
+mod process_handover;
 #[path = "kernel/prompt_integrity.rs"]
 mod prompt_integrity;
 #[path = "kernel/provider_probes.rs"]

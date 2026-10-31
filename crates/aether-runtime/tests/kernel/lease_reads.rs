@@ -157,6 +157,13 @@ impl Store for CountingStore {
     fn latest_custom_event(&self, names: &[&str]) -> aether_store::Result<Option<Event>> {
         self.inner.latest_custom_event(names)
     }
+    fn latest_agent_custom_event(
+        &self,
+        agent: AgentId,
+        name: &str,
+    ) -> aether_store::Result<Option<Event>> {
+        self.inner.latest_agent_custom_event(agent, name)
+    }
     fn agent(&self, id: AgentId) -> StoreResult<Option<Agent>> {
         self.reads.lock().expect("reads").agent_reads += 1;
         self.inner.agent(id)
@@ -455,7 +462,7 @@ async fn the_quarantine_walk_reads_only_lease_events_and_only_once_per_agent() {
             restarted_as: None,
             engine_alive: false,
             last_event_at: None,
-            config: AgentConfig::default(),
+            config: interactive_config(),
             stats: Default::default(),
             run: Default::default(),
             created_at: at,

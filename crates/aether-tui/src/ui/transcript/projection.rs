@@ -215,6 +215,7 @@ mod tests {
                             from: "tester".into(),
                         },
                         text: "waiting".into(),
+                        images: Vec::new(),
                     },
                 },
             );

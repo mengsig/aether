@@ -7,7 +7,7 @@ mod selection;
 pub mod stream;
 mod window;
 pub(crate) use selection::{
-    selected_text, selection_order, selection_point, selection_resolves, selection_rows,
+    line_at, selected_text, selection_order, selection_point, selection_resolves, selection_rows,
 };
 
 use std::collections::HashMap;
@@ -228,15 +228,23 @@ fn file_row_matches(
 ) -> Vec<(crate::viewer::references::Reference, Vec<(usize, usize)>)> {
     refs.iter()
         .filter_map(|reference| {
-            let mut ranges = row_hits(lines, row, &reference.target);
-            let ambiguous = refs
-                .iter()
-                .any(|other| other.label == reference.label && other.target != reference.target);
+            let image = crate::viewer::sent_images::is_sent_image(&reference.target);
+            // An image line's label is unique among images and only matches its aside style.
+            let ambiguous = !image
+                && refs.iter().any(|other| {
+                    other.label == reference.label && other.target != reference.target
+                });
+            // A sent image is found only by its line; a file also by its target.
+            let (mut ranges, style) = if image {
+                (Vec::new(), theme.aside())
+            } else {
+                (row_hits(lines, row, &reference.target), theme.link())
+            };
             if reference.label != reference.target && !ambiguous {
                 ranges.extend(
                     row_hits(lines, row, &reference.label)
                         .into_iter()
-                        .filter(|range| styled_link(line, *range, theme.link())),
+                        .filter(|range| styled_link(line, *range, style)),
                 );
             }
             (!ranges.is_empty()).then(|| (reference.clone(), ranges))

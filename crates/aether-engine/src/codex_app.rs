@@ -413,7 +413,7 @@ impl Engine for CodexAppEngine {
         context: EngineLaunchContext,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
-        self.launch(turn, Some(context.agent_id), cancel).await
+        self.launch(turn, Some(context), cancel).await
     }
 }
 
@@ -421,7 +421,7 @@ impl CodexAppEngine {
     async fn launch(
         &self,
         turn: EngineTurn,
-        agent: Option<aether_core::id::AgentId>,
+        context: Option<EngineLaunchContext>,
         cancel: CancellationToken,
     ) -> Result<EngineRun, EngineError> {
         use std::os::unix::process::CommandExt as _;
@@ -436,6 +436,8 @@ impl CodexAppEngine {
                     &turn.tool_hidden_env,
                     turn.temp_dir.as_deref(),
                     &turn.build_env,
+                    context.as_ref(),
+                    &cancel,
                 )
                 .await?,
             )
@@ -445,6 +447,7 @@ impl CodexAppEngine {
         let environment = sandbox.as_ref().map(|s| s.environment.clone());
         let args = self.args(&turn);
         let cwd: PathBuf = turn.cwd.clone();
+        let agent = context.as_ref().map(|context| context.agent_id);
         let mut command = crate::scope::command(&self.program, agent);
         command
             .args(&args)
@@ -459,11 +462,10 @@ impl CodexAppEngine {
         crate::export_temp_dir(&mut command, turn.temp_dir.as_deref());
         crate::export_build_env(&mut command, &turn.build_env);
         let run_token = crate::orphans::tag(&mut command);
-        let (mut child, group_watch) = crate::lifeline::spawn(command)
-            .map_err(|e| crate::spawn_error(&self.program, &cwd, e))?;
-        let engine_record =
-            crate::orphans::EngineRecord::register(child.id(), run_token.as_deref());
-        crate::scope::adopt(child.id(), agent).await;
+        let (mut child, group_watch, adoption, engine_record) =
+            crate::spawn_gated(command, context.as_ref(), &cancel, run_token.as_deref())
+                .map_err(|e| crate::spawn_error(&self.program, &cwd, e))?;
+        crate::scope::adopt(child.id(), adoption).await;
         let stdin = child
             .stdin
             .take()

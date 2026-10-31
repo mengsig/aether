@@ -23,6 +23,36 @@ pub(super) fn exhaustion_detail(error: &ModelError) -> Option<String> {
     Some(format!("{error}{code}{after}"))
 }
 
+/// A spent account or refused sign-in answers no other turn either: bench the
+/// link the chain is leaving, bounded. A too-long request says nothing of it.
+///
+/// The last link is benched by its suspension instead, on the probe schedule,
+/// so only a link the chain leaves for a fallback is benched here.
+pub(super) fn bench_left_link(
+    runtime: &Runtime,
+    provider: &str,
+    class: ModelErrorClass,
+    retry_after: Option<Duration>,
+) -> Result<()> {
+    debug_assert!(!provider.is_empty(), "a benched link names its provider");
+    debug_assert!(
+        crate::exhaustion::native_suspends(class),
+        "only a link left for a fallback is benched: {class:?}"
+    );
+    if class == ModelErrorClass::ContextLimit {
+        return Ok(());
+    }
+    let wait = retry_after
+        .unwrap_or(crate::scheduler::QUOTA_BACKOFF)
+        .min(Duration::from_secs(300));
+    crate::scheduler::backoff(
+        runtime,
+        provider,
+        format!("{} from the provider", class.as_str()),
+        wait,
+    )
+}
+
 /// Write the failed invocation, then decide what the turn does next: fall
 /// back to the next link, retry this one after a backoff, or fail.
 #[allow(clippy::too_many_arguments)]
@@ -109,22 +139,7 @@ pub(super) async fn record_failure(
     }
     if crate::exhaustion::recoverable_by_fallback(error.class) {
         if let Some(next) = rest.first() {
-            // A spent account answers no other turn either: bench the link the
-            // chain is leaving, bounded, as main did when quota was classed a
-            // rate limit. The last link is benched by its suspension instead,
-            // on the probe schedule, so it is not benched twice here.
-            if error.class != ModelErrorClass::ContextLimit {
-                let wait = error
-                    .retry_after
-                    .unwrap_or(crate::scheduler::QUOTA_BACKOFF)
-                    .min(Duration::from_secs(300));
-                crate::scheduler::backoff(
-                    runtime,
-                    &model.provider,
-                    format!("{} from the provider", error.class.as_str()),
-                    wait,
-                )?;
-            }
+            bench_left_link(runtime, &model.provider, error.class, error.retry_after)?;
             announce_fallback(runtime, ctx, model, next, detail.clone(), Some(error.class))?;
             return Ok(LinkOutcome::FellBack);
         }

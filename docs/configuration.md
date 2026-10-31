@@ -487,7 +487,17 @@ its contents. Inventory bytes describe the tree before cleanup.
 
 Each engine an agent runs starts as the leader of its own process group, with
 `AETHER_ENGINE_AGENT` set to the agent's id in its environment, which its
-descendants inherit. On Linux, once the engine is running, the daemon asks the
+descendants inherit. Aether's own shell tool sets the same variable on every
+command it runs on the host, in the foreground or the background, so a browser,
+dev server or other helper that a command detaches (a new session, a double
+fork) still carries its agent's id after it leaves the command's process group.
+Containers run by the Docker daemon do not, and are not Aether's to stop,
+except that a daemon start kills the containers of Aether's own container
+backend that an earlier daemon on the same store left running, before any
+turn starts. If that sweep times out or a `docker ps` or `docker kill`
+fails, each agent whose mutating call was in flight waits for inspection,
+even a headless one, since its container may still run, after a host reboot
+too. On Linux, once the engine is running, the daemon asks the
 user systemd manager to move it into a transient scope named
 `aether-engine-<agent>-<id>.scope`, whose cgroup then holds every descendant,
 even one that cleared its environment or started its own session. A process
@@ -496,17 +506,106 @@ tag. Without a working user systemd the engine keeps its process group and tag
 alone; the engine is already running, so this never delays or fails it. Set
 `AETHER_ENGINE_SCOPE=0` in the daemon's environment to skip the scopes.
 
-When an agent ends - it completes, fails, is cancelled, or runs out of time or
-budget - the daemon sends `SIGTERM` to every live process in the agent's scopes
-or carrying its tag, including any forked meanwhile, and sends `SIGKILL` to
-whatever is left after the grace. It records what it stopped as an
+What an agent leaves running when it ends depends on how it ends.
+
+- A delegated child that completes normally under a live ancestor stops
+  nothing. What it and the agents that handed up to it left running -
+  processes carrying their tags or in their engine scopes, and their
+  background shell jobs - passes to the nearest live ancestor, usually its parent. That agent
+  can read and stop the background jobs as its own, and gets a message from
+  the system listing each process it took over by pid and command line, past
+  the first 50 by pid alone. The
+  child records the same as an `agent.processes_handed_up` event with `to`,
+  `pids`, `processes` and `jobs`. A child that delegated a server to run on
+  thus leaves it running for its parent to use. The message arrives once the
+  child's turn is over, after the result of its task. If the ancestor ended
+  meanwhile, the jobs go on as its own end would have sent them, and the
+  message and event name the live agent that holds them in the end; when
+  none is left they are stopped and no message is sent. An owner that ends
+  just after it was told hands them on, or stops them, with its own end, and
+  the next owner is told in turn.
+- Any other end stops them: a child that fails or is cancelled, the root of
+  a task tree (an agent with no live ancestor) however it ends, and an agent
+  that runs out of time or budget. The ending agent's processes are stopped
+  together with what was handed up to it: the processes of each completed
+  agent that handed up to it, and of those that handed up to them in turn.
+  The daemon records each hand-up, so this follows who took what, not the
+  agents' current ancestry: a failed agent a child handed up past does not
+  take that child's processes if it is woken later.
+- An agent that has ended but whose own stop has not run yet still counts as
+  live for both rules: a child completing meanwhile hands up to it, and its
+  stop decides what happens to that, while a sweep of the agent it handed to
+  leaves it and what it holds to its own stop.
+
+To stop them the daemon sends `SIGTERM` to every live process in the swept
+agents' scopes or carrying one of their tags, including any forked meanwhile,
+and sends `SIGKILL` to whatever is left after the grace. A process forked
+as the grace ends, after the last `SIGTERM` round, gets `SIGKILL` alone: a
+grace that waited for every newcomer would never end for one that keeps
+forking. A background job's stop works the same way, in rounds 50 ms apart. It records what it
+stopped on the ending agent as an
 `agent.processes_reaped` event, with the pids, the ones that needed `SIGKILL`,
 and in `survived` any still alive after that. Only processes of the daemon's
-own user are signalled, and never the daemon itself. If the agent is restarted
-during the grace, the reap stops, so its next engine is spared. A daemon
-shutdown does not end its agents, so it skips this reap: it stops each running
-engine's process group, as for any interrupted turn, and only processes that
-left that group keep running until their agent ends after the restart.
+own user are signalled, and never the daemon itself. A turn cancelled as its
+agent ended starts no host command or engine after the reap begins; one it was
+already starting is in place before the reap looks, and the reap waits, up to
+11 seconds, for an engine still being moved into its scope. If an agent is restarted
+during the grace, or before the reap begins, the reap drops it, so its next engine
+is spared, and so is what it hands up should it end again, and goes on stopping
+the other agents' processes. Each round holds new engines and host
+commands from starting, and a failed agent from being woken, while it checks
+which agents are still ended and signals, so a restarted agent's next engine,
+or what it hands up, is never among those signalled.
+An ending agent's background jobs are taken from it at its end, under the
+same lock a wake takes, so a job it starts once woken stays its own.
+
+A process meant to outlive the whole task tree, and the daemon, can be kept:
+start it with `AETHER_KEEP_PROCESS=1` in its environment, which what it starts
+inherits. No sweep signals such a process: not at an agent's end, not when the
+background shell job that started it ends or is stopped, and not at a daemon
+stop. Each process is signalled on its own, scopes included, so a kept one
+inside an engine's scope is spared too; there, a process whose environment
+cannot be read (a non-dumpable one) is treated as kept, as the mark cannot be
+ruled out. When a background job is stopped, or its shell exits on its own,
+what is in its process group is signalled one process at a time, sparing a
+kept one and one whose environment cannot be read; the shell is reaped only
+afterwards, so the group id cannot be reused meanwhile. The job's shell, or
+what it `exec`s, is the job and is stopped with it even if marked. Stopping a turn, the
+end of a foreground command, and recovery after a crash still signal the
+whole process group, so a kept process must also leave it, for example
+`AETHER_KEEP_PROCESS=1 setsid -f ./server`. Nothing stops a kept process
+afterwards; that is up to whoever started it.
+
+A daemon shutdown ends no agent, and it leaves what a live agent holds
+running, so a server an agent started is still up when a restart's recovery
+resumes the agent. It stops each running engine's process group, as for any
+interrupted turn. On Linux it then stops what those engines left outside
+their groups, as a start after a crash would: each process carrying an
+interrupted engine's token that runs for no agent or for the agent whose
+turn the stop cut short, such as the command Claude Code was running in a
+session of its own, unless it is kept. A server that engine started for its
+agent goes with it, since the stop cannot tell it from the command; start
+one with `AETHER_KEEP_PROCESS=1` to keep it. From then on it refuses to start any host command or
+engine, letting one already being started finish first, and it stops every
+background shell. Then it finds every process carrying an agent's tag or in an
+engine scope, keeps the agents its own store ran (never an imported one, nor
+another daemon's) that have ended, and of those leaves each completed one
+whose processes a live ancestor holds, by the rules above. It stops the rest
+the same way, in one sweep, with a grace of `reap_grace_secs` but at most 10
+seconds. It spares an agent woken meanwhile, or whose ancestor was, which
+then holds what the agent left, and one whose ancestry it cannot read or
+that has an ancestor gone from the store. If
+that ancestor ends again before the sweep records it as holding, the sweep
+goes back for the agent, up to three times. The daemon log records what it stopped. A process is signalled only through a pidfd opened before its tag,
+or its scope, and the keep entry are checked again, so a pid reused meanwhile
+is never hit. What a live agent holds runs on while the daemon is down and is
+stopped when that agent ends after the next start; to stop it with the daemon,
+end or cancel the agent first.
+
+The tag attributes processes; it is not a security boundary. Any process of
+the same user that sets `AETHER_ENGINE_AGENT` to one of the daemon's agents
+is treated as that agent's, and a descendant that removes it is found only
+through an engine scope.
 
 A daemon that dies without a clean shutdown (killed with `SIGKILL`, out of
 memory, crashed) takes its engines with it on Linux. Each engine process, and
@@ -519,11 +618,49 @@ and the engine does not start until its watchdog is in the group. That
 takes the processes the engine started in its group, such as the native CLI
 a wrapper like the npm `codex` launcher starts, and its shell commands. A
 version probe's group is killed as soon as the probe ends. The MCP bridge
-exits when its engine's pipe closes. The next daemon start kills what left
-the group: every recorded engine process group whose leader still has the
-recorded pid and kernel start time, and every process of
-the daemon's user carrying a recorded engine's random token. It never
-signals a process it cannot tie to an engine it started. macOS has neither a
+exits when its engine's pipe closes. The next daemon start kills
+the engines themselves: every recorded engine process group whose leader
+still has the recorded pid and kernel start time, with the tool commands in
+it, and every process of the daemon's user carrying a recorded engine's random
+token that runs for no agent, or for an agent whose turn the crash cut short:
+that may be the tool command the engine was running in a session of its own,
+as Claude Code runs each, which the resumed turn must not race. A token
+carrier that carries the tag of an agent with no turn in flight (a dev server,
+a database, a `docker compose` client an agent started), or the keep entry, is
+left alone there. Before it runs any turn the start then stops,
+as a clean stop would have, what no live agent holds: the processes tagged
+with, or in an engine scope of, each of its own agents that has ended, unless
+it completed under a live ancestor. That ancestor then holds them again, as
+the hand-up the dead daemon recorded only in memory said, and they stop with
+its end; it is not told again. An ended ancestor between them is passed
+over even if it failed after the child completed: the start cannot tell
+whether it held them, and spares them. A live agent's own processes, and what a
+completed child handed up to it, are spared, so the agents recovery resumes
+find their servers up. A foreground call of Aether's own shell tool is
+recorded before its command starts and until it ends, and the start kills
+the process group of each one a crash cut short, as the call's end would
+have: through its leader, held stopped while the group is signalled, while
+that leader still has the recorded pid and start time, or, once the leader
+is gone, each process of the daemon's user left in the group while the group
+is still in the session it was recorded in and a process in it carries the
+call's id. A group id another session took since is left alone. A group in
+that session in which no process carries the id may be the call's, its id
+cleared, or a later group that took the id: it is left alone too, and the
+call's agent waits for inspection, even a headless one, so it never resumes
+beside what may be its command. A process in the group that runs as another user (a
+`sudo` child) cannot be signalled and is skipped; the rest of the group is
+still stopped, and the call's agent waits for inspection, even a headless one. A call that cannot be recorded is not started, and a start
+that cannot stop a recorded call refuses to run, naming the process group to
+stop by hand. Engines are recorded the same way, while held before they
+start: one that cannot be recorded is not started, a start that cannot stop
+a recorded engine refuses to run and names its group, and the sweep for an
+engine's token carriers repeats until a pass finds none it had not
+signalled, so one forked behind it is caught. An agent that recovery resumes
+never races its own interrupted command, and what the call detached is
+spared as above. It
+never signals a process it cannot tie to an engine it started or an agent it
+ran.
+macOS has neither a
 parent-death signal nor a readable start time. There, an engine left by a
 killed daemon runs until it exits on its own, and the next start reaps
 nothing. Stop the daemon with `aether stop` rather than killing it.

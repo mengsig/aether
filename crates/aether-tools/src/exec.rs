@@ -126,7 +126,12 @@ fn host_command(command: &str, ctx: &ToolContext) -> Result<tokio::process::Comm
     cmd.arg("-lc")
         .arg(command)
         .current_dir(&ctx.cwd)
-        .envs(&ctx.env);
+        .envs(&ctx.env)
+        // What the command detaches still carries it, so the agent's end finds it.
+        .env(
+            aether_core::agent::PROCESS_AGENT_ENV,
+            ctx.agent_id.to_string(),
+        );
     pipes(&mut cmd, ctx);
     if let Some(dir) = &ctx.temp_dir {
         aether_core::agent_temp::ensure_agent_leaf(dir, ctx.agent_id, &ctx.instance_id)
@@ -303,25 +308,35 @@ fn validate_extra_mount(root: &std::path::Path) -> Result<(), ToolError> {
 /// that has nothing to do with it. The instance id is the store's, stable
 /// across restarts on one data directory, so a daemon still finds its own
 /// predecessors.
-pub async fn sweep_orphan_containers(instance_id: &str) {
+///
+/// False when the sweep timed out or a listing or kill failed, so a container
+/// an interrupted call left may still run; true with no docker client at all.
+pub async fn sweep_orphan_containers(instance_id: &str) -> bool {
+    debug_assert!(
+        !instance_id.is_empty(),
+        "an unscoped sweep kills other daemons' containers"
+    );
     // Docker may target an unavailable remote service. Bound the whole sweep,
     // including kills, so recovery cannot wait forever before publishing its socket.
-    if tokio::time::timeout(
+    match tokio::time::timeout(
         ORPHAN_SWEEP_TIMEOUT,
         sweep_orphan_containers_inner(instance_id),
     )
     .await
-    .is_err()
     {
-        tracing::warn!(
-            instance = %instance_id,
-            timeout_secs = ORPHAN_SWEEP_TIMEOUT.as_secs(),
-            "orphan container sweep timed out; some containers may still be running"
-        );
+        Ok(swept) => swept,
+        Err(_) => {
+            tracing::warn!(
+                instance = %instance_id,
+                timeout_secs = ORPHAN_SWEEP_TIMEOUT.as_secs(),
+                "orphan container sweep timed out; some containers may still be running"
+            );
+            false
+        }
     }
 }
 
-async fn sweep_orphan_containers_inner(instance_id: &str) {
+async fn sweep_orphan_containers_inner(instance_id: &str) -> bool {
     let agents = format!("label={}", AGENT_LABEL);
     let ours = format!("label={}={instance_id}", INSTANCE_LABEL);
     let listed = tokio::process::Command::new("docker")
@@ -331,14 +346,21 @@ async fn sweep_orphan_containers_inner(instance_id: &str) {
         .kill_on_drop(true)
         .output()
         .await;
+    // Neither failure is a reason not to start; only a missing client proves
+    // no container of ours runs, as none could have been started.
     let listed = match listed {
         Ok(output) if output.status.success() => output.stdout,
-        // No docker, or docker refused: there is nothing this daemon can do
-        // about containers it cannot see, and it is not a reason not to start.
-        Ok(_) => return,
-        Err(e) => {
+        Ok(output) => {
+            tracing::warn!(status = %output.status, "docker could not list orphaned containers; some may still be running");
+            return false;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             tracing::debug!(error = %e, "no docker to sweep orphaned containers with");
-            return;
+            return true;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot run docker to sweep orphaned containers; some may still be running");
+            return false;
         }
     };
     let orphans: Vec<String> = String::from_utf8_lossy(&listed)
@@ -348,13 +370,14 @@ async fn sweep_orphan_containers_inner(instance_id: &str) {
         .map(str::to_owned)
         .collect();
     if orphans.is_empty() {
-        return;
+        return true;
     }
     tracing::warn!(
         count = orphans.len(),
         instance = %instance_id,
         "killing containers left by an earlier daemon on this instance"
     );
+    let mut swept = true;
     for id in orphans {
         let killed = tokio::process::Command::new("docker")
             .args(["kill", &id])
@@ -364,10 +387,19 @@ async fn sweep_orphan_containers_inner(instance_id: &str) {
             .kill_on_drop(true)
             .status()
             .await;
-        if let Err(e) = killed {
-            tracing::error!(container = %id, error = %e, "cannot kill an orphaned container");
+        match killed {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                tracing::error!(container = %id, %status, "docker could not kill an orphaned container");
+                swept = false;
+            }
+            Err(e) => {
+                tracing::error!(container = %id, error = %e, "cannot kill an orphaned container");
+                swept = false;
+            }
         }
     }
+    swept
 }
 
 /// Refuse a path docker's argv parser would read as something other than the
@@ -445,6 +477,25 @@ mod tests {
         let prepared = prepare("echo hi", &ctx).expect("prepare");
         assert!(prepared.teardown.is_none());
         assert_eq!(rendered(&prepared.command), "bash -lc echo hi");
+    }
+
+    #[tokio::test]
+    async fn host_commands_carry_their_agent_even_when_the_context_sets_another() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut ctx = ctx_in(dir.path());
+        let name = aether_core::agent::PROCESS_AGENT_ENV;
+        ctx.env.insert(name.into(), "agt_spoofed".into());
+        let output = prepare(&format!(r#"printf '%s' "${name}""#), &ctx)
+            .expect("prepare")
+            .command
+            .output()
+            .await
+            .expect("run");
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            ctx.agent_id.to_string()
+        );
     }
 
     /// `ctx` with its agent's temp dir under a fresh root in `dir`.

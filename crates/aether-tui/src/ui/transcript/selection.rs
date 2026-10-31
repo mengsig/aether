@@ -195,3 +195,43 @@ pub(crate) fn selected_text(app: &App, cache: &mut ViewCache) -> Result<String, 
     text.pop();
     Ok(text)
 }
+
+/// The source line under `point`: its first and last rows in the cell and its
+/// text, soft wraps rejoined. Rows whose wrapping is unknown stand alone.
+pub(crate) fn line_at(
+    app: &App,
+    cache: &mut ViewCache,
+    point: crate::ui::selection::TextPoint,
+) -> Option<(usize, usize, String)> {
+    let agent = app.selected?;
+    let t = app.transcripts.get(&agent)?;
+    let width = cache.regions.transcript.width;
+    let rows = rows_for(app, agent, t, width, &mut cache.stream, &app.theme);
+    let item = rows.find(point.cell)?;
+    let gap = rows.gap(item, &mut cache.layout);
+    let lines = rows.lines(item, &mut cache.layout);
+    let row = point.row.checked_sub(gap)?;
+    lines.get(row)?;
+    let mut first = row;
+    while first > 0 && lines.source(first).continues.is_some() {
+        first -= 1;
+    }
+    let mut last = row;
+    while last + 1 < lines.len() && lines.source(last + 1).continues.is_some() {
+        last += 1;
+    }
+    let mut text = String::new();
+    for r in first..=last {
+        let source = lines.source(r);
+        let (part, start) = source.text_of(lines.get(r)?);
+        if r == first {
+            text.push_str(&part);
+            continue;
+        }
+        debug_assert!(source.continues.is_some(), "row {r} joins the line above");
+        text.extend(std::iter::repeat_n(' ', source.continues.unwrap_or(0)));
+        text.push_str(&part[start..]);
+    }
+    debug_assert!(first <= row && row <= last && last < lines.len());
+    Some((gap + first, gap + last, text.trim_end().to_owned()))
+}

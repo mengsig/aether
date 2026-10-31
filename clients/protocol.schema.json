@@ -450,6 +450,13 @@
             "null"
           ]
         },
+        "interactive": {
+          "description": "Whether a person watches this tree in the TUI; children inherit it. Creation\nalways stores it, so `None` is a row stored before it existed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "leaf": {
           "default": false,
           "description": "A leaf cannot create children and receives fewer coordination instructions and tools.",
@@ -8031,10 +8038,11 @@
       ]
     },
     "ExhaustionClass": {
-      "description": "The subset of [`ModelErrorClass`] a probe can recover from. `ContextLimit`\nis deliberately unrepresentable: it is not credits, and waiting cannot fix it.",
+      "description": "The subset of [`ModelErrorClass`] a probe can recover from. `ContextLimit`\nis deliberately unrepresentable: it is not credits, and waiting cannot fix it.\n`Credentials` is a sign-in the provider refused, which an operator renews.",
       "enum": [
         "quota_exhausted",
-        "usage_limit"
+        "usage_limit",
+        "credentials"
       ],
       "type": "string"
     },
@@ -16785,7 +16793,7 @@
     "$ref": "#/$defs/ClientFrame"
   },
   "min_protocol_version": 17,
-  "protocol_version": 24,
+  "protocol_version": 25,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },

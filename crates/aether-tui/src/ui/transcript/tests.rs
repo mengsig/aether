@@ -486,6 +486,7 @@ fn the_prompt_being_answered_pins_to_the_top_row() {
     view.push(CellModel::User {
         from: UserFrom::Operator,
         text: "explain the flake".into(),
+        images: Vec::new(),
     });
     view.replies(1, 30);
     let rows = view.frame();
@@ -692,6 +693,7 @@ fn a_user_cell_tints_its_padding_rows_and_one_gap_follows() {
     view.push(CellModel::User {
         from: UserFrom::Operator,
         text: "how does the build work?".into(),
+        images: Vec::new(),
     });
     view.push(CellModel::Assistant {
         text: "In three stages.".into(),

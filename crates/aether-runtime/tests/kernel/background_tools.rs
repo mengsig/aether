@@ -101,26 +101,7 @@ async fn an_engine_descendant_that_left_its_group_dies_with_its_agent() {
         .cancel_agent(agent.id, Some("done".into()), Actor::user())
         .expect("cancel");
     h.wait_until(agent.id, |s| s.is_terminal()).await;
-    let reaped = || {
-        h.store
-            .events(0, 10_000, &EventFilter::for_agent(agent.id))
-            .expect("events")
-            .into_iter()
-            .find_map(|e| match e.kind {
-                EventKind::Custom { name, payload } if name == "agent.processes_reaped" => {
-                    Some(payload)
-                }
-                _ => None,
-            })
-    };
-    let payload = wait_for_with_budget(
-        h.wait_ceiling,
-        h.wait_ceiling,
-        reaped,
-        || (),
-        || format!("no agent.processes_reaped for detached process {pid}"),
-    )
-    .await;
+    let payload = wait_custom_event(&h, agent.id, "agent.processes_reaped").await;
 
     assert!(!process_alive(pid), "the detached process is gone");
     assert!(
@@ -136,10 +117,214 @@ async fn an_engine_descendant_that_left_its_group_dies_with_its_agent() {
     );
 }
 
+/// A shell command that detaches `sleep` the way a browser or dev server
+/// does - a new session, then a fork whose parent exits - and records its
+/// pid. It returns once the pid is recorded, as `setsid -w` waits for `sh`.
+#[cfg(target_os = "linux")]
+pub(super) fn detach_sleep(marker_name: &str) -> String {
+    format!(
+        "setsid -w sh -c 'sleep 300 & echo $! > {marker_name}.tmp && mv {marker_name}.tmp {marker_name}' \
+         </dev/null >/dev/null 2>&1"
+    )
+}
+
+/// A detached process of an agent this daemon never ran, as another
+/// daemon's would be: no reap here may touch it. Killed when dropped.
+#[cfg(target_os = "linux")]
+pub(super) struct Sibling(std::process::Child);
+
+#[cfg(target_os = "linux")]
+impl Sibling {
+    pub(super) fn start() -> Self {
+        Self::tagged(AgentId::new())
+    }
+
+    /// A detached process carrying `agent`'s tag, as one its engine left would.
+    pub(super) fn tagged(agent: AgentId) -> Self {
+        let child = std::process::Command::new("setsid")
+            .args(["sleep", "300"])
+            .env("AETHER_ENGINE_AGENT", agent.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start the sibling");
+        Self(child)
+    }
+
+    pub(super) fn alive(&self) -> bool {
+        process_alive(self.pid())
+    }
+
+    pub(super) fn pid(&self) -> i32 {
+        i32::try_from(self.0.id()).expect("a pid fits an i32")
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for Sibling {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(super) async fn wait_gone(h: &Harness, pid: i32, what: &str) {
+    // A liveness flip has no partial-progress signal: a ceiling-only wait.
+    wait_for_with_budget(
+        h.wait_ceiling,
+        h.wait_ceiling,
+        || (!process_alive(pid)).then_some(()),
+        || (),
+        || format!("{what} {pid} is still running"),
+    )
+    .await;
+}
+
+/// What an agent's own shell detaches leaves its turn's process group and
+/// session, but the agent's end still finds it by its tag, and only it.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_process_detached_from_an_agent_shell_dies_with_the_agent_alone() {
+    let marker_name = "detached.pid";
+    let h = harness(vec![
+        ScriptedClient::tool_call("bash", json!({ "command": detach_sleep(marker_name) })),
+        ScriptedClient::tool_call("complete_task", json!({ "summary": "started it" })),
+    ])
+    .await;
+    let sibling = Sibling::start();
+    let mut s = spec("start a detached server");
+    s.config = Some(AgentConfig {
+        approval: ApprovalPolicy::none(),
+        ..Default::default()
+    });
+    let (agent, _) = h.runtime.create_agent(s, Actor::user()).expect("create");
+
+    let pid = wait_for_marker(&h.workspace_root, marker_name).await;
+    let status = h.wait_until(agent.id, |s| s.is_terminal()).await;
+    assert!(
+        matches!(status, AgentStatus::Completed { .. }),
+        "{status:?}"
+    );
+    let payload = wait_custom_event(&h, agent.id, "agent.processes_reaped").await;
+    wait_gone(&h, pid, "the detached process").await;
+
+    assert!(
+        sibling.alive(),
+        "a process outside the agent survives its end"
+    );
+    assert!(
+        payload["pids"]
+            .as_array()
+            .is_some_and(|pids| pids.contains(&json!(pid))),
+        "the reap stopped it: {payload}"
+    );
+}
+
+/// The payload of `agent`'s first custom event `name`, if recorded yet.
+#[cfg(target_os = "linux")]
+pub(super) fn custom_event(h: &Harness, agent: AgentId, name: &str) -> Option<serde_json::Value> {
+    h.store
+        .events(0, 10_000, &EventFilter::for_agent(agent))
+        .expect("events")
+        .into_iter()
+        .find_map(|e| match e.kind {
+            EventKind::Custom {
+                name: found,
+                payload,
+            } if found == name => Some(payload),
+            _ => None,
+        })
+}
+
+/// Wait for [`custom_event`], failing at the harness ceiling.
+#[cfg(target_os = "linux")]
+pub(super) async fn wait_custom_event(
+    h: &Harness,
+    agent: AgentId,
+    name: &str,
+) -> serde_json::Value {
+    wait_for_with_budget(
+        h.wait_ceiling,
+        h.wait_ceiling,
+        || custom_event(h, agent, name),
+        || (),
+        || format!("no {name} for {agent}"),
+    )
+    .await
+}
+
+/// A daemon stop ends no agent and leaves what a waiting agent detached
+/// running, as its recovery after a restart expects; what an ended agent no
+/// live agent holds left is stopped, and a process outside them runs on.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_daemon_stop_leaves_what_its_waiting_agents_detached() {
+    let marker_name = "detached-at-stop.pid";
+    let h = harness(vec![
+        ScriptedClient::tool_call("bash", json!({ "command": detach_sleep(marker_name) })),
+        ScriptedClient::text("started it"),
+    ])
+    .await;
+    let sibling = Sibling::start();
+    let mut s = spec("start a detached server, then wait");
+    s.config = Some(AgentConfig {
+        approval: ApprovalPolicy::none(),
+        long_lived: true,
+        ..Default::default()
+    });
+    let (agent, _) = h.runtime.create_agent(s, Actor::user()).expect("create");
+    h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Waiting)
+        .await;
+    let pid = wait_for_marker(&h.workspace_root, marker_name).await;
+    assert!(process_alive(pid), "the detached process outlives its turn");
+    let (ended, _) = h
+        .runtime
+        .create_agent(
+            CreateAgentSpec {
+                role: "worker".into(),
+                start: false,
+                ..Default::default()
+            },
+            Actor::user(),
+        )
+        .expect("create");
+    let mut row = h.store.agent(ended.id).expect("read").expect("exists");
+    row.transition(AgentStatus::Failed { error: "x".into() }, now())
+        .expect("fail it");
+    // Written past the runtime, so its own reap never ran.
+    h.store
+        .commit(Commit::new().mutate(Mutation::UpsertAgent(row)))
+        .expect("write the end");
+    let leftover = Sibling::tagged(ended.id);
+
+    h.runtime.shutdown().await;
+
+    wait_gone(&h, leftover.pid(), "the ended agent's leftover").await;
+    let survived = process_alive(pid);
+    // Not a child of this test, so it is killed by hand.
+    let _ = std::process::Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status();
+    assert!(survived, "a waiting agent's server survives the stop");
+    assert!(
+        sibling.alive(),
+        "a process outside the agents survives the stop"
+    );
+    let row = h.store.agent(agent.id).expect("read").expect("exists");
+    assert!(
+        !row.status.is_terminal(),
+        "the stop ends no agent: {:?}",
+        row.status
+    );
+}
+
 /// Whether `pid` is a live (non-zombie) process. `/proc` only exists on
 /// Linux, so elsewhere this reports "not alive" and only the negative
 /// assertions below mean anything.
-fn process_alive(pid: i32) -> bool {
+pub(super) fn process_alive(pid: i32) -> bool {
     if !cfg!(target_os = "linux") {
         return false;
     }

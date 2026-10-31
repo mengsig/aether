@@ -26,9 +26,27 @@ This policy uses the existing reply shape and reserved ID-zero/closure contract;
 it does not introduce an incompatible wire change. It applies to every served
 protocol version.
 
+### Reply order
+
+A connection may carry many requests at once, and replies can arrive in a
+different order from their requests; match each reply to its request by `id`.
+Reads (commands of the `observe` class in
+[Authorization](remote.md#authorization), such as `status`, `get_tree` and
+`get_transcript`) start as soon as they are read and run side by side, up to
+16 per connection, so one slow read or write does not hold the next poll.
+Further reads wait for a free slot, in order. Every other command runs one at
+a time in the order it arrived, as it did before. `hello`, `subscribe` and
+`unsubscribe` are answered before the daemon reads the next frame. `shutdown`
+is answered once every command sent before it has run; after 30 seconds it
+gives up the replies its client has not read. A client that reads no replies
+at all is no longer read once its replies back up, as before, so a
+`shutdown` it sends behind them is never read. A read sent before an earlier
+command's reply arrived may not see that command's effects; wait for the reply
+first when the order matters.
+
 ## Versions
 
-The protocol is version 23 and the daemon serves versions 17 through 23. The window is
+The protocol is version 25 and the daemon serves versions 17 through 25. The window is
 `MIN_PROTOCOL_VERSION` to `PROTOCOL_VERSION` in `aether-protocol`; the
 `compat` module translates replies for the older versions.
 A hello outside the window is refused with `incompatible`, naming both bounds.
@@ -39,6 +57,11 @@ Only the daemon's answers are rewritten. Every field a newer version added to
 a command is optional, so an older client's requests decode unchanged; the
 test `no_command_requires_a_field_an_older_client_would_not_send` holds that
 against the live schema.
+
+Version 25 adds the `credentials` exhaustion class: an agent suspended because
+the provider refused its engine CLI's sign-in. Clients on versions 17 through 24
+cannot decode it, so they receive that block reason as `usage_limit`; its
+`detail` still names the refusal.
 
 Version 24 adds a `level` to `append_note`: `info` (the default), `applied`
 or `refused`. A level other than `info` needs a daemon on version 24 or later;
@@ -280,6 +303,26 @@ descendant's limits to the named agent's new ones:
 - The reply is the named agent, as for a plain update. The command needs the
   same access as updating the named agent.
 
+## Deadline warnings
+
+An agent's `deadline` stops it as failed and cancels its live subtree. Before
+that, the daemon warns the agent once: when 80 % of the time from its creation
+to the deadline has passed, or ten minutes before the deadline, whichever
+comes first. The warning is an inbox wake that reads "N minutes left before
+your deadline (…) as of (…): commit what works now", and points to
+`inspect_state` for the time left when it is read. It never cuts a tool call
+short: a running engine reads it at its next step. Like any inbox item, it
+ends a wait for any inbox item, which is where an idle agent sits; a wait on
+tasks, a named sender or an approval goes on, and the agent reads it after. The daemon records it as a `deadline.warning` custom event on
+the agent, with `deadline` (RFC 3339) and `minutes_left` in its payload, so
+every served client version decodes it.
+
+A moved deadline is a new one: an extension (or a shortening) warns again once
+the new deadline is near. A deadline moved back to the one last warned about
+before the new one was warned is not warned again. Each descendant has its own deadline, inherited at
+delegation or set later, and gets its own warning. `inspect_state` reports
+`deadline_minutes_left` beside `deadline`.
+
 ## Naming a checkout
 
 An agent's memory is scoped by `scope.repository`. Left unset, the daemon
@@ -306,6 +349,27 @@ and agents delegating with the `delegate` tool cannot set it. The id is
 derived from the path given, so a subdirectory of a checkout with no `origin`
 names a different scope than the checkout itself. Check the
 `repository_root` feature first.
+
+## Interactive trees
+
+`config.interactive` on `create_agent` says a person watches this tree in an
+interactive client. The TUI sets it to `true` on every root it starts. A child
+inherits `true` from its parent. Creation stores `true` or `false` on every
+agent, so an agent reads `null` only when it was stored before the field
+existed. After a daemon restart (not a host reboot) or a lost turn cut a
+mutating tool call short, recovery parks an agent that is `true` or `null` as
+`blocked: inspection` until someone runs `aether resume`. An agent that is
+`false` is headless: after a daemon restart on Linux, where the start stops
+the commands the old daemon's agents left in flight, it resumes at once, told which
+calls have an unknown outcome and to check the state before repeating them,
+and its `agent.resumed` event says it resumed without inspection. Where the
+command may still run (a turn a live daemon lost, or a restart elsewhere than
+Linux) it parks like any other agent. A server the agent detached is spared
+while the agent is live (but one its engine started in the engine process the
+crash cut short), and a process kept with `AETHER_KEEP_PROCESS=1` is never
+stopped, so either may still run beside the resumed agent. A new child of a `null` parent, and the
+successor `restart_agent` makes of a `null` agent, are headless. An older daemon ignores the field and parks every such agent, which
+was its behaviour before, so no feature gates it.
 
 ## Repository aliases
 

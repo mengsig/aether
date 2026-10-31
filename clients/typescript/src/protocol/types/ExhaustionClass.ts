@@ -8,5 +8,6 @@ import type {
 /**
  * The subset of [`ModelErrorClass`] a probe can recover from. `ContextLimit`
  * is deliberately unrepresentable: it is not credits, and waiting cannot fix it.
+ * `Credentials` is a sign-in the provider refused, which an operator renews.
  */
-export type ExhaustionClass = "quota_exhausted" | "usage_limit";
+export type ExhaustionClass = "quota_exhausted" | "usage_limit" | "credentials";

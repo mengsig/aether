@@ -669,11 +669,7 @@ pub(crate) fn record(
         .take_while(|link| **link != cause.model)
         .collect();
     payload["fallbacks_tried"] = json!(tried);
-    payload["verdict"] = json!(
-        "Suspended, not failed: the task stays active, descendants keep running, and the agent \
-         probes this provider by itself until it answers. Resume it sooner from your client, \
-         or cancel it; no work is lost meanwhile."
-    );
+    payload["verdict"] = json!(verdict(cause.class));
     let enriched = format!("exhaustion: {payload}");
     commit.push_event(custom(agent, by, "exhaustion.suspended", payload));
     for ancestor in recipients.values() {
@@ -689,6 +685,19 @@ pub(crate) fn record(
         )?;
     }
     Ok(())
+}
+
+fn verdict(class: ExhaustionClass) -> String {
+    let kept = "Suspended, not failed: the task stays active, descendants keep running, and the \
+                agent probes this provider by itself until it answers. Resume it sooner from \
+                your client, or cancel it; no work is lost meanwhile.";
+    match class {
+        ExhaustionClass::Credentials => format!(
+            "{kept} The provider refused the engine CLI's sign-in: sign it in again (for \
+             Claude Code run `claude auth login`, for Codex `codex login`)."
+        ),
+        ExhaustionClass::QuotaExhausted | ExhaustionClass::UsageLimit => kept.to_owned(),
+    }
 }
 
 /// Close the agent's open exhaustion episode because a provider answered, and
@@ -758,7 +767,10 @@ fn custom(agent: &Agent, by: &Actor, name: &str, payload: Value) -> EventDraft {
 
 mod classification;
 mod probing;
-pub(crate) use classification::{engine_error_class, native_transient, recoverable_by_fallback};
+pub(crate) use classification::{
+    engine_error_class, native_suspends, native_transient, recoverable_by_fallback,
+    transient_os_error,
+};
 pub(crate) use probing::next_probe;
 use probing::{probes_after, reported_interval};
 #[cfg(test)]

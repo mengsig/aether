@@ -33,6 +33,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+pub use aether_spawn::SpawnGate;
 pub use claude_code::ClaudeCodeEngine;
 pub use codex::CodexEngine;
 pub use codex_app::CodexAppEngine;
@@ -389,11 +390,13 @@ pub struct EngineRun {
 }
 
 /// Runtime identity for a launch, separate from the source-compatible turn payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineLaunchContext {
     pub run_id: aether_core::id::RunId,
     pub agent_id: aether_core::id::AgentId,
     pub task_id: Option<aether_core::id::TaskId>,
+    /// Closed when the daemon stops: the engine process then never starts.
+    pub spawns: SpawnGate,
 }
 
 #[async_trait::async_trait]
@@ -581,6 +584,42 @@ where
     .await
 }
 
+/// A gated engine, its watchdog, its adoption, and its record.
+pub(crate) type Gated = (
+    tokio::process::Child,
+    lifeline::GroupWatch,
+    scope::Adoption,
+    Option<orphans::EngineRecord>,
+);
+
+/// [`lifeline::spawn_recorded`], unless the launch's daemon has closed its
+/// spawns or `cancel`, the launch's turn token, is cancelled. The
+/// [`scope::Adoption`] goes to [`scope::adopt`].
+pub(crate) fn spawn_gated(
+    command: tokio::process::Command,
+    launch: Option<&EngineLaunchContext>,
+    cancel: &CancellationToken,
+    token: Option<&str>,
+) -> std::io::Result<Gated> {
+    let Some(launch) = launch else {
+        let (child, watch, record) = lifeline::spawn_recorded(command, token)?;
+        return Ok((child, watch, scope::Adoption::begin(None), record));
+    };
+    // Held until the engine has exec'd and its adoption is recorded, so a
+    // sweep after a fence finds the engine and waits for its scope.
+    launch
+        .spawns
+        .spawn(
+            || cancel.is_cancelled(),
+            || {
+                let (child, watch, record) = lifeline::spawn_recorded(command, token)?;
+                let adoption = scope::Adoption::begin(Some(launch.agent_id));
+                Ok((child, watch, adoption, record))
+            },
+        )
+        .map_err(std::io::Error::other)?
+}
+
 /// Fails before a spawn when the working directory is gone, so the OS's
 /// ENOENT is never mistaken for a missing executable.
 pub(crate) fn ensure_workspace(cwd: &Path) -> Result<(), EngineError> {
@@ -594,6 +633,8 @@ pub(crate) fn ensure_workspace(cwd: &Path) -> Result<(), EngineError> {
 
 /// Names the real cause of a failed spawn: ENOENT means a missing
 /// working directory or a missing executable, and only `cwd` tells them apart.
+/// Any other errno stays in the `Spawn` text, which the runtime reads to wait
+/// out EAGAIN, ETXTBSY and ENOMEM rather than fail the agent.
 pub(crate) fn spawn_error(program: &str, cwd: &Path, error: std::io::Error) -> EngineError {
     if error.kind() != std::io::ErrorKind::NotFound {
         return EngineError::Spawn {
@@ -621,7 +662,7 @@ pub(crate) async fn run_process_with_env<P>(
     temp_dir: Option<&Path>,
     build_env: &[(String, PathBuf)],
     extra_env: &[(std::ffi::OsString, std::ffi::OsString)],
-    agent: Option<aether_core::id::AgentId>,
+    launch: Option<&EngineLaunchContext>,
     redactor: &aether_core::redact::Redactor,
     first_input: String,
     keep_stdin_open: bool,
@@ -636,6 +677,7 @@ where
     use tokio::io::AsyncWriteExt as _;
 
     ensure_workspace(&cwd)?;
+    let agent = launch.map(|launch| launch.agent_id);
     let mut command = scope::command(program, agent);
     command
         .args(&args)
@@ -652,8 +694,9 @@ where
     export_temp_dir(&mut command, temp_dir);
     export_build_env(&mut command, build_env);
     let run_token = orphans::tag(&mut command);
-    let (mut child, group_watch) =
-        lifeline::spawn(command).map_err(|e| spawn_error(program, &cwd, e))?;
+    let (mut child, group_watch, adoption, engine_record) =
+        spawn_gated(command, launch, &cancel, run_token.as_deref())
+            .map_err(|e| spawn_error(program, &cwd, e))?;
     let program = program.to_owned();
     let pid = child.id();
     let mut stdin = child
@@ -673,8 +716,7 @@ where
     // Do not hold stdin open after the runtime drops its final input sender.
     let interrupt_input = input_tx.downgrade();
 
-    let engine_record = orphans::EngineRecord::register(pid, run_token.as_deref());
-    scope::adopt(pid, agent).await;
+    scope::adopt(pid, adoption).await;
     let stdin_error = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     let stdin_error_writer = stdin_error.clone();
     let mut stdin_task = tokio::spawn(async move {

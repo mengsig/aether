@@ -239,6 +239,12 @@ Each engine run gets the agent's own temp directory (see
   inherit them. In sandbox mode Claude Code sets `TMPDIR` to its own
   `claude-<uid>` subdirectory inside that directory. Network-denied runs are
   sandboxed, and their sandbox may also write to the agent's temp directory.
+  When the workspace is a linked Git worktree, that sandbox may also write the
+  repository's shared Git directory (`git rev-parse --git-common-dir`), where
+  a commit writes the worktree's index, refs and objects. Nothing wider is
+  added: a plain checkout's `.git` is already inside the workspace. Claude Code
+  2.1.312 also allows that directory by itself; the explicit entry keeps
+  commits working on versions that do not.
 - **Codex** gets the variables in the app-server's environment, the loopback
   sandbox's environment, and `shell_environment_policy.set`. Codex applies
   `include_only` after `set`, so if your `shell_environment_policy` allowlists
@@ -588,7 +594,8 @@ signal is the whole of the containment. Aether sends `SIGTERM` to your process
 group, then `SIGKILL` two seconds later, so the real bound on work after a park
 is the grace plus those two seconds plus the reap - and a grandchild you
 `setsid` into its own process group is not reached by either signal. It lives
-until your agent ends, when Aether stops everything its engines left running
+until your agent ends, when Aether stops everything its engines left running;
+a daemon stop or restart leaves it to your agent while that agent is live
 (see [agent processes](configuration.md#agent-processes)).
 
 Strip `turn.hidden_env` from the child's environment. The engine drives its
@@ -706,9 +713,13 @@ unparsable. `DetectError`'s variants - `NotInstalled`, `ExitFailure`,
 and the remedy; `aether doctor`'s engines check and the daemon's startup log
 (`tracing::warn!`) both print the value's `Display` verbatim.
 
-Each version or capability probe has a 15-second deadline and no terminal input.
+Each version or capability probe has a 60-second deadline and no terminal input,
+so a CLI that is slow to start on a loaded machine is not taken for a broken one.
 A timeout reports which probe failed; timeout or caller cancellation kills the
-direct child instead of leaving the probe running. These are local CLI checks,
+direct child instead of leaving the probe running. A CLI the OS cannot start is
+`NotInstalled` with the OS error, from the capability probe too, so a launch
+refused for now (`EAGAIN`, `ETXTBSY`, `ENOMEM`) is never taken for a missing
+`app-server`. These are local CLI checks,
 not model calls. The bound is per probe, not a deadline for total daemon startup.
 
 The probes leave the user's home as they found it. Codex creates files
@@ -725,13 +736,39 @@ An engine that fails preflight is not ruled out for the daemon's life. When
 a turn, a compaction, a delegation or the creation of a started agent needs an engine that
 detection found unusable, or one whose CLI has since left `PATH`, the
 daemon probes that CLI again first. A CLI installed, upgraded or fixed
-since startup is then used without a restart, and one removed since is
-refused with an install hint. Probes of one engine run at most once every two seconds, and
+since startup is then used without a restart, and one never found is
+refused with an install hint; one usable earlier and removed since is suspect
+(below), as a CLI mid-reinstall is. Probes of one engine run at most once every two seconds, and
 callers arriving meanwhile share the latest outcome. A started agent
 (`aether run`) whose engine is still unusable is refused before it exists,
-with the probe's reason. A parked agent (`aether new`) is still created: its
+with the probe's reason, unless that probe was inconclusive (below). A parked agent (`aether new`) is still created: its
 CLI may be installed before it runs. Spawn schedules and their runs are not
 refused either: each run's first turn probes the CLI again.
+
+A usable engine is not given up on one failed probe. A probe that times out,
+or whose CLI the OS could not start for now, keeps the last good detection, and a Codex app-server probe that times out is
+never downgraded to the exec fallback. A probe that fails outright marks the
+engine suspect: no turn launches it until a probe passes again, but agents are
+still created on it. Only three failed probes in a row, at least 30 seconds
+apart from first to last, demote it to unusable.
+
+A turn whose engine is not launchable does not fail an agent that has run on
+it before (or on an engine that was usable earlier in the daemon's life). It
+probes the CLI again under the transient retry backoff below, emitting an
+`engine.transient_retry` event with class `detection` and `waiting_for`
+`engine CLI` for each wait, and fails when the retry window ends, even
+mid-probe; cancelling the agent also ends a probe still running. A probe that
+finds the engine back just as the window ends still launches it: the window
+bounds the wait, not the use of an engine that works. A new agent
+on an engine that was never found still fails at once, unless its latest probe
+was inconclusive: one that timed out, or whose CLI the OS refused to start for
+now (`EAGAIN`, `ETXTBSY`, `ENOMEM`), proves nothing, so creation is not refused
+on it and the turn waits as above.
+
+A launch the OS refused for now - `EAGAIN` (fork or process limits),
+`ETXTBSY` (the binary being replaced by an update) or `ENOMEM` - is a
+transient timeout and is retried the same way. A missing CLI or a denied
+launch is not.
 
 A version floor is only ever a registration gate (`DetectError::TooOld`) once
 it is independently verified for everything that adapter's `args()` sends on
@@ -875,6 +912,21 @@ re-dispatches the interrupted turn on a backoff schedule once the window is
 expected to have cleared. `aether resume <agent>` forces an immediate probe
 without waiting for the schedule.
 
+A native engine whose sign-in the provider refused is suspended the same way,
+with class `credentials`, instead of failing the agent. Claude Code's
+`authentication_error`, "Invalid API key", "Please run /login", "OAuth token
+has expired" and a result with `api_error_status` 401, and Codex's
+"401 Unauthorized" and "access token could not be refreshed" count. The
+operator is told once per episode, not once per probe, and the suspension
+names the fix (`claude auth login`, `codex login`). Once the CLI is signed in
+again, the next probe answers and every agent suspended on that provider is
+released. A configured fallback link takes the turn first, as for an exhausted
+quota, and the engine it leaves is benched for a minute (as an HTTP provider
+is), so other turns go straight to their fallback instead of relaunching it. A stalled engine that names a refused sign-in or a spent plan as it is
+stopped is suspended on that, not retried as a stall. Models reached over HTTP
+keep failing on an auth error: their key is configuration, not a session that
+expires.
+
 ## Transient provider and network failures
 
 A native turn that fails with a network error (`EAI_AGAIN`, `ECONNREFUSED`,
@@ -925,8 +977,13 @@ fallback or suspension path above.
 Retries stop after a wall-clock window,
 `[scheduler] engine_transient_retry_minutes` (two hours by default; `0` fails
 on the first error). The window is a hard bound per turn: it starts at the
-turn's first transient failure, partial progress does not reset it, and no
-attempt starts after it ends. The agent then fails, the error names the class
+turn's first transient failure and no attempt starts after it ends. Real
+progress resets it - a model message or a tool result, not a partial stream
+delta or Claude Code's synthetic error message - so a long turn that recovers
+gives its next outage a fresh window and backoff from the 15s floor. Progress
+ends at most eight outages of one turn this way; after that the window runs
+on, so an engine that answers a little and then fails every attempt still
+gives up. The agent then fails, the error names the class
 and how long it retried, and every responsible ancestor is told. The turn
 keeps its scheduler and engine-cap slot while it waits.
 
@@ -944,8 +1001,10 @@ A stall emits an `agent.stalled` event with `agent`, `engine`, `model`,
 `silent_secs` and `attempt` (1 for the first stall of the turn), so clients can
 subscribe to it. Aether then stops the engine process and resumes the same
 session, like a transient failure, waiting with the same backoff. After two
-retries (the third stall) the turn ends with a recorded error saying the
-engine stalled; the agent goes idle and a message resumes its session. While
+consecutive retries (the third stall in a row) the turn ends with a recorded
+error saying the engine stalled. Progress after a stall - a model message or a
+tool result - restarts that count, even after the eight outages whose window
+progress resets, so a long turn is not ended by stalls hours apart; the agent goes idle and a message resumes its session. While
 an agent is stalled, `aether status` lists it under "Needs attention", and the
 TUI and `aether run` print a notice for each stall.
 

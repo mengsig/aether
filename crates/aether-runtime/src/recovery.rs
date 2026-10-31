@@ -18,6 +18,10 @@ use crate::{Result, Runtime};
 /// leave the previous boot available to the next attempt.
 const BOOT_ID_META: &str = "runtime.daemon_boot_id";
 
+/// The `agent.resumed` reason of a headless agent recovered with mutating
+/// calls of unknown outcome, which an interactive one would wait on.
+const HEADLESS_RESUME: &str = "resumed without inspection: no person watches this agent; the calls its interrupted turn ran have an unknown outcome";
+
 fn host_boot_id() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
@@ -41,6 +45,31 @@ pub(crate) fn recover(runtime: &Arc<Runtime>) -> Result<()> {
     recover_with_boot_id(runtime, host_boot_id().as_deref())
 }
 
+/// What may still run of the turns a recovery finds interrupted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Restart {
+    /// The host rebooted: nothing the old daemon started survived.
+    Reboot,
+    /// The daemon started again; its start sweep stops what the old one's
+    /// agents left running before any turn runs, where processes can be found.
+    Daemon,
+    /// A live daemon recovers a turn whose processes may still run.
+    Live,
+}
+
+impl Restart {
+    /// Whether nothing an interrupted call started still runs once its agent can
+    /// retry, a process kept with `AETHER_KEEP_PROCESS=1` aside, as at any end.
+    fn stops_processes(self) -> bool {
+        match self {
+            Restart::Reboot => true,
+            // Only Linux finds an agent's processes again (`aether_engine::reap`).
+            Restart::Daemon => cfg!(target_os = "linux"),
+            Restart::Live => false,
+        }
+    }
+}
+
 fn host_restarted(previous: Option<&str>, current: Option<&str>) -> bool {
     matches!((previous, current), (Some(previous), Some(current))
         if !previous.is_empty() && !current.is_empty() && previous != current)
@@ -48,7 +77,11 @@ fn host_restarted(previous: Option<&str>, current: Option<&str>) -> bool {
 
 fn recover_with_boot_id(runtime: &Arc<Runtime>, current_boot: Option<&str>) -> Result<()> {
     let previous_boot = runtime.store.meta(BOOT_ID_META)?;
-    let rebooted = host_restarted(previous_boot.as_deref(), current_boot);
+    let restart = if host_restarted(previous_boot.as_deref(), current_boot) {
+        Restart::Reboot
+    } else {
+        Restart::Daemon
+    };
     let mut stale = runtime.store.leases()?;
     // Agents marked running without a lease are just as interrupted.
     for agent in runtime.store.agents(&AgentFilter {
@@ -84,8 +117,8 @@ fn recover_with_boot_id(runtime: &Arc<Runtime>, current_boot: Option<&str>) -> R
             stale.retain(|lease| lease.agent_id != id);
         }
     }
-    let recovered = recover_leases(runtime, stale, rebooted, None)?;
-    requarantine_inspected(runtime, &recovered.quarantined, rebooted)?;
+    let recovered = recover_leases(runtime, stale, restart, None)?;
+    requarantine_inspected(runtime, &recovered.quarantined, restart == Restart::Reboot)?;
     validation::validate_live(runtime)?;
     runtime.apply(Commit::new().mutate(Mutation::SetMeta {
         key: BOOT_ID_META.into(),
@@ -106,12 +139,12 @@ pub(crate) struct Recovered {
 }
 
 /// Classify each stale lease's turn and put its agent where that leaves it.
-/// `rebooted` only when the host boot changed since the last recovery.
+/// `restart` says what may still run of the turns they interrupted.
 /// `reason`, when given, is recorded with each recovery as `agent.recovered`.
 pub(crate) fn recover_leases(
     runtime: &Arc<Runtime>,
     stale: Vec<aether_core::lease::Lease>,
-    rebooted: bool,
+    restart: Restart,
     reason: Option<&str>,
 ) -> Result<Recovered> {
     let mut done = Recovered::default();
@@ -122,7 +155,7 @@ pub(crate) fn recover_leases(
         }
         let id = lease.agent_id;
         let recovered = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            recover_lease(runtime, lease, rebooted, reason)
+            recover_lease(runtime, lease, restart, reason)
         }))
         .unwrap_or_else(|panic| {
             Err(crate::RuntimeError::Invalid(format!(
@@ -154,14 +187,14 @@ pub(crate) enum Outcome {
 fn recover_lease(
     runtime: &Arc<Runtime>,
     lease: aether_core::lease::Lease,
-    rebooted: bool,
+    restart: Restart,
     reason: Option<&str>,
 ) -> Result<Outcome> {
     let Some(agent) = runtime.store.agent(lease.agent_id)? else {
         runtime.apply(Commit::new().mutate(Mutation::ClearLease(lease.agent_id)))?;
         return Ok(Outcome::Done);
     };
-    recover_agent(runtime, lease, agent, rebooted, reason)
+    recover_agent(runtime, lease, agent, restart, reason)
 }
 
 /// Recover `agent` as read before the commit lock. A live daemon may write it
@@ -170,12 +203,15 @@ pub(crate) fn recover_agent(
     runtime: &Arc<Runtime>,
     lease: aether_core::lease::Lease,
     mut agent: aether_core::agent::Agent,
-    rebooted: bool,
+    restart: Restart,
     reason: Option<&str>,
 ) -> Result<Outcome> {
     debug_assert_eq!(lease.agent_id, agent.id, "the lease is the agent's");
-    let found = classify_or_inspect(runtime, &agent, rebooted)?;
-    let held = if found.class == RecoveryClass::Inspect || rebooted {
+    let found = classify_or_inspect(runtime, &agent, restart)?;
+    let held = if found.class == RecoveryClass::Inspect
+        || restart == Restart::Reboot
+        || found.headless_resume
+    {
         let mut keys = unreleased_keys(runtime, agent.id)?;
         keys.extend(found.cancelled_keys.iter().cloned());
         keys.sort();
@@ -314,7 +350,17 @@ fn interruption_commit(
     commit
 }
 
+/// Cancel the calls still open and tell the model why each interrupted call
+/// stopped, including a mutating one the stop cancelled before recovery ran.
 fn record_open_calls(commit: &mut Commit, agent: &aether_core::agent::Agent, found: &Interrupted) {
+    assert!(
+        found
+            .cancelled_unsure
+            .iter()
+            .all(|id| !found.open_calls.contains(id)),
+        "a cancelled call is no longer open"
+    );
+    let cause = format!("recovery.classified ({:?}): {}", found.class, found.detail);
     for id in &found.open_calls {
         let call = found.calls.get(id);
         crate::tool_interruption::record(
@@ -323,7 +369,18 @@ fn record_open_calls(commit: &mut Commit, agent: &aether_core::agent::Agent, fou
             *id,
             call.map_or("unknown tool", |call| call.name.as_str()),
             &call.map_or(serde_json::Value::Null, |call| call.input.clone()),
-            &format!("recovery.classified ({:?}): {}", found.class, found.detail),
+            &cause,
+        );
+    }
+    for id in &found.cancelled_unsure {
+        let call = found.calls.get(id);
+        crate::tool_interruption::push_note(
+            commit,
+            agent,
+            *id,
+            call.map_or("unknown tool", |call| call.name.as_str()),
+            &call.map_or(serde_json::Value::Null, |call| call.input.clone()),
+            &cause,
         );
     }
 }
@@ -379,7 +436,7 @@ fn resume_recovered(
         commit.push_event(recovery_event(
             agent,
             EventKind::AgentResumed {
-                reason: "recovered after restart".into(),
+                reason: resumed_reason(agent, found).into(),
                 via: None,
             },
         ));
@@ -396,6 +453,25 @@ fn resume_recovered(
         )?;
     }
     Ok(())
+}
+
+/// Why `agent.resumed` says recovery resumed the agent. A headless resume
+/// is logged too: it replaces an inspection an interactive tree would wait on.
+fn resumed_reason(agent: &aether_core::agent::Agent, found: &Interrupted) -> &'static str {
+    if !found.headless_resume {
+        return "recovered after restart";
+    }
+    assert_eq!(
+        found.class,
+        RecoveryClass::Retry,
+        "a headless resume retries"
+    );
+    assert!(
+        !agent.config.awaits_inspection(),
+        "an interactive tree waits for inspection"
+    );
+    tracing::warn!(agent = %agent.id, detail = %found.detail, "headless agent resumed instead of waiting for inspection");
+    HEADLESS_RESUME
 }
 
 /// The inspection hold outlives daemon restarts on the same host boot.
@@ -474,10 +550,15 @@ struct Interrupted {
     class: RecoveryClass,
     detail: String,
     open_calls: Vec<ToolCallId>,
+    /// Mutating calls the stop already cancelled, whose outcome is unknown.
+    cancelled_unsure: Vec<ToolCallId>,
     cancelled_keys: Vec<ResourceKey>,
     open_invocation: Option<(aether_core::id::InvocationId, aether_core::id::SnapshotId)>,
     /// Approvals the turn raised while an engine ran it, answered or not.
     engine_approvals: Vec<ApprovalId>,
+    /// Mutating calls of unknown outcome were in flight, and a headless
+    /// agent resumes rather than wait for an inspection nobody would do.
+    headless_resume: bool,
 }
 
 /// Events the agent's own turn wrote, oldest first, read a page at a time.
@@ -564,9 +645,9 @@ fn turn_start_seq(runtime: &Runtime, agent: AgentId) -> Result<u64> {
 fn classify_or_inspect(
     runtime: &Runtime,
     agent: &aether_core::agent::Agent,
-    rebooted: bool,
+    restart: Restart,
 ) -> Result<Interrupted> {
-    match classify(runtime, agent, rebooted) {
+    match classify(runtime, agent, restart) {
         Ok(found) => Ok(found),
         Err(
             error @ crate::RuntimeError::Store(
@@ -587,9 +668,11 @@ fn classify_or_inspect(
                 class: RecoveryClass::Inspect,
                 detail,
                 open_calls: Vec::new(),
+                cancelled_unsure: Vec::new(),
                 cancelled_keys: Vec::new(),
                 open_invocation: None,
                 engine_approvals,
+                headless_resume: false,
             })
         }
         Err(error) => Err(error),
@@ -600,7 +683,7 @@ fn classify_or_inspect(
 fn classify(
     runtime: &Runtime,
     agent: &aether_core::agent::Agent,
-    rebooted: bool,
+    restart: Restart,
 ) -> Result<Interrupted> {
     // Open work as the turn left it. Walking forward, each event either opens
     // something or closes what an earlier one opened.
@@ -656,6 +739,7 @@ fn classify(
     })?;
     let open_calls: Vec<ToolCallId> = open_tools.into_iter().collect();
     let mut needs_inspection = Vec::new();
+    let mut cancelled_unsure = Vec::new();
     let mut cancelled_keys = Vec::new();
     // Cancellation stops execution but cannot roll back effects already applied.
     for call in open_calls.iter().chain(&cancelled_tools) {
@@ -668,6 +752,9 @@ fn classify(
         }
         let name = requested.map_or("unknown tool", |(requested, _)| requested.name.as_str());
         needs_inspection.push(format!("{name} ({call})"));
+        if cancelled_tools.contains(call) {
+            cancelled_unsure.push(*call);
+        }
         if cancelled_tools.contains(call)
             && let Some((requested, _)) = requested
         {
@@ -680,40 +767,21 @@ fn classify(
             );
         }
     }
-    let (class, detail) = if rebooted && !needs_inspection.is_empty() {
-        (
-            RecoveryClass::Retry,
-            reboot_detail(&needs_inspection.join(", ")),
-        )
-    } else if !needs_inspection.is_empty() {
-        (
-            RecoveryClass::Inspect,
-            format!(
-                "mutating tool calls were in flight when the daemon stopped: {}",
-                needs_inspection.join(", ")
-            ),
-        )
-    } else if !open_calls.is_empty()
+    let interrupted = !open_calls.is_empty()
         || invocation_open.is_some()
         || !cancelled_tools.is_empty()
-        || cancelled_invocation
-    {
-        (
-            RecoveryClass::Retry,
-            "turn interrupted; safe to retry from the last committed step".into(),
-        )
-    } else if agent.status.kind() == AgentStatusKind::Running {
-        // An engine keeps the turn inside its own process and commits nothing
-        // between the start and the reply, so the log alone reads as idle.
-        // The Running status is the evidence that a turn was lost.
-        (
-            RecoveryClass::Retry,
-            "the turn in flight was lost when the daemon stopped; nothing it produced was committed"
-                .into(),
-        )
-    } else {
-        (RecoveryClass::Resume, "no work in flight".into())
-    };
+        || cancelled_invocation;
+    let calls_stopped = !runtime.config.unstopped_calls.contains(&agent.id);
+    let (class, detail) = decide(
+        agent,
+        restart,
+        &needs_inspection,
+        interrupted,
+        calls_stopped,
+    );
+    let headless_resume = restart != Restart::Reboot
+        && !needs_inspection.is_empty()
+        && class != RecoveryClass::Inspect;
     Ok(Interrupted {
         calls: calls
             .into_iter()
@@ -722,10 +790,66 @@ fn classify(
         class,
         detail,
         open_calls,
+        cancelled_unsure,
         cancelled_keys,
         open_invocation: invocation_open,
         engine_approvals,
+        headless_resume,
     })
+}
+
+/// The class of a turn `classify` read. `unsure` names the mutating calls whose
+/// outcome is unknown; a headless agent retries them once nothing of them runs,
+/// which `calls_stopped` false says the start could not establish.
+fn decide(
+    agent: &aether_core::agent::Agent,
+    restart: Restart,
+    unsure: &[String],
+    interrupted: bool,
+    calls_stopped: bool,
+) -> (RecoveryClass, String) {
+    assert!(
+        unsure.is_empty() || interrupted,
+        "an unsure call was in flight, so the turn was interrupted"
+    );
+    if !unsure.is_empty() {
+        let calls = unsure.join(", ");
+        // A reboot ends host processes, not a container on a remote Docker host.
+        return if !calls_stopped {
+            (
+                RecoveryClass::Inspect,
+                format!(
+                    "mutating tool calls were in flight when the daemon stopped: {calls}; \
+                     the restart could not prove their shell command stopped, so it may still run"
+                ),
+            )
+        } else if restart == Restart::Reboot {
+            (RecoveryClass::Retry, reboot_detail(&calls))
+        } else if restart.stops_processes() && !agent.config.awaits_inspection() {
+            (RecoveryClass::Retry, restart_detail(&calls))
+        } else {
+            (
+                RecoveryClass::Inspect,
+                format!("mutating tool calls were in flight when the daemon stopped: {calls}"),
+            )
+        };
+    }
+    if interrupted {
+        return (
+            RecoveryClass::Retry,
+            "turn interrupted; safe to retry from the last committed step".into(),
+        );
+    }
+    if agent.status.kind() == AgentStatusKind::Running {
+        // An engine keeps the turn inside its own process and commits nothing
+        // between the start and the reply, so the log alone reads as idle.
+        return (
+            RecoveryClass::Retry,
+            "the turn in flight was lost when the daemon stopped; nothing it produced was committed"
+                .into(),
+        );
+    }
+    (RecoveryClass::Resume, "no work in flight".into())
 }
 
 /// Native edits can be idempotent once complete, but retrying alongside a
@@ -760,6 +884,12 @@ fn recovery_side_effect(
         | "apply_patch" | "file_change" => SideEffectClass::Mutation,
         _ => recorded,
     }
+}
+
+fn restart_detail(calls: &str) -> String {
+    format!(
+        "the turn running these calls was cut short (a daemon restart or a lost turn): {calls}; their outcome is unknown, so check the state before repeating them"
+    )
 }
 
 fn reboot_detail(calls: &str) -> String {

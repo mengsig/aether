@@ -273,6 +273,8 @@ pub enum CellModel {
     User {
         from: UserFrom,
         text: String,
+        /// The stored images the message carried; `text` ends with a line per image.
+        images: Vec<aether_core::attachment::AttachmentRef>,
     },
     Assistant {
         text: String,

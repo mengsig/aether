@@ -19,6 +19,7 @@ use aether_core::time::{Timestamp, now};
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 
 use crate::capture::{Capture, pump};
 use crate::exec::{Teardown, prepare_interactive};
@@ -91,6 +92,8 @@ pub struct BackgroundProcesses {
     stopped_output: Mutex<HashMap<AgentId, VecDeque<Arc<Capture>>>>,
     #[cfg(target_os = "linux")]
     journal: Mutex<Option<journal::Journal>>,
+    /// Closed once the daemon stops; see [`BackgroundProcesses::close_spawns`].
+    spawns: aether_spawn::SpawnGate,
 }
 
 impl std::fmt::Debug for BackgroundProcesses {
@@ -109,7 +112,12 @@ impl BackgroundProcesses {
 
     /// Recover this store's host jobs before the runtime resumes agents.
     /// The caller must hold the daemon's exclusive store lock throughout use.
-    pub fn recover_host_jobs(&self, store_path: &std::path::Path) -> Result<(), ToolError> {
+    /// Returns the agents a foreground call of which may still run: neither
+    /// stopped nor proven another's, so they must wait for inspection.
+    pub fn recover_host_jobs(
+        &self,
+        store_path: &std::path::Path,
+    ) -> Result<std::collections::HashSet<aether_core::id::AgentId>, ToolError> {
         #[cfg(target_os = "linux")]
         {
             let processes = self.lock()?;
@@ -124,11 +132,15 @@ impl BackgroundProcesses {
                 .map_err(|_| ToolError::Internal("background journal poisoned".into()))?;
             let mut directory = store_path.as_os_str().to_owned();
             directory.push(".background-processes");
-            *journal = Some(journal::Journal::recover(directory.into())?);
+            let (recovered, unstopped) = journal::Journal::recover(directory.into())?;
+            *journal = Some(recovered);
+            Ok(unstopped)
         }
         #[cfg(not(target_os = "linux"))]
-        tracing::warn!(store = %store_path.display(), "host background crash recovery requires Linux");
-        Ok(())
+        {
+            tracing::warn!(store = %store_path.display(), "host background crash recovery requires Linux");
+            Ok(Default::default())
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -149,6 +161,25 @@ impl BackgroundProcesses {
         Ok(Some(registration))
     }
 
+    /// Record the group foreground `call`'s `pid` leads until the registration
+    /// is cleared, so a start after a crash stops it; `None` without a journal.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn register_foreground(
+        &self,
+        call: ProcessId,
+        pid: u32,
+        agent: aether_core::id::AgentId,
+    ) -> std::io::Result<Option<journal::Registration>> {
+        let journal = self
+            .journal
+            .lock()
+            .map_err(|_| std::io::Error::other("background journal poisoned"))?;
+        journal
+            .as_ref()
+            .map(|journal| journal.register_foreground(call, pid, agent))
+            .transpose()
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<ProcessId, Process>>, ToolError> {
         self.processes
             .lock()
@@ -163,15 +194,18 @@ impl BackgroundProcesses {
         command: &str,
         ctx: &ToolContext,
     ) -> Result<ProcessStatus, ToolError> {
-        self.start_with_terminal(agent, command, ctx, false)
+        self.start_with_terminal(agent, command, ctx, false, &CancellationToken::new())
     }
 
+    /// [`Self::start`], on a terminal if asked. Refused once `cancel`, the
+    /// calling turn's token, is cancelled.
     pub fn start_with_terminal(
         &self,
         agent: AgentId,
         command: &str,
         ctx: &ToolContext,
         terminal: bool,
+        cancel: &CancellationToken,
     ) -> Result<ProcessStatus, ToolError> {
         self.reap_settled(agent)?;
         let mut processes = self.lock()?;
@@ -189,12 +223,14 @@ impl BackgroundProcesses {
         cmd.kill_on_drop(true);
         #[cfg(target_os = "linux")]
         cmd.env(journal::JOB_ENV, id.to_string());
-        let (mut child, pty) = if terminal {
-            let (child, pty) = crate::terminal::spawn(&cmd)?;
-            (child, Some(pty))
-        } else {
-            (cmd.spawn()?, None)
-        };
+        let (mut child, pty) = self.spawn_host(cancel, || {
+            if terminal {
+                let (child, pty) = crate::terminal::spawn(&cmd)?;
+                Ok((child, Some(pty)))
+            } else {
+                Ok((cmd.spawn()?, None))
+            }
+        })?;
         #[cfg(target_os = "linux")]
         let (registration, durability) = {
             let registered = self
@@ -355,7 +391,7 @@ impl BackgroundProcesses {
         agent: AgentId,
         id: ProcessId,
         chars: &str,
-        cancel: tokio_util::sync::CancellationToken,
+        cancel: CancellationToken,
     ) -> Result<usize, ToolError> {
         let writer = {
             let processes = self.lock()?;
@@ -407,6 +443,35 @@ impl BackgroundProcesses {
         Ok(out)
     }
 
+    /// Run `spawn`, which starts a host command, unless spawns are closed or
+    /// `cancel` is; the gate stays held meanwhile, so a fence waits for it.
+    pub(crate) fn spawn_host<T>(
+        &self,
+        cancel: &CancellationToken,
+        spawn: impl FnOnce() -> Result<T, ToolError>,
+    ) -> Result<T, ToolError> {
+        self.spawns
+            .spawn(|| cancel.is_cancelled(), spawn)
+            .map_err(|_| ToolError::Cancelled)?
+    }
+
+    /// Wait out the host commands being started, so a sweep after a turn's
+    /// cancellation sees each one that will ever start for that turn.
+    pub fn fence_spawns(&self) {
+        self.spawns.fence();
+    }
+
+    /// Refuse every host command from now on, once the spawns under way have
+    /// finished, so a daemon stop's sweep sees every process there will be.
+    pub fn close_spawns(&self) {
+        self.spawns.close();
+    }
+
+    /// The gate every host command starts through, for a sweep to hold.
+    pub fn spawn_gate(&self) -> aether_spawn::SpawnGate {
+        self.spawns.clone()
+    }
+
     /// Stop and forget the handle, retaining its log until eviction or agent end.
     pub async fn stop(&self, agent: AgentId, id: ProcessId) -> Result<ProcessStatus, ToolError> {
         let process = {
@@ -434,20 +499,56 @@ impl BackgroundProcesses {
     /// Stop everything an agent started. Called when the agent ends, so a
     /// cancelled agent never leaves a process behind. Returns how many.
     pub async fn stop_agent(&self, agent: AgentId) -> usize {
-        let count = self.stop_matching(|p| p.agent == agent).await;
+        self.stop_agents(&[agent]).await
+    }
+
+    /// Take what `agents` hold, and their stopped logs, out of the registry
+    /// now, before the returned future stops it: a process an agent woken
+    /// again starts later is not among them. The future returns how many.
+    pub fn stop_agents(&self, agents: &[AgentId]) -> impl Future<Output = usize> + Send + 'static {
+        let doomed = self.take_matching(|p| agents.contains(&p.agent));
+        assert!(
+            doomed.iter().all(|p| agents.contains(&p.agent)),
+            "only the ending agents' processes are taken"
+        );
         match self.stopped_output.lock() {
             Ok(mut stopped) => {
-                stopped.remove(&agent);
+                for agent in agents {
+                    stopped.remove(agent);
+                }
             }
             Err(error) => tracing::error!(%error, "cannot remove stopped shell output"),
         }
-        count
+        stop_taken(doomed)
+    }
+
+    /// Give `to` every process `from` holds, as a child that completed hands
+    /// what it started to its nearest live ancestor. Returns those still running.
+    pub fn hand_up(&self, from: AgentId, to: AgentId) -> Result<Vec<ProcessStatus>, ToolError> {
+        assert_ne!(from, to, "an agent hands nothing to itself");
+        let mut handed = Vec::new();
+        {
+            let mut processes = self.lock()?;
+            for process in processes.values_mut().filter(|p| p.agent == from) {
+                process.agent = to;
+                handed.push(self.status_of(process)?);
+            }
+        }
+        match self.stopped_output.lock() {
+            Ok(mut stopped) => {
+                stopped.remove(&from);
+            }
+            Err(error) => tracing::error!(%error, "cannot remove stopped shell output"),
+        }
+        handed.retain(|status| status.running);
+        handed.sort_by_key(|status| status.started_at);
+        Ok(handed)
     }
 
     /// Stop every process this daemon started, whatever agent owns it. The
     /// daemon must not exit leaving processes nothing can reach.
     pub async fn stop_all(&self) -> usize {
-        let count = self.stop_matching(|_| true).await;
+        let count = stop_taken(self.take_matching(|_| true)).await;
         match self.stopped_output.lock() {
             Ok(mut stopped) => stopped.clear(),
             Err(error) => tracing::error!(%error, "cannot remove stopped shell output"),
@@ -455,8 +556,8 @@ impl BackgroundProcesses {
         count
     }
 
-    async fn stop_matching(&self, wanted: impl Fn(&Process) -> bool) -> usize {
-        let mut doomed: Vec<Process> = match self.processes.lock() {
+    fn take_matching(&self, wanted: impl Fn(&Process) -> bool) -> Vec<Process> {
+        match self.processes.lock() {
             Ok(mut processes) => {
                 let ids: Vec<ProcessId> = processes
                     .values()
@@ -467,21 +568,9 @@ impl BackgroundProcesses {
             }
             Err(_) => {
                 tracing::error!("background registry poisoned; cannot stop processes");
-                return 0;
-            }
-        };
-        let count = doomed.len();
-        for process in &mut doomed {
-            if let Some(stop) = process.stop.take() {
-                let _ = stop.send(());
+                Vec::new()
             }
         }
-        for process in doomed {
-            if let Err(error) = end(process).await {
-                tracing::error!(%error, "cannot finish stopping background process");
-            }
-        }
-        count
     }
 
     /// The process's own exit signal, so a test can await the reap instead of
@@ -532,6 +621,22 @@ async fn end(mut process: Process) -> Result<(), ToolError> {
     Ok(())
 }
 
+/// Stop processes already taken out of the registry. Returns how many.
+async fn stop_taken(mut doomed: Vec<Process>) -> usize {
+    let count = doomed.len();
+    for process in &mut doomed {
+        if let Some(stop) = process.stop.take() {
+            let _ = stop.send(());
+        }
+    }
+    for process in doomed {
+        if let Err(error) = end(process).await {
+            tracing::error!(%error, "cannot finish stopping background process");
+        }
+    }
+    count
+}
+
 /// Own the child and clean its group before publishing completion.
 #[allow(clippy::too_many_arguments)]
 async fn own(
@@ -547,21 +652,26 @@ async fn own(
 ) {
     let pgid = child.id().map(|p| Pid::from_raw(p as i32));
     let exited = tokio::select! {
-        status = child.wait() => Some(status),
+        exit = leader_exited(&mut child) => Some(exit),
         _ = stop => None,
         _ = capture.failed.cancelled() => None,
     };
     let status = match exited {
-        Some(status) => {
-            let cleanup = pgid
-                .map(|pgid| signal_group(pgid, Signal::SIGKILL))
-                .transpose();
+        Some(exit) => {
+            // A shell already reaped no longer pins the group id; its group is left alone.
+            let cleanup = match (pgid, &exit) {
+                (Some(pgid), Ok(true)) => stop_exited_group(pgid).await,
+                _ => Ok(()),
+            };
+            // Reaped only now: until then its zombie kept the group id from reuse.
+            let status = exit.and(child.wait().await);
             status.and_then(|status| cleanup.map(|_| status))
         }
         None => signal_until_gone(&mut child, pgid, teardown.as_ref()).await,
     };
     #[cfg(target_os = "linux")]
-    let status = journal::kill_job(job).and(status);
+    // What the job detached gets the same SIGTERM, then SIGKILL, as its group.
+    let status = journal::stop_job(job, STOP_GRACE).await.and(status);
     #[cfg(not(target_os = "linux"))]
     let _ = job;
     // What is still in the pipes belongs to this process: drain it before
@@ -611,6 +721,62 @@ fn signal_group(pgid: Pid, signal: Signal) -> std::io::Result<()> {
     }
 }
 
+/// Wait until the job's shell exits, leaving it unreaped, so its zombie
+/// keeps the group id from reuse while the group is stopped. True when it
+/// does; false once the shell had to be reaped to wait for it.
+#[cfg(target_os = "linux")]
+async fn leader_exited(child: &mut tokio::process::Child) -> std::io::Result<bool> {
+    let Some(pid) = child.id() else {
+        return child.wait().await.map(|_| false);
+    };
+    match exited_unreaped(pid).await {
+        Ok(()) => Ok(true),
+        Err(error) => {
+            tracing::warn!(pid, %error, "cannot wait for the job's shell unreaped; reaping it");
+            child.wait().await.map(|_| false)
+        }
+    }
+}
+
+/// Elsewhere the shell is reaped to wait for it, and its group killed at once.
+#[cfg(not(target_os = "linux"))]
+async fn leader_exited(child: &mut tokio::process::Child) -> std::io::Result<bool> {
+    child.wait().await.map(|_| true)
+}
+
+/// Wait until `pid`, a child of this process, exits, without reaping it.
+#[cfg(target_os = "linux")]
+async fn exited_unreaped(pid: u32) -> std::io::Result<()> {
+    use rustix::process::{Pid as ProcessPid, WaitId, WaitIdOptions, waitid};
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let raw = i32::try_from(pid)
+        .ok()
+        .and_then(ProcessPid::from_raw)
+        .ok_or_else(|| std::io::Error::other(format!("not a process id: {pid}")))?;
+    let peek = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
+    // Listening before the first look, so an exit between a look and the wait still wakes it.
+    let mut exits = signal(SignalKind::child())?;
+    while waitid(WaitId::Pid(raw), peek)?.is_none() {
+        if exits.recv().await.is_none() {
+            return Err(std::io::Error::other("the SIGCHLD stream closed"));
+        }
+    }
+    Ok(())
+}
+
+/// What a job whose shell exited left in its group: SIGTERM, then SIGKILL
+/// once it outlives the stop grace, member by member, sparing a kept one.
+#[cfg(target_os = "linux")]
+async fn stop_exited_group(pgid: Pid) -> std::io::Result<()> {
+    journal::stop_pinned_group(pgid, STOP_GRACE).await
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn stop_exited_group(pgid: Pid) -> std::io::Result<()> {
+    signal_group(pgid, Signal::SIGKILL)
+}
+
 /// Keep the leader unreaped through the grace period, pinning its group ID
 /// even if it exits before descendants that ignore SIGTERM.
 async fn signal_until_gone(
@@ -618,36 +784,32 @@ async fn signal_until_gone(
     pgid: Option<Pid>,
     teardown: Option<&Teardown>,
 ) -> std::io::Result<std::process::ExitStatus> {
-    let mut killed = Ok(());
-    if let Some(pgid) = pgid {
-        if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
-            tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
-        }
-        let deadline = tokio::time::Instant::now() + STOP_GRACE;
-        loop {
-            #[cfg(target_os = "linux")]
-            match journal::group_is_running(pgid) {
-                Ok(false) => break,
-                Ok(true) => {}
-                Err(error) => {
-                    tracing::warn!(%pgid, %error, "cannot inspect group; allowing full stop grace");
-                    tokio::time::sleep_until(deadline).await;
-                    break;
-                }
-            }
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            tokio::time::sleep(remaining.min(Duration::from_millis(50))).await;
-        }
-        killed = signal_group(pgid, Signal::SIGKILL);
-    }
+    let stopped = match pgid {
+        Some(pgid) => stop_running_group(pgid).await,
+        None => Ok(()),
+    };
     if let Some(teardown) = teardown {
         teardown.run();
     }
-    killed?;
+    stopped?;
     child.wait().await
+}
+
+/// Stop a running job's group as an exited one's: its unreaped shell pins
+/// the group id, so each member is signalled on its own and a kept one spared.
+#[cfg(target_os = "linux")]
+async fn stop_running_group(pgid: Pid) -> std::io::Result<()> {
+    journal::stop_pinned_group(pgid, STOP_GRACE).await
+}
+
+/// SIGTERM the whole group, then SIGKILL it once the stop grace is over.
+#[cfg(not(target_os = "linux"))]
+async fn stop_running_group(pgid: Pid) -> std::io::Result<()> {
+    if let Err(error) = signal_group(pgid, Signal::SIGTERM) {
+        tracing::warn!(%pgid, %error, "SIGTERM failed; will attempt SIGKILL");
+    }
+    tokio::time::sleep(STOP_GRACE).await;
+    signal_group(pgid, Signal::SIGKILL)
 }
 
 #[cfg(test)]

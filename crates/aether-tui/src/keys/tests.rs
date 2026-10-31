@@ -282,3 +282,65 @@ fn notices_escape_control_characters_from_bad_file_entries() {
         );
     }
 }
+
+/// #351: what legacy, kitty and kitty-with-Num-Lock terminals decode an Alt
+/// chord to must match its binding, defaults and remapped Alt+Shift alike.
+#[test]
+fn alt_chords_match_in_every_decoded_form() {
+    use crossterm::event::KeyEventState;
+    let keys = KeyBindings::default();
+    let mut alt_defaults = 0;
+    for action in KeyAction::ALL {
+        for chord in defaults(*action) {
+            if !chord.modifiers.contains(KeyModifiers::ALT) {
+                continue;
+            }
+            alt_defaults += 1;
+            let event = KeyEvent::new(chord.code, chord.modifiers);
+            let mut locked = event;
+            locked.state = KeyEventState::NUM_LOCK | KeyEventState::CAPS_LOCK;
+            assert!(keys.matches(*action, event), "{chord}");
+            assert!(keys.matches(*action, locked), "{chord} with lock keys");
+            let mut shifted = event;
+            shifted.modifiers.insert(KeyModifiers::SHIFT);
+            if matches!(chord.code, KeyCode::Char(c) if c.is_ascii_alphabetic()) {
+                assert!(
+                    !keys.matches(*action, shifted),
+                    "{chord} is not its Shift chord"
+                );
+            }
+        }
+    }
+    assert_eq!(alt_defaults, 16, "every documented Alt default is checked");
+
+    let raw = [(
+        "notifications".to_owned(),
+        toml::Value::String("alt+shift+n".into()),
+    )];
+    let (keys, notices) = KeyBindings::load(&raw.into_iter().collect());
+    assert!(notices.is_empty(), "{notices:?}");
+    let alt_shift = KeyModifiers::ALT | KeyModifiers::SHIFT;
+    // Legacy ESC N decodes as a capital, kitty CSI 110;4u as the base key.
+    for event in [
+        KeyEvent::new(KeyCode::Char('N'), alt_shift),
+        KeyEvent::new(KeyCode::Char('n'), alt_shift),
+    ] {
+        assert!(keys.matches(KeyAction::Notifications, event), "{event:?}");
+    }
+    let plain_alt = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT);
+    assert!(!keys.matches(KeyAction::Notifications, plain_alt));
+}
+
+/// The Esc join asks this before turning Esc then a Ctrl key into Ctrl+Alt.
+#[test]
+fn binds_answers_for_any_action_only() {
+    let ctrl_alt = KeyModifiers::CONTROL | KeyModifiers::ALT;
+    let ctrl_alt_u = KeyEvent::new(KeyCode::Char('u'), ctrl_alt);
+    let mut keys = KeyBindings::default();
+    assert!(keys.binds(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT)));
+    assert!(!keys.binds(KeyEvent::new(KeyCode::Char('c'), ctrl_alt)));
+    assert!(!keys.binds(ctrl_alt_u));
+    keys.assign(KeyAction::Details, "ctrl+alt+u".parse().unwrap())
+        .unwrap();
+    assert!(keys.binds(ctrl_alt_u));
+}

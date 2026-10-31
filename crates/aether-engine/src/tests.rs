@@ -316,13 +316,14 @@ async fn a_first_write_to_an_engine_that_already_exited_is_reported() {
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_recorded_engine_is_reaped_by_the_next_start() {
-    let dir = tempfile::tempdir().unwrap();
+    // Kept: the registry is process-wide, and later engines refuse to start unrecorded.
+    let dir = tempfile::tempdir().unwrap().keep();
     std::fs::set_permissions(
-        dir.path(),
+        dir.as_path(),
         std::os::unix::fs::PermissionsExt::from_mode(0o700),
     )
     .unwrap();
-    orphans::init(dir.path()).unwrap();
+    orphans::init(dir.as_path(), &Default::default()).unwrap();
     let mut run = run_process(
         "sleep",
         vec!["60".into()],
@@ -339,8 +340,8 @@ async fn a_recorded_engine_is_reaped_by_the_next_start() {
     )
     .await
     .expect("spawn sleep");
-    assert!(std::fs::read_dir(dir.path()).unwrap().count() >= 1);
-    let reaped = orphans::reap(dir.path()).unwrap();
+    assert!(std::fs::read_dir(dir.as_path()).unwrap().count() >= 1);
+    let reaped = orphans::reap(dir.as_path(), &Default::default()).unwrap();
     assert_eq!(reaped.len(), 1, "{reaped:?}");
     let done = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while let Some(event) = run.events.recv().await {
@@ -445,4 +446,58 @@ async fn run_process_tells_a_missing_workspace_from_a_missing_program() {
     std::fs::write(&file, "").unwrap();
     let error = spawn_in("sh", file.clone()).await.err().unwrap();
     assert!(matches!(&error, EngineError::WorkspaceMissing { path } if path == &file));
+}
+
+/// A sweep of a stopped turn's or daemon's processes has begun: an engine
+/// launched afterwards would escape it, so it never starts.
+#[tokio::test(flavor = "multi_thread")]
+async fn no_engine_starts_once_its_turn_or_daemon_stopped() {
+    for daemon_stopped in [true, false] {
+        let launch = EngineLaunchContext {
+            run_id: aether_core::id::RunId::new(),
+            agent_id: aether_core::id::AgentId::new(),
+            task_id: None,
+            spawns: SpawnGate::default(),
+        };
+        let cancel = CancellationToken::new();
+        if daemon_stopped {
+            launch.spawns.close();
+        } else {
+            cancel.cancel();
+        }
+        let ran = launch_touch(&launch, cancel).await;
+        assert!(
+            !ran,
+            "an engine started after its stop (daemon: {daemon_stopped})"
+        );
+    }
+}
+
+/// Launch `touch` as an engine and report whether it ran; panics unless a
+/// refused launch fails as a spawn error.
+async fn launch_touch(launch: &EngineLaunchContext, cancel: CancellationToken) -> bool {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let marker = dir.path().join("ran");
+    let started = run_process_with_env(
+        "touch",
+        vec![marker.to_string_lossy().into_owned()],
+        dir.path().to_path_buf(),
+        &[],
+        None,
+        &[],
+        &[],
+        Some(launch),
+        &aether_core::redact::Redactor::default(),
+        String::new(),
+        false,
+        None,
+        cancel,
+        |_| Vec::new(),
+    )
+    .await;
+    let Err(EngineError::Spawn { source, .. }) = started else {
+        panic!("a refused engine launch did not fail to spawn");
+    };
+    assert!(source.to_string().contains("has stopped"), "{source}");
+    marker.exists()
 }

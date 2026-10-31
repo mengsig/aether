@@ -59,13 +59,32 @@ impl TestDaemon {
 
     /// Stop, then start again over the same store and configuration.
     pub async fn restart(self) -> TestDaemon {
+        let dir = self.stop_cleanly().await;
+        Self::launch_in(dir, None, None, None).await
+    }
+
+    /// Stop, run `between` on the store path, then start again over a store
+    /// `between` may have made large; returns how long the daemon took to answer.
+    pub async fn restart_large_after(
+        self,
+        between: impl FnOnce(&std::path::Path),
+    ) -> (TestDaemon, Duration) {
+        let dir = self.stop_cleanly().await;
+        between(&dir.path().join("aether.db"));
+        let started = std::time::Instant::now();
+        let daemon = Self::spawn_in(dir, None, None, None);
+        daemon.await_answering(Duration::from_secs(600)).await;
+        (daemon, started.elapsed())
+    }
+
+    async fn stop_cleanly(self) -> tempfile::TempDir {
         self.shutdown.cancel();
         let stopped = tokio::time::timeout(Duration::from_secs(10), self.serving).await;
         stopped
             .expect("the daemon stops in time")
             .expect("the daemon task joins")
             .expect("the daemon stops cleanly");
-        Self::launch_in(self._dir, None, None, None).await
+        self._dir
     }
 
     async fn launch(
@@ -80,6 +99,17 @@ impl TestDaemon {
 
     /// Start a daemon in `dir`, writing `toml` as its configuration first.
     async fn launch_in(
+        dir: tempfile::TempDir,
+        tcp: Option<TcpListen>,
+        toml: Option<String>,
+        override_limit: Option<usize>,
+    ) -> TestDaemon {
+        let daemon = Self::spawn_in(dir, tcp, toml, override_limit);
+        daemon.await_answering(Duration::from_secs(15)).await;
+        daemon
+    }
+
+    fn spawn_in(
         dir: tempfile::TempDir,
         tcp: Option<TcpListen>,
         toml: Option<String>,
@@ -105,15 +135,13 @@ impl TestDaemon {
         }
         let shutdown = CancellationToken::new();
         let serving = tokio::spawn(aether_daemon::run(config, shutdown.clone()));
-        let daemon = TestDaemon {
+        TestDaemon {
             _dir: dir,
             socket,
             tcp: address,
             shutdown,
             serving,
-        };
-        daemon.await_answering().await;
-        daemon
+        }
     }
 
     /// The database `launch` put beside the socket.
@@ -127,8 +155,9 @@ impl TestDaemon {
     }
 
     /// Wait for a daemon that answers, not merely for a socket path.
-    async fn await_answering(&self) {
-        for _ in 0..200 {
+    async fn await_answering(&self, within: Duration) {
+        let deadline = std::time::Instant::now() + within;
+        while std::time::Instant::now() < deadline {
             if let Ok(mut conn) = RawConn::connect(&self.socket).await
                 && conn.hello(aether_protocol::PROTOCOL_VERSION).await.is_ok()
             {

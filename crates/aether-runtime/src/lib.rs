@@ -302,6 +302,15 @@ pub struct Runtime {
     pub(crate) engines: engine_access::EngineCatalog,
     /// Engine turns in flight, keyed by agent, for routing bridge calls.
     pub(crate) engine_turns: parking_lot::Mutex<HashMap<AgentId, turn_engine::EngineTurnHandle>>,
+    /// Closed by [`Runtime::shutdown`] before it sweeps agent processes, so
+    /// no engine starts after that sweep.
+    pub(crate) engine_spawns: aether_engine::SpawnGate,
+    /// Ended agents whose reap has not run yet, which still hold what is
+    /// handed to them. Changed only under the commit hold.
+    pub(crate) awaiting_reap: parking_lot::Mutex<std::collections::HashSet<AgentId>>,
+    /// Each completed agent whose processes were handed up, to the agent it
+    /// handed them to, until a stop takes them. Changed only under the commit hold.
+    pub(crate) handed_to: parking_lot::Mutex<std::collections::HashMap<AgentId, AgentId>>,
     pub(crate) tools: Arc<ToolRegistry>,
     /// Resource keys held by mutating tool calls in flight, across agents.
     pub(crate) resources: Arc<resources::ResourceLeases>,
@@ -401,7 +410,7 @@ impl Runtime {
             client_override,
             engine_access::EngineCatalog::detected(engine_access::DetectedEngines {
                 usable: engines,
-                unavailable: HashMap::new(),
+                ..Default::default()
             }),
         )
         .await
@@ -455,6 +464,9 @@ impl Runtime {
             recovery_failed: std::sync::atomic::AtomicBool::new(false),
             workspace_gc_cursor: Default::default(),
             workspace_gc_active: Default::default(),
+            engine_spawns: Default::default(),
+            awaiting_reap: Default::default(),
+            handed_to: Default::default(),
             storage_gc_lock: parking_lot::Mutex::new(()),
             storage_last_run: parking_lot::Mutex::new(None),
             seeded_repositories: parking_lot::Mutex::new(std::collections::HashSet::new()),
@@ -499,6 +511,15 @@ impl Runtime {
             Err(error) => runtime.report_problem("retention.artifacts".into(), format!(
                 "Startup artifact cleanup failed: {error}; periodic maintenance will retry. Run `aether doctor` and `aether diagnose`."
             )),
+        }
+        // A daemon that died left what its ended agents detached or handed up
+        // running; a stop would have taken what no live agent holds, so this start does.
+        let reaped = runtime.reap_unheld_agent_processes().await;
+        if reaped > 0 {
+            tracing::info!(
+                reaped,
+                "stopped processes a previous daemon's agents left running"
+            );
         }
         disk::spawn(runtime.clone());
         scheduler::spawn(runtime.clone());
@@ -745,13 +766,13 @@ impl Runtime {
     /// Stop scheduling, cancel running turns, and record the stop.
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
-        let tokens: Vec<CancellationToken> = self
-            .sched
-            .lock()
-            .running
-            .values()
-            .map(|r| r.cancel.clone())
-            .collect();
+        let (tokens, interrupted): (Vec<CancellationToken>, HashSet<AgentId>) = {
+            let sched = self.sched.lock();
+            let tokens = sched.running.values().map(|r| r.cancel.clone()).collect();
+            (tokens, sched.running.keys().copied().collect())
+        };
+        // Taken first: a stopped engine's record goes with it.
+        let mut engines = Self::recorded_engines();
         for token in tokens {
             token.cancel();
         }
@@ -761,10 +782,23 @@ impl Runtime {
         }
         // Nothing this daemon started may outlive it: after exit the registry
         // is empty, so a survivor would be unreachable forever.
+        // A turn that outlived the wait above may still reach a spawn.
+        self.engine_spawns.close();
+        engines.extend(Self::recorded_engines());
+        Self::stop_interrupted_engine_commands(engines, interrupted).await;
         let background_processes_stopped = match self.tools.background() {
-            Some(processes) => processes.stop_all().await,
+            Some(processes) => {
+                processes.close_spawns();
+                processes.stop_all().await
+            }
             None => 0,
         };
+        // What left those groups, and what engines detached, is found by agent;
+        // a live agent's stays up for its recovery after a restart.
+        let reaped = self.reap_unheld_agent_processes().await;
+        if reaped > 0 {
+            tracing::info!(reaped, "stopped agent processes with the daemon");
+        }
         if let Err(e) = self.apply(Commit::new().event(EventDraft::new(
             Actor::System,
             EventKind::DaemonStopped {

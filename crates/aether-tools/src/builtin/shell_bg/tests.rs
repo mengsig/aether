@@ -276,6 +276,7 @@ async fn terminal_stop_kills_the_session_and_pipe_processes_reject_input() {
             "echo $$ > terminal.pid.tmp && mv terminal.pid.tmp terminal.pid; read -r answer",
             &ctx,
             true,
+            &CancellationToken::new(),
         )
         .unwrap();
     let pid_path = dir.path().join("terminal.pid");
@@ -319,7 +320,7 @@ async fn terminal_control_input_and_hidden_environment_are_preserved() {
     let reg = BackgroundProcesses::new();
     let p = reg.start_with_terminal(ctx.agent_id,
         r#"test -z "${AETHER_PTY_SECRET+x}" || exit 9; trap 'printf INTERRUPTED; exit 0' INT; printf ENV_HIDDEN_READY; while :; do read -r answer; done"#,
-        &ctx, true).unwrap();
+        &ctx, true, &CancellationToken::new()).unwrap();
     wait_for_output(&reg, &ctx, p.id, "ENV_HIDDEN_READY").await;
     reg.write_stdin(ctx.agent_id, p.id, "\u{3}", CancellationToken::new())
         .await
@@ -337,21 +338,25 @@ async fn a_job_stops_on_group_sigint_although_the_daemon_ignores_it() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = ctx_in(dir.path());
     let reg = BackgroundProcesses::new();
+    // Only builtins before the exec: bash takes a SIGINT that lands while it
+    // waits for a child which then exits normally as handled, and runs on.
     let p = reg
-        .start(
-            ctx.agent_id,
-            "echo $$ > leader.tmp; mv leader.tmp leader; exec sleep 60",
-            &ctx,
-        )
+        .start(ctx.agent_id, "echo $$ > leader; exec sleep 60", &ctx)
         .unwrap();
-    wait_for("the job to record its pid", || {
-        match dir.path().join("leader").exists() {
-            true => Observed::Held,
-            false => Observed::Pending("no pid file yet".into()),
-        }
-    })
+    let pid_file = dir.path().join("leader");
+    wait_for(
+        "the job to record its pid",
+        || match std::fs::read_to_string(&pid_file) {
+            Ok(line) if line.ends_with('\n') => Observed::Held,
+            Ok(line) => Observed::Pending(format!("a partial pid line {line:?}")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Observed::Pending("no pid file yet".into())
+            }
+            Err(e) => Observed::Impossible(format!("reading the pid file: {e}")),
+        },
+    )
     .await;
-    let leader: i32 = std::fs::read_to_string(dir.path().join("leader"))
+    let leader: i32 = std::fs::read_to_string(&pid_file)
         .unwrap()
         .trim()
         .parse()

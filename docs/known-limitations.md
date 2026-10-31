@@ -186,6 +186,10 @@ looks like a boundary and is not one.
   which it can open with a tool but no longer sees.
 - An image over 3.75 MiB is refused, not shrunk; a full-screen capture of a
   4K display can exceed that as PNG. Crop it or save it as JPEG.
+- A sent image opens in the viewer pane only in a TUI on the daemon's own
+  machine and data directory. The TUI reads the image from the daemon's
+  store. Over SSH, or with a daemon started under another `AETHER_DATA_DIR`,
+  the TUI says where the image is, or says that it is no longer stored.
 - Only people attach images. Agents cannot send images to each other or in
   replies, the terminal does not draw them, and the picker for other file
   types is not shipped.
@@ -242,6 +246,12 @@ looks like a boundary and is not one.
   is no TUI or phone view of it yet (roadmap).
 - A background PTY shell has been seen to ignore Ctrl-C on a heavily
   oversubscribed host (roadmap).
+- The [deadline warning](protocol.md#deadline-warnings) never cuts a tool
+  call short, and ends only a `wait_for` that waits for any inbox item. An
+  agent waiting on tasks, a named sender or an approval until past its
+  deadline is stopped without having read it. An engine blocked on a native question
+  when the warning arrives receives the warning as its answer, as it would
+  any other inbox item.
 
 ## Measurement and compatibility
 
@@ -300,15 +310,74 @@ isolation depend on the installed engine version and the platform; see
   `setsid`, for one) keeps running until the next daemon start. That start
   kills the process group of every engine it recorded, but only while the
   recorded pid and start time still match a live group leader, plus every
-  process carrying a recorded engine's token. A descendant that cleared its
-  environment and left the group is reaped only when its agent ends. On macOS
+  process carrying a recorded engine's token that runs for no agent or for one
+  whose turn the crash cut short. What runs for any other agent is stopped
+  then only when that agent has ended and no live ancestor holds it; a live
+  agent's server keeps running for its recovery. A server started inside the
+  very turn the crash (or a stop) cut short, outside the engine's group and
+  without `AETHER_KEEP_PROCESS=1`, is killed with that turn's in-flight
+  command: Claude Code runs each command in a session of its own, and nothing
+  yet tells such a server from the command. The resumed agent is told to
+  check state before it repeats anything, so it can start the server again;
+  start it with `AETHER_KEEP_PROCESS=1` to keep it. A
+  descendant that cleared its environment and left the group is reaped only
+  when its agent ends. On macOS
   there is no parent-death signal, no group watchdog, and nothing is recorded
   or reaped, so the engines of a killed daemon keep running and must be
   stopped by hand. A graceful stop
   leaves no engine running.
-- When an agent ends, its engines' leftover processes are found by their
-  environment tag and, with a user systemd, their scope
+- When an agent ends or the daemon stops, the processes its engines and its
+  shell commands left are found by their environment tag and, with a user
+  systemd, their engines' scope
   ([agent processes](configuration.md#agent-processes)). This needs Linux. A
-  process that cleared its environment is found only through a scope, so
-  without a user systemd it keeps running. On macOS a process left behind
-  after a turn keeps running.
+  process that cleared its environment is found only through an engine's
+  scope, so one detached from Aether's own shell tool, or from an engine
+  without a user systemd, keeps running: `env -i setsid server` escapes both.
+  An engine joins its scope asynchronously, after it has started, so that a
+  launch never waits on a slow or missing user manager; what it detaches
+  before it has joined is found by its tag alone. A sweep reads a process
+  caught inside `exec` again once its new image is set up, for up to 50 ms,
+  and one that does not settle is neither its agent's nor proven unkept; a
+  `vfork` child (`posix_spawn`) reads as its parent until its exec, so a keep
+  mark set only for that child is not seen until then. A sweep lists processes
+  one at a time, so a child forked as it runs is found past its parent; one
+  given a lower pid, as the pid counter wraps around, is missed by that pass.
+  A non-dumpable process, whose environment cannot be read, is spared in a
+  scope, and in the group of a background job that is stopped or whose shell
+  exited, as it may carry the keep mark; one a browser sandboxed this way
+  exits with the browser, but another keeps running. On macOS a process left
+  behind after a turn keeps running.
+- What a delegated child that completed left running passes to its nearest
+  live ancestor and runs until that ancestor's tree ends, so a long-lived root
+  keeps every server and browser its completed children left until it ends
+  or is cancelled; a daemon stop or restart leaves them running. It is told
+  each one's pid, with the command for the first 50, and can stop them sooner.
+- A background shell job of Aether's own shell tool still stops with the
+  daemon, even for a live agent: its output, input and terminal run through
+  the daemon, which a restart cannot hand back, and what the job detached
+  stops with it. A server an agent needs across a restart should be detached
+  from an engine's own shell or a shell command that is not a background job,
+  where the sweeps treat it as the agent's.
+- A daemon stop, or a start after a crash, cannot tell a tool command an
+  engine ran outside its own process group from a server the agent detached
+  under the same engine process. When the stop or crash cut that agent's turn
+  short, it stops both, so a server the engine started during that engine
+  process is gone when the agent resumes; one started under an earlier engine
+  process, or by an agent with no turn in flight, is spared. A process a
+  foreground call of Aether's own shell tool moved out of the call's process
+  group is spared like any agent's server, and runs until that agent ends.
+- When a crash cut a foreground shell call short and its shell is gone, the
+  start stops what is left of its process group only if a process in it
+  still carries the call's id. If every one cleared it (`env -i`, `env -u`),
+  the start cannot tell the group from a later one that took the same id:
+  it leaves the group running, and the call's agent waits for inspection
+  even when headless.
+- The start's sweep of containers an earlier daemon left is bounded in time
+  and does not stop the start when Docker cannot list or kill them, as with
+  an unreachable remote Docker service: a resumed agent may then run beside
+  its interrupted call's container.
+- The daemon records hand-ups only in memory, so a start after a crash
+  cannot tell whether an ancestor that has since failed or been cancelled
+  held a completed child's processes, which its end would have stopped, or
+  was handed past. The start spares them: they stay with the nearest live
+  ancestor and stop with its end.

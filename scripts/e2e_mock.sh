@@ -86,8 +86,28 @@ EOF
 
 python3 scripts/mock_openai.py "$PORT" > "$ROOT/mock.log" 2>&1 &
 MOCK=$!
+# A process's kernel start time: with its pid, what no reused pid can match.
+started_at() {
+  local stat fields
+  stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  # Fields after the command name, which may hold spaces; start time is the 20th.
+  read -ra fields <<< "${stat##*) }"
+  printf '%s\n' "${fields[19]}"
+}
+# The crash drill's servers outlive the daemon by design, and a failed drill
+# leaves its call running too: each was listed as "pid start-time" while it
+# ran, and is stopped here only while that pid still has that start time.
+stop_drill_processes() {
+  local list="$ROOT/crash-drill/processes" pid started
+  [ -s "$list" ] || return 0
+  while read -r pid started; do
+    if [ "$(started_at "$pid")" = "$started" ]; then kill -KILL "$pid" 2>/dev/null || true; fi
+  done < "$list"
+  rm -f "$list"
+}
 cleanup() {
   if [ -n "${DAEMON:-}" ]; then stop_test_child "$DAEMON"; fi
+  stop_drill_processes
   kill "$MOCK" 2>/dev/null || true
   wait "$MOCK" 2>/dev/null || true
   echo "artifacts in $ROOT"
@@ -290,6 +310,53 @@ assert len(sent["deliveries"]) == 3, sent
 print("pause/resume --subtree and send --subtree cover", len(sent["deliveries"]), "agents")
 PY
 
+# Linux only: elsewhere a start cannot find a dead daemon's processes again.
+if [ "$(uname -s)" = Linux ]; then
+  step "crash mid-command: the next start stops the interrupted call, not the agent's servers"
+  # A headless agent resumes after a crash without inspection only because the
+  # start stops the call the killed daemon left running before any turn does.
+  running() { [ -r "/proc/$1/stat" ] && ! grep -q ') Z ' "/proc/$1/stat"; }
+  DRILL="$ROOT/crash-drill"
+  mkdir -p "$DRILL"
+  "$BIN" new --name crasher --model mock/mock-1 --json > "$DRILL/agent.json"
+  CRASHER=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$DRILL/agent.json")
+  "$BIN" send "$CRASHER" "crash drill in $DRILL" > /dev/null
+  for ((attempt = 0; attempt < 300; attempt++)); do
+    [ -s "$DRILL/call.pids" ] && break
+    sleep 0.1
+  done
+  [ -s "$DRILL/call.pids" ] || { echo "the drill's command never started"; exit 1; }
+  read -r CALL_SHELL CALL_CHILD < "$DRILL/call.pids"
+  HELD=$(cat "$DRILL/held.pid")
+  KEPT=$(cat "$DRILL/kept.pid")
+  for pid in "$CALL_SHELL" "$CALL_CHILD" "$HELD" "$KEPT"; do
+    started=$(started_at "$pid") || { echo "the drill's process $pid is not running"; exit 1; }
+    echo "$pid $started" >> "$DRILL/processes"
+  done
+  kill -KILL "$DAEMON"
+  wait "$DAEMON" 2>/dev/null || true
+  DAEMON=
+  running "$CALL_CHILD" \
+    || { echo "the call died with the daemon, so the drill proves nothing"; exit 1; }
+  start_test_daemon
+  for pid in "$CALL_SHELL" "$CALL_CHILD"; do
+    for ((attempt = 0; attempt < 100; attempt++)); do
+      running "$pid" || break
+      sleep 0.1
+    done
+    if running "$pid"; then echo "the interrupted call's process $pid still runs"; exit 1; fi
+  done
+  running "$HELD" || { echo "the server the agent holds was stopped"; exit 1; }
+  running "$KEPT" || { echo "the AETHER_KEEP_PROCESS=1 server was stopped"; exit 1; }
+  for ((attempt = 0; attempt < 300; attempt++)); do
+    "$BIN" events "$CRASHER" --type agent.resumed --json > "$DRILL/resumed.jsonl"
+    grep -q 'without inspection' "$DRILL/resumed.jsonl" && break
+    sleep 0.1
+  done
+  grep -q 'without inspection' "$DRILL/resumed.jsonl" \
+    || { echo "the headless agent was not resumed: $("$BIN" agents --all)"; exit 1; }
+  stop_drill_processes
+fi
 step "agents / tasks"
 "$BIN" agents --all
 "$BIN" tasks

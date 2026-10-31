@@ -153,6 +153,78 @@ async fn an_unresponsive_docker_sweep_is_bounded_and_its_client_is_reaped() {
     .expect("a timed-out Docker client must be killed and reaped");
 }
 
+/// A container sweep that kills what it lists says it finished; one whose
+/// listing fails, or whose kill hangs past its bound or fails, says a container
+/// may still run, so the start parks the interrupted agents rather than resume
+/// one beside its container.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_container_sweep_says_whether_it_stopped_every_container() {
+    const NAME: &str = "a_container_sweep_says_whether_it_stopped_every_container";
+    const LIST: &str = "if [ \"$1\" = ps ]; then printf '%s\\n' fixture-orphan; exit 0; fi\n";
+    if std::env::var_os(PROBE_ROOT).is_none() {
+        let killed = format!("{LIST}printf killed > \"$AETHER_TEST_STARTUP_PROBE_ROOT/stopped\"\n");
+        let hung = format!("{LIST}exec /bin/sleep 300\n");
+        let refused = format!("{LIST}exit 1\n");
+        let unlisted = "exit 1\n";
+        assert!(run_isolated(NAME, FAST_ENGINE, &killed).await);
+        assert!(run_isolated(NAME, FAST_ENGINE, &hung).await);
+        assert!(run_isolated(NAME, FAST_ENGINE, &refused).await);
+        assert!(run_isolated(NAME, FAST_ENGINE, unlisted).await);
+        return;
+    }
+    let probes = std::env::var_os(PROBE_ROOT).unwrap();
+    let swept = aether_tools::exec::sweep_orphan_containers("inst-fixture").await;
+    let killed = Path::new(&probes).join("stopped").exists();
+    assert_eq!(swept, killed, "the sweep reports whether its kill ran");
+}
+
+/// Containers an earlier daemon left are swept before the runtime starts, so
+/// a resumed turn never runs beside its interrupted call's container and the
+/// sweep never kills a container a new turn started.
+#[tokio::test]
+async fn the_container_sweep_finishes_before_the_runtime_starts() {
+    if run_isolated(
+        "the_container_sweep_finishes_before_the_runtime_starts",
+        FAST_ENGINE,
+        "printf ready > \"$AETHER_TEST_STARTUP_PROBE_ROOT/ready\"\nwhile [ ! -f \"$AETHER_TEST_STARTUP_PROBE_ROOT/release\" ]; do /bin/sleep 0.01; done\n",
+    )
+    .await
+    {
+        return;
+    }
+    let probes = std::env::var_os(PROBE_ROOT).unwrap();
+    let probes = Path::new(&probes);
+    let root = tempfile::tempdir().unwrap();
+    let config = config(root.path());
+    drop(SqliteStore::open(&config.store_path).unwrap());
+    let shutdown = CancellationToken::new();
+    shutdown.cancel();
+    let serving = tokio::spawn(aether_daemon::run(config.clone(), shutdown));
+    tokio::time::timeout(Duration::from_secs(60), async {
+        while !probes.join("ready").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the orphan sweep runs during startup");
+    let store = SqliteStore::open(&config.store_path).unwrap();
+    let started = store
+        .events(0, 100, &EventFilter::default())
+        .unwrap()
+        .iter()
+        .filter(|e| matches!(e.kind, EventKind::DaemonStarted { .. }))
+        .count();
+    drop(store);
+    std::fs::write(probes.join("release"), b"release").unwrap();
+    tokio::time::timeout(Duration::from_secs(60), serving)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(started, 0, "the runtime started while the sweep ran");
+}
+
 #[tokio::test]
 async fn pid_replacement_after_preflight_still_stops_the_runtime_and_cleans_its_socket() {
     if run_isolated(
@@ -175,7 +247,7 @@ async fn pid_replacement_after_preflight_still_stops_the_runtime_and_cleans_its_
         }
     })
     .await
-    .expect("the orphan sweep must follow runtime startup");
+    .expect("the orphan sweep runs during startup");
     let pid = aether_protocol::paths::pid_path_for(&config.socket);
     let victim = root.path().join("keep");
     std::fs::write(&victim, b"keep bytes").unwrap();

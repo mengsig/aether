@@ -204,17 +204,17 @@ pub(super) async fn compaction_client(
     }
     // Probed again when unusable, so a CLI fixed since startup compacts.
     let detected = runtime.engines.recheck(kind).await;
-    let engine = detected.get(&kind).ok_or_else(|| {
+    let engine = detected.launchable(&kind).ok_or_else(|| {
         RuntimeError::Invalid(crate::engine_access::unavailable_text(
             kind,
             &resolved.provider.id,
-            detected.unavailable.get(&kind).map(String::as_str),
+            detected.reason(&kind),
         ))
     })?;
     let tool_ctx = tool_context(runtime, ctx);
     Ok(Arc::new(crate::compaction_client::CompactionClient {
         engine,
-        context: ctx.launch_context(),
+        context: ctx.launch_context(&runtime.engine_spawns),
         pricing: crate::turn_engine::TurnPricing::of(runtime, &resolved),
         turn: aether_engine::EngineTurn {
             redactor: runtime.tool_runtime.redactor().clone(),

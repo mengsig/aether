@@ -6,6 +6,272 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.8
+
+Released 2026-10-30. A patch release about agents' lifecycles: a browser or
+helper an agent detached is stopped when the agent ends (#332), while a
+daemon restart spares the servers its live agents started; a headless agent
+resumes after a restart instead of waiting for an inspection; an agent is
+warned before its deadline; a refused engine sign-in suspends an agent and a
+briefly unusable engine no longer fails it; and `status` and `get_tree`
+answer while the daemon does slow work (#333). The TUI copies a line on a
+double click (#331), contributed by @AmmarBattah. Two flaky tests were fixed
+(#330, #342). Protocol version 25 (was 24): the `credentials` exhaustion
+class is new, and clients on 17 through 24 see it as `usage_limit`. Store
+schema 28, unchanged.
+
+### Before updating
+
+- Restart the daemon after the update (`aether stop`, then `aether`). The
+  store stays at schema 28, so there is no migration and no pre-migration
+  backup.
+- A server, database or browser an agent started now keeps running while the
+  daemon is stopped, as long as that agent has not ended, so recovery can
+  resume the agent beside it. End or cancel an agent before `aether stop` to
+  stop what it holds. Not everything survives: background shell jobs still
+  stop with the daemon, and a stop or crash that cuts an engine's turn short
+  stops what that engine ran for the turn, a server it started included. A
+  process started with `AETHER_KEEP_PROCESS=1` is never stopped by these
+  sweeps. What an ended agent left running, with no live ancestor to hold it,
+  is stopped at the agent's end, at a daemon stop and at the next start.
+  Linux only.
+- An agent the TUI did not start (an `aether run` agent, one an orchestrator
+  such as Archon created, and their children) now resumes after a restart on
+  Linux without `aether resume`, once the start has stopped the commands its
+  interrupted turn left running. It still waits for inspection when the start
+  cannot show that: a foreground call whose process group no process proves
+  is the call's, a process in it the daemon cannot stop (such as a `sudo`
+  child), a container sweep that failed or timed out, or a turn a live daemon
+  lost. Agents stored before the update, and agents already parked for
+  inspection, wait for it too.
+- Replies on one connection can arrive out of request order. Every Aether
+  client already matches them by `id`; a client of your own must too (see
+  [Reply order](docs/protocol.md#reply-order)).
+
+### Added
+
+- **Double-click a line in the TUI to select and copy it (#331, #340).**
+  Contributed by @AmmarBattah. A second left press within 400 ms and one cell
+  of the first highlights the line under the pointer and copies it the way a
+  drag selection does. A line the renderer wrapped is copied whole: in the
+  transcript, its soft-wrapped rows are joined back into one line, and in the
+  composer, the draft line is copied, rows scrolled out of view included. Rows
+  whose wrapping the renderer does not track, such as a streaming reply's,
+  copy on their own. A double click on a file link or an agent-board row keeps
+  its click. On an empty composer it copies nothing. Single clicks and drag
+  selection are unchanged, and a drag does not count as the first click of a
+  double click.
+- **An agent is warned before its deadline stops it (#343).** A deadline was a
+  hard stop with no warning: an agent saw it only by calling `inspect_state`,
+  and at the deadline it was failed mid-edit with its uncommitted work left
+  behind. The daemon now tells the agent once, in its inbox, "N minutes left
+  before your deadline: commit what works now", when 80 % of its time has
+  passed or ten minutes before the deadline, whichever comes first. The
+  warning waits for the running tool call instead of interrupting it, so it
+  says when the count held and points to `inspect_state` for the time left
+  when it is read. An extended deadline warns again when it nears, and each
+  delegated agent is warned about its own deadline. The warning is recorded as
+  a `deadline.warning` custom event and shown in the TUI, and `inspect_state`
+  reports `deadline_minutes_left`.
+
+### Fixed
+
+- **Browsers and helpers an agent detached no longer outlive it (#332,
+  #337).** Aether's own shell tool now tags every host command with its
+  agent's id (`AETHER_ENGINE_AGENT`), as engines already were, so a Chromium,
+  Firefox, `node` server or other helper a command detaches with `setsid` or a
+  double fork is stopped when the agent fails or is cancelled, or completes
+  with no live ancestor to hand it to (see below). A daemon stop now also
+  sends `SIGTERM`, then `SIGKILL` after `reap_grace_secs` (at most 10 s), to
+  every process tagged with, or in an engine scope of, an ended agent its own
+  store ran that no live agent holds; agents of another daemon and imported
+  agents are never touched. Once the stop begins no new host shell command or
+  engine starts, nor one for a cancelled turn whose agent's reap has begun.
+  The bwrap sandbox of a network-denied Codex turn is tagged, scoped and gated
+  like its engine, and a reap waits for an engine still joining its scope.
+  What a background shell job leaves running when it ends or is stopped, in
+  its process group or detached, gets `SIGTERM` and a 2 s grace before
+  `SIGKILL`, and what it forks during the grace gets `SIGTERM` within 50 ms;
+  one forked as the grace ends gets `SIGKILL` alone; the shell of a job that
+  exits on its own is reaped only once its group is stopped, so the group id
+  is never reused under the signal. A process caught inside `exec`, whose
+  environment reads empty or torn until its new program is set up, is read
+  again rather than missed, as is a bash still reading its environment; a
+  process forked and left behind while a sweep lists processes is found too.
+  Containers run by the Docker daemon stay out of scope. Linux only; elsewhere
+  nothing changes.
+- **A delegated child that completes hands what it left running to its parent
+  (#332, #337).** A server or browser a child started is not stopped when the
+  child completes normally: it and the child's background shell jobs pass to
+  the nearest live ancestor, which is sent their pids and command lines and
+  can read and stop the jobs. They are stopped when the agent holding them
+  ends with no live ancestor, fails or is cancelled. A child that fails or is
+  cancelled stops its own at once. A process started with
+  `AETHER_KEEP_PROCESS=1` is never signalled by these sweeps, so one meant to
+  outlive the tree can. A daemon start after a crash stops what the dead
+  daemon's ended agents left running that no live agent holds, as a clean stop
+  would have.
+- **A daemon restart no longer kills the servers its agents started (#339).**
+  The start after a stop or crash killed every process carrying a recorded
+  engine's token, so a dev server, database or `docker compose` client an
+  agent had up was dead when recovery resumed that agent. The start now kills
+  the recorded engine process groups themselves, the CLIs and the tool
+  commands in them, and of the token carriers outside them those that run for
+  no agent or for one whose turn the crash cut short, which may be the tool
+  command its engine ran in a session of its own as Claude Code does, but none
+  kept with `AETHER_KEEP_PROCESS=1`. What runs for an agent is stopped at a
+  daemon stop or start only when that agent has ended and no live ancestor
+  holds it; a completed child's processes go back to its nearest live ancestor
+  and stop with its end. Such processes now run on while the daemon is down:
+  end or cancel an agent before `aether stop` to stop what it holds. A start
+  after a crash, which cannot tell whether a since-failed ancestor held a
+  completed child's processes, leaves them with the nearest live ancestor.
+  Background shell jobs still stop with the daemon, whose pipes carry their
+  output. A foreground call of Aether's own shell tool that a daemon crash cut
+  short is stopped by the next start, its process group as the call's end
+  would have (the call is recorded before its command starts), so an agent
+  recovery resumes never races its own interrupted command; what the call
+  detached is spared like any agent's server. Once the call's shell is gone,
+  what is left in its process group is the call's only if a process in it
+  carries the call's id: a later group can take the same id. A group none
+  proves is spared, and the call's agent waits for inspection, even a headless
+  one, rather than resume beside what may be its command. A process of another
+  user in the group (a `sudo` child) no longer makes the start give up on the
+  rest; as it cannot be stopped, the call's agent waits for inspection. A call
+  that cannot be recorded is not started, and a start that cannot stop a
+  recorded call refuses to run and says which process group to stop. Engines
+  are now recorded before they start, and one that cannot be recorded is not
+  started; a start that cannot stop a recorded engine refuses to run the same
+  way, and its sweep for the engine's token carriers repeats until no new one
+  appears. A daemon stop now does the same for the engines it interrupts: it
+  stops the processes outside their groups that carry their tokens and run for
+  no agent or for one whose turn the stop cut short, such as the command
+  Claude Code was running in a session of its own, which nothing would find
+  once the engine was gone. As at a start after a crash, this includes a
+  server such an engine started for that agent unless it is kept with
+  `AETHER_KEEP_PROCESS=1`. Linux only.
+- **A restart sweeps an earlier daemon's containers before any turn starts
+  (#339).** The sweep of containers that Aether's container backend left
+  running ran after the scheduler had started, so a resumed turn could run
+  beside its interrupted call's container, and the sweep could kill a
+  container a new turn had just started. It now finishes first. A sweep that
+  times out, or whose `docker ps` or `docker kill` fails, makes each agent
+  with a mutating call in flight wait for inspection, even a headless one,
+  since its container may still run. A host with no `docker` client skips the
+  sweep.
+- **A headless agent resumes after a daemon restart instead of waiting for an
+  inspection nobody does (#341).** A daemon stopped while an agent ran a
+  mutating call (a `docker compose up` in Bash, a file write) left the agent
+  `blocked: inspection` until someone ran `aether resume`. An orchestrator
+  such as Archon saw a held agent and waited for its stage deadline. Only a
+  tree a person watches now waits: the TUI marks the roots it starts with the
+  new `config.interactive`, and children inherit it. Every other agent resumes
+  at once on Linux, where the start stops the commands the old daemon's agents
+  left in flight, as a person's `aether resume` would. Its keys are released,
+  and its wake and the interrupted call's result say its turn was cut short
+  while those calls ran, so their outcome is unknown and it should check the
+  state before repeating them. Its `agent.resumed` event says it resumed
+  without inspection. An agent stored before the upgrade cannot say whether a
+  person watches it, so it still parks, and one already parked stays parked
+  until resumed; its new children and a restarted successor are headless.
+  Where the interrupted command may still run (a turn a live daemon lost, a
+  restart elsewhere than Linux) a headless agent still parks. See [interactive
+  trees](docs/protocol.md#interactive-trees). A model reached over HTTP reads
+  this as the result of each call a restart cut short, where it read only
+  "Tool call was cancelled.", whether it resumes at once or after an
+  inspection.
+- **A refused engine sign-in suspends the agent instead of failing it
+  (#338).** A native engine whose OAuth token expired or whose API key was
+  refused (Claude Code's `authentication_error`, "Please run /login", a result
+  with `api_error_status` 401; Codex's "401 Unauthorized" or a token that
+  could not be refreshed; either CLI's bare 401 status) classed as an unknown
+  error, so the agent failed. It is now suspended with the new `credentials`
+  class: the operator is told once per episode and the suspension names the
+  fix, the provider is benched, and the agent resumes when a probe answers
+  after the CLI is signed in again. A configured fallback still takes the turn
+  first, and a native engine left for one, on a refused sign-in or a spent
+  plan, is now benched for a minute as an HTTP provider already was, so other
+  turns go straight to their fallback instead of relaunching the refused CLI.
+  A stalled engine that names the refusal as it is stopped suspends the same
+  way instead of being retried as a stall. Models reached over HTTP keep
+  failing on an auth error.
+- **A briefly unusable engine no longer fails agents (#338).** A turn whose
+  engine probe had just failed (`claude --version` timing out under load, a
+  CLI mid-update) failed at once, and creation was refused in the same window.
+  A probe that times out, or whose CLI the OS could not start for now, keeps
+  the last good detection, and a usable engine whose probe fails is only
+  suspect: agents are still created on it, turns do not launch it until a
+  probe passes, and it is recorded unusable only after three failed probes
+  over at least 30 seconds. A turn on an engine that is not launchable probes
+  it again under the transient retry backoff and fails when the window ends,
+  even mid-probe. An agent new to an engine never found still fails at once,
+  unless the latest probe was such an inconclusive one; creation is not
+  refused on one either. The CLI probe timeout is 60 seconds instead of 15.
+- **An engine launch the OS refused for now is retried (#338).** A spawn that
+  failed with `EAGAIN`, `ETXTBSY` (the CLI replaced by an update) or `ENOMEM`
+  failed the agent; it is now a transient timeout, retried within the
+  transient retry window. A missing CLI or a denied launch still fails at
+  once.
+- **Progress resets the transient retry window and the stall count (#338).**
+  The retry window started at a turn's first transient failure and was never
+  cleared, so a long turn with two brief outages hours apart failed at the
+  second; the third stall of a turn ended it even when hours of work came
+  between them. A model message or a tool result now restarts the stall count,
+  so only consecutive stalls end a turn, and the window (and the backoff, from
+  the 15-second floor) for at most eight outages of one turn, so an engine
+  that fails after every bit of progress still gives up. Claude Code's
+  synthetic API-error message is not progress.
+- **`status` and `get_tree` answer while the daemon does slow work (#333,
+  #336).** A connection ran its commands one at a time, so the TUI's polls
+  waited behind any slow request it had sent first. One example is a write
+  waiting out a database lock. Every read in the daemon also shared one store
+  connection, so a long transcript read held every other client's `status`.
+  The client then gave up with "the daemon did not answer `status` within
+  60s". Reads on a connection now run side by side as soon as they are read,
+  off the threads that answer sockets; other commands still run one at a time,
+  in order, and `shutdown` still waits for them. The store reads on a pool of
+  up to 32 connections. A request over two seconds is logged with its command
+  and with where its time went, as are a slow `status` section and a long wait
+  for a store connection. The timeout message points at that log. On a 1.8 GB
+  store with seven clients reading 25 MB transcripts, the slowest `get_tree`
+  went from 2.0 s to 0.7 s and the slowest `status` from 2.4 s to 1.6 s.
+  Behind a write held by a database lock, they now answer in milliseconds
+  instead of waiting for that write. Replies on one connection can now arrive
+  out of request order; every Aether client already matches them by `id` (see
+  [Reply order](docs/protocol.md#reply-order)).
+- **A network-denied Claude Code agent can commit in a linked Git worktree on
+  every supported Claude Code version (#343).** A commit in a linked worktree
+  writes to the repository's shared Git directory, outside the workspace.
+  Aether now adds that directory, from `git rev-parse --git-common-dir`, to
+  the offline sandbox's `allowWrite`, and nothing wider. Claude Code 2.1.312
+  already allowed it by itself (checked with a real sandboxed commit), so this
+  stops relying on the engine to notice the worktree.
+- **A sent image opens from its transcript line in the TUI (#345).** A click
+  on `[image: shot.png, 1.2 MB]` used to look up `shot.png` in the agent's
+  workspace. That lookup failed for a pasted image, which has no file, and
+  for an attached file that had since been moved, and it said "File not
+  found … ask the agent to create it". The line now opens, in the viewer
+  pane, the copy the daemon stored when the message was sent, checked
+  against its digest. This also works after the file is gone, after the
+  TUI restarts, and in a second TUI on the same machine. The file picker
+  (Alt+O) lists the line too. An image the daemon no longer holds says
+  "This image is no longer stored.". A TUI connected over SSH says that
+  the image is on the remote host. When one message carries images of
+  the same size whose names differ at most in case, every line after the
+  first is numbered (`[image 2: …]`), so each line opens its own image.
+- **Alt shortcuts no longer stop the TUI from taking keys (#351, #352).**
+  Alt+] and Alt+Shift+P were read as the start of a terminal reply, and every
+  key after them was dropped until the next Esc, Alt shortcuts included. Such
+  a key is now held only while what follows still looks like a reply, at most
+  250 ms, and is typed otherwise, ahead of any paste or click after it; late
+  replies to the startup probes, kitty graphics replies (Alt+_) included,
+  still never reach the draft. An Alt chord whose Esc and key arrive in two
+  reads is now read as Alt instead of Esc and the bare key, which used to
+  close a view or interrupt the agent and then type the letter. Every
+  documented Alt shortcut was checked in the real input loop with legacy,
+  kitty-protocol and split encodings. `docs/tui.md` now says how to make
+  macOS Option send Alt, and which encodings cannot carry Alt shortcuts.
+
 ## 1.2.7
 
 Released 2026-10-29. A patch release from the 2026-10-26 end-to-end sweep:

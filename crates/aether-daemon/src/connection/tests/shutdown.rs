@@ -53,7 +53,8 @@ async fn assert_stalled_connection_stops(fill_queue: bool) {
     .expect("the peer is admitted");
     if fill_queue {
         let filled = tokio::time::timeout(Duration::from_millis(200), async {
-            for _ in 0..1100 {
+            // Past the reply queue and the reads that may wait to run.
+            for _ in 0..1100 + crate::connection::lanes::MAX_QUEUED_READS {
                 client.write_all(ping.as_bytes()).await.unwrap();
             }
         })
@@ -236,5 +237,142 @@ fn shutdown_finishes_an_inflight_artifact_publication() {
             store.read_artifact_bytes(artifacts[0].id).unwrap().unwrap(),
             b"saved evidence"
         );
+    });
+}
+
+/// A client that sends `shutdown` behind replies it never reads still shuts
+/// the daemon down, once the earlier commands have had their patience.
+#[tokio::test(start_paused = true)]
+async fn shutdown_behind_replies_nobody_reads_still_shuts_down() {
+    let (daemon, _config) = daemon().await;
+    let daemon = Arc::new(daemon);
+    let runtime = daemon.runtime.clone();
+    let shutdown = CancellationToken::new();
+    // Frames go in freely; replies stop at 128 bytes, as no one reads them.
+    let (mut requests, inbound) = tokio::io::duplex(1 << 20);
+    let (_unread, outbound) = tokio::io::duplex(128);
+    let (inbound, _) = tokio::io::split(inbound);
+    let (_, outbound) = tokio::io::split(outbound);
+    let serving = tokio::spawn(serve(
+        daemon,
+        tokio::io::join(inbound, outbound),
+        ConnectionPolicy::default(),
+        None,
+        None,
+        shutdown.clone(),
+    ));
+    let mut frames = aether_protocol::encode(&ClientFrame {
+        id: 1,
+        command: Command::Hello(aether_protocol::Hello::new("shutdown-test", "test")),
+    })
+    .unwrap();
+    // Past the reply queue, short of the reads that stop the connection reading.
+    let pings = 1024 + crate::connection::lanes::MAX_QUEUED_READS / 2;
+    for id in 2..2 + pings as u64 {
+        let ping = ClientFrame {
+            id,
+            command: Command::Ping,
+        };
+        frames.push_str(&aether_protocol::encode(&ping).unwrap());
+    }
+    let stop = ClientFrame {
+        id: u64::MAX,
+        command: Command::Shutdown,
+    };
+    frames.push_str(&aether_protocol::encode(&stop).unwrap());
+    requests.write_all(frames.as_bytes()).await.unwrap();
+
+    let stopped = tokio::time::timeout(3 * crate::connection::lanes::DRAIN_PATIENCE, serving).await;
+    assert!(
+        shutdown.is_cancelled(),
+        "shutdown was not held off for good"
+    );
+    stopped
+        .expect("the connection closes once shutdown gave up on its replies")
+        .unwrap()
+        .unwrap();
+    runtime.shutdown().await;
+}
+
+/// Patience gives up unread replies, never a command still running: one slower
+/// than it finishes before `shutdown` answers, and its reply still goes out.
+#[test]
+fn finishing_waits_past_its_patience_for_a_running_command() {
+    use aether_store::Store as _;
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let store =
+            Arc::new(aether_store::SqliteStore::open(directory.path().join("store.db")).unwrap());
+        let (daemon, _config) = daemon_with_store(store.clone()).await;
+        let daemon = Arc::new(daemon);
+        let (_, task) = daemon
+            .runtime
+            .create_agent(
+                CreateAgentSpec {
+                    role: "worker".into(),
+                    objective: Some("publish evidence".into()),
+                    scope: Some(Default::default()),
+                    start: false,
+                    ..Default::default()
+                },
+                Actor::user(),
+            )
+            .unwrap();
+        let task = task.unwrap();
+        let (out, mut replies) = tokio::sync::mpsc::channel(8);
+        let mut lanes =
+            crate::connection::lanes::Lanes::new(daemon.clone(), out, CancellationToken::new());
+        let (release, blocked) = std::sync::mpsc::channel();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let blocker = tokio::task::spawn_blocking(move || {
+            started.send(()).unwrap();
+            let _ = blocked.recv();
+        });
+        ready.await.unwrap();
+        let publication = Command::PublishArtifact(aether_protocol::PublishArtifact {
+            task: task.id,
+            name: "evidence".into(),
+            summary: "published past the patience".into(),
+            content_type: "text/plain".into(),
+            text: "saved evidence".into(),
+        });
+        lanes
+            .run(
+                2,
+                publication,
+                &Actor::user(),
+                &crate::authz::AuthContext::Local,
+            )
+            .await;
+
+        let finishing = lanes.finish(Duration::from_millis(50));
+        tokio::pin!(finishing);
+        let early = tokio::time::timeout(Duration::from_millis(300), &mut finishing).await;
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        assert!(
+            early.is_err(),
+            "finishing must wait for the running publication"
+        );
+        let answered = tokio::time::timeout(Duration::from_secs(30), finishing)
+            .await
+            .expect("the publication finishes once the blocking pool is free");
+        assert!(!answered, "the publication outlasted the patience");
+        let reply = replies.try_recv().expect("a reply with room is still sent");
+        assert!(matches!(
+            reply,
+            ServerFrame::Reply {
+                id: 2,
+                result: Ok(_)
+            }
+        ));
+        assert_eq!(store.live_artifacts().unwrap().len(), 1);
+        daemon.runtime.shutdown().await;
     });
 }

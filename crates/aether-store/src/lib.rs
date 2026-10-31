@@ -655,6 +655,9 @@ pub trait Store: Send + Sync {
     -> Result<Option<Event>>;
     /// The newest custom event with any of these names, without a history window.
     fn latest_custom_event(&self, names: &[&str]) -> Result<Option<Event>>;
+    /// The newest custom event `agent` emitted itself under `name`, without a
+    /// history window.
+    fn latest_agent_custom_event(&self, agent: AgentId, name: &str) -> Result<Option<Event>>;
 
     fn schedule(&self, id: ScheduleId) -> Result<Option<Schedule>>;
     fn schedules(&self, target: Option<AgentId>) -> Result<Vec<Schedule>>;

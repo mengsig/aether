@@ -489,6 +489,7 @@ fn pinned_coordination_prompts_copy_and_keep_selection_in_compact_and_full_views
             transcript.cells[0].model = CellModel::User {
                 from: from.clone(),
                 text: "coordination prompt\nsecond line".into(),
+                images: Vec::new(),
             };
             app.scroll_log
                 .push(agent, ScrollIntent::Reveal(transcript.cells[1].id));

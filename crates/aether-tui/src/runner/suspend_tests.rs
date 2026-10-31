@@ -22,12 +22,18 @@ fn fixture_loop_child() {
         let fixture = crate::testing::app_with_transcript(&[]);
         let agent = fixture.selected.expect("fixture agent");
         let tree = fixture.tree;
+        // A message naming files makes the fixture's cwd the workspace they open from.
+        let message = std::env::var("AETHER_LOOP_MESSAGE").ok();
+        let cwd = message
+            .as_ref()
+            .map(|_| std::env::current_dir().expect("fixture cwd"));
+        let message = message.unwrap_or_else(|| "conversation before suspension".into());
         let history = StoredEvent::from_draft(
             EventDraft::new(
                 Actor::Agent { id: agent },
                 EventKind::AgentMessage {
                     role: MessageRole::Assistant,
-                    content: vec![ContentBlock::text("conversation before suspension")],
+                    content: vec![ContentBlock::text(message)],
                     invocation: None,
                 },
             )
@@ -72,6 +78,7 @@ fn fixture_loop_child() {
             client,
             TuiOptions {
                 focus: Some(agent),
+                cwd,
                 home: Some(std::env::current_dir().expect("fixture home")),
                 ..Default::default()
             },

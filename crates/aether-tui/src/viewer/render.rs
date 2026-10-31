@@ -50,15 +50,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let viewer = &app.viewer;
     frame.render_widget(Clear, area);
     let focus = if viewer.focused { "chat" } else { "focus" };
-    let path = viewer
-        .path()
-        .map(PathBuf::as_path)
-        .or_else(|| match viewer.preview {
-            Some(Err(_)) => viewer.pending.as_ref().map(|r| Path::new(&r.target)),
-            _ => None,
-        })
-        .map(|p| clean(&p.file_name().unwrap_or(p.as_os_str()).to_string_lossy()))
-        .unwrap_or_else(|| "Files".into());
+    let path = title(viewer);
     let page = viewer
         .pages()
         .map(|p| format!(" · page {}/{}", p.current, p.total))
@@ -88,6 +80,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         };
         frame.render_widget(Paragraph::new(hints(viewer)), footer);
     }
+}
+
+/// The file shown, or that failed to load; a stored image's digest-named file says nothing.
+fn title(viewer: &Viewer) -> String {
+    let pending = viewer.pending.as_ref().map(|r| r.target.as_str());
+    if pending.is_some_and(super::sent_images::is_sent_image) {
+        return "Sent image".into();
+    }
+    viewer
+        .path()
+        .map(PathBuf::as_path)
+        .or_else(|| match viewer.preview {
+            Some(Err(_)) => pending.map(Path::new),
+            _ => None,
+        })
+        .map(|p| clean(&p.file_name().unwrap_or(p.as_os_str()).to_string_lossy()))
+        .unwrap_or_else(|| "Files".into())
 }
 
 fn hints(viewer: &Viewer) -> &'static str {
@@ -120,7 +129,7 @@ fn content(viewer: &Viewer, theme: &Theme) -> Vec<Line<'static>> {
                     format!(
                         "{} {}",
                         if i == viewer.cursor { ">" } else { " " },
-                        clean(&r.target)
+                        clean(super::sent_images::picker_name(r))
                     ),
                     if i == viewer.cursor {
                         theme.accent()

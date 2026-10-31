@@ -2,6 +2,7 @@
 use super::*;
 use anyhow::Context;
 use crossterm::event::{KeyCode, KeyModifiers};
+use futures::StreamExt;
 use std::io::Write;
 
 #[test]

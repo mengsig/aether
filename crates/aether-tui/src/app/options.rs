@@ -37,6 +37,9 @@ pub struct TuiOptions {
     /// Home directory, for `~` and the picker's project discovery. Injected
     /// so tests never read the real one.
     pub home: Option<PathBuf>,
+    /// Where the local daemon stores the images sent with messages; `None`
+    /// for a remote host. Injected so tests never read the real one.
+    pub attachment_dir: Option<PathBuf>,
     /// Workspaces agents were started in, newest first, from `ui.toml`.
     pub recent_workspaces: Vec<String>,
     /// Workspaces the picker lists first, in pin order, from `ui.toml`.

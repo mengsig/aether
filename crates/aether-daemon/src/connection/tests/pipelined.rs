@@ -2,7 +2,7 @@ use super::*;
 use tokio::io::AsyncWriteExt;
 
 #[tokio::test]
-async fn hello_and_three_requests_in_one_write_receive_ordered_replies() {
+async fn hello_and_three_requests_in_one_write_each_receive_a_reply() {
     let (daemon, _config) = daemon().await;
     let daemon = Arc::new(daemon);
     let runtime = daemon.runtime.clone();
@@ -49,7 +49,14 @@ async fn hello_and_three_requests_in_one_write_receive_ordered_replies() {
     })
     .await
     .expect("every pipelined request should receive a reply");
-    assert_eq!(replies, [1, 2, 3, 4]);
+    assert_eq!(replies[0], 1, "hello answers before anything sent after it");
+    let mut reads = replies[1..].to_vec();
+    reads.sort_unstable();
+    assert_eq!(
+        reads,
+        [2, 3, 4],
+        "reads run side by side, so answer in any order"
+    );
 
     shutdown.cancel();
     tokio::time::timeout(Duration::from_secs(3), serving)
