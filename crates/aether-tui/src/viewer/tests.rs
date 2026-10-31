@@ -214,6 +214,32 @@ fn wrapped_unicode_file_references_have_hit_regions_on_both_rows() {
 }
 
 #[test]
+fn slash_words_in_agent_text_are_not_underlined_as_files() {
+    let (_dir, mut app) = setup();
+    let agent = app.selected.unwrap();
+    crate::testing::push_message(
+        &mut app,
+        agent,
+        aether_core::model::MessageRole::Assistant,
+        "/blablabla and/or a/b, but see /home/user/file",
+    );
+    let mut cache = ViewCache::default();
+    render_with(&app, &mut cache, 160, 40);
+    let targets: Vec<_> = cache
+        .file_hits
+        .iter()
+        .map(|hit| hit.reference.target.as_str())
+        .collect();
+    assert!(targets.contains(&"/home/user/file"), "{targets:?}");
+    for word in ["/blablabla", "and/or", "a/b"] {
+        assert!(
+            !targets.contains(&word),
+            "{word} is not a file: {targets:?}"
+        );
+    }
+}
+
+#[test]
 fn file_reference_underlines_preserve_error_and_search_styles() {
     use ratatui::{layout::Rect, text::Line};
 

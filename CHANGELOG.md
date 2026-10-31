@@ -18,6 +18,17 @@ release is also the text of its GitHub release.
   covers the screen, the keys only say so. With focus anywhere else they
   still size the file viewer.
 
+### Fixed
+
+- **Slash words in the transcript are no longer underlined as files (#355).**
+  A word like `/blablabla`, `and/or` or `a/b`, typed by you or written by an
+  agent, looked like a command because the transcript underlined it as a
+  clickable file. A word without a known file extension is now a file link
+  only in a path's shape: an absolute path with a parent directory such as
+  `/home/user/file`, or one starting with `./`, `../` or `file:`. Those, and
+  names with a known extension such as `src/main.rs`, still open in the file
+  viewer.
+
 ## 1.2.8
 
 Released 2026-10-30. A patch release about agents' lifecycles: a browser or
