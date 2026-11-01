@@ -74,6 +74,15 @@ def missing_cells(records, config):
     return sorted(planned - present)
 
 
+def complete_blocks(records, missing):
+    """Records whose (task, repeat) block has no missing cell: every planned arm ran it."""
+    short = {(task, repeat) for _, task, repeat in missing}
+    kept = [item for item in records if (item["task"], item["repeat"]) not in short]
+    assert len({item["arm"] for item in kept}) <= len({item["arm"] for item in records}), "no arm is invented"
+    assert not short & {(item["task"], item["repeat"]) for item in kept}, "every short block is dropped"
+    return kept
+
+
 def check_complete(rows, tier):
     """Raise unless every version of `tier` has the same (task, repeat) cells, so none is silently short."""
     cells = defaultdict(set)
@@ -359,9 +368,17 @@ def command_export(args):
         records = [json.loads(line) for line in stream if line.strip()]
     with open(args.run_dir / "config.json") as stream:
         missing = missing_cells(records, json.load(stream))
-    if missing:
-        raise SystemExit(f"{len(missing)} planned trial(s) have no record, such as {missing[:3]}; finish the run first")
-    rows = export_rows(records, args.old_tag, args.new_tag)
+    if missing and not args.partial:
+        raise SystemExit(f"{len(missing)} planned trial(s) have no record, such as {missing[:3]}; finish the run "
+                         "first, or pass --partial")
+    kept = complete_blocks(records, missing)
+    if not kept:
+        raise SystemExit("no (task, repeat) block was run by every planned arm")
+    if len(kept) < len(records):
+        blocks = len({(task, repeat) for _, task, repeat in missing})
+        print(f"--partial: left out {len(records) - len(kept)} trial(s) of {blocks} (task, repeat) block(s) "
+              f"some arm did not finish; {len(missing)} planned trial(s) never ran")
+    rows = export_rows(kept, args.old_tag, args.new_tag)
     with open(args.out, "w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\n")
         writer.writeheader()
@@ -389,6 +406,8 @@ def main(argv=None):
     export.add_argument("--old-tag", required=True, help="the release tag the run's old arm ran, such as v1.2.7")
     export.add_argument("--new-tag", required=True, help="the release tag the run's new arm ran, such as v1.2.8")
     export.add_argument("--out", type=Path, required=True)
+    export.add_argument("--partial", action="store_true",
+                        help="export an unfinished run: only the (task, repeat) blocks every planned arm ran")
     report = commands.add_parser("report", help="the history tables from exported CSVs")
     report.add_argument("csv", type=Path, nargs="+")
     report.add_argument("--seed", type=int, default=0)

@@ -7,6 +7,7 @@ import unittest
 from release_bench_history import (
     _sum_counts,
     analyze_tier,
+    complete_blocks,
     conditional_logit,
     export_rows,
     missing_cells,
@@ -142,6 +143,15 @@ class HistoryStatsTests(unittest.TestCase):
         self.assertEqual(len(missing_cells(no_v100, config)), 4)
         with self.assertRaises(AssertionError):
             missing_cells(records + [{"arm": "haiku/new", "task": "t-0", "repeat": 0}], config)
+
+    def test_a_partial_export_keeps_only_blocks_every_arm_ran(self):
+        config = {"arms": ["haiku/old", "haiku/v1.0.0"], "set": {"task_ids": ["t-0", "t-1"]}, "repeats": 1}
+        records = [{"arm": arm, "task": task, "repeat": 0} for arm in config["arms"] for task in ("t-0", "t-1")]
+        unfinished = records[:3]
+        kept = complete_blocks(unfinished, missing_cells(unfinished, config))
+        self.assertEqual({(item["task"], item["arm"]) for item in kept},
+                         {("t-0", "haiku/old"), ("t-0", "haiku/v1.0.0")})
+        self.assertEqual(complete_blocks(records, []), records)
 
 
 if __name__ == "__main__":
