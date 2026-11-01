@@ -214,9 +214,9 @@ fn timeout_hint(theme: &Theme, request: &str, host_overloaded: bool, command: &s
     if host_overloaded {
         return crate::ui_format!(
             theme,
-            "the daemon is slow because this host is overloaded · ease the load and try again; \
+            "the daemon is slow, likely because this host is overloaded · ease the load and try again; \
              if it keeps happening, `{command} stop`, then start it again",
-            "the daemon is slow because this host is overloaded | ease the load and try again; \
+            "the daemon is slow, likely because this host is overloaded | ease the load and try again; \
              if it keeps happening, `{command} stop`, then start it again"
         );
     }

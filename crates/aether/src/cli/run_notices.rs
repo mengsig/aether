@@ -3,6 +3,7 @@
 
 use super::sane;
 use aether_core::disk::LowDisk;
+use aether_protocol::{DaemonStatus, StatusStale};
 use std::time::Duration;
 use tokio::time::{Interval, MissedTickBehavior};
 
@@ -32,6 +33,15 @@ impl GateWatch {
         self.ticker.tick().await;
     }
 
+    /// The line to print for this status's disk gate, if it changed. A stale
+    /// status whose first read has not finished knows nothing of the disk.
+    pub(super) fn update_from(&mut self, status: &DaemonStatus) -> Option<String> {
+        if figures_unknown(status.stale.as_ref()) {
+            return None;
+        }
+        self.update(status.low_disk.as_ref())
+    }
+
     /// The line to print for the daemon's current `low_disk`, if the gate
     /// changed since the last look.
     pub(super) fn update(&mut self, low_disk: Option<&LowDisk>) -> Option<String> {
@@ -43,6 +53,10 @@ impl GateWatch {
         self.holding = low_disk.is_some();
         line
     }
+}
+
+fn figures_unknown(stale: Option<&StatusStale>) -> bool {
+    stale.is_some_and(|stale| stale.read_at.is_none())
 }
 
 fn low_disk_line(low: &LowDisk) -> String {
@@ -113,6 +127,18 @@ mod tests {
         let freed = watch.update(None).expect("release named");
         assert!(freed.contains("resumes"), "{freed}");
         assert_eq!(watch.update(None), None);
+    }
+
+    /// A stale status with no figures yet is not a sign the disk was freed.
+    #[test]
+    fn only_a_stale_status_with_no_read_yet_has_unknown_figures() {
+        let stale = |read_at| StatusStale {
+            read_at,
+            waited_ms: 3000,
+        };
+        assert!(figures_unknown(Some(&stale(None))));
+        assert!(!figures_unknown(Some(&stale(Some(chrono::Utc::now())))));
+        assert!(!figures_unknown(None), "a fresh status is known");
     }
 
     #[test]
