@@ -365,6 +365,18 @@ async fn every_partition_under_the_root_counts_so_the_budget_holds() {
             && problem.contains("aether storage build-cache")),
         "an unmet budget is shown: {problems:?}"
     );
+
+    fs::remove_dir_all(&f.root).unwrap();
+    fs::create_dir(&f.root).unwrap();
+    let emptied = f.gc(false);
+    assert_eq!(emptied.partitions, 0, "{emptied:?}");
+    let problems = f.runtime.status().unwrap().problems;
+    assert!(
+        problems
+            .iter()
+            .all(|problem| !problem.contains("build cache")),
+        "a cache emptied by hand is no longer over budget: {problems:?}"
+    );
 }
 
 #[tokio::test]

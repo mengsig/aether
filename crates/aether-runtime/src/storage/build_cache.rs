@@ -116,6 +116,9 @@ impl Runtime {
             .any(|entry| entry.run.is_some() || entry.unmarked_run.is_some());
         let leftovers = !dry_run && fs::symlink_metadata(&trash).is_ok();
         if !partitions && !leftovers {
+            if !dry_run {
+                self.clear_problem(OVER_BUDGET_PROBLEM);
+            }
             return Ok(report);
         }
         let max_bytes = match config.max_bytes {
