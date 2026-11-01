@@ -9,6 +9,7 @@ from release_bench_history import (
     analyze_tier,
     conditional_logit,
     export_rows,
+    missing_cells,
     one_sided_decline_p,
     permutation_trend,
     records_of,
@@ -88,8 +89,19 @@ class HistoryStatsTests(unittest.TestCase):
         doubled = analyze_tier(rows, "luna", positions={version: 2 * index for version, index in STEPS.items()})
         self.assertAlmostEqual(doubled["spaced_trend"]["beta"], doubled["trend"]["beta"] / 2, places=6)
         self.assertAlmostEqual(doubled["spaced_trend"]["logit_decline_p"], doubled["trend"]["logit_decline_p"])
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             analyze_tier(rows, "luna", positions={"v1.0.0": 0})
+        with self.assertRaises(ValueError):
+            analyze_tier(rows, "luna", positions={**STEPS, "v1.2.0": 9})
+
+    def test_a_version_short_of_cells_is_refused_not_dropped(self):
+        rows = rows_from(chance(lambda index: 0.6))
+        short = [row for row in rows if not (row["version"] == "v1.0.5" and row["task"] == "t-3")]
+        with self.assertRaises(ValueError):
+            analyze_tier(short, "luna")
+        result = analyze_tier(rows, "luna")
+        self.assertEqual(result["versions"], VERSIONS)
+        self.assertEqual(set(result["declines"]), {"trend", "trend_permutation", "newest_below_oldest"})
 
     def test_the_permutation_test_shuffles_within_each_task_and_repeat(self):
         # Every task passes only on its first release: the steepest decline the data allows.
@@ -119,6 +131,17 @@ class HistoryStatsTests(unittest.TestCase):
         self.assertEqual((rows[2]["passed"], rows[2]["graded_pass"]), (0, 1))
         with self.assertRaises(AssertionError):
             export_rows(records + [records[0]], "v1.2.7", "v1.2.8")
+
+    def test_missing_cells_name_every_planned_trial_without_a_record(self):
+        config = {"arms": ["haiku/old", "haiku/v1.0.0"], "set": {"task_ids": ["t-0", "t-1"]}, "repeats": 2}
+        records = [{"arm": arm, "task": task, "repeat": repeat} for arm in config["arms"]
+                   for task in ("t-0", "t-1") for repeat in (0, 1)]
+        self.assertEqual(missing_cells(records, config), [])
+        self.assertEqual(missing_cells(records[1:], config), [("haiku/old", "t-0", 0)])
+        no_v100 = [item for item in records if item["arm"] != "haiku/v1.0.0"]
+        self.assertEqual(len(missing_cells(no_v100, config)), 4)
+        with self.assertRaises(AssertionError):
+            missing_cells(records + [{"arm": "haiku/new", "task": "t-0", "repeat": 0}], config)
 
 
 if __name__ == "__main__":

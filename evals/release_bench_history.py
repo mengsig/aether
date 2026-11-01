@@ -64,6 +64,29 @@ def export_rows(records, old_tag, new_tag):
     return sorted(rows, key=lambda row: (row["tier"], version_key(row["version"]), row["task"], row["repeat"]))
 
 
+def missing_cells(records, config):
+    """Planned (arm, task, repeat) cells of a run's config that have no record, sorted."""
+    assert config["arms"] and config["set"]["task_ids"] and config["repeats"] > 0, "a run plans arms, tasks, repeats"
+    planned = {(arm, task, repeat) for arm in config["arms"] for task in config["set"]["task_ids"]
+               for repeat in range(config["repeats"])}
+    present = {(item["arm"], item["task"], item["repeat"]) for item in records}
+    assert present <= planned, f"records outside the plan: {sorted(present - planned)[:3]}"
+    return sorted(planned - present)
+
+
+def check_complete(rows, tier):
+    """Raise unless every version of `tier` has the same (task, repeat) cells, so none is silently short."""
+    cells = defaultdict(set)
+    for row in rows:
+        if row["tier"] == tier:
+            cells[row["version"]].add((row["task"], row["repeat"]))
+    assert cells, f"no rows for tier {tier}"
+    union = set().union(*cells.values())
+    short = {version: len(union - mine) for version, mine in cells.items() if mine != union}
+    if short:
+        raise ValueError(f"{tier}: versions missing (task, repeat) cells: {short}")
+
+
 def records_of(rows, graded=False):
     """Records in the shape release_bench_stats reads; `graded` counts a harness failure by its grade."""
     records = []
@@ -210,10 +233,13 @@ def analyze_tier(rows, tier, seed=0, positions=None):
 
     The trend steps one per version run; `positions` ({tag: number of releases since the
     oldest}) adds the same tests with each version at its place among every release."""
+    check_complete(rows, tier)
     mine = [row for row in rows if row["tier"] == tier]
-    assert mine, f"no rows for tier {tier}"
     versions = sorted({row["version"] for row in mine}, key=version_key)
     assert len(versions) >= 3, "a history needs at least three releases"
+    if positions and set(positions) != set(versions):
+        raise ValueError(f"{tier}: --positions names {sorted(set(positions) - set(versions), key=version_key)} "
+                         f"with no rows and lacks {sorted(set(versions) - set(positions), key=version_key)}")
     records, graded = records_of(mine), records_of(mine, graded=True)
     newest, oldest = versions[-1], versions[0]
     summaries = {version: arm_summary(records, f"{tier}/{version}", seed) for version in versions}
@@ -232,11 +258,12 @@ def analyze_tier(rows, tier, seed=0, positions=None):
     result = {"tier": tier, "versions": versions, "summaries": summaries, "against": against,
               "trend": trend(records, steps, seed), "graded_trend": trend(graded, steps, seed)}
     if positions:
-        assert set(versions) <= set(positions), f"no position for {sorted(set(versions) - set(positions))}"
         assert [positions[v] for v in versions] == sorted(positions[v] for v in versions), "positions keep the order"
         result["spaced_trend"] = trend(records, {version: positions[version] for version in versions}, seed)
     oldest_vs_newest = against[oldest]
-    result["declines"] = {"trend": min(result["trend"]["logit_decline_p"], result["trend"]["perm_decline_p"]) < ALPHA,
+    # The conditional logit is the prespecified trend test; the permutation test is reported beside it.
+    result["declines"] = {"trend": result["trend"]["logit_decline_p"] < ALPHA,
+                          "trend_permutation": result["trend"]["perm_decline_p"] < ALPHA,
                           "newest_below_oldest": oldest_vs_newest["decline_p"] < ALPHA}
     return result
 
@@ -296,9 +323,12 @@ def render_tier(result):
         lines += trend_lines("Pass rate as recorded, spaced by every release since the oldest",
                              result["spaced_trend"], unit="release")
     declines = result["declines"]
-    return lines + ["", f"- Deterioration test (one-sided, alpha {ALPHA}): trend significantly negative: "
-                    f"**{'yes' if declines['trend'] else 'no'}**; {newest} significantly below {oldest}: "
-                    f"**{'yes' if declines['newest_below_oldest'] else 'no'}**.", ""]
+    def answer(flag):
+        return "yes" if flag else "no"
+    return lines + ["", f"- Deterioration test (one-sided, alpha {ALPHA} each): trend significantly negative by the "
+                    f"conditional logit (the primary test): **{answer(declines['trend'])}** (permutation test: "
+                    f"{answer(declines['trend_permutation'])}); {newest} significantly below {oldest} by McNemar: "
+                    f"**{answer(declines['newest_below_oldest'])}**.", ""]
 
 
 def _positions(text):
@@ -327,6 +357,10 @@ def read_rows(paths):
 def command_export(args):
     with open(args.run_dir / "results.jsonl") as stream:
         records = [json.loads(line) for line in stream if line.strip()]
+    with open(args.run_dir / "config.json") as stream:
+        missing = missing_cells(records, json.load(stream))
+    if missing:
+        raise SystemExit(f"{len(missing)} planned trial(s) have no record, such as {missing[:3]}; finish the run first")
     rows = export_rows(records, args.old_tag, args.new_tag)
     with open(args.out, "w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=FIELDS, lineterminator="\n")
@@ -339,7 +373,11 @@ def command_export(args):
 def command_report(args):
     rows = read_rows(args.csv)
     for tier in sorted({row["tier"] for row in rows}):
-        print("\n".join(render_tier(analyze_tier(rows, tier, args.seed, args.positions))))
+        try:
+            result = analyze_tier(rows, tier, args.seed, args.positions)
+        except ValueError as error:
+            raise SystemExit(f"cannot report: {error}") from error
+        print("\n".join(render_tier(result)))
     return 0
 
 
