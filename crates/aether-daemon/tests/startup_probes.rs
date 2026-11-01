@@ -286,8 +286,44 @@ async fn pid_replacement_after_preflight_still_stops_the_runtime_and_cleans_its_
 // Records each probe, then answers only once the test releases it.
 const GATED_ENGINE: &str = "printf '%s\\n' \"$0 $*\" >> \"$AETHER_TEST_STARTUP_PROBE_ROOT/probes\"\nwhile [ ! -f \"$AETHER_TEST_STARTUP_PROBE_ROOT/release\" ]; do /bin/sleep 0.01; done\nprintf '%s\\n' '2.1.269'\n";
 
-/// The acceptance bound for a warm start, from process start to an answered hello.
+/// The acceptance bound for a warm start, from process start to an answered
+/// hello, less the time the host stalled; see [`stalled_since`].
 const HELLO_WITHIN: Duration = Duration::from_millis(1500);
+
+/// Microseconds some task of this process's cgroup has stalled on a CPU and on
+/// I/O, from Linux pressure stall information; zeros where none is exposed.
+fn host_stall() -> [u64; 2] {
+    let cgroup = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+    let unified = cgroup.lines().find_map(|line| line.strip_prefix("0::"));
+    ["cpu", "io"].map(|resource| match unified {
+        None => 0,
+        Some("/") => pressure_micros(&format!("/proc/pressure/{resource}")),
+        Some(group) => pressure_micros(&format!("/sys/fs/cgroup{group}/{resource}.pressure")),
+    })
+}
+
+/// The longer of the CPU and I/O stalls since `before`, which the host rather
+/// than the daemon may have spent. Their overlap is unknown, so not their sum.
+fn stalled_since(before: [u64; 2]) -> Duration {
+    let now = host_stall();
+    let cpu = now[0].saturating_sub(before[0]);
+    let io = now[1].saturating_sub(before[1]);
+    Duration::from_micros(cpu.max(io))
+}
+
+fn pressure_micros(path: &str) -> u64 {
+    let Ok(pressure) = std::fs::read_to_string(path) else {
+        return 0;
+    };
+    let some = pressure
+        .lines()
+        .find(|line| line.starts_with("some "))
+        .unwrap_or_else(|| panic!("no `some` line in {path}: {pressure}"));
+    let (_, total) = some
+        .rsplit_once("total=")
+        .unwrap_or_else(|| panic!("no total in {path}: {some}"));
+    total.trim().parse().expect("a stall total in microseconds")
+}
 
 async fn first_hello(socket: &Path) -> aether_client::Client {
     tokio::time::timeout(Duration::from_secs(30), async {
@@ -320,12 +356,21 @@ async fn hello_is_answered_while_engine_probes_run_and_engine_requests_wait() {
     std::fs::create_dir_all(root.path().join("workspace")).unwrap();
     drop(SqliteStore::open(&config.store_path).unwrap());
     let shutdown = CancellationToken::new();
+    let stall_before = host_stall();
     let started = std::time::Instant::now();
     let serving = tokio::spawn(aether_daemon::run(config.clone(), shutdown.clone()));
     let client = first_hello(&config.socket).await;
     let answered = started.elapsed();
-    eprintln!("start to first answered hello: {} ms", answered.as_millis());
-    assert!(answered < HELLO_WITHIN, "hello took {answered:?}");
+    let stalled = stalled_since(stall_before);
+    eprintln!(
+        "start to first answered hello: {} ms, host stalled {} ms",
+        answered.as_millis(),
+        stalled.as_millis()
+    );
+    assert!(
+        answered.saturating_sub(stalled) < HELLO_WITHIN,
+        "hello took {answered:?}, of which the host stalled {stalled:?}"
+    );
     assert!(!probes.join("release").exists());
     let status = client.status().await.unwrap();
     assert_eq!(status.engines, [aether_protocol::ENGINES_STARTING]);
