@@ -212,3 +212,62 @@ fn a_family_page_reads_as_much_for_a_long_history_as_for_a_short_one() {
         );
     }
 }
+
+/// A store where `run` billed `own` usage receipts among `others` of other runs.
+fn receipts_among_others(own: usize, others: usize) -> (SqliteStore, RunId) {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let (run, busy) = (RunId::new(), RunId::new());
+    let receipt = |run: RunId| {
+        let usage = aether_core::model::Usage::default();
+        EventDraft::new(
+            Actor::System,
+            EventKind::AgentUsageUpdated {
+                total: usage,
+                turn_usage: usage,
+            },
+        )
+        .agent(AgentId::new())
+        .run(run)
+    };
+    let noise = (0..others).fold(Commit::new(), |commit, _| commit.event(receipt(busy)));
+    store.commit(noise).expect("commit other runs");
+    let mine = (0..own).fold(Commit::new(), |commit, _| commit.event(receipt(run)));
+    store.commit(mine).expect("commit the run's receipts");
+    (store, run)
+}
+
+/// Virtual-machine steps to read `run`'s newest page of usage receipts.
+fn run_receipt_page_work(store: &SqliteStore, run: RunId) -> (usize, i32) {
+    let filter = EventFilter {
+        run: Some(run),
+        types: vec!["agent.usage_updated".into()],
+        ..Default::default()
+    };
+    let mut args = Vec::new();
+    let predicate = crate::sqlite::event_queries::filter_predicate(&filter, &mut args);
+    let sql =
+        crate::sqlite::event_queries::page_sql("seq", &predicate, 0, None, 256, false, &mut args);
+    let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|arg| arg.as_ref()).collect();
+    let conn = store.conn.lock();
+    let mut statement = conn.prepare(&sql).expect("prepare");
+    let rows = statement
+        .query_map(refs.as_slice(), |r| r.get::<_, i64>(0))
+        .expect("query")
+        .count();
+    (rows, statement.get_status(StatementStatus::VmStep))
+}
+
+#[test]
+fn a_runs_receipt_page_does_not_walk_every_other_runs_receipts() {
+    // `status` reads this page for every live run (#333 follow-up): walked
+    // through the type index, it read every receipt the store ever kept.
+    let (quiet, quiet_run) = receipts_among_others(15, 100);
+    let (busy, busy_run) = receipts_among_others(15, 4_000);
+    let (quiet_rows, quiet_steps) = run_receipt_page_work(&quiet, quiet_run);
+    let (rows, steps) = run_receipt_page_work(&busy, busy_run);
+    assert_eq!((quiet_rows, rows), (15, 15), "every receipt of the run");
+    assert!(
+        steps < quiet_steps * 2,
+        "other runs' receipts cost {steps} steps, against {quiet_steps} without them"
+    );
+}
