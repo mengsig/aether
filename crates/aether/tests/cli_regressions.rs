@@ -71,6 +71,9 @@ struct Stub {
     event_count: Option<u64>,
     stale_events: bool,
     event_follow: bool,
+    /// Tail pages a followed tail reads after opening its stream; the stub
+    /// ends the stream once they are answered.
+    tail_pages: usize,
     hostile_saved_model: bool,
     reject_models: bool,
     invalid_models: bool,
@@ -107,6 +110,7 @@ impl Default for Stub {
             event_count: None,
             stale_events: false,
             event_follow: false,
+            tail_pages: 0,
             hostile_saved_model: false,
             reject_models: false,
             invalid_models: false,
@@ -220,6 +224,8 @@ async fn cli_with_socket(
         let mut run_created = false;
         // Where the newest subscription replays from, as the daemon would.
         let mut replay_after = stub.compaction_cursor;
+        // Tail pages still to answer before the followed stream ends.
+        let mut pages_left: Option<usize> = None;
         while let Some(line) = next_request(&mut lines).await {
             let frame: ClientFrame = serde_json::from_str(&line).unwrap();
             let result = match &frame.command {
@@ -677,7 +683,8 @@ async fn cli_with_socket(
                 && query.agent.is_some()
             {
                 let count = stub.event_count.unwrap();
-                assert_eq!(after, Some(count));
+                // A followed tail starts at the daemon's latest, or asks for it.
+                assert_eq!(after.unwrap_or(count), count, "followed from {after:?}");
                 assert_eq!(query.types, ["compaction.failed"]);
                 for (offset, error) in [(1, "absent"), (2, "failed live")] {
                     let event = Event::from_draft(
@@ -702,7 +709,19 @@ async fn cli_with_socket(
                     )
                     .await;
                 }
-                break;
+                if after.is_some() || stub.tail_pages == 0 {
+                    break;
+                }
+                pages_left = Some(stub.tail_pages);
+                continue;
+            }
+            if let Command::GetEvents { .. } = frame.command
+                && let Some(left) = pages_left.as_mut()
+            {
+                *left -= 1;
+                if *left == 0 {
+                    break;
+                }
             }
             if matches!(frame.command, Command::CreateAgent(ref spec) if spec.objective.is_some()) {
                 run_created = true;
@@ -2224,6 +2243,38 @@ async fn events_page_until_exhausted_with_filters_and_stable_lines() {
         assert_eq!(seqs.len(), 2005);
         assert_eq!(seqs, (8..=2012).collect::<Vec<_>>());
     }
+}
+
+/// On an overloaded host `status` may be stale with `last_seq` 0. A followed
+/// tail that ended there replayed the whole log instead of the last few.
+#[tokio::test]
+async fn a_followed_tail_starts_at_its_stream_not_a_stale_status() {
+    let output = cli(
+        &[
+            "events",
+            "--agent",
+            AGENT,
+            "--type",
+            "compaction.failed",
+            "--tail",
+            "2",
+            "--follow",
+        ],
+        Stub {
+            event_count: Some(5),
+            event_follow: true,
+            tail_pages: 1,
+            stale_status: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let text = stdout(&output);
+    let seqs: Vec<u64> = text
+        .lines()
+        .map(|line| line.split_whitespace().next().unwrap().parse().unwrap())
+        .collect();
+    assert_eq!(seqs, [4, 5, 6, 7], "{text}{}", stderr(&output));
 }
 
 #[tokio::test]
