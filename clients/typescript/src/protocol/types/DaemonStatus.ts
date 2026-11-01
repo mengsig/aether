@@ -10,6 +10,7 @@ import type {
   ProviderHealth,
   ResourceHolding,
   RunSummary,
+  StatusStale,
   Usage,
   WriteStats,
   providers,
@@ -43,6 +44,7 @@ export interface DaemonStatus {
   "run_hard_stop_tokens"?: number | null;
   "run_hard_stop_usd"?: number | null;
   "runs"?: Array<RunSummary>;
+  "stale"?: StatusStale | null;
   "started_at": string;
   "tasks_active": number;
   "usage_total": Usage;

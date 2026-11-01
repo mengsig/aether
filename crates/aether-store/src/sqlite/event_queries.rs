@@ -197,7 +197,14 @@ fn filter_predicate_with_agent(
             sql.push_str(&format!(" AND {column} = ?{}", args.len()));
         }
     }
-    for (column, values) in [("family", &filter.families), ("type", &filter.types)] {
+    // With only a run to narrow by, `+type` keeps the planner on the run's
+    // index: the type index would walk every receipt of every run (#333).
+    let type_column = if filter.run.is_some() && filter.agent.is_none() {
+        "+type"
+    } else {
+        "type"
+    };
+    for (column, values) in [("family", &filter.families), (type_column, &filter.types)] {
         if !values.is_empty() {
             sql.push_str(&format!(" AND {}", in_list(column, values, args)));
         }

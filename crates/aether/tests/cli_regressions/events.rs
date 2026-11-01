@@ -52,7 +52,7 @@ async fn events_tail_respects_after_and_local_filters() {
 
 #[tokio::test]
 async fn events_follow_starts_after_tail_snapshot_and_keeps_filters() {
-    for (tail, expected) in [("2", vec![9, 10, 12]), ("0", vec![12])] {
+    for (tail, pages, expected) in [("2", 1, vec![9, 10, 12]), ("0", 0, vec![12])] {
         let output = tokio::time::timeout(
             Duration::from_secs(5),
             cli(
@@ -72,6 +72,7 @@ async fn events_follow_starts_after_tail_snapshot_and_keeps_filters() {
                 Stub {
                     event_count: Some(10),
                     event_follow: true,
+                    tail_pages: pages,
                     ..Default::default()
                 },
             ),

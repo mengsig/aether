@@ -97,6 +97,25 @@ pub struct DaemonStatus {
     /// build. Absent when engines have no bridge, and on older daemons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge: Option<String>,
+    /// Set when the daemon could not read its store, scheduler and disk in
+    /// time and answered with what it read before. Every field but the
+    /// daemon's identity, `default_model`, `bridge` and its configured limits
+    /// is then as of [`StatusStale::read_at`]. Absent on a fresh answer, and
+    /// on older daemons, which never answer stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale: Option<StatusStale>,
+}
+
+/// Why a [`DaemonStatus`] is not fresh, and how old it is.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct StatusStale {
+    /// When the figures shown were read. Absent when the daemon has not
+    /// finished one read since it started: the counts are then zero because
+    /// they are unknown, not because nothing runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_at: Option<Timestamp>,
+    /// How long the daemon waited for a fresh read before it answered.
+    pub waited_ms: u64,
 }
 
 /// One agent's copy of a fanned-out message.

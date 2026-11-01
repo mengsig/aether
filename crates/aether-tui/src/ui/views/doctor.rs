@@ -94,8 +94,13 @@ fn body(app: &App, theme: &Theme) -> Vec<Line<'static>> {
                 status.pid,
                 status.last_seq
             ),
-            true,
-            "",
+            status.stale.is_none(),
+            &status.stale.as_ref().map_or_else(String::new, |stale| {
+                format!(
+                    "{}; its store reads are slow, a fresh one is running",
+                    crate::format::stale_status(stale)
+                )
+            }),
         ),
         (_, true) => check(theme, "daemon", "connected".into(), true, ""),
         _ => check(

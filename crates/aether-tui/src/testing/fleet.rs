@@ -165,6 +165,7 @@ pub fn loaded_app(agents: usize, events: usize, messages: usize) -> App {
             low_disk: None,
             writes: None,
             bridge: None,
+            stale: None,
         })),
     });
 
