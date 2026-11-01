@@ -146,8 +146,10 @@ async fn a_message_with_an_image_sent_mid_turn_reaches_the_engine_with_its_image
     h.runtime
         .send_message(id, vec![ContentBlock::text("start")], Actor::user())
         .expect("send");
-    wait_for(h.store.as_ref(), id, |a| {
-        a.status.kind() == AgentStatusKind::Running
+    // Running is recorded before the prompt is assembled; a message sent then
+    // joins the prompt and the engine would wait for a steer that never comes.
+    wait_until("the engine to be handed the turn", || {
+        (!engine.turns.lock().unwrap().is_empty()).then_some(())
     })
     .await;
     send_screenshot(&h, id, "and look at this");
@@ -156,6 +158,9 @@ async fn a_message_with_an_image_sent_mid_turn_reaches_the_engine_with_its_image
     })
     .await;
 
+    let turns = engine.turns.lock().unwrap().clone();
+    assert_eq!(turns.len(), 1, "the image is steered, not a new turn");
+    assert!(!turns[0].prompt.contains("and look at this"));
     let steered = engine.steered.lock().unwrap().clone();
     assert_eq!(steered.len(), 1, "{steered:?}");
     assert!(steered[0].text.contains("and look at this"));

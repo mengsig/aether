@@ -87,8 +87,12 @@ async fn restart_over(store: Arc<dyn Store>) -> Daemon {
     }
 }
 
+/// How long a run may take to settle before a test gives up. Generous: under
+/// host load a few scripted turns took more than 15 s, and a pass never waits it out.
+const SETTLE_WITHIN: Duration = Duration::from_secs(120);
+
 async fn wait_terminal(store: &dyn Store, id: AgentId) -> AgentStatus {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + SETTLE_WITHIN;
     loop {
         let agent = store.agent(id).expect("agent").expect("exists");
         if agent.status.is_terminal() {
@@ -222,7 +226,7 @@ async fn run_answered_by_a_rule() -> (Daemon, RunId) {
 
     // Answer the first ask and remember it; the second call is then answered
     // by the rule, which is the actor this test exists for.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + SETTLE_WITHIN;
     let mut remembered = false;
     loop {
         let pending = source.store.pending_approvals().expect("pending");
