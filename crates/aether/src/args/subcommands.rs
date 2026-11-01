@@ -810,6 +810,17 @@ pub(crate) enum StorageCmd {
         #[arg(long)]
         json: bool,
     },
+    /// The build cache against its budget, each partition with why it is
+    /// kept or would go. Previews unless `--prune`.
+    BuildCache {
+        /// Run storage GC now, which evicts the cache to its budget and
+        /// drops finished runs' partitions, then report what it did.
+        #[arg(long)]
+        prune: bool,
+        /// Print the build cache report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove eligible workspaces and migration backups.
     Gc {
         /// Report what would be removed; remove nothing.

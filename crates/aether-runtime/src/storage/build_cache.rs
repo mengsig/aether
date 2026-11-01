@@ -98,8 +98,8 @@ struct PartitionEntry {
 
 impl Runtime {
     /// Report the cache under `root` and, unless `dry_run`, evict it to its
-    /// budget. Uses are read and partitions moved aside under the commit
-    /// hold, so no agent can start using one between the check and the move.
+    /// budget. Agents' uses are read and partitions moved aside under the
+    /// commit hold, so no agent can start using one between check and move.
     pub(super) fn gc_build_cache(
         &self,
         root: &Path,
@@ -124,6 +124,9 @@ impl Runtime {
         };
         report.max_bytes = partitions.then_some(max_bytes);
         let grace = Duration::from_secs(u64::from(config.finished_grace_seconds));
+        // Read before the hold to keep it short: a process Aether starts
+        // later belongs to a turn or a job, both checked under it.
+        let processes = processes::using_partitions(root);
         let hold = (!dry_run).then(|| self.hold());
         let sched = self.sched.lock();
         let engine_turns = self.engine_turns.lock();
@@ -135,7 +138,7 @@ impl Runtime {
             max_bytes,
             grace,
             now: aether_core::time::now(),
-            processes: processes::using_partitions(root),
+            processes,
         };
         let chosen = if partitions {
             plan(&mut report, &claims, &policy)

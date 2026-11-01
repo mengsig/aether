@@ -8,6 +8,22 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **The build cache stays under its budget.** A cache beside `aether.db`
+  held 142 GB against its 76.7 GB budget, and 97 hourly sweeps removed
+  nothing. Their reports named the cause: 71 GB sat in partitions made
+  before the eviction marker existed, which counted neither against the
+  budget nor as evictable, so the rest looked within it. Now every byte
+  under the root counts, and an unmarked partition is evicted when an
+  agent in the store still builds into it. A finished run's partition is
+  dropped `[build_cache] finished_grace_seconds` (900 by default) after
+  its last use, whatever the cache holds. A live agent no longer holds its
+  run's partition just by existing: over the budget, a long-lived run's
+  idle partition goes after every finished run's. A partition stays while
+  an agent of its run is running, has work in flight or a background job,
+  or a process's environment or working directory points into it. `aether
+  status` reports a cache a sweep left over its budget, and `aether storage
+  build-cache` previews each partition's fate (`--prune` runs the sweep).
+
 - **`status` answers within seconds on an overloaded host.** On a host with a
   load of 45, 12 GB in swap and a 1.9 GB store, `status` took up to 146 s and
   every client gave up at 60 s. The daemon's log named the cause: the spend of
