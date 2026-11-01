@@ -142,7 +142,7 @@ pub async fn run(
                     }
                     Err(error) => return Err(error.into()),
                 };
-                if let Some(line) = gate.update(status.low_disk.as_ref()) {
+                if let Some(line) = gate.update_from(&status) {
                     finish_stream(&mut out, &mut streaming)?;
                     eprintln!("{line}");
                 }
