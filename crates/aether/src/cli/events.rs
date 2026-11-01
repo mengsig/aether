@@ -118,7 +118,7 @@ pub async fn events(
     let query = args.query(&client, &socket).await?;
     let mut cursor = args.after;
     if let Some(limit) = tail {
-        cursor = cursor.max(client.status().await?.last_seq);
+        cursor = cursor.max(tail_end(&client.status().await?, args.follow)?);
         for event in tail_events(&client, &args, query.clone(), cutoff, limit, cursor).await? {
             print_event(&event, args.json)?;
         }
@@ -141,6 +141,20 @@ pub async fn events(
     }
     eprintln!("{STREAM_ENDED_MESSAGE}");
     Ok(STREAM_ENDED_EXIT)
+}
+
+/// Where the tail ends. A stale status's sequence may be old: following
+/// replays what came after it, but a plain tail would silently stop short.
+fn tail_end(status: &aether_protocol::DaemonStatus, follow: bool) -> anyhow::Result<u64> {
+    let Some(stale) = status.stale.as_ref().filter(|_| !follow) else {
+        return Ok(status.last_seq);
+    };
+    assert!(stale.waited_ms > 0, "a stale status waited for a fresh one");
+    anyhow::bail!(
+        "the daemon's store reads are slow, so its newest event is not known yet \
+         (status waited {}s for it); try again, or add --follow",
+        stale.waited_ms.div_ceil(1000)
+    )
 }
 
 async fn tail_events(

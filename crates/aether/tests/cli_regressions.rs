@@ -82,6 +82,8 @@ struct Stub {
     /// before the command and answer history pages; the rest follow `compact`.
     compaction_log: Vec<Event>,
     compaction_cursor: u64,
+    /// `status` answers stale before its first read: no figures, `last_seq` 0.
+    stale_status: bool,
     /// While the root works, its child and grandchild and an agent another
     /// client placed in the run ask for approval (see `run_asks`).
     run_family: bool,
@@ -113,6 +115,7 @@ impl Default for Stub {
             viewed: None,
             compaction_log: Vec::new(),
             compaction_cursor: 0,
+            stale_status: false,
             run_family: false,
             awaiting_approval: false,
             expired_approvals: false,
@@ -215,6 +218,8 @@ async fn cli_with_socket(
         // `run` opens after creating its agent. Other subscriptions get fresh ids.
         let mut next_sub = 2;
         let mut run_created = false;
+        // Where the newest subscription replays from, as the daemon would.
+        let mut replay_after = stub.compaction_cursor;
         while let Some(line) = next_request(&mut lines).await {
             let frame: ClientFrame = serde_json::from_str(&line).unwrap();
             let result = match &frame.command {
@@ -234,11 +239,14 @@ async fn cli_with_socket(
                 Command::Subscribe { query, .. } if run_created && query.run.is_some() => {
                     Ok(Reply::Subscribed { id: 1, last_seq: 0 })
                 }
-                Command::Subscribe { .. } => {
+                Command::Subscribe { after, .. } => {
                     next_sub += 1;
+                    // As the daemon does: the requested cursor, or its latest.
+                    let latest = stub.event_count.unwrap_or(stub.compaction_cursor);
+                    replay_after = after.unwrap_or(latest);
                     Ok(Reply::Subscribed {
                         id: next_sub - 1,
-                        last_seq: 0,
+                        last_seq: replay_after,
                     })
                 }
                 Command::Unsubscribe { .. } => Ok(Reply::Ok),
@@ -347,7 +355,11 @@ async fn cli_with_socket(
                 Command::Status => Ok(Reply::Status(
                     serde_json::from_value(json!({
                         "instance_id": "stub", "version": "stub", "pid": 1, "started_at": AT,
-                        "last_seq": stub.event_count.unwrap_or(stub.compaction_cursor), "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
+                        "stale": stub.stale_status.then(|| json!({"waited_ms": 3000})),
+                        "last_seq": if stub.stale_status { 0 } else {
+                            stub.event_count.unwrap_or(stub.compaction_cursor)
+                        },
+                        "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
                         "agents_blocked": 0, "tasks_active": 0, "pending_approvals": 0,
                         "usage_total": aether_core::model::Usage::default(), "mcp": [hostile_mcp()],
                         "providers": [{"provider": HOSTILE, "running": 0, "backoff": {"reason": HOSTILE, "until": AT}}]
@@ -650,7 +662,7 @@ async fn cli_with_socket(
             .await;
             if let Command::Compact { .. } = &frame.command {
                 for event in &stub.compaction_log {
-                    if event.seq <= stub.compaction_cursor {
+                    if event.seq <= replay_after {
                         continue;
                     }
                     let sub = next_sub - 1;
@@ -1129,6 +1141,25 @@ async fn compact_reports_its_own_outcome_not_a_later_request_s() {
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["outcome"], "completed");
     assert_eq!(value["event"]["seq"], 2);
+}
+
+/// A stale `status` on an overloaded host names no current cursor. Taking
+/// it replayed an earlier fold, whose outcome was then reported as this one's.
+#[tokio::test]
+async fn compact_takes_its_cursor_from_its_subscription_not_a_stale_status() {
+    let mut stub = compacting(&[
+        (requested(), None),
+        (native(false, 4000), Some(0)),
+        (requested(), None),
+        (native(false, 932), Some(2)),
+    ]);
+    stub.compaction_cursor = 2;
+    stub.stale_status = true;
+    let output = cli(&["compact", AGENT, "--json"], stub).await;
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["event"]["seq"], 4, "this command's own fold");
+    assert_eq!(value["event"]["kind"]["after_tokens"], 932);
 }
 
 /// A pending handoff takes the request in without a new event; its fold is
