@@ -278,13 +278,24 @@ fn execute(args: Args, socket: PathBuf) -> anyhow::Result<i32> {
                 {
                     return cli::storage_backup(output, json || backup_json).map(|()| 0);
                 }
+                if let Some(StorageCmd::BuildCache {
+                    prune,
+                    json: cache_json,
+                }) = command
+                {
+                    return cli::storage_build_cache(endpoint, prune, json || cache_json)
+                        .await
+                        .map(|()| 0);
+                }
                 let (gc, dry_run, prune_build_output, json) = match command {
                     Some(StorageCmd::Gc {
                         dry_run,
                         prune_build_output,
                         json: gc_json,
                     }) => (true, dry_run, prune_build_output, json || gc_json),
-                    Some(StorageCmd::Backup { .. }) => unreachable!("handled above"),
+                    Some(StorageCmd::Backup { .. } | StorageCmd::BuildCache { .. }) => {
+                        unreachable!("handled above")
+                    }
                     None => (false, true, false, json),
                 };
                 cli::storage(endpoint, gc, dry_run, prune_build_output, json).await

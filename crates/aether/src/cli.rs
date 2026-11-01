@@ -26,7 +26,7 @@ pub(crate) use memory_proposals::OperatorScopeRef;
 pub(crate) use resolve::{AgentRef, ApprovalRef, RunRef, ScheduleRef, TargetRef, TaskRef};
 
 mod storage;
-pub use storage::{storage, storage_backup};
+pub use storage::{storage, storage_backup, storage_build_cache};
 mod retention;
 pub use retention::retention_preview;
 mod workspace;

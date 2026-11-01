@@ -688,6 +688,7 @@ partition and never writes into this one.
 # root = "/var/cache/aether"
 # Unset means 15% of the cache's filesystem.
 # max_bytes = 53687091200
+# finished_grace_seconds = 900
 
 # A listed table replaces the default, which is the one below.
 [[build_cache.env]]
@@ -717,17 +718,32 @@ an agent with `config.build_cache` on `create_agent` (see
 
 `aether storage` reports the bytes, repositories and partitions under the
 root as `build_cache`, apart from workspaces, with each partition's bytes,
-last use and the agents that lease it. Every agent of the run that is not
-yet completed, failed or cancelled, or has work in flight, leases its
-partition. When Aether's partitions hold more than `max_bytes`, storage GC
-evicts unleased ones, least recently used first, until the rest fit; the
-disk guard does the same as soon as the disk runs low. Last use is the
-latest activity of the run's agents or the newest write at the partition's
-top level. Aether marks each partition it creates with a `.aether-partition`
-file, and evicts only marked partitions. Anything else under the root, such
-as an operator's own target directory or a partition made before this
-release, is reported and kept. So is a partition that holds, or lies
-inside, a directory a client named with `config.build_cache`. Evicted
+last use, whether its run is live and what uses it. `aether storage
+build-cache` shows that section alone, with the bytes kept against the
+budget and why each partition is kept or would go; `--prune` runs storage
+GC now and reports what it removed. A partition is in use while an agent
+of its run is running, has work in flight or has a background job, or while
+a process's environment or working directory points into it (read from
+`/proc`); a partition in use is never evicted.
+
+Storage GC runs every `[storage] gc_interval_seconds` (an hour by default).
+It drops a finished run's partition once `finished_grace_seconds` have
+passed since its last use, whatever the cache holds; a run is finished when
+none of its agents in the store is still live. Then, while the partition
+directories under the root hold more than `max_bytes`, whether Aether made
+them or not, it evicts
+partitions nothing uses: finished runs' first, then idle ones of live runs
+such as a long-lived root agent's, oldest first within each. The disk guard
+does the same as soon as the disk runs low. When what is left is still over
+the budget, `aether status` says so. Last use is the latest activity of the
+run's agents or the newest write at the partition's top level. Aether marks
+each partition it creates with a `.aether-partition` file, and evicts only
+marked partitions, or an unmarked one an earlier release made while an
+agent in the store still builds into it, which it marks first. Anything
+else under the root, such as an operator's own target directory, is
+reported and kept, though its bytes count against the budget. So is a
+partition that holds, or lies inside, a directory a client named with
+`config.build_cache`. Evicted
 partitions are renamed into `<root>/.evicting` and then deleted; a deletion
 that fails is retried at the next sweep (each partition's marker is
 removed last), and nothing in `.evicting` that Aether did not move there,

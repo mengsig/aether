@@ -15,6 +15,36 @@ pub async fn storage(
     Ok(())
 }
 
+/// `aether storage build-cache`: the cache's part of a storage preview, or
+/// of a sweep run now with `prune`.
+pub async fn storage_build_cache(
+    endpoint: impl Into<aether_client::Endpoint>,
+    prune: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let client = connect(&endpoint.into()).await?;
+    let report = client.storage(true, !prune, false).await?;
+    println!("{}", build_cache_text(&report["build_cache"], prune, json)?);
+    Ok(())
+}
+
+/// The build cache section alone; a daemon with no cache root says so.
+fn build_cache_text(cache: &Value, prune: bool, json: bool) -> anyhow::Result<String> {
+    if json {
+        return Ok(serde_json::to_string_pretty(cache)?);
+    }
+    if cache.is_null() {
+        return Ok("build_cache: this daemon has no build cache root".to_owned());
+    }
+    let mut out = vec![format!(
+        "Build cache {}",
+        if prune { "cleanup" } else { "preview" }
+    )];
+    out.extend(kind_lines("build_cache", cache));
+    debug_assert!(out.len() > 1, "the section says at least its size");
+    Ok(out.join("\n"))
+}
+
 /// `aether storage backup`: a verified compressed copy of the local database.
 pub fn storage_backup(output: Option<std::path::PathBuf>, json: bool) -> anyhow::Result<()> {
     let database = aether_protocol::paths::store_path();
@@ -119,6 +149,17 @@ fn kind_lines(kind: &str, value: &Value) -> Vec<String> {
     }
     if let Some(max) = value["max_bytes"].as_u64() {
         out.push(format!("  budget {}", units::bytes(max)));
+        if let Some(kept) = value["bytes_kept"].as_u64() {
+            let state = if kept > max {
+                "over budget"
+            } else {
+                "within budget"
+            };
+            out.push(format!(
+                "  {} kept after eviction, {state}",
+                units::bytes(kept)
+            ));
+        }
     }
     for error in value["errors"].as_array().into_iter().flatten() {
         out.push(format!(
@@ -234,6 +275,26 @@ mod tests {
         }
         assert!(text.ends_with("Available: 1.00 TiB"), "{text}");
         assert!(!text.contains("106801321380"), "{text}");
+    }
+
+    #[test]
+    fn the_build_cache_command_shows_its_section_against_the_budget() {
+        let mut report = report();
+        report["build_cache"]["bytes_kept"] = json!(12_884_901_888_u64);
+        let text = build_cache_text(&report["build_cache"], false, false).expect("renders");
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines[0], "Build cache preview");
+        assert!(lines.contains(&"  budget 10.0 GiB"), "{text}");
+        assert!(
+            lines.contains(&"  12.0 GiB kept after eviction, over budget"),
+            "{text}"
+        );
+        assert!(!text.contains("workspaces"), "{text}");
+        let json = build_cache_text(&report["build_cache"], true, true).expect("renders");
+        let value: Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(value, report["build_cache"]);
+        let none = build_cache_text(&Value::Null, false, false).expect("renders");
+        assert!(none.contains("no build cache root"), "{none}");
     }
 
     #[test]
