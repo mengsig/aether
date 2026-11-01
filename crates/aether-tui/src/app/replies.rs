@@ -51,8 +51,7 @@ impl App {
         if then == Then::Status
             && let Reply::Status(status) = reply
         {
-            if self.status.as_ref() != Some(&status) {
-                self.status = Some(status);
+            if self.accept_status(status) {
                 self.background_dirty = true;
             }
             return effects;
@@ -64,6 +63,20 @@ impl App {
         }
         self.apply_lifecycle_reply(then, reply, &mut effects);
         effects
+    }
+
+    /// Stores `status` unless it equals the current one; true when it changed.
+    /// A stale status never changes the disk hold: its flag is the daemon's
+    /// word from an earlier read, or a default when it has not read yet.
+    pub(super) fn accept_status(&mut self, mut status: aether_protocol::DaemonStatus) -> bool {
+        if status.stale.is_some() {
+            status.low_disk = self.status.as_ref().and_then(|s| s.low_disk.clone());
+        }
+        if self.status.as_ref() == Some(&status) {
+            return false;
+        }
+        self.status = Some(status);
+        true
     }
 
     fn settle_remote_ack(&mut self, then: Then, result: &Result<Reply, ClientError>) -> Then {

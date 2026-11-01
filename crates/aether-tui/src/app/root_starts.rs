@@ -226,7 +226,7 @@ impl App {
         }
         let workspace = start.workspace.clone();
         if link == self.link {
-            self.status = Some(status);
+            self.accept_status(status);
         }
         let request = self.request_root(id, workspace);
         debug_assert!(

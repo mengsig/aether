@@ -96,7 +96,10 @@ pub(super) async fn doctor_report(socket: PathBuf, explicit_socket: bool) -> cra
         doctor::check_disk(
             &paths,
             disk_floor,
-            status.as_ref().and_then(|s| s.low_disk.as_ref()),
+            status
+                .as_ref()
+                .filter(|s| s.stale.is_none())
+                .and_then(|s| s.low_disk.as_ref()),
         ),
         doctor::check_agent_temp(
             &paths,
