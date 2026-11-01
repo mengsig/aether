@@ -276,9 +276,8 @@ fn chat_agent(h: &Harness) -> AgentId {
     agent.id
 }
 
-/// Polls `wait_for` and `wait_until` make before giving up: at least a minute.
-/// Counted in polls, not wall-clock: a host stall freezes the runtime too,
-/// so a deadline could expire before the runtime ran again.
+/// At least a minute of polls, counted rather than timed: a host stall freezes
+/// the runtime too, so a deadline could expire before it ran again.
 const POLLS: u32 = 3000;
 
 /// Waits until `probe` yields a value, for something no agent's record shows
