@@ -116,6 +116,7 @@ fn reply_status(app: &mut App, then: Then, agents_suspended: u32) {
             low_disk: None,
             writes: None,
             bridge: None,
+            stale: None,
         })),
     });
 }
@@ -386,6 +387,7 @@ pub fn populated_app() -> App {
             low_disk: None,
             writes: None,
             bridge: None,
+            stale: None,
         })),
     });
     let ev = |seq, kind| {

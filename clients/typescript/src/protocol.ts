@@ -308,6 +308,7 @@ export * from "./protocol/types/SideEffectClass.ts";
 export * from "./protocol/types/SnapshotId.ts";
 export * from "./protocol/types/SnapshotMemories.ts";
 export * from "./protocol/types/SpawnSpec.ts";
+export * from "./protocol/types/StatusStale.ts";
 export * from "./protocol/types/StopReason.ts";
 export * from "./protocol/types/SubmissionResolution.ts";
 export * from "./protocol/types/Task.ts";

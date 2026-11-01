@@ -5226,6 +5226,17 @@
           },
           "type": "array"
         },
+        "stale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusStale"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when the daemon could not read its store, scheduler and disk in\ntime and answered with what it read before. Every field but the\ndaemon's identity, `default_model`, `bridge` and its configured limits\nis then as of [`StatusStale::read_at`]. Absent on a fresh answer, and\non older daemons, which never answer stale."
+        },
         "started_at": {
           "format": "date-time",
           "type": "string"
@@ -14879,6 +14890,29 @@
       "required": [
         "role",
         "objective"
+      ],
+      "type": "object"
+    },
+    "StatusStale": {
+      "description": "Why a [`DaemonStatus`] is not fresh, and how old it is.",
+      "properties": {
+        "read_at": {
+          "description": "When the figures shown were read. Absent when the daemon has not\nfinished one read since it started: the counts are then zero because\nthey are unknown, not because nothing runs.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "waited_ms": {
+          "description": "How long the daemon waited for a fresh read before it answered.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "waited_ms"
       ],
       "type": "object"
     },
