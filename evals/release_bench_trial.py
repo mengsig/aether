@@ -18,6 +18,7 @@ from harness_bench import run_aether_trial, run_native_trial, save_json
 from harness_bench_report import trial_summary
 from harness_bench_reprice import rebuild_trial_usage
 from release_bench_archon import run_archon_trial
+from release_bench_arms import is_release_label
 from release_bench_grade import grade
 from release_bench_spend import (
     ALLOWANCE_USD,
@@ -116,7 +117,7 @@ def _price(row, arm, context):
         return _with_codex_descendants(row, arm, context, summary)
     if summary["cost_priced"]:
         return summary["api_equivalent_usd"], summary["tokens"]
-    if arm["harness"] in ("old", "new"):
+    if arm["harness"] in ("old", "new") or is_release_label(arm["harness"]):
         return _price_from_store(row, arm, context), summary["tokens"]
     return None, summary["tokens"]
 
@@ -186,7 +187,7 @@ def infra_error(row, harness):
     Only the bench's own steps, provider outages and (on the native drift
     reference) a CLI that never produced output are excluded. A failure of an
     Aether or Archon arm is the harness's own: see `harness_failure`."""
-    assert harness in ("native", "old", "new", "archon"), f"unknown harness {harness!r}"
+    assert harness in ("native", "old", "new", "archon") or is_release_label(harness), f"unknown harness {harness!r}"
     if row.get("bench_error"):
         return f"bench: {str(row['bench_error'])[:300]}"
     if row.get("spend_stop"):

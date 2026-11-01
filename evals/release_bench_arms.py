@@ -2,13 +2,16 @@
 
 An arm is one harness on one model tier. Every model tier has a native arm
 (the plain CLI, the drift reference) and two Aether arms that differ only in
-the binary: `old` (the last release) and `new` (the candidate). The optional
-Archon arm queues the task on a private Archon over the candidate binary.
+the binary: `old` (the last release) and `new` (the candidate). A history run
+adds Aether arms named by a release tag, such as `haiku/v1.0.0`, each on that
+release's binary. The optional Archon arm queues the task on a private Archon over the candidate binary.
 Every arm runs under its tier's spend allowance (release_bench_spend), which
 a live guard enforces; harness-native caps are set to the same figure where
 the harness has one. Every arm also installs a limit on the model-calling
 agents a trial runs at once, the figure its budget reservation assumes.
 """
+import re
+
 from harness_bench_config import COMMON_SUFFIX, SOLO_SUFFIX
 from harness_bench_treatments import lower_tier_conditions
 from release_bench_spend import ALLOWANCE_USD, DELEGATION_AGENTS
@@ -19,11 +22,17 @@ HARNESSES = ("native", "old", "new")
 LUNA_TOKEN_CAP = 4_000_000
 CONDITION_KEYS = {"haiku": ("native-haiku-low", "aether-single-haiku-low"),
                   "luna": ("native-luna-low", "aether-single-luna-low")}
+RELEASE_LABEL = re.compile(r"v\d+\.\d+\.\d+")
+
+
+def is_release_label(harness):
+    """Whether `harness` names an extra Aether release binary of a history run, such as `v1.0.0`."""
+    return RELEASE_LABEL.fullmatch(harness) is not None
 
 
 def arm_key(model, harness):
     assert model in MODELS, f"unknown model tier {model!r}"
-    assert harness in HARNESSES + ("archon",), f"unknown harness {harness!r}"
+    assert harness in HARNESSES + ("archon",) or is_release_label(harness), f"unknown harness {harness!r}"
     return f"{model}/{harness}"
 
 
@@ -32,7 +41,7 @@ def agent_cap(harness, allow_delegation):
 
     Aether's turn scheduler counts every agent, Archon's orchestrator included. The native
     CLIs limit only subagents, and to no fewer than one, so a native trial may run two."""
-    assert harness in HARNESSES + ("archon",), f"unknown harness {harness!r}"
+    assert harness in HARNESSES + ("archon",) or is_release_label(harness), f"unknown harness {harness!r}"
     delegates = DELEGATION_AGENTS if allow_delegation else 0
     if harness == "native":
         return 1 + max(1, delegates)

@@ -57,6 +57,11 @@ show. Reports are never pooled across protocol versions. To run a comparison
 yourself, see the [evaluation tooling](../evals/README.md) and its
 [protocol](../evals/harness_bench_protocol.md).
 
+- [Release bench history](release-bench/history.md): nine Aether releases
+  from 1.0.0 to 1.2.8 side by side, one run per tier on set v2; no deterioration
+  found. Haiku (990 trials): 1.2.8 -1.8 points against 1.0.0 (p = 0.344
+  one-sided), trend p = 0.130. Luna, partial (83 of 110 tasks, stopped at the
+  Codex quota): -6.0 points (p = 0.202), trend p = 0.369, with wide intervals.
 - [Release bench 1.2.8](release-bench/1.2.8.md): Aether 1.2.8 against 1.2.7
   on set v2, 440 trials; Haiku +0.9 points and Luna -5.5 (p = 0.392), cost
   x0.84 and x1.10: no decrease; Luna's estimate is within the set's A/A
