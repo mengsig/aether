@@ -6,6 +6,27 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Changed
+
+- **`make ci` retries a failed test once and names the flaky ones.** On a
+  loaded host a timing-sensitive test sometimes failed, and `make ci`, 20 to
+  30 minutes, then ran again in full; one change failed all three of its runs
+  that way. The test stage now runs the tests under cargo-nextest with
+  `--retries 1`, then the doc-tests with `cargo test --doc`. A test that
+  passed only on its retry is printed as `FLAKY <binary> <test>`, with a count
+  at the end of the run; a test that fails twice still fails it. On this
+  host the tests ran in 130 s instead of 6.5 minutes. Without cargo-nextest
+  the stage says how to install it and runs `cargo test`. The kernel tests'
+  limit of 4 at once that fork a real `bash` is kept as a nextest test group
+  (`.config/nextest.toml`).
+- **`make ci` takes a host CI slot.** It first takes one of `CI_HOST_SLOTS`
+  (default 1) host-wide slots, a `flock` on
+  `${XDG_RUNTIME_DIR:-/tmp}/heavy-ci/slot-<i>.lock`, shared with Archon's
+  `make ci`, and says once that it waits when all are taken. The slot is
+  released however `make ci` ends. `CI_HOST_SLOTS=0` turns it off, and
+  `make ci-checks` runs the same checks without one. GitHub CI is
+  unaffected.
+
 ### Fixed
 
 - **The build cache stays under its budget.** A cache beside `aether.db`
