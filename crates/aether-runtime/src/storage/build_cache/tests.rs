@@ -14,6 +14,9 @@ const REPOSITORY: &str = "github.com/example-org/example-repo";
 const KIB: u64 = 1 << 10;
 const DAY: Duration = Duration::from_secs(86_400);
 
+/// A grace no test outlives, so only the budget evicts.
+const FOREVER: u32 = u32::MAX;
+
 /// A runtime with its own cache root and a budget of `max_bytes`.
 struct Fixture {
     runtime: Arc<Runtime>,
@@ -24,10 +27,18 @@ struct Fixture {
 
 impl Fixture {
     async fn new(max_bytes: u64) -> Self {
+        Self::with_grace(max_bytes, FOREVER).await
+    }
+
+    /// A finished run's partition is dropped `grace_seconds` after its use.
+    async fn with_grace(max_bytes: u64, grace_seconds: u32) -> Self {
         let config = tempfile::tempdir().unwrap();
         fs::write(
             config.path().join("config.toml"),
-            format!("[storage]\nworkspaces_days = 0\n[build_cache]\nmax_bytes = {max_bytes}\n"),
+            format!(
+                "[storage]\nworkspaces_days = 0\n[build_cache]\nmax_bytes = {max_bytes}\n\
+                 finished_grace_seconds = {grace_seconds}\n"
+            ),
         )
         .unwrap();
         let cache = tempfile::tempdir().unwrap();
@@ -180,12 +191,12 @@ async fn over_budget_the_least_recently_used_unleased_partition_goes_first() {
 }
 
 #[tokio::test]
-async fn every_live_status_leases_its_partition_even_with_no_budget() {
+async fn over_budget_finished_runs_go_before_idle_live_ones_and_a_running_one_stays() {
     let f = Fixture::new(0).await;
-    let live = [
+    let (running, in_use) = f.agent(AgentStatus::Running, 90, 8);
+    let idle = [
         AgentStatus::Created,
         AgentStatus::Ready,
-        AgentStatus::Running,
         AgentStatus::Waiting {
             condition: WaitCondition::Task { id: TaskId::new() },
         },
@@ -193,7 +204,7 @@ async fn every_live_status_leases_its_partition_even_with_no_budget() {
             reason: BlockReason::Dependency { on: TaskId::new() },
         },
     ];
-    let live: Vec<_> = live.map(|status| f.agent(status, 90, 8)).into();
+    let idle: Vec<_> = idle.map(|status| f.agent(status, 90, 8)).into();
     let finished = [
         AgentStatus::Completed { summary: None },
         AgentStatus::Failed {
@@ -203,22 +214,217 @@ async fn every_live_status_leases_its_partition_even_with_no_budget() {
     ];
     let finished: Vec<_> = finished.map(|status| f.agent(status, 1, 8)).into();
 
+    let preview = f.gc(true);
+    let order: Vec<_> = preview
+        .entries
+        .iter()
+        .filter(|entry| entry.action == "would_evict")
+        .map(|entry| entry.run_live)
+        .collect();
+    assert_eq!(order.len(), idle.len() + finished.len(), "{preview:?}");
+    assert!(
+        order.iter().all(|live| live.is_some()),
+        "every run is known: {order:?}"
+    );
+
     let swept = f.gc(false);
-    for (agent, partition) in &live {
-        let kept = entry(&swept, partition);
-        assert_eq!(kept.action, "kept", "{:?}", agent.status);
-        assert_eq!(kept.leased_by, [agent.id]);
-        assert!(built(partition), "{:?}", agent.status);
-    }
-    for (agent, partition) in &finished {
-        assert_eq!(
-            entry(&swept, partition).action,
-            "evicted",
-            "{:?}",
-            agent.status
-        );
+    let kept = entry(&swept, &in_use);
+    assert_eq!(
+        (kept.action, kept.reason),
+        ("kept", "in use by an agent of its run")
+    );
+    assert_eq!(kept.leased_by, [running.id]);
+    assert!(built(&in_use));
+    for (agent, partition) in finished.iter().chain(&idle) {
+        let seen = entry(&swept, partition);
+        assert_eq!(seen.action, "evicted", "{:?}", agent.status);
+        assert_eq!(seen.run_live, Some(!agent.status.is_terminal()));
         assert!(!partition.exists(), "{:?}", agent.status);
     }
+    let reasons: Vec<_> = finished
+        .iter()
+        .chain(&idle)
+        .map(|(_, partition)| entry(&swept, partition).reason)
+        .collect();
+    assert!(
+        reasons[..finished.len()]
+            .iter()
+            .all(|reason| reason.starts_with("a finished run's")),
+        "{reasons:?}"
+    );
+    assert!(
+        reasons[finished.len()..]
+            .iter()
+            .all(|reason| reason.starts_with("idle in a live run")),
+        "{reasons:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_long_lived_runs_idle_partition_goes_only_after_finished_ones() {
+    let f = Fixture::new(300 * KIB).await;
+    let waiting = AgentStatus::Waiting {
+        condition: WaitCondition::Task { id: TaskId::new() },
+    };
+    let (_, long_lived) = f.agent(waiting, 30, 256);
+    let (_, finished) = f.agent(AgentStatus::Completed { summary: None }, 1, 256);
+
+    let first = f.gc(false);
+    assert_eq!(entry(&first, &finished).action, "evicted", "{first:?}");
+    assert_eq!(
+        entry(&first, &long_lived).action,
+        "kept",
+        "older, but the finished run's going was enough"
+    );
+    assert!(first.bytes_kept <= 300 * KIB, "{first:?}");
+
+    let (_, newer) = f.agent(AgentStatus::Completed { summary: None }, 0, 256);
+    fs::File::open(newer.join(PARTITION_MARKER))
+        .unwrap()
+        .set_modified(SystemTime::now())
+        .unwrap();
+    let second = f.gc(false);
+    assert_eq!(entry(&second, &newer).action, "evicted", "{second:?}");
+    assert_eq!(entry(&second, &long_lived).action, "kept");
+
+    let (_, live_newer) = f.agent(AgentStatus::Ready, 0, 256);
+    let third = f.gc(false);
+    let evicted = entry(&third, &long_lived);
+    assert_eq!(
+        (evicted.action, evicted.run_live),
+        ("evicted", Some(true)),
+        "the idle long-lived run is the oldest: {third:?}"
+    );
+    assert!(!long_lived.exists());
+    assert!(built(&live_newer));
+}
+
+#[tokio::test]
+async fn a_finished_runs_partition_is_dropped_after_its_grace_whatever_the_budget() {
+    let f = Fixture::with_grace(u64::MAX, 3_600).await;
+    let (_, long_ago) = f.agent(AgentStatus::Completed { summary: None }, 1, 8);
+    let (_, just_now) = f.agent(AgentStatus::Completed { summary: None }, 0, 8);
+    let (_, live) = f.agent(AgentStatus::Ready, 1, 8);
+
+    let swept = f.gc(false);
+    let dropped = entry(&swept, &long_ago);
+    assert_eq!(
+        (dropped.action, dropped.reason),
+        ("evicted", "its run finished longer than the grace ago")
+    );
+    assert!(!long_ago.exists());
+    assert_eq!(
+        entry(&swept, &just_now).action,
+        "kept",
+        "still in its grace"
+    );
+    assert_eq!(
+        entry(&swept, &live).action,
+        "kept",
+        "a live run is not finished"
+    );
+    assert!(built(&just_now) && built(&live));
+}
+
+#[tokio::test]
+async fn every_byte_under_the_root_counts_so_the_budget_holds() {
+    let f = Fixture::new(300 * KIB).await;
+    let then = SystemTime::now() - DAY * 40;
+    let operators = f.root.join("my-target/debug");
+    build(&operators, 256, then);
+    let (_, oldest) = f.agent(AgentStatus::Completed { summary: None }, 20, 32);
+    let (_, newer) = f.agent(AgentStatus::Completed { summary: None }, 10, 32);
+
+    let swept = f.gc(false);
+    assert_eq!(entry(&swept, &operators).action, "kept", "not Aether's");
+    assert!(built(&operators));
+    assert_eq!(
+        entry(&swept, &oldest).action,
+        "evicted",
+        "Aether's alone fit, all of it does not: {swept:?}"
+    );
+    assert_eq!(entry(&swept, &newer).action, "kept", "the rest fit");
+    assert!(
+        swept.bytes_kept > 256 * KIB && swept.bytes_kept <= 300 * KIB,
+        "{swept:?}"
+    );
+    let problems = f.runtime.status().unwrap().problems;
+    assert!(
+        problems
+            .iter()
+            .all(|problem| !problem.contains("build cache")),
+        "{problems:?}"
+    );
+
+    build(&f.root.join("my-target/release"), 128, then);
+    let over = f.gc(false);
+    assert!(over.bytes_kept > 300 * KIB, "{over:?}");
+    let problems = f.runtime.status().unwrap().problems;
+    assert!(
+        problems.iter().any(|problem| problem.contains("over its")
+            && problem.contains("aether storage build-cache")),
+        "an unmet budget is shown: {problems:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_partition_made_before_the_marker_is_evicted_once_the_store_vouches_for_it() {
+    let f = Fixture::new(0).await;
+    let (agent, legacy) = f.agent(AgentStatus::Completed { summary: None }, 5, 8);
+    fs::remove_file(legacy.join(PARTITION_MARKER)).unwrap();
+    let repository = legacy.parent().unwrap();
+    let unknown = repository.join(RunId::new().to_string());
+    build(&unknown, 8, SystemTime::now() - DAY);
+
+    let preview = f.gc(true);
+    let adopted = entry(&preview, &legacy);
+    assert_eq!(
+        (adopted.action, adopted.run),
+        ("would_evict", Some(agent.run))
+    );
+    assert!(
+        !is_marked(&legacy, PARTITION_MARKER),
+        "a preview marks nothing"
+    );
+    let swept = f.gc(false);
+    assert_eq!(entry(&swept, &legacy).action, "evicted", "{swept:?}");
+    assert!(!legacy.exists());
+    let stranger = entry(&swept, &unknown);
+    assert_eq!(
+        (stranger.action, stranger.reason),
+        ("kept", "not a partition Aether creates"),
+        "no agent of the store built there"
+    );
+    assert!(built(&unknown));
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_partition_a_process_points_into_is_never_evicted() {
+    let f = Fixture::with_grace(0, 0).await;
+    let (_, used) = f.agent(AgentStatus::Completed { summary: None }, 5, 8);
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .env("CARGO_TARGET_DIR", used.join("cargo-target"))
+        .spawn()
+        .unwrap();
+    let swept = f.gc(false);
+    let alive = child.try_wait().unwrap().is_none();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(alive, "the process ran through the sweep");
+    let kept = entry(&swept, &used);
+    assert_eq!(
+        (kept.action, kept.reason),
+        ("kept", "in use by a running process")
+    );
+    assert_eq!(kept.used_by_pids, [child.id()]);
+    assert!(built(&used));
+    assert_eq!(
+        entry(&f.gc(false), &used).action,
+        "evicted",
+        "once it exits"
+    );
 }
 
 #[tokio::test]

@@ -443,6 +443,28 @@ impl BackgroundProcesses {
         Ok(out)
     }
 
+    /// The agents with a background process not yet reaped, whatever their
+    /// status: what they run may still be writing where they pointed it.
+    pub fn agents_running(&self) -> Result<std::collections::HashSet<AgentId>, ToolError> {
+        let processes = self.lock()?;
+        let mut agents = std::collections::HashSet::new();
+        for process in processes.values() {
+            let finished = process
+                .state
+                .lock()
+                .map_err(|_| ToolError::Internal("process state poisoned".into()))?
+                .finished;
+            if !finished {
+                agents.insert(process.agent);
+            }
+        }
+        debug_assert!(
+            agents.len() <= processes.len(),
+            "one agent per process at most"
+        );
+        Ok(agents)
+    }
+
     /// Run `spawn`, which starts a host command, unless spawns are closed or
     /// `cancel` is; the gate stays held meanwhile, so a fence waits for it.
     pub(crate) fn spawn_host<T>(

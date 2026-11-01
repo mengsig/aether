@@ -1,23 +1,32 @@
-//! What the build cache holds, and keeping it to its byte budget: Aether's
-//! own partitions that no agent leases are evicted, least recently used first.
+//! What the build cache holds, and keeping it to its byte budget: a finished
+//! run's partition is dropped after a grace, and over the budget Aether's own
+//! partitions that nothing uses are evicted, finished runs' first.
 
-use std::collections::{HashMap, HashSet};
+mod plan;
+mod processes;
+
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
+use aether_core::agent::AgentStatus;
 use aether_core::id::{AgentId, RunId};
 use aether_core::time::Timestamp;
 use aether_store::AgentFilter;
 use serde::Serialize;
 
+use self::plan::{Claims, Policy, plan};
 use super::{Runtime, invalid};
 use crate::build_cache::PARTITION_MARKER;
 
-const POLICY: &str =
-    "unleased partitions over the byte budget are evicted, least recently used first";
+const POLICY: &str = "a finished run's partition is dropped after the grace; over the byte \
+     budget, partitions no agent or process uses are evicted, finished runs' first, oldest first";
+
+/// The problem `aether status` shows while a sweep leaves the cache over budget.
+const OVER_BUDGET_PROBLEM: &str = "storage.build_cache";
 
 /// A cache is build output, far more entries than any other category, so its
 /// walk gets its own, larger bound.
@@ -42,9 +51,13 @@ pub(super) struct BuildCacheReport {
     policy: &'static str,
     /// Allocated disk blocks, as `du` counts them.
     bytes: u64,
-    /// What Aether's partitions may hold; unset when there is nothing to evict.
+    /// What the cache may hold; unset when there is nothing to evict.
     max_bytes: Option<u64>,
+    /// What the partitions hold once this pass's evictions are done, or
+    /// would hold for a preview; above `max_bytes` the rest is in use.
+    bytes_kept: u64,
     bytes_removed: u64,
+    finished_grace_seconds: u32,
     repositories: usize,
     /// One per repository and run.
     partitions: usize,
@@ -66,43 +79,26 @@ struct PartitionEntry {
     bytes: u64,
     /// The latest of its run's agent activity and a write at its top level.
     last_used: Option<Timestamp>,
-    /// Live agents of the run, or ones with work in flight.
+    /// Agents of the run that are running, have work in flight or have a
+    /// background process.
     leased_by: Vec<AgentId>,
+    /// Whether an agent of its run has not finished; unset when none of its
+    /// agents is in the store.
+    run_live: Option<bool>,
+    /// Processes whose environment or working directory lies inside it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    used_by_pids: Vec<u32>,
     action: &'static str,
     reason: &'static str,
-}
-
-/// What the store says of one partition.
-#[derive(Debug, Default)]
-struct Owners {
-    holders: Vec<AgentId>,
-    last_active: Option<Timestamp>,
-}
-
-/// What the store says of the cache: Aether's partitions in use, and the
-/// directories clients named, which eviction must never reach.
-#[derive(Debug, Default)]
-struct Claims {
-    owners: HashMap<PathBuf, Owners>,
-    clients: Vec<PathBuf>,
-}
-
-impl Claims {
-    /// Whether `path` holds or lies inside a client's directory, comparing
-    /// both as written and with links resolved.
-    fn touches_client(&self, path: &Path) -> bool {
-        let real = resolve(path);
-        self.clients.iter().any(|dir| {
-            [path, real.as_path()]
-                .into_iter()
-                .any(|path| dir.starts_with(path) || path.starts_with(dir))
-        })
-    }
+    /// The run a directory named like a partition but unmarked would be:
+    /// one made by a release before the marker.
+    #[serde(skip)]
+    unmarked_run: Option<RunId>,
 }
 
 impl Runtime {
     /// Report the cache under `root` and, unless `dry_run`, evict it to its
-    /// budget. Leases are read and partitions moved aside under the commit
+    /// budget. Uses are read and partitions moved aside under the commit
     /// hold, so no agent can start using one between the check and the move.
     pub(super) fn gc_build_cache(
         &self,
@@ -112,26 +108,39 @@ impl Runtime {
         debug_assert!(root.is_absolute(), "{} is not absolute", root.display());
         let trash = root.join(TRASH);
         let mut report = scan(root).map_err(invalid)?;
-        let partitions = report.entries.iter().any(|entry| entry.run.is_some());
+        let config = &self.models.config().build_cache;
+        report.finished_grace_seconds = config.finished_grace_seconds;
+        let partitions = report
+            .entries
+            .iter()
+            .any(|entry| entry.run.is_some() || entry.unmarked_run.is_some());
         let leftovers = !dry_run && fs::symlink_metadata(&trash).is_ok();
         if !partitions && !leftovers {
             return Ok(report);
         }
-        if partitions {
-            report.max_bytes = Some(match self.models.config().build_cache.max_bytes {
-                Some(bytes) => bytes,
-                None => fs4::total_space(root).map_err(invalid)? / 100 * DEFAULT_BUDGET_PERCENT,
-            });
-        }
+        let max_bytes = match config.max_bytes {
+            Some(bytes) => bytes,
+            None => fs4::total_space(root).map_err(invalid)? / 100 * DEFAULT_BUDGET_PERCENT,
+        };
+        report.max_bytes = partitions.then_some(max_bytes);
+        let grace = Duration::from_secs(u64::from(config.finished_grace_seconds));
         let hold = (!dry_run).then(|| self.hold());
         let sched = self.sched.lock();
         let engine_turns = self.engine_turns.lock();
-        let in_flight = self.in_flight_agents(&sched, &engine_turns)?;
-        let claims = self.build_cache_claims(root, &in_flight)?;
+        let mut in_use = self.in_flight_agents(&sched, &engine_turns)?;
+        in_use.extend(self.agents_with_background_jobs()?);
+        let claims = self.build_cache_claims(root, &in_use)?;
         self.require_gc_ownership()?;
-        let chosen = match report.max_bytes {
-            Some(max_bytes) => plan(&mut report, &claims, max_bytes),
-            None => Vec::new(),
+        let policy = Policy {
+            max_bytes,
+            grace,
+            now: aether_core::time::now(),
+            processes: processes::using_partitions(root),
+        };
+        let chosen = if partitions {
+            plan(&mut report, &claims, &policy)
+        } else {
+            Vec::new()
         };
         if dry_run {
             return Ok(report);
@@ -139,6 +148,18 @@ impl Runtime {
         let left = trash_leftovers(&trash, &claims, &mut report.errors);
         let moved = move_to_trash(&mut report, &chosen, &trash);
         drop((engine_turns, sched, hold));
+        self.remove_evicted(&mut report, moved, left);
+        Ok(report)
+    }
+
+    /// Delete what the sweep moved into the trash, outside the commit hold,
+    /// and say in `status` when what is left is still over the budget.
+    fn remove_evicted(
+        &self,
+        report: &mut BuildCacheReport,
+        moved: Vec<(usize, PathBuf)>,
+        left: Vec<PathBuf>,
+    ) {
         for (index, path) in moved {
             match remove_partition(&path) {
                 Ok(()) => report.bytes_removed += report.entries[index].bytes,
@@ -154,7 +175,18 @@ impl Runtime {
                     .push(format!("removing {}: {error}", path.display()));
             }
         }
-        Ok(report)
+        let held: u64 = report.entries.iter().map(|entry| entry.bytes).sum();
+        report.bytes_kept = held.saturating_sub(report.bytes_removed);
+        debug_assert!(
+            report.bytes_kept <= held,
+            "nothing is kept that was not held"
+        );
+        match report.max_bytes {
+            Some(max_bytes) if report.bytes_kept > max_bytes => {
+                self.report_problem(OVER_BUDGET_PROBLEM.into(), over_budget(report, max_bytes));
+            }
+            _ => self.clear_problem(OVER_BUDGET_PROBLEM),
+        }
     }
 
     /// Evict the cache now because the disk guard found the disk low, rather
@@ -176,14 +208,19 @@ impl Runtime {
         }
     }
 
+    /// The agents with a background process of Aether's still running.
+    fn agents_with_background_jobs(&self) -> crate::Result<HashSet<AgentId>> {
+        let Some(jobs) = self.tools.background() else {
+            return Ok(HashSet::new());
+        };
+        jobs.agents_running()
+            .map_err(|error| invalid(format!("reading background jobs: {error}")))
+    }
+
     /// Each Aether partition under `root` an agent in the store builds into,
-    /// with the agents that lease it and when its run was last active, and
-    /// every directory a client named for its agents.
-    fn build_cache_claims(
-        &self,
-        root: &Path,
-        in_flight: &HashSet<AgentId>,
-    ) -> crate::Result<Claims> {
+    /// with the agents using it, whether its run is live and when it was last
+    /// active, and every directory a client named for its agents.
+    fn build_cache_claims(&self, root: &Path, in_use: &HashSet<AgentId>) -> crate::Result<Claims> {
         let mut claims = Claims::default();
         for agent in self.store.agents(&AgentFilter::default())? {
             if let Some(dir) = &agent.config.build_cache {
@@ -193,10 +230,12 @@ impl Runtime {
             let Some(partition) = crate::build_cache::aether_partition(root, &agent) else {
                 continue;
             };
+            debug_assert!(partition.starts_with(root), "{}", partition.display());
             let owner = claims.owners.entry(partition).or_default();
-            if !agent.status.is_terminal() || in_flight.contains(&agent.id) {
+            if matches!(agent.status, AgentStatus::Running) || in_use.contains(&agent.id) {
                 owner.holders.push(agent.id);
             }
+            owner.live |= !agent.status.is_terminal();
             let active = agent
                 .updated_at
                 .max(agent.status_since.unwrap_or(agent.updated_at));
@@ -206,50 +245,22 @@ impl Runtime {
     }
 }
 
-/// Mark the evictable partitions to evict, least recently used first, until
-/// the rest of Aether's fit `max_bytes`. Evictable means Aether's, unleased
-/// and holding no client's directory. Returns indexes in `report.entries`.
-fn plan(report: &mut BuildCacheReport, claims: &Claims, max_bytes: u64) -> Vec<usize> {
-    let mut held = 0u64;
-    let mut evictable = Vec::new();
-    for (index, entry) in report.entries.iter_mut().enumerate() {
-        if entry.run.is_none() {
-            continue;
-        }
-        held = held.saturating_add(entry.bytes);
-        if let Some(owner) = claims.owners.get(&entry.path) {
-            entry.leased_by.clone_from(&owner.holders);
-            entry.last_used = entry.last_used.max(owner.last_active);
-        }
-        if claims.touches_client(&entry.path) {
-            entry.reason = "holds a client's build cache";
-        } else if !entry.leased_by.is_empty() {
-            entry.reason = "leased by an agent of its run";
-        } else {
-            evictable.push(index);
-        }
-    }
-    let entries = &mut report.entries;
-    evictable.sort_by(|&a, &b| {
-        (entries[a].last_used, &entries[a].path).cmp(&(entries[b].last_used, &entries[b].path))
-    });
-    let mut chosen = Vec::new();
-    for index in evictable {
-        if held <= max_bytes {
-            break;
-        }
-        let entry = &mut entries[index];
-        debug_assert!(
-            entry.run.is_some() && entry.leased_by.is_empty(),
-            "{} is not evictable",
-            entry.path.display()
-        );
-        held = held.saturating_sub(entry.bytes);
-        entry.action = "would_evict";
-        entry.reason = "least recently used while over the byte budget";
-        chosen.push(index);
-    }
-    chosen
+/// The `status` line for a cache a sweep could not bring under its budget.
+fn over_budget(report: &BuildCacheReport, max_bytes: u64) -> String {
+    let gib = |bytes: u64| bytes as f64 / f64::from(1u32 << 30);
+    let foreign = report
+        .entries
+        .iter()
+        .filter(|entry| entry.run.is_none())
+        .count();
+    format!(
+        "The build cache {} holds {:.1} GiB after its last sweep, over its {:.1} GiB budget: \
+         the rest is in use, or is {foreign} directories Aether did not create. Run \
+         `aether storage build-cache` to see each partition and why it is kept.",
+        report.root.display(),
+        gib(report.bytes_kept),
+        gib(max_bytes),
+    )
 }
 
 /// `path` with every link in the part that exists resolved, and the rest
@@ -301,6 +312,16 @@ fn move_to_trash(
             "{} is not Aether's",
             entry.path.display()
         );
+        if entry.unmarked_run.is_some()
+            && let Err(error) = adopt(&entry.path)
+        {
+            entry.action = "kept";
+            entry.reason = "eviction failed";
+            report
+                .errors
+                .push(format!("marking {}: {error}", entry.path.display()));
+            continue;
+        }
         if !is_partition(&entry.path) {
             entry.action = "kept";
             entry.reason = "changed since the scan";
@@ -326,6 +347,19 @@ fn move_to_trash(
         }
     }
     moved
+}
+
+/// Mark a partition a release before the marker made, once the store has
+/// vouched for it, so it is removed like any other. Never through a link.
+fn adopt(partition: &Path) -> io::Result<()> {
+    if !fs::symlink_metadata(partition)?.is_dir() {
+        return Err(io::Error::other("not a real directory; left in place"));
+    }
+    match fs::File::create_new(partition.join(PARTITION_MARKER)) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 /// Whether `trash` is Aether's: a real directory holding its marker. With
@@ -432,7 +466,9 @@ fn scan(root: &Path) -> io::Result<BuildCacheReport> {
         policy: POLICY,
         bytes: 0,
         max_bytes: None,
+        bytes_kept: 0,
         bytes_removed: 0,
+        finished_grace_seconds: 0,
         repositories: 0,
         partitions: 0,
         unreadable: 0,
@@ -452,6 +488,9 @@ fn scan(root: &Path) -> io::Result<BuildCacheReport> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(report),
         Err(error) => return Err(error),
     }
+    // Every partition is listed before any is measured, so one that a
+    // spent budget leaves unmeasured can still be dropped once its run ends.
+    let mut listed = Vec::new();
     for repository in report.real_dirs(root) {
         let name = repository.file_name().and_then(|name| name.to_str());
         if name == Some(TRASH) {
@@ -459,29 +498,16 @@ fn scan(root: &Path) -> io::Result<BuildCacheReport> {
         }
         let aether = name.is_some_and(crate::build_cache::is_repository_dir);
         report.repositories += 1;
-        for partition in report.real_dirs(&repository) {
-            report.partitions += 1;
-            let run = partition
-                .file_name()
-                .and_then(|name| name.to_str())
-                .and_then(|name| name.parse::<RunId>().ok())
-                .filter(|_| aether && is_marked(&partition, PARTITION_MARKER));
-            let before = report.bytes;
-            let newest = report.add_tree(&partition);
-            report.entries.push(PartitionEntry {
-                path: partition,
-                run,
-                bytes: report.bytes - before,
-                last_used: newest.map(Timestamp::from),
-                leased_by: Vec::new(),
-                action: "kept",
-                reason: if run.is_some() {
-                    "within the byte budget"
-                } else {
-                    "not a partition Aether creates"
-                },
-            });
-        }
+        listed.extend(
+            report
+                .real_dirs(&repository)
+                .into_iter()
+                .map(|partition| (partition, aether)),
+        );
+    }
+    for (partition, aether) in listed {
+        report.partitions += 1;
+        report.measure(partition, aether);
     }
     debug_assert!(report.budget <= MAX_CACHE_ENTRIES, "{}", report.budget);
     debug_assert_eq!(report.entries.len(), report.partitions);
@@ -489,6 +515,37 @@ fn scan(root: &Path) -> io::Result<BuildCacheReport> {
 }
 
 impl BuildCacheReport {
+    /// Add `partition`'s entry: Aether's when it is run-named in a repository
+    /// directory of Aether's shape and marked.
+    fn measure(&mut self, partition: PathBuf, aether: bool) {
+        let named_run = partition
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.parse::<RunId>().ok())
+            .filter(|_| aether);
+        let marked = is_marked(&partition, PARTITION_MARKER);
+        let run = named_run.filter(|_| marked);
+        let before = self.bytes;
+        let newest = self.add_tree(&partition);
+        debug_assert!(self.bytes >= before, "bytes only grow");
+        self.entries.push(PartitionEntry {
+            path: partition,
+            run,
+            bytes: self.bytes - before,
+            last_used: newest.map(Timestamp::from),
+            leased_by: Vec::new(),
+            run_live: None,
+            used_by_pids: Vec::new(),
+            action: "kept",
+            reason: if run.is_some() {
+                "within the byte budget"
+            } else {
+                "not a partition Aether creates"
+            },
+            unmarked_run: named_run.filter(|_| !marked),
+        });
+    }
+
     /// The directories directly in `dir`, links and files left out.
     fn real_dirs(&mut self, dir: &Path) -> Vec<PathBuf> {
         let Some(entries) = self.readable(fs::read_dir(dir)) else {
