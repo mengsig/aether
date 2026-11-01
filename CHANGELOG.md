@@ -6,6 +6,45 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.9
+
+Released 2026-11-01. A patch release for the TUI and the docs. The agent
+board can be resized from the keyboard with the file viewer's size keys
+(#346), and slash words such as `/blablabla` or `and/or` are no longer
+underlined as file links in the transcript (#355). The new release bench
+history compares nine releases, 1.0.0 through 1.2.8, in one run (#357). No
+change to the daemon, the protocol (version 25) or the store (schema 28).
+
+### Added
+
+- **The agent board can be resized from the keyboard (#346).** While the
+  board has focus, the file viewer's size keys apply to it: Alt+- and Alt+=
+  narrow and widen the docked board by 5 % of the terminal width, keeping it
+  at least 40 columns wide and the transcript and composer at least 40
+  columns, and Alt+Z toggles the board full screen. The width lasts for the
+  session, also when Ctrl+B hides and shows the board, and is clamped again
+  when the terminal is resized. Below 100 columns, where the board already
+  covers the screen, the keys only say so. With focus anywhere else they
+  still size the file viewer.
+
+### Fixed
+
+- **Slash words in the transcript are no longer underlined as files (#355).**
+  A word like `/blablabla`, `and/or` or `a/b`, typed by you or written by an
+  agent, looked like a command because the transcript underlined it as a
+  clickable file. A word without a known file extension is now a file link
+  only in a path's shape: an absolute path with a parent directory such as
+  `/home/user/file`, or one starting with `./`, `../` or `file:`. Those, and
+  names with a known extension such as `src/main.rs`, still open in the file
+  viewer.
+
+### Documentation
+
+- **Release bench history (#357).** `docs/release-bench/history.md` reports
+  nine Aether releases, 1.0.0 through 1.2.8, run side by side on set v2 in
+  one run per tier. No deterioration was found; the Luna run is partial
+  because the Codex quota stopped it.
+
 ## 1.2.8
 
 Released 2026-10-30. A patch release about agents' lifecycles: a browser or

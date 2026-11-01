@@ -174,10 +174,32 @@ fn bare_reference(text: &str) -> (usize, Option<Reference>) {
     let token = text[..end]
         .trim_start_matches('(')
         .trim_end_matches([')', '.', ';', '!', ':']);
-    let candidate = token.contains('/') || known_extension(token);
+    let candidate = known_extension(token) || path_shaped(token);
     debug_assert!(end > 0 && text.is_char_boundary(end));
     debug_assert!(token.len() <= end);
     (end, candidate.then(|| reference(token, token)).flatten())
+}
+
+/// A word without a known extension names a file only in a path's shape, so prose
+/// (`and/or`) and slash words (`/blablabla`) stay plain text.
+fn path_shaped(token: &str) -> bool {
+    debug_assert!(!token.contains(char::is_whitespace));
+    if token
+        .get(..5)
+        .is_some_and(|s| s.eq_ignore_ascii_case("file:"))
+    {
+        return true;
+    }
+    if let Some(rest) = token.strip_prefix("./").or(token.strip_prefix("../")) {
+        return !rest.is_empty();
+    }
+    let Some(rest) = token.strip_prefix('/') else {
+        return false;
+    };
+    // An absolute path needs a parent directory: `/tmp/out`, never `/word`.
+    let names = rest.split('/').filter(|name| !name.is_empty()).count();
+    debug_assert!(names <= rest.len());
+    names >= 2
 }
 
 fn is_separator(character: char) -> bool {
@@ -337,6 +359,19 @@ mod tests {
                 .all(|reference| reference.label == reference.target)
         );
         assert!(parse("ordinary words example.unknown").is_empty());
+    }
+
+    #[test]
+    fn slash_words_and_prose_are_not_file_references() {
+        let text = "/blablabla said /help and/or a/b TCP/IP src/lib ~/notes / // ./ \
+                    /blablabla. (/word)";
+        assert!(parse(text).is_empty(), "{:?}", parse(text));
+        let references = parse("/home/user/file ./run ../build file:///tmp/notes");
+        let targets: Vec<_> = references.iter().map(|r| r.target.as_str()).collect();
+        assert_eq!(
+            targets,
+            ["/home/user/file", "./run", "../build", "file:///tmp/notes"]
+        );
     }
 
     #[test]

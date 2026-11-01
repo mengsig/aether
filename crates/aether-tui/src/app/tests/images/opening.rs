@@ -258,7 +258,7 @@ fn images_with_one_summary_get_lines_of_their_own() {
     let model = crate::app::transcript::CellModel::User {
         from: crate::app::transcript::UserFrom::Operator,
         text: crate::app::with_image_lines(
-            "see image/png",
+            "see shots/a.png",
             images.iter().map(AttachmentRef::summary),
         ),
         images: images.clone(),
@@ -268,13 +268,13 @@ fn images_with_one_summary_get_lines_of_their_own() {
     assert_eq!(
         labels,
         [
-            "image/png",
+            "shots/a.png",
             "[image: image/png, 1.2 MB]",
             "[image 2: image/png, 1.2 MB]"
         ]
     );
     assert_eq!(
-        references[0].target, "image/png",
+        references[0].target, "shots/a.png",
         "the words keep their file links"
     );
     for (reference, image) in references[1..].iter().zip(&images) {

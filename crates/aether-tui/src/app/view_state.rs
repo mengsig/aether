@@ -223,7 +223,20 @@ impl App {
 
     /// How the board shows at the current width.
     pub fn board_mode(&self) -> crate::ui::layout::BoardMode {
-        crate::ui::layout::board_mode(self.size.0, self.board.open)
+        self.board_mode_at(self.size.0)
+    }
+
+    /// How the board shows in `cols` columns; a full screen board counts as the overlay.
+    pub fn board_mode_at(&self, cols: u16) -> crate::ui::layout::BoardMode {
+        if self.board_fullscreen_at(cols) {
+            return crate::ui::layout::BoardMode::Overlay;
+        }
+        crate::ui::layout::sized_board_mode(cols, self.board.open, self.board.width)
+    }
+
+    /// Alt+Z holds only while the board has focus and could dock.
+    pub(crate) fn board_fullscreen_at(&self, cols: u16) -> bool {
+        self.board.full && self.board.focused() && cols >= crate::ui::layout::BOARD_DOCK_MIN_COLS
     }
 
     pub fn selected_agent(&self) -> Option<&Agent> {

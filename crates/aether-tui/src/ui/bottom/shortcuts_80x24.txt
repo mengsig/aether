@@ -45,7 +45,7 @@ ascii=true
   Alt+T          PDF/HTML text or image
   Alt+N          notification center
   Alt+Up         view the parent agent
-  v 47 more | up/down pgup/pgdn scroll | ? or esc to close
+  v 49 more | up/down pgup/pgdn scroll | ? or esc to close
 
 
 

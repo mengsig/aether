@@ -70,7 +70,7 @@ fn render_main(frame: &mut Frame, area: Rect, app: &App, cache: &mut ViewCache) 
         bottom::footer::render(frame, hint, app, theme, false, false);
         return;
     }
-    let mode = layout::board_mode(area.width, app.board.open);
+    let mode = app.board_mode_at(area.width);
     let width = bottom_width(area.width, mode);
     // The same predicate key dispatch uses: only a card on screen takes keys.
     let approval = app.shown_approval();
@@ -241,7 +241,7 @@ fn bottom_layout(
 /// approval over it: keys that depend on painted geometry (`?` scrolling) ask here.
 pub(crate) fn composer_area(app: &App) -> Rect {
     let area = Rect::new(0, 0, app.size.0, app.size.1);
-    let mode = layout::board_mode(area.width, app.board.open);
+    let mode = app.board_mode_at(area.width);
     let width = bottom_width(area.width, mode);
     let block = bottom::composer::desired_height(app, width, &mut Default::default());
     let status_row = bottom::status_row::model(app).is_some();

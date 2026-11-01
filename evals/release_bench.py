@@ -24,7 +24,7 @@ import release_bench_families as families
 from harness_bench import fetch_price_table, save_json
 from harness_bench_assets import native_cli_provenance, pin_binary
 from harness_bench_metadata import native_configured_defaults
-from release_bench_arms import build_arm, parse_arms
+from release_bench_arms import build_arm, is_release_label, parse_arms
 from release_bench_calibrate import SELECTION_DEFAULTS, acceptance, select, task_rates
 from release_bench_calibrate import render as render_calibration
 from release_bench_generate import verify
@@ -72,6 +72,8 @@ def parse_args(argv):
     run.add_argument("--old", type=Path, required=True, help="aether binary of the last release")
     run.add_argument("--new", type=Path, required=True, help="aether binary of the release candidate")
     run.add_argument("--arms", default="all", help='"all", a model tier, or keys such as haiku/native,luna/new')
+    run.add_argument("--release", type=_release, action="append", default=[], metavar="TAG=PATH",
+                     help="an extra release binary, such as v1.0.0=<aether 1.0.0>, run by arms like haiku/v1.0.0")
     run.add_argument("--archon-bin", type=Path, help="archon executable; adds an Archon arm per model tier")
     run.add_argument("--allow-off-target", action="store_true",
                      help="run a set whose calibration missed its acceptance targets (never a release verdict)")
@@ -113,6 +115,26 @@ def _band(text):
     if not 0 <= low < high <= 1:
         raise argparse.ArgumentTypeError(f"a band needs 0 <= LOW < HIGH <= 1, got {text!r}")
     return (low, high)
+
+
+def _release(text):
+    label, _, path = text.partition("=")
+    if not is_release_label(label) or not path:
+        raise argparse.ArgumentTypeError(f"expected TAG=PATH with a tag such as v1.0.0, got {text!r}")
+    return label, Path(path)
+
+
+def _releases(args, arm_keys, run_dir):
+    """{tag: (pinned binary, sha256)} of the extra release binaries: one per release arm, and an arm per binary."""
+    given = dict(args.release)
+    if len(given) != len(args.release):
+        raise SystemExit("a release tag was given twice")
+    wanted = {key.split("/")[1] for key in arm_keys if is_release_label(key.split("/")[1])}
+    if wanted != set(given):
+        raise SystemExit(f"release arms {sorted(wanted)} and --release tags {sorted(given)} differ")
+    pinned = {label: _pin(path, run_dir, label) for label, path in sorted(given.items())}
+    assert all(sha for _, sha in pinned.values()), "every release binary is pinned by its hash"
+    return pinned
 
 
 def _run_dir(kind, run_id):
@@ -205,6 +227,7 @@ def _header(config, records, stop_reason, started):
              f"`{config['binaries']['new']['sha256'][:16]}`" + (" (same binary: an A/A run)"
                                                                  if config["binaries"]["old"]["sha256"]
                                                                  == config["binaries"]["new"]["sha256"] else ""),
+             *[f"- Release {label}: `{info['sha256'][:16]}`" for label, info in config.get("releases", {}).items()],
              f"- Native CLIs: claude {config['native']['claude'].get('version')}, "
              f"codex {config['native']['codex'].get('version')}",
              f"- Arms: {', '.join(config['arms'])}; repeats {config['repeats']}; jobs {config['jobs']}; "
@@ -245,6 +268,7 @@ def command_run(args):
     run_dir = _run_dir("runs", args.run_id)
     old, old_sha = _pin(args.old, run_dir, "old")
     new, new_sha = _pin(args.new, run_dir, "new")
+    releases = _releases(args, arm_keys, run_dir)
     native = {name: native_cli_provenance(name) for name in ("claude", "codex")}
     config = {"set": {"path": str(args.set), "sha256": manifest["set_sha256"], "tasks": len(specs),
                       "accepted": accepted, "task_ids": sorted(spec["id"] for spec in specs)},
@@ -252,10 +276,13 @@ def command_run(args):
               "native": {name: {"version": info["version"]} for name, info in native.items()},
               "arms": arm_keys, "repeats": args.repeats, "jobs": args.jobs, "timeout": args.timeout,
               "seed": args.seed, "gate": _gate_settings(args), "archon": bool(args.archon_bin)}
+    if releases:
+        config["releases"] = {label: {"sha256": sha} for label, (_, sha) in releases.items()}
     _config_check(run_dir, config)
     log(f"run directory {run_dir}")
     context = {"run_dir": str(run_dir), "work_dir": _work_dir(args.work_root, run_dir),
-               "binaries": {"old": old, "new": new}, "timeout": args.timeout,
+               "binaries": {"old": old, "new": new, **{label: path for label, (path, _) in releases.items()}},
+               "timeout": args.timeout,
                "real_claude": shutil.which("claude"), "archon_bin": str(args.archon_bin or ""),
                "price_manifest": _price_manifest(new, new_sha, run_dir)}
     stop = _early_stop(args, len(specs)) if args.early_stop else None

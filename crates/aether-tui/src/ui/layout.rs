@@ -9,6 +9,8 @@ pub const BOARD_DOCK_MIN_COLS: u16 = 100;
 pub const BOARD_DEFAULT_OPEN_COLS: u16 = 140;
 pub const BOARD_MIN_WIDTH: u16 = 40;
 pub const BOARD_MAX_WIDTH: u16 = 56;
+/// Columns the transcript and composer keep beside a board the operator widened.
+pub const MAIN_MIN_COLS: u16 = 40;
 /// Columns of padding inside the board on each side.
 pub const BOARD_PADDING: u16 = 2;
 /// Below this height the inspector drops its low-priority rows (§1.2).
@@ -25,6 +27,36 @@ pub fn board_width(cols: u16) -> u16 {
         .clamp(BOARD_MIN_WIDTH, BOARD_MAX_WIDTH)
 }
 
+/// Widest docked board that still leaves the main column [`MAIN_MIN_COLS`].
+pub fn board_max_width(cols: u16) -> u16 {
+    cols.saturating_sub(MAIN_MIN_COLS + 2).max(BOARD_MIN_WIDTH)
+}
+
+/// The operator's width clamped to fit `cols`; `None` keeps [`board_width`].
+pub fn chosen_board_width(cols: u16, chosen: Option<u16>) -> u16 {
+    let Some(chosen) = chosen else {
+        return board_width(cols);
+    };
+    let max = board_max_width(cols);
+    debug_assert!(BOARD_MIN_WIDTH <= max, "{cols} columns: max {max}");
+    chosen.clamp(BOARD_MIN_WIDTH, max)
+}
+
+/// One Alt+- / Alt+= step from `current`: 5 % of `cols`, as the viewer steps.
+pub fn step_board_width(cols: u16, current: u16, wider: bool) -> u16 {
+    let step = u16::try_from((u32::from(cols) * 5 + 50) / 100)
+        .unwrap_or(u16::MAX)
+        .max(1);
+    let next = if wider {
+        current.saturating_add(step)
+    } else {
+        current.saturating_sub(step)
+    };
+    let width = chosen_board_width(cols, Some(next));
+    debug_assert!((BOARD_MIN_WIDTH..=board_max_width(cols)).contains(&width));
+    width
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoardMode {
     Hidden,
@@ -37,11 +69,16 @@ pub enum BoardMode {
 }
 
 pub fn board_mode(cols: u16, open: bool) -> BoardMode {
+    sized_board_mode(cols, open, None)
+}
+
+/// [`board_mode`] with the operator's docked width, see [`chosen_board_width`].
+pub fn sized_board_mode(cols: u16, open: bool, chosen: Option<u16>) -> BoardMode {
     if !open {
         BoardMode::Hidden
     } else if cols >= BOARD_DOCK_MIN_COLS {
         BoardMode::Docked {
-            width: board_width(cols),
+            width: chosen_board_width(cols, chosen),
         }
     } else {
         BoardMode::Overlay
@@ -238,6 +275,51 @@ mod tests {
         assert_eq!(board_width(120), 40);
         assert_eq!(board_width(300), 56);
         assert_eq!(board_width(0), 40);
+    }
+
+    #[test]
+    fn a_chosen_width_is_clamped_to_the_board_and_transcript_minimums() {
+        assert_eq!(chosen_board_width(160, None), board_width(160));
+        assert_eq!(chosen_board_width(160, Some(0)), BOARD_MIN_WIDTH);
+        assert_eq!(chosen_board_width(160, Some(70)), 70);
+        assert_eq!(
+            chosen_board_width(160, Some(u16::MAX)),
+            160 - MAIN_MIN_COLS - 2
+        );
+        assert_eq!(board_max_width(100), 58);
+        for cols in [0, 1, 41, 82] {
+            assert_eq!(board_max_width(cols), BOARD_MIN_WIDTH, "{cols}");
+            assert_eq!(chosen_board_width(cols, Some(u16::MAX)), BOARD_MIN_WIDTH);
+        }
+    }
+
+    #[test]
+    fn a_step_is_five_percent_of_the_terminal_within_the_bounds() {
+        assert_eq!(step_board_width(140, 42, true), 49);
+        assert_eq!(step_board_width(140, 49, false), 42);
+        assert_eq!(step_board_width(220, 56, true), 67);
+        assert_eq!(step_board_width(100, 42, false), BOARD_MIN_WIDTH);
+        assert_eq!(step_board_width(100, 55, true), board_max_width(100));
+        assert_eq!(step_board_width(100, u16::MAX, true), board_max_width(100));
+        assert_eq!(step_board_width(u16::MAX, 0, false), BOARD_MIN_WIDTH);
+    }
+
+    #[test]
+    fn a_chosen_width_docks_only_from_one_hundred_columns() {
+        assert_eq!(sized_board_mode(99, true, Some(60)), BoardMode::Overlay);
+        assert_eq!(sized_board_mode(140, false, Some(60)), BoardMode::Hidden);
+        assert_eq!(
+            sized_board_mode(140, true, Some(60)),
+            BoardMode::Docked { width: 60 }
+        );
+        for cols in [100, 140, 220] {
+            let mode = sized_board_mode(cols, true, Some(u16::MAX));
+            let l = frame_layout(area(cols, 40), mode, typical());
+            let board = l.board.unwrap();
+            assert_eq!(l.transcript.width, MAIN_MIN_COLS, "{cols}");
+            assert_eq!(l.separator.unwrap().x, l.transcript.width + 1);
+            assert_eq!(board.x + board.width, cols);
+        }
     }
 
     #[test]
