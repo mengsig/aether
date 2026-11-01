@@ -365,10 +365,14 @@ async fn a_reply_that_never_arrives_fails_the_request_instead_of_hanging() {
         })
         .await
         .expect_err("the request is failed, not left waiting");
-    let ClientError::TimedOut { command, .. } = err else {
+    let ClientError::TimedOut { command, host, .. } = err else {
         panic!("{err:?}");
     };
     assert_eq!(command, "forget_memory", "the error names what was sent");
+    assert_eq!(
+        host, None,
+        "a daemon not over a Unix socket may be on another host"
+    );
     assert!(client.is_connected(), "the connection itself is fine");
 }
 
