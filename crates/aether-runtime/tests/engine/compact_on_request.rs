@@ -118,16 +118,14 @@ async fn a_requested_compaction_runs_the_engine_s_own_fold_and_keeps_the_session
                 EventKind::CompactionNative { .. } | EventKind::CompactionFailed { .. }
             )
         };
-        let events = loop {
+        let events = wait_until("the compaction to settle", || {
             let events = h
                 .store
                 .events(0, 1000, &EventFilter::for_agent(id))
                 .unwrap();
-            if events.iter().any(|e| settled(&e.kind)) {
-                break events;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        };
+            events.iter().any(|e| settled(&e.kind)).then_some(events)
+        })
+        .await;
         let after = wait_for(h.store.as_ref(), id, |a| {
             a.status.kind() == AgentStatusKind::Waiting
         })
@@ -284,19 +282,20 @@ async fn a_fold_the_engine_makes_mid_turn_leaves_a_queued_request_owed() {
         h.runtime
             .send_message(id, vec![ContentBlock::text("go on")], Actor::user())
             .unwrap();
-        wait_for(h.store.as_ref(), id, |a| {
-            a.status.kind() == AgentStatusKind::Running
+        // Running is recorded before the prompt is assembled, and a request
+        // seen there folds first; it must queue behind the launched reply turn.
+        wait_until("the engine to be handed the reply turn", || {
+            (!turns.lock().unwrap().is_empty()).then_some(())
         })
         .await;
         h.runtime.request_compaction(id, Actor::user()).unwrap();
         gate.notify_one();
-        let requested_fold = tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let events = h
-                    .store
-                    .events(0, 1000, &EventFilter::for_agent(id))
-                    .unwrap();
-                let fold = events.iter().find(|e| {
+        let requested_fold = wait_until("the queued /compact to run once the turn ends", || {
+            h.store
+                .events(0, 1000, &EventFilter::for_agent(id))
+                .unwrap()
+                .into_iter()
+                .find(|e| {
                     matches!(
                         e.kind,
                         EventKind::CompactionNative {
@@ -304,15 +303,9 @@ async fn a_fold_the_engine_makes_mid_turn_leaves_a_queued_request_owed() {
                             ..
                         }
                     )
-                });
-                if let Some(fold) = fold {
-                    break fold.clone();
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
+                })
         })
-        .await
-        .expect("the queued /compact runs once the turn ends");
+        .await;
         let recorded = turns.lock().unwrap().clone();
         assert_eq!(recorded.len(), 2, "the reply turn, then the requested fold");
         assert!(recorded[1].compact_session);

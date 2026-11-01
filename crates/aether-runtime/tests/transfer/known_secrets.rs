@@ -231,7 +231,7 @@ async fn reading_a_published_artifact_commits_and_sends_a_masked_outcome() {
             Actor::user(),
         )
         .expect("send");
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + SETTLE_WITHIN;
     while source.client.remaining() > 0 || !event_log(source.daemon.store.as_ref()).contains(MASK) {
         assert!(
             tokio::time::Instant::now() < deadline,
@@ -565,7 +565,7 @@ async fn reading_an_artifact_masks_secrets_that_json_escapes() {
     runtime
         .send_message(agent.id, vec![ContentBlock::text("read it")], Actor::user())
         .expect("send");
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let deadline = tokio::time::Instant::now() + SETTLE_WITHIN;
     let content = loop {
         let succeeded = source
             .daemon

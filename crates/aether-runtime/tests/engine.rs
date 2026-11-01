@@ -276,14 +276,28 @@ fn chat_agent(h: &Harness) -> AgentId {
     agent.id
 }
 
+/// Polls `wait_for` and `wait_until` make before giving up: at least a minute.
+/// Counted in polls, not wall-clock: a host stall freezes the runtime too,
+/// so a deadline could expire before the runtime ran again.
+const POLLS: u32 = 3000;
+
+/// Waits until `probe` yields a value, for something no agent's record shows
+/// (an engine handed its turn, an event recorded).
+async fn wait_until<T>(what: &str, mut probe: impl FnMut() -> Option<T>) -> T {
+    for _ in 0..POLLS {
+        if let Some(found) = probe() {
+            return found;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    probe().unwrap_or_else(|| panic!("timed out waiting for {what}"))
+}
+
 async fn wait_for(
     store: &dyn Store,
     id: AgentId,
     pred: impl Fn(&aether_core::agent::Agent) -> bool,
 ) -> aether_core::agent::Agent {
-    // Counted in polls, not wall-clock: a host stall freezes the runtime too,
-    // so a deadline could expire before the runtime ran again.
-    const POLLS: u32 = 750;
     for _ in 0..POLLS {
         let agent = store.agent(id).expect("agent").expect("exists");
         if pred(&agent) {
