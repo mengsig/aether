@@ -6,6 +6,15 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.9
+
+Released 2026-11-01. A patch release for the TUI and the docs. The agent
+board can be resized from the keyboard with the file viewer's size keys
+(#346), and slash words such as `/blablabla` or `and/or` are no longer
+underlined as file links in the transcript (#355). The new release bench
+history compares nine releases, 1.0.0 through 1.2.8, in one run (#357). No
+change to the daemon, the protocol (version 25) or the store (schema 28).
+
 ### Added
 
 - **The agent board can be resized from the keyboard (#346).** While the
@@ -28,6 +37,13 @@ release is also the text of its GitHub release.
   `/home/user/file`, or one starting with `./`, `../` or `file:`. Those, and
   names with a known extension such as `src/main.rs`, still open in the file
   viewer.
+
+### Documentation
+
+- **Release bench history (#357).** `docs/release-bench/history.md` reports
+  nine Aether releases, 1.0.0 through 1.2.8, run side by side on set v2 in
+  one run per tier. No deterioration was found; the Luna run is partial
+  because the Codex quota stopped it.
 
 ## 1.2.8
 
