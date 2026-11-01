@@ -22,7 +22,11 @@ release is also the text of its GitHub release.
   read since it started. `aether status` leads with a line saying how old
   the figures are, and the TUI marks them stale. The protocol is still
   version 25: `stale` is a new optional field older clients ignore, and the
-  same note is the first entry of `problems`, which they do show.
+  same note is the first entry of `problems`, which they do show. Commands
+  that took a cursor from `status` no longer trust a stale one: `aether
+  compact` takes it from its own subscription, `aether events` refuses to
+  end a tail at a stale one unless it follows, and `aether run` does not
+  read a status with no figures as a freed disk.
 - **A request that times out names what the host shows.** A client on the
   daemon's own machine reads the load, memory and disk stalls from `/proc`
   when a request goes unanswered. When the host is past a threshold the
