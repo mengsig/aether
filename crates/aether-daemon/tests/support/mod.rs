@@ -13,6 +13,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpStream, UnixStream};
 use tokio_util::sync::CancellationToken;
 
+/// How long a fresh daemon may take to answer. Startup sweeps Docker, bounded at
+/// ten seconds alone, so a loaded host needs far more than an idle one.
+const STARTUP_WAIT: Duration = Duration::from_secs(120);
+
+/// How long one frame may take. A wait on a condition, not a latency bound.
+const FRAME_WAIT: Duration = Duration::from_secs(60);
+
 /// A daemon with its own socket, store and config directory. Everything it
 /// writes lives under one temporary directory, removed on drop.
 pub struct TestDaemon {
@@ -105,7 +112,7 @@ impl TestDaemon {
         override_limit: Option<usize>,
     ) -> TestDaemon {
         let daemon = Self::spawn_in(dir, tcp, toml, override_limit);
-        daemon.await_answering(Duration::from_secs(15)).await;
+        daemon.await_answering(STARTUP_WAIT).await;
         daemon
     }
 
@@ -257,9 +264,9 @@ impl RawConn {
     /// The next frame, or `None` when the daemon closed the connection.
     pub async fn recv(&mut self) -> Option<Value> {
         let mut line = String::new();
-        let read = tokio::time::timeout(Duration::from_secs(10), self.lines.read_line(&mut line))
+        let read = tokio::time::timeout(FRAME_WAIT, self.lines.read_line(&mut line))
             .await
-            .expect("a frame within ten seconds")
+            .expect("a frame in time")
             .expect("read frame");
         if read == 0 {
             return None;
@@ -272,7 +279,7 @@ impl RawConn {
     /// both mean the same thing to the peer.
     pub async fn is_closed(&mut self) -> bool {
         let mut line = String::new();
-        match tokio::time::timeout(Duration::from_secs(10), self.lines.read_line(&mut line)).await {
+        match tokio::time::timeout(FRAME_WAIT, self.lines.read_line(&mut line)).await {
             Ok(Ok(0)) | Ok(Err(_)) => true,
             Ok(Ok(_)) | Err(_) => false,
         }

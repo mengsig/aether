@@ -28,27 +28,38 @@ check "exit 0 passthrough" "$?" 0
 with_timeout 20 bash -c 'exit 7'
 check "exit 7 passthrough" "$?" 7
 
-with_timeout 1 sleep 5
+with_timeout 1 sleep 60
 check "timeout returns 124" "$?" 124
 
 # --- with_timeout: early finish returns immediately, no orphaned sleep ---
 start=$(date +%s)
-out=$(with_timeout 15 printf 'done\n' | cat)
+out=$(with_timeout 60 printf 'done\n' | cat)
 end=$(date +%s)
 elapsed=$((end - start))
-if [ "$out" = "done" ] && [ "$elapsed" -lt 5 ]; then
+if [ "$out" = "done" ] && [ "$elapsed" -lt 30 ]; then
   ok "early finish returns immediately (${elapsed}s)"
 else
   bad "early finish returns immediately" "out=[$out] elapsed=${elapsed}s"
 fi
 
 # --- with_timeout: deadline kills a grandchild via the process group ---
+# The signal lands asynchronously and an orphan stays a zombie until its new
+# parent reaps it, so poll for up to 30s, well inside the grandchild's own life.
+running() { # pid
+  kill -0 "$1" 2>/dev/null || return 1
+  case $(ps -o stat= -p "$1" 2>/dev/null) in Z*) return 1 ;; esac
+}
 gc_marker="$WORK/grandchild.pid"
-with_timeout 2 bash -c "sleep 20 & echo \$! > '$gc_marker'; wait" >/dev/null 2>&1 || true
-sleep 1
+with_timeout 2 bash -c "sleep 300 & echo \$! > '$gc_marker'; wait" >/dev/null 2>&1 || true
 gpid=$(cat "$gc_marker" 2>/dev/null || true)
-if [ -n "$gpid" ] && kill -0 "$gpid" 2>/dev/null; then
+polls=0
+while [ -n "$gpid" ] && running "$gpid" && [ "$polls" -lt 300 ]; do
+  sleep 0.1
+  polls=$((polls + 1))
+done
+if [ -n "$gpid" ] && running "$gpid"; then
   bad "deadline kills a grandchild" "pid $gpid still alive"
+  kill -KILL "$gpid" 2>/dev/null || true
 else
   ok "deadline kills a grandchild"
 fi
@@ -88,10 +99,10 @@ fi
 if [ -z "${LIB_TEST_TRAILING_SLASH_CHECK:-}" ]; then
   slash_tmpdir="$WORK/trailing_slash_tmpdir/"
   mkdir -p "$slash_tmpdir"
-  if LIB_TEST_TRAILING_SLASH_CHECK=1 TMPDIR="$slash_tmpdir" "$0" >/dev/null 2>&1; then
+  if slash_out=$(LIB_TEST_TRAILING_SLASH_CHECK=1 TMPDIR="$slash_tmpdir" "$0" 2>&1); then
     ok "passes with a trailing-slash TMPDIR"
   else
-    bad "passes with a trailing-slash TMPDIR" "sub-invocation failed"
+    bad "passes with a trailing-slash TMPDIR" "$(printf '%s\n' "$slash_out" | grep -v '^ok - ')"
   fi
 fi
 

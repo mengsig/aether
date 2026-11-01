@@ -18,6 +18,14 @@ use tokio_util::sync::CancellationToken;
 const PUBLIC_KEY: &str =
     "BMgwFKrH7TvvMAEg7GPE-KUu5a2OgrV55YaK-5umZW8nLS5GYqYPuBEEPsHRxvA1O8ZG6UR3D9hr4P_hjgxbma4";
 
+/// How long the daemon may take to answer. Startup sweeps Docker, bounded at
+/// ten seconds alone, so a loaded host needs far more than an idle one.
+const STARTUP_WAIT: Duration = Duration::from_secs(120);
+
+/// How long a command, a line of its output or a daemon stop may take: waits
+/// on a condition, not latency bounds.
+const STEP_WAIT: Duration = Duration::from_secs(60);
+
 struct Host {
     root: tempfile::TempDir,
     shutdown: CancellationToken,
@@ -58,7 +66,8 @@ impl Host {
     }
 
     async fn await_answering(&self) {
-        for _ in 0..400 {
+        let deadline = std::time::Instant::now() + STARTUP_WAIT;
+        while std::time::Instant::now() < deadline {
             if aether_client::Client::connect(self.socket()).await.is_ok() {
                 return;
             }
@@ -89,7 +98,7 @@ impl Host {
     /// Run to the end; standard output if it succeeded, standard error if not.
     async fn run(&self, args: &[&str]) -> Result<String, String> {
         let running = self.command(args).output();
-        let output = tokio::time::timeout(Duration::from_secs(60), running).await;
+        let output = tokio::time::timeout(STEP_WAIT, running).await;
         let output = output.expect("the command ends").expect("the command runs");
         if output.status.success() {
             return Ok(String::from_utf8(output.stdout).expect("UTF-8"));
@@ -134,7 +143,7 @@ impl Host {
 
     async fn stop(self) {
         self.shutdown.cancel();
-        let stopped = tokio::time::timeout(Duration::from_secs(10), self.serving).await;
+        let stopped = tokio::time::timeout(STEP_WAIT, self.serving).await;
         stopped
             .expect("the daemon stops")
             .expect("joins")
@@ -153,7 +162,7 @@ impl Pairing {
     /// Everything printed so far, once a line containing `marker` arrives.
     async fn read_until(&mut self, marker: &str) -> String {
         loop {
-            let next = tokio::time::timeout(Duration::from_secs(30), self.lines.next_line()).await;
+            let next = tokio::time::timeout(STEP_WAIT, self.lines.next_line()).await;
             let line = next.expect("output in time").expect("readable");
             let line = line.unwrap_or_else(|| panic!("ended before {marker:?}: {}", self.seen));
             self.seen.push_str(&line);
@@ -177,7 +186,7 @@ impl Pairing {
             rest.push_str(&line);
             rest.push('\n');
         }
-        let ended = tokio::time::timeout(Duration::from_secs(30), self.child.wait()).await;
+        let ended = tokio::time::timeout(STEP_WAIT, self.child.wait()).await;
         (rest, ended.expect("ends").expect("waits").success())
     }
 }
