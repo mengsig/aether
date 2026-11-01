@@ -111,7 +111,7 @@ async fn prose_completion_preserves_budget_termination() {
         &ctx,
         &response,
         false,
-        CompletionSource::NativeTurn,
+        CompletionSource::NativeTurn(crate::turn::AnswerJobs::Idle),
     )
     .expect("prose completion");
     finish(&runtime, &ctx, next).expect("finish turn");

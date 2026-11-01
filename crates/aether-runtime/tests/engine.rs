@@ -63,6 +63,8 @@ mod extended_context;
 mod handoff;
 #[path = "engine/interruptions.rs"]
 mod interruptions;
+#[path = "engine/job_answers.rs"]
+mod job_answers;
 #[path = "engine/known_secrets.rs"]
 mod known_secrets;
 #[path = "engine/launch_context.rs"]
