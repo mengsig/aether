@@ -540,6 +540,7 @@ pub(super) async fn drive(
                     }
                     // The engine is answering it; its next result decides.
                     settled = None;
+                    answered_over_jobs = false;
                     settle_deadline = None;
                 }
                 Some(EngineEvent::InputRejected { reason }) => {

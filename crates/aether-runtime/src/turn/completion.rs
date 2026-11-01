@@ -123,6 +123,15 @@ fn wake_for_jobs(
         !ctx.agent.config.long_lived,
         "a long-lived agent keeps waiting"
     );
+    // Settled while the turn ran (a cancel): nothing is left to wake for, and
+    // `complete_from_prose` leaves such a task as it is.
+    let stored = runtime
+        .store
+        .task(task.id)?
+        .ok_or_else(|| RuntimeError::NotFound(task.id.to_string()))?;
+    if stored.status.is_terminal() {
+        return Ok(None);
+    }
     let reasons = wake_reasons(runtime, ctx.agent.id)?;
     let sent = (1..=MAX_JOB_WAKES)
         .take_while(|wake| reasons.contains(&job_wake_notice(task, *wake)))
