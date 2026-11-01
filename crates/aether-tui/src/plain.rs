@@ -819,6 +819,9 @@ pub fn summary(app: &App, agent: AgentId) -> String {
             out.push_str(&format!(", {} suspended", status.agents_suspended));
         }
         out.push_str(&format!(" - {}", format::cost(&status.usage_total)));
+        if let Some(stale) = &status.stale {
+            out.push_str(&format!(" ({})", format::stale_status(stale)));
+        }
     }
     if !app.connected {
         out.push_str(" - not connected, reconnecting");
@@ -1030,6 +1033,34 @@ mod tests {
             "- Disk low: new turns held - 1.0 GiB free / 5.0 GiB floor\n- Disk recovered: new turns released\n"
         );
         assert!(output(&out).is_ascii());
+    }
+
+    #[test]
+    fn a_stale_fleet_summary_says_how_old_it_is() {
+        let mut app = populated_app();
+        let agent = app.selected.expect("a selected agent");
+        assert!(!summary(&app, agent).contains("stale"), "a fresh status");
+        let status = app.status.as_mut().expect("status");
+        status.stale = Some(aether_protocol::StatusStale {
+            read_at: None,
+            waited_ms: 3_000,
+        });
+        assert!(
+            summary(&app, agent).contains("(stale: figures not read yet)"),
+            "{}",
+            summary(&app, agent)
+        );
+        let read_at = "2026-11-01T13:44:05Z".parse().expect("time");
+        let status = app.status.as_mut().expect("status");
+        status.stale = Some(aether_protocol::StatusStale {
+            read_at: Some(read_at),
+            waited_ms: 3_000,
+        });
+        assert!(
+            summary(&app, agent).contains("(stale: figures from 13:44:05 UTC)"),
+            "{}",
+            summary(&app, agent)
+        );
     }
 
     #[test]

@@ -4,10 +4,12 @@
 use crate::Daemon;
 use crate::authz::AuthContext;
 use aether_core::event::Actor;
-use aether_protocol::{Command, DaemonStatus, ErrorCode, ErrorReply, Reply};
+use aether_protocol::{Command, DaemonStatus, ErrorCode, ErrorReply, Reply, StatusStale};
+use std::sync::Arc;
 
 use crate::connection::dispatch::blocking;
 use crate::connection::{host_services, map_err, providers, push, remote_admin, store_err};
+use crate::status_reads::{Answer, Figures, PATIENCE};
 
 pub(super) fn owns(command: &Command) -> bool {
     matches!(
@@ -129,19 +131,22 @@ async fn storage(daemon: &Daemon, command: Command) -> Result<Reply, ErrorReply>
 
 async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
     let rt = &daemon.runtime;
-    // Reads every agent and takes `sched`: on a slow disk that must not park an async worker.
     let reading = rt.clone();
-    let (s, last_seq) = blocking(move || {
-        let mut status = reading.status().map_err(map_err)?;
-        if let Some(paths) = &reading.config().storage_paths
-            && let Some(problem) = aether_core::crash::problem(&paths.store)
-        {
-            status.problems.push(problem);
-        }
-        let last_seq = reading.store().last_seq().map_err(store_err)?;
-        Ok::<_, ErrorReply>((status, last_seq))
-    })
-    .await??;
+    // Reads every agent and takes `sched`: shared, off the async workers, and
+    // waited for only `PATIENCE`, so an overloaded store cannot time it out.
+    let answer = daemon
+        .status_reads
+        .answer(PATIENCE, move || read_figures(&reading))
+        .await?;
+    let (figures, stale) = resolve(answer);
+    let (mut s, last_seq) = match figures {
+        Some(figures) => (figures.runtime.clone(), figures.last_seq),
+        None => (rt.status_settings(), 0),
+    };
+    if let Some(stale) = &stale {
+        s.problems
+            .insert(0, stale_problem(stale, aether_core::time::now()));
+    }
     Ok(Reply::Status(DaemonStatus {
         problems: s.problems,
         instance_id: daemon.instance_id.clone(),
@@ -180,7 +185,67 @@ async fn status(daemon: &Daemon) -> Result<Reply, ErrorReply> {
             .bridge
             .as_ref()
             .map(|bridge| bridge.command.display().to_string()),
+        stale,
     }))
+}
+
+/// The figures to show, and whether they are stale. None are shown only
+/// when no read has finished since the daemon started.
+fn resolve(answer: Answer<Figures>) -> (Option<Arc<Figures>>, Option<StatusStale>) {
+    let (figures, stale) = match answer {
+        Answer::Fresh(figures) => (Some(figures), None),
+        Answer::Stale(last) => {
+            let stale = StatusStale {
+                read_at: last.as_ref().map(|(at, _)| *at),
+                waited_ms: PATIENCE.as_millis() as u64,
+            };
+            (last.map(|(_, figures)| figures), Some(stale))
+        }
+    };
+    assert_eq!(
+        figures.is_some(),
+        stale.as_ref().is_none_or(|stale| stale.read_at.is_some()),
+        "figures are shown exactly when some read finished"
+    );
+    assert!(
+        stale.as_ref().is_none_or(|stale| stale.waited_ms > 0),
+        "a stale answer waited for a fresh one first"
+    );
+    (figures, stale)
+}
+
+/// One read for `status`: the runtime's figures, a crash left behind, and
+/// the log position.
+fn read_figures(reading: &aether_runtime::Runtime) -> Result<Figures, ErrorReply> {
+    let mut runtime = reading.status().map_err(map_err)?;
+    if let Some(paths) = &reading.config().storage_paths
+        && let Some(problem) = aether_core::crash::problem(&paths.store)
+    {
+        runtime.problems.push(problem);
+    }
+    let last_seq = reading.store().last_seq().map_err(store_err)?;
+    Ok(Figures { runtime, last_seq })
+}
+
+/// The line a stale status leads its problems with, which older clients
+/// show too: they do not know `stale`.
+fn stale_problem(stale: &StatusStale, at: aether_core::time::Timestamp) -> String {
+    let waited = stale.waited_ms as f64 / 1000.0;
+    match stale.read_at {
+        Some(read_at) => {
+            let age = (at - read_at).num_seconds().max(0);
+            format!(
+                "status is {age}s old: reading the store and scheduler took longer than \
+                 {waited:.0}s, so these figures are from {}; a fresh read is still running",
+                read_at.format("%Y-%m-%dT%H:%M:%SZ")
+            )
+        }
+        None => format!(
+            "status figures are unknown: the daemon's first read of the store and scheduler \
+             has taken longer than {waited:.0}s and is still running, so the counts are zero \
+             because they are not known"
+        ),
+    }
 }
 
 async fn mcp_servers(

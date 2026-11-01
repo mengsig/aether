@@ -6,6 +6,24 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+### Fixed
+
+- **`status` answers within seconds on an overloaded host.** On a host with a
+  load of 45, 12 GB in swap and a 1.9 GB store, `status` took up to 146 s and
+  every client gave up at 60 s. The daemon's log named the cause: the spend of
+  each live run read that run's recent usage receipts, and SQLite walked
+  every usage receipt the store kept to find them, 80,000 pages for a run
+  with 15 receipts. It now walks the run's own index, 225 pages for the same
+  read. Each request also started its own read, so three clients ran three.
+  Now one read runs at a time and is shared. A request waits at most 3 s for
+  a read that started after it arrived. Past that it is answered with the
+  last read, marked `stale` with the time that read was taken (`read_at`),
+  or with no counts and the stale mark when the daemon has not finished a
+  read since it started. `aether status` leads with a line saying how old
+  the figures are, and the TUI marks them stale. The protocol is still
+  version 25: `stale` is a new optional field older clients ignore, and the
+  same note is the first entry of `problems`, which they do show.
+
 ## 1.2.9
 
 Released 2026-11-01. A patch release for the TUI and the docs. The agent

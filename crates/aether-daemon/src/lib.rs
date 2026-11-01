@@ -17,6 +17,7 @@ pub mod push;
 pub mod remote;
 mod secrets;
 mod startup;
+mod status_reads;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -167,6 +168,8 @@ pub struct Daemon {
     pub push: Option<push::Push>,
     /// Remote control; empty until [`remote::attach`] gives the daemon one.
     pub remote: remote::RemoteSlot,
+    /// The reads behind `status`, shared by every request.
+    pub(crate) status_reads: status_reads::StatusReads<status_reads::Figures>,
 }
 
 /// Run until `shutdown` fires or a client asks to stop.
@@ -471,6 +474,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             version: env!("CARGO_PKG_VERSION").to_owned(),
             push: Some(push),
             remote: remote::RemoteSlot::default(),
+            status_reads: Default::default(),
         });
         // Supervised with the connections: it opens the listener the stored
         // settings ask for, and closes it when the daemon stops.

@@ -137,6 +137,7 @@ dependencies = [
  "chrono",
  "futures",
  "ignore",
+ "parking_lot",
  "rusqlite",
  "rustix",
  "serde",

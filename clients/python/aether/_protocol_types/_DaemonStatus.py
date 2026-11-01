@@ -34,6 +34,7 @@ class DaemonStatus(TypedDict, total=False):
     run_hard_stop_tokens: int | None  # optional
     run_hard_stop_usd: float | None  # optional
     runs: list[_protocol.RunSummary]  # optional
+    stale: _protocol.StatusStale | None  # optional
     started_at: str
     tasks_active: int
     usage_total: _protocol.Usage

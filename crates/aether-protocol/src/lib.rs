@@ -237,7 +237,8 @@ pub use command::{Command, KeyedRequest};
 mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ENGINES_STARTING, ErrorCode, ErrorReply, MessageDelivery,
-    ModelInfo, ProviderInfo, Reply, RunListing, SubmissionResolution, TranscriptEntry, TreeNode,
+    ModelInfo, ProviderInfo, Reply, RunListing, StatusStale, SubmissionResolution, TranscriptEntry,
+    TreeNode,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};

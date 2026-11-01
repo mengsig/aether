@@ -38,6 +38,7 @@ pub(super) async fn daemon() -> (Daemon, tempfile::TempDir) {
         version: "test".into(),
         push: None,
         remote: Default::default(),
+        status_reads: Default::default(),
     };
     (daemon, config_dir)
 }

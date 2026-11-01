@@ -60,6 +60,22 @@ const WRITE_KINDS_SHOWN: usize = 8;
 const RECEIPT_PAGE: usize = 256;
 
 impl Runtime {
+    /// What `status` reports from configuration alone, with every count at
+    /// zero: it reads no lock, store or disk, so it is there when they stall.
+    pub fn status_settings(&self) -> RuntimeStatus {
+        RuntimeStatus {
+            yolo: self.config.yolo,
+            approval_default: self.config.approval_default,
+            network_default: self.config.network_default,
+            max_concurrent_turns: self.config.max_concurrent_turns,
+            max_concurrent_engine_turns: self.config.max_concurrent_engine_turns,
+            run_budget_usd: self.config.run_budget_usd,
+            run_hard_stop_usd: self.config.run_hard_stop.usd,
+            run_hard_stop_tokens: self.config.run_hard_stop.tokens,
+            ..Default::default()
+        }
+    }
+
     pub fn status(&self) -> Result<RuntimeStatus> {
         let mut engines: Vec<String> = match self.engines.now() {
             Ok(detected) => detected.usable.values().map(|e| e.adapter()).collect(),
@@ -72,21 +88,14 @@ impl Runtime {
         let started = std::time::Instant::now();
         let mut status = RuntimeStatus {
             problems: self.problems()?,
-            yolo: self.config.yolo,
-            network_default: self.config.network_default,
-            max_concurrent_turns: self.config.max_concurrent_turns,
-            max_concurrent_engine_turns: self.config.max_concurrent_engine_turns,
             engine_turns_running,
-            run_budget_usd: self.config.run_budget_usd,
-            run_hard_stop_usd: self.config.run_hard_stop.usd,
-            run_hard_stop_tokens: self.config.run_hard_stop.tokens,
             engines,
             providers: timed("providers", || self.provider_health())?,
             resource_leases: timed("resource_leases", || self.resource_holdings()),
             mcp: timed("mcp", || self.mcp_health()),
             low_disk: timed("low_disk", || self.low_disk()),
             writes: self.store.write_stats().top(WRITE_KINDS_SHOWN),
-            ..Default::default()
+            ..self.status_settings()
         };
         let live = timed("live_agents", || {
             self.store.agents(&AgentFilter {
@@ -108,7 +117,6 @@ impl Runtime {
             })?
             .len() as u32;
         status.pending_approvals = self.store.pending_approvals()?.len() as u32;
-        status.approval_default = self.config.approval_default;
         tracing::debug!(
             elapsed_ms = started.elapsed().as_millis() as u64,
             "status: total"

@@ -51,6 +51,15 @@ pub fn low_disk(disk: &aether_core::disk::LowDisk) -> String {
     )
 }
 
+/// How old a stale daemon status is: the daemon could not read its store in
+/// time and answered with an earlier read, or with none.
+pub fn stale_status(stale: &aether_protocol::StatusStale) -> String {
+    match stale.read_at {
+        Some(at) => format!("stale: figures from {} UTC", at.format("%H:%M:%S")),
+        None => "stale: figures not read yet".into(),
+    }
+}
+
 /// A usage's cost, in the phrasing every surface shares: a complete total is
 /// a number, a total that folded in an unpriced invocation is a floor and
 /// says so, and one with nothing priced at all is not a number.
