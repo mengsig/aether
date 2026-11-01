@@ -23,6 +23,12 @@ release is also the text of its GitHub release.
   the figures are, and the TUI marks them stale. The protocol is still
   version 25: `stale` is a new optional field older clients ignore, and the
   same note is the first entry of `problems`, which they do show.
+- **A request that times out names what the host shows.** A client on the
+  daemon's own machine reads the load, memory and disk stalls from `/proc`
+  when a request goes unanswered. When the host is past a threshold the
+  error says so, for example `this host is overloaded: load 45.0 on 12 cores,
+  12.0 GiB of swap in use and 0.8 GiB of memory available`. The TUI then
+  advises easing the load before stopping the daemon.
 
 ## 1.2.9
 

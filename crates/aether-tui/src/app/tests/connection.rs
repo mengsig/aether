@@ -321,6 +321,7 @@ fn a_slow_status_poll_is_not_stacked_and_its_failure_frees_the_next() {
         result: Err(ClientError::TimedOut {
             command: "status".into(),
             timeout: std::time::Duration::from_secs(60),
+            host: None,
         }),
     });
     assert!(polled(app.reduce(AppEvent::Tick { frames: 120 })));
@@ -365,10 +366,36 @@ fn a_slow_reply_is_not_blamed_on_an_older_build() {
     let timed_out = |command: &str| ClientError::TimedOut {
         command: command.into(),
         timeout: std::time::Duration::from_secs(60),
+        host: None,
     };
     let slow = explain(&theme, &timed_out("status"), Then::Status, "aether");
     assert!(slow.contains("connected but slow"), "{slow}");
     assert!(!slow.contains("older build"), "{slow}");
     let silent = explain(&theme, &timed_out("hello"), Then::Status, "aether");
     assert!(silent.contains("older build"), "{silent}");
+}
+
+/// When the client could see that its host is overloaded, the hint says so
+/// instead of guessing, and still keeps stopping the daemon as the last step.
+#[test]
+fn a_timeout_on_an_overloaded_host_names_the_host_not_a_guess() {
+    let theme = crate::ui::theme::tokens::Theme::default();
+    let error = ClientError::TimedOut {
+        command: "status".into(),
+        timeout: std::time::Duration::from_secs(60),
+        host: Some("this host is overloaded: load 45.0 on 12 cores".into()),
+    };
+    let said = error.to_string();
+    assert!(
+        said.contains("load 45.0 on 12 cores, the likely cause"),
+        "{said}"
+    );
+    let hint = explain(&theme, &error, Then::Status, "aether");
+    assert!(hint.contains("this host is overloaded"), "{hint}");
+    assert!(!hint.contains("older build"), "{hint}");
+    let (ease, stop) = (hint.find("ease the load"), hint.find("aether stop"));
+    assert!(
+        ease.is_some() && ease < stop,
+        "stopping is the last resort: {hint}"
+    );
 }

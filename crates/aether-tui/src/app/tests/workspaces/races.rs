@@ -376,6 +376,7 @@ fn a_timed_out_workspace_creation_keeps_its_workspace_and_socket_hint() {
         result: Err(ClientError::TimedOut {
             command: "create_agent".into(),
             timeout: std::time::Duration::from_secs(1),
+            host: None,
         }),
     });
     let message = app.live_flash().expect("creation failure");

@@ -28,6 +28,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 
 mod agents;
 mod delivery;
+mod host_pressure;
 mod outbox;
 mod resolution;
 pub use delivery::key_command;
@@ -72,17 +73,31 @@ pub enum ClientError {
     Malformed(String),
     #[error("invalid client usage: {0}")]
     InvalidUsage(String),
-    #[error(
-        "the daemon did not answer `{command}` within {}s, though it is still connected; \
-         its log (`logs/aetherd.log` in its data directory) names each request slower \
-         than 2s and what it waited on",
-        timeout.as_secs()
-    )]
-    TimedOut { command: String, timeout: Duration },
+    #[error("{}", timed_out_message(command, *timeout, host.as_deref()))]
+    TimedOut {
+        command: String,
+        timeout: Duration,
+        /// What this host showed at the timeout that would slow the daemon,
+        /// when the client shares the daemon's host and something did.
+        host: Option<String>,
+    },
     /// A daemon this client started died before it listened. Carries what
     /// that daemon said, which is the only account of it there is.
     #[error("the daemon failed to start: {0}")]
     DaemonStartup(String),
+}
+
+fn timed_out_message(command: &str, timeout: Duration, host: Option<&str>) -> String {
+    let unanswered = format!(
+        "the daemon did not answer `{command}` within {}s, though it is still connected",
+        timeout.as_secs()
+    );
+    let log = "its log (`logs/aetherd.log` in its data directory) names each request slower \
+               than 2s and what it waited on";
+    match host {
+        Some(host) => format!("{unanswered}; {host}, the likely cause; {log}"),
+        None => format!("{unanswered}; {log}"),
+    }
 }
 
 impl ClientError {
@@ -177,6 +192,9 @@ pub struct Client {
     /// grant.
     request_timeout: Option<Duration>,
     carrier: Option<Arc<ssh::Carrier>>,
+    /// Over a Unix socket the daemon shares this host, so the host's load
+    /// is worth naming when it does not answer.
+    same_host: bool,
     outbox: Option<Arc<outbox::Outbox>>,
     recovered: Vec<(Command, std::result::Result<Reply, ErrorReply>)>,
 }
@@ -283,6 +301,7 @@ impl Client {
     /// Wrap a transport without handshaking. Callers must send `Hello`
     /// themselves before any other command.
     pub fn from_transport(transport: Transport) -> Client {
+        let same_host = matches!(transport, Transport::Unix(_));
         let (stream, sink) = transport.split();
         let shared = Arc::new(Shared {
             next_id: AtomicU64::new(1),
@@ -300,6 +319,7 @@ impl Client {
             welcome: None,
             request_timeout: Some(DEFAULT_REQUEST_TIMEOUT),
             carrier: None,
+            same_host,
             outbox: None,
             recovered: Vec::new(),
         }
@@ -478,6 +498,7 @@ impl Client {
                     return Err(ClientError::TimedOut {
                         command: name,
                         timeout,
+                        host: self.same_host.then(host_pressure::observe).flatten(),
                     });
                 }
             },

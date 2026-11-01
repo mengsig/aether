@@ -333,6 +333,7 @@ fn daemon_error_hints_preserve_the_selected_socket() {
                 ClientError::TimedOut {
                     command: "hello".into(),
                     timeout: std::time::Duration::from_secs(1),
+                    host: None,
                 },
                 "stop",
             ),
@@ -340,6 +341,7 @@ fn daemon_error_hints_preserve_the_selected_socket() {
                 ClientError::TimedOut {
                     command: "status".into(),
                     timeout: std::time::Duration::from_secs(1),
+                    host: None,
                 },
                 "stop",
             ),
