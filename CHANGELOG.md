@@ -29,6 +29,18 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **A native answer given while background jobs run no longer closes the
+  task.** Stage agents ended their turn with "`make ci` is running; I'll
+  report when it finishes" while the native job still ran, and that prose
+  completed the task; Archon refused the missing result and restarted the
+  whole run, which cost one item 175 minutes. Now a one-shot agent's native
+  final answer given while its background jobs ran keeps the task open, and
+  the agent is woken with a note to wait for the job and then report: at
+  once when the jobs finished unanswered, or 2 minutes after the turn when
+  they were still running. A task gets at most 2 such wakes, after which
+  the answer completes it as before. Long-lived agents and turns whose jobs
+  had all finished before the answer are unchanged.
+
 - **The build cache stays under its budget.** A cache beside `aether.db`
   held 142 GB against its 76.7 GB budget, and 97 hourly sweeps removed
   nothing. Their reports named the cause: 71 GB sat in partitions made

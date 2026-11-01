@@ -561,6 +561,7 @@ pub(crate) async fn execute(
         budget_stop,
         uncommitted,
         stalled,
+        answer_jobs,
         ..
     } = run;
 
@@ -709,7 +710,7 @@ pub(crate) async fn execute(
         ctx,
         &response,
         ran_tools || earlier_tools,
-        CompletionSource::NativeTurn,
+        CompletionSource::NativeTurn(answer_jobs),
     )
     .map(EngineLink::Done)
 }
@@ -1136,5 +1137,6 @@ pub(super) fn test_run() -> DriveResult {
         cleaned_up: true,
         uncommitted: Uncommitted::default(),
         stalled: None,
+        answer_jobs: crate::turn::AnswerJobs::Idle,
     }
 }

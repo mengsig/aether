@@ -44,7 +44,7 @@ use crate::{CommitHold, Result, Runtime, RuntimeError};
 
 mod completion;
 use completion::mark_completed;
-pub(crate) use completion::{CompletionSource, prose_only_next};
+pub(crate) use completion::{AnswerJobs, CompletionSource, prose_only_next};
 
 mod state;
 use state::*;

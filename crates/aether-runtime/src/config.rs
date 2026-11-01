@@ -27,6 +27,10 @@ pub const DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR: Duration = Duration::from_secs(1
 /// before the stall watchdog interrupts it.
 pub const DEFAULT_ENGINE_STALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
+/// How long a worker whose native turn answered while its background jobs
+/// still ran sleeps before it is woken to check on them.
+pub const DEFAULT_NATIVE_JOB_WAKE_AFTER: Duration = Duration::from_secs(2 * 60);
+
 /// How often the daemon looks for agents marked running that have no turn.
 pub const DEFAULT_ORPHAN_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -102,6 +106,9 @@ pub struct RuntimeConfig {
     /// Silence, with no tool running, after which a native engine turn is
     /// interrupted and resumed. Zero turns the watchdog off.
     pub engine_stall_timeout: Duration,
+    /// A worker whose native turn ended in prose while its background jobs
+    /// still ran is woken this long after, its task kept open.
+    pub native_job_wake_after: Duration,
     /// Interval of the sweep that recovers running agents with no turn.
     /// Zero turns the sweep off.
     pub orphan_sweep_interval: Duration,
@@ -185,6 +192,7 @@ impl Default for RuntimeConfig {
             engine_transient_retry_window: DEFAULT_ENGINE_TRANSIENT_RETRY_WINDOW,
             engine_transient_retry_floor: DEFAULT_ENGINE_TRANSIENT_RETRY_FLOOR,
             engine_stall_timeout: DEFAULT_ENGINE_STALL_TIMEOUT,
+            native_job_wake_after: DEFAULT_NATIVE_JOB_WAKE_AFTER,
             orphan_sweep_interval: DEFAULT_ORPHAN_SWEEP_INTERVAL,
             orphan_idle: DEFAULT_ORPHAN_IDLE,
             unstopped_calls: Default::default(),

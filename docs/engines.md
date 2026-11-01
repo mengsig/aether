@@ -26,6 +26,16 @@ agents return to waiting for input without implicitly closing their task.
 Blank or unanswered turns retain bounded recovery rather than being reported
 as successful completion. Explicit Aether task-completion tools remain available.
 
+A final answer given while native background jobs still ran (a `make ci`
+started in the background, then "I'll report when it finishes") does not
+complete the task. The task stays open and the agent is woken with a note
+naming the task: at once when the jobs finished after the answer without the
+engine answering again, and 2 minutes after the turn
+(`RuntimeConfig::native_job_wake_after`) when they were still running as it
+ended, since the ended turn no longer tracks them. A task gets at most 2 such
+wakes; after that such an answer completes it as before. Long-lived agents,
+and answers given once every job had finished, are unaffected.
+
 ## Which tools Aether owns
 
 Keep each engine's native web search, fetch, file, shell, and other useful
@@ -358,9 +368,11 @@ reported. It goes ahead as soon as a job starts or the window passes, so
 a turn with no command pays at most 500 ms per such call and never hangs.
 
 The agent's final answer still ends the turn and stops the session's jobs
-with it. Every process an agent's engine started is reaped when the agent
-ends ([agent processes](configuration.md#agent-processes)); a job never
-outlives its agent.
+with it; for a one-shot agent, an answer given while jobs ran keeps its
+task open and wakes the agent instead of completing it
+([above](#engines)). Every process an agent's engine started is reaped
+when the agent ends ([agent processes](configuration.md#agent-processes));
+a job never outlives its agent.
 
 ## Native reasoning effort
 
