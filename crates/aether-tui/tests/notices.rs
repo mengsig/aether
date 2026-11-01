@@ -164,3 +164,66 @@ fn daemon_status_keeps_the_disk_hold_until_a_successful_reply_clears_it() {
     assert!(app.background_dirty);
     assert!(app.status.as_ref().unwrap().low_disk.is_none());
 }
+
+#[test]
+fn a_stale_status_keeps_the_disk_hold_a_fresh_one_changes() {
+    use aether_core::disk::LowDisk;
+    use aether_protocol::{Reply, StatusStale};
+    use aether_tui::app::Then;
+    use aether_tui::testing::populated_app;
+
+    let mut app = populated_app();
+    let status = app.status.clone().expect("status");
+    let disk = LowDisk {
+        path: "/isolated/store".into(),
+        available_bytes: 1 << 30,
+        floor_bytes: 5 << 30,
+        since: app.now,
+    };
+    let send = |app: &mut aether_tui::app::App, mut next: aether_protocol::DaemonStatus| {
+        next.stale = None;
+        app.reduce(AppEvent::Reply {
+            then: Then::Status,
+            result: Ok(Reply::Status(next)),
+        });
+    };
+    let mut held = status.clone();
+    held.low_disk = Some(disk.clone());
+    send(&mut app, held);
+
+    for read_at in [None, Some(app.now)] {
+        let mut stale = status.clone();
+        stale.stale = Some(StatusStale {
+            read_at,
+            waited_ms: 3_000,
+        });
+        app.reduce(AppEvent::Reply {
+            then: Then::Status,
+            result: Ok(Reply::Status(stale)),
+        });
+        let shown = app.status.as_ref().expect("status");
+        assert!(shown.stale.is_some(), "the status is marked stale");
+        assert_eq!(shown.low_disk.as_ref(), Some(&disk), "{read_at:?}");
+    }
+
+    send(&mut app, status.clone());
+    assert!(
+        app.status.as_ref().unwrap().low_disk.is_none(),
+        "fresh frees"
+    );
+
+    let mut stale = status;
+    stale.low_disk = Some(disk);
+    stale.stale = Some(StatusStale {
+        read_at: Some(app.now),
+        waited_ms: 3_000,
+    });
+    app.reduce(AppEvent::Reply {
+        then: Then::Status,
+        result: Ok(Reply::Status(stale)),
+    });
+    assert!(
+        app.status.as_ref().unwrap().low_disk.is_none(),
+        "stale holds nothing new"
+    );
+}

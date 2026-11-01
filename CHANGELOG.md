@@ -44,6 +44,16 @@ release is also the text of its GitHub release.
   tail ends where its own stream starts, a plain tail refuses a stale
   cursor, and `aether run` does not read a status with no figures as a
   freed disk.
+- **A stale `status` no longer changes the disk state shown.** A stale
+  status, with or without a read behind it, carries the disk hold of an
+  earlier read or a default, so it could free the disk in the plain TUI
+  ("Disk recovered"), drop the TUI's low-disk line after a restart, and clear
+  or set `waiting: disk low` in `aether agents`. All of them now keep the last
+  known state until a fresh status arrives. The TUI's low-disk line and
+  `aether agents` say when the status is stale, with its read time.
+  `aether run` ignores any stale status for the disk gate, not only one with
+  no read, and `aether diagnose` takes the daemon's disk hold from a fresh
+  status only.
 - **A request that times out names what the host shows.** A client on the
   daemon's own machine reads the load, memory and disk stalls from `/proc`
   when a request goes unanswered. When the host is past a threshold the
