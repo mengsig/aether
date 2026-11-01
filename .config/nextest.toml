@@ -1,0 +1,11 @@
+# cargo-nextest runs each test in a process of its own, so a cap that a test
+# binary keeps in memory bounds nothing; a test group keeps it across processes.
+
+# The kernel tests cap how many fork a real `bash` at once with one semaphore
+# per binary (REAL_BASH_CONCURRENCY in crates/aether-runtime/tests/kernel/fixture.rs).
+[test-groups]
+kernel-real-bash = { max-threads = 4 }
+
+[[profile.default.overrides]]
+filter = "binary_id(aether-runtime::kernel)"
+test-group = "kernel-real-bash"
