@@ -64,7 +64,7 @@ enum Class {
 }
 
 /// Mark the partitions to evict and return their indexes in
-/// `report.entries`, finished runs' first. Every byte under the root counts
+/// `report.entries`, finished runs' first. Every partition directory counts
 /// against the budget, Aether's or not; only Aether's are ever evicted.
 pub(super) fn plan(report: &mut BuildCacheReport, claims: &Claims, policy: &Policy) -> Vec<usize> {
     let mut held = 0u64;

@@ -729,8 +729,9 @@ a process's environment or working directory points into it (read from
 Storage GC runs every `[storage] gc_interval_seconds` (an hour by default).
 It drops a finished run's partition once `finished_grace_seconds` have
 passed since its last use, whatever the cache holds; a run is finished when
-none of its agents in the store is still live. Then, while everything under
-the root holds more than `max_bytes`, Aether's own counted too, it evicts
+none of its agents in the store is still live. Then, while the partition
+directories under the root hold more than `max_bytes`, whether Aether made
+them or not, it evicts
 partitions nothing uses: finished runs' first, then idle ones of live runs
 such as a long-lived root agent's, oldest first within each. The disk guard
 does the same as soon as the disk runs low. When what is left is still over

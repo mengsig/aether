@@ -12,8 +12,8 @@ release is also the text of its GitHub release.
   held 142 GB against its 76.7 GB budget, and 97 hourly sweeps removed
   nothing. Their reports named the cause: 71 GB sat in partitions made
   before the eviction marker existed, which counted neither against the
-  budget nor as evictable, so the rest looked within it. Now every byte
-  under the root counts, and an unmarked partition is evicted when an
+  budget nor as evictable, so the rest looked within it. Now every partition
+  directory under the root counts, and an unmarked partition is evicted when an
   agent in the store still builds into it. A finished run's partition is
   dropped `[build_cache] finished_grace_seconds` (900 by default) after
   its last use, whatever the cache holds. A live agent no longer holds its

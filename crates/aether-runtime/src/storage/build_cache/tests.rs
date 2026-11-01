@@ -327,7 +327,7 @@ async fn a_finished_runs_partition_is_dropped_after_its_grace_whatever_the_budge
 }
 
 #[tokio::test]
-async fn every_byte_under_the_root_counts_so_the_budget_holds() {
+async fn every_partition_under_the_root_counts_so_the_budget_holds() {
     let f = Fixture::new(300 * KIB).await;
     let then = SystemTime::now() - DAY * 40;
     let operators = f.root.join("my-target/debug");

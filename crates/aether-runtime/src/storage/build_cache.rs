@@ -310,46 +310,46 @@ fn move_to_trash(
     let mut moved = Vec::new();
     for &index in chosen {
         let entry = &mut report.entries[index];
-        debug_assert!(
-            entry.run.is_some(),
-            "{} is not Aether's",
-            entry.path.display()
-        );
-        if entry.unmarked_run.is_some()
-            && let Err(error) = adopt(&entry.path)
-        {
-            entry.action = "kept";
-            entry.reason = "eviction failed";
-            report
-                .errors
-                .push(format!("marking {}: {error}", entry.path.display()));
-            continue;
-        }
-        if !is_partition(&entry.path) {
-            entry.action = "kept";
-            entry.reason = "changed since the scan";
-            report.errors.push(format!(
-                "{} is no longer a marked directory; left in place",
-                entry.path.display()
-            ));
-            continue;
-        }
-        let target = trash.join(ulid::Ulid::generate().to_string());
-        match fs::rename(&entry.path, &target) {
-            Ok(()) => {
-                entry.action = "evicted";
-                moved.push((index, target));
-            }
-            Err(error) => {
-                entry.action = "kept";
-                entry.reason = "eviction failed";
-                report
-                    .errors
-                    .push(format!("moving {}: {error}", entry.path.display()));
-            }
+        if let Some(target) = move_one(entry, trash, &mut report.errors) {
+            moved.push((index, target));
         }
     }
+    debug_assert!(moved.len() <= chosen.len(), "only chosen partitions move");
     moved
+}
+
+/// Rename one partition into `trash`, marking it first when the store
+/// vouched for an unmarked one. Returns where it went.
+fn move_one(entry: &mut PartitionEntry, trash: &Path, errors: &mut Vec<String>) -> Option<PathBuf> {
+    debug_assert!(
+        entry.run.is_some(),
+        "{} is not Aether's",
+        entry.path.display()
+    );
+    entry.action = "kept";
+    if entry.unmarked_run.is_some()
+        && let Err(error) = adopt(&entry.path)
+    {
+        entry.reason = "eviction failed";
+        errors.push(format!("marking {}: {error}", entry.path.display()));
+        return None;
+    }
+    if !is_partition(&entry.path) {
+        entry.reason = "changed since the scan";
+        errors.push(format!(
+            "{} is no longer a marked directory; left in place",
+            entry.path.display()
+        ));
+        return None;
+    }
+    let target = trash.join(ulid::Ulid::generate().to_string());
+    if let Err(error) = fs::rename(&entry.path, &target) {
+        entry.reason = "eviction failed";
+        errors.push(format!("moving {}: {error}", entry.path.display()));
+        return None;
+    }
+    entry.action = "evicted";
+    Some(target)
 }
 
 /// Mark a partition a release before the marker made, once the store has
