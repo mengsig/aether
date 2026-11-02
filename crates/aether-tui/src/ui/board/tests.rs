@@ -1070,9 +1070,17 @@ fn folded_cost_is_the_subtree_total_and_unfolded_cost_is_own() {
     let text = inner_rows(&draw_docked(&f.app, 56, 44, &dark()));
     let row = text
         .iter()
-        .find(|line| line.contains("implementer") && line.contains("total"))
+        .find(|line| line.contains("implementer") && line.contains('$'))
         .expect("folded total");
-    assert!(row.ends_with("$0.51 total"), "{row}");
+    assert!(
+        row.ends_with("$0.51"),
+        "the tree column stays compact: {row}"
+    );
+    assert!(
+        text.iter()
+            .any(|r| r.starts_with("Cost") && r.contains("$0.51 with children")),
+        "the inspector says what the total covers: {text:#?}"
+    );
     f.app.board_unfold();
     let text = inner_rows(&draw_docked(&f.app, 56, 44, &dark()));
     let row = text
@@ -1177,7 +1185,132 @@ fn priced_tree_preserves_header_and_name_at_docked_width() {
     let text = inner_rows(&draw_docked(&f.app, board_width(160), 44, &dark()));
     assert!(text[1].starts_with("Agents "), "{text:#?}");
     assert!(text[7].contains("implementer"), "{text:#?}");
-    assert!(text[7].ends_with("~$1.84 list price"), "{text:#?}");
+    assert!(text[7].ends_with("~$1.84"), "{text:#?}");
+    assert!(
+        text[1].contains("~$1.84 list"),
+        "the header keeps the basis: {text:#?}"
+    );
+}
+
+/// A root over a folded child priced at `$12.34 provider-reported`, then
+/// `implement` and its own child `review 2/3`, and a long-named sibling; the
+/// last three entered their status `secs` ago, or ran for `secs` when done.
+fn crowded_board(secs: i64, finished: bool) -> App {
+    use aether_core::model::CostBasis;
+    let mut t = TreeBuilder::default();
+    let root = t.add(None, "orchestrator", "assistant", AgentStatus::Running);
+    let archive = t.add(Some(root), "archive", "worker", done());
+    t.add(Some(archive), "indexer", "worker", done());
+    let implement = t.add(Some(root), "implement", "worker", AgentStatus::Running);
+    let review = t.add(
+        Some(implement),
+        "review 2/3",
+        "reviewer",
+        AgentStatus::Running,
+    );
+    let long = t.add(
+        Some(root),
+        "integration-tests-for-runs-list",
+        "worker",
+        AgentStatus::Running,
+    );
+    for id in [implement, review, long] {
+        if finished {
+            t.agent(id).status = done();
+            t.took(id, secs);
+        } else {
+            t.since(id, secs);
+        }
+    }
+    let mut app = app_with(t.build());
+    app.board.collapsed.insert(archive);
+    // A finished subtree folds on its own; `review 2/3` stays in view.
+    app.board.expanded.insert(implement);
+    app.rebuild_board();
+    let row = app
+        .board
+        .model
+        .rows
+        .iter_mut()
+        .find(|r| r.id == archive)
+        .expect("the archive row");
+    assert!(row.folded, "the archive row is folded");
+    row.cost = Some(Cost {
+        usd: 12.34,
+        estimated: false,
+        basis: CostBasis::ProviderReported,
+    });
+    app
+}
+
+/// The name on a title row: past `depth` guide columns, the glyph and a
+/// space, up to its `…` or the gap before the role or the right columns.
+fn shown_name(row: &str, depth: usize) -> String {
+    let rest: String = row.chars().skip(2 * depth + 2).collect();
+    let whole = rest.split("  ").next().unwrap_or_default();
+    match whole.find('…') {
+        Some(at) => whole[..at + '…'.len_utf8()].to_owned(),
+        None => whole.to_owned(),
+    }
+}
+
+/// `name` in full, or a prefix of it at least the minimum wide ending in one `…`.
+fn assert_name_kept(shown: &str, name: &str, context: &str) {
+    use unicode_width::UnicodeWidthStr;
+    if shown == name {
+        return;
+    }
+    let head = shown
+        .strip_suffix('…')
+        .unwrap_or_else(|| panic!("{shown:?} is neither {name:?} nor cut: {context}"));
+    assert!(
+        !head.is_empty() && !head.contains('…'),
+        "{shown:?}: {context}"
+    );
+    assert!(name.starts_with(head), "{shown:?} vs {name:?}: {context}");
+    assert!(
+        shown.width() >= name.width().min(12),
+        "{shown:?} is under the minimum: {context}"
+    );
+}
+
+#[test]
+fn names_keep_their_minimum_beside_a_wide_cost_column_at_every_clock() {
+    let rows = [
+        ("orchestrator", 0),
+        ("archive", 1),
+        ("implement", 1),
+        ("review 2/3", 2),
+        ("integration-tests-for-runs-list", 1),
+    ];
+    for finished in [false, true] {
+        for secs in [0, 45, 60, 725] {
+            let app = crowded_board(secs, finished);
+            for inner in [36u16, 38, 44] {
+                let text = tree_text(&app, inner + 4, &dark());
+                let context = format!("{inner} columns, {secs}s, finished {finished}");
+                assert!(
+                    text.iter().all(|r| r.chars().count() <= usize::from(inner)),
+                    "{context}: {text:#?}"
+                );
+                for (name, depth) in rows {
+                    // Finished rows sort differently; every name keeps its first 6 columns.
+                    let row = text
+                        .iter()
+                        .find(|r| r.contains(&name[..6]))
+                        .unwrap_or_else(|| panic!("no {name:?} row, {context}: {text:#?}"));
+                    let shown = shown_name(row, depth);
+                    assert_name_kept(&shown, name, &format!("{context}: {row:?}"));
+                }
+                let archive = text
+                    .iter()
+                    .find(|r| r.contains("archive"))
+                    .expect("the archive row");
+                assert!(archive.ends_with("$12.34"), "{context}: {archive:?}");
+                assert!(!archive.contains("provider"), "{context}: {archive:?}");
+            }
+        }
+    }
 }
 
 /// An Archon-style run node that never took a turn, over three stages.
@@ -1274,14 +1407,19 @@ fn a_passive_leaf_and_an_ordinary_parent_keep_the_model_line() {
 }
 
 #[test]
-fn a_long_group_name_is_cut_at_its_end_and_keeps_the_cost() {
+fn a_long_group_name_is_cut_at_its_end_and_keeps_its_minimum_over_the_cost() {
     let (app, _) = run_node(&[("build", AgentStatus::Running)]);
     let theme = dark();
-    let text = tree_text(&app, 30, &theme);
-    let title = &text[3];
-    assert!(title.starts_with("● Foundatio…"), "{title:?}");
-    assert!(title.contains('…') && title.ends_with("$1.50"), "{title:?}");
-    assert!(!title.contains("more"), "{title:?}");
+    let roomy = &tree_text(&app, 40, &theme)[3];
+    assert!(roomy.starts_with("● Foundation ADRs"), "{roomy:?}");
+    assert!(roomy.contains('…') && roomy.ends_with("$1.50"), "{roomy:?}");
+    let tight = &tree_text(&app, 30, &theme)[3];
+    assert!(tight.starts_with("● Foundation A"), "{tight:?}");
+    assert!(
+        tight.contains('…') && tight.ends_with("1h 00m"),
+        "{tight:?}"
+    );
+    assert!(!tight.contains("more") && !tight.contains('$'), "{tight:?}");
 }
 
 #[test]
@@ -1331,4 +1469,21 @@ fn inspector_shows_cache_writes_between_input_and_cached_tokens() {
         text.contains("32k in · 42 cache-write · 380k cached"),
         "{text}"
     );
+}
+
+#[test]
+fn a_crowded_title_sheds_its_cost_then_its_clock_before_the_name() {
+    let app = crowded_board(725, false);
+    let text = tree_text(&app, 24, &dark());
+    assert!(text.iter().all(|r| r.chars().count() <= 20), "{text:#?}");
+    let archive = &text[5];
+    assert_eq!(shown_name(archive, 1), "archive", "{text:#?}");
+    assert!(
+        archive.ends_with(" <1s") && !archive.contains('$'),
+        "{archive:?}"
+    );
+    for (row, name, depth) in [(7, "implement", 1), (9, "review 2/3", 2)] {
+        assert_eq!(shown_name(&text[row], depth), name, "{text:#?}");
+        assert!(!text[row].contains("12m"), "{:?}", text[row]);
+    }
 }

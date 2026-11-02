@@ -10,10 +10,11 @@ use aether_core::id::AgentId;
 use aether_core::time::Timestamp;
 
 use super::{
-    BoardScroll, elapsed_text, fit_spans, left_room, split_line, status_glyph, status_style,
+    BoardScroll, cost_text, elapsed_text, fit_spans, split_line, status_glyph, status_style,
     truncate,
 };
 use crate::app::board::{BoardModel, BoardRow, BoardStatus, Guide};
+use crate::app::transcript::Cost;
 use crate::ui::theme::tokens::{Theme, ThemeMode};
 
 /// What the tree paints besides the model: cursor (only while focused), viewed agent, clock.
@@ -28,6 +29,9 @@ pub struct TreeContext {
 
 /// Header and the blank row under it.
 const HEADER_ROWS: u16 = 2;
+/// Columns a name keeps (all of a shorter one) before its row sheds the cost,
+/// then the elapsed label.
+const NAME_MIN_COLUMNS: usize = 12;
 
 /// Elapsed and cost text per row, rebuilt at most once a second or when the
 /// model changes; every frame in between (the pulse) reuses it.
@@ -63,37 +67,22 @@ impl Labels {
             .iter()
             .map(|r| elapsed_text(r.status, r.elapsed_ms(ctx.now)))
             .collect();
-        self.cost = model
-            .rows
-            .iter()
-            .map(|r| {
-                let cost = cost_text(r.cost);
-                if r.folded && !cost.is_empty() {
-                    format!("{cost} total")
-                } else {
-                    cost
-                }
-            })
-            .collect();
+        self.cost = model.rows.iter().map(|r| row_cost_text(r.cost)).collect();
         self.cost_width = self.cost.iter().map(|c| c.width()).max().unwrap_or(0);
         self.summary = summary(model, theme);
     }
 }
 
-/// Cost provenance uses the same vocabulary as the inspector.
-fn cost_text(cost: Option<crate::app::transcript::Cost>) -> String {
+/// A row's price in the tree's shared column: `$0.38`, `~$0.09` for an
+/// estimate. Its basis, and a folded row's subtree total, are the inspector's.
+fn row_cost_text(cost: Option<Cost>) -> String {
     let Some(cost) = cost else {
         return String::new();
     };
     debug_assert!(cost.usd.is_finite());
     debug_assert!(cost.usd >= 0.0);
     let prefix = if cost.estimated { "~" } else { "" };
-    let basis = cost
-        .basis
-        .label()
-        .map(|label| format!(" {label}"))
-        .unwrap_or_default();
-    format!("{prefix}${:.2}{basis}", cost.usd)
+    format!("{prefix}${:.2}", cost.usd)
 }
 
 /// `5 agents · 2 running · $1.84`; the running count only when something
@@ -278,30 +267,56 @@ fn title_line(
     } else {
         hue
     };
-    let right = right_columns(
-        &labels.elapsed[index],
-        &labels.cost[index],
-        labels.cost_width,
-        theme,
-    );
     let mut left = vec![
         Span::styled(guides(row.guides.iter().copied(), theme), theme.rule()),
         status_glyph(row.status, theme, ctx.now),
         Span::raw(" "),
     ];
-    // The role goes first, then the name's end; its start is what reads.
     let lead: usize = left.iter().map(|s| s.content.width()).sum();
-    let name = truncate(
-        &row.name,
-        left_room(&right, width).saturating_sub(lead),
-        theme,
-    );
+    let floor = row.name.width().min(NAME_MIN_COLUMNS);
+    let (right, name_room) = title_right(labels, index, floor, width.saturating_sub(lead), theme);
+    // The role goes first, then the name's end; its start is what reads.
+    let name = truncate(&row.name, name_room, theme);
     left.push(Span::styled(name, name_style));
     if !row.role.is_empty() && row.group.is_none() {
         left.push(Span::raw("  "));
         left.push(Span::styled(row.role.clone(), theme.secondary()));
     }
     split_line(left, right, width, theme)
+}
+
+/// Row `index`'s right columns that still leave its name `floor` of the
+/// `avail` columns past its guides and glyph, and the name's room beside
+/// them: elapsed and cost, else elapsed alone, else nothing.
+fn title_right(
+    labels: &Labels,
+    index: usize,
+    floor: usize,
+    avail: usize,
+    theme: &Theme,
+) -> (Vec<Span<'static>>, usize) {
+    debug_assert!(floor <= NAME_MIN_COLUMNS);
+    debug_assert!(index < labels.elapsed.len() && index < labels.cost.len());
+    let elapsed = &labels.elapsed[index];
+    let full = right_columns(elapsed, &labels.cost[index], labels.cost_width, theme);
+    if let Some(room) = name_room(&full, avail).filter(|room| *room >= floor) {
+        return (full, room);
+    }
+    let shed_cost = right_columns(elapsed, "", 0, theme);
+    if let Some(room) = name_room(&shed_cost, avail).filter(|room| *room >= floor) {
+        return (shed_cost, room);
+    }
+    (Vec::new(), avail)
+}
+
+/// Columns of `avail` left beside `right` and the one-column gap before it;
+/// `None` when `right` does not fit. Never grows as `right` widens.
+fn name_room(right: &[Span<'static>], avail: usize) -> Option<usize> {
+    if right.is_empty() {
+        return Some(avail);
+    }
+    let right_width: usize = right.iter().map(|s| s.content.width()).sum();
+    avail.checked_sub(right_width + 1)
 }
 
 /// `2m 40s  $0.38`, the cost right-aligned in a column `cost_width` wide; a
