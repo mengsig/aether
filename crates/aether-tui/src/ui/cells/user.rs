@@ -30,19 +30,27 @@ pub fn layout(cell: &CellModel, width: u16, _detail: bool, theme: &Theme) -> Lay
     }
     // The block keeps a 2-column right margin inside its tint (mock h).
     let wrap_width = usize::from(width).saturating_sub(2);
+    let (edge, indent) = block_edge(theme);
     let mut rows = Layout::default();
-    rows.push(Line::default(), RowSource::default());
-    rows.append(wrap_layout(
-        body,
-        wrap_width,
-        first,
-        vec![span("  ", theme.text())],
-    ));
-    rows.push(Line::default(), RowSource::default());
+    rows.push(edge.clone(), RowSource::default());
+    rows.append(wrap_layout(body, wrap_width, first, indent));
+    rows.push(edge, RowSource::default());
     for (row, _) in rows.rows_mut() {
         row.style = theme.tint();
     }
     rows
+}
+
+/// The padding row and continuation indent: blank on the band, or a bar in
+/// the user hue where no band can be painted, so the block still stands out.
+fn block_edge(theme: &Theme) -> (Line<'static>, Spans) {
+    if !theme.bars_blocks() {
+        return (Line::default(), vec![span("  ", theme.text())]);
+    }
+    let bar = theme.decoration("▎", "|");
+    debug_assert_eq!(bar.width(), 1, "the bar keeps the 2-column indent");
+    let edge = Line::from(span(bar, theme.user()));
+    (edge, vec![span(format!("{bar} "), theme.user())])
 }
 
 /// The pinned header row: the prompt on one tinted row, cut with an ellipsis.

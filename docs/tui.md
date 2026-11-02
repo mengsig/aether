@@ -403,6 +403,13 @@ wins over the saved choice. `dusk`, `dawn` and `monochrome` are still accepted
 as `dark`, `light` and `mono`. When the terminal does not report its colours,
 `auto` falls back to `COLORFGBG`, then dark.
 
+Aether asks the terminal for its colours (OSC 10/11) once at startup. The
+wait ends as soon as the terminal answers, and gives up after 100 ms, or
+500 ms inside tmux (`$TMUX`) or over SSH (`$SSH_CONNECTION`, `$SSH_TTY`).
+tmux before 3.4 does not pass the question on to the outer terminal and
+answers it only for a pane with explicit colours (`window-style`), so in
+tmux the colours are often unknown.
+
 When the terminal reports its background, each hue is made readable against it
 (WCAG AA, 4.5:1); the pulse dims below that between its peaks, and quiet text
 and rules are blended from the terminal's own colours. Colours are reduced to
@@ -410,6 +417,13 @@ the terminal's depth: 256-colour terminals get the nearest palette entry, and
 16-colour terminals use their own basic colours, so there every palette looks
 the same. At 256 colours the user-message band picks the nearest entry that
 still stands out from the probed background.
+
+When the colours stay unknown, user messages, the composer and approvals sit
+on a fixed grey band for the light or dark guess (xterm-256 `237` with `252`
+text on dark, `254` with `235` on light). The band sets its own text colour,
+so it stays readable if the guess is wrong. A 16-colour terminal's colours
+are its own, so there a user message gets a bar (`▎`, `|` with `--ascii`)
+down its left edge instead of a band. `mono` draws neither.
 
 `COLORTERM=truecolor` enables truecolor. SSH does not normally forward
 `COLORTERM`, so when `TERM` claims 256 colours Aether also asks the terminal
