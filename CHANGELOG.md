@@ -6,6 +6,59 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.11
+
+Released 2026-11-03. A patch release for the TUI and the dependencies.
+Agent names on the board keep a minimum width, so a new agent's name no
+longer shows blank or as a lone "…" (#378). User messages keep a highlight
+when the terminal does not answer the colour probe, as under tmux or over
+a slow SSH link (#380). The dependabot bumps #374 to #376 are applied,
+among them rusqlite 0.41.1 with SQLite 3.54.1; unicode-width stays at
+0.2.2 (#379). The protocol stays at version 25 and the store at schema 28.
+
+### Before updating
+
+- Restart the daemon after the update (`aether stop`, then `aether`). The
+  store stays at schema 28, so there is no migration and no pre-migration
+  backup.
+
+### Changed
+
+- **Dependency updates (#379).** The dependabot bumps #374, #375 and #376
+  are applied in one change: `taiki-e/install-action` 2.88.1 in CI, the
+  cargo minor and patch group, and rusqlite 0.40.2 to 0.41.1, whose
+  bundled SQLite goes from 3.53.2 to 3.54.1. rusqlite 0.41 needs a mutable
+  connection for hooks and an explicit backup progress type, and
+  aether-store was changed only for that. unicode-width is held at 0.2.2:
+  0.2.3 changes the widths of the halfwidth sound marks, which breaks
+  ratatui-core's compensation for them and three aether-tui width tests.
+
+### Fixed
+
+- **Agent names on the board keep a minimum width (#378).** A title row
+  gave its name whatever the right columns left, and the shared cost
+  column was as wide as the widest label of any row, such as
+  `$12.34 provider-reported total`. Beside that column a new agent's name
+  showed blank or as a lone "…" for up to a minute, until its clock grew
+  long enough to drop the right side, and flickered back whenever the clock
+  reset. A name now keeps the smaller of its width and 12 columns: a
+  crowded row sheds its cost, then its elapsed time, before the name is
+  cut, and the room is computed from the right columns actually shown. The
+  tree's cost column shows the amount alone (`~` for an estimate); the
+  basis and a folded row's subtree total stay in the header and the
+  inspector.
+- **User messages keep a highlight when the colour probe goes unanswered
+  (#380).** When the terminal did not answer the OSC 10/11 probe within
+  100 ms (tmux before 3.4, a slow SSH link) or showed only 16 colours, the
+  user-message band dropped out and user messages looked like the rest of
+  the transcript (#377). Without a probed palette, 256-colour and truecolor
+  terminals now get a fixed grey band for the light or dark guess
+  (`COLORFGBG`, then dark), which sets its own text colour so it stays
+  readable when the guess is wrong; cursor rows keep the underline. At 16
+  colours a user message gets a bar down its left edge instead; `mono` and
+  the plain-text theme stay bare. The probe waits up to 500 ms inside tmux
+  or over SSH, and still ends as soon as the terminal answers.
+
 ## 1.2.10
 
 Released 2026-11-02. A patch release for an overloaded host. `status`
