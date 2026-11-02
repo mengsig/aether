@@ -29,6 +29,12 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **`aether status` dates a disk LOW line read from a stale status.** When
+  the daemon answers with an earlier read, the `disk` line now says
+  `disk     LOW (as of <time>, status stale)`, as the TUI footer and plain
+  mode already did, instead of reading as the current disk state. A fresh
+  status prints as before; `--json` already carries `stale` beside
+  `low_disk`.
 - **A process sweep no longer misses a child the newest process forks
   while it is visited.** `/proc` points each entry at the process listed
   after it when read, so when the visited process was the newest, the

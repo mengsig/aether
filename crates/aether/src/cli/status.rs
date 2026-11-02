@@ -109,14 +109,7 @@ fn human_status(
         s.tasks_active, s.pending_approvals
     ));
     if let Some(low) = &s.low_disk {
-        let gib = |bytes: u64| bytes as f64 / (1u64 << 30) as f64;
-        out.push(format!(
-            "disk     LOW · {:.1} GiB free on the filesystem of {}, floor {:.1} GiB, since {} · new turns wait",
-            gib(low.available_bytes),
-            sane(&low.path),
-            gib(low.floor_bytes),
-            low.since.to_rfc3339()
-        ));
+        out.push(disk_line(low, s.stale.as_ref()));
     }
     if let Some(writes) = &s.writes {
         out.push(writes_line(writes));
@@ -126,6 +119,29 @@ fn human_status(
     out.extend(activity_lines(s, at));
     debug_assert!(out.iter().all(|line| !line.is_empty()));
     out
+}
+
+/// The disk hold. A stale status carries the reading of an earlier read,
+/// so the line says when it held instead of presenting it as current.
+fn disk_line(
+    low: &aether_core::disk::LowDisk,
+    stale: Option<&aether_protocol::StatusStale>,
+) -> String {
+    let gib = |bytes: u64| bytes as f64 / (1u64 << 30) as f64;
+    let freshness = match stale {
+        None => String::new(),
+        Some(stale) => match stale.read_at {
+            Some(read_at) => format!(" (as of {}, status stale)", read_at.to_rfc3339()),
+            None => " (status stale)".to_owned(),
+        },
+    };
+    format!(
+        "disk     LOW{freshness} · {:.1} GiB free on the filesystem of {}, floor {:.1} GiB, since {} · new turns wait",
+        gib(low.available_bytes),
+        sane(&low.path),
+        gib(low.floor_bytes),
+        low.since.to_rfc3339()
+    )
 }
 
 /// What the store wrote since the daemon started, and the three kinds of
@@ -596,6 +612,52 @@ mod tests {
         let text = status_text(&status, &LocalInstall::default(), false, at).expect("renders");
         assert!(text.contains("engines  none"), "{text}");
         assert!(text.contains("model    none configured"), "{text}");
+    }
+
+    #[test]
+    fn a_stale_status_dates_its_disk_hold_and_a_fresh_one_does_not() {
+        let at = aether_core::time::now();
+        let read_at = at - chrono::Duration::seconds(90);
+        let mut status = fixture(at);
+        status.low_disk = Some(aether_core::disk::LowDisk {
+            path: "/data".into(),
+            available_bytes: 1 << 30,
+            floor_bytes: 2 << 30,
+            since: read_at,
+        });
+        let disk_of = |status: &aether_protocol::DaemonStatus| {
+            let lines = human_status(status, None, at);
+            lines
+                .into_iter()
+                .find(|l| l.starts_with("disk "))
+                .expect("a disk line")
+        };
+        let tail = format!(
+            "1.0 GiB free on the filesystem of /data, floor 2.0 GiB, since {} · new turns wait",
+            read_at.to_rfc3339()
+        );
+        assert_eq!(disk_of(&status), format!("disk     LOW · {tail}"));
+
+        status.stale = Some(aether_protocol::StatusStale {
+            read_at: Some(read_at),
+            waited_ms: 5_000,
+        });
+        assert_eq!(
+            disk_of(&status),
+            format!(
+                "disk     LOW (as of {}, status stale) · {tail}",
+                read_at.to_rfc3339()
+            )
+        );
+
+        status.stale = Some(aether_protocol::StatusStale {
+            read_at: None,
+            waited_ms: 5_000,
+        });
+        assert_eq!(
+            disk_of(&status),
+            format!("disk     LOW (status stale) · {tail}")
+        );
     }
 
     #[test]
