@@ -326,14 +326,37 @@ async fn a_finished_runs_partition_is_dropped_after_its_grace_whatever_the_budge
     assert!(built(&just_now) && built(&live));
 }
 
-#[tokio::test]
-async fn every_partition_under_the_root_counts_so_the_budget_holds() {
-    let f = Fixture::new(300 * KIB).await;
+/// Operator output of 256 KiB plus two Aether partitions of 32 KiB each.
+fn mixed_root(f: &Fixture) -> (PathBuf, PathBuf, PathBuf) {
     let then = SystemTime::now() - DAY * 40;
     let operators = f.root.join("my-target/debug");
     build(&operators, 256, then);
     let (_, oldest) = f.agent(AgentStatus::Completed { summary: None }, 20, 32);
     let (_, newer) = f.agent(AgentStatus::Completed { summary: None }, 10, 32);
+    (operators, oldest, newer)
+}
+
+/// A budget that holds the operator output and one partition but not the
+/// second, from the blocks this filesystem gives that layout.
+async fn budget_for_one_partition_too_few() -> u64 {
+    let probe = Fixture::new(u64::MAX).await;
+    let (operators, oldest, newer) = mixed_root(&probe);
+    let report = probe.gc(true);
+    let (fixed, partition) = (
+        entry(&report, &operators).bytes,
+        entry(&report, &newer).bytes,
+    );
+    assert_eq!(partition, entry(&report, &oldest).bytes, "same layout");
+    assert!(partition >= 32 * KIB, "{report:?}");
+    fixed + partition + partition / 2
+}
+
+#[tokio::test]
+async fn every_partition_under_the_root_counts_so_the_budget_holds() {
+    let budget = budget_for_one_partition_too_few().await;
+    let f = Fixture::new(budget).await;
+    let then = SystemTime::now() - DAY * 40;
+    let (operators, oldest, newer) = mixed_root(&f);
 
     let swept = f.gc(false);
     assert_eq!(entry(&swept, &operators).action, "kept", "not Aether's");
@@ -345,7 +368,7 @@ async fn every_partition_under_the_root_counts_so_the_budget_holds() {
     );
     assert_eq!(entry(&swept, &newer).action, "kept", "the rest fit");
     assert!(
-        swept.bytes_kept > 256 * KIB && swept.bytes_kept <= 300 * KIB,
+        swept.bytes_kept > entry(&swept, &operators).bytes && swept.bytes_kept <= budget,
         "{swept:?}"
     );
     let problems = f.runtime.status().unwrap().problems;
@@ -358,7 +381,7 @@ async fn every_partition_under_the_root_counts_so_the_budget_holds() {
 
     build(&f.root.join("my-target/release"), 128, then);
     let over = f.gc(false);
-    assert!(over.bytes_kept > 300 * KIB, "{over:?}");
+    assert!(over.bytes_kept > budget, "{over:?}");
     let problems = f.runtime.status().unwrap().problems;
     assert!(
         problems.iter().any(|problem| problem.contains("over its")
