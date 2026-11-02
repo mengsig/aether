@@ -57,7 +57,11 @@ fn write_snapshot(conn: &Connection, directory: &Path, name: &str) -> Result<Pat
     let snapshot = tempfile::NamedTempFile::new_in(directory)?;
     // SQLite's backup API includes committed WAL data and preserves row IDs,
     // which are referenced by the external-content memory search index.
-    conn.backup(rusqlite::MAIN_DB, snapshot.path(), None)?;
+    conn.backup(
+        rusqlite::MAIN_DB,
+        snapshot.path(),
+        None::<fn(rusqlite::backup::Progress)>,
+    )?;
     let length = check_snapshot(snapshot.path())?;
     let compressed = tempfile::NamedTempFile::new_in(directory)?;
     let written = compress(&mut snapshot.reopen()?, compressed.as_file())?;
