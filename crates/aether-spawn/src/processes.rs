@@ -9,10 +9,10 @@ use rustix::fs::{Mode, OFlags, RawDir, SeekFrom};
 /// Room for any one `/proc` entry; a read fills it with those after it too.
 const ENTRY_ROOM: usize = 256;
 
-/// Visit the pid of each process listed under `proc_root`. The listing is
-/// read afresh past each pid, so a child forked meanwhile is still visited,
-/// as its pid lies past its parent's; one given a lower pid, as the pid
-/// counter wraps around, is missed.
+/// Visit the pid of each process listed under `proc_root`. Each read starts
+/// again at the entry just visited, so what follows it is listed as it is
+/// after the visit: a child forked meanwhile is still visited, as its pid lies
+/// past its parent's; one given a lower pid, as the pid counter wraps, is missed.
 pub fn visit_processes(
     proc_root: &Path,
     mut visit: impl FnMut(u32) -> io::Result<()>,
@@ -23,25 +23,60 @@ pub fn visit_processes(
         Mode::empty(),
     )?;
     let mut buffer = [MaybeUninit::<u8>::uninit(); ENTRY_ROOM];
-    let mut position = 0;
+    let mut handled = Handled::default();
     loop {
-        let (pid, next) = {
-            let mut entries = RawDir::new(&listing, &mut buffer);
-            let Some(entry) = entries.next() else {
-                return Ok(());
-            };
-            let entry = entry?;
-            let name = entry.file_name().to_str().ok();
-            let pid = name.and_then(|name| name.parse::<u32>().ok());
-            (pid, entry.next_entry_cookie())
+        rustix::fs::seek(&listing, SeekFrom::Start(handled.start))?;
+        let Some(pid) = next_entry(&listing, &mut buffer, &mut handled)? else {
+            return Ok(());
         };
-        assert_ne!(next, position, "a read of the listing did not advance");
-        rustix::fs::seek(&listing, SeekFrom::Start(next))?;
-        position = next;
         if let Some(pid) = pid.filter(|pid| *pid > 0) {
             visit(pid)?;
         }
     }
+}
+
+/// The entry last handled: where it starts and its name, once there is one.
+#[derive(Default)]
+struct Handled {
+    start: u64,
+    name: Vec<u8>,
+}
+
+/// Read from `handled.start`, step past the entry handled there if it is still
+/// listed, and make the next entry the handled one. `Some` holds its pid, if
+/// its name is one; `None` ends the listing.
+fn next_entry(
+    listing: &rustix::fd::OwnedFd,
+    buffer: &mut [MaybeUninit<u8>],
+    handled: &mut Handled,
+) -> io::Result<Option<Option<u32>>> {
+    let mut entries = RawDir::new(listing, buffer);
+    let Some(first) = entries.next().transpose()? else {
+        return Ok(None);
+    };
+    let (entry, start) =
+        if !handled.name.is_empty() && first.file_name().to_bytes() == handled.name.as_slice() {
+            let after = first.next_entry_cookie();
+            assert_ne!(
+                after, handled.start,
+                "a read of the listing did not advance"
+            );
+            let Some(next) = entries.next().transpose()? else {
+                return Ok(None);
+            };
+            (next, after)
+        } else {
+            (first, handled.start)
+        };
+    let name = entry.file_name().to_bytes();
+    assert!(!name.is_empty(), "a listed entry has a name");
+    handled.start = start;
+    handled.name.clear();
+    handled.name.extend_from_slice(name);
+    let pid = std::str::from_utf8(name)
+        .ok()
+        .and_then(|name| name.parse().ok());
+    Ok(Some(pid))
 }
 
 #[cfg(test)]
