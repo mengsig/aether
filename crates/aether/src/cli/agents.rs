@@ -84,7 +84,11 @@ pub async fn agents(
         .collect();
     // The scheduler starts no turn while the disk is below its floor, so a
     // ready agent is waiting on that, not about to run.
-    let disk_low = client.status().await?.low_disk.is_some();
+    let status = client.status().await?;
+    let disk_low = fresh_disk_low(&status);
+    if let Some(note) = stale_disk_note(&status) {
+        eprintln!("{note}");
+    }
     // Cache reads are their own column: folded into `in` they let a
     // cache-dominated total read as fresh input nobody had paid full price for.
     let glyphs = Glyphs::new(super::display_ascii(ascii)?);
@@ -108,6 +112,25 @@ pub async fn agents(
         println!("{}", agent_row(&a, holds, glyphs));
     }
     Ok(())
+}
+
+/// Whether turns wait on the disk, as far as this status can say: a stale
+/// one is an earlier read or none, so it never says so.
+fn fresh_disk_low(status: &aether_protocol::DaemonStatus) -> bool {
+    status.stale.is_none() && status.low_disk.is_some()
+}
+
+/// A stale status is an earlier read, or none, so it cannot say whether
+/// turns wait on the disk; the table then omits that hold and this says why.
+fn stale_disk_note(status: &aether_protocol::DaemonStatus) -> Option<String> {
+    let stale = status.stale.as_ref()?;
+    let figures = match stale.read_at {
+        Some(at) => format!("figures from {} UTC", at.format("%H:%M:%S")),
+        None => "figures not read yet".into(),
+    };
+    Some(format!(
+        "note: the daemon's status is stale ({figures}); whether new turns wait on the disk is not shown"
+    ))
 }
 
 fn agent_row(a: &aether_core::agent::Agent, holds: Holds, glyphs: Glyphs) -> String {
@@ -422,8 +445,61 @@ pub async fn resume(
 
 #[cfg(test)]
 mod tests {
-    use super::{Glyphs, Holds, agent_status_label};
+    use super::{Glyphs, Holds, agent_status_label, fresh_disk_low, stale_disk_note};
     use aether_core::agent::AgentStatus;
+
+    fn status(stale: Option<serde_json::Value>) -> aether_protocol::DaemonStatus {
+        status_with_disk(stale, false)
+    }
+
+    fn status_with_disk(
+        stale: Option<serde_json::Value>,
+        low: bool,
+    ) -> aether_protocol::DaemonStatus {
+        let low_disk = low.then(|| {
+            serde_json::json!({
+                "path": "/store", "available_bytes": 1u64 << 30,
+                "floor_bytes": 5u64 << 30, "since": "2026-11-01T00:00:00Z",
+            })
+        });
+        serde_json::from_value(serde_json::json!({
+            "instance_id": "i", "version": "test", "pid": 42, "started_at": "2026-11-01T00:00:00Z",
+            "last_seq": 0, "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
+            "agents_blocked": 0, "tasks_active": 0, "pending_approvals": 0,
+            "usage_total": aether_core::model::Usage::default(), "mcp": [], "providers": [],
+            "stale": stale, "low_disk": low_disk,
+        }))
+        .expect("daemon status")
+    }
+
+    /// Only a fresh status sets the hold; a stale one, read or not, never does.
+    #[test]
+    fn only_a_fresh_status_marks_the_disk_low() {
+        let read = || {
+            Some(serde_json::json!({
+                "read_at": "2026-11-01T13:44:05Z", "waited_ms": 3000,
+            }))
+        };
+        let unread = || Some(serde_json::json!({ "waited_ms": 3000 }));
+        assert!(fresh_disk_low(&status_with_disk(None, true)));
+        assert!(!fresh_disk_low(&status_with_disk(None, false)));
+        assert!(!fresh_disk_low(&status_with_disk(read(), true)));
+        assert!(!fresh_disk_low(&status_with_disk(unread(), true)));
+        assert!(!fresh_disk_low(&status_with_disk(unread(), false)));
+    }
+
+    #[test]
+    fn a_stale_status_is_named_with_its_read_time_and_a_fresh_one_is_not() {
+        assert_eq!(stale_disk_note(&status(None)), None);
+        let unread = status(Some(serde_json::json!({ "waited_ms": 3000 })));
+        let note = stale_disk_note(&unread).expect("note");
+        assert!(note.contains("figures not read yet"), "{note}");
+        let read = status(Some(serde_json::json!({
+            "read_at": "2026-11-01T13:44:05Z", "waited_ms": 3000,
+        })));
+        let note = stale_disk_note(&read).expect("note");
+        assert!(note.contains("figures from 13:44:05 UTC"), "{note}");
+    }
 
     #[test]
     fn a_ready_agent_on_a_low_disk_says_it_waits_for_the_disk() {

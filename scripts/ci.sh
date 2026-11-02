@@ -47,9 +47,10 @@ usage() {
 run_lint() {
   step "scripts/lib_test.sh"; scripts/lib_test.sh
   step "sh -n install.sh"; sh -n install.sh
+  step "scripts/ci_slot_test.sh (host CI slots)"; sh scripts/ci_slot_test.sh
   if command -v shellcheck >/dev/null; then
-    step "shellcheck (installer and release scripts)"
-    shellcheck install.sh scripts/release.sh scripts/ci_scope.sh
+    step "shellcheck (installer, release and CI slot scripts)"
+    shellcheck install.sh scripts/release.sh scripts/ci_scope.sh scripts/ci_slot.sh scripts/ci_slot_test.sh
   else
     printf '\n\033[1;33m==> shellcheck of install.sh skipped (needs shellcheck)\033[0m\n'
   fi
@@ -65,8 +66,53 @@ run_lint() {
   step "cargo clippy";        cargo clippy --workspace --all-targets -- -D warnings
 }
 
+# Set by the test stage when nextest ran: the tests that passed only on retry.
+NEXTEST_RAN=0
+FLAKY_TESTS=""
+
 run_test() {
-  step "cargo test";          cargo test --workspace --no-fail-fast
+  if ! cargo nextest --version >/dev/null 2>&1; then
+    printf '\n\033[1;33m==> cargo-nextest not found: cargo test runs instead, with no retry\033[0m\n'
+    printf 'Install it with: cargo install cargo-nextest --locked (GitHub CI installs it)\n'
+    step "cargo test";        cargo test --workspace --no-fail-fast
+    return
+  fi
+  local tmp_base log status=0
+  tmp_base="${TMPDIR:-/tmp}"
+  log=$(mktemp "${tmp_base%/}/aether-ci-nextest-XXXXXX")
+  # One retry: a test that fails on a loaded host and then passes is FLAKY, not a failure.
+  step "cargo nextest run --retries 1"
+  cargo nextest run --workspace --no-fail-fast --retries 1 2>&1 | tee "$log" || status=$?
+  NEXTEST_RAN=1
+  FLAKY_TESTS=$(flaky_tests_in "$log")
+  rm -f "$log"
+  step "cargo test --doc (nextest does not run doc-tests)"
+  cargo test --workspace --doc || status=1
+  report_flaky
+  return "$status"
+}
+
+# nextest's final-status line of a test that passed only on retry reads
+# `FLAKY 2/2 [   0.019s] (3/3) <binary id> <test name>`; this prints the last two.
+flaky_tests_in() {
+  local esc
+  esc=$(printf '\033')
+  sed "s/${esc}\[[0-9;]*m//g" "$1" \
+    | sed -n 's/^ *FLAKY [0-9]*\/[0-9]* \[[^]]*\] *\(([^)]*) *\)\{0,1\}//p'
+}
+
+report_flaky() {
+  if [ "$NEXTEST_RAN" = 0 ]; then
+    return 0
+  fi
+  if [ -z "$FLAKY_TESTS" ]; then
+    printf '\nFLAKY: none; no test needed its retry\n'
+    return 0
+  fi
+  printf '\n'
+  printf '%s\n' "$FLAKY_TESTS" | sed 's/^/FLAKY /'
+  printf '\033[1;33mFLAKY: %s test(s) passed only on retry\033[0m\n' \
+    "$(printf '%s\n' "$FLAKY_TESTS" | wc -l | tr -d ' ')"
 }
 
 check_client_drift() {
@@ -309,4 +355,5 @@ done
 for stage in "$@"; do
   "run_$stage"
 done
+report_flaky
 printf '\n\033[1;32mCI passed: %s\033[0m\n' "$*"

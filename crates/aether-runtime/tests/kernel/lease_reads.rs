@@ -17,6 +17,8 @@ pub(super) struct StoreReads {
     /// Event rows deserialized by every `events()` call.
     rows: usize,
     pub(super) agent_filters: Vec<AgentFilter>,
+    /// The thread of each `agents` call, in `agent_filters` order.
+    pub(super) agent_threads: Vec<std::thread::ThreadId>,
     agent_reads: usize,
     /// Calls narrowed to the two lease kinds: one quarantine walk each.
     lease_walks: usize,
@@ -218,6 +220,7 @@ impl Store for CountingStore {
         let agents = self.inner.agents(filter)?;
         let mut reads = self.reads.lock().expect("reads");
         reads.agent_filters.push(filter.clone());
+        reads.agent_threads.push(std::thread::current().id());
         reads.agents_decoded += agents.len();
         Ok(agents)
     }

@@ -39,13 +39,15 @@ pub async fn compact(
         return Ok(0);
     }
     // Subscribed before asking, so an outcome that lands at once is not missed.
-    let cursor = client.status().await?.last_seq;
+    // The cursor is the subscription's own: a stale `status` could name an
+    // older one and replay an earlier compaction's outcome as this one's.
     let query = EventQuery {
         agent: Some(id),
         types: WATCHED.map(String::from).to_vec(),
         ..Default::default()
     };
-    let mut sub = client.subscribe(Some(cursor), query, false).await?;
+    let mut sub = client.subscribe(None, query, false).await?;
+    let cursor = sub.last_seq();
     let agent = client.get_agent(id).await?;
     // Requests made from the cursor on, this command's among them; an outcome
     // answers this command only when it names one of these as its cause.

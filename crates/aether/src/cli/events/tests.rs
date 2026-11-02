@@ -114,3 +114,31 @@ fn durations_and_ids_reject_invalid_input() {
             .is_err()
     );
 }
+
+/// A status with `last_seq` 40, stale when `read_at` is given.
+fn status_at_seq_40(stale: Option<serde_json::Value>) -> aether_protocol::DaemonStatus {
+    serde_json::from_value(serde_json::json!({
+        "instance_id": "i", "version": "test", "pid": 42, "started_at": "2026-11-01T00:00:00Z",
+        "last_seq": 40, "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
+        "agents_blocked": 0, "tasks_active": 0, "pending_approvals": 0,
+        "usage_total": aether_core::model::Usage::default(), "mcp": [], "providers": [],
+        "stale": stale,
+    }))
+    .expect("daemon status")
+}
+
+/// A stale status's sequence may be minutes old: a plain tail would stop
+/// short of the newest events without saying so, so it is refused.
+#[test]
+fn a_tail_ends_at_a_fresh_status_and_refuses_a_stale_one() {
+    let fresh = status_at_seq_40(None);
+    assert_eq!(tail_end(&fresh).expect("fresh"), 40);
+    let stale = status_at_seq_40(Some(serde_json::json!({
+        "read_at": "2026-11-01T00:00:00Z", "waited_ms": 3000,
+    })));
+    let refused = tail_end(&stale).expect_err("stale").to_string();
+    assert!(
+        refused.contains("not known yet") && refused.contains("3s"),
+        "{refused}"
+    );
+}

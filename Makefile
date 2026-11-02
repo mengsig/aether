@@ -1,5 +1,8 @@
-.PHONY: ci fmt lint test build install bench-release bench-calibrate
-ci:      ; ./scripts/ci.sh
+.PHONY: ci ci-checks fmt lint test build install bench-release bench-calibrate
+# `ci` holds one of the host-wide CI slots (scripts/ci_slot.sh, CI_HOST_SLOTS,
+# default 1) while scripts/ci.sh runs; `ci-checks` runs it without one.
+ci:      ; sh scripts/ci_slot.sh ./scripts/ci.sh
+ci-checks: ; ./scripts/ci.sh
 fmt:     ; cargo fmt --all
 lint:    ; cargo clippy --workspace --all-targets -- -D warnings
 test:    ; cargo test --workspace

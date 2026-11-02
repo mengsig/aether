@@ -159,10 +159,14 @@ looks like a boundary and is not one.
   temp directory. Agent temp directories are not cleaned up automatically
   yet: `aether storage` shows their size, and you can remove a finished
   agent's directory by hand.
-- The build cache is kept to its byte budget at each storage sweep and when
-  the disk runs low, not continuously: a run whose agents are all live can
-  grow past it until they finish. Partitions made before eviction existed
-  carry no marker and are never evicted: remove a finished run's by hand.
+- The build cache is kept to its byte budget at each storage sweep (hourly
+  by default) and when the disk runs low, not continuously: partitions in
+  use can grow past it until they are idle. A partition made before eviction
+  existed carries no marker and is evicted only while an agent in the store
+  still builds into it; once its run has left the store, remove it by hand
+  (`aether storage build-cache` lists it as not Aether's). On a host without
+  `/proc`, a live run's idle partition is never evicted, since the processes
+  using it cannot be checked.
   Only programs that honour the configured variables (by default
   `CARGO_TARGET_DIR`) use it. The agents of one run share a partition and can
   overwrite each other's output; runs are kept apart by directory, not by an

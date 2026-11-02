@@ -187,8 +187,10 @@ fn failure_hint(theme: &Theme, error: &ClientError, command: &str) -> String {
          start it again"
         ),
         ClientError::TimedOut {
-            command: request, ..
-        } => timeout_hint(theme, request, command),
+            command: request,
+            host,
+            ..
+        } => timeout_hint(theme, request, host.is_some(), command),
         ClientError::Codec(_) | ClientError::Unexpected { .. } | ClientError::Malformed(_) => {
             crate::ui_format!(
                 theme,
@@ -207,7 +209,17 @@ fn failure_hint(theme: &Theme, error: &ClientError, command: &str) -> String {
     }
 }
 
-fn timeout_hint(theme: &Theme, request: &str, command: &str) -> String {
+fn timeout_hint(theme: &Theme, request: &str, host_overloaded: bool, command: &str) -> String {
+    // The error already names what this host shows, so the hint need not guess.
+    if host_overloaded {
+        return crate::ui_format!(
+            theme,
+            "the daemon is slow, likely because this host is overloaded · ease the load and try again; \
+             if it keeps happening, `{command} stop`, then start it again",
+            "the daemon is slow, likely because this host is overloaded | ease the load and try again; \
+             if it keeps happening, `{command} stop`, then start it again"
+        );
+    }
     // An older build never greets, but neither does a daemon whose workers are all blocked.
     if request == "hello" {
         crate::ui_format!(

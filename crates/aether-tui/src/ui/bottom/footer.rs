@@ -163,19 +163,20 @@ fn footer_line(
     overlay: bool,
 ) -> Line<'static> {
     let glyphs = theme.glyphs();
-    if let Some(disk) = app
+    if let Some((status, disk)) = app
         .status
         .as_ref()
-        .and_then(|status| status.low_disk.as_ref())
+        .and_then(|status| Some((status, status.low_disk.as_ref()?)))
     {
+        let mut text = format::low_disk(disk);
+        if let Some(stale) = &status.stale {
+            text.push_str(&format!(" ({})", format::stale_status(stale)));
+        }
         let prefix = format!("{INDENT}{} ", glyphs.needs_you);
         let room = usize::from(width).saturating_sub(prefix.width());
         return Line::from(vec![
             Span::styled(prefix, theme.accent()),
-            Span::styled(
-                truncate(&format::low_disk(disk), room, glyphs),
-                theme.title(),
-            ),
+            Span::styled(truncate(&text, room, glyphs), theme.title()),
         ]);
     }
     let separator = format!(" {} ", glyphs.dot);

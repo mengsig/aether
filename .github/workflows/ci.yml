@@ -88,6 +88,12 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
+      # scripts/ci.sh runs the tests under cargo-nextest, with one retry; without it,
+      # it falls back to cargo test and has no retry.
+      - if: steps.scope.outputs.code == 'true' && matrix.stage == 'test'
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-nextest@0.9.148
       # scripts/ci.sh skips a check whose tool is missing, so prove each one is here.
       - if: steps.scope.outputs.code == 'true' && matrix.stage == 'lint'
         name: install and verify the tools the lint checks need

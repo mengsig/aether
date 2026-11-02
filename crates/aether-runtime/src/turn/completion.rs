@@ -17,8 +17,24 @@ use crate::{Result, Runtime, RuntimeError};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CompletionSource {
     ApiResponse,
-    NativeTurn,
+    NativeTurn(AnswerJobs),
 }
+
+/// The native background jobs of the turn whose final answer this is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum AnswerJobs {
+    /// No job was running when the engine gave its answer.
+    Idle,
+    /// The answer came while jobs ran; they finished, and the engine never
+    /// answered again.
+    Finished,
+    /// Jobs were still running when the turn ended.
+    Running,
+}
+
+/// How many times a task's agent is woken for an answer it gave while its
+/// native jobs ran, before such an answer completes the task as any other.
+const MAX_JOB_WAKES: usize = 2;
 
 /// A response without tool calls: answer delivered, or a worker that forgot
 /// to close its task. `ran_tools`: the turn called tools before this final reply.
@@ -53,7 +69,12 @@ pub(crate) fn prose_only_next(
     }
     // Native engines already own the tool loop and have ended it. Asking
     // them to close the same task again adds an otherwise unnecessary turn.
-    if source == CompletionSource::NativeTurn {
+    if let CompletionSource::NativeTurn(jobs) = source {
+        if jobs != AnswerJobs::Idle
+            && let Some(next) = wake_for_jobs(runtime, ctx, task, jobs)?
+        {
+            return Ok(next);
+        }
         return complete_from_prose(runtime, ctx, task, summary);
     }
     let nudge = completion_nudge(task);
@@ -72,6 +93,60 @@ fn completion_nudge(task: &Task) -> String {
         "Your task {} is still active. Call `complete_task` with a summary if it is done, `fail_task` if it cannot be done, or keep working.",
         task.id
     )
+}
+
+/// Names its task and how many such wakes it has had, so the bound counts
+/// this task's wakes only.
+fn job_wake_notice(task: &Task, wake: usize) -> String {
+    format!(
+        "Your last turn on task {} ended while native background jobs you started were still \
+         running, before you reported their result (reminder {wake} of {MAX_JOB_WAKES}), so the \
+         task stays open. Wait for each job that is still running, or rerun it in the foreground \
+         if it is gone, then report your result with `complete_task` or `fail_task`. Do not end \
+         a turn while a check you depend on still runs.",
+        task.id
+    )
+}
+
+/// A native turn answered in prose while its background jobs ran: keep the
+/// task open and wake the agent: at once when the jobs are over, and after the
+/// configured bound when they still ran, as the ended turn tracks them no
+/// more. `None` once the task had [`MAX_JOB_WAKES`]: the answer completes it.
+fn wake_for_jobs(
+    runtime: &Runtime,
+    ctx: &TurnCtx,
+    task: &Task,
+    jobs: AnswerJobs,
+) -> Result<Option<Next>> {
+    debug_assert!(jobs != AnswerJobs::Idle, "an idle answer needs no wake");
+    debug_assert!(
+        !ctx.agent.config.long_lived,
+        "a long-lived agent keeps waiting"
+    );
+    // Settled while the turn ran (a cancel): nothing is left to wake for, and
+    // `complete_from_prose` leaves such a task as it is.
+    let stored = runtime
+        .store
+        .task(task.id)?
+        .ok_or_else(|| RuntimeError::NotFound(task.id.to_string()))?;
+    if stored.status.is_terminal() {
+        return Ok(None);
+    }
+    let reasons = wake_reasons(runtime, ctx.agent.id)?;
+    let sent = (1..=MAX_JOB_WAKES)
+        .take_while(|wake| reasons.contains(&job_wake_notice(task, *wake)))
+        .count();
+    if sent >= MAX_JOB_WAKES {
+        tracing::info!(task = %task.id, "native jobs outlived the answer again; completing from it");
+        return Ok(None);
+    }
+    push_wake(runtime, ctx, job_wake_notice(task, sent + 1))?;
+    Ok(Some(match jobs {
+        AnswerJobs::Running => Next::Waiting(WaitCondition::Deadline {
+            at: super::state::deadline_after(runtime.config.native_job_wake_after),
+        }),
+        AnswerJobs::Finished | AnswerJobs::Idle => Next::Ready,
+    }))
 }
 
 /// Names the turn as well, so the run of silent turns before this one can

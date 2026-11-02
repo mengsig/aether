@@ -117,8 +117,19 @@ pub async fn events(
     let client = connect(&socket).await?;
     let query = args.query(&client, &socket).await?;
     let mut cursor = args.after;
+    // A followed tail opens its stream first and ends where the stream starts:
+    // the daemon reads that cursor fresh, where a stale `status` may not.
+    let mut live = None;
     if let Some(limit) = tail {
-        cursor = cursor.max(client.status().await?.last_seq);
+        let end = if args.follow {
+            let sub = client.subscribe(None, query.clone(), false).await?;
+            let end = sub.last_seq();
+            live = Some(sub);
+            end
+        } else {
+            tail_end(&client.status().await?)?
+        };
+        cursor = cursor.max(end);
         for event in tail_events(&client, &args, query.clone(), cutoff, limit, cursor).await? {
             print_event(&event, args.json)?;
         }
@@ -129,10 +140,16 @@ pub async fn events(
     if !args.follow {
         return Ok(0);
     }
-    let mut sub = client.subscribe(Some(cursor), query, false).await?;
+    let mut sub = match live {
+        Some(sub) => sub,
+        None => client.subscribe(Some(cursor), query, false).await?,
+    };
     while let Some(frame) = sub.next().await {
         match frame {
-            SubscriptionFrame::Event(e) if args.matches(&e, cutoff)? => print_event(&e, args.json)?,
+            // The stream may start before `--after`; what precedes it is skipped.
+            SubscriptionFrame::Event(e) if e.seq > cursor && args.matches(&e, cutoff)? => {
+                print_event(&e, args.json)?
+            }
             SubscriptionFrame::Lagged { capacity } => anyhow::bail!(
                 "event subscription exceeded {capacity} queued frames; resume with --after using the last sequence printed"
             ),
@@ -141,6 +158,19 @@ pub async fn events(
     }
     eprintln!("{STREAM_ENDED_MESSAGE}");
     Ok(STREAM_ENDED_EXIT)
+}
+
+/// Where a plain tail ends. A stale status's sequence may be old, and a
+/// tail ending there would silently leave out the newest events.
+fn tail_end(status: &aether_protocol::DaemonStatus) -> anyhow::Result<u64> {
+    let Some(stale) = &status.stale else {
+        return Ok(status.last_seq);
+    };
+    anyhow::bail!(
+        "the daemon's store reads are slow, so its newest event is not known yet \
+         (status waited {}s for it); try again, or add --follow",
+        stale.waited_ms.div_ceil(1000)
+    )
 }
 
 async fn tail_events(

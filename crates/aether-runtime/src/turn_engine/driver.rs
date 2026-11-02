@@ -56,6 +56,8 @@ pub(super) struct DriveResult {
     pub(super) uncommitted: Uncommitted,
     /// The watchdog ended the turn after this much silence.
     pub(super) stalled: Option<std::time::Duration>,
+    /// Whether the engine gave its final answer while background jobs ran.
+    pub(super) answer_jobs: crate::turn::AnswerJobs,
 }
 
 fn event_has_activity(event: &EngineEvent, ctx: &TurnCtx) -> bool {
@@ -197,6 +199,7 @@ fn failed_launch(
         cleaned_up: true,
         uncommitted: Uncommitted::default(),
         stalled: None,
+        answer_jobs: crate::turn::AnswerJobs::Idle,
     }
 }
 
@@ -290,6 +293,8 @@ pub(super) async fn drive(
     // Tools the engine moved to the background: the turn is not over until
     // they report back and the model has answered again.
     let mut background: BTreeSet<String> = BTreeSet::new();
+    // The engine's latest result came while background jobs still ran.
+    let mut answered_over_jobs = false;
     // The engine's result while it still owes an answer: to background work,
     // or to a steered message it has not folded in yet.
     let mut settled: Option<EngineOutcome> = None;
@@ -450,6 +455,7 @@ pub(super) async fn drive(
                     reap_grace.get_or_insert_with(ReapGrace::start);
                 }
                 Some(EngineEvent::Done(o)) => {
+                    answered_over_jobs = !background.is_empty();
                     // No native background/input acknowledgement can make an
                     // exhausted provider answer. Do not strand the turn on it.
                     if o.error.as_deref().is_some_and(names_exhaustion) {
@@ -534,6 +540,7 @@ pub(super) async fn drive(
                     }
                     // The engine is answering it; its next result decides.
                     settled = None;
+                    answered_over_jobs = false;
                     settle_deadline = None;
                 }
                 Some(EngineEvent::InputRejected { reason }) => {
@@ -1011,7 +1018,13 @@ pub(super) async fn drive(
         state.message_invocation,
         DeltaKind::TurnFinished,
     );
+    let answer_jobs = match (answered_over_jobs, background.is_empty()) {
+        (false, _) => crate::turn::AnswerJobs::Idle,
+        (true, true) => crate::turn::AnswerJobs::Finished,
+        (true, false) => crate::turn::AnswerJobs::Running,
+    };
     Ok(DriveResult {
+        answer_jobs,
         receipt_seen: receipt_seen
             && !outcome.interrupted
             && steering.sent_up_to <= receipt_input_cursor,

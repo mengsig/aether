@@ -20,14 +20,16 @@ starts the jobs, which run just the link check in `lint` and stop.
 
 The three stages together are the whole script, split so they run side by side:
 
-- **`lint`**: `scripts/lib_test.sh`, `sh -n install.sh`, `shellcheck` on
-  `install.sh`, `scripts/release.sh` and `scripts/ci_scope.sh`,
+- **`lint`**: `scripts/lib_test.sh`, `sh -n install.sh`, the host CI slot
+  tests (`scripts/ci_slot_test.sh`), `shellcheck` on `install.sh`,
+  `scripts/release.sh`, `scripts/ci_scope.sh` and the two slot scripts,
   `THIRD-PARTY-NOTICES` against `Cargo.lock`
   (`python3 scripts/third_party_notices.py --check`), the relative links and
   anchors of every tracked Markdown document (`python3 scripts/check_links.py`),
   `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`.
-- **`test`**: `cargo test --workspace`.
+- **`test`**: `cargo nextest run --workspace --retries 1`, then the doc-tests
+  with `cargo test --workspace --doc` ([why](#why-nextest-with-one-retry)).
 - **`binary`**: builds the release binary, then checks everything that needs it
   or Python: the generated clients against the protocol types, the Python script
   suites (the installer tests among them) and client suite, the TypeScript client
@@ -43,11 +45,28 @@ scripts/ci.sh lint test   # only the stages you name, in the order given
 ```
 
 `lint` and `test` need the toolchain in `rust-toolchain.toml`, git and Python 3;
-`lint` also uses `shellcheck`. `binary` also needs Python 3.11+, Node 22.6+ with
+`lint` also uses `shellcheck` and `flock`, and `test` uses
+[cargo-nextest](https://nexte.st/) (`cargo install cargo-nextest --locked`).
+Without cargo-nextest, `test` says so and runs `cargo test --workspace`, which
+has no retry. `binary` also needs Python 3.11+, Node 22.6+ with
 npm, tmux, Pillow and `dash`. Locally, a check whose tool is missing is skipped
 with a yellow `skipped (needs ...)` line, and the Pillow-backed tests and the
 `dash` installer test skip themselves. The Linux jobs install or verify these
 tools in a step of their own, so none of those checks is skipped there.
+
+### Host CI slots
+
+`make ci` shares the host with other heavy CI runs, such as Archon's `make ci`
+and the stages of every Archon run. It first takes one of `CI_HOST_SLOTS`
+(default 1) host-wide slots, a `flock` on
+`${XDG_RUNTIME_DIR:-/tmp}/heavy-ci/slot-<i>.lock` for `i` in `0..N-1`, the
+contract Archon's `make ci` keeps (`scripts/ci_slot.sh`). When all are taken
+it says once that it waits, and waits until one frees. The slot is released
+when `make ci` ends, whether it passes, fails or is interrupted with Ctrl-C.
+`CI_HOST_SLOTS=0 make ci` skips the slots, and `make ci-checks` and
+`scripts/ci.sh` run the same checks without one. Without `flock` (util-linux)
+it runs without a slot and says so. GitHub CI runs `scripts/ci.sh`, one job
+per runner, and is unaffected.
 
 ## Where it runs, and what a fork can trigger
 
@@ -209,17 +228,25 @@ the label the workflow starts, the job is skipped, and no runner is used. A
 manual dispatch of `ci.yml` runs the Linux jobs only. The capture lanes are
 skipped where tmux is missing, and the process measurements are Linux-only.
 
-## Why `cargo test`, and not a faster runner
+## Why nextest, with one retry
 
-The `test` job compiles for longer than it tests: on a cold cache about nine
-minutes of compiling and six of running. `cargo nextest` would shorten only the
-second part, and it runs every test in a process of its own. The kernel tests
-of `aether-runtime` cap how many of them fork a real `bash` at once with one
-semaphore per test binary (`crates/aether-runtime/tests/kernel/fixture.rs`); a
-process per test would have a semaphore per test, the cap would bound nothing,
-and those tests time out on a loaded machine. The doctests would also need a
-second command. So the stage stays `cargo test --workspace`, the same command
-`make test` runs.
+Under load, a timing-sensitive test sometimes fails, and `make ci` then had to
+run again in full: 20 to 30 minutes for one flake. `cargo nextest` retries a
+failed test once (`--retries 1`), so a flake costs seconds. A test that passed
+only on its retry is still listed: nextest marks it `FLAKY` in its summary, and
+`scripts/ci.sh` repeats each one as a `FLAKY <binary> <test>` line with a count
+after the test stage and again at the end of the run. A test that fails twice
+fails the stage.
+
+nextest runs every test in a process of its own, so a limit a test binary keeps
+in memory bounds nothing. The kernel tests of `aether-runtime` cap how many of
+them fork a real `bash` at once with a semaphore in that binary
+(`crates/aether-runtime/tests/kernel/fixture.rs`); `.config/nextest.toml` puts
+that binary in a test group of the same size, 4, instead. The other tests that
+serialize with a lock do so only for state of their own process, such as the
+`tracing` dispatcher or `/proc/self/io`, which a process per test gives them
+anyway. nextest does not run doc-tests, so `cargo test --workspace --doc`
+follows it. `make test` stays `cargo test --workspace`.
 
 ## What CI does not cover
 

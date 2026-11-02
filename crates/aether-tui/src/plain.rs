@@ -543,7 +543,8 @@ impl<W: Write> Printer<W> {
             }
             self.diagnostics.clone_from(&app.view_modes.diagnostics);
         }
-        if let Some(status) = &app.status {
+        // A stale status says nothing new of the disk: keep what was last said.
+        if let Some(status) = app.status.as_ref().filter(|s| s.stale.is_none()) {
             let held = status.low_disk.is_some();
             if held != self.disk_held {
                 match &status.low_disk {
@@ -819,6 +820,9 @@ pub fn summary(app: &App, agent: AgentId) -> String {
             out.push_str(&format!(", {} suspended", status.agents_suspended));
         }
         out.push_str(&format!(" - {}", format::cost(&status.usage_total)));
+        if let Some(stale) = &status.stale {
+            out.push_str(&format!(" ({})", format::stale_status(stale)));
+        }
     }
     if !app.connected {
         out.push_str(" - not connected, reconnecting");
@@ -1030,6 +1034,73 @@ mod tests {
             "- Disk low: new turns held - 1.0 GiB free / 5.0 GiB floor\n- Disk recovered: new turns released\n"
         );
         assert!(output(&out).is_ascii());
+    }
+
+    #[test]
+    fn a_stale_status_neither_prints_a_recovery_nor_a_hold_and_a_fresh_one_does() {
+        let mut app = populated_app();
+        app.selected = None;
+        app.approvals.clear();
+        let mut out = Printer::new(Vec::new());
+        let disk = aether_core::disk::LowDisk {
+            path: "/isolated/store".into(),
+            available_bytes: 1 << 30,
+            floor_bytes: 5 << 30,
+            since: app.now,
+        };
+        app.status.as_mut().expect("status").low_disk = Some(disk.clone());
+        assert!(out.drain(&app).expect("hold"));
+        let stale = |read_at| {
+            Some(aether_protocol::StatusStale {
+                read_at,
+                waited_ms: 3_000,
+            })
+        };
+        let set = |app: &mut App, stale, low: Option<_>| {
+            let status = app.status.as_mut().expect("status");
+            status.stale = stale;
+            status.low_disk = low;
+        };
+        set(&mut app, stale(None), None);
+        assert!(!out.drain(&app).expect("restart, nothing read"));
+        let now = app.now;
+        set(&mut app, stale(Some(now)), None);
+        assert!(!out.drain(&app).expect("restart, old read"));
+        set(&mut app, None, None);
+        assert!(out.drain(&app).expect("fresh release"));
+        set(&mut app, stale(None), Some(disk));
+        assert!(!out.drain(&app).expect("stale hold is not news"));
+        let said = output(&out);
+        assert_eq!(said.matches("Disk recovered").count(), 1, "{said}");
+        assert_eq!(said.matches("Disk low").count(), 1, "{said}");
+    }
+
+    #[test]
+    fn a_stale_fleet_summary_says_how_old_it_is() {
+        let mut app = populated_app();
+        let agent = app.selected.expect("a selected agent");
+        assert!(!summary(&app, agent).contains("stale"), "a fresh status");
+        let status = app.status.as_mut().expect("status");
+        status.stale = Some(aether_protocol::StatusStale {
+            read_at: None,
+            waited_ms: 3_000,
+        });
+        assert!(
+            summary(&app, agent).contains("(stale: figures not read yet)"),
+            "{}",
+            summary(&app, agent)
+        );
+        let read_at = "2026-11-01T13:44:05Z".parse().expect("time");
+        let status = app.status.as_mut().expect("status");
+        status.stale = Some(aether_protocol::StatusStale {
+            read_at: Some(read_at),
+            waited_ms: 3_000,
+        });
+        assert!(
+            summary(&app, agent).contains("(stale: figures from 13:44:05 UTC)"),
+            "{}",
+            summary(&app, agent)
+        );
     }
 
     #[test]

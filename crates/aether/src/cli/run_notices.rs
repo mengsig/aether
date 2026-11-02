@@ -3,6 +3,7 @@
 
 use super::sane;
 use aether_core::disk::LowDisk;
+use aether_protocol::DaemonStatus;
 use std::time::Duration;
 use tokio::time::{Interval, MissedTickBehavior};
 
@@ -30,6 +31,15 @@ impl GateWatch {
 
     pub(super) async fn tick(&mut self) {
         self.ticker.tick().await;
+    }
+
+    /// The line to print for this status's disk gate, if it changed. A stale
+    /// status is an earlier read, or none at all, so it never changes it.
+    pub(super) fn update_from(&mut self, status: &DaemonStatus) -> Option<String> {
+        if status.stale.is_some() {
+            return None;
+        }
+        self.update(status.low_disk.as_ref())
     }
 
     /// The line to print for the daemon's current `low_disk`, if the gate
@@ -113,6 +123,42 @@ mod tests {
         let freed = watch.update(None).expect("release named");
         assert!(freed.contains("resumes"), "{freed}");
         assert_eq!(watch.update(None), None);
+    }
+
+    fn status(stale: Option<serde_json::Value>, low: bool) -> DaemonStatus {
+        let low_disk = low.then(|| {
+            serde_json::json!({
+                "path": "/store", "available_bytes": 1u64 << 30,
+                "floor_bytes": 5u64 << 30, "since": "2026-11-01T00:00:00Z",
+            })
+        });
+        serde_json::from_value(serde_json::json!({
+            "instance_id": "i", "version": "test", "pid": 42, "started_at": "2026-11-01T00:00:00Z",
+            "last_seq": 0, "agents_live": 0, "agents_running": 0, "agents_waiting": 0,
+            "agents_blocked": 0, "tasks_active": 0, "pending_approvals": 0,
+            "usage_total": aether_core::model::Usage::default(), "mcp": [], "providers": [],
+            "stale": stale, "low_disk": low_disk,
+        }))
+        .expect("daemon status")
+    }
+
+    /// A stale status, read or not, neither names the gate nor releases it.
+    #[tokio::test]
+    async fn a_stale_status_never_changes_the_gate_and_a_fresh_one_does() {
+        let unread = || Some(serde_json::json!({ "waited_ms": 3000 }));
+        let read = || {
+            Some(serde_json::json!({
+                "read_at": "2026-11-01T13:44:05Z", "waited_ms": 3000,
+            }))
+        };
+        let mut watch = GateWatch::new();
+        assert_eq!(watch.update_from(&status(unread(), false)), None);
+        assert_eq!(watch.update_from(&status(read(), true)), None, "not named");
+        assert!(watch.update_from(&status(None, true)).is_some(), "named");
+        assert_eq!(watch.update_from(&status(unread(), false)), None);
+        assert_eq!(watch.update_from(&status(read(), false)), None, "not freed");
+        let freed = watch.update_from(&status(None, false)).expect("freed");
+        assert!(freed.contains("resumes"), "{freed}");
     }
 
     #[test]

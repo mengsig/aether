@@ -83,6 +83,7 @@ impl Fixture {
             version: "test".into(),
             push: Some(push),
             remote: Default::default(),
+            status_reads: Default::default(),
         };
         Self {
             daemon,

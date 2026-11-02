@@ -34,10 +34,20 @@ cargo test -p aether-runtime some_test_name   # one crate, one test
 
 Things worth knowing:
 
+- **Host CI slots.** `make ci` first takes one of `CI_HOST_SLOTS` (default 1)
+  host-wide slots that Archon's `make ci` shares, and says once that it waits
+  when all are taken. `CI_HOST_SLOTS=0 make ci` or `make ci-checks` runs
+  without one; see [docs/ci.md](docs/ci.md#host-ci-slots).
+- **cargo-nextest.** The test stage of `make ci` runs the tests under
+  [cargo-nextest](https://nexte.st/) with one retry, and lists a test that
+  passed only on its retry as `FLAKY`. Install it with
+  `cargo install cargo-nextest --locked`; without it the stage runs
+  `cargo test` and says so.
 - **Memory.** A full build links many test binaries. On a machine with little
   free memory, limit the parallelism: `CARGO_BUILD_JOBS=4 make ci`, and
-  `RUST_TEST_THREADS=4` for the tests. The hosted CI sets neither: each of its
-  jobs has a runner to itself.
+  `NEXTEST_TEST_THREADS=4` for the tests (`RUST_TEST_THREADS=4` with
+  `make test`). The hosted CI sets neither: each of its jobs has a runner to
+  itself.
 - **Optional tools.** `make ci` also runs the Python and TypeScript client
   suites, a mock end-to-end run and terminal captures. Those steps need
   `python3` (3.11 or newer), Node.js 22.6 or newer with `npm`, and `tmux`. A

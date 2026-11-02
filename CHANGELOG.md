@@ -6,6 +6,148 @@ release is also the text of its GitHub release.
 
 ## Unreleased
 
+## 1.2.10
+
+Released 2026-11-02. A patch release for an overloaded host. `status`
+answers within seconds when the host is overloaded, and a stale answer is
+marked as such and no longer drives the low-disk state (#361, #363, #369);
+a request that times out names the host's load (#361). The build cache
+stays under its budget and drops finished runs' partitions (#362). A
+one-shot agent's native answer given while its background jobs run no
+longer closes its task (#367), and a process sweep visits a child forked
+while the newest process is listed (#368). `make ci` retries a failed test
+once, reports it as flaky and takes a host CI slot shared with Archon
+(#364), and the tests that failed on a loaded host now wait on their
+condition (#365, #366, #368, #370). The protocol stays at version 25 and
+the store at schema 28.
+
+### Before updating
+
+- Restart the daemon after the update (`aether stop`, then `aether`). The
+  store stays at schema 28, so there is no migration and no pre-migration
+  backup.
+
+### Changed
+
+- **`make ci` retries a failed test once and names the flaky ones
+  (#364).** On a loaded host a timing-sensitive test sometimes failed, and
+  `make ci`, 20 to 30 minutes, then ran again in full; one change failed
+  all three of its runs that way. The test stage now runs the tests under
+  cargo-nextest with `--retries 1`, then the doc-tests with
+  `cargo test --doc`. A test that passed only on its retry is printed as
+  `FLAKY <binary> <test>`, with a count at the end of the run; a test that
+  fails twice still fails it. On this host the tests ran in 130 s instead
+  of 6.5 minutes. Without cargo-nextest the stage says how to install it
+  and runs `cargo test`. The kernel tests' limit of 4 at once that fork a
+  real `bash` is kept as a nextest test group (`.config/nextest.toml`).
+- **`make ci` takes a host CI slot (#364).** It first takes one of
+  `CI_HOST_SLOTS` (default 1) host-wide slots, a `flock` on
+  `${XDG_RUNTIME_DIR:-/tmp}/heavy-ci/slot-<i>.lock`, shared with Archon's
+  `make ci`, and says once that it waits when all are taken. The slot is
+  released however `make ci` ends. `CI_HOST_SLOTS=0` turns it off, and
+  `make ci-checks` runs the same checks without one. GitHub CI is
+  unaffected.
+
+### Fixed
+
+- **`status` answers within seconds on an overloaded host (#361).** On a
+  host with a load of 45, 12 GB in swap and a 1.9 GB store, `status` took
+  up to 146 s and every client gave up at 60 s. The daemon's log named the
+  cause: the spend of each live run read that run's recent usage receipts,
+  and SQLite walked every usage receipt the store kept to find them, 80,000
+  pages for a run with 15 receipts. It now walks the run's own index, 225
+  pages for the same read. Each request also started its own read, so three
+  clients ran three. Now one read runs at a time and is shared. A request
+  waits at most 3 s for a read that started after it arrived. Past that it
+  is answered with the last read, marked `stale` with the time that read
+  was taken (`read_at`), or with no counts and the stale mark when the
+  daemon has not finished a read since it started. `aether status` leads
+  with a line saying how old the figures are, and the TUI marks them stale.
+  The protocol is still version 25: `stale` is a new optional field older
+  clients ignore, and the same note is the first entry of `problems`, which
+  they do show. Commands that took a cursor from `status` no longer trust a
+  stale one: `aether compact` takes it from its own subscription, a
+  followed `aether events` tail ends where its own stream starts, a plain
+  tail refuses a stale cursor, and `aether run` does not read a status with
+  no figures as a freed disk.
+- **A request that times out names what the host shows (#361).** A client
+  on the daemon's own machine reads the load, memory and disk stalls from
+  `/proc` when a request goes unanswered. When the host is past a threshold
+  the error says so, for example `this host is overloaded: load 45.0 on 12
+  cores, 12.0 GiB of swap in use and 0.8 GiB of memory available`. The TUI
+  then advises easing the load before stopping the daemon.
+- **A stale `status` no longer changes the disk state shown (#363).** A
+  stale status, with or without a read behind it, carries the disk hold of
+  an earlier read or a default, so it could free the disk in the plain TUI
+  ("Disk recovered"), drop the TUI's low-disk line after a restart, and
+  clear or set `waiting: disk low` in `aether agents`. All of them now keep
+  the last known state until a fresh status arrives. The TUI's low-disk
+  line and `aether agents` say when the status is stale, with its read
+  time. `aether run` ignores any stale status for the disk gate, not only
+  one with no read, and `aether diagnose` takes the daemon's disk hold from
+  a fresh status only.
+- **`aether status` dates a disk LOW line read from a stale status
+  (#369).** When the daemon answers with an earlier read, the `disk` line
+  now says `disk     LOW (as of <time>, status stale)`, as the TUI footer
+  and plain mode already did, instead of reading as the current disk state.
+  A fresh status prints as before; `--json` already carries `stale` beside
+  `low_disk`.
+- **The build cache stays under its budget (#362).** A cache beside
+  `aether.db` held 142 GB against its 76.7 GB budget, and 97 hourly sweeps
+  removed nothing. Their reports named the cause: 71 GB sat in partitions
+  made before the eviction marker existed, which counted neither against
+  the budget nor as evictable, so the rest looked within it. Now every
+  partition directory under the root counts, and an unmarked partition is
+  evicted when an agent in the store still builds into it. A finished run's
+  partition is dropped `[build_cache] finished_grace_seconds` (900 by
+  default) after its last use, whatever the cache holds. A live agent no
+  longer holds its run's partition just by existing: over the budget, a
+  long-lived run's idle partition goes after every finished run's. A
+  partition stays while an agent of its run is running, has work in flight
+  or a background job, or a process's environment or working directory
+  points into it. `aether status` reports a cache a sweep left over its
+  budget, and `aether storage build-cache` previews each partition's fate
+  (`--prune` runs the sweep).
+- **A native answer given while background jobs run no longer closes the
+  task (#367).** Stage agents ended their turn with "`make ci` is running;
+  I'll report when it finishes" while the native job still ran, and that
+  prose completed the task; Archon refused the missing result and restarted
+  the whole run, which cost one item 175 minutes. Now a one-shot agent's
+  native final answer given while its background jobs ran keeps the task
+  open, and the agent is woken with a note to wait for the job and then
+  report: at once when the jobs finished unanswered, or 2 minutes after the
+  turn when they were still running. A task gets at most 2 such wakes,
+  after which the answer completes it as before. Long-lived agents and
+  turns whose jobs had all finished before the answer are unchanged.
+- **A process sweep no longer misses a child the newest process forks
+  while it is visited (#368).** `/proc` points each entry at the process
+  listed after it when read, so when the visited process was the newest,
+  the listing ended there and a child it forked meanwhile was never visited
+  by the orphan reaper or the background-job sweep. Each read now starts
+  again at the entry just visited. This was also why the
+  `a_process_forked_during_the_listing_is_visited` test failed when it ran
+  alone or was the newest process under `make ci`.
+
+### Tests
+
+- **Tests that failed on a loaded host wait on their condition (#365, #366,
+  #368).** The aether-runtime mid-turn image, mid-turn fold and cancel
+  tests now wait for the engine or model to be handed the turn, not just
+  for the agent to be Running, and the transfer tests and engine helpers
+  allow at least a minute (#365). The real-daemon fixtures of
+  `malformed_requests` and `remote_admin` wait up to 120 s for a starting
+  daemon, `startup_probes` discounts the host's CPU and I/O stalls from its
+  1500 ms hello bound, and `scripts/lib_test.sh` polls for its killed
+  grandchild instead of sleeping a second (#366). The remaining load flakes
+  (alt keys, mid-export, transient window, subtree reads) were fixed the
+  same way (#368).
+- **The build-cache budget test sizes its budget from the blocks the
+  filesystem allocates (#370).** The cache counts allocated blocks,
+  directories included, and ext4 gives each directory a 4 KiB block where
+  btrfs and tmpfs give none, so on GitHub runners the test's fixed 12 KiB
+  margin was used up and both partitions were evicted. The test now
+  measures its layout on the filesystem first.
+
 ## 1.2.9
 
 Released 2026-11-01. A patch release for the TUI and the docs. The agent

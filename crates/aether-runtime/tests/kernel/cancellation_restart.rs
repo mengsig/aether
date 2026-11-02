@@ -3,18 +3,19 @@ use super::*;
 
 #[tokio::test]
 async fn cancelled_agent_stops_and_receives_no_new_work() {
-    let client_delay = Duration::from_millis(400);
     let h = harness(vec![
         ScriptedClient::text("thinking slowly"),
         ScriptedClient::text("should never run"),
     ])
     .await;
-    h.client.set_delay(client_delay);
+    // Held until the cancel: a reply finishing first would complete the task.
+    let _held = h.client.hold_next_response();
     let (agent, _) = h
         .runtime
         .create_agent(spec("slow work"), Actor::user())
         .expect("create");
-    h.wait_until(agent.id, |s| s.kind() == AgentStatusKind::Running)
+    // Running is recorded before the model is called; cancel mid-call.
+    h.wait_for("the first model call", || h.client.requests().len() == 1)
         .await;
     h.runtime
         .cancel_agent(agent.id, Some("operator".into()), Actor::user())
@@ -33,6 +34,7 @@ async fn cancelled_agent_stops_and_receives_no_new_work() {
         1,
         "no further invocation after cancel"
     );
+    assert_eq!(h.client.requests().len(), 1, "the model was called once");
     let err = h
         .runtime
         .send_message(agent.id, vec![ContentBlock::text("hi")], Actor::user())

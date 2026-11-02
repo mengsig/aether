@@ -14,9 +14,12 @@ pub struct BuildCacheSection {
     /// Variables pointed at a directory of the agent's cache partition. An
     /// empty list exports nothing.
     pub env: Vec<BuildCacheVar>,
-    /// Bytes the cache may hold before storage GC evicts unleased partitions,
-    /// least recently used first. Unset means 15% of the cache's filesystem.
+    /// Bytes the cache may hold before storage GC evicts partitions no agent
+    /// or process uses, oldest first. Unset means 15% of its filesystem.
     pub max_bytes: Option<u64>,
+    /// Seconds a finished run's partition is kept after its last use before
+    /// storage GC drops it, whatever the cache holds.
+    pub finished_grace_seconds: u32,
 }
 
 /// One exported variable and the directory, inside the partition, it names.
@@ -30,6 +33,9 @@ pub struct BuildCacheVar {
 /// Variables an agent's temp dir already owns; a cache must not replace them.
 const RESERVED: [&str; 3] = ["TMPDIR", "TMP", "TEMP"];
 
+/// Long enough for a retry or a follow-up turn to find the run's build warm.
+const DEFAULT_FINISHED_GRACE_SECONDS: u32 = 900;
+
 impl Default for BuildCacheSection {
     fn default() -> Self {
         Self {
@@ -39,6 +45,7 @@ impl Default for BuildCacheSection {
                 dir: "cargo-target".into(),
             }],
             max_bytes: None,
+            finished_grace_seconds: DEFAULT_FINISHED_GRACE_SECONDS,
         }
     }
 }
@@ -115,6 +122,7 @@ mod tests {
         let config: AetherConfig = toml::from_str("").unwrap();
         assert_eq!(config.build_cache.root, None);
         assert_eq!(config.build_cache.max_bytes, None);
+        assert_eq!(config.build_cache.finished_grace_seconds, 900);
         let names: Vec<_> = config.build_cache.env.iter().map(|v| &v.name).collect();
         assert_eq!(names, ["CARGO_TARGET_DIR"]);
         assert_eq!(config.build_cache.env[0].dir, "cargo-target");
@@ -132,10 +140,13 @@ mod tests {
         );
         let names: Vec<_> = config.build_cache.env.iter().map(|v| &v.name).collect();
         assert_eq!(names, ["npm_config_cache"]);
-        let config: AetherConfig =
-            toml::from_str("[build_cache]\nenv = []\nmax_bytes = 1048576\n").unwrap();
+        let config: AetherConfig = toml::from_str(
+            "[build_cache]\nenv = []\nmax_bytes = 1048576\nfinished_grace_seconds = 0\n",
+        )
+        .unwrap();
         assert!(config.build_cache.env.is_empty());
         assert_eq!(config.build_cache.max_bytes, Some(1 << 20));
+        assert_eq!(config.build_cache.finished_grace_seconds, 0);
     }
 
     #[test]

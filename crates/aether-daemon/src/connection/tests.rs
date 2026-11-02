@@ -219,6 +219,7 @@ pub(super) async fn daemon_with_config(
             version: "test".into(),
             push: None,
             remote: Default::default(),
+            status_reads: Default::default(),
         },
         config_dir,
     )
