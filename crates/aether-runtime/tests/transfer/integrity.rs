@@ -51,18 +51,30 @@ async fn a_file_that_is_not_an_export_is_refused() {
 /// being exported can grow between the count and the stream. The export is
 /// pinned to the sequence it counted, so the file always matches its own
 /// header - a mismatch used to be a `debug_assert` that shipped a file
-/// refused on somebody else's machine.
+/// refused on somebody else's machine. Appends are rationed per export:
+/// unrationed, a loaded host grew the log faster than it exported it.
 #[tokio::test]
 async fn an_event_appended_mid_export_does_not_produce_an_unimportable_file() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    const EXPORTS: usize = 30;
+    const APPENDS_PER_EXPORT: usize = 64;
     let (source, run) = finished_run().await;
     let dir = tempfile::tempdir().expect("dir");
     let store = source.store.clone();
 
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
+    let allowance = Arc::new(AtomicUsize::new(0));
     let appending = {
-        let (store, stop) = (store.clone(), stop.clone());
+        let (store, stop, allowance) = (store.clone(), stop.clone(), allowance.clone());
         std::thread::spawn(move || {
-            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let mut appended = 0usize;
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_micros(200));
+                let rationed = allowance
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+                if rationed.is_err() {
+                    continue;
+                }
                 store
                     .commit(
                         aether_store::Commit::new().event(
@@ -78,13 +90,15 @@ async fn an_event_appended_mid_export_does_not_produce_an_unimportable_file() {
                         ),
                     )
                     .expect("append");
-                std::thread::sleep(Duration::from_micros(200));
+                appended += 1;
             }
+            appended
         })
     };
 
-    for attempt in 0..30 {
+    for attempt in 0..EXPORTS {
         let file = dir.path().join(format!("run-{attempt}.aether"));
+        allowance.store(APPENDS_PER_EXPORT, Ordering::Relaxed);
         let exported = transfer::export_run(
             store.as_ref(),
             run,
@@ -92,6 +106,7 @@ async fn an_event_appended_mid_export_does_not_produce_an_unimportable_file() {
             &aether_tools::Redactor::default(),
         )
         .expect("the export must not fail");
+        allowance.store(0, Ordering::Relaxed);
         let text = std::fs::read_to_string(&file).expect("read");
         let promised = serde_json::from_str::<serde_json::Value>(
             text.lines().next().expect("a manifest line"),
@@ -117,12 +132,20 @@ async fn an_event_appended_mid_export_does_not_produce_an_unimportable_file() {
         );
     }
 
-    stop.store(true, std::sync::atomic::Ordering::Relaxed);
-    appending.join().expect("appender");
+    stop.store(true, Ordering::Relaxed);
+    let appended = appending.join().expect("appender");
+    assert!(
+        (1..=EXPORTS * APPENDS_PER_EXPORT).contains(&appended),
+        "{appended} events appended: the log never moved or was not rationed"
+    );
 
     // And a file written while the log moved still imports.
     let target = daemon(Vec::new()).await;
-    transfer::import_run(&target.runtime, &dir.path().join("run-29.aether")).expect("import");
+    transfer::import_run(
+        &target.runtime,
+        &dir.path().join(format!("run-{}.aether", EXPORTS - 1)),
+    )
+    .expect("import");
 }
 
 /// The id map is seeded with the manifest's run, so a record naming another

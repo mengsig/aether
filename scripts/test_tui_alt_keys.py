@@ -111,6 +111,11 @@ def encode(encoding, key):
 
 
 ENCODINGS = ["legacy", "kitty", "kitty_locks", "modify_other_keys", "eight_bit", "split", "rxvt"]
+# Waits on the loop: generous, since a loaded host stalls it for seconds.
+SETTLE_WITHIN = 60
+# A split chord needs the loop to read the Esc alone and the key within
+# ESC_JOIN (50 ms); a stall either way joins or splits it, so it gets retries.
+SPLIT_ATTEMPTS = 5
 
 
 class Tui:
@@ -143,7 +148,7 @@ class Tui:
             return []
         return [json.loads(line) for line in self.receipt.read_bytes().split(b"\n")[:-1]]
 
-    def wait_for(self, predicate, description, start=0, timeout=10):
+    def wait_for(self, predicate, description, start=0, timeout=SETTLE_WITHIN):
         deadline = time.monotonic() + timeout
         while True:
             found = next((r for r in self.records()[start:] if predicate(r)), None)
@@ -197,9 +202,11 @@ def fixture_env(root):
 
 
 def escape(tui):
-    """A lone Esc, given time to stand alone rather than prefix the next key."""
+    """A lone Esc, handled before the next key so it cannot prefix it. An Esc
+    an unfixed reply filter swallows is never recorded; its case then fails."""
+    start = len(tui.records())
     tui.send(b"\x1b")
-    time.sleep(.2)
+    tui.wait_for(lambda r: r.get("key") == "KeyModifiers(0x0) Esc", "escape", start)
 
 
 def reset(tui):
@@ -216,10 +223,10 @@ def reset(tui):
     raise AssertionError(("could not reset", state))
 
 
-def opened(tui, more_than=None):
-    """Files the fake opener was given; waits up to 3 s for more than `more_than`."""
+def opened(tui, more_than=None, timeout=SETTLE_WITHIN):
+    """Files the fake opener was given; waits for more than `more_than`."""
     path = tui.root / "clipboard" / "opened"
-    deadline = time.monotonic() + 3
+    deadline = time.monotonic() + timeout
     while True:
         count = len(path.read_text().splitlines()) if path.exists() else 0
         if more_than is None or count > more_than or time.monotonic() >= deadline:
@@ -229,7 +236,8 @@ def opened(tui, more_than=None):
 
 def ready(tui, binding, state):
     """The state once a viewer the setup keys opened has its file loaded."""
-    for _ in range(100):
+    deadline = time.monotonic() + SETTLE_WITHIN
+    while time.monotonic() < deadline:
         if not state["viewer"]["open"] or state["viewer"]["loaded"]:
             return state
         time.sleep(.05)
@@ -243,6 +251,8 @@ def run_case(tui, binding, encoding):
     keys = encode(encoding, key)
     if keys is None:
         return None, "no such encoding"
+    # Unsupported encodings never fire and are not asserted: no long wait.
+    patience = 3 if encoding in UNSUPPORTED else SETTLE_WITHIN
     reset(tui)
     if draft:
         tui.send(draft)
@@ -252,19 +262,26 @@ def run_case(tui, binding, encoding):
     tui.send(keys)
     after = tui.settle(binding)
     if binding == "alt+v":
-        found = tui.wait_for(lambda r: r["images"] > before["images"], binding, start, 3)
+        found = tui.wait_for(lambda r: r["images"] > before["images"], binding, start, patience)
         after = found or after
-    after["opened"] = opened(tui, before["opened"] if binding == "alt+e" else None)
+    after["opened"] = opened(tui, before["opened"] if binding == "alt+e" else None, patience)
     keys = [r["key"] for r in tui.records()[start:]
             if "key" in r and r["key"] != "KeyModifiers(0x0) F(12)"]
     return fired(after, before, keys), keys
+
+
+def attempts(encoding):
+    return SPLIT_ATTEMPTS if encoding == "split" else 1
 
 
 def run_matrix(tui):
     matrix = {}
     for binding in BINDINGS:
         for encoding in ENCODINGS:
-            matrix[(binding, encoding)] = run_case(tui, binding, encoding)
+            for _ in range(attempts(encoding)):
+                matrix[(binding, encoding)] = run_case(tui, binding, encoding)
+                if matrix[(binding, encoding)][0] is not False:
+                    break
     return matrix
 
 
@@ -301,6 +318,17 @@ SHIFTED = [
 ]
 
 
+def shifted_cases(tui):
+    """Per chord: (the keys decoded on its last attempt, the key wanted)."""
+    results = {}
+    for name, keys, want in SHIFTED:
+        for _ in range(attempts("split" if isinstance(keys, list) else "")):
+            results[name] = (shifted_case(tui, keys), want)
+            if results[name][0] == [want]:
+                break
+    return results
+
+
 def shifted_case(tui, keys):
     """The keys the loop decoded from `keys`."""
     escape(tui)
@@ -332,7 +360,7 @@ def check(executable, report):
             assert tui.wait_for(lambda r: r["kind"] == "backfill", "history loaded"), "no backfill"
             matrix = run_matrix(tui)
             follow_ups = {name: follow_up_case(tui, keys) for name, keys in FOLLOW_UPS}
-            shifted = {name: (shifted_case(tui, keys), want) for name, keys, want in SHIFTED}
+            shifted = shifted_cases(tui)
         finally:
             tui.stop()
     return report_or_assert(matrix, follow_ups, shifted, report)

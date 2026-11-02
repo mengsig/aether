@@ -83,27 +83,34 @@ mod tests {
     }
 
     /// A process forked while the listing is visited is visited too: its pid
-    /// lies ahead of where the listing has got to.
+    /// lies ahead of where the listing has got to. The visit is recorded, not
+    /// raced against the child's own exit, so a stalled host cannot fail it.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_process_forked_during_the_listing_is_visited() {
         let own = std::process::id();
         let mut forked = None;
-        visit_processes(Path::new("/proc"), |pid| {
+        let mut child_visits = 0;
+        let listed = visit_processes(Path::new("/proc"), |pid| {
             if pid == own {
-                forked = Some(std::process::Command::new("sleep").arg("5").spawn()?);
+                assert!(forked.is_none(), "this process was listed twice");
+                forked = Some(std::process::Command::new("sleep").arg("300").spawn()?);
             }
-            if let Some(child) = forked.as_mut().filter(|child| child.id() == pid) {
-                child.kill()?;
+            if forked.as_ref().is_some_and(|child| child.id() == pid) {
+                child_visits += 1;
             }
             Ok(())
-        })
-        .unwrap();
+        });
         let mut child = forked.expect("this process is listed");
-        let killed = child.wait().unwrap();
+        child.kill().unwrap();
         assert!(
-            !killed.success(),
-            "the child forked mid-listing was never visited"
+            !child.wait().unwrap().success(),
+            "the child outlived its kill"
+        );
+        listed.unwrap();
+        assert_eq!(
+            child_visits, 1,
+            "the child forked mid-listing was not visited exactly once"
         );
     }
 }
