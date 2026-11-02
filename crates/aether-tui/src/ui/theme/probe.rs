@@ -10,6 +10,20 @@ use super::tokens::{Background, Rgb, TerminalPalette};
 
 /// The probe's deadline: long enough for a local terminal, short enough to hide.
 pub const PROBE_DEADLINE: Duration = Duration::from_millis(100);
+/// Through tmux or SSH the replies cross a multiplexer or a network first.
+pub const REMOTE_PROBE_DEADLINE: Duration = Duration::from_millis(500);
+
+/// The wait ends at the DA1 answer, so the longer remote deadline only costs
+/// time on a terminal that answers nothing at all.
+pub fn probe_deadline(in_tmux: bool, over_ssh: bool) -> Duration {
+    let deadline = if in_tmux || over_ssh {
+        REMOTE_PROBE_DEADLINE
+    } else {
+        PROBE_DEADLINE
+    };
+    debug_assert!(PROBE_DEADLINE <= deadline && deadline <= Duration::from_secs(1));
+    deadline
+}
 
 /// Default fg, default bg, then DA1. Every terminal answers DA1 and replies
 /// arrive in order, so its answer means nothing else is coming.
@@ -272,6 +286,15 @@ pub fn background_of(palette: Option<TerminalPalette>, colorfgbg: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tmux_and_ssh_wait_longer_for_the_probe() {
+        assert_eq!(probe_deadline(false, false), PROBE_DEADLINE);
+        assert_eq!(probe_deadline(true, false), REMOTE_PROBE_DEADLINE);
+        assert_eq!(probe_deadline(false, true), REMOTE_PROBE_DEADLINE);
+        assert_eq!(probe_deadline(true, true), REMOTE_PROBE_DEADLINE);
+        assert!(REMOTE_PROBE_DEADLINE > PROBE_DEADLINE);
+    }
 
     #[test]
     fn only_a_256_colour_terminal_is_asked_about_truecolor() {

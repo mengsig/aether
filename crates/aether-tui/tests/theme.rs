@@ -363,7 +363,7 @@ fn only_the_tint_paints_a_background() {
                 &stray[..stray.len().min(5)]
             );
             if palette.is_none() {
-                assert_eq!(tint, None, "an unknown palette has no tint to blend");
+                assert!(tint.is_some(), "an unknown palette still bands blocks");
             }
         }
     }
@@ -405,12 +405,16 @@ fn the_accent_is_readable_on_every_probed_background() {
     assert_eq!(basic.accent().fg, Some(Color::Magenta));
 }
 
-/// Without a palette, blends are impossible: the tint drops out, the pulse
-/// holds at the running hue and the selection falls back to an underline.
+/// Without a palette, blends are impossible: the tint is a fixed band with its
+/// own ink, the pulse holds at the running hue and the selection falls back to
+/// an underline.
 #[test]
 fn an_unknown_palette_drops_the_blends() {
     let theme = Theme::resolve(spec(ThemeMode::Dark, ColorDepth::Truecolor, None));
-    assert_eq!(theme.tint(), Style::new());
+    let band = theme.tint();
+    let (bg, fg) = (band.bg.and_then(shown_rgb), band.fg.and_then(shown_rgb));
+    let (bg, fg) = (bg.expect("a fixed band"), fg.expect("its own ink"));
+    assert!(contrast_ratio(fg, bg) >= MIN_TEXT_CONTRAST);
     assert!(theme.selected().add_modifier.contains(Modifier::UNDERLINED));
     assert_eq!(theme.pulse(0.0), theme.running());
     assert_eq!(theme.pulse(1.0), theme.running());
@@ -610,7 +614,11 @@ fn terminal_probe_repaints_the_band_at_the_confirmed_depth() {
     let mut app = fixture(None);
     app.theme = Theme::resolve(spec(ThemeMode::Auto, ColorDepth::Indexed256, None));
     let choice = app.theme_choice.clone();
-    assert_eq!(app.theme.tint().bg, None);
+    assert_eq!(
+        app.theme.tint().bg,
+        Some(Color::Indexed(237)),
+        "the guessed band"
+    );
     app.apply_terminal_probe(TerminalProbe {
         palette: Some(DARK),
         truecolor: true,
