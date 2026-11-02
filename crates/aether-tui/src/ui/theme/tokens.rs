@@ -902,23 +902,24 @@ mod tests {
         }
     }
 
+    fn guessed(hint: Background, depth: ColorDepth) -> Theme {
+        Theme::resolve(ThemeSpec {
+            background_hint: hint,
+            ..spec(ThemeMode::Auto, depth, None)
+        })
+    }
+
     /// Issue #377: no reply (or one past the deadline) leaves `palette` unset,
-    /// and user blocks must still stand out on both guesses at every depth.
+    /// and user blocks must still stand out on both guesses.
     #[test]
-    fn an_unknown_palette_still_marks_user_blocks_on_either_guess() {
-        let guess = |hint, depth| {
-            Theme::resolve(ThemeSpec {
-                background_hint: hint,
-                ..spec(ThemeMode::Auto, depth, None)
-            })
-        };
+    fn an_unknown_palette_bands_user_blocks_on_either_guess() {
         for hint in [Background::Dark, Background::Light] {
             let (guessed_bg, ink) = match hint {
                 Background::Dark => (BLACK, WHITE),
                 Background::Light => (WHITE, BLACK),
             };
             for depth in [ColorDepth::Truecolor, ColorDepth::Indexed256] {
-                let theme = guess(hint, depth);
+                let theme = guessed(hint, depth);
                 assert_eq!(theme.background(), hint);
                 let tint = theme.tint();
                 let bg = tint.bg.and_then(shown_rgb).expect("a fixed band colour");
@@ -936,28 +937,47 @@ mod tests {
                 );
                 // The band's ink leans like the guessed terminal's own text.
                 assert!(contrast_ratio(fg, ink) < contrast_ratio(fg, guessed_bg));
-                for builtin in crate::ui::theme::Builtin::ALL {
-                    let themed = Theme::resolve(ThemeSpec {
-                        scheme: builtin.scheme(),
-                        ..theme.spec()
-                    });
-                    let user = themed.user().fg.and_then(shown_rgb).expect("a user hue");
-                    // The bold `›` is a marker: WCAG's 3:1 for non-text applies.
-                    let ratio = contrast_ratio(user, bg);
-                    assert!(
-                        ratio >= 3.0,
-                        "{} {hint:?} {depth:?}: {ratio:.2}",
-                        builtin.name()
-                    );
-                }
                 assert!(!theme.bars_blocks());
                 assert!(theme.selected().add_modifier.contains(Modifier::UNDERLINED));
             }
+        }
+    }
+
+    #[test]
+    fn the_user_prompt_marker_reads_on_the_guessed_band_in_every_builtin() {
+        for hint in [Background::Dark, Background::Light] {
+            for depth in [ColorDepth::Truecolor, ColorDepth::Indexed256] {
+                let spec = guessed(hint, depth).spec();
+                for builtin in crate::ui::theme::Builtin::ALL {
+                    let theme = Theme::resolve(ThemeSpec {
+                        scheme: builtin.scheme(),
+                        ..spec
+                    });
+                    let band = theme.tint().bg.and_then(shown_rgb).expect("a band");
+                    let user = theme.user().fg.and_then(shown_rgb).expect("a user hue");
+                    // The bold `›` is a marker: WCAG's 3:1 for non-text applies.
+                    let ratio = contrast_ratio(user, band);
+                    let name = builtin.name();
+                    assert!(ratio >= 3.0, "{name} {hint:?} {depth:?}: {ratio:.2}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ansi16_bars_user_blocks_and_mono_and_a_probed_palette_do_not() {
+        for hint in [Background::Dark, Background::Light] {
             // ANSI-16 colours are the terminal's own: a bar instead of a band.
-            let basic = guess(hint, ColorDepth::Basic16);
+            let basic = guessed(hint, ColorDepth::Basic16);
             assert_eq!(basic.tint(), Style::new());
             assert!(basic.bars_blocks());
         }
+        let probed_basic = Theme::resolve(spec(
+            ThemeMode::Auto,
+            ColorDepth::Basic16,
+            Some(GITHUB_DARK),
+        ));
+        assert!(probed_basic.bars_blocks());
         // Mono, also the plain-text theme, keeps user blocks bare.
         let mono = Theme::resolve(spec(ThemeMode::Mono, ColorDepth::Truecolor, None));
         assert!(!mono.bars_blocks());
@@ -973,12 +993,6 @@ mod tests {
             Style::new().bg(Color::Rgb(band.0, band.1, band.2))
         );
         assert!(!probed.bars_blocks());
-        let basic = Theme::resolve(spec(
-            ThemeMode::Auto,
-            ColorDepth::Basic16,
-            Some(GITHUB_DARK),
-        ));
-        assert!(basic.bars_blocks());
     }
 
     #[test]
