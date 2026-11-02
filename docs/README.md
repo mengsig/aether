@@ -57,6 +57,10 @@ show. Reports are never pooled across protocol versions. To run a comparison
 yourself, see the [evaluation tooling](../evals/README.md) and its
 [protocol](../evals/harness_bench_protocol.md).
 
+- [Release bench 1.2.11](release-bench/1.2.11.md): Aether 1.2.11 against
+  1.2.10 on set v2, Haiku and Luna (440 trials); Haiku +1.8 points
+  (p = 0.688), cost x1.03; Luna -5.5 points (p = 0.327), cost x0.89: no
+  decrease. The verdict is INCONCLUSIVE because v2 is off target.
 - [Release bench 1.2.10](release-bench/1.2.10.md): Aether 1.2.10 against
   1.2.9 on set v2, Haiku only (220 trials; Luna not run while the Codex quota
   is exhausted); Haiku -1.8 points (p = 0.754), cost x1.11 (x0.70 to x1.76):
