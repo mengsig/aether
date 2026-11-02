@@ -108,8 +108,12 @@ pub struct Tokens {
     pub hues: [Style; HUES],
     /// Commands and paths: the foreground leaning toward the code hue.
     pub command: Style,
-    /// Background-only style; `None` when the palette is unknown.
-    pub tint: Option<Color>,
+    /// The block band: a background blended from the probed one, or a fixed
+    /// band with its own foreground when the palette is unknown; plain at ANSI-16.
+    pub tint: Style,
+    /// Cursor rows: the probed band, else an underline. The guessed band
+    /// paints its own ink, which would override the hues on a cursor row.
+    pub selected: Style,
     pub selection: Style,
     pub track: Style,
     pub rule: Style,
@@ -217,6 +221,10 @@ const PULSE_DIM: f32 = 0.45;
 const COMMAND_TINT: f32 = 0.3;
 /// How much accent shows through a selection's background.
 const SELECTION_ALPHA: f32 = 0.3;
+/// The band and its ink when the palette is unknown, per light/dark guess.
+/// Painting both keeps it readable even when the guess is wrong.
+const GUESSED_DARK_BAND: (Rgb, Rgb) = (Rgb(0x3a, 0x3a, 0x3a), Rgb(0xd0, 0xd0, 0xd0));
+const GUESSED_LIGHT_BAND: (Rgb, Rgb) = (Rgb(0xe4, 0xe4, 0xe4), Rgb(0x26, 0x26, 0x26));
 
 /// A resolved theme: tokens plus glyphs. Cheap to copy; rendering never does
 /// colour arithmetic beyond [`Theme::pulse`].
@@ -236,7 +244,7 @@ impl Default for Theme {
 
 impl Theme {
     /// The §5.2 table for `spec`. Blends need the probed palette and a depth
-    /// above ANSI-16; without them tint and pulse drop out.
+    /// above ANSI-16; without a palette the tint is a fixed band and the pulse holds.
     pub fn resolve(spec: ThemeSpec) -> Theme {
         let background = match spec.mode {
             ThemeMode::Dark => Background::Dark,
@@ -428,33 +436,33 @@ impl Theme {
         self.tokens.secondary.patch(self.emphasis())
     }
 
-    /// Background for user/composer/approval blocks; plain when the palette is unknown.
+    /// Background for user/composer/approval blocks: the probed band, a fixed
+    /// band with its own foreground without a palette, plain at ANSI-16 and in mono.
     pub fn tint(&self) -> Style {
-        match self.tokens.tint {
-            Some(bg) => Style::new().bg(bg),
-            None => Style::new(),
-        }
+        self.tokens.tint
     }
 
-    /// Cursor/selected row: the tint, or an underline when there is no tint;
+    /// A colour theme that cannot paint the band (ANSI-16) marks user blocks
+    /// with a bar instead; mono, also the plain-text theme, stays bare.
+    pub fn bars_blocks(&self) -> bool {
+        self.tokens.tint.bg.is_none() && self.spec.mode != ThemeMode::Mono
+    }
+
+    /// Cursor/selected row: the probed tint, or an underline without one;
     /// a reversed block would outweigh everything else in mono.
     pub fn selected(&self) -> Style {
-        match self.tokens.tint {
-            Some(bg) => Style::new().bg(bg),
-            None => Style::new().add_modifier(Modifier::UNDERLINED),
-        }
+        self.tokens.selected
     }
 
     /// Find: the current match is accented, bold, underlined and reversed; other hits
-    /// lie on the tint, or are underlined when there is none.
+    /// look like [`Theme::selected`].
     pub fn find_hit(&self, current: bool) -> Style {
-        match (current, self.tokens.tint) {
-            (true, _) => self
+        if current {
+            return self
                 .accent()
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED | Modifier::REVERSED),
-            (false, Some(bg)) => Style::new().bg(bg),
-            (false, None) => Style::new().add_modifier(Modifier::UNDERLINED),
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED | Modifier::REVERSED);
         }
+        self.selected()
     }
 
     /// Whether [`Theme::pulse`] and [`Theme::shimmer`] move at all: frames
@@ -499,7 +507,8 @@ fn mono_tokens() -> Tokens {
         title: bold,
         hues,
         command: Style::new(),
-        tint: None,
+        tint: Style::new(),
+        selected: Style::new().add_modifier(Modifier::UNDERLINED),
         selection: Style::new().add_modifier(Modifier::REVERSED),
         track: dim,
         rule: dim,
@@ -529,7 +538,8 @@ fn color_tokens(spec: ThemeSpec, background: Background) -> Tokens {
         title: Style::new().add_modifier(Modifier::BOLD),
         hues: hue_styles,
         command: Style::new(),
-        tint: None,
+        tint: guessed_band(spec.depth, background),
+        selected: Style::new().add_modifier(Modifier::UNDERLINED),
         selection: Style::new().add_modifier(Modifier::REVERSED),
         track: dim,
         rule: dim,
@@ -540,6 +550,7 @@ fn color_tokens(spec: ThemeSpec, background: Background) -> Tokens {
         return base;
     };
     let quiet = blend(p.fg, p.bg, 0.55);
+    let band = Style::new().bg(band_color(p.bg, spec.depth, background));
     let running = rgbs[Hue::Running as usize];
     let command = readable_rgb(
         blend(rgbs[Hue::Code as usize], p.fg, COMMAND_TINT),
@@ -549,7 +560,8 @@ fn color_tokens(spec: ThemeSpec, background: Background) -> Tokens {
     Tokens {
         secondary: fg(quiet),
         command: fg(command),
-        tint: Some(band_color(p.bg, spec.depth, background)),
+        tint: band,
+        selected: band,
         selection: Style::new().bg(best_color(
             blend(rgbs[Hue::Accent as usize], p.bg, SELECTION_ALPHA),
             spec.depth,
@@ -562,6 +574,26 @@ fn color_tokens(spec: ThemeSpec, background: Background) -> Tokens {
 }
 
 const MIN_BAND_CONTRAST: f64 = 1.15;
+
+/// The band without a probed palette: a fixed grey for the light/dark guess
+/// with its own ink. ANSI-16 colours are the terminal's own, so it gets none.
+fn guessed_band(depth: ColorDepth, background: Background) -> Style {
+    if depth == ColorDepth::Basic16 {
+        return Style::new();
+    }
+    let (bg, fg) = match background {
+        Background::Dark => GUESSED_DARK_BAND,
+        Background::Light => GUESSED_LIGHT_BAND,
+    };
+    debug_assert!(contrast_ratio(fg, bg) >= MIN_TEXT_CONTRAST);
+    debug_assert_eq!(
+        super::probe::luminance(bg) < super::probe::luminance(fg),
+        background == Background::Dark
+    );
+    Style::new()
+        .bg(best_color(bg, depth))
+        .fg(best_color(fg, depth))
+}
 
 fn band_color(bg: Rgb, depth: ColorDepth, background: Background) -> Color {
     debug_assert!(depth != ColorDepth::Basic16, "ANSI-16 shows no band");
@@ -861,10 +893,106 @@ mod tests {
                 assert_eq!(style.bg, None, "{name} in {s:?}");
             }
             let tint = theme.tint();
-            assert_eq!(tint.fg, None, "{s:?}");
+            // Only the guessed band, with no probed bg to lean on, brings its own ink.
+            let guessed = s.palette.is_none() && tint.bg.is_some();
+            assert_eq!(tint.fg.is_some(), guessed, "{s:?}");
             assert!(tint.add_modifier.is_empty(), "{s:?}");
             assert_eq!(theme.selection().fg, None, "{s:?}");
+            assert_eq!(theme.selected().fg, None, "{s:?}");
         }
+    }
+
+    fn guessed(hint: Background, depth: ColorDepth) -> Theme {
+        Theme::resolve(ThemeSpec {
+            background_hint: hint,
+            ..spec(ThemeMode::Auto, depth, None)
+        })
+    }
+
+    /// Issue #377: no reply (or one past the deadline) leaves `palette` unset,
+    /// and user blocks must still stand out on both guesses.
+    #[test]
+    fn an_unknown_palette_bands_user_blocks_on_either_guess() {
+        for hint in [Background::Dark, Background::Light] {
+            let (guessed_bg, ink) = match hint {
+                Background::Dark => (BLACK, WHITE),
+                Background::Light => (WHITE, BLACK),
+            };
+            for depth in [ColorDepth::Truecolor, ColorDepth::Indexed256] {
+                let theme = guessed(hint, depth);
+                assert_eq!(theme.background(), hint);
+                let tint = theme.tint();
+                let bg = tint.bg.and_then(shown_rgb).expect("a fixed band colour");
+                let fg = tint.fg.and_then(shown_rgb).expect("the band's own ink");
+                if depth == ColorDepth::Indexed256 {
+                    assert!(matches!(tint.bg, Some(Color::Indexed(i)) if i >= 16));
+                }
+                assert!(
+                    contrast_ratio(fg, bg) >= MIN_TEXT_CONTRAST,
+                    "{hint:?} {depth:?}"
+                );
+                assert!(
+                    contrast_ratio(bg, guessed_bg) >= MIN_BAND_CONTRAST,
+                    "{hint:?} {depth:?}"
+                );
+                // The band's ink leans like the guessed terminal's own text.
+                assert!(contrast_ratio(fg, ink) < contrast_ratio(fg, guessed_bg));
+                assert!(!theme.bars_blocks());
+                assert!(theme.selected().add_modifier.contains(Modifier::UNDERLINED));
+            }
+        }
+    }
+
+    #[test]
+    fn the_user_prompt_marker_reads_on_the_guessed_band_in_every_builtin() {
+        for hint in [Background::Dark, Background::Light] {
+            for depth in [ColorDepth::Truecolor, ColorDepth::Indexed256] {
+                let spec = guessed(hint, depth).spec();
+                for builtin in crate::ui::theme::Builtin::ALL {
+                    let theme = Theme::resolve(ThemeSpec {
+                        scheme: builtin.scheme(),
+                        ..spec
+                    });
+                    let band = theme.tint().bg.and_then(shown_rgb).expect("a band");
+                    let user = theme.user().fg.and_then(shown_rgb).expect("a user hue");
+                    // The bold `›` is a marker: WCAG's 3:1 for non-text applies.
+                    let ratio = contrast_ratio(user, band);
+                    let name = builtin.name();
+                    assert!(ratio >= 3.0, "{name} {hint:?} {depth:?}: {ratio:.2}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ansi16_bars_user_blocks_and_mono_and_a_probed_palette_do_not() {
+        for hint in [Background::Dark, Background::Light] {
+            // ANSI-16 colours are the terminal's own: a bar instead of a band.
+            let basic = guessed(hint, ColorDepth::Basic16);
+            assert_eq!(basic.tint(), Style::new());
+            assert!(basic.bars_blocks());
+        }
+        let probed_basic = Theme::resolve(spec(
+            ThemeMode::Auto,
+            ColorDepth::Basic16,
+            Some(GITHUB_DARK),
+        ));
+        assert!(probed_basic.bars_blocks());
+        // Mono, also the plain-text theme, keeps user blocks bare.
+        let mono = Theme::resolve(spec(ThemeMode::Mono, ColorDepth::Truecolor, None));
+        assert!(!mono.bars_blocks());
+        // A probed palette keeps its exact blend and needs no bar.
+        let probed = Theme::resolve(spec(
+            ThemeMode::Auto,
+            ColorDepth::Truecolor,
+            Some(GITHUB_DARK),
+        ));
+        let band = blend(WHITE, GITHUB_DARK.bg, 0.07);
+        assert_eq!(
+            probed.tint(),
+            Style::new().bg(Color::Rgb(band.0, band.1, band.2))
+        );
+        assert!(!probed.bars_blocks());
     }
 
     #[test]
@@ -981,7 +1109,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_probe_drops_tint_and_holds_the_pulse_still() {
+    fn a_failed_probe_keeps_a_fixed_band_and_holds_the_pulse_still() {
         for depth in [
             ColorDepth::Truecolor,
             ColorDepth::Indexed256,
@@ -989,7 +1117,14 @@ mod tests {
         ] {
             let theme = Theme::resolve(spec(ThemeMode::Auto, depth, None));
             let dim = Style::new().add_modifier(Modifier::DIM);
-            assert_eq!(theme.tint(), Style::new());
+            let (bg, fg) = GUESSED_DARK_BAND;
+            let band = match depth {
+                ColorDepth::Basic16 => Style::new(),
+                _ => Style::new()
+                    .bg(best_color(bg, depth))
+                    .fg(best_color(fg, depth)),
+            };
+            assert_eq!(theme.tint(), band, "{depth:?}");
             assert_eq!(
                 theme.selected(),
                 Style::new().add_modifier(Modifier::UNDERLINED)

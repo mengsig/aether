@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "1.2.10"
+version = "1.2.11"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/mengsig/aether"
@@ -55,7 +55,7 @@ qrcode = { version = "0.14.1", default-features = false }
 rand = "0.10.2"
 ratatui = "0.30.2"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls", "charset", "http2"] }
-rusqlite = { version = "0.40.2", features = ["bundled", "backup", "hooks"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "backup", "hooks"] }
 same-file = "1.0.6"
 schemars = { version = "1.2.2", features = ["chrono04"] }
 serde = { version = "1.0.229", features = ["derive"] }

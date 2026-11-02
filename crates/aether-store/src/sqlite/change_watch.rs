@@ -55,7 +55,7 @@ pub(crate) struct ChangeLog {
 
 impl ChangeLog {
     /// Record `conn`'s writes into `log` from now on.
-    pub(super) fn install(log: &Arc<Self>, conn: &Connection) -> rusqlite::Result<()> {
+    pub(super) fn install(log: &Arc<Self>, conn: &mut Connection) -> rusqlite::Result<()> {
         let written = log.clone();
         conn.update_hook(Some(move |action, database: &str, table: &str, rowid| {
             // A deleted row can no longer hold a reference.

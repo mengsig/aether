@@ -284,6 +284,7 @@ final figure is given and the first run in brackets.
 | [1.2.7](1.2.7.md) | 1.2.6 | +0.0 [-1.8, +1.8], p = 1.000 | -8.2 [-16.4, +0.9], p = 0.175 |
 | [1.2.8](1.2.8.md) | 1.2.7 | +0.9 [-2.7, +4.5], p = 1.000 | r128 -5.5 [-14.5, +3.6], p = 0.392; r128b +4.5 [-4.5, +13.6], p = 0.522; pooled over 220 pairs -0.5 [-6.8, +5.9], p = 1.000 |
 | [1.2.10](1.2.10.md) | 1.2.9 | -1.8 [-6.4, +2.7], p = 0.754 | not run (Codex quota exhausted) |
+| [1.2.11](1.2.11.md) | 1.2.10 | +1.8 [-1.8, +5.5], p = 0.688 | -5.5 [-12.7, +1.8], p = 0.327 |
 
 Summed, the first-run Luna deltas from 1.2.0 to 1.2.8 come to about -22
 points, and the pooled or final ones to about -14. Neither sum estimates

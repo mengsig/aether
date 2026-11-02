@@ -724,6 +724,58 @@ fn a_user_cell_tints_its_padding_rows_and_one_gap_follows() {
     );
 }
 
+/// Issue #377: with no palette reply a user message keeps a band at 256
+/// colours on either guess, and a bar where ANSI-16 cannot paint one.
+#[test]
+fn a_user_cell_stands_out_without_a_probed_palette() {
+    use crate::ui::theme::ColorDepth;
+    use crate::ui::theme::tokens::Background;
+    let text = "a question long enough to wrap onto a second row of the block";
+    for hint in [Background::Dark, Background::Light] {
+        for depth in [ColorDepth::Indexed256, ColorDepth::Basic16] {
+            let mut view = View::new();
+            view.theme = Theme::resolve(ThemeSpec {
+                depth,
+                background_hint: hint,
+                ..ThemeSpec::default()
+            });
+            view.push(CellModel::User {
+                from: UserFrom::Operator,
+                text: text.into(),
+                images: Vec::new(),
+            });
+            let rows = view.frame();
+            let prompt = rows
+                .iter()
+                .position(|r| r.contains("a question"))
+                .expect("the prompt row");
+            let buffer = view.terminal.backend().buffer();
+            let cell = |x: u16, y: usize| &buffer[(x, y as u16)];
+            let block = [prompt - 1, prompt, prompt + 1, prompt + 2];
+            if depth == ColorDepth::Basic16 {
+                for y in block {
+                    assert_eq!(cell(0, y).bg, ratatui::style::Color::Reset, "{rows:#?}");
+                }
+                for y in [prompt - 1, prompt + 1, prompt + 2] {
+                    assert_eq!(cell(0, y).symbol(), "▎", "{hint:?} row {y}: {rows:#?}");
+                }
+                assert!(rows[prompt].starts_with("› a question"), "{rows:#?}");
+                continue;
+            }
+            let band = view.theme.tint();
+            assert!(band.bg.is_some() && band.fg.is_some(), "{hint:?} {band:?}");
+            for y in block {
+                assert!((0..W).all(|x| cell(x, y).bg == band.bg.unwrap_or_default()));
+            }
+            // Plain words take the band's own ink, readable whichever guess was wrong.
+            let at = rows[prompt].find("question").expect("a word");
+            let word = u16::try_from(rows[prompt][..at].chars().count()).expect("a column");
+            assert_eq!(Some(cell(word, prompt).fg), band.fg, "{hint:?}");
+            assert_ne!(cell(0, prompt + 1).symbol(), "▎");
+        }
+    }
+}
+
 /// Codex keeps the session header atop history: the first message must not
 /// push it away, and Ctrl+Home must find it again.
 #[test]

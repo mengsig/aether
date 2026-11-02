@@ -218,7 +218,7 @@ impl SqliteStore {
         self
     }
 
-    fn init(conn: Connection, artifact_dir: Option<PathBuf>) -> Result<Self> {
+    fn init(mut conn: Connection, artifact_dir: Option<PathBuf>) -> Result<Self> {
         schema::migrate(&conn)?;
         conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('instance_id', ?1)",
@@ -230,7 +230,7 @@ impl SqliteStore {
         )?;
         Self::ensure_submission_ledger(&conn)?;
         let changes = std::sync::Arc::new(change_watch::ChangeLog::default());
-        change_watch::ChangeLog::install(&changes, &conn)?;
+        change_watch::ChangeLog::install(&changes, &mut conn)?;
         let data_version = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
         Ok(Self {
             conn: Mutex::new(conn),
