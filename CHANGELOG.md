@@ -29,6 +29,14 @@ release is also the text of its GitHub release.
 
 ### Fixed
 
+- **A process sweep no longer misses a child the newest process forks
+  while it is visited.** `/proc` points each entry at the process listed
+  after it when read, so when the visited process was the newest, the
+  listing ended there and a child it forked meanwhile was never visited by
+  the orphan reaper or the background-job sweep. Each read now starts again
+  at the entry just visited. This was also why the
+  `a_process_forked_during_the_listing_is_visited` test failed when it ran
+  alone or was the newest process under `make ci`.
 - **A native answer given while background jobs run no longer closes the
   task.** Stage agents ended their turn with "`make ci` is running; I'll
   report when it finishes" while the native job still ran, and that prose

@@ -81,14 +81,17 @@ async fn a_synthetic_error_message_is_not_progress() {
 
 /// Progress ends at most eight outages of one turn (`MAX_RECOVERIES`): an
 /// engine that answers a little and then fails every attempt still gives up.
+/// Each window outlasts its floor wait by seconds, so a stalled host cannot
+/// spend one before progress resets it, yet holds only about four doubling
+/// waits once the resets are spent.
 #[tokio::test]
 async fn an_engine_that_fails_after_every_bit_of_progress_still_gives_up() {
     const RECOVERIES: usize = 8;
     let runs = (0..40).map(|_| progressed_then_failed(None)).collect();
     let engine = QueuedEngine::new(runs);
     let h = harness_with_engine_config(engine.clone(), |config| {
-        config.engine_transient_retry_window = Duration::from_millis(80);
-        config.engine_transient_retry_floor = Duration::from_millis(20);
+        config.engine_transient_retry_window = Duration::from_secs(4);
+        config.engine_transient_retry_floor = Duration::from_millis(300);
     })
     .await;
     let id = chat_agent(&h);

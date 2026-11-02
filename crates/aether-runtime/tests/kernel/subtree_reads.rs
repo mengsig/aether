@@ -200,7 +200,10 @@ async fn waking_over_a_subtree_budget_reads_only_that_subtree() {
         .expect("one token under the budget wakes");
 }
 
-#[tokio::test]
+/// The turn and its tools run on this test's current-thread runtime. The
+/// startup storage sweep reads the whole fleet on a blocking thread, and
+/// under load it lands in this window: only this thread's reads count.
+#[tokio::test(flavor = "current_thread")]
 async fn a_budgeted_turn_and_a_delegation_never_read_the_whole_fleet() {
     let store = counting_store();
     let h = harness_full(
@@ -246,9 +249,17 @@ async fn a_budgeted_turn_and_a_delegation_never_read_the_whole_fleet() {
     })
     .await;
     let reads = store.take();
+    assert_eq!(reads.agent_filters.len(), reads.agent_threads.len());
+    let runtime_thread = std::thread::current().id();
+    let fleet_reads: Vec<_> = reads
+        .agent_filters
+        .iter()
+        .zip(&reads.agent_threads)
+        .filter(|(filter, thread)| **filter == AgentFilter::default() && **thread == runtime_thread)
+        .collect();
     assert!(
-        !reads.agent_filters.contains(&AgentFilter::default()),
-        "the whole fleet was read: {:?}",
+        fleet_reads.is_empty(),
+        "the turn or the delegation read the whole fleet: {:?}",
         reads.agent_filters
     );
     assert!(
