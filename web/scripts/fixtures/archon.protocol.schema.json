@@ -1,0 +1,533 @@
+{
+  "$defs": {
+    "Change": {
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "subject": {
+          "$ref": "#/$defs/ChangeSubject"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "subject"
+      ],
+      "type": "object"
+    },
+    "ChangeSubject": {
+      "description": "What a change is about.",
+      "oneOf": [
+        {
+          "properties": {
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "stage": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "state": {
+              "$ref": "#/$defs/QueueStateKind"
+            },
+            "subject": {
+              "const": "item",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "item",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "added": {
+              "type": "boolean"
+            },
+            "depends_on": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "subject": {
+              "const": "dependency",
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject",
+            "item",
+            "depends_on",
+            "added"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ChangesPage": {
+      "properties": {
+        "after": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "limit": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "after"
+      ],
+      "type": "object"
+    },
+    "ClientFrame": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/Hello",
+          "description": "Opens a session.",
+          "properties": {
+            "cmd": {
+              "const": "hello",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "after": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "subscribe_changes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "$ref": "#/$defs/ChangesPage",
+          "properties": {
+            "cmd": {
+              "const": "changes_page",
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": {
+              "const": "item_history",
+              "type": "string"
+            },
+            "item": {
+              "$ref": "#/$defs/QueueItemId"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "item"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "req": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "req"
+      ],
+      "type": "object"
+    },
+    "ClientKind": {
+      "oneOf": [
+        {
+          "const": "archon-cli",
+          "type": "string"
+        },
+        {
+          "const": "archon-web",
+          "description": "The web app.",
+          "type": "string"
+        }
+      ]
+    },
+    "DeviceInfo": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "operator",
+            "observer"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "role"
+      ],
+      "type": "object"
+    },
+    "ErrorCode": {
+      "oneOf": [
+        {
+          "properties": {
+            "code": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "code": {
+              "const": "history_expired",
+              "type": "string"
+            },
+            "first_seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "last_seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "code",
+            "first_seq",
+            "last_seq"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ErrorReply": {
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "error",
+        "message"
+      ],
+      "type": "object"
+    },
+    "Hello": {
+      "properties": {
+        "client": {
+          "$ref": "#/$defs/ClientKind"
+        },
+        "client_version": {
+          "type": "string"
+        },
+        "features": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "protocol_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "client",
+        "client_version"
+      ],
+      "type": "object"
+    },
+    "QueueItemId": {
+      "description": "A queue item id.",
+      "pattern": "^qi_[0-9A-Z]{26}$",
+      "type": "string"
+    },
+    "QueueStateKind": {
+      "enum": [
+        "queued",
+        "running",
+        "waiting",
+        "done",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "Reply": {
+      "description": "Adjacently tagged.",
+      "oneOf": [
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/Welcome"
+            },
+            "reply": {
+              "const": "welcome",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "reply": {
+              "const": "ok",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "properties": {
+                "changes": {
+                  "items": {
+                    "$ref": "#/$defs/Change"
+                  },
+                  "type": "array"
+                },
+                "last_seq": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "changes",
+                "last_seq"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "changes",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "reply": {
+              "const": "labels",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ServerFrame": {
+      "oneOf": [
+        {
+          "properties": {
+            "frame": {
+              "const": "reply",
+              "type": "string"
+            },
+            "id": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Reply"
+                },
+                {
+                  "$ref": "#/$defs/ErrorReply"
+                }
+              ]
+            }
+          },
+          "required": [
+            "frame",
+            "id",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "change": {
+              "$ref": "#/$defs/Change"
+            },
+            "frame": {
+              "const": "change",
+              "type": "string"
+            },
+            "sub": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "frame",
+            "sub",
+            "change"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Welcome": {
+      "description": "What archond says after a hello. A comment end */ in a description stays inside the comment.",
+      "properties": {
+        "daemon_version": {
+          "type": "string"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeviceInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "features": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "min_protocol_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pid": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "protocol_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "daemon_version",
+        "pid",
+        "min_protocol_version",
+        "features"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "client_frame": {
+    "$ref": "#/$defs/ClientFrame"
+  },
+  "min_protocol_version": 23,
+  "protocol_version": 24,
+  "server_frame": {
+    "$ref": "#/$defs/ServerFrame"
+  },
+  "title": "Archon daemon protocol"
+}

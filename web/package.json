@@ -1,0 +1,39 @@
+{
+  "name": "aether-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The unified Aether and Archon frontend: packages under packages/, entries under apps/.",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "generate": "node scripts/generate-protocol.ts",
+    "generate:check": "node scripts/generate-protocol.ts --check",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "lint": "eslint --max-warnings 0 .",
+    "test": "vitest run --config scripts/vitest.config.ts",
+    "licenses": "node scripts/check-licenses.ts",
+    "build": "node scripts/build.ts",
+    "check": "npm run generate:check && npm run typecheck && npm run lint && npm run test && npm run licenses && npm run build"
+  },
+  "dependencies": {
+    "d3-force": "^3.0.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.64.1",
+    "@types/d3-force": "^3.0.10",
+    "@types/node": "^22.19.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^7.3.7",
+    "vitest": "^5.1.0"
+  }
+}

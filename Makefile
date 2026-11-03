@@ -1,4 +1,4 @@
-.PHONY: ci ci-checks fmt lint test build install bench-release bench-calibrate bench-memory
+.PHONY: ci ci-checks fmt lint test build install web bench-release bench-calibrate bench-memory
 # `ci` holds one of the host-wide CI slots (scripts/ci_slot.sh, CI_HOST_SLOTS,
 # default 1) while scripts/ci.sh runs; `ci-checks` runs it without one.
 ci:      ; sh scripts/ci_slot.sh ./scripts/ci.sh
@@ -8,6 +8,9 @@ lint:    ; cargo clippy --workspace --all-targets -- -D warnings
 test:    ; cargo test --workspace
 build:   ; cargo build --release -p aether
 install: ; cargo install --path crates/aether --locked
+# The web workspace (web/): a locked install, then types, lint, tests, licences
+# and build (`npm run check`), holding a host CI slot like `ci`.
+web:     ; sh scripts/ci_slot.sh sh -c 'cd web && npm ci --no-audit --no-fund && npm run check'
 
 # Release benchmark (docs/release-bench.md): run it only before a release, never in CI.
 # OLD is the last release's aether binary; NEW defaults to this tree's release build.
