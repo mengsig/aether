@@ -193,7 +193,7 @@ def parser():
     run.add_argument("--check", action="store_true", help="exit 1 unless the baseline reproduces")
     run.add_argument("--write-baseline", action="store_true", help="record this run as the set's baseline")
     run.add_argument("--task-arm", action="store_true", help="also run the model-graded task arm (spends tokens)")
-    run.add_argument("--task-command", default="claude -p --model haiku",
+    run.add_argument("--task-command", default='claude -p --model haiku --tools ""',
                      help="model command: prompt on stdin, answer on stdout")
     run.add_argument("--task-max-calls", type=int, default=24, help="refuse a task arm needing more calls")
     run.set_defaults(func=cmd_run)

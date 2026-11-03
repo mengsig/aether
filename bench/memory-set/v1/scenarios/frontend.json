@@ -135,8 +135,8 @@
       ],
       "harmful": [],
       "task": {
-        "question": "Which command adds a dependency to the dashboard repository? Answer with the command only.",
-        "answer": "pnpm add"
+        "question": "Which package manager must be used to add a dependency to the dashboard repository? Answer with its name only.",
+        "answer": "(?i)\\bpnpm\\b"
       }
     },
     {

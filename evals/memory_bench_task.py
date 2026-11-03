@@ -10,6 +10,7 @@ correlation only.
 import re
 import shlex
 import subprocess
+import tempfile
 
 CONDITIONS = ("none", "retrieved", "oracle")
 CALL_TIMEOUT_SECONDS = 180
@@ -50,10 +51,13 @@ def plan_calls(labelled, rows, memories):
 
 
 def ask(command, text):
-    """One model call through `command`, prompt on stdin, answer on stdout."""
-    completed = subprocess.run(
-        shlex.split(command), input=text, capture_output=True, text=True, timeout=CALL_TIMEOUT_SECONDS
-    )
+    """One model call through `command`, prompt on stdin, answer on stdout. It
+    runs in an empty directory, so no repository file can stand in for memory."""
+    with tempfile.TemporaryDirectory(prefix="memory-bench-task-") as empty:
+        completed = subprocess.run(
+            shlex.split(command), input=text, capture_output=True, text=True,
+            timeout=CALL_TIMEOUT_SECONDS, cwd=empty,
+        )
     if completed.returncode != 0:
         raise RuntimeError(f"task command exited {completed.returncode}: {completed.stderr.strip()[:300]}")
     return completed.stdout.strip()

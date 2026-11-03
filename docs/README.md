@@ -13,6 +13,8 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
 - [Release bench](release-bench.md): `make bench-release`, the regression
   check run before each release on the last release, the candidate and the
   native CLIs.
+- [Memory baseline](memory/BASELINE.md): how operational memory works today,
+  and its baseline on `make bench-memory`, the benchmark Memory 2.0 is judged by.
 - [Development](development.md): build, test, and CI entry points.
 - [Architecture](../ARCHITECTURE.md): ownership, execution paths, persistence,
   and where code lives.
