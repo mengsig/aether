@@ -109,11 +109,12 @@ fn a_page_holds_only_what_the_filter_names() {
 }
 
 /// A record that no longer decodes is quarantined and left out, yet its
-/// page still points past it, so the walk reaches every healthy agent.
+/// page still points past it, so the walk reaches every healthy agent. The
+/// wire's default query excludes archived agents, which reads the body in SQL.
 #[test]
 fn a_quarantined_agent_shortens_its_page_and_the_walk_goes_on() {
     let store = SqliteStore::open_in_memory().expect("open");
-    let mut ids: Vec<AgentId> = (0..9)
+    let mut ids: Vec<AgentId> = (0..12)
         .map(|_| {
             let agent = agent();
             let id = agent.id;
@@ -122,30 +123,38 @@ fn a_quarantined_agent_shortens_its_page_and_the_walk_goes_on() {
         })
         .collect();
     ids.sort();
-    // The last agent of the first page of three, and one mid-way on the second.
-    let broken = [ids[2], ids[4]];
-    for id in broken {
+    // The last agent of the first page of three, then one mid-page each after.
+    let broken: [(AgentId, rusqlite::types::Value); 3] = [
+        (ids[2], r#"{"not":"an agent"}"#.to_owned().into()),
+        (ids[4], "{".to_owned().into()),
+        (ids[7], vec![0xff_u8, 0xfe].into()),
+    ];
+    for (id, body) in &broken {
         let changed = store
             .write_conn()
             .execute(
-                "UPDATE agents SET body = '{\"not\":\"an agent\"}' WHERE id = ?1",
-                [id.to_string()],
+                "UPDATE agents SET body = ?1 WHERE id = ?2",
+                rusqlite::params![body, id.to_string()],
             )
             .expect("corrupt");
         assert_eq!(changed, 1);
     }
-    let first = store
-        .agents_page(&AgentFilter::default(), None, 3)
-        .expect("page");
-    assert_eq!(first.agents.len(), 2, "the broken record is left out");
-    assert_eq!(first.next_after, Some(ids[2]), "the cursor is the row read");
-
+    let broken: Vec<AgentId> = broken.iter().map(|(id, _)| *id).collect();
     let healthy: Vec<AgentId> = ids
         .iter()
         .copied()
         .filter(|id| !broken.contains(id))
         .collect();
-    assert_eq!(walk(&store, &AgentFilter::default(), 3), healthy);
+    for exclude_archived in [false, true] {
+        let filter = AgentFilter {
+            exclude_archived,
+            ..AgentFilter::default()
+        };
+        let first = store.agents_page(&filter, None, 3).expect("page");
+        assert_eq!(first.agents.len(), 2, "the broken record is left out");
+        assert_eq!(first.next_after, Some(ids[2]), "the cursor is the row read");
+        assert_eq!(walk(&store, &filter, 3), healthy, "{filter:?}");
+    }
     let quarantined: BTreeSet<String> = store
         .quarantines()
         .expect("quarantines")

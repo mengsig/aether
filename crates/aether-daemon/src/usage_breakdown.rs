@@ -75,8 +75,7 @@ pub fn usage_breakdown(
 }
 
 /// The reads that cover the scope. A subtree reads each kept agent's own
-/// invocations and its root's, so retention removed elsewhere is not read,
-/// yet a root whose run expired, agents and all, still fails. Any other scope
+/// invocations, so retention removed elsewhere is not read. Any other scope
 /// reads its whole run or fleet: an expired agent's role is gone with it, so
 /// a role scope cannot tell which expired history was its own and refuses.
 fn scoped_reads(request: &UsageRequest, agents: &Agents) -> Vec<EventFilter> {
@@ -87,22 +86,19 @@ fn scoped_reads(request: &UsageRequest, agents: &Agents) -> Vec<EventFilter> {
         exclude_children: request.scope.agent.is_some(),
         ..EventFilter::default()
     };
-    let (Some(root), Some(kept), None) = (request.scope.subtree, &agents.kept, request.scope.agent)
+    let (Some(_), Some(kept), None) = (request.scope.subtree, &agents.kept, request.scope.agent)
     else {
         return vec![base];
     };
-    let mut read: BTreeSet<AgentId> = kept.clone();
-    read.insert(root);
-    let reads: Vec<EventFilter> = read
-        .into_iter()
+    let reads: Vec<EventFilter> = kept
+        .iter()
         .map(|id| EventFilter {
-            agent: Some(id),
+            agent: Some(*id),
             exclude_children: true,
             ..base.clone()
         })
         .collect();
-    assert!(!reads.is_empty(), "a subtree reads at least its root");
-    assert!(reads.len() <= kept.len() + 1);
+    assert_eq!(reads.len(), kept.len(), "one read per kept agent");
     reads
 }
 
@@ -158,7 +154,7 @@ fn scoped_agents(store: &dyn Store, request: &UsageRequest) -> aether_store::Res
         HashMap::new()
     };
     let mut kept = match scope.subtree {
-        Some(root) => Some(store.subtree_ids(root)?),
+        Some(root) => Some(subtree(store, root)?),
         None => None,
     };
     if let Some(prefix) = scope.role_prefix.as_deref() {
@@ -172,6 +168,28 @@ fn scoped_agents(store: &dyn Store, request: &UsageRequest) -> aether_store::Res
         });
     }
     Ok(Agents { roles, kept })
+}
+
+/// The root and its descendants. A child shares its parent's run, and
+/// retention removes a run whole, so a root that is gone took its subtree
+/// with it: if that was retention, its own history says so and the read fails.
+fn subtree(store: &dyn Store, root: AgentId) -> aether_store::Result<BTreeSet<AgentId>> {
+    let ids = store.subtree_ids(root)?;
+    if !ids.is_empty() {
+        assert!(ids.contains(&root), "a found subtree holds its root");
+        return Ok(ids);
+    }
+    let own = EventFilter {
+        agent: Some(root),
+        exclude_children: true,
+        ..EventFilter::default()
+    };
+    let left = store.events(0, 1, &own)?;
+    debug_assert!(
+        left.iter().all(|event| event.agent_id == Some(root)),
+        "the probe reads only the root's own history"
+    );
+    Ok(ids)
 }
 
 fn completed(event: &Event) -> Option<Completed<'_>> {

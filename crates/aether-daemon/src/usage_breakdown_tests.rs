@@ -197,8 +197,6 @@ fn create(store: &SqliteStore, agent: &Agent) {
     store.commit(Commit::new().mutate(created)).expect("create");
 }
 
-/// Retention removed another run's invocations: a subtree or role scope
-/// still answers, while a fleet-wide one says the history is gone.
 /// Retention removes a run's events and its agents together, as
 /// `expire_run_history` does; a scope that may hold any of it refuses.
 #[test]
@@ -212,12 +210,13 @@ fn history_expired_elsewhere_fails_only_a_scope_that_may_hold_it() {
     let gone_child = agent(Some(gone.id), gone_run, "worker");
     let lead = agent(None, kept_run, "lead");
     let worker = agent(Some(lead.id), kept_run, "worker");
-    for (agent, spent) in [
-        (&gone, 1000),
-        (&gone_child, 2000),
-        (&lead, 100),
-        (&worker, 10),
-    ] {
+    // The expired root never invoked a model itself; only its child spent.
+    create(&store, &gone);
+    let ready = EventDraft::new(Actor::System, EventKind::AgentReady)
+        .agent(gone.id)
+        .run(gone_run);
+    store.commit(Commit::new().event(ready)).expect("ready");
+    for (agent, spent) in [(&gone_child, 2000), (&lead, 100), (&worker, 10)] {
         create(&store, agent);
         complete(&store, agent.id, agent.run, &model, usage(spent, 0.0));
     }
@@ -244,6 +243,10 @@ fn history_expired_elsewhere_fails_only_a_scope_that_may_hold_it() {
         matches!(expired_root, Err(StoreError::HistoryExpired { .. })),
         "a root gone with its run is expired, not empty: {expired_root:?}"
     );
+    let never = usage_breakdown(&store, &request(subtree(AgentId::new()), UsageGroup::Role))
+        .expect("a root that never existed spent nothing");
+    assert_eq!(never.total, Usage::default());
+    assert!(never.rows.is_empty());
 
     let leads = |run: Option<RunId>| UsageScope {
         run,

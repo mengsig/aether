@@ -52,9 +52,12 @@ impl SqliteStore {
             "SELECT id, body FROM agents WHERE {}",
             super::store::agent_predicate(filter, &mut args)
         );
-        // `archived` lives in the body; here it must narrow the page itself.
+        // `archived` lives in the body; here it must narrow the page itself. A
+        // body that is not JSON stays in, so the decoder can quarantine it.
         if filter.exclude_archived {
-            sql.push_str(" AND COALESCE(json_extract(body, '$.archived'), 0) = 0");
+            sql.push_str(
+                " AND (CASE WHEN json_valid(body) THEN COALESCE(json_extract(body, '$.archived'), 0) ELSE 0 END) = 0",
+            );
         }
         if let Some(after) = after {
             args.push(Box::new(after.to_string()));
