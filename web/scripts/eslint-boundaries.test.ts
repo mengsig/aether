@@ -108,6 +108,15 @@ describe("package import boundaries (CONTRACTS.md §2.2)", () => {
     ]);
   });
 
+  it("checks the files new URL(..., import.meta.url) hands to Vite", async () => {
+    const worker = (target: string) => `export const w = new Worker(new URL(${JSON.stringify(target)}, import.meta.url), { type: "module" });\n`;
+    expect(await lint("packages/graph/src/layout.ts", worker("./layout.worker.ts"))).toEqual([]);
+    expect(await lint("packages/graph/src/layout.ts", worker("../../archon/src/dag/worker.ts"))).toEqual([
+      "aether/import-boundaries: a relative import must stay inside packages/graph; import @aether-ui/archon instead",
+    ]);
+    expect(await lint("packages/graph/src/layout.ts", 'export const site = new URL("../docs", "https://example.com/a/");\n')).toEqual([]);
+  });
+
   it("accepts inline type-only re-exports of protocol from ui, but not runtime ones", async () => {
     const shell = "packages/ui/src/index.ts";
     expect(await lint(shell, 'export { type RouteDef, type RouteProps } from "@aether-ui/protocol";\n')).toEqual([]);

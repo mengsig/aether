@@ -107,6 +107,16 @@ function globPatterns(node: Rule.Node): string[] | string | undefined {
   return patterns as string[];
 }
 
+/** The relative path of `new URL("<path>", import.meta.url)`, which Vite bundles (workers, assets). */
+function moduleUrl(node: Rule.Node): string | undefined {
+  const call = node as unknown as { callee: { type: string; name?: string }; arguments: unknown[] };
+  if (call.callee.type !== "Identifier" || call.callee.name !== "URL") return undefined;
+  const base = call.arguments[1] as { type?: string; object?: { type?: string }; property?: { name?: string } } | undefined;
+  if (base?.type !== "MemberExpression" || base.object?.type !== "MetaProperty" || base.property?.name !== "url") return undefined;
+  const target = literalValue(call.arguments[0]);
+  return typeof target === "string" && target.startsWith(".") ? target : undefined;
+}
+
 // Vite resolves patterns against `base` when given; refusing it keeps each pattern relative to its file.
 function globOptionsCheckable(options: unknown): boolean {
   if (options === undefined) return true;
@@ -160,6 +170,7 @@ const rule: Rule.RuleModule = {
         if (node.source.type === "Literal") return check(node, node.source.value);
         context.report({ node, message: "a dynamic import needs a string literal, so its package boundary can be checked" });
       },
+      NewExpression: (node) => check(node, moduleUrl(node), false),
       CallExpression: (node) => {
         const patterns = globPatterns(node);
         if (patterns === undefined) return;
