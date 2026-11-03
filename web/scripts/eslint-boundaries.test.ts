@@ -114,7 +114,23 @@ describe("package import boundaries (CONTRACTS.md §2.2)", () => {
     expect(await lint("packages/graph/src/layout.ts", worker("../../archon/src/dag/worker.ts"))).toEqual([
       "aether/import-boundaries: a relative import must stay inside packages/graph; import @aether-ui/archon instead",
     ]);
+    const shared = (target: string) => `export const w = new SharedWorker(new URL(\`${target}\`, import.meta.url));\n`;
+    expect(await lint("packages/graph/src/layout.ts", shared("./layout.worker.ts"))).toEqual([]);
+    expect(await lint("packages/aether/src/index.ts", shared("../../archon/src/worker.ts"))).toEqual([
+      "aether/import-boundaries: a relative import must stay inside packages/aether; import @aether-ui/archon instead",
+    ]);
+    const refused = "aether/import-boundaries: new URL(..., import.meta.url) needs a static relative path, so its package boundary can be checked";
+    for (const target of ["`../${name}.ts`", '"/packages/archon/src/w.ts"', "name"]) {
+      const code = `export const name = "w";\nexport const u = new URL(${target}, import.meta.url);\n`;
+      expect(await lint("packages/graph/src/layout.ts", code), target).toEqual([refused]);
+    }
     expect(await lint("packages/graph/src/layout.ts", 'export const site = new URL("../docs", "https://example.com/a/");\n')).toEqual([]);
+    expect(await lint(FEATURE_FILE, "export const load = () => import(`../../../archon/src/queue/routes.ts`);\n")).toEqual([
+      "aether/import-boundaries: a relative import must stay inside packages/aether; import @aether-ui/archon instead",
+    ]);
+    expect(await lint(FEATURE_FILE, "export const r = import.meta.glob(`../../../archon/src/**/*.ts`);\n")).toEqual([
+      "aether/import-boundaries: a relative import must stay inside packages/aether; import @aether-ui/archon instead",
+    ]);
   });
 
   it("accepts inline type-only re-exports of protocol from ui, but not runtime ones", async () => {

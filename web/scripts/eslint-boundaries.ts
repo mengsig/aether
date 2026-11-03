@@ -57,8 +57,12 @@ function resolveTarget(root: string, file: string, own: string, specifier: strin
   return { kind: "error", message: `a relative import must stay inside packages/${own}${through}` };
 }
 
+/** The value of a string literal or a template literal with no substitutions, else undefined. */
 function literalValue(node: unknown): unknown {
-  return (node as { type?: unknown; value?: unknown } | undefined)?.type === "Literal" ? (node as { value: unknown }).value : undefined;
+  const literal = node as { type?: unknown; value?: unknown; expressions?: unknown[]; quasis?: Array<{ value: { cooked?: unknown } }> } | undefined;
+  if (literal?.type === "Literal") return literal.value;
+  if (literal?.type !== "TemplateLiteral" || (literal.expressions ?? []).length > 0) return undefined;
+  return literal.quasis?.[0]?.value.cooked;
 }
 
 function isTypeOnly(node: Rule.Node): boolean {
@@ -107,14 +111,18 @@ function globPatterns(node: Rule.Node): string[] | string | undefined {
   return patterns as string[];
 }
 
-/** The relative path of `new URL("<path>", import.meta.url)`, which Vite bundles (workers, assets). */
-function moduleUrl(node: Rule.Node): string | undefined {
+/**
+ * The path of `new URL(path, import.meta.url)`, which Vite bundles (workers, assets): the path, an
+ * error when it is not a static relative one, or undefined for any other `new` expression.
+ */
+function moduleUrl(node: Rule.Node): { path: string } | { error: string } | undefined {
   const call = node as unknown as { callee: { type: string; name?: string }; arguments: unknown[] };
   if (call.callee.type !== "Identifier" || call.callee.name !== "URL") return undefined;
   const base = call.arguments[1] as { type?: string; object?: { type?: string }; property?: { name?: string } } | undefined;
   if (base?.type !== "MemberExpression" || base.object?.type !== "MetaProperty" || base.property?.name !== "url") return undefined;
   const target = literalValue(call.arguments[0]);
-  return typeof target === "string" && target.startsWith(".") ? target : undefined;
+  if (typeof target === "string" && target.startsWith(".")) return { path: target };
+  return { error: "new URL(..., import.meta.url) needs a static relative path, so its package boundary can be checked" };
 }
 
 // Vite resolves patterns against `base` when given; refusing it keeps each pattern relative to its file.
@@ -167,10 +175,16 @@ const rule: Rule.RuleModule = {
       ExportNamedDeclaration: (node) => check(node, node.source?.value),
       ExportAllDeclaration: (node) => check(node, node.source.value),
       ImportExpression: (node) => {
-        if (node.source.type === "Literal") return check(node, node.source.value);
+        const source = literalValue(node.source);
+        if (typeof source === "string") return check(node, source);
         context.report({ node, message: "a dynamic import needs a string literal, so its package boundary can be checked" });
       },
-      NewExpression: (node) => check(node, moduleUrl(node), false),
+      NewExpression: (node) => {
+        const url = moduleUrl(node);
+        if (url === undefined) return;
+        if ("error" in url) return context.report({ node, message: url.error });
+        check(node, url.path, false);
+      },
       CallExpression: (node) => {
         const patterns = globPatterns(node);
         if (patterns === undefined) return;
