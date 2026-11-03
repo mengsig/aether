@@ -79,6 +79,32 @@ describe("package import boundaries (CONTRACTS.md §2.2)", () => {
       .toEqual(["aether/import-boundaries: packages/protocol must not import react (CONTRACTS.md §2.2)"]);
   });
 
+  it("checks the import.meta.glob patterns that load routes", async () => {
+    const index = "packages/aether/src/index.ts";
+    const local = 'export const routes = import.meta.glob(["./*/routes.ts", "!./**/*.test.ts"], { eager: true });\n';
+    expect(await lint(index, local)).toEqual([]);
+    const foreign = 'export const routes = import.meta.glob("../../archon/src/**/*.ts", { eager: true });\n';
+    expect(await lint(index, foreign)).toEqual([
+      "aether/import-boundaries: a relative import must stay inside packages/aether; import @aether-ui/archon instead",
+    ]);
+    const mixed = 'export const routes = import.meta.glob(["./*/routes.ts", "../../*/src/routes.ts"]);\n';
+    expect(await lint(index, mixed)).toEqual(["aether/import-boundaries: a relative import must stay inside packages/aether"]);
+    expect(await lint(index, 'export const r = import.meta.glob("/packages/archon/src/*.ts");\n')).toEqual([
+      'aether/import-boundaries: import.meta.glob pattern "/packages/archon/src/*.ts" must be relative to this file',
+    ]);
+    expect(await lint(index, "const where = './*.ts';\nexport const r = import.meta.glob(where);\n")).toEqual([
+      "aether/import-boundaries: import.meta.glob needs string literal patterns, so its package boundary can be checked",
+    ]);
+  });
+
+  it("accepts inline type-only re-exports of protocol from ui, but not runtime ones", async () => {
+    const shell = "packages/ui/src/index.ts";
+    expect(await lint(shell, 'export { type RouteDef, type RouteProps } from "@aether-ui/protocol";\n')).toEqual([]);
+    expect(await lint(shell, 'export { type RouteDef, aether } from "@aether-ui/protocol";\n')).toEqual([
+      "aether/import-boundaries: @aether-ui/ui may import only types from @aether-ui/protocol: use `import type`",
+    ]);
+  });
+
   it("keeps transports and the desktop bridge inside core", async () => {
     const transport = "Only @aether-ui/core talks to transports (CONTRACTS.md §2.2); send through useCommand.";
     const code = 'export const socket = new WebSocket("ws://127.0.0.1");\n';

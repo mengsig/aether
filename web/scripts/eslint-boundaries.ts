@@ -62,10 +62,11 @@ function literalValue(node: unknown): unknown {
 }
 
 function isTypeOnly(node: Rule.Node): boolean {
-  const declaration = node as unknown as { importKind?: string; exportKind?: string; specifiers?: Array<{ importKind?: string }> };
+  type Kinds = { importKind?: string; exportKind?: string };
+  const declaration = node as unknown as Kinds & { specifiers?: Kinds[] };
   if (declaration.importKind === "type" || declaration.exportKind === "type") return true;
   const specifiers = declaration.specifiers ?? [];
-  return specifiers.length > 0 && specifiers.every((specifier) => specifier.importKind === "type");
+  return specifiers.length > 0 && specifiers.every((s) => s.importKind === "type" || s.exportKind === "type");
 }
 
 function problem(own: string, allowance: Allowance, target: Target, typeOnly: boolean, isTest: boolean): string | undefined {
@@ -85,6 +86,29 @@ function problem(own: string, allowance: Allowance, target: Target, typeOnly: bo
     return `${SCOPE}${own} may import only types from ${SCOPE}${target.name}: use \`import type\``;
   }
   return undefined;
+}
+
+/** The patterns of an `import.meta.glob(...)` call, or an error when they are not literals. */
+function globPatterns(node: Rule.Node): string[] | string | undefined {
+  const call = node as unknown as { callee: { type: string; object?: { type: string; meta?: { name: string } }; property?: { name?: string } }; arguments: unknown[] };
+  const callee = call.callee;
+  const isGlob = callee.type === "MemberExpression" && callee.object?.type === "MetaProperty"
+    && callee.object.meta?.name === "import" && (callee.property?.name ?? "").startsWith("glob");
+  if (!isGlob) return undefined;
+  const first = call.arguments[0] as { type?: string; elements?: unknown[] } | undefined;
+  const literals = first?.type === "ArrayExpression" ? first.elements ?? [] : [first];
+  const patterns = literals.map(literalValue);
+  if (patterns.length === 0 || patterns.some((p) => typeof p !== "string")) {
+    return "import.meta.glob needs string literal patterns, so its package boundary can be checked";
+  }
+  return patterns as string[];
+}
+
+/** A glob reaches only the directories before its first wildcard, so check that prefix like an import. */
+function globPrefix(pattern: string): string | undefined {
+  if (!pattern.startsWith("./") && !pattern.startsWith("../")) return undefined;
+  const wildcard = pattern.search(/[*?[\]{}()!+@]/);
+  return wildcard === -1 ? pattern : pattern.slice(0, wildcard);
 }
 
 const rule: Rule.RuleModule = {
@@ -119,6 +143,19 @@ const rule: Rule.RuleModule = {
       ImportExpression: (node) => {
         if (node.source.type === "Literal") return check(node, node.source.value);
         context.report({ node, message: "a dynamic import needs a string literal, so its package boundary can be checked" });
+      },
+      CallExpression: (node) => {
+        const patterns = globPatterns(node);
+        if (patterns === undefined) return;
+        if (typeof patterns === "string") return context.report({ node, message: patterns });
+        for (const pattern of patterns.filter((p) => !p.startsWith("!"))) {
+          const prefix = globPrefix(pattern);
+          if (prefix === undefined) {
+            context.report({ node, message: `import.meta.glob pattern ${JSON.stringify(pattern)} must be relative to this file` });
+            continue;
+          }
+          check(node, prefix, false);
+        }
       },
       ...typescriptNodes,
     };
