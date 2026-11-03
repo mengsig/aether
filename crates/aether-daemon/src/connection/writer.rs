@@ -152,4 +152,52 @@ mod tests {
         legacy_history_expired(&mut other);
         assert_eq!(other, before);
     }
+
+    /// The line `run` writes for one numbered tool-input delta.
+    async fn written(delta_order: bool) -> String {
+        use tokio::io::AsyncBufReadExt;
+        let (write, read) = tokio::io::duplex(4096);
+        let (out, frames) = mpsc::channel(1);
+        let speaking = Speaking {
+            version: Arc::new(AtomicU32::new(aether_protocol::PROTOCOL_VERSION)),
+            history_expired: Arc::new(AtomicBool::new(true)),
+            delta_order: Arc::new(AtomicBool::new(delta_order)),
+        };
+        let (_auth, auth) = watch::channel(None);
+        let writer = tokio::spawn(run(write, frames, speaking, auth));
+        let frame = ServerFrame::Delta {
+            sub: 1,
+            agent: aether_core::id::AgentId::new(),
+            invocation: aether_core::id::InvocationId::new(),
+            delta: aether_protocol::Delta::ToolInput {
+                name: "bash".into(),
+                partial_json: "{".into(),
+                tool_use_id: Some("toolu_1".into()),
+            },
+            invocation_seq: Some(7),
+        };
+        out.send(frame).await.expect("the writer is reading");
+        drop(out);
+        let mut line = String::new();
+        tokio::io::BufReader::new(read)
+            .read_line(&mut line)
+            .await
+            .expect("a line");
+        writer.await.expect("the writer ends with its queue");
+        line
+    }
+
+    #[tokio::test]
+    async fn only_a_client_that_asked_for_delta_order_reads_the_numbering() {
+        let numbered = written(true).await;
+        assert!(numbered.contains(r#""invocation_seq":7"#), "{numbered}");
+        assert!(
+            numbered.contains(r#""tool_use_id":"toolu_1""#),
+            "{numbered}"
+        );
+        let plain = written(false).await;
+        assert!(!plain.contains("invocation_seq"), "{plain}");
+        assert!(!plain.contains("tool_use_id"), "{plain}");
+        assert!(plain.contains(r#""partial_json":"{""#), "{plain}");
+    }
 }

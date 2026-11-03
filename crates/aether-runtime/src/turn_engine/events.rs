@@ -957,6 +957,44 @@ mod live_accounting_tests {
         let stored = runtime.store.agent(ctx.agent.id).unwrap().unwrap();
         assert_eq!(stored.stats.usage, ctx.agent.stats.usage);
         assert_eq!(stored.stats.context_tokens, Some(412));
+
+        // Every input delta of a tool block names the call it belongs to.
+        let tool_block = aether_core::model::StreamEvent::BlockStart {
+            index: 1,
+            block: aether_core::model::BlockStart::ToolUse {
+                id: "toolu_1".into(),
+                name: "bash".into(),
+                input: None,
+            },
+        };
+        let tool_input = aether_core::model::StreamEvent::ToolInputDelta {
+            index: 1,
+            partial_json: "{".into(),
+        };
+        for event in [tool_block, tool_input] {
+            handle_event(
+                &runtime,
+                &mut ctx,
+                &snapshot,
+                EngineEvent::Delta(event),
+                &mut state,
+            )
+            .unwrap();
+            let message = std::iter::from_fn(|| bus.try_recv().ok())
+                .find(|message| matches!(message, BusMessage::Delta { .. }));
+            let Some(BusMessage::Delta {
+                delta:
+                    DeltaKind::ToolInput {
+                        name, tool_use_id, ..
+                    },
+                ..
+            }) = message
+            else {
+                panic!("a tool input delta, got {message:?}");
+            };
+            assert_eq!(name, "bash");
+            assert_eq!(tool_use_id.as_deref(), Some("toolu_1"));
+        }
         runtime.shutdown().await;
     }
 }

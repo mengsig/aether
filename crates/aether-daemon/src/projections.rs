@@ -569,4 +569,58 @@ mod tests {
             "the hidden worker's and reviewer's spend"
         );
     }
+
+    fn say(store: &dyn Store, agent: AgentId, text: &str) -> u64 {
+        let kind = EventKind::AgentMessage {
+            role: aether_core::model::MessageRole::User,
+            content: vec![aether_core::model::ContentBlock::text(text)],
+            invocation: None,
+        };
+        let noise =
+            EventDraft::new(Actor::System, EventKind::AgentStarted { turn: 1 }).agent(agent);
+        let events = aether_store::Store::commit(
+            store,
+            Commit::new()
+                .event(noise)
+                .event(EventDraft::new(Actor::System, kind).agent(agent)),
+        )
+        .expect("commit");
+        events[1].seq
+    }
+
+    /// Five messages among other events: the newest page, then each cursor
+    /// both ways, report the entries beyond them.
+    #[test]
+    fn a_transcript_pages_by_seq_both_ways() {
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let agent = AgentId::new();
+        let empty = transcript_page(&store, agent, None, None, 2).expect("empty");
+        assert_eq!((empty.entries.len(), empty.last_seq), (0, 0));
+        assert!(!empty.has_before && !empty.has_after);
+        let seqs: Vec<u64> = (0..5)
+            .map(|i| say(&store, agent, &format!("m{i}")))
+            .collect();
+        let page_seqs =
+            |page: &TranscriptPage| page.entries.iter().map(|e| e.seq).collect::<Vec<_>>();
+
+        let newest = transcript_page(&store, agent, None, None, 2).expect("newest");
+        assert_eq!(page_seqs(&newest), &seqs[3..]);
+        assert!(newest.has_before && !newest.has_after);
+        assert_eq!(newest.last_seq, seqs[4]);
+
+        let older = transcript_page(&store, agent, None, Some(seqs[3]), 2).expect("before");
+        assert_eq!(page_seqs(&older), &seqs[1..3]);
+        assert!(older.has_before && older.has_after);
+        let oldest = transcript_page(&store, agent, None, Some(seqs[1]), 2).expect("oldest");
+        assert_eq!(page_seqs(&oldest), &seqs[..1]);
+        assert!(!oldest.has_before && oldest.has_after);
+
+        let from_start = transcript_page(&store, agent, Some(0), None, 3).expect("after 0");
+        assert_eq!(page_seqs(&from_start), &seqs[..3]);
+        assert!(!from_start.has_before && from_start.has_after);
+        let rest = transcript_page(&store, agent, Some(seqs[2]), None, 3).expect("after");
+        assert_eq!(page_seqs(&rest), &seqs[3..]);
+        assert!(rest.has_before && !rest.has_after);
+        assert_eq!(rest.last_seq, seqs[4]);
+    }
 }

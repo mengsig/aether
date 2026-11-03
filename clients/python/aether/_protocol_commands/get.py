@@ -126,11 +126,30 @@ def get_transcript(*, after: int, agent: AgentId) -> dict[str, Any]:
     frame["agent"] = agent
     return frame
 
-def get_tree(*, include_archived: bool | None = None, run: RunId | None = None) -> dict[str, Any]:
+def get_transcript_page(*, agent: AgentId, after: int | None = None, before: int | None = None, limit: int | None = None) -> dict[str, Any]:
+    """A bounded page of an agent's transcript: entries after `after`, the
+    newest before `before`, or the newest of all when neither is given.
+    `limit` is 1 to 1000, 200 when absent. Needs `features::TRANSCRIPT_PAGING`.
+    """
+    frame: dict[str, Any] = {"cmd": "get_transcript_page"}
+    if after is not None:
+        frame["after"] = after
+    frame["agent"] = agent
+    if before is not None:
+        frame["before"] = before
+    if limit is not None:
+        frame["limit"] = limit
+    return frame
+
+def get_tree(*, include_archived: bool | None = None, role_prefix: str | None = None, root: AgentId | None = None, run: RunId | None = None) -> dict[str, Any]:
     """The live graph: every agent in the run (or all runs) with relations."""
     frame: dict[str, Any] = {"cmd": "get_tree"}
     if include_archived is not None:
         frame["include_archived"] = include_archived
+    if role_prefix is not None:
+        frame["role_prefix"] = role_prefix
+    if root is not None:
+        frame["root"] = root
     if run is not None:
         frame["run"] = run
     return frame

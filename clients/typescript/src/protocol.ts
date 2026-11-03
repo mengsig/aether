@@ -1,7 +1,7 @@
 // Generated from clients/protocol.schema.json by scripts/generate_clients.py.
 // Do not edit: change the Rust types and regenerate.
 
-export const PROTOCOL_VERSION = 25;
+export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
 
 export * from "./protocol/commands/accept.ts";
@@ -63,6 +63,7 @@ export * from "./protocol/commands/trigger.ts";
 export * from "./protocol/commands/union.ts";
 export * from "./protocol/commands/unsubscribe.ts";
 export * from "./protocol/commands/update.ts";
+export * from "./protocol/commands/usage.ts";
 export * from "./protocol/commands/validate.ts";
 export * from "./protocol/commands/wake.ts";
 export * from "./protocol/commands/workspace.ts";
@@ -224,6 +225,7 @@ export * from "./protocol/types/ModelCostTier.ts";
 export * from "./protocol/types/ModelErrorClass.ts";
 export * from "./protocol/types/ModelInfo.ts";
 export * from "./protocol/types/ModelRef.ts";
+export * from "./protocol/types/MountKind.ts";
 export * from "./protocol/types/NetworkPolicy.ts";
 export * from "./protocol/types/NewApprovalRule.ts";
 export * from "./protocol/types/NoteContext.ts";
@@ -266,6 +268,7 @@ export * from "./protocol/types/QuotaWindow.ts";
 export * from "./protocol/types/RecoveryClass.ts";
 export * from "./protocol/types/Recurrence.ts";
 export * from "./protocol/types/RememberSpec.ts";
+export * from "./protocol/types/RemoteMount.ts";
 export * from "./protocol/types/RemoteSettings.ts";
 export * from "./protocol/types/RemoteStatus.ts";
 export * from "./protocol/types/ReplayApproval.ts";
@@ -333,6 +336,10 @@ export * from "./protocol/types/TreeNode.ts";
 export * from "./protocol/types/TurnOutcome.ts";
 export * from "./protocol/types/UnprovenAbsence.ts";
 export * from "./protocol/types/Usage.ts";
+export * from "./protocol/types/UsageBreakdown.ts";
+export * from "./protocol/types/UsageGroup.ts";
+export * from "./protocol/types/UsageRow.ts";
+export * from "./protocol/types/UsageScope.ts";
 export * from "./protocol/types/UsageWindow.ts";
 export * from "./protocol/types/WaitCondition.ts";
 export * from "./protocol/types/Welcome.ts";

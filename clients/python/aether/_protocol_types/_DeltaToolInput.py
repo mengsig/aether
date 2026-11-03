@@ -10,3 +10,4 @@ class DeltaToolInput(TypedDict, total=False):
     delta: Literal["tool_input"]
     name: str
     partial_json: str
+    tool_use_id: str | None  # optional
