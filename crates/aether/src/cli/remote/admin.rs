@@ -39,6 +39,7 @@ impl Enable {
             self.origins
         };
         RemoteSettings {
+            mounts: None,
             enabled: true,
             pairing: self.pairing,
             public_origins,

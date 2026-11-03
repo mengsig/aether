@@ -1,24 +1,47 @@
 //! Read-only projections of authoritative state for clients.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use aether_core::agent::Agent;
 
 use aether_core::id::{AgentId, RunId};
 use aether_core::model::Usage;
 use aether_core::replay::{self, ReplayFrame};
 use aether_core::report::{self, RunReport};
-use aether_protocol::{AgentTree, RunListing, TreeNode};
+use aether_protocol::{AgentTree, RunListing, TranscriptEntry, TreeNode};
 use aether_runtime::Runtime;
 use aether_store::{AgentFilter, EventFilter, Store, TaskFilter};
+
+/// Which agents `get_tree` projects. Spend is rolled up over every agent of
+/// the run whatever is shown; a hidden child's lands in its parent's `hidden_usage`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TreeFilter {
+    pub include_archived: bool,
+    /// Only agents whose role starts with this text.
+    pub role_prefix: Option<String>,
+    /// Only this agent and its descendants.
+    pub root: Option<AgentId>,
+}
+
+impl TreeFilter {
+    fn shows(&self, agent: &Agent, under_root: Option<&BTreeSet<AgentId>>) -> bool {
+        (self.include_archived || !agent.archived)
+            && self
+                .role_prefix
+                .as_deref()
+                .is_none_or(|prefix| agent.role.as_str().starts_with(prefix))
+            && under_root.is_none_or(|under| under.contains(&agent.id))
+    }
+}
 
 /// Build the live agent graph for one run, or every run.
 pub fn build_tree(
     store: &dyn Store,
     run: Option<RunId>,
-    include_archived: bool,
+    filter: &TreeFilter,
 ) -> aether_store::Result<AgentTree> {
     // Always roll usage up over the unfiltered set: an archived child's spend
-    // still counts against its live ancestors' budgets even once hidden from
-    // the tree. `exclude_archived` below only trims what gets projected.
+    // still counts against its live ancestors' budgets even once hidden.
     let all_agents = store.agents(&AgentFilter {
         run,
         exclude_archived: false,
@@ -33,56 +56,23 @@ pub fn build_tree(
         .into_iter()
         .map(|l| (l.agent_id, l))
         .collect();
-
-    // Roll each agent's usage into every live ancestor with a post-order
-    // walk over the parent/child structure itself, so a child is always
-    // folded in before its own parent is. Not a reverse creation-order walk
-    // over the store's ASC `created_at` order:
-    // verified `to_rfc3339`'s "+00:00" suffix keeps that order
-    // chronological here (a digit always sorts after it, unlike a 'Z'
-    // suffix), but nothing guarantees the wall clock itself never steps
-    // backward between a parent's creation and its child's - the store
-    // layer promises nothing about ordering either way, so this does not
-    // depend on it.
     let mut all_children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
-    let all_ids: std::collections::BTreeSet<AgentId> = all_agents.iter().map(|a| a.id).collect();
     for agent in &all_agents {
         if let Some(p) = agent.parent {
             all_children.entry(p).or_default().push(agent.id);
         }
     }
-    let mut subtree_usage: BTreeMap<AgentId, Usage> =
-        all_agents.iter().map(|a| (a.id, a.stats.usage)).collect();
-    let roots: Vec<AgentId> = all_agents
-        .iter()
-        .filter(|a| a.parent.is_none_or(|p| !all_ids.contains(&p)))
-        .map(|a| a.id)
+    let subtree_usage = roll_up_usage(&all_agents, &all_children);
+    let under_root = filter.root.map(|root| subtree_of(root, &all_children));
+    let agents: Vec<_> = all_agents
+        .into_iter()
+        .filter(|agent| filter.shows(agent, under_root.as_ref()))
         .collect();
-    for root in roots {
-        let mut stack = vec![(root, false)];
-        while let Some((id, post)) = stack.pop() {
-            let Some(kids) = all_children.get(&id) else {
-                continue;
-            };
-            if post {
-                let mut total = subtree_usage[&id];
-                for child in kids {
-                    total += subtree_usage[child];
-                }
-                subtree_usage.insert(id, total);
-                continue;
-            }
-            stack.push((id, true));
-            stack.extend(kids.iter().map(|c| (*c, false)));
-        }
-    }
-
-    let agents: Vec<_> = if include_archived {
-        all_agents
-    } else {
-        all_agents.into_iter().filter(|a| !a.archived).collect()
-    };
-    let visible: std::collections::BTreeSet<_> = agents.iter().map(|agent| agent.id).collect();
+    let visible: BTreeSet<_> = agents.iter().map(|agent| agent.id).collect();
+    assert!(
+        visible.len() <= subtree_usage.len(),
+        "only agents of the run are shown"
+    );
 
     let tasks: HashMap<_, _> = tasks.into_iter().map(|t| (t.id, t)).collect();
     let mut nodes: BTreeMap<AgentId, TreeNode> = BTreeMap::new();
@@ -120,6 +110,59 @@ pub fn build_tree(
         );
     }
     Ok(AgentTree { roots, nodes })
+}
+
+/// Each agent's own usage plus every descendant's, by a post-order walk over
+/// the parent/child structure, so a child is always folded in before its
+/// parent. Not by creation order: the wall clock may step backwards between
+/// a parent's creation and its child's.
+fn roll_up_usage(
+    all_agents: &[Agent],
+    all_children: &BTreeMap<AgentId, Vec<AgentId>>,
+) -> BTreeMap<AgentId, Usage> {
+    let all_ids: BTreeSet<AgentId> = all_agents.iter().map(|a| a.id).collect();
+    let mut subtree_usage: BTreeMap<AgentId, Usage> =
+        all_agents.iter().map(|a| (a.id, a.stats.usage)).collect();
+    let roots = all_agents
+        .iter()
+        .filter(|a| a.parent.is_none_or(|p| !all_ids.contains(&p)))
+        .map(|a| a.id);
+    for root in roots {
+        let mut stack = vec![(root, false)];
+        while let Some((id, post)) = stack.pop() {
+            let Some(kids) = all_children.get(&id) else {
+                continue;
+            };
+            if post {
+                let mut total = subtree_usage[&id];
+                for child in kids {
+                    total += subtree_usage[child];
+                }
+                subtree_usage.insert(id, total);
+                continue;
+            }
+            stack.push((id, true));
+            stack.extend(kids.iter().map(|c| (*c, false)));
+        }
+    }
+    assert_eq!(subtree_usage.len(), all_ids.len(), "one total per agent");
+    subtree_usage
+}
+
+/// `root` and every agent below it.
+fn subtree_of(root: AgentId, all_children: &BTreeMap<AgentId, Vec<AgentId>>) -> BTreeSet<AgentId> {
+    let mut under = BTreeSet::from([root]);
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        for child in all_children.get(&id).into_iter().flatten() {
+            // A parent cycle in a corrupt store must not loop forever.
+            if under.insert(*child) {
+                stack.push(*child);
+            }
+        }
+    }
+    assert!(under.contains(&root));
+    under
 }
 
 /// Every run the store knows about, newest first. Projected from agents and
@@ -204,6 +247,84 @@ pub fn replay(store: &dyn Store, agent: AgentId) -> aether_store::Result<Vec<Rep
     Ok(replay::build(agent, &events))
 }
 
+/// One page of an agent's transcript, as `get_transcript_page` replies.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TranscriptPage {
+    pub entries: Vec<TranscriptEntry>,
+    pub has_before: bool,
+    pub has_after: bool,
+    /// The agent's newest transcript entry, 0 before its first.
+    pub last_seq: u64,
+}
+
+/// Up to `limit` transcript entries in seq order: past `after`, below
+/// `before`, or the newest when neither is given.
+pub fn transcript_page(
+    store: &dyn Store,
+    agent: AgentId,
+    after: Option<u64>,
+    before: Option<u64>,
+    limit: usize,
+) -> aether_store::Result<TranscriptPage> {
+    assert!(limit > 0, "a page holds at least one entry");
+    assert!(after.is_none() || before.is_none(), "one cursor at most");
+    let filter = EventFilter {
+        types: vec!["agent.message".into()],
+        ..EventFilter::own_events(agent)
+    };
+    let last_seq = store
+        .latest_events(1, &filter)?
+        .first()
+        .map_or(0, |event| event.seq);
+    let (events, has_before, has_after) = match after {
+        Some(after) => {
+            let mut events = store.events(after, limit + 1, &filter)?;
+            let has_after = events.len() > limit;
+            events.truncate(limit);
+            let has_before = !store
+                .events_before(after.saturating_add(1), 1, &filter)?
+                .is_empty();
+            (events, has_before, has_after)
+        }
+        None => {
+            let mut events = match before {
+                Some(before) => store.events_before(before, limit + 1, &filter)?,
+                None => store.latest_events(limit + 1, &filter)?,
+            };
+            let has_before = events.len() > limit;
+            events.truncate(limit);
+            events.reverse();
+            let has_after = before.is_some_and(|before| last_seq >= before);
+            (events, has_before, has_after)
+        }
+    };
+    let entries: Vec<TranscriptEntry> = events.into_iter().filter_map(transcript_entry).collect();
+    assert!(entries.windows(2).all(|pair| pair[0].seq < pair[1].seq));
+    assert!(entries.last().is_none_or(|entry| entry.seq <= last_seq));
+    Ok(TranscriptPage {
+        entries,
+        has_before,
+        has_after,
+        last_seq,
+    })
+}
+
+fn transcript_entry(event: aether_core::event::Event) -> Option<TranscriptEntry> {
+    match event.kind {
+        aether_core::event::EventKind::AgentMessage {
+            role,
+            content,
+            invocation,
+        } => Some(TranscriptEntry {
+            seq: event.seq,
+            at: event.at,
+            message: aether_core::model::Message { role, content },
+            invocation,
+        }),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,7 +395,7 @@ mod tests {
         upsert(&store, &parent);
         upsert(&store, &child);
 
-        let tree = build_tree(&store, Some(run), false).expect("tree");
+        let tree = build_tree(&store, Some(run), &TreeFilter::default()).expect("tree");
 
         assert!(!tree.nodes.contains_key(&child.id), "archived child hidden");
         let parent_node = tree.nodes.get(&parent.id).expect("parent visible");
@@ -302,7 +423,7 @@ mod tests {
             upsert(&store, &child);
         }
 
-        let tree = build_tree(&store, Some(run), false).expect("tree");
+        let tree = build_tree(&store, Some(run), &TreeFilter::default()).expect("tree");
 
         assert_eq!(tree.nodes.len(), 100);
         assert_eq!(tree.roots, vec![root.id]);
@@ -323,7 +444,15 @@ mod tests {
         upsert(&store, &parent);
         upsert(&store, &child);
 
-        let tree = build_tree(&store, Some(run), true).expect("tree");
+        let tree = build_tree(
+            &store,
+            Some(run),
+            &TreeFilter {
+                include_archived: true,
+                ..TreeFilter::default()
+            },
+        )
+        .expect("tree");
 
         assert!(tree.nodes.contains_key(&child.id));
         assert_eq!(tree.nodes[&parent.id].hidden_usage, None);
@@ -380,11 +509,64 @@ mod tests {
             "test setup: the store must actually return the child before its parent"
         );
 
-        let tree = build_tree(&store, Some(run), false).expect("tree");
+        let tree = build_tree(&store, Some(run), &TreeFilter::default()).expect("tree");
         assert_eq!(
             tree.nodes[&grandparent.id].subtree_usage.input_tokens, 111,
             "every generation's usage must reach the grandparent regardless of store order"
         );
         assert_eq!(tree.nodes[&parent.id].subtree_usage.input_tokens, 11);
+    }
+
+    /// A root narrows the tree to its subtree, a role prefix to the roles it
+    /// names; a filtered-out child's spend still reaches its shown parent.
+    #[test]
+    fn a_rooted_role_filtered_tree_shows_only_what_it_names() {
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let run = RunId::new();
+        let top = agent(None, run, false, 1000);
+        let mut lead = agent(Some(top.id), run, false, 100);
+        lead.role = Role::new("lead");
+        let worker = agent(Some(lead.id), run, false, 10);
+        let mut reviewer = agent(Some(lead.id), run, false, 1);
+        reviewer.role = Role::new("reviewer");
+        let sibling = agent(Some(top.id), run, false, 5);
+        for a in [&top, &lead, &worker, &reviewer, &sibling] {
+            upsert(&store, a);
+        }
+
+        let rooted = TreeFilter {
+            root: Some(lead.id),
+            ..TreeFilter::default()
+        };
+        let tree = build_tree(&store, Some(run), &rooted).expect("tree");
+        assert_eq!(tree.roots, vec![lead.id]);
+        let shown: BTreeSet<_> = tree.nodes.keys().copied().collect();
+        assert_eq!(shown, BTreeSet::from([lead.id, worker.id, reviewer.id]));
+        assert_eq!(tree.nodes[&lead.id].subtree_usage.input_tokens, 111);
+
+        let workers = TreeFilter {
+            root: Some(lead.id),
+            role_prefix: Some("work".into()),
+            ..TreeFilter::default()
+        };
+        let tree = build_tree(&store, Some(run), &workers).expect("tree");
+        assert_eq!(
+            tree.roots,
+            vec![worker.id],
+            "a shown agent without a shown parent is a root"
+        );
+        assert_eq!(tree.nodes.len(), 1);
+
+        let leads = TreeFilter {
+            role_prefix: Some("lead".into()),
+            ..TreeFilter::default()
+        };
+        let tree = build_tree(&store, Some(run), &leads).expect("tree");
+        assert_eq!(tree.roots, vec![lead.id]);
+        assert_eq!(
+            tree.nodes[&lead.id].hidden_usage.map(|u| u.input_tokens),
+            Some(11),
+            "the hidden worker's and reviewer's spend"
+        );
     }
 }

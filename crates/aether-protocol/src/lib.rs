@@ -21,6 +21,7 @@ pub mod auth;
 pub mod command_hint;
 pub mod compat;
 pub mod paths;
+pub mod read_models;
 pub mod remote;
 pub mod schema;
 
@@ -171,7 +172,13 @@ use serde::{Deserialize, Serialize};
 ///
 /// 25: the `credentials` exhaustion class, for an agent suspended on an engine
 /// sign-in the provider refused. `compat` shows it to older clients as `usage_limit`.
-pub const PROTOCOL_VERSION: u32 = 25;
+///
+/// 26: read models for one frontend, each behind its own feature:
+/// `list_agents_page` and the `get_tree` filters, `get_transcript_page`,
+/// `usage_breakdown`, `RemoteSettings.mounts`, and delta frames numbered per
+/// invocation for a client listing `delta_order`. Older clients get every
+/// frame byte for byte as before.
+pub const PROTOCOL_VERSION: u32 = 26;
 
 /// Optional features a peer may advertise. Unknown ones are ignored.
 pub mod features {
@@ -223,6 +230,18 @@ pub mod features {
     /// Both sides of a connection handle `ErrorCode::HistoryExpired`. The
     /// daemon sends it only to a client whose hello lists this feature.
     pub const HISTORY_EXPIRED: &str = "history_expired";
+    /// The daemon serves `list_agents_page` and the `root` and `role_prefix`
+    /// filters of `get_tree`.
+    pub const AGENTS_PAGING: &str = "agents_paging";
+    /// The daemon serves `get_transcript_page`.
+    pub const TRANSCRIPT_PAGING: &str = "transcript_paging";
+    /// Listed by a client, delta frames carry `invocation_seq` and tool input
+    /// carries `tool_use_id`; listed by the daemon, it numbers them.
+    pub const DELTA_ORDER: &str = "delta_order";
+    /// The daemon serves `usage_breakdown`.
+    pub const USAGE_BREAKDOWN: &str = "usage_breakdown";
+    /// `get_remote` and `configure_remote` carry `RemoteSettings.mounts`.
+    pub const REMOTE_MOUNTS: &str = "remote_mounts";
 }
 
 mod handshake;

@@ -276,6 +276,17 @@ impl Store for CommitsMidPass {
         }
         Ok(agents)
     }
+    fn agents_page(
+        &self,
+        filter: &AgentFilter,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> Result<aether_store::AgentPage> {
+        self.inner.agents_page(filter, after, limit)
+    }
+    fn agent_subsystem(&self, id: AgentId) -> Result<Option<String>> {
+        self.inner.agent_subsystem(id)
+    }
 
     fn inbox_last_seq(&self, agent: AgentId) -> Result<u64> {
         // Ready is what separates the scheduler's has-work read from the

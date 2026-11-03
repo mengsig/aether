@@ -113,6 +113,7 @@ fn artifact_named(name: &str) -> Artifact {
     }
 }
 
+mod agent_pages;
 mod transactions;
 
 mod plans;

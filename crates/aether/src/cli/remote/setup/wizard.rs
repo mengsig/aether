@@ -414,6 +414,7 @@ pub(super) fn desired_settings(
     origins.retain(|existing| existing != origin);
     origins.insert(0, origin.to_owned());
     RemoteSettings {
+        mounts: None,
         enabled: true,
         pairing: current.pairing || !current.enabled,
         public_origins: origins,

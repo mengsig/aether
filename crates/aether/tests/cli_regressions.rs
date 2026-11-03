@@ -739,6 +739,7 @@ async fn cli_with_socket(
                         write_frame(
                             &mut write,
                             ServerFrame::Delta {
+                                invocation_seq: None,
                                 sub: 1,
                                 agent: AGENT.parse().unwrap(),
                                 invocation: InvocationId::new(),
@@ -752,6 +753,7 @@ async fn cli_with_socket(
                     write_frame(
                         &mut write,
                         ServerFrame::Delta {
+                            invocation_seq: None,
                             sub: 1,
                             agent: AGENT.parse().unwrap(),
                             invocation: InvocationId::new(),
@@ -787,6 +789,7 @@ async fn cli_with_socket(
                     write_frame(
                         &mut write,
                         ServerFrame::Delta {
+                            invocation_seq: None,
                             sub: 1,
                             agent: AGENT.parse().unwrap(),
                             invocation: InvocationId::new(),
@@ -799,6 +802,7 @@ async fn cli_with_socket(
                     write_frame(
                         &mut write,
                         ServerFrame::Delta {
+                            invocation_seq: None,
                             sub: 1,
                             agent: AGENT.parse().unwrap(),
                             invocation: InvocationId::new(),

@@ -447,6 +447,17 @@ impl Store for CommitLog {
     fn agents(&self, filter: &AgentFilter) -> StoreResult<Vec<Agent>> {
         self.inner.agents(filter)
     }
+    fn agents_page(
+        &self,
+        filter: &AgentFilter,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> StoreResult<aether_store::AgentPage> {
+        self.inner.agents_page(filter, after, limit)
+    }
+    fn agent_subsystem(&self, id: AgentId) -> StoreResult<Option<String>> {
+        self.inner.agent_subsystem(id)
+    }
     fn task(&self, id: TaskId) -> StoreResult<Option<Task>> {
         self.inner.task(id)
     }

@@ -180,6 +180,12 @@ pub enum Mutation {
     UpsertSchedule(Schedule),
     RecordScheduleOccurrence(ScheduleOccurrence),
     UpsertAgent(Agent),
+    /// Insert a new agent with the subsystem it belongs to, if any. Fails on
+    /// an existing id: the subsystem is fixed when the row is first written.
+    CreateAgent {
+        agent: Agent,
+        subsystem: Option<String>,
+    },
     UpsertTask(Task),
     /// `item.seq` must equal the agent's current last inbox seq plus one.
     DeliverInbox(InboxItem),
@@ -409,6 +415,13 @@ pub struct AgentFilter {
     /// every internal walk - subtree, budget rollup, recovery - still sees
     /// them: archiving is a view filter, never a deletion.
     pub exclude_archived: bool,
+}
+
+/// One page of agents, and the cursor for the next when there is one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentPage {
+    pub agents: Vec<Agent>,
+    pub next_after: Option<AgentId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -668,6 +681,17 @@ pub trait Store: Send + Sync {
 
     fn agent(&self, id: AgentId) -> Result<Option<Agent>>;
     fn agents(&self, filter: &AgentFilter) -> Result<Vec<Agent>>;
+    /// One page of `filter`'s agents in id order, from just after `after`,
+    /// at most `limit` of them. `filter.budgeted_only` is not supported.
+    fn agents_page(
+        &self,
+        filter: &AgentFilter,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> Result<AgentPage>;
+    /// The subsystem an agent was created under; set once, by
+    /// [`Mutation::CreateAgent`], and never changed.
+    fn agent_subsystem(&self, id: AgentId) -> Result<Option<String>>;
     /// Whether `id` is `root` or one of its descendants; false when either is unknown.
     /// Same answer as `subtree_of(..).contains(&id)` without reading the fleet.
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool>;

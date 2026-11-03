@@ -16,6 +16,7 @@ pub(super) fn owns(command: &Command) -> bool {
         Command::CreateAgent(_)
             | Command::GetAgent { .. }
             | Command::ListAgents { .. }
+            | Command::ListAgentsPage { .. }
             | Command::Archive { .. }
             | Command::UpdateAgent { .. }
             | Command::WorkspaceDiff { .. }
@@ -56,6 +57,11 @@ pub(super) async fn dispatch(
             .await?;
             Ok(Reply::Agents(agents.map_err(map_err)?))
         }
+        Command::ListAgentsPage {
+            query,
+            after,
+            limit,
+        } => list_agents_page(daemon, query, after, limit).await,
         Command::Archive {
             target, archived, ..
         } => Ok(Reply::Agents(
@@ -108,6 +114,7 @@ async fn create_agent(
             .map_err(map_err)?;
     }
     let spec = CreateAgentSpec {
+        subsystem: None,
         role: req.role,
         name: req.name,
         objective: req.objective,
@@ -205,4 +212,38 @@ async fn engine_tool(
         .await
         .map_err(map_err)?;
     Ok(Reply::EngineTool { content, is_error })
+}
+
+/// One page of agents in id order, past `after`.
+async fn list_agents_page(
+    daemon: &Daemon,
+    query: aether_protocol::AgentQuery,
+    after: Option<aether_core::id::AgentId>,
+    limit: Option<u32>,
+) -> Result<Reply, ErrorReply> {
+    use aether_protocol::read_models::{AGENTS_PAGE_DEFAULT, AGENTS_PAGE_MAX, page_limit};
+    let limit =
+        page_limit(limit, AGENTS_PAGE_DEFAULT, AGENTS_PAGE_MAX).map_err(ErrorReply::invalid)?;
+    let runtime = daemon.runtime.clone();
+    let page = blocking(move || {
+        let mut page = runtime
+            .store()
+            .agents_page(&query.into(), after, limit as usize)?;
+        runtime.annotate_agents(&mut page.agents)?;
+        Ok::<_, aether_runtime::RuntimeError>(page)
+    })
+    .await?
+    .map_err(map_err)?;
+    assert!(
+        page.agents.len() <= limit as usize,
+        "a page holds at most its limit"
+    );
+    assert!(
+        page.next_after.is_none() || page.agents.len() == limit as usize,
+        "only a full page has a next one"
+    );
+    Ok(Reply::AgentsPage {
+        agents: page.agents,
+        next_after: page.next_after,
+    })
 }

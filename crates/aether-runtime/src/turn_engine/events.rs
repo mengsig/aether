@@ -57,7 +57,8 @@ pub(super) struct StreamState {
     /// Bridge replies can precede native announcements or outlive missing echoes.
     bridge_replies: Vec<BridgeReply>,
     /// Content-block index → tool name for input deltas.
-    pub(super) tool_names: BTreeMap<usize, String>,
+    /// Each streaming tool block's name and call id, by block index.
+    pub(super) tool_names: BTreeMap<usize, (String, String)>,
     /// The engine reported per-message usage at least once this turn.
     pub(super) usage_seen: bool,
     /// An assistant message arrived, so an invocation was recorded.
@@ -388,21 +389,26 @@ pub(super) fn handle_event(
                 }
                 StreamEvent::BlockStart {
                     index,
-                    block: aether_core::model::BlockStart::ToolUse { name, .. },
+                    block: aether_core::model::BlockStart::ToolUse { id, name, .. },
                 } => {
-                    state.tool_names.insert(index, name.clone());
+                    state.tool_names.insert(index, (name.clone(), id.clone()));
                     Some(DeltaKind::ToolInput {
                         name,
                         partial_json: String::new(),
+                        tool_use_id: Some(id),
                     })
                 }
                 StreamEvent::ToolInputDelta {
                     index,
                     partial_json,
-                } => Some(DeltaKind::ToolInput {
-                    name: state.tool_names.get(&index).cloned().unwrap_or_default(),
-                    partial_json,
-                }),
+                } => {
+                    let (name, id) = state.tool_names.get(&index).cloned().unzip();
+                    Some(DeltaKind::ToolInput {
+                        name: name.unwrap_or_default(),
+                        partial_json,
+                        tool_use_id: id,
+                    })
+                }
                 _ => None,
             };
             if let Some(delta) = delta {
@@ -905,6 +911,7 @@ mod live_accounting_tests {
             handle_event(&runtime, &mut ctx, &snapshot, event, &mut state).unwrap();
             match bus.try_recv().expect("a reading publishes immediately") {
                 BusMessage::Delta {
+                    seq: _,
                     agent,
                     invocation,
                     delta:

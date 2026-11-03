@@ -46,6 +46,7 @@ fn text_invocations(
     let mut ids: Vec<InvocationId> = Vec::new();
     while let Ok(message) = bus.try_recv() {
         if let BusMessage::Delta {
+            seq: _,
             agent: from,
             invocation,
             delta: DeltaKind::Text { .. },

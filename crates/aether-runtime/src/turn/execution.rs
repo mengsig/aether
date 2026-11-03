@@ -533,7 +533,7 @@ pub(super) async fn run_link(
     };
     let bus = runtime.bus.clone();
     let agent_id = ctx.agent.id;
-    let mut tool_names: BTreeMap<usize, String> = BTreeMap::new();
+    let mut tool_names: BTreeMap<usize, (String, String)> = BTreeMap::new();
     let mut receipt_seen = false;
     let outcome = collect_partial(stream, |event| match event {
         StreamEvent::MessageStop => receipt_seen = true,
@@ -549,15 +549,16 @@ pub(super) async fn run_link(
         ),
         StreamEvent::BlockStart {
             index,
-            block: aether_core::model::BlockStart::ToolUse { name, .. },
+            block: aether_core::model::BlockStart::ToolUse { id, name, .. },
         } => {
-            tool_names.insert(*index, name.clone());
+            tool_names.insert(*index, (name.clone(), id.clone()));
             bus.publish_delta(
                 agent_id,
                 invocation_id,
                 DeltaKind::ToolInput {
                     name: name.clone(),
                     partial_json: String::new(),
+                    tool_use_id: Some(id.clone()),
                 },
             );
         }
@@ -565,13 +566,14 @@ pub(super) async fn run_link(
             index,
             partial_json,
         } => {
-            let name = tool_names.get(index).cloned().unwrap_or_default();
+            let (name, id) = tool_names.get(index).cloned().unzip();
             bus.publish_delta(
                 agent_id,
                 invocation_id,
                 DeltaKind::ToolInput {
-                    name,
+                    name: name.unwrap_or_default(),
                     partial_json: partial_json.clone(),
+                    tool_use_id: id,
                 },
             );
         }

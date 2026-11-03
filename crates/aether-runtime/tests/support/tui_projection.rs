@@ -18,6 +18,7 @@ fn frame(message: BusMessage) -> SubscriptionFrame {
     match message {
         BusMessage::Event(event) => SubscriptionFrame::Event(Box::new((*event).clone())),
         BusMessage::Delta {
+            seq: _,
             agent,
             invocation,
             delta,
@@ -28,9 +29,15 @@ fn frame(message: BusMessage) -> SubscriptionFrame {
                 DeltaKind::TurnStarted { turn } => Delta::TurnStarted { turn },
                 DeltaKind::Text { text } => Delta::Text { text },
                 DeltaKind::Thinking { text } => Delta::Thinking { text },
-                DeltaKind::ToolInput { name, partial_json } => {
-                    Delta::ToolInput { name, partial_json }
-                }
+                DeltaKind::ToolInput {
+                    name,
+                    partial_json,
+                    tool_use_id,
+                } => Delta::ToolInput {
+                    name,
+                    partial_json,
+                    tool_use_id,
+                },
                 DeltaKind::Accounting {
                     total,
                     turn_usage,

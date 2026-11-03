@@ -50,12 +50,29 @@ pub enum Command {
     ListAgents {
         query: AgentQuery,
     },
+    /// One page of agents in `AgentId` order, from just after `after`.
+    /// `limit` is 1 to 500, 200 when absent. Needs `features::AGENTS_PAGING`.
+    ListAgentsPage {
+        #[serde(default)]
+        query: AgentQuery,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<AgentId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
     /// The live graph: every agent in the run (or all runs) with relations.
     GetTree {
         run: Option<RunId>,
         /// Include agents cleared from the view.
         #[serde(default)]
         include_archived: bool,
+        /// Only agents whose role starts with this text. Needs
+        /// `features::AGENTS_PAGING`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role_prefix: Option<String>,
+        /// Only this agent and its descendants. Needs `features::AGENTS_PAGING`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root: Option<AgentId>,
     },
     UpdateAgent {
         id: AgentId,
@@ -335,6 +352,32 @@ pub enum Command {
     GetTranscript {
         agent: AgentId,
         after: u64,
+    },
+    /// A bounded page of an agent's transcript: entries after `after`, the
+    /// newest before `before`, or the newest of all when neither is given.
+    /// `limit` is 1 to 1000, 200 when absent. Needs `features::TRANSCRIPT_PAGING`.
+    GetTranscriptPage {
+        agent: AgentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Spend summed from `invocation.completed` events, grouped by `by`, in
+    /// `since..until` (completion time, `until` exclusive). `limit` is 1 to
+    /// 1000 rows, 1000 when absent. Needs `features::USAGE_BREAKDOWN`.
+    UsageBreakdown {
+        #[serde(default)]
+        scope: crate::read_models::UsageScope,
+        by: crate::read_models::UsageGroup,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<aether_core::time::Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<aether_core::time::Timestamp>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
     },
     GetInbox {
         agent: AgentId,

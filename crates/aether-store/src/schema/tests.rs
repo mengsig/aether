@@ -1026,6 +1026,7 @@ fn a_v22_store_gains_the_creation_order_listing_indexes() {
             "agents_created",
             "agents_parent",
             "agents_run_created",
+            "agents_run_id",
             "agents_status",
             "tasks_created",
             "tasks_owner",
@@ -1264,4 +1265,44 @@ fn a_v27_store_gains_the_approvals_agent_index_history_retention_reads() {
         "{}",
         plan(&v27)
     );
+}
+
+#[test]
+fn v29_leaves_existing_agents_without_a_subsystem_and_fixes_it_from_then_on() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("aether.db");
+    let previous = database_at(&path, 28);
+    previous
+        .execute(
+            "INSERT INTO agents(id, parent, role, status, run, created_at, updated_at, body)
+             VALUES ('agt_old', NULL, 'root', 'created', 'run_1', 't', 't', '{}')",
+            [],
+        )
+        .expect("an agent from before");
+    drop(previous);
+    let conn = Connection::open(&path).expect("reopen");
+    migrate(&conn).expect("migrate");
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    assert!(column_names(&conn, "agents").contains(&"subsystem".to_owned()));
+    let subsystem: Option<String> = conn
+        .query_row(
+            "SELECT subsystem FROM agents WHERE id = 'agt_old'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("row");
+    assert_eq!(subsystem, None);
+    let refused = conn.execute(
+        "UPDATE agents SET subsystem = 'late' WHERE id = 'agt_old'",
+        [],
+    );
+    assert!(refused.is_err(), "not even a first naming after creation");
+    let indexes: Vec<String> = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('agents_run_id', 'events_run_type') ORDER BY name")
+        .expect("prepare")
+        .query_map([], |r| r.get(0))
+        .expect("query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("names");
+    assert_eq!(indexes, ["agents_run_id", "events_run_type"]);
 }

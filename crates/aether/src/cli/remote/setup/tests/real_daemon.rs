@@ -231,6 +231,7 @@ async fn the_wizard_enables_and_pairs_against_a_real_daemon() {
     let client = host.client().await;
     let status = requests::status(&client).await.expect("status");
     let wanted = RemoteSettings {
+        mounts: None,
         enabled: true,
         pairing: true,
         public_origins: vec![ORIGIN.to_owned()],
