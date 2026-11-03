@@ -7,10 +7,16 @@ import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 import boundaries from "./scripts/eslint-boundaries.ts";
 
-const transportGlobals = ["WebSocket", "EventSource", "XMLHttpRequest"].map((name) => ({
-  name,
-  message: "Only @aether-ui/core talks to transports (CONTRACTS.md §2.2); send through useCommand.",
-}));
+const TRANSPORTS = ["WebSocket", "EventSource", "XMLHttpRequest", "fetch"];
+const TRANSPORT_MESSAGE = "Only @aether-ui/core talks to transports (CONTRACTS.md §2.2); send through useCommand.";
+const BRIDGE_MESSAGE = "Only @aether-ui/core reaches the desktop bridge (CONTRACTS.md §2.2).";
+const GLOBAL_OBJECTS = ["window", "globalThis", "self"];
+
+const transportGlobals = TRANSPORTS.map((name) => ({ name, message: TRANSPORT_MESSAGE }));
+const qualifiedGlobals = GLOBAL_OBJECTS.flatMap((object) => [
+  ...TRANSPORTS.map((property) => ({ object, property, message: TRANSPORT_MESSAGE })),
+  { object, property: "desktop", message: BRIDGE_MESSAGE },
+]);
 
 export default defineConfig([
   globalIgnores([
@@ -33,10 +39,7 @@ export default defineConfig([
     ignores: ["packages/core/**"],
     rules: {
       "no-restricted-globals": ["error", ...transportGlobals],
-      "no-restricted-properties": ["error",
-        { object: "window", property: "desktop", message: "Only @aether-ui/core reaches the desktop bridge." },
-        { object: "globalThis", property: "desktop", message: "Only @aether-ui/core reaches the desktop bridge." },
-        { object: "window", property: "WebSocket", message: "Only @aether-ui/core talks to transports." }],
+      "no-restricted-properties": ["error", ...qualifiedGlobals],
     },
   },
 ]);

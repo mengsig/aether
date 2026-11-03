@@ -66,14 +66,39 @@ describe("package import boundaries (CONTRACTS.md §2.2)", () => {
       .toEqual(["aether/import-boundaries: a dynamic import needs a string literal, so its package boundary can be checked"]);
   });
 
-  it("keeps transports and the desktop bridge inside core", async () => {
-    const code = 'export const socket = new WebSocket("ws://127.0.0.1");\n';
-    expect(await lint(FEATURE_FILE, code)).toEqual([
-      "no-restricted-globals: Unexpected use of 'WebSocket'. Only @aether-ui/core talks to transports (CONTRACTS.md §2.2); send through useCommand.",
+  it("checks TypeScript import types and import-require like imports", async () => {
+    expect(await lint(FEATURE_FILE, 'export type Other = import("@aether-ui/archon").Other;\n')).toEqual([
+      "aether/import-boundaries: @aether-ui/aether must not import @aether-ui/archon (CONTRACTS.md §2.2); " +
+        "feature packages cross over only through routes and the entity-action registry",
     ]);
+    expect(await lint(FEATURE_FILE, 'export type Queue = import("../../../archon/src/queue/routes.ts").Queue;\n')).toEqual([
+      "aether/import-boundaries: a relative import must stay inside packages/aether; import @aether-ui/archon instead",
+    ]);
+    expect(await lint("packages/ui/src/Shell.tsx", 'export type Def = import("@aether-ui/protocol").RouteDef;\n')).toEqual([]);
+    expect(await lint("packages/protocol/src/extra.ts", 'export type El = import("react").ReactNode;\n'))
+      .toEqual(["aether/import-boundaries: packages/protocol must not import react (CONTRACTS.md §2.2)"]);
+  });
+
+  it("keeps transports and the desktop bridge inside core", async () => {
+    const transport = "Only @aether-ui/core talks to transports (CONTRACTS.md §2.2); send through useCommand.";
+    const code = 'export const socket = new WebSocket("ws://127.0.0.1");\n';
+    expect(await lint(FEATURE_FILE, code)).toEqual([`no-restricted-globals: Unexpected use of 'WebSocket'. ${transport}`]);
     expect(await lint("packages/core/src/transport.ts", code)).toEqual([]);
-    expect(await lint("packages/ui/src/bridge.ts", "export const bridge = window.desktop;\n")).toEqual([
-      "no-restricted-properties: 'window.desktop' is restricted from being used. Only @aether-ui/core reaches the desktop bridge.",
+    const qualified: Array<[string, string]> = [
+      ['export const s = new globalThis.WebSocket("ws://127.0.0.1");\n', "globalThis.WebSocket"],
+      ['export const e = new window.EventSource("/events");\n', "window.EventSource"],
+      ['export const r = self.fetch("/api");\n', "self.fetch"],
+      ['export const s = new globalThis["WebSocket"]("ws://127.0.0.1");\n', "globalThis.WebSocket"],
+      ["const { XMLHttpRequest: Xhr } = window;\nexport { Xhr };\n", "window.XMLHttpRequest"],
+    ];
+    for (const [source, access] of qualified) {
+      expect(await lint("packages/settings/src/probe.ts", source), access)
+        .toEqual([`no-restricted-properties: '${access}' is restricted from being used. ${transport}`]);
+      expect(await lint("packages/core/src/probe.ts", source), access).toEqual([]);
+    }
+    expect(await lint("packages/ui/src/bridge.ts", "export const bridge = globalThis.desktop;\n")).toEqual([
+      "no-restricted-properties: 'globalThis.desktop' is restricted from being used. " +
+        "Only @aether-ui/core reaches the desktop bridge (CONTRACTS.md §2.2).",
     ]);
   });
 });

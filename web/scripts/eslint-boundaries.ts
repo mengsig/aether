@@ -57,6 +57,10 @@ function resolveTarget(root: string, file: string, own: string, specifier: strin
   return { kind: "error", message: `a relative import must stay inside packages/${own}${through}` };
 }
 
+function literalValue(node: unknown): unknown {
+  return (node as { type?: unknown; value?: unknown } | undefined)?.type === "Literal" ? (node as { value: unknown }).value : undefined;
+}
+
 function isTypeOnly(node: Rule.Node): boolean {
   const declaration = node as unknown as { importKind?: string; exportKind?: string; specifiers?: Array<{ importKind?: string }> };
   if (declaration.importKind === "type" || declaration.exportKind === "type") return true;
@@ -64,7 +68,7 @@ function isTypeOnly(node: Rule.Node): boolean {
   return specifiers.length > 0 && specifiers.every((specifier) => specifier.importKind === "type");
 }
 
-function problem(own: string, allowance: Allowance, target: Target, node: Rule.Node, isTest: boolean): string | undefined {
+function problem(own: string, allowance: Allowance, target: Target, typeOnly: boolean, isTest: boolean): string | undefined {
   if (target.kind === "error") return target.message;
   if (target.kind === "external") {
     const allowed = [...allowance.external, ...(isTest ? TEST_EXTERNAL : [])];
@@ -77,7 +81,7 @@ function problem(own: string, allowance: Allowance, target: Target, node: Rule.N
       ? "; feature packages cross over only through routes and the entity-action registry" : "";
     return `${SCOPE}${own} must not import ${SCOPE}${target.name} (CONTRACTS.md §2.2)${why}`;
   }
-  if (allowance.typeOnly.includes(target.name) && !isTypeOnly(node)) {
+  if (allowance.typeOnly.includes(target.name) && !typeOnly) {
     return `${SCOPE}${own} may import only types from ${SCOPE}${target.name}: use \`import type\``;
   }
   return undefined;
@@ -98,10 +102,15 @@ const rule: Rule.RuleModule = {
       return { Program: (node) => context.report({ node, message: `packages/${own} is not a package of CONTRACTS.md §2.1` }) };
     }
     const isTest = /\.test\.tsx?$/.test(context.filename) || context.filename.includes(`${path.sep}test${path.sep}`);
-    const check = (node: Rule.Node, source: unknown) => {
+    const check = (node: Rule.Node, source: unknown, typeOnly = isTypeOnly(node)) => {
       if (typeof source !== "string") return;
-      const message = problem(own, allowance, resolveTarget(root, context.filename, own, source), node, isTest);
+      const message = problem(own, allowance, resolveTarget(root, context.filename, own, source), typeOnly, isTest);
       if (message !== undefined) context.report({ node, message });
+    };
+    // TypeScript's own module references; ESTree's listener types do not name them.
+    const typescriptNodes: Record<string, (node: Rule.Node) => void> = {
+      TSImportType: (node) => check(node, literalValue((node as unknown as { source?: unknown }).source), true),
+      TSExternalModuleReference: (node) => check(node, literalValue((node as unknown as { expression?: unknown }).expression)),
     };
     return {
       ImportDeclaration: (node) => check(node, node.source.value),
@@ -111,6 +120,7 @@ const rule: Rule.RuleModule = {
         if (node.source.type === "Literal") return check(node, node.source.value);
         context.report({ node, message: "a dynamic import needs a string literal, so its package boundary can be checked" });
       },
+      ...typescriptNodes,
     };
   },
 };
