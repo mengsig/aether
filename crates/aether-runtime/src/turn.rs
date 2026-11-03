@@ -37,7 +37,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::approval::{self, Gate};
 use crate::artifacts::StoreArtifactSink;
-use crate::bus::DeltaKind;
+use crate::bus::{DeltaKind, DeltaStream};
 use crate::commands::CreateAgentSpec;
 use crate::resources::{ResourceGuard, WaitOutcome};
 use crate::{CommitHold, Result, Runtime, RuntimeError};

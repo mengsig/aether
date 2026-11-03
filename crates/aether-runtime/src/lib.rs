@@ -62,7 +62,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 pub use approval::{Gate, Remember};
-pub use bus::{BusMessage, DeltaKind, EventBus};
+pub use bus::{BusMessage, DeltaKind, DeltaStream, EventBus};
 pub use commands::{
     AgentUpdate, CreateAgentSpec, CreateTaskSpec, MessageDelivery, RuntimeStatus, pending_question,
 };

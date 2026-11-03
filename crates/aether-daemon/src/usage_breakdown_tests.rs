@@ -199,43 +199,65 @@ fn create(store: &SqliteStore, agent: &Agent) {
 
 /// Retention removed another run's invocations: a subtree or role scope
 /// still answers, while a fleet-wide one says the history is gone.
+/// Retention removes a run's events and its agents together, as
+/// `expire_run_history` does; a scope that may hold any of it refuses.
 #[test]
-fn history_expired_elsewhere_fails_only_a_scope_that_reads_it() {
+fn history_expired_elsewhere_fails_only_a_scope_that_may_hold_it() {
     let dir = tempfile::tempdir().expect("tmp");
     let path = dir.path().join("aether.db");
     let store = SqliteStore::open(&path).expect("open");
     let model = ModelRef::new("anthropic", "opus");
     let (gone_run, kept_run) = (RunId::new(), RunId::new());
-    let gone = agent(None, gone_run, "reviewer");
+    let gone = agent(None, gone_run, "lead");
+    let gone_child = agent(Some(gone.id), gone_run, "worker");
     let lead = agent(None, kept_run, "lead");
     let worker = agent(Some(lead.id), kept_run, "worker");
-    for (agent, spent) in [(&gone, 1000), (&lead, 100), (&worker, 10)] {
+    for (agent, spent) in [
+        (&gone, 1000),
+        (&gone_child, 2000),
+        (&lead, 100),
+        (&worker, 10),
+    ] {
         create(&store, agent);
         complete(&store, agent.id, agent.run, &model, usage(spent, 0.0));
     }
     let conn = rusqlite::Connection::open(&path).expect("expire");
     conn.execute_batch(&format!(
         "INSERT INTO expired_event_spans SELECT run, COALESCE(agent_id,''), COALESCE(parent_agent_id,''), COALESCE(task_id,''), type, family, MIN(seq), MAX(seq) FROM events WHERE run = '{gone_run}' GROUP BY run, agent_id, parent_agent_id, task_id, type, family;
-         DELETE FROM events WHERE run = '{gone_run}';"
+         DELETE FROM events WHERE run = '{gone_run}';
+         DELETE FROM agents WHERE run = '{gone_run}';"
     ))
     .expect("expire the other run");
     drop(conn);
 
-    let subtree = UsageScope {
-        subtree: Some(lead.id),
+    let subtree = |root: AgentId| UsageScope {
+        subtree: Some(root),
         ..UsageScope::default()
     };
-    let breakdown = usage_breakdown(&store, &request(subtree, UsageGroup::Role)).expect("subtree");
+    let breakdown =
+        usage_breakdown(&store, &request(subtree(lead.id), UsageGroup::Role)).expect("subtree");
     assert_eq!(breakdown.total.input_tokens, 110);
     let keys: Vec<_> = breakdown.rows.iter().map(|row| row.key.as_str()).collect();
     assert_eq!(keys, ["lead", "worker"]);
-    let leads = UsageScope {
+    let expired_root = usage_breakdown(&store, &request(subtree(gone.id), UsageGroup::Role));
+    assert!(
+        matches!(expired_root, Err(StoreError::HistoryExpired { .. })),
+        "a root gone with its run is expired, not empty: {expired_root:?}"
+    );
+
+    let leads = |run: Option<RunId>| UsageScope {
+        run,
         role_prefix: Some("lead".into()),
         ..UsageScope::default()
     };
-    let breakdown = usage_breakdown(&store, &request(leads, UsageGroup::Run)).expect("role");
-    assert_eq!(breakdown.total.input_tokens, 100);
-
+    let in_run = usage_breakdown(&store, &request(leads(Some(kept_run)), UsageGroup::Run))
+        .expect("role in a whole run");
+    assert_eq!(in_run.total.input_tokens, 100);
+    let fleet_leads = usage_breakdown(&store, &request(leads(None), UsageGroup::Run));
+    assert!(
+        matches!(fleet_leads, Err(StoreError::HistoryExpired { .. })),
+        "an expired lead's spend is unknowable, not zero: {fleet_leads:?}"
+    );
     let fleet = usage_breakdown(&store, &request(UsageScope::default(), UsageGroup::Model));
     assert!(
         matches!(fleet, Err(StoreError::HistoryExpired { .. })),

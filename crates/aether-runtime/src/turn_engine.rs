@@ -56,7 +56,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::approval::{self, Gate};
 
-use crate::bus::{BusMessage, DeltaKind};
+use crate::bus::{BusMessage, DeltaKind, DeltaStream};
 
 use crate::turn::{
     CompletionSource, Next, ToolEffects, TurnCtx, apply_action, prose_only_next, tool_context,

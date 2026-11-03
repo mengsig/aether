@@ -74,8 +74,11 @@ pub fn usage_breakdown(
     })
 }
 
-/// The reads that cover the scope. A subtree or role scope reads each kept
-/// agent's own invocations, so history retention removed elsewhere is not read.
+/// The reads that cover the scope. A subtree reads each kept agent's own
+/// invocations and its root's, so retention removed elsewhere is not read,
+/// yet a root whose run expired, agents and all, still fails. Any other scope
+/// reads its whole run or fleet: an expired agent's role is gone with it, so
+/// a role scope cannot tell which expired history was its own and refuses.
 fn scoped_reads(request: &UsageRequest, agents: &Agents) -> Vec<EventFilter> {
     let base = EventFilter {
         types: vec!["invocation.completed".into()],
@@ -84,19 +87,22 @@ fn scoped_reads(request: &UsageRequest, agents: &Agents) -> Vec<EventFilter> {
         exclude_children: request.scope.agent.is_some(),
         ..EventFilter::default()
     };
-    let Some(kept) = &agents.kept else {
+    let (Some(root), Some(kept), None) = (request.scope.subtree, &agents.kept, request.scope.agent)
+    else {
         return vec![base];
     };
-    let reads: Vec<EventFilter> = kept
-        .iter()
-        .filter(|id| request.scope.agent.is_none_or(|agent| agent == **id))
+    let mut read: BTreeSet<AgentId> = kept.clone();
+    read.insert(root);
+    let reads: Vec<EventFilter> = read
+        .into_iter()
         .map(|id| EventFilter {
-            agent: Some(*id),
+            agent: Some(id),
             exclude_children: true,
             ..base.clone()
         })
         .collect();
-    assert!(reads.len() <= kept.len());
+    assert!(!reads.is_empty(), "a subtree reads at least its root");
+    assert!(reads.len() <= kept.len() + 1);
     reads
 }
 

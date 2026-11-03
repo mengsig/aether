@@ -299,7 +299,9 @@ the same `AgentQuery` as `list_agents`, ordered by id ascending, with ids
 greater than `after`. `next_after` is present when another page follows; send
 it as the next `after`. The cursor is a key, not an offset, so a walk sees
 every agent that exists throughout it exactly once and an agent created
-during it at most once.
+during it at most once. A stored agent that no longer decodes is quarantined
+and left out, so a page can hold fewer than `limit` agents while `next_after`
+is present: keep paging until it is absent.
 
 `get_tree {run?, include_archived, root?, role_prefix?}`: `root` keeps that
 agent and its descendants, `role_prefix` the agents whose role starts with it.
@@ -340,10 +342,13 @@ its count of `invocations`. At most `limit` rows (1 to 1000, default 1000)
 are returned and `truncated` says more groups matched; `total` counts every
 invocation in scope, the cut rows' included. A native engine's message records
 zero usage there, as its spend arrives as `agent.usage_updated`, so the
-breakdown does not include it. A breakdown that would read invocations history retention
-removed is refused with `history_expired` rather than summed short; a
-`subtree` or `role_prefix` scope reads only its own agents' invocations, so
-another run's expiry does not affect it.
+breakdown does not include it. A breakdown that may hold invocations history
+retention removed is refused with `history_expired` rather than summed short.
+A `subtree` scope reads only its own agents' invocations, so another run's
+expiry does not affect it, but a root whose run expired is refused. Retention
+removes an expired run's agents with it, so their roles are unknown: a
+`role_prefix` scope without a `subtree` reads its whole `run`, or every run,
+and is refused when any of that history expired.
 
 ## Delta order
 

@@ -238,9 +238,11 @@ async fn list_agents_page(
         page.agents.len() <= limit as usize,
         "a page holds at most its limit"
     );
+    // A quarantined record shortens a page, so only the cursor's order is fixed.
     assert!(
-        page.next_after.is_none() || page.agents.len() == limit as usize,
-        "only a full page has a next one"
+        page.next_after
+            .is_none_or(|next| page.agents.last().is_none_or(|last| last.id <= next)),
+        "the next page starts after every agent on this one"
     );
     Ok(Reply::AgentsPage {
         agents: page.agents,

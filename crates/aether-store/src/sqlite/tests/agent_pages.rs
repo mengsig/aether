@@ -17,7 +17,10 @@ fn walk(store: &SqliteStore, filter: &AgentFilter, limit: usize) -> Vec<AgentId>
         assert!(page.agents.len() <= limit);
         seen.extend(page.agents.iter().map(|agent| agent.id));
         let Some(next) = page.next_after else { break };
-        assert_eq!(Some(next), page.agents.last().map(|agent| agent.id));
+        assert!(
+            page.agents.last().is_none_or(|last| last.id <= next),
+            "the cursor resumes past every agent returned"
+        );
         after = Some(next);
     }
     seen
@@ -103,6 +106,53 @@ fn a_page_holds_only_what_the_filter_names() {
         .map(|agent| agent.id)
         .collect();
     assert_eq!(listed, wanted, "paging and listing agree");
+}
+
+/// A record that no longer decodes is quarantined and left out, yet its
+/// page still points past it, so the walk reaches every healthy agent.
+#[test]
+fn a_quarantined_agent_shortens_its_page_and_the_walk_goes_on() {
+    let store = SqliteStore::open_in_memory().expect("open");
+    let mut ids: Vec<AgentId> = (0..9)
+        .map(|_| {
+            let agent = agent();
+            let id = agent.id;
+            create(&store, agent, None);
+            id
+        })
+        .collect();
+    ids.sort();
+    // The last agent of the first page of three, and one mid-way on the second.
+    let broken = [ids[2], ids[4]];
+    for id in broken {
+        let changed = store
+            .write_conn()
+            .execute(
+                "UPDATE agents SET body = '{\"not\":\"an agent\"}' WHERE id = ?1",
+                [id.to_string()],
+            )
+            .expect("corrupt");
+        assert_eq!(changed, 1);
+    }
+    let first = store
+        .agents_page(&AgentFilter::default(), None, 3)
+        .expect("page");
+    assert_eq!(first.agents.len(), 2, "the broken record is left out");
+    assert_eq!(first.next_after, Some(ids[2]), "the cursor is the row read");
+
+    let healthy: Vec<AgentId> = ids
+        .iter()
+        .copied()
+        .filter(|id| !broken.contains(id))
+        .collect();
+    assert_eq!(walk(&store, &AgentFilter::default(), 3), healthy);
+    let quarantined: BTreeSet<String> = store
+        .quarantines()
+        .expect("quarantines")
+        .into_iter()
+        .map(|record| record.id)
+        .collect();
+    assert_eq!(quarantined, broken.iter().map(AgentId::to_string).collect());
 }
 
 /// The subsystem is written by the creating insert and nothing after it.

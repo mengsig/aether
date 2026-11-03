@@ -8,6 +8,9 @@ use crate::{RecordQuarantine, Result, StoreError};
 
 const PREFIX: &str = "quarantine.";
 
+/// A record's key and its body, or why the body could not be read.
+pub(super) type RecordRow = (String, std::result::Result<String, String>);
+
 impl SqliteStore {
     pub(super) fn record_list<T: DeserializeOwned>(
         &self,
@@ -16,19 +19,41 @@ impl SqliteStore {
         params: &[&dyn rusqlite::ToSql],
         identity: impl Fn(&T) -> String,
     ) -> Result<Vec<T>> {
-        let rows = {
-            let conn = self.read_conn()?;
-            let mut statement = conn.prepare(sql)?;
-            statement
-                .query_map(params, |row| {
-                    Ok((
-                        row.get::<_, String>(0)
-                            .unwrap_or_else(|error| format!("unreadable-key:{error}")),
-                        row.get::<_, String>(1).map_err(|error| error.to_string()),
-                    ))
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-        };
+        let rows = self.record_rows(sql, params)?;
+        self.decode_records(table, rows, identity)
+    }
+
+    /// The `(key, body)` rows `sql` selects, in one statement, still undecoded.
+    pub(super) fn record_rows(
+        &self,
+        sql: &str,
+        params: &[&dyn rusqlite::ToSql],
+    ) -> Result<Vec<RecordRow>> {
+        let conn = self.read_conn()?;
+        let mut statement = conn.prepare(sql)?;
+        assert!(
+            statement.column_count() >= 2,
+            "a record read selects its key and body"
+        );
+        let rows = statement
+            .query_map(params, |row| {
+                Ok((
+                    row.get::<_, String>(0)
+                        .unwrap_or_else(|error| format!("unreadable-key:{error}")),
+                    row.get::<_, String>(1).map_err(|error| error.to_string()),
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Decode `rows`, quarantining any that do not decode and leaving them out.
+    pub(super) fn decode_records<T: DeserializeOwned>(
+        &self,
+        table: &str,
+        rows: Vec<RecordRow>,
+        identity: impl Fn(&T) -> String,
+    ) -> Result<Vec<T>> {
         let quarantined: std::collections::BTreeSet<_> = self
             .list_quarantines()?
             .into_iter()

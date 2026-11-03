@@ -6,10 +6,13 @@ use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::SqliteStore;
 use super::event_queries::Arguments;
+use super::quarantine::RecordRow;
 use super::write_tally::WriteTally;
 use crate::{AgentFilter, AgentPage, Result, StoreError};
 
 impl SqliteStore {
+    /// Ids and bodies come from one statement, and the cursor from the rows
+    /// read, so a quarantined record shortens its page but never ends the walk.
     pub(super) fn page_agents(
         &self,
         filter: &AgentFilter,
@@ -18,29 +21,35 @@ impl SqliteStore {
     ) -> Result<AgentPage> {
         assert!(limit > 0, "a page holds at least one agent");
         assert!(!filter.budgeted_only, "budget selection is not paged");
-        let ids = self.page_ids(filter, after, limit)?;
-        let next_after = (ids.len() > limit).then(|| ids[limit - 1].clone());
-        let page = &ids[..ids.len().min(limit)];
-        let agents = self.agents_by_id(page)?;
+        let mut rows = self.page_rows(filter, after, limit)?;
+        debug_assert!(rows.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        let next_after = if rows.len() > limit {
+            Some(parse_id(&rows[limit - 1].0)?)
+        } else {
+            None
+        };
+        rows.truncate(limit);
+        let agents: Vec<Agent> =
+            self.decode_records("agents", rows, |agent: &Agent| agent.id.to_string())?;
         debug_assert!(agents.windows(2).all(|pair| pair[0].id < pair[1].id));
-        let next_after = next_after
-            .map(|id| id.parse())
-            .transpose()
-            .map_err(|e| StoreError::Corrupt(format!("invalid agent id: {e}")))?;
         debug_assert!(next_after.is_none_or(|next| after.is_none_or(|after| next > after)));
+        debug_assert!(
+            next_after.is_none_or(|next| agents.last().is_none_or(|last| last.id <= next)),
+            "the cursor resumes after every agent returned"
+        );
         Ok(AgentPage { agents, next_after })
     }
 
-    /// Up to `limit + 1` ids past `after`: the extra one says another page follows.
-    fn page_ids(
+    /// Up to `limit + 1` rows past `after`: the extra one says another page follows.
+    fn page_rows(
         &self,
         filter: &AgentFilter,
         after: Option<AgentId>,
         limit: usize,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<RecordRow>> {
         let mut args: Arguments = Vec::new();
         let mut sql = format!(
-            "SELECT id FROM agents WHERE {}",
+            "SELECT id, body FROM agents WHERE {}",
             super::store::agent_predicate(filter, &mut args)
         );
         // `archived` lives in the body; here it must narrow the page itself.
@@ -55,26 +64,9 @@ impl SqliteStore {
         sql.push_str(&format!(" ORDER BY id ASC LIMIT ?{}", args.len()));
         debug_assert_eq!(sql.matches('?').count(), args.len());
         let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
-        let conn = self.read_conn()?;
-        let mut statement = conn.prepare(&sql)?;
-        let ids = statement
-            .query_map(refs.as_slice(), |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(ids)
-    }
-
-    fn agents_by_id(&self, ids: &[String]) -> Result<Vec<Agent>> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let placeholders: Vec<String> = (1..=ids.len()).map(|n| format!("?{n}")).collect();
-        let sql = format!(
-            "SELECT id, body FROM agents WHERE id IN ({}) ORDER BY id ASC",
-            placeholders.join(",")
-        );
-        let refs: Vec<&dyn rusqlite::ToSql> =
-            ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
-        self.record_list("agents", &sql, &refs, |agent: &Agent| agent.id.to_string())
+        let rows = self.record_rows(&sql, &refs)?;
+        assert!(rows.len() <= limit + 1, "the statement is limited");
+        Ok(rows)
     }
 
     pub(super) fn read_agent_subsystem(&self, id: AgentId) -> Result<Option<String>> {
@@ -117,4 +109,9 @@ impl SqliteStore {
         debug_assert_eq!(inserted, 1, "a plain insert writes its one row or fails");
         Ok(())
     }
+}
+
+fn parse_id(id: &str) -> Result<AgentId> {
+    id.parse()
+        .map_err(|e| StoreError::Corrupt(format!("invalid agent id {id}: {e}")))
 }
