@@ -50,6 +50,8 @@ export class Connection {
   private stopped = true;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
+  /** What the screen shows; kept across reconnects so each new sync resumes it. */
+  private onScreen: readonly string[] = [];
 
   constructor(endpoint: Endpoint, hooks: ConnectionHooks) {
     string(endpoint.target, "endpoint target");
@@ -95,6 +97,14 @@ export class Connection {
     if (this.stopped || this.info.state === "ready" || this.info.state === "connecting") return;
     clearTimeout(this.retryTimer);
     void this.open();
+  }
+
+  /** §5.2.2 and §5.3.3: the agents or items on screen, applied now and after every reconnect. */
+  show(ids: readonly string[]): Promise<void> {
+    this.onScreen = ids.map((id) => string(id, "on-screen id"));
+    if (this.sync instanceof AetherSync) return this.sync.watch(this.onScreen);
+    this.archonSync?.show(this.onScreen);
+    return Promise.resolve();
   }
 
   request(command: Command): Promise<Json> {
@@ -145,9 +155,12 @@ export class Connection {
     }
     this.attempt = 0;
     const previous = this.info.id;
+    // Entities of a replaced daemon instance do not exist on the new one.
+    if (previous !== id && this.info.protocol !== undefined) this.onScreen = [];
     this.info = { ...this.info, id, protocol, features, standing: this.standing(welcome), state: "ready" };
     const ctx = this.syncContext(new Set(features));
     this.sync = this.endpoint.daemon === "aether" ? new AetherSync(ctx) : new ArchonSync(ctx);
+    void this.show(this.onScreen);
     this.hooks.publish(this.info, previous === id ? undefined : previous);
     this.startHeartbeat(welcome.idle_timeout_secs);
   }

@@ -51,18 +51,33 @@ export const ARCHON_HOST_ONLY = words(`check_updates remote_status operator_comm
 
 export function aetherAccess(command: Json): Access {
   const cmd = string(command.cmd, "command.cmd");
-  if (cmd === "list_devices" && command.include_revoked === true) return "host_only";
-  if (cmd === "mcp_servers") return command.refresh === true ? "operate" : "observe";
-  if (cmd === "update_agent") {
-    const patch = (command.patch ?? {}) as Json;
-    if (patch.backend != null || patch.tools != null) return "host_only";
-  }
-  if (isGlobalRule(command)) return "host_only";
+  const special = fieldAccess(cmd, command);
+  if (special) return special;
   if (AETHER_OBSERVE.has(cmd)) return "observe";
   if (AETHER_DEVICE_SELF.has(cmd)) return "device_self";
   if (AETHER_HOST_ONLY.has(cmd)) return "host_only";
   // Unknown commands are treated as changes: the conservative side of the check.
   return "operate";
+}
+
+/** The guarded arms of access.rs, where a field widens what a command reaches. */
+function fieldAccess(cmd: string, command: Json): Access | null {
+  const field = (name: string): Json => {
+    const value = command[name];
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {};
+  };
+  if (cmd === "create_memory" && field("spec").proposed === true) return "host_only";
+  if (cmd === "memories" && field("query").proposed === true) return "host_only";
+  if (cmd === "list_devices") return command.include_revoked === true ? "host_only" : "operate";
+  if (cmd === "mcp_servers") return command.refresh === true ? "operate" : "observe";
+  if (cmd === "update_agent" && (field("patch").backend != null || field("patch").tools != null)) return "host_only";
+  if (isGlobalRule(command)) return "host_only";
+  if (cmd === "resolve_submission") {
+    // Asking what became of a command needs the standing to send it.
+    const inner = typeof field("command").cmd === "string" ? aetherAccess(field("command")) : "operate";
+    return inner === "observe" ? "operate" : inner;
+  }
+  return null;
 }
 
 function isGlobalRule(command: Json): boolean {

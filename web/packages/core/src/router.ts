@@ -9,6 +9,16 @@ export interface RouteMatch {
   readonly params: Readonly<Record<string, string>>;
 }
 
+/** A typed-in hash may carry a broken escape; it matches nothing rather than throwing. */
+function decode(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    if (error instanceof URIError) return null;
+    throw error;
+  }
+}
+
 function segments(path: string): string[] {
   return path.replace(/^#?\/?/, "").split("/").filter((part) => part.length > 0);
 }
@@ -26,8 +36,11 @@ export function matchPattern(pattern: string, path: string): Record<string, stri
     }
     const value = have[index];
     if (value === undefined) return null;
-    if (part.startsWith(":")) params[part.slice(1)] = decodeURIComponent(value);
-    else if (part !== value) return null;
+    if (part.startsWith(":")) {
+      const decoded = decode(value);
+      if (decoded === null) return null;
+      params[part.slice(1)] = decoded;
+    } else if (part !== value) return null;
   }
   return have.length === want.length ? params : null;
 }

@@ -5,7 +5,7 @@
 import type { Transport } from "@aether-ui/protocol";
 import { DaemonError } from "../errors.ts";
 import { errorText, invariant, object, string, type Json } from "../guards.ts";
-import { signChallenge, type IdentityStore } from "./identity.ts";
+import { signChallenge, type DeviceIdentity, type IdentityStore } from "./identity.ts";
 import { browserSocket, checkSocketUrl, openSocket, parseFrame, sendFrame, type SocketFactory, type SocketLike } from "./socket.ts";
 
 export interface AetherSocketOptions {
@@ -20,6 +20,83 @@ interface Challenge { instance: string; nonce: string }
 
 const CLOSE_PROTOCOL_ERROR = 1002;
 
+interface Peer {
+  onFrame(frame: unknown): void;
+  onClose(code: number, reason: string): void;
+}
+
+/** One link's authentication: the challenge it waits for, the hello it signs, the welcome it pins. */
+class Handshake {
+  readonly challenge: Promise<Challenge>;
+  socket: SocketLike | null = null;
+  private received: Challenge | null = null;
+  private helloReq: number | null = null;
+  private welcomed = false;
+  private challenged: (challenge: Challenge) => void = () => {};
+  private refused: (error: Error) => void = () => {};
+  private readonly identity: DeviceIdentity & { deviceId: string };
+  private readonly store: IdentityStore;
+  private readonly peer: Peer;
+
+  constructor(identity: DeviceIdentity & { deviceId: string }, store: IdentityStore, peer: Peer) {
+    this.identity = identity;
+    this.store = store;
+    this.peer = peer;
+    this.challenge = new Promise<Challenge>((resolve, reject) => { this.challenged = resolve; this.refused = reject; });
+  }
+
+  refuse(error: Error): void {
+    this.refused(error);
+  }
+
+  onText = (raw: unknown): void => {
+    try {
+      const frame = parseFrame(raw);
+      if (this.received === null) return this.onChallenge(frame);
+      if (frame.frame === "challenge") throw new Error("Unexpected repeated authentication challenge");
+      if (!this.welcomed && frame.frame === "reply" && frame.id === this.helloReq) this.onWelcome(frame, this.received);
+      this.peer.onFrame(frame);
+    } catch (error) {
+      this.refused(error instanceof Error ? error : new Error(errorText(error)));
+      this.fail(`Protocol error: ${errorText(error)}`);
+    }
+  };
+
+  onClose = (code: number, reason: string): void => {
+    this.refused(new DaemonError("disconnected", `Connection closed during authentication (${code})`));
+    this.peer.onClose(code, reason);
+  };
+
+  /** Adds the device proof to the link's single hello. */
+  hello(command: Json, signature: string): Json {
+    invariant(this.helloReq === null, "hello is sent once per link");
+    invariant(Number.isSafeInteger(command.req), "hello carries a request id");
+    this.helloReq = Number(command.req);
+    return { ...command, device: { id: this.identity.deviceId, signature } };
+  }
+
+  private onChallenge(frame: Json): void {
+    if (frame.frame !== "challenge") throw new Error("Expected an authentication challenge before hello");
+    const received = { instance: string(frame.instance_id, "challenge.instance_id"), nonce: string(frame.nonce, "challenge.nonce") };
+    this.received = received;
+    this.challenged(received);
+  }
+
+  private onWelcome(frame: Json, pinned: Challenge): void {
+    this.welcomed = true;
+    const device = checkWelcome(frame, this.identity.deviceId, pinned);
+    if (!device) return;
+    // Pinning the daemon id is what lets a later challenge detect an identity change.
+    this.store.save({ ...this.identity, ...device, daemonId: pinned.instance })
+      .catch((error: unknown) => this.fail(`Could not save the device identity: ${errorText(error)}`));
+  }
+
+  private fail(reason: string): void {
+    this.socket?.close(CLOSE_PROTOCOL_ERROR, "Invalid server frame");
+    this.peer.onClose(CLOSE_PROTOCOL_ERROR, reason);
+  }
+}
+
 export function aetherSocketTransport(options: AetherSocketOptions): Transport {
   const factory = options.socket ?? browserSocket;
   return {
@@ -27,45 +104,13 @@ export function aetherSocketTransport(options: AetherSocketOptions): Transport {
     async open(target, onFrame, onClose) {
       const url = checkSocketUrl(target, "/ws");
       const identity = await options.identity.load();
-      if (!identity?.deviceId) throw new DaemonError("unpaired", "Pair this browser with your daemon");
-      let challenged: (challenge: Challenge) => void = () => {};
-      let refused: (error: Error) => void = () => {};
-      const challenge = new Promise<Challenge>((resolve, reject) => { challenged = resolve; refused = reject; });
-      let state: { challenge?: Challenge; helloReq?: number; welcomed: boolean } = { welcomed: false };
-      const opened: { socket?: SocketLike } = {};
-      const fail = (reason: string) => {
-        opened.socket?.close(CLOSE_PROTOCOL_ERROR, "Invalid server frame");
-        onClose(CLOSE_PROTOCOL_ERROR, reason);
-      };
-      const onText = (raw: unknown) => {
-        try {
-          const frame = parseFrame(raw);
-          if (!state.challenge) {
-            if (frame.frame !== "challenge") throw new Error("Expected an authentication challenge before hello");
-            const received = { instance: string(frame.instance_id, "challenge.instance_id"), nonce: string(frame.nonce, "challenge.nonce") };
-            state = { ...state, challenge: received };
-            challenged(received);
-            return;
-          }
-          if (frame.frame === "challenge") throw new Error("Unexpected repeated authentication challenge");
-          if (!state.welcomed && frame.frame === "reply" && frame.id === state.helloReq) {
-            const pinned = state.challenge;
-            state = { ...state, welcomed: true };
-            const device = checkWelcome(frame, identity.deviceId ?? "", pinned);
-            // Pinning the daemon id is what lets a later challenge detect an identity change.
-            if (device) void options.identity.save({ ...identity, ...device, daemonId: pinned.instance })
-              .catch((error: unknown) => fail(`Could not save the device identity: ${errorText(error)}`));
-          }
-          onFrame(frame);
-        } catch (error) {
-          refused(error instanceof Error ? error : new Error(errorText(error)));
-          fail(`Protocol error: ${errorText(error)}`);
-        }
-      };
-      const open = (opened.socket = await openSocket(factory, url, "aether", { onText, onClose }));
-      const timer = setTimeout(() => refused(new Error("Challenge timed out")), options.challengeTimeoutMs ?? 15_000);
+      const deviceId = identity?.deviceId;
+      if (!identity || !deviceId) throw new DaemonError("unpaired", "Pair this browser with your daemon");
+      const handshake = new Handshake({ ...identity, deviceId }, options.identity, { onFrame, onClose });
+      const socket = (handshake.socket = await openSocket(factory, url, "aether", { onText: handshake.onText, onClose: handshake.onClose }));
+      const timer = setTimeout(() => handshake.refuse(new Error("Challenge timed out")), options.challengeTimeoutMs ?? 15_000);
       try {
-        const received = await challenge;
+        const received = await handshake.challenge;
         if (identity.daemonId && identity.daemonId !== received.instance) {
           throw new DaemonError("identity_changed", "Daemon identity changed; verify and pair again");
         }
@@ -73,15 +118,12 @@ export function aetherSocketTransport(options: AetherSocketOptions): Transport {
         return {
           send(frame: unknown) {
             const command = object(frame, "client frame");
-            if (command.cmd !== "hello") return sendFrame(open, command);
-            invariant(state.helloReq === undefined, "hello is sent once per link");
-            state = { ...state, helloReq: Number(command.req) };
-            sendFrame(open, { ...command, device: { id: identity.deviceId, signature } });
+            sendFrame(socket, command.cmd === "hello" ? handshake.hello(command, signature) : command);
           },
-          close: () => open.close(1000, "bye"),
+          close: () => socket.close(1000, "bye"),
         };
       } catch (error) {
-        open.close(1000, "authentication failed");
+        socket.close(1000, "authentication failed");
         throw error;
       } finally {
         clearTimeout(timer);

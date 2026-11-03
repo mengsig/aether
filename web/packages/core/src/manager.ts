@@ -102,16 +102,18 @@ export class ConnectionManager {
     else this.options.store.updateArchon(conn, drop);
   }
 
-  /** §5.2.2: the agents on screen for one Aether connection. */
+  /** §5.2.2: the agents on screen for one Aether connection; resumed after reconnects. */
   watchAgents(conn: ConnId, agents: readonly string[]): Promise<void> {
-    const sync = this.get(conn)?.aetherSync;
-    if (!sync) return Promise.reject(new DaemonError("disconnected", `${conn} is not a ready Aether connection`));
-    return sync.watch(agents);
+    const connection = this.get(conn);
+    if (connection?.endpoint.daemon !== "aether") return Promise.reject(new DaemonError("not_found", `${conn} is not an Aether connection`));
+    return connection.show(agents);
   }
 
-  /** §5.3.3: the items on screen for one archond connection. */
+  /** §5.3.3: the items on screen for one archond connection; resumed after reconnects. */
   showItems(conn: ConnId, items: readonly string[]): void {
-    this.get(conn)?.archonSync?.show(items);
+    const connection = this.get(conn);
+    invariant(connection?.endpoint.daemon === "archon", `${conn} is not an archond connection`);
+    void connection.show(items);
   }
 
   private publish(info: ConnectionInfo, previous?: ConnId): void {

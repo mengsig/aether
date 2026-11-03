@@ -12,6 +12,7 @@ import { EMPTY_ARCHON, type ArchonConnState, type ArchonGraph, type ArchonItem }
 export const FALLBACK_REFETCH_MS = 350;
 const ENTITY_REFETCH_MS = 250;
 const FEED_KEEP = 200;
+const RECENT_CHANGES = 256;
 
 /** A queue state is a bare kind or an object tagged by `state`. */
 function stateKind(value: unknown): string {
@@ -25,14 +26,14 @@ export function itemFromSummary(summary: Json): ArchonItem {
   return { summary, state: stateKind(summary.state), ...(stage ? { stage } : {}), ...(waitingReason ? { waitingReason } : {}) };
 }
 
-/** Applies one Change (§5.3.2-3) to the snapshots it is newer than; returns the item it touched. */
-export function applyChange(state: ArchonConnState, value: Json): { state: ArchonConnState; item?: string } {
+/** Applies one Change to the snapshots older than it (§5.3.2); replaying a change is harmless. */
+export function patchSnapshots(state: ArchonConnState, value: Json): ArchonConnState {
   const at = seq(value.seq, "change.seq");
-  if (state.changeCursor !== null && at <= state.changeCursor) return { state };
   const subject = object(value.subject, "change.subject");
   const item = typeof subject.item === "string" ? subject.item : undefined;
-  let next: ArchonConnState = { ...state, changeCursor: at };
-  if (subject.subject === "item" && item) {
+  if (!item) return state;
+  let next = state;
+  if (subject.subject === "item") {
     const live = { state: string(subject.state, "change.state"), stage: subject.stage, waitingReason: subject.waiting_reason };
     const current = next.items[item];
     if (current && (next.itemsAsOf === null || at > next.itemsAsOf)) {
@@ -42,9 +43,24 @@ export function applyChange(state: ArchonConnState, value: Json): { state: Archo
     const node = next.graph?.nodes[item];
     if (next.graph && node && at > next.graph.asOf) next = { ...next, graph: { ...next.graph, nodes: { ...next.graph.nodes, [item]: { ...node, state: live.state } } } };
   }
-  if (subject.subject === "dependency" && item && next.graph && at > next.graph.asOf) next = { ...next, graph: withDependency(next.graph, subject) };
+  if (subject.subject === "dependency" && next.graph && at > next.graph.asOf) next = { ...next, graph: withDependency(next.graph, subject) };
+  return next;
+}
+
+/**
+ * Applies one Change past the cursor (§5.3.2-3). `unknown` means it names an
+ * item missing from a snapshot, which then needs rereading.
+ */
+export function applyChange(state: ArchonConnState, value: Json): { state: ArchonConnState; item?: string; unknown: boolean } {
+  const at = seq(value.seq, "change.seq");
+  if (state.changeCursor !== null && at <= state.changeCursor) return { state, unknown: false };
+  const subject = object(value.subject, "change.subject");
+  const item = typeof subject.item === "string" ? subject.item : undefined;
+  const next = patchSnapshots({ ...state, changeCursor: at }, value);
   invariant(next.changeCursor === at, "an applied change advances the change cursor");
-  return { state: next, ...(item ? { item } : {}) };
+  const named = item === undefined ? [] : subject.subject === "dependency" ? [item, string(subject.depends_on, "dependency.depends_on")] : [item];
+  const unknown = named.some((id) => !(id in next.items) || (next.graph !== null && !next.graph.truncated && !(id in next.graph.nodes)));
+  return { state: next, ...(item ? { item } : {}), unknown };
 }
 
 function withDependency(graph: ArchonGraph, subject: Json): ArchonGraph {
@@ -62,6 +78,9 @@ export class ArchonSync {
   private buffer: Json[] | null = null;
   private readonly refetch = new Debouncer(ENTITY_REFETCH_MS);
   private readonly fallback = new Debouncer(FALLBACK_REFETCH_MS);
+  private readonly structure = new Debouncer(ENTITY_REFETCH_MS);
+  /** Changes applied lately, replayed onto snapshots reread while they arrived. */
+  private recent: Json[] = [];
   private onScreen: ReadonlySet<string> = new Set();
 
   constructor(ctx: SyncContext) {
@@ -120,6 +139,7 @@ export class ArchonSync {
     this.buffer = null;
     this.refetch.cancelAll();
     this.fallback.cancelAll();
+    this.structure.cancelAll();
   }
 
   /** Entities on screen are refetched on change; others are updated in place only. */
@@ -133,8 +153,13 @@ export class ArchonSync {
       return;
     }
     if (frame.sub !== this.changeSub) return;
-    const { state, item } = applyChange(this.state, object(frame.change, "change frame"));
+    const change = object(frame.change, "change frame");
+    const before = this.state;
+    const { state, item, unknown } = applyChange(before, change);
+    if (state === before) return;
     this.set(() => state);
+    this.recent = [...this.recent, change].slice(-RECENT_CHANGES);
+    if (unknown) this.structure.schedule("snapshots", () => void this.rereadSnapshots().catch((error: unknown) => this.fail("the queue", error)));
     if (item && this.onScreen.has(item)) this.refetch.schedule(item, () => void this.refetchItem(item));
   }
 
@@ -162,19 +187,30 @@ export class ArchonSync {
   }
 
   private async readSnapshots(): Promise<void> {
-    if (this.ctx.features.has("task_graph")) {
-      const graph = replyObject(await this.ctx.request({ cmd: "task_graph", filter: {} }), "task_graph");
-      const nodes = Object.fromEntries(array(graph.nodes, "task_graph.nodes").map((node) => [string(object(node, "node").id, "node.id"), node as Json]));
-      const snapshot: ArchonGraph = {
-        nodes, edges: array(graph.edges, "task_graph.edges") as Json[], initiatives: array(graph.initiatives ?? [], "initiatives") as Json[],
-        asOf: seq(graph.as_of, "task_graph.as_of"), truncated: graph.truncated === true,
-      };
-      this.set((s) => ({ ...s, graph: snapshot }));
-    }
+    await this.readGraph();
     await this.readSummaries();
     // Changes at or below every snapshot's as_of are already in all of them.
     const asOfs = [this.state.graph?.asOf, this.state.itemsAsOf].filter((value): value is number => typeof value === "number");
     if (asOfs.length > 0) this.set((s) => ({ ...s, changeCursor: Math.min(...asOfs) }));
+  }
+
+  /** A change named an entity no snapshot holds: reread both, keeping the cursor. */
+  private async rereadSnapshots(): Promise<void> {
+    await this.readGraph();
+    await this.readSummaries();
+    const recent = this.recent;
+    this.set((s) => recent.reduce(patchSnapshots, s));
+  }
+
+  private async readGraph(): Promise<void> {
+    if (!this.ctx.features.has("task_graph")) return;
+    const graph = replyObject(await this.ctx.request({ cmd: "task_graph", filter: {} }), "task_graph");
+    const nodes = Object.fromEntries(array(graph.nodes, "task_graph.nodes").map((node) => [string(object(node, "node").id, "node.id"), node as Json]));
+    const snapshot: ArchonGraph = {
+      nodes, edges: array(graph.edges, "task_graph.edges") as Json[], initiatives: array(graph.initiatives ?? [], "initiatives") as Json[],
+      asOf: seq(graph.as_of, "task_graph.as_of"), truncated: graph.truncated === true,
+    };
+    this.set((s) => ({ ...s, graph: snapshot }));
   }
 
   /** Protocol 24 wraps the rows with their `as_of`; protocol 23 answers the bare list. */
