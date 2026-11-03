@@ -51,7 +51,7 @@ pub struct Timings {
 #[derive(Debug, Serialize)]
 pub struct Scaled {
     pub memories: usize,
-    pub bytes: u64,
+    pub footprint: crate::Footprint,
     pub timings: Vec<Timings>,
 }
 
@@ -150,7 +150,7 @@ pub fn scaled_latency(dir: &Path, plan: &Plan) -> BenchResult<Scaled> {
     let (store, service) = open(dir, &plan.index)?;
     let seeded = crate::seed::seed(&store, &service, plan)?;
     add_filler(&store, plan.latency.filler)?;
-    store.sync()?;
+    crate::checkpoint(&store)?;
     let timings = time_with(&service, plan, seeded.agent)?;
     let memories = crate::seed::count_current(&store)?;
     drop(service);
@@ -158,7 +158,7 @@ pub fn scaled_latency(dir: &Path, plan: &Plan) -> BenchResult<Scaled> {
     debug_assert!(memories >= plan.latency.filler);
     Ok(Scaled {
         memories,
-        bytes: crate::dir_bytes(dir)?,
+        footprint: crate::footprint(dir)?,
         timings,
     })
 }

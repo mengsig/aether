@@ -65,6 +65,21 @@ templates in `release_bench_families/`. See
 python3 -m unittest discover -s evals -p 'test_release_bench*.py'
 ```
 
+## Memory benchmark
+
+`make bench-memory` seeds a private store with the synthetic scenarios in
+`bench/memory-set/v1/` through the real admission path, ranks every labelled
+query as a turn does, and reports retrieval relevance, stale-memory influence,
+duplicate and low-value rates, injected tokens, latency, storage and recovery.
+It calls no model and fails unless the deterministic metrics match the
+committed baseline. `--task-arm` adds a small, budget-capped model-graded arm.
+See [docs/memory/BASELINE.md](../docs/memory/BASELINE.md).
+
+```sh
+# No cargo, no model calls: dataset validity, metrics, baseline check.
+python3 -m unittest discover -s evals -p 'test_memory_bench*.py'
+```
+
 ## Native harness and coordinator pilot
 
 `harness_bench.py` compares the installed native Claude Code/Codex CLIs with

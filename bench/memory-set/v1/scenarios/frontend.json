@@ -1,0 +1,175 @@
+{
+  "id": "frontend",
+  "description": "A TypeScript dashboard: package manager, component layout, generated API types and a styling migration.",
+  "repository": "github.com/example-org/dashboard",
+  "memories": [
+    {
+      "key": "pnpm",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "constraint",
+      "importance": 0.8,
+      "confidence": 0.9,
+      "age_days": 90,
+      "tags": [
+        "deps"
+      ],
+      "text": "Use pnpm, not npm or yarn: the lockfile is pnpm-lock.yaml and CI runs pnpm install --frozen-lockfile."
+    },
+    {
+      "key": "pnpm-dup",
+      "class": "near_duplicate",
+      "duplicate_of": "pnpm",
+      "scope": "repository",
+      "kind": "lesson",
+      "importance": 0.7,
+      "confidence": 0.8,
+      "age_days": 14,
+      "tags": [
+        "deps"
+      ],
+      "text": "The package manager is pnpm; running npm install creates a package-lock.json that conflicts with pnpm-lock.yaml and fails CI."
+    },
+    {
+      "key": "pnpm-dup2",
+      "class": "near_duplicate",
+      "duplicate_of": "pnpm",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.6,
+      "confidence": 0.8,
+      "age_days": 3,
+      "text": "Add dependencies with pnpm add (never npm install) so pnpm-lock.yaml stays the only lockfile."
+    },
+    {
+      "key": "components",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.9,
+      "age_days": 60,
+      "tags": [
+        "tests"
+      ],
+      "text": "Components live in src/components/<Name>/ with a colocated <Name>.test.tsx; tests run with vitest via pnpm test."
+    },
+    {
+      "key": "styled",
+      "class": "stale",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.9,
+      "age_days": 380,
+      "tags": [
+        "styling"
+      ],
+      "text": "Styling uses styled-components; put a component's styles in a styles.ts file next to it."
+    },
+    {
+      "key": "css-modules",
+      "class": "durable",
+      "contradicts": "styled",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.7,
+      "confidence": 0.9,
+      "age_days": 45,
+      "tags": [
+        "styling"
+      ],
+      "text": "Styling uses CSS modules (<Name>.module.css next to the component); styled-components was removed in March."
+    },
+    {
+      "key": "gen-api",
+      "class": "durable",
+      "scope": "repository",
+      "kind": "constraint",
+      "importance": 0.8,
+      "confidence": 0.9,
+      "age_days": 75,
+      "tags": [
+        "api"
+      ],
+      "text": "API types are generated from openapi.yaml by pnpm gen:api into src/api/types.ts; never edit that file by hand."
+    },
+    {
+      "key": "storybook-disk",
+      "class": "one_off",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.9,
+      "age_days": 5,
+      "text": "The storybook build on 2026-07-30 failed because the runner's disk was full."
+    },
+    {
+      "key": "rendered-ok",
+      "class": "one_off",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.4,
+      "confidence": 0.9,
+      "age_days": 2,
+      "text": "Opened the dashboard at http://localhost:5173 after the change and the settings page rendered correctly."
+    },
+    {
+      "key": "debug-logs",
+      "class": "transient",
+      "scope": "repository",
+      "kind": "fact",
+      "importance": 0.5,
+      "confidence": 0.7,
+      "age_days": 1,
+      "text": "While debugging the chart I added console.log calls to Chart.tsx; remove them before merging."
+    }
+  ],
+  "queries": [
+    {
+      "id": "add-dependency",
+      "role": "worker",
+      "query": "Add a date-picker dependency to the dashboard.",
+      "relevant": [
+        "pnpm"
+      ],
+      "harmful": [],
+      "task": {
+        "question": "Which command adds a dependency to the dashboard repository? Answer with the command only.",
+        "answer": "pnpm add"
+      }
+    },
+    {
+      "id": "new-component",
+      "role": "worker",
+      "query": "Create a settings panel component with styles and tests.",
+      "relevant": [
+        "components",
+        "css-modules"
+      ],
+      "harmful": [
+        "styled"
+      ]
+    },
+    {
+      "id": "api-field",
+      "role": "worker",
+      "query": "The backend added a currency field to invoices; update the frontend types.",
+      "relevant": [
+        "gen-api"
+      ],
+      "harmful": []
+    },
+    {
+      "id": "dark-mode",
+      "role": "worker",
+      "query": "Restyle the header for dark mode.",
+      "relevant": [
+        "css-modules"
+      ],
+      "harmful": [
+        "styled"
+      ]
+    }
+  ]
+}

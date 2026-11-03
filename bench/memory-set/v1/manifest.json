@@ -1,0 +1,9 @@
+{
+  "name": "memory-set",
+  "version": "v1",
+  "description": "Synthetic engineering scenarios for Aether's operational memory. Every repository, path, commit and number is invented; nothing comes from a real store.",
+  "scenarios": ["build-ci", "db-migrations", "release", "frontend", "agent-ops", "fresh-repo"],
+  "k": [3, 6],
+  "limit": 6,
+  "memory_max": 2000
+}

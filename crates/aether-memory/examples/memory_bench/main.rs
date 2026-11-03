@@ -60,16 +60,16 @@ pub fn run(plan: &Plan, sandbox: &Path) -> BenchResult<Report> {
     if !sandbox.is_dir() || std::fs::read_dir(sandbox)?.next().is_some() {
         return Err(format!("sandbox {} must be an empty directory", sandbox.display()).into());
     }
-    let empty_bytes = seed::empty_store_bytes(&sandbox.join("empty"))?;
+    let empty = seed::empty_store(&sandbox.join("empty"))?;
     let main_dir = sandbox.join("main");
     let (store, service) = open(&main_dir, &plan.index)?;
     let seeded = seed::seed(&store, &service, plan)?;
-    store.sync()?;
+    checkpoint(&store)?;
     let queries = retrieval::run_queries(&service, plan, &seeded)?;
     let small = retrieval::time_queries(&service, plan, &seeded)?;
     drop(service);
     drop(store);
-    let storage = seed::storage_row(empty_bytes, &main_dir, &seeded)?;
+    let storage = seed::storage_row(empty, &main_dir, &seeded)?;
     let restart = recovery::restart(&main_dir, plan, &seeded, &queries)?;
     let corruption = recovery::corruption_cases(&main_dir, sandbox, plan, &seeded)?;
     let scaled = retrieval::scaled_latency(&sandbox.join("scaled"), plan)?;
@@ -102,8 +102,36 @@ pub fn store_path(dir: &Path) -> PathBuf {
     dir.join(STORE_FILE)
 }
 
+/// Fold the WAL into the database file, so a copy of that file alone holds
+/// every commit. A reader can hold frames back for a moment; it is retried.
+pub fn checkpoint(store: &SqliteStore) -> BenchResult<()> {
+    for _ in 0..100 {
+        if store.sync()? {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Err("the WAL checkpoint was held back for two seconds".into())
+}
+
+/// A closed store's size on disk.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Footprint {
+    /// The checkpointed database file alone.
+    pub database: u64,
+    /// Everything in its directory: database, WAL, shared memory, artifacts.
+    pub total: u64,
+}
+
+pub fn footprint(dir: &Path) -> BenchResult<Footprint> {
+    let database = std::fs::metadata(store_path(dir))?.len();
+    let total = dir_bytes(dir)?;
+    debug_assert!(database <= total);
+    Ok(Footprint { database, total })
+}
+
 /// Bytes of every file under `dir`: the database, its WAL and side files.
-pub fn dir_bytes(dir: &Path) -> BenchResult<u64> {
+fn dir_bytes(dir: &Path) -> BenchResult<u64> {
     let mut total = 0;
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;

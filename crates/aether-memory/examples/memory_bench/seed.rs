@@ -16,7 +16,7 @@ use chrono::Duration;
 use serde::Serialize;
 
 use crate::plan::{Plan, PlanMemory};
-use crate::{BenchResult, dir_bytes};
+use crate::{BenchResult, Footprint, checkpoint, footprint};
 
 /// What admission made of one candidate.
 #[derive(Debug, Serialize)]
@@ -30,8 +30,8 @@ pub struct AdmissionRow {
 
 #[derive(Debug, Serialize)]
 pub struct StorageRow {
-    pub empty_bytes: u64,
-    pub seeded_bytes: u64,
+    pub empty: Footprint,
+    pub seeded: Footprint,
     /// Admitted records, current or superseded: every row the store keeps.
     pub records: usize,
     pub current: usize,
@@ -222,20 +222,20 @@ pub fn count_current(store: &SqliteStore) -> BenchResult<usize> {
 }
 
 /// The size of a store with nothing in it, closed.
-pub fn empty_store_bytes(dir: &Path) -> BenchResult<u64> {
+pub fn empty_store(dir: &Path) -> BenchResult<Footprint> {
     let store = SqliteStore::open(crate::store_path(dir))?;
-    store.sync()?;
+    checkpoint(&store)?;
     drop(store);
-    dir_bytes(dir)
+    footprint(dir)
 }
 
 /// The seeded store's size, measured closed so the WAL is folded in.
-pub fn storage_row(empty_bytes: u64, dir: &Path, seeded: &Seeded) -> BenchResult<StorageRow> {
-    let seeded_bytes = dir_bytes(dir)?;
-    debug_assert!(seeded_bytes > 0);
+pub fn storage_row(empty: Footprint, dir: &Path, seeded: &Seeded) -> BenchResult<StorageRow> {
+    let footprint = footprint(dir)?;
+    debug_assert!(footprint.database >= empty.database);
     Ok(StorageRow {
-        empty_bytes,
-        seeded_bytes,
+        empty,
+        seeded: footprint,
         records: seeded.records,
         current: seeded.current,
     })

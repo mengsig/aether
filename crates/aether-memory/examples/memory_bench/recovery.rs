@@ -72,7 +72,7 @@ struct Case {
     damage: fn(&Path) -> std::io::Result<()>,
 }
 
-const CASES: [Case; 5] = [
+const CASES: [Case; 6] = [
     // The control: a copy must hold everything, or every other case is moot.
     Case {
         name: "intact_copy",
@@ -93,6 +93,10 @@ const CASES: [Case; 5] = [
     Case {
         name: "garbled_middle_page",
         damage: garble_middle_page,
+    },
+    Case {
+        name: "garbled_every_8th_page",
+        damage: garble_every_8th_page,
     },
 ];
 
@@ -170,14 +174,28 @@ fn overwrite(path: &Path, offset: u64, len: usize) -> std::io::Result<()> {
     file.sync_all()
 }
 
+const PAGE: u64 = 4_096;
+
 /// A page in the middle written over with a byte pattern: damage the header
 /// check cannot see.
 fn garble_middle_page(path: &Path) -> std::io::Result<()> {
-    const PAGE: u64 = 4_096;
     let len = std::fs::metadata(path)?.len();
-    let offset = (len / 2 / PAGE) * PAGE;
+    garble_pages(path, &[len / 2 / PAGE])
+}
+
+/// Spread damage that is bound to reach the memory tables and their index.
+fn garble_every_8th_page(path: &Path) -> std::io::Result<()> {
+    let pages = std::fs::metadata(path)?.len() / PAGE;
+    let damaged: Vec<u64> = (1..pages).step_by(8).collect();
+    garble_pages(path, &damaged)
+}
+
+fn garble_pages(path: &Path, pages: &[u64]) -> std::io::Result<()> {
     let mut file = OpenOptions::new().write(true).open(path)?;
-    file.seek(SeekFrom::Start(offset))?;
-    file.write_all(&[0x5a; PAGE as usize])?;
+    for page in pages {
+        debug_assert!(*page > 0, "page 0 is the header case");
+        file.seek(SeekFrom::Start(page * PAGE))?;
+        file.write_all(&[0x5a; PAGE as usize])?;
+    }
     file.sync_all()
 }

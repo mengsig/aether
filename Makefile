@@ -1,4 +1,4 @@
-.PHONY: ci ci-checks fmt lint test build install bench-release bench-calibrate
+.PHONY: ci ci-checks fmt lint test build install bench-release bench-calibrate bench-memory
 # `ci` holds one of the host-wide CI slots (scripts/ci_slot.sh, CI_HOST_SLOTS,
 # default 1) while scripts/ci.sh runs; `ci-checks` runs it without one.
 ci:      ; sh scripts/ci_slot.sh ./scripts/ci.sh
@@ -35,3 +35,8 @@ bench-calibrate:
 	$(PYTHON) evals/release_bench.py calibrate --count $(COUNT) --price-binary "$(NEW)" --freeze "$(FREEZE)" \
 		--jobs $(JOBS) --load-max $(LOAD_MAX) --budget $(or $(CAL_BUDGET),25) --repeats $(or $(CAL_REPEATS),3) \
 		$(if $(TEMPLATES),--templates "$(TEMPLATES)") $(if $(ACCEPT_OFF_TARGET),--accept-off-target) $(EXTRA)
+
+# Memory benchmark (docs/memory/BASELINE.md): deterministic, no model calls. Fails
+# when the deterministic metrics differ from bench/memory-set/v1/baseline.json.
+bench-memory:
+	$(PYTHON) evals/memory_bench.py run --check $(EXTRA)

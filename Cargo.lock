@@ -183,6 +183,7 @@ dependencies = [
 name = "aether-memory"
 version = "1.2.11"
 dependencies = [
+ "aether-context",
  "aether-core",
  "aether-store",
  "chrono",
