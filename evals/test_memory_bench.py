@@ -64,6 +64,7 @@ def tiny_report():
     return {
         "index": "none",
         "admissions": [{"key": f"s/{k}", "outcome": outcomes.get(k, "accepted")} for k in keys],
+        "current": [f"s/{k}" for k in ["fresh", "new", "once", "rule", "rule-again", "stale"]],
         "queries": [
             {"id": "s/q1", "ranked": ranked("rule", "rule-again", "once"), "layer_tokens": 40,
              "layer": "Memory:\n- text of rule"},
@@ -75,8 +76,8 @@ def tiny_report():
                     "scaled": {"memories": 100, "footprint": {"database": 9000, "total": 12000},
                                "timings": [{"id": "s/q1", "micros": [5.0]}]}},
         "storage": {"empty": {"database": 1000, "total": 1500}, "seeded": {"database": 1700, "total": 4000},
-                    "records": 7, "current": 5},
-        "restart": {"queries": 3, "identical": 3, "current_before": 5, "current_after": 5},
+                    "records": 7, "current": 6},
+        "restart": {"queries": 3, "identical": 3, "current_before": 6, "current_after": 6},
         "corruption": [
             {"case": "intact_copy", "open": "ok", "retrieval": "ok", "recovered": 5, "expected": 5},
             {"case": "zeroed_header", "open": "error", "retrieval": "skipped", "recovered": None, "expected": 5},
@@ -179,6 +180,36 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(store["low_value_share"], round(1 / 6, 4))
         self.assertEqual(store["transient_rejected"], 1.0)
         self.assertEqual(store["near_duplicates_admitted"], 1.0)
+
+    def test_store_quality_reads_current_memories_from_the_store(self):
+        report = tiny_report()
+        report["current"].remove("s/rule-again")
+        report["storage"]["current"] = 5
+        self.assertEqual(compute(tiny_dataset(), report)["deterministic"]["store"]["duplicate_share"], 0.0)
+        report = tiny_report()
+        report["current"].append("s/old")
+        report["storage"]["current"] = 7
+        self.assertEqual(compute(tiny_dataset(), report)["deterministic"]["store"]["current"], 7)
+        report["storage"]["current"] = 6
+        with self.assertRaises(AssertionError):
+            compute(tiny_dataset(), report)
+
+    def test_only_injected_lines_count_as_exposure_and_slots(self):
+        report = tiny_report()
+        report["queries"][1]["ranked"][0]["injected"] = False
+        report["queries"][1]["layer"] = "Memory:\n- text of fresh"
+        partial = compute(tiny_dataset(), report)
+        self.assertEqual(partial["queries"][1]["shown"], ["s/fresh"])
+        self.assertEqual(partial["queries"][1]["precision@2"], 0.5, "retrieval still scores the ranking")
+        self.assertEqual(partial["conflicts"][0]["outcome"], "replacement_only")
+        self.assertEqual(partial["deterministic"]["influence"]["harmful_exposure_rate"], 0.0)
+        for item in report["queries"][1]["ranked"]:
+            item["injected"] = False
+        report["queries"][1].update(layer=None, layer_tokens=0)
+        empty = compute(tiny_dataset(), report)
+        self.assertEqual(empty["queries"][1]["slots"], 0)
+        self.assertEqual(empty["conflicts"][0]["outcome"], "neither")
+        self.assertEqual(empty["deterministic"]["injection"]["mean_slots"], round(4 / 3, 4))
 
     def test_measured_and_recovery_sections(self):
         measured = self.metrics["measured"]

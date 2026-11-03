@@ -38,6 +38,8 @@ fn a_run_admits_ranks_restarts_and_probes_damage() {
     let report = run(&plan(), sandbox.path()).unwrap();
     let outcomes: Vec<&str> = report.admissions.iter().map(|a| a.outcome).collect();
     assert_eq!(outcomes, ["accepted", "superseded", "rejected", "rejected"]);
+    assert_eq!(report.admissions[1].replaced.as_deref(), Some("a/old"));
+    assert_eq!(report.current, ["a/new"], "read back from the store");
     let ranked: Vec<&str> = report.queries[0]
         .ranked
         .iter()

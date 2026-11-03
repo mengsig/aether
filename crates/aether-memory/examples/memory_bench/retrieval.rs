@@ -200,7 +200,8 @@ const WORDS: [&str; 32] = [
     "pipeline",
 ];
 
-/// Committed directly: filler is the load, not the system under test.
+/// Committed directly, without admission or its events: filler is the load,
+/// not the system under test.
 fn add_filler(store: &SqliteStore, count: usize) -> BenchResult<()> {
     let mut rng = Lcg(0x5eed);
     let at = now();

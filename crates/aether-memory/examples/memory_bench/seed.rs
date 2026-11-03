@@ -5,7 +5,7 @@ use std::path::Path;
 
 use aether_core::event::Actor;
 use aether_core::id::{AgentId, MemoryFeedbackId, MemoryId, TaskId};
-use aether_core::memory::{MemoryCandidate, MemoryProvenance};
+use aether_core::memory::{MemoryCandidate, MemoryProvenance, MemoryRecord};
 use aether_core::memory_feedback::{
     MemoryEvidence, MemoryFeedback, MemoryFeedbackSpec, MemoryVerdict,
 };
@@ -26,6 +26,9 @@ pub struct AdmissionRow {
     pub outcome: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The key admission retired, for `superseded`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +48,8 @@ pub struct Seeded {
     pub keys: Keys,
     pub admissions: Vec<AdmissionRow>,
     pub records: usize,
+    /// Keys of the memories the store holds current after seeding, sorted.
+    pub current_keys: Vec<String>,
     pub current: usize,
 }
 
@@ -82,19 +87,20 @@ pub fn seed(store: &SqliteStore, service: &MemoryService, plan: &Plan) -> BenchR
         if let Some(record) = admission.record() {
             keys.insert(&memory.key, record.id);
         }
-        admissions.push(admission_row(&memory.key, admission));
+        admissions.push(admission_row(&memory.key, admission, &keys)?);
     }
     backdate(store, plan, &keys)?;
     record_feedback(store, plan, &keys)?;
-    let current = count_current(store)?;
+    let current_keys = current_keys(store, &keys)?;
     debug_assert_eq!(admissions.len(), plan.memories.len());
-    debug_assert!(current <= keys.by_id.len());
+    debug_assert!(current_keys.len() <= keys.by_id.len());
     Ok(Seeded {
         agent,
         records: keys.by_id.len(),
+        current: current_keys.len(),
+        current_keys,
         keys,
         admissions,
-        current,
     })
 }
 
@@ -134,21 +140,23 @@ fn candidate(memory: &PlanMemory, agent: AgentId, keys: &Keys) -> BenchResult<Me
     })
 }
 
-fn admission_row(key: &str, admission: Admission) -> AdmissionRow {
-    let (outcome, reason) = match admission {
-        Admission::Accepted { .. } => ("accepted", None),
-        Admission::Superseded { .. } => ("superseded", None),
-        Admission::Rejected { reason } => ("rejected", Some(reason)),
+fn admission_row(key: &str, admission: Admission, keys: &Keys) -> BenchResult<AdmissionRow> {
+    let (outcome, reason, replaced) = match admission {
+        Admission::Accepted { .. } => ("accepted", None, None),
+        Admission::Superseded { old, .. } => ("superseded", None, Some(keys.key(old)?.to_owned())),
+        Admission::Rejected { reason } => ("rejected", Some(reason), None),
     };
-    AdmissionRow {
+    debug_assert!(replaced.as_deref() != Some(key), "{key} replaced itself");
+    Ok(AdmissionRow {
         key: key.to_owned(),
         outcome,
         reason,
-    }
+        replaced,
+    })
 }
 
-/// Move `created_at` back by each memory's `age_days`. The only write the
-/// benchmark makes outside admission: no public path records an old memory.
+/// Move `created_at` back by each memory's `age_days`, written directly: no
+/// public path records an old memory. See BASELINE.md's fixture exceptions.
 fn backdate(store: &SqliteStore, plan: &Plan, keys: &Keys) -> BenchResult<()> {
     let at = now();
     let mut commit = Commit::new();
@@ -168,7 +176,8 @@ fn backdate(store: &SqliteStore, plan: &Plan, keys: &Keys) -> BenchResult<()> {
     Ok(())
 }
 
-/// Review verdicts, each from its own task: the evidence feedback ranking counts.
+/// Review verdicts, each from its own invented task, written directly: this
+/// seeds what ranking reads and skips the runtime's feedback validation.
 fn record_feedback(store: &SqliteStore, plan: &Plan, keys: &Keys) -> BenchResult<()> {
     let mut commit = Commit::new();
     for memory in &plan.memories {
@@ -212,13 +221,30 @@ fn review(memory: MemoryId, verdict: MemoryVerdict) -> MemoryFeedback {
 }
 
 /// Every current memory in the store, whatever its scope.
-pub fn count_current(store: &SqliteStore) -> BenchResult<usize> {
+fn current_memories(store: &SqliteStore) -> BenchResult<Vec<MemoryRecord>> {
     let all = store.memories(&MemoryQuery {
         limit: 1_000_000,
         ..Default::default()
     })?;
     debug_assert!(all.iter().all(|m| m.is_current()));
-    Ok(all.len())
+    Ok(all)
+}
+
+pub fn count_current(store: &SqliteStore) -> BenchResult<usize> {
+    Ok(current_memories(store)?.len())
+}
+
+/// The dataset keys of the store's current memories, as the store reports them.
+fn current_keys(store: &SqliteStore, keys: &Keys) -> BenchResult<Vec<String>> {
+    let mut current = current_memories(store)?
+        .iter()
+        .map(|record| keys.key(record.id).map(str::to_owned))
+        .collect::<BenchResult<Vec<String>>>()?;
+    current.sort();
+    let before = current.len();
+    current.dedup();
+    debug_assert_eq!(before, current.len(), "the store listed a memory twice");
+    Ok(current)
 }
 
 /// The size of a store with nothing in it, closed.

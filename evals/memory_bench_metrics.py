@@ -25,19 +25,31 @@ def percentile(values, fraction):
     return ordered[rank - 1]
 
 
+def first_of_cluster(keys, roots):
+    """For each key, whether no earlier key restates the same memory."""
+    seen = set()
+    fresh = []
+    for key in keys:
+        root = roots.get(key, key)
+        fresh.append(root not in seen)
+        seen.add(root)
+    return fresh
+
+
 def score_query(query, row, roots, classes, ks):
-    """One query's labels against the keys it ranked."""
+    """One query's labels against the keys it ranked. Relevance is scored on
+    the ranking; exposure, slots and tokens only on the lines the model got."""
     ranked = [item["key"] for item in row["ranked"]]
     assert row["id"] == query["id"], (row["id"], query["id"])
     relevant = set(query["relevant"])
-    first_of_cluster = []
-    seen = set()
-    for key in ranked:
-        root = roots.get(key, key)
-        first_of_cluster.append(root not in seen)
-        seen.add(root)
-    useful = [fresh and roots.get(key, key) in relevant for key, fresh in zip(ranked, first_of_cluster)]
-    scored = {"id": query["id"], "ranked": ranked, "relevant": sorted(relevant)}
+    useful = [fresh and roots.get(key, key) in relevant
+              for key, fresh in zip(ranked, first_of_cluster(ranked, roots))]
+    shown_items = [item for item in row["ranked"] if item["injected"]]
+    shown = [item["key"] for item in shown_items]
+    shown_fresh = first_of_cluster(shown, roots)
+    shown_useful = [fresh and roots.get(key, key) in relevant for key, fresh in zip(shown, shown_fresh)]
+    assert not shown or row["layer"], f"{query['id']}: lines injected without a layer"
+    scored = {"id": query["id"], "ranked": ranked, "shown": shown, "relevant": sorted(relevant)}
     for k in ks:
         top = useful[:k]
         hits = sum(top)
@@ -45,29 +57,29 @@ def score_query(query, row, roots, classes, ks):
         scored[f"recall@{k}"] = hits / len(relevant) if relevant else None
     first = next((i for i, u in enumerate(useful) if u), None)
     scored["reciprocal_rank"] = (1.0 / (first + 1) if first is not None else 0.0) if relevant else None
-    scored["harmful_slots"] = sum(key in query["harmful"] for key in ranked)
-    scored["redundant_slots"] = sum(not fresh for fresh in first_of_cluster)
-    scored["low_value_slots"] = sum(classes.get(key) == "one_off" for key in ranked)
-    scored["slots"] = len(ranked)
+    scored["harmful_slots"] = sum(key in query["harmful"] for key in shown)
+    scored["redundant_slots"] = sum(not fresh for fresh in shown_fresh)
+    scored["low_value_slots"] = sum(classes.get(key) == "one_off" for key in shown)
+    scored["slots"] = len(shown)
     scored["layer_tokens"] = row["layer_tokens"]
-    scored["wasted_tokens"] = sum(
-        item["tokens"] for item, use in zip(row["ranked"], useful) if item["injected"] and not use
-    )
-    scored["line_tokens"] = sum(item["tokens"] for item in row["ranked"] if item["injected"])
+    scored["wasted_tokens"] = sum(item["tokens"] for item, use in zip(shown_items, shown_useful) if not use)
+    scored["line_tokens"] = sum(item["tokens"] for item in shown_items)
     return scored
 
 
 def conflict_outcomes(dataset, scored_queries):
     """For each query labelling a replaced memory harmful and its replacement
-    relevant: did the replacement reach the model, and ahead of the old one?"""
+    relevant: did the replacement reach the model, and ahead of the old one?
+    Only injected lines count. No benchmark memory comes from a file, so the
+    layer lists them in ranking order."""
     outcomes = []
     for query in scored_queries:
         for old, new, relation in replacements(dataset):
             if old not in query["harmful_labels"] or new not in query["relevant"]:
                 continue
-            ranked = query["ranked"]
-            old_at = ranked.index(old) if old in ranked else None
-            new_at = ranked.index(new) if new in ranked else None
+            shown = query["shown"]
+            old_at = shown.index(old) if old in shown else None
+            new_at = shown.index(new) if new in shown else None
             if old_at is None:
                 outcome = "replacement_only" if new_at is not None else "neither"
             elif new_at is None or old_at < new_at:
@@ -79,14 +91,15 @@ def conflict_outcomes(dataset, scored_queries):
 
 
 def store_quality(dataset, report):
-    """What admission kept, by class, and how much of it is redundant or low value."""
+    """What admission kept, by class, and how much of the store's current
+    memories, as the store reports them, is redundant or low value."""
     index = memory_index(dataset)
     roots = cluster_roots(dataset)
     outcomes = {row["key"]: row["outcome"] for row in report["admissions"]}
     assert set(outcomes) == set(index), "the driver admitted a different set of memories"
-    superseded = {old for old, new, relation in replacements(dataset)
-                  if relation == "supersedes" and outcomes.get(new) != "rejected"}
-    current = [k for k, o in outcomes.items() if o != "rejected" and k not in superseded]
+    current = report["current"]
+    assert len(current) == report["storage"]["current"], "two different counts of current memories"
+    assert all(outcomes[k] != "rejected" for k in current), "a rejected memory is current"
     by_class = {}
     for key, memory in index.items():
         entry = by_class.setdefault(memory["class"], {"offered": 0, "admitted": 0})

@@ -37,6 +37,8 @@ const STORE_FILE: &str = "aether.db";
 pub struct Report {
     pub index: String,
     pub admissions: Vec<seed::AdmissionRow>,
+    /// Keys the store holds current after seeding, read back from it.
+    pub current: Vec<String>,
     pub queries: Vec<retrieval::QueryRow>,
     pub latency: retrieval::LatencyRows,
     pub storage: seed::StorageRow,
@@ -77,6 +79,7 @@ pub fn run(plan: &Plan, sandbox: &Path) -> BenchResult<Report> {
     Ok(Report {
         index: plan.index.clone(),
         admissions: seeded.admissions,
+        current: seeded.current_keys,
         queries,
         latency: retrieval::LatencyRows { small, scaled },
         storage,

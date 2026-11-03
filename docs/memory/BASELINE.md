@@ -105,9 +105,19 @@ did.
 a sandbox under `target/memory-bench/`, removed afterwards. The driver uses the
 paths agents use: `MemoryService::admit` with the agent or operator actor,
 `retrieve` with the request a turn builds, and `aether_context::memory_layer`
-for what the model is sent. The only write outside those paths sets each
-record's `created_at` back by its `age_days`, because recency is a ranking
-signal and no public path records an old memory.
+for what the model is sent. Three fixture writes go to the store directly,
+outside those paths:
+
+- **Backdating:** each record's `created_at` is set back by its `age_days`,
+  because recency is a ranking signal and no public path records an old
+  memory.
+- **Feedback:** review verdicts are committed as `RecordMemoryFeedback`, each
+  with an invented task id, bypassing `Runtime::record_memory_feedback` and
+  its task and context checks. The benchmark measures how seeded feedback
+  ranks, not how feedback is accepted.
+- **Filler:** the 5,000 memories of the scaled latency store are written as
+  records, without admission or its events, so the scaled bytes per memory
+  understate an admitted store's.
 
 ### Dataset
 
@@ -126,11 +136,11 @@ repository, path, commit and number is invented. Each memory has a class:
 | `incorrect` | 1 | A wrong lesson that review marked as hurting twice |
 | `transient` | 4 | Should never be admitted |
 
-Two durable memories are replaced through `supersedes`, three stale ones are
-contradicted by newer memories, and three memories carry review feedback.
-Each query labels the memories it needs (`relevant`, always a cluster's first
-wording) and the ones that would mislead it (`harmful`). Five queries have no
-relevant memory. Seven carry a question and an answer pattern for the task
+Two durable memories are replaced through `supersedes`, all five stale ones
+are contradicted by newer memories, and two memories carry review feedback
+(one durable that helped, the incorrect one that hurt). Each query labels the
+memories it needs (`relevant`, always a cluster's first wording) and the ones
+that would mislead it (`harmful`). Three queries have no relevant memory. Seven carry a question and an answer pattern for the task
 arm.
 
 ### Metrics
@@ -141,23 +151,25 @@ Deterministic, checked against the baseline:
   relevant memory not already shown in another wording (with no slot ranked,
   1 when nothing is relevant); recall@k is the share of relevant memories
   shown; MRR over queries with a relevant memory. k is 3 and 6.
-- **Influence:** queries with a harmful label that are shown one; share of all
-  slots holding one; and for each stale or superseded fact whose replacement
-  the query needs, how often the old one ranks first or alone.
-- **Store:** shares of current memories that restate another, are one-off, or
-  are stale or incorrect; the admission rate of near-duplicates and the
-  rejection rate of transients.
+- **Influence:** counted on the memories injected into the layer, not on the
+  ranking: queries with a harmful label that are shown one; share of all
+  injected slots holding one; and for each stale or superseded fact whose
+  replacement the query needs, how often the old one is shown first or alone.
+- **Store:** shares of the current memories the store lists after seeding
+  that restate another, are one-off, or are stale or incorrect; the admission
+  rate of near-duplicates and the rejection rate of transients.
 - **Injection:** memories and estimated tokens injected per turn; the share of
-  injected tokens that are not relevant; tokens injected when nothing is
-  relevant; slots repeating a shown memory or holding a one-off; model calls
-  per retrieval.
+  estimated memory-line tokens (the layer header excluded) spent on lines
+  that are not relevant; tokens injected when nothing is relevant; injected
+  slots repeating a shown memory or holding a one-off; model calls per
+  retrieval.
 - **Recovery:** whether every query ranks the same after closing and reopening
   the store; and, on copies of the closed database, what opening and
   retrieving do after each kind of damage.
 
 Measured, reported but not checked: retrieval latency over 30 repetitions per
 query on the dataset store and on a scaled store with 5,000 synthetic
-memories, and the database's bytes per record.
+memories (inserted directly, see above), and the database's bytes per record.
 
 The task arm (`--task-arm`, off by default, capped by `--task-max-calls`)
 asks a model each task's question with no memory, with the layer retrieval
@@ -189,7 +201,7 @@ Recorded at `b0ffd05e42fa8fff3bb2fd4b548f893edbfb8b8d` with `make bench-memory`
 | Transient candidates rejected | 1.0 | 1.0 |
 | Memories injected per turn | 6 | 6 |
 | Injected tokens per turn, mean / p95 | 323 / 349 | 320 / 346 |
-| Injected tokens not relevant to the task | 0.8301 | 0.815 |
+| Memory-line tokens not relevant to the task (header excluded) | 0.8301 | 0.815 |
 | Tokens injected when nothing is relevant | 305 | 307 |
 | Slots repeating a memory already shown | 0.2244 | 0.1731 |
 | Slots holding a one-off observation | 0.1795 | 0.2115 |
@@ -225,8 +237,8 @@ also held the stale fact, the model still answered with the newer one.
 ### What the baseline shows
 
 - **Inject sparingly is not met.** Every turn gets six memories, about 320
-  tokens, whatever the task; 83% of those tokens are not relevant, and a task
-  with nothing relevant still gets about 305 tokens of memory.
+  tokens, whatever the task; 83% of the memory-line tokens are not relevant,
+  and a task with nothing relevant still gets about 305 tokens of memory.
 - **Duplicates and one-offs are stored and shown.** Every reworded
   restatement is admitted (15% of the store), so a fifth of retrieved slots
   repeat a memory already shown. Every one-off observation is admitted (23%
@@ -239,9 +251,11 @@ also held the stale fact, the model still answered with the newer one.
   (0.89 to 0.98) but also raises stale exposure (0.4 to 0.6) and the rate at
   which the old fact ranks ahead of its replacement (0.125 to 0.5), because
   an outdated statement is worded like its replacement.
-- **Recovery is all or nothing.** A damaged database refuses to open; a
-  missing one is replaced by an empty store without a warning; neither path
-  restores from a backup.
+- **Recovery is all or nothing in the cases tested.** A truncated database,
+  a zeroed header and damage to every eighth page refuse to open; one
+  overwritten middle page goes undetected and every memory is still
+  retrieved; a missing file is replaced by an empty store without a warning.
+  No path restores from a backup.
 
 ## Judging Memory 2.0
 
