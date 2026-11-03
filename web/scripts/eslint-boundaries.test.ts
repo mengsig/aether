@@ -90,8 +90,19 @@ describe("package import boundaries (CONTRACTS.md §2.2)", () => {
     const mixed = 'export const routes = import.meta.glob(["./*/routes.ts", "../../*/src/routes.ts"]);\n';
     expect(await lint(index, mixed)).toEqual(["aether/import-boundaries: a relative import must stay inside packages/aether"]);
     expect(await lint(index, 'export const r = import.meta.glob("/packages/archon/src/*.ts");\n')).toEqual([
-      'aether/import-boundaries: import.meta.glob pattern "/packages/archon/src/*.ts" must be relative to this file',
+      'aether/import-boundaries: import.meta.glob pattern "/packages/archon/src/*.ts" must be relative to this file, with no .. after a wildcard',
     ]);
+    for (const climb of ["./*/../../../archon/src/**/routes.ts", "./{..,.}/../archon/src/*.ts"]) {
+      expect(await lint(index, `export const r = import.meta.glob(${JSON.stringify(climb)});\n`), climb).toEqual([
+        `aether/import-boundaries: import.meta.glob pattern ${JSON.stringify(climb)} must be relative to this file, with no .. after a wildcard`,
+      ]);
+    }
+    const baseRefused = "aether/import-boundaries: import.meta.glob options must be an object literal without `base`, so the matched files stay checkable";
+    for (const options of ['{ base: "../../archon/src", eager: true }', '{ "base": "/packages/archon/src" }', "{ ...shared }", "shared"]) {
+      const code = `const shared = {};\nexport const r = import.meta.glob("./**/routes.ts", ${options});\nexport { shared };\n`;
+      expect(await lint(index, code), options).toEqual([baseRefused]);
+    }
+    expect(await lint(index, 'export const r = import.meta.glob("./*/routes.ts", { eager: true, import: "routes" });\n')).toEqual([]);
     expect(await lint(index, "const where = './*.ts';\nexport const r = import.meta.glob(where);\n")).toEqual([
       "aether/import-boundaries: import.meta.glob needs string literal patterns, so its package boundary can be checked",
     ]);

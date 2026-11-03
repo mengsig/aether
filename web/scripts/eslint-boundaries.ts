@@ -95,6 +95,9 @@ function globPatterns(node: Rule.Node): string[] | string | undefined {
   const isGlob = callee.type === "MemberExpression" && callee.object?.type === "MetaProperty"
     && callee.object.meta?.name === "import" && (callee.property?.name ?? "").startsWith("glob");
   if (!isGlob) return undefined;
+  if (!globOptionsCheckable(call.arguments[1])) {
+    return "import.meta.glob options must be an object literal without `base`, so the matched files stay checkable";
+  }
   const first = call.arguments[0] as { type?: string; elements?: unknown[] } | undefined;
   const literals = first?.type === "ArrayExpression" ? first.elements ?? [] : [first];
   const patterns = literals.map(literalValue);
@@ -104,11 +107,24 @@ function globPatterns(node: Rule.Node): string[] | string | undefined {
   return patterns as string[];
 }
 
-/** A glob reaches only the directories before its first wildcard, so check that prefix like an import. */
+// Vite resolves patterns against `base` when given; refusing it keeps each pattern relative to its file.
+function globOptionsCheckable(options: unknown): boolean {
+  if (options === undefined) return true;
+  const object = options as { type?: string; properties?: Array<{ type?: string; computed?: boolean; key?: { name?: unknown; value?: unknown } }> };
+  if (object.type !== "ObjectExpression") return false;
+  return (object.properties ?? []).every((property) => property.type === "Property" && property.computed !== true
+    && (property.key?.name ?? property.key?.value) !== "base");
+}
+
+/**
+ * The static directory a glob pattern stays under, checked like a relative import. A `..` after the
+ * first wildcard could climb out of it, so such a pattern has no safe prefix.
+ */
 function globPrefix(pattern: string): string | undefined {
   if (!pattern.startsWith("./") && !pattern.startsWith("../")) return undefined;
   const wildcard = pattern.search(/[*?[\]{}()!+@]/);
-  return wildcard === -1 ? pattern : pattern.slice(0, wildcard);
+  if (wildcard === -1) return pattern;
+  return pattern.slice(wildcard).includes("..") ? undefined : pattern.slice(0, wildcard);
 }
 
 const rule: Rule.RuleModule = {
@@ -151,7 +167,8 @@ const rule: Rule.RuleModule = {
         for (const pattern of patterns.filter((p) => !p.startsWith("!"))) {
           const prefix = globPrefix(pattern);
           if (prefix === undefined) {
-            context.report({ node, message: `import.meta.glob pattern ${JSON.stringify(pattern)} must be relative to this file` });
+            const message = `import.meta.glob pattern ${JSON.stringify(pattern)} must be relative to this file, with no .. after a wildcard`;
+            context.report({ node, message });
             continue;
           }
           check(node, prefix, false);
