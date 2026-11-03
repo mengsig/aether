@@ -351,8 +351,9 @@ pub fn build_request(snapshot: &InvocationSnapshot) -> ModelRequest {
 }
 
 /// The memory layer's text and the ids it renders, in render order: own
-/// memories first, then repository notes, as the text lists them.
-fn memory_layer(
+/// memories first, then repository notes, as the text lists them. Public so
+/// the memory benchmark measures the layer a model is actually sent.
+pub fn memory_layer(
     records: &[MemoryRecord],
     estimator: &TokenEstimator,
     maximum: u32,
