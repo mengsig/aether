@@ -56,12 +56,7 @@ pub fn build_tree(
         .into_iter()
         .map(|l| (l.agent_id, l))
         .collect();
-    let mut all_children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
-    for agent in &all_agents {
-        if let Some(p) = agent.parent {
-            all_children.entry(p).or_default().push(agent.id);
-        }
-    }
+    let all_children = children_of(&all_agents);
     let subtree_usage = roll_up_usage(&all_agents, &all_children);
     let under_root = filter.root.map(|root| subtree_of(root, &all_children));
     let agents: Vec<_> = all_agents
@@ -76,26 +71,14 @@ pub fn build_tree(
 
     let tasks: HashMap<_, _> = tasks.into_iter().map(|t| (t.id, t)).collect();
     let mut nodes: BTreeMap<AgentId, TreeNode> = BTreeMap::new();
-    let mut children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
-    let mut roots = Vec::new();
-    for agent in &agents {
-        match agent.parent {
-            Some(p) if visible.contains(&p) => children.entry(p).or_default().push(agent.id),
-            _ => roots.push(agent.id),
-        }
-    }
+    let (roots, mut children) = link(&agents, &visible);
     for agent in agents {
         let task = agent.current_task.and_then(|id| tasks.get(&id).cloned());
         let waiting_on = Runtime::waiting_on(&agent).into_iter().collect();
         let subtree = subtree_usage.get(&agent.id).copied().unwrap_or_default();
-        let hidden_usage = all_children.get(&agent.id).and_then(|children| {
-            let mut hidden = children.iter().filter(|id| !visible.contains(*id));
-            let mut total = subtree_usage[hidden.next()?];
-            for child in hidden {
-                total += subtree_usage[child];
-            }
-            Some(total)
-        });
+        let hidden_usage = all_children
+            .get(&agent.id)
+            .and_then(|children| hidden_usage(children, &visible, &subtree_usage));
         nodes.insert(
             agent.id,
             TreeNode {
@@ -110,6 +93,52 @@ pub fn build_tree(
         );
     }
     Ok(AgentTree { roots, nodes })
+}
+
+/// Every agent's children, in the order `agents` lists them.
+fn children_of(agents: &[Agent]) -> BTreeMap<AgentId, Vec<AgentId>> {
+    let mut children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
+    for agent in agents {
+        if let Some(parent) = agent.parent {
+            children.entry(parent).or_default().push(agent.id);
+        }
+    }
+    debug_assert!(children.values().map(Vec::len).sum::<usize>() <= agents.len());
+    children
+}
+
+/// The shown agents without a shown parent, and each shown agent's shown children.
+fn link(
+    agents: &[Agent],
+    visible: &BTreeSet<AgentId>,
+) -> (Vec<AgentId>, BTreeMap<AgentId, Vec<AgentId>>) {
+    let mut children: BTreeMap<AgentId, Vec<AgentId>> = BTreeMap::new();
+    let mut roots = Vec::new();
+    for agent in agents {
+        match agent.parent {
+            Some(p) if visible.contains(&p) => children.entry(p).or_default().push(agent.id),
+            _ => roots.push(agent.id),
+        }
+    }
+    debug_assert_eq!(
+        roots.len() + children.values().map(Vec::len).sum::<usize>(),
+        agents.len()
+    );
+    (roots, children)
+}
+
+/// The spend under an agent's children that are not shown; `None` when all are.
+fn hidden_usage(
+    children: &[AgentId],
+    visible: &BTreeSet<AgentId>,
+    subtree_usage: &BTreeMap<AgentId, Usage>,
+) -> Option<Usage> {
+    let mut hidden = children.iter().filter(|id| !visible.contains(*id));
+    let mut total = subtree_usage[hidden.next()?];
+    for child in hidden {
+        total += subtree_usage[child];
+    }
+    Some(total)
 }
 
 /// Each agent's own usage plus every descendant's, by a post-order walk over
@@ -272,10 +301,6 @@ pub fn transcript_page(
         types: vec!["agent.message".into()],
         ..EventFilter::own_events(agent)
     };
-    let last_seq = store
-        .latest_events(1, &filter)?
-        .first()
-        .map_or(0, |event| event.seq);
     let (events, has_before, has_after) = match after {
         Some(after) => {
             let mut events = store.events(after, limit + 1, &filter)?;
@@ -294,13 +319,25 @@ pub fn transcript_page(
             let has_before = events.len() > limit;
             events.truncate(limit);
             events.reverse();
-            let has_after = before.is_some_and(|before| last_seq >= before);
-            (events, has_before, has_after)
+            (events, has_before, false)
         }
     };
+    // Read after the page and from its own transaction: an entry committed
+    // in between raises it, so it is never below the page's newest entry.
+    let newest = store
+        .latest_events(1, &filter)?
+        .first()
+        .map(|event| event.seq);
+    let has_after =
+        has_after || before.is_some_and(|before| newest.is_some_and(|seq| seq >= before));
     let entries: Vec<TranscriptEntry> = events.into_iter().filter_map(transcript_entry).collect();
+    let last_seq = newest
+        .into_iter()
+        .chain(entries.last().map(|entry| entry.seq))
+        .max()
+        .unwrap_or(0);
     assert!(entries.windows(2).all(|pair| pair[0].seq < pair[1].seq));
-    assert!(entries.last().is_none_or(|entry| entry.seq <= last_seq));
+    assert!(entries.len() <= limit, "a page holds at most its limit");
     Ok(TranscriptPage {
         entries,
         has_before,
@@ -597,6 +634,8 @@ mod tests {
         let empty = transcript_page(&store, agent, None, None, 2).expect("empty");
         assert_eq!((empty.entries.len(), empty.last_seq), (0, 0));
         assert!(!empty.has_before && !empty.has_after);
+        let empty = transcript_page(&store, agent, None, Some(0), 2).expect("before 0");
+        assert!(!empty.has_after, "no entry lies at or past the cursor");
         let seqs: Vec<u64> = (0..5)
             .map(|i| say(&store, agent, &format!("m{i}")))
             .collect();

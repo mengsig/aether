@@ -1,11 +1,12 @@
 use std::time::Duration;
 
+use aether_core::agent::{Agent, AgentConfig, AgentStats, AgentStatus, Role, Scope};
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::{AgentId, InvocationId, RunId, SnapshotId};
 use aether_core::model::{ModelRef, Usage};
 use aether_core::time::now;
 use aether_protocol::read_models::{UsageGroup, UsageScope};
-use aether_store::{Commit, SqliteStore, Store};
+use aether_store::{Commit, Mutation, SqliteStore, Store, StoreError};
 
 use super::{UsageRequest, usage_breakdown};
 
@@ -151,5 +152,93 @@ fn a_window_takes_since_inclusive_and_until_exclusive() {
             .total
             .input_tokens,
         1
+    );
+}
+
+fn agent(parent: Option<AgentId>, run: RunId, role: &str) -> Agent {
+    let at = now();
+    Agent {
+        id: AgentId::new(),
+        parent,
+        role: Role::new(role),
+        name: role.into(),
+        scope: Scope::default(),
+        model: ModelRef::new("mock", "m"),
+        fallbacks: Vec::new(),
+        status: AgentStatus::Created,
+        current_task: None,
+        inbox_cursor: 0,
+        checkpoint: None,
+        engine_session: None,
+        engine_usage: None,
+        engine_sent: None,
+        status_since: None,
+        archived: false,
+        paused: false,
+        paused_via: None,
+        resume_wait: None,
+        restarted_from: None,
+        restarted_as: None,
+        engine_alive: false,
+        last_event_at: None,
+        config: AgentConfig::default(),
+        stats: AgentStats::default(),
+        run,
+        created_at: at,
+        updated_at: at,
+    }
+}
+
+fn create(store: &SqliteStore, agent: &Agent) {
+    let created = Mutation::CreateAgent {
+        agent: agent.clone(),
+        subsystem: None,
+    };
+    store.commit(Commit::new().mutate(created)).expect("create");
+}
+
+/// Retention removed another run's invocations: a subtree or role scope
+/// still answers, while a fleet-wide one says the history is gone.
+#[test]
+fn history_expired_elsewhere_fails_only_a_scope_that_reads_it() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let path = dir.path().join("aether.db");
+    let store = SqliteStore::open(&path).expect("open");
+    let model = ModelRef::new("anthropic", "opus");
+    let (gone_run, kept_run) = (RunId::new(), RunId::new());
+    let gone = agent(None, gone_run, "reviewer");
+    let lead = agent(None, kept_run, "lead");
+    let worker = agent(Some(lead.id), kept_run, "worker");
+    for (agent, spent) in [(&gone, 1000), (&lead, 100), (&worker, 10)] {
+        create(&store, agent);
+        complete(&store, agent.id, agent.run, &model, usage(spent, 0.0));
+    }
+    let conn = rusqlite::Connection::open(&path).expect("expire");
+    conn.execute_batch(&format!(
+        "INSERT INTO expired_event_spans SELECT run, COALESCE(agent_id,''), COALESCE(parent_agent_id,''), COALESCE(task_id,''), type, family, MIN(seq), MAX(seq) FROM events WHERE run = '{gone_run}' GROUP BY run, agent_id, parent_agent_id, task_id, type, family;
+         DELETE FROM events WHERE run = '{gone_run}';"
+    ))
+    .expect("expire the other run");
+    drop(conn);
+
+    let subtree = UsageScope {
+        subtree: Some(lead.id),
+        ..UsageScope::default()
+    };
+    let breakdown = usage_breakdown(&store, &request(subtree, UsageGroup::Role)).expect("subtree");
+    assert_eq!(breakdown.total.input_tokens, 110);
+    let keys: Vec<_> = breakdown.rows.iter().map(|row| row.key.as_str()).collect();
+    assert_eq!(keys, ["lead", "worker"]);
+    let leads = UsageScope {
+        role_prefix: Some("lead".into()),
+        ..UsageScope::default()
+    };
+    let breakdown = usage_breakdown(&store, &request(leads, UsageGroup::Run)).expect("role");
+    assert_eq!(breakdown.total.input_tokens, 100);
+
+    let fleet = usage_breakdown(&store, &request(UsageScope::default(), UsageGroup::Model));
+    assert!(
+        matches!(fleet, Err(StoreError::HistoryExpired { .. })),
+        "{fleet:?}"
     );
 }

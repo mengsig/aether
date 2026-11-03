@@ -41,6 +41,15 @@ struct Agents {
     kept: Option<BTreeSet<AgentId>>,
 }
 
+/// The groups summed so far, in key order, and the total over all of them.
+#[derive(Default)]
+struct Tally {
+    groups: BTreeMap<String, UsageRow>,
+    total: Usage,
+}
+
+/// A store failure, `history_expired` included, fails the whole breakdown:
+/// a sum that skipped what retention removed would read as complete.
 pub fn usage_breakdown(
     store: &dyn Store,
     request: &UsageRequest,
@@ -51,28 +60,67 @@ pub fn usage_breakdown(
         "an empty prefix is refused at the boundary"
     );
     let agents = scoped_agents(store, request)?;
-    let filter = EventFilter {
+    let mut tally = Tally::default();
+    for filter in scoped_reads(request, &agents) {
+        fold(store, &filter, request, &agents, &mut tally)?;
+    }
+    let truncated = tally.groups.len() > request.limit;
+    let rows: Vec<UsageRow> = tally.groups.into_values().take(request.limit).collect();
+    debug_assert!(rows.windows(2).all(|pair| pair[0].key < pair[1].key));
+    Ok(UsageBreakdown {
+        rows,
+        total: tally.total,
+        truncated,
+    })
+}
+
+/// The reads that cover the scope. A subtree or role scope reads each kept
+/// agent's own invocations, so history retention removed elsewhere is not read.
+fn scoped_reads(request: &UsageRequest, agents: &Agents) -> Vec<EventFilter> {
+    let base = EventFilter {
         types: vec!["invocation.completed".into()],
         run: request.scope.run,
         agent: request.scope.agent,
         exclude_children: request.scope.agent.is_some(),
         ..EventFilter::default()
     };
-    let mut groups: BTreeMap<String, UsageRow> = BTreeMap::new();
-    let mut total = Usage::default();
+    let Some(kept) = &agents.kept else {
+        return vec![base];
+    };
+    let reads: Vec<EventFilter> = kept
+        .iter()
+        .filter(|id| request.scope.agent.is_none_or(|agent| agent == **id))
+        .map(|id| EventFilter {
+            agent: Some(*id),
+            exclude_children: true,
+            ..base.clone()
+        })
+        .collect();
+    assert!(reads.len() <= kept.len());
+    reads
+}
+
+/// Add every in-scope invocation `filter` reads to `tally`, in seq order.
+fn fold(
+    store: &dyn Store,
+    filter: &EventFilter,
+    request: &UsageRequest,
+    agents: &Agents,
+    tally: &mut Tally,
+) -> aether_store::Result<()> {
     let mut after = 0u64;
     loop {
-        let page = store.events(after, PAGE, &filter)?;
+        let page = store.events(after, PAGE, filter)?;
         let Some(last) = page.last() else { break };
         assert!(last.seq > after, "the log pages forwards");
         after = last.seq;
         for completed in page.iter().filter_map(completed) {
-            if !in_scope(&completed, request, &agents) {
+            if !in_scope(&completed, request, agents) {
                 continue;
             }
-            total += completed.usage;
-            let key = group_key(&completed, request.by, &agents);
-            let row = groups.entry(key.clone()).or_insert_with(|| UsageRow {
+            tally.total += completed.usage;
+            let key = group_key(&completed, request.by, agents);
+            let row = tally.groups.entry(key.clone()).or_insert_with(|| UsageRow {
                 key,
                 usage: Usage::default(),
                 invocations: 0,
@@ -81,17 +129,10 @@ pub fn usage_breakdown(
             row.invocations += 1;
         }
         if page.len() < PAGE {
-            break;
+            return Ok(());
         }
     }
-    let truncated = groups.len() > request.limit;
-    let rows: Vec<UsageRow> = groups.into_values().take(request.limit).collect();
-    debug_assert!(rows.windows(2).all(|pair| pair[0].key < pair[1].key));
-    Ok(UsageBreakdown {
-        rows,
-        total,
-        truncated,
-    })
+    Ok(())
 }
 
 /// Every agent's role, and the agents a subtree or role scope keeps.

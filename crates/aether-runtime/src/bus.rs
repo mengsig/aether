@@ -3,11 +3,10 @@
 //! The bus is a fast path, not the source of truth. A subscriber that needs
 //! durability replays from the store using sequence numbers.
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use aether_core::event::Event;
+use aether_core::event::{Event, EventKind};
 use aether_core::id::{AgentId, InvocationId};
 use aether_core::model::Usage;
 use tokio::sync::broadcast;
@@ -58,8 +57,11 @@ pub enum BusMessage {
     },
 }
 
-/// Invocations whose delta counters are kept. Ids are time-ordered, so the
-/// one dropped past this is the oldest: long finished in any real fleet.
+mod delta_counters;
+use delta_counters::DeltaCounters;
+
+/// Invocations whose delta counters are kept. Past it a finished one's goes
+/// first, else the one idle longest, never one that just streamed.
 const TRACKED_INVOCATIONS: usize = 65_536;
 
 #[derive(Debug, Clone)]
@@ -67,7 +69,7 @@ pub struct EventBus {
     tx: broadcast::Sender<BusMessage>,
     last_seq: Arc<AtomicU64>,
     /// The last delta seq each invocation was given.
-    delta_seqs: Arc<Mutex<BTreeMap<InvocationId, u64>>>,
+    delta_seqs: Arc<Mutex<DeltaCounters>>,
 }
 
 impl Default for EventBus {
@@ -87,7 +89,7 @@ impl EventBus {
         Self {
             tx,
             last_seq: Arc::new(AtomicU64::new(0)),
-            delta_seqs: Arc::default(),
+            delta_seqs: Arc::new(Mutex::new(DeltaCounters::new(TRACKED_INVOCATIONS))),
         }
     }
 
@@ -97,6 +99,11 @@ impl EventBus {
 
     pub fn publish_event(&self, event: Event) {
         self.last_seq.fetch_max(event.seq, Ordering::SeqCst);
+        if let EventKind::InvocationCompleted { invocation, .. }
+        | EventKind::InvocationFailed { invocation, .. } = &event.kind
+        {
+            self.counters().finish(*invocation);
+        }
         // No receivers is not an error: the store already has the event.
         let _ = self.tx.send(BusMessage::Event(Arc::new(event)));
     }
@@ -109,20 +116,9 @@ impl EventBus {
     /// across the send, so the channel carries each invocation's deltas in
     /// seq order.
     pub fn publish_delta(&self, agent: AgentId, invocation: InvocationId, delta: DeltaKind) {
-        // A poisoned counter map is only ever mid-increment: its numbers still hold.
-        let mut seqs = self
-            .delta_seqs
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let seq = {
-            let last = seqs.entry(invocation).or_insert(0);
-            *last += 1;
-            *last
-        };
-        if seqs.len() > TRACKED_INVOCATIONS {
-            seqs.pop_first();
-        }
-        debug_assert!(seq >= 1 && seqs.len() <= TRACKED_INVOCATIONS);
+        let mut counters = self.counters();
+        let seq = counters.next(invocation);
+        debug_assert!(seq >= 1);
         // No receivers is not an error: deltas are transient, and the gap a
         // later subscriber sees is how it knows to read the transcript.
         let _ = self.tx.send(BusMessage::Delta {
@@ -131,6 +127,14 @@ impl EventBus {
             seq,
             delta,
         });
+        drop(counters);
+    }
+
+    fn counters(&self) -> std::sync::MutexGuard<'_, DeltaCounters> {
+        // A poisoned lock can only interrupt an assertion; the counts still hold.
+        self.delta_seqs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -219,18 +223,25 @@ mod tests {
     }
 
     #[test]
-    fn the_counters_kept_are_bounded_and_the_oldest_goes_first() {
+    fn the_counters_kept_are_bounded_and_one_still_streaming_is_kept() {
         let bus = EventBus::new();
         let agent = AgentId::new();
-        let oldest = InvocationId::new();
-        bus.publish_delta(agent, oldest, text(0));
-        // Ids within one millisecond are unordered; the rest must be newer.
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        for _ in 0..TRACKED_INVOCATIONS {
-            bus.publish_delta(agent, InvocationId::new(), text(0));
+        let streaming = InvocationId::new();
+        bus.publish_delta(agent, streaming, text(0));
+        for n in 0..TRACKED_INVOCATIONS {
+            bus.publish_delta(agent, InvocationId::new(), text(n));
+            if n % 1000 == 0 {
+                bus.publish_delta(agent, streaming, text(n));
+            }
         }
-        let seqs = bus.delta_seqs.lock().unwrap();
-        assert_eq!(seqs.len(), TRACKED_INVOCATIONS);
-        assert!(!seqs.contains_key(&oldest));
+        assert_eq!(bus.counters().len(), TRACKED_INVOCATIONS);
+        assert!(bus.counters().tracks(streaming));
+        let mut rx_late = bus.subscribe();
+        bus.publish_delta(agent, streaming, DeltaKind::TurnFinished);
+        let numbered = seqs_of(&mut rx_late, streaming);
+        assert_eq!(
+            numbered,
+            vec![TRACKED_INVOCATIONS.div_ceil(1000) as u64 + 2]
+        );
     }
 }

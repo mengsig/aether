@@ -314,7 +314,9 @@ default 200). With `after`, the first entries with a seq greater than it; with
 `before`, the newest entries with a seq below it; with neither, the newest
 entries. `has_before` and `has_after` say whether entries lie beyond the page
 on either side, and `last_seq` is the seq of the agent's newest entry, 0 before
-its first. Page backwards with `before` set to the first entry's seq, and
+its first. `last_seq` is read after the page, so an entry committed meanwhile
+can put it past the page's last entry with `has_after` still false; ask again
+with `after` to read it. Page backwards with `before` set to the first entry's seq, and
 forwards with `after` set to the last one's.
 
 `usage_breakdown {scope, by, since?, until?, limit?}` answers
@@ -338,7 +340,10 @@ its count of `invocations`. At most `limit` rows (1 to 1000, default 1000)
 are returned and `truncated` says more groups matched; `total` counts every
 invocation in scope, the cut rows' included. A native engine's message records
 zero usage there, as its spend arrives as `agent.usage_updated`, so the
-breakdown does not include it.
+breakdown does not include it. A breakdown that would read invocations history retention
+removed is refused with `history_expired` rather than summed short; a
+`subtree` or `role_prefix` scope reads only its own agents' invocations, so
+another run's expiry does not affect it.
 
 ## Delta order
 
