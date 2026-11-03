@@ -30,6 +30,18 @@ describe("package import boundaries (CONTRACTS.md §2.2)", () => {
     ]);
   });
 
+  it("checks every module kind a package may hold, not only .ts", async () => {
+    const crossing = 'import { routes } from "@aether-ui/archon";\nexport const all = routes;\nexport const get = () => fetch("/api");\n';
+    for (const extension of ["mts", "cts", "tsx", "mjs", "js", "jsx"]) {
+      const rules = (await lint(`packages/aether/src/probe.${extension}`, crossing)).map((m) => m.split(":")[0]);
+      expect(rules, extension).toContain("aether/import-boundaries");
+      expect(rules, extension).toContain("no-restricted-globals");
+    }
+    const required = (await lint("packages/aether/src/probe.cjs", 'module.exports = require("@aether-ui/archon");\n'))
+      .map((m) => m.split(":")[0]);
+    expect(required).toContain("@typescript-eslint/no-require-imports");
+  });
+
   it("lets a feature package use core, ui, graph, protocol and React", async () => {
     const code = [
       'import { useState } from "react";',

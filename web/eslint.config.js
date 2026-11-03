@@ -11,6 +11,8 @@ const TRANSPORTS = ["WebSocket", "EventSource", "XMLHttpRequest", "fetch"];
 const TRANSPORT_MESSAGE = "Only @aether-ui/core talks to transports (CONTRACTS.md §2.2); send through useCommand.";
 const BRIDGE_MESSAGE = "Only @aether-ui/core reaches the desktop bridge (CONTRACTS.md §2.2).";
 const GLOBAL_OBJECTS = ["window", "globalThis", "self"];
+// Every module kind ESLint, TypeScript or Vite would accept inside a package.
+const PACKAGE_SOURCES = ["packages/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}"];
 
 const transportGlobals = TRANSPORTS.map((name) => ({ name, message: TRANSPORT_MESSAGE }));
 const qualifiedGlobals = GLOBAL_OBJECTS.flatMap((object) => [
@@ -30,12 +32,12 @@ export default defineConfig([
   tseslint.configs.strict,
   reactHooks.configs.flat.recommended,
   {
-    files: ["packages/**/*.{ts,tsx,js,jsx}"],
+    files: PACKAGE_SOURCES,
     plugins: { aether: boundaries },
     rules: { "aether/import-boundaries": ["error", { root: import.meta.dirname }] },
   },
   {
-    files: ["packages/**/*.{ts,tsx,js,jsx}"],
+    files: PACKAGE_SOURCES,
     ignores: ["packages/core/**"],
     rules: {
       "no-restricted-globals": ["error", ...transportGlobals],
