@@ -49,8 +49,8 @@ fn next_ulid() -> Ulid {
     let next = if fresh > *last {
         fresh
     } else {
-        last.increment()
-            .expect("a ULID's random part does not overflow")
+        // The 80-bit random part overflowing is out of reach; a new draw is the safe answer.
+        last.increment().unwrap_or_else(|_| Ulid::generate())
     };
     assert!(next > *last, "ids rise strictly");
     *last = next;
