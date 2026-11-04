@@ -4,7 +4,8 @@ export { createApp, archonMounted, CLIENT_VERSION, type App, type AppOptions } f
 export { ConnectionManager, type ManagerOptions } from "./manager.ts";
 export { Connection, ARCHON_VERSIONS, type Endpoint } from "./connection.ts";
 export { AetherSync, MAX_DELTA_AGENTS } from "./aether-sync.ts";
-export { ArchonSync } from "./archon-sync.ts";
+export { ArchonSync, GRAPH_LIMIT } from "./archon-sync.ts";
+export { searchKey, checkSearch, SEARCHES_KEPT, type ItemSearch } from "./archon-reads.ts";
 export { Store, dropConnection, INITIAL_STATE, replaces } from "./store.ts";
 export type { State, AetherConnState, ArchonConnState, ArchonItem, ArchonGraph, ArchonPlan, Stamped, StreamState, StreamTool, TranscriptState, Submission, Report, FrameScheduler } from "./store.ts";
 export { computeCapabilities } from "./capabilities.ts";

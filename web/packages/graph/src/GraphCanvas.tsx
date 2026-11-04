@@ -7,7 +7,7 @@ import { announce, keyAction, readingOrder, type KeyAction } from "./focus.ts";
 import { invariant } from "./invariant.ts";
 import { visibleGraph } from "./model.ts";
 import { GraphNodeList, VISUALLY_HIDDEN } from "./NodeList.tsx";
-import { animationFrames, GraphRenderer } from "./renderer.ts";
+import { animationFrames, GraphRenderer, type Emphasis } from "./renderer.ts";
 import { buildScene, hitTest, type Hit, type NodeShape, type Scene } from "./scene.ts";
 import { readTheme, watchTheme } from "./theme.ts";
 import { toWorld, Viewport } from "./viewport.ts";
@@ -20,6 +20,8 @@ export interface GraphCanvasProps {
   label: string;
   shape?: NodeShape;
   selected?: string;
+  /** Drawn in the accent without a relayout, e.g. a critical path; keep its identity stable between renders. */
+  emphasis?: Emphasis;
   onActivate?: (id: string) => void;
   onToggleGroup?: (group: string) => void;
 }
@@ -174,7 +176,7 @@ function usePointer(canvasRef: RefObject<HTMLCanvasElement | null>, surface: Ref
 }
 
 export function GraphCanvas(props: GraphCanvasProps): ReactNode {
-  const { model, layout, label, selected, onActivate, onToggleGroup } = props;
+  const { model, layout, label, selected, emphasis, onActivate, onToggleGroup } = props;
   const shape = props.shape ?? "box";
   const graph = useMemo(() => visibleGraph(model), [model]);
   const scene = useMemo(() => buildScene(graph, layout, shape), [graph, layout, shape]);
@@ -185,6 +187,7 @@ export function GraphCanvas(props: GraphCanvasProps): ReactNode {
 
   useEffect(() => { surface.current?.setScene(scene); }, [surface, scene]);
   useEffect(() => { surface.current?.renderer.update({ selected }); }, [surface, selected]);
+  useEffect(() => { surface.current?.renderer.update({ emphasis }); }, [surface, emphasis]);
   // Only a focus move pans to the node; a new scene (a status change) keeps the user's view.
   useEffect(() => {
     surface.current?.renderer.update({ focused });

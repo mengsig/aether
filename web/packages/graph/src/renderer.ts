@@ -18,8 +18,13 @@ export type Context2D = Pick<CanvasRenderingContext2D,
   | "bezierCurveTo" | "lineTo" | "stroke"
   | "fillStyle" | "strokeStyle" | "lineWidth" | "font" | "textBaseline">;
 
+/** Nodes and edges drawn in the accent, such as a critical path; an edge's key is `edgeKey(from, to)`. */
+export interface Emphasis { readonly nodes: ReadonlySet<string>; readonly edges: ReadonlySet<string> }
+export const edgeKey = (from: string, to: string): string => `${from}\n${to}`;
+
 export interface RenderState { scene?: Scene | undefined; camera: Camera; width: number; height: number; dpr: number;
-  focused?: string | undefined; selected?: string | undefined; hovered?: string | undefined; theme: GraphTheme }
+  focused?: string | undefined; selected?: string | undefined; hovered?: string | undefined; theme: GraphTheme;
+  emphasis?: Emphasis | undefined }
 
 /** Labels are skipped below this zoom, where they would be unreadable. */
 const LABEL_SCALE = 0.45;
@@ -82,7 +87,9 @@ export class GraphRenderer {
     ctx.font = theme.font;
     ctx.textBaseline = "middle";
     for (const group of scene.groups) if (overlaps(group, view)) this.drawGroup(group, camera.scale);
-    this.drawEdges(scene.edges.filter((e) => overlaps(e.box, view)), scene.shape === "box");
+    const { plain, strong } = this.splitEdges(scene.edges.filter((e) => overlaps(e.box, view)));
+    this.drawEdges(plain, scene.shape === "box", false);
+    if (strong.length > 0) this.drawEdges(strong, scene.shape === "box", true);
     const visible = scene.index.query(view);
     for (const node of visible) this.drawNode(node, scene.shape === "box", camera.scale);
   }
@@ -97,10 +104,21 @@ export class GraphRenderer {
     ctx.fillText(this.fit(group.label, group.width - 16), group.x + 8, group.y + GROUP_HEADER / 2 + 2);
   }
 
-  private drawEdges(edges: readonly SceneEdge[], layered: boolean): void {
+  /** Emphasized edges draw last, over the others. */
+  private splitEdges(edges: readonly SceneEdge[]): { plain: readonly SceneEdge[]; strong: readonly SceneEdge[] } {
+    const keys = this.state.emphasis?.edges;
+    if (keys === undefined || keys.size === 0) return { plain: edges, strong: [] };
+    const plain: SceneEdge[] = [];
+    const strong: SceneEdge[] = [];
+    for (const edge of edges) (keys.has(edgeKey(edge.from.node.id, edge.to.node.id)) ? strong : plain).push(edge);
+    invariant(plain.length + strong.length === edges.length, "every edge is drawn once");
+    return { plain, strong };
+  }
+
+  private drawEdges(edges: readonly SceneEdge[], layered: boolean, strong: boolean): void {
     const { ctx } = this;
-    ctx.strokeStyle = this.state.theme.edge;
-    ctx.lineWidth = 1 / this.state.camera.scale;
+    ctx.strokeStyle = strong ? this.state.theme.accent : this.state.theme.edge;
+    ctx.lineWidth = (strong ? 2.5 : 1) / this.state.camera.scale;
     ctx.beginPath();
     for (const edge of edges) {
       const [start, c1, c2, end] = edge.curve;
@@ -121,8 +139,9 @@ export class GraphRenderer {
     }
     const ring = state.focused === node.id ? state.theme.focus : state.selected === node.id ? state.theme.accent
       : state.hovered === node.id ? state.theme.text : state.theme.border;
-    ctx.strokeStyle = ring;
-    ctx.lineWidth = (ring === state.theme.border ? 1 : 3) / scale;
+    const emphasized = ring === state.theme.border && state.emphasis?.nodes.has(node.id) === true;
+    ctx.strokeStyle = emphasized ? state.theme.accent : ring;
+    ctx.lineWidth = (emphasized ? 2 : ring === state.theme.border ? 1 : 3) / scale;
     ctx.strokeRect(scene.x, scene.y, scene.width, scene.height);
     if (!box || scale < LABEL_SCALE) return;
     const text = node.collapsedMembers === undefined ? node.label : `${node.label} (${node.collapsedMembers})`;
