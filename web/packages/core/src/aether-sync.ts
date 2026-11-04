@@ -284,6 +284,9 @@ export class AetherSync {
 /** Installs a refetched agent row and keeps the root index in step with its parent. */
 function withAgent(state: AetherConnState, agent: aether.Agent): AetherConnState {
   string(agent.id, "agent.id");
+  // A reread replaces the whole row, but never with one older than the row it would replace.
+  const held = state.agents[agent.id];
+  if (held && Date.parse(held.updated_at) > Date.parse(agent.updated_at)) return state;
   const isRoot = !agent.parent;
   const listed = state.roots.includes(agent.id);
   const roots = isRoot && !listed ? [...state.roots, agent.id] : !isRoot && listed ? state.roots.filter((id) => id !== agent.id) : state.roots;

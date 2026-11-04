@@ -22,9 +22,7 @@ export function applyEvent(state: AetherConnState, event: aether.Event): AetherC
   if (type === "agent.message" && agent) {
     const entry = { seq: at, at: event.at, invocation: invocation ?? null, message: { role: kind.role, content: kind.content } } as aether.TranscriptEntry;
     if (next.transcripts[agent]) next = { ...next, transcripts: { ...next.transcripts, [agent]: mergeEntries(next.transcripts[agent], [entry], null) } };
-    // The committed message replaces the streamed text of its invocation.
-    const stream = invocation ? next.streams[invocation] : undefined;
-    if (invocation && stream) next = withStream(next, invocation, { ...stream, text: "", thinking: "" });
+    if (invocation && kind.role === "assistant") next = commitStream(next, agent, invocation);
   }
   if ((type === "invocation.completed" || type === "invocation.failed") && invocation) next = withStream(next, invocation, undefined);
   if (type === "noesis.settings_changed") next = { ...next, noesis: withNoesisSettings(next.noesis, kind) };
@@ -54,6 +52,21 @@ function withNoesisSettings(status: Json | null, kind: Json): Json {
 
 function pick(source: Json, keys: readonly string[]): Json {
   return Object.fromEntries(keys.filter((key) => key in source).map((key) => [key, source[key]]));
+}
+
+/**
+ * The committed assistant message replaces its invocation's tail: the stream stays as an
+ * empty tombstone until the invocation ends, so a late delta cannot append the text again.
+ */
+function commitStream(state: AetherConnState, agent: string, invocation: string): AetherConnState {
+  const stream = state.streams[invocation];
+  invariant(!stream || stream.agent === agent, "an invocation belongs to one agent");
+  const base = stream ?? emptyStream(agent, invocation, null);
+  return withStream(state, invocation, { ...base, text: "", thinking: "", tools: [], recovering: false, partial: false, committed: true });
+}
+
+function emptyStream(agent: string, invocation: string, order: number | null): StreamState {
+  return { agent, invocation, text: "", thinking: "", tools: [], lastInvocationSeq: order, recovering: false, partial: false, committed: false };
 }
 
 export function withStream(state: AetherConnState, invocation: string, stream: StreamState | undefined): AetherConnState {
@@ -87,17 +100,38 @@ export function applyDelta(state: AetherConnState, frame: Json): { state: Aether
   const order = frame.invocation_seq === undefined || frame.invocation_seq === null ? null : seq(frame.invocation_seq, "delta.invocation_seq");
   const previous = state.streams[invocation];
   invariant(!previous || previous.agent === agent, "an invocation belongs to one agent");
-  const lost: StreamState = { agent, invocation, text: "", thinking: "", lastInvocationSeq: order, recovering: true };
+  if (previous?.committed) return { state, outcome: "ignored" };
+  const lost: StreamState = { ...emptyStream(agent, invocation, order), recovering: true, partial: true };
   if (order !== null && previous?.lastInvocationSeq != null && order <= previous.lastInvocationSeq) return { state, outcome: "ignored" };
   if (previous?.recovering) return { state: withStream(state, invocation, { ...previous, lastInvocationSeq: order }), outcome: "ignored" };
   const expected = previous?.lastInvocationSeq == null ? 1 : previous.lastInvocationSeq + 1;
   if (order !== null && order !== expected) return { state: withStream(state, invocation, lost), outcome: "reread" };
-  const stream: StreamState = { ...(previous ?? { ...lost, recovering: false }), lastInvocationSeq: order };
-  if (delta.delta !== "text" && delta.delta !== "thinking") return { state: withStream(state, invocation, stream), outcome: "applied" };
-  const field = delta.delta;
-  const text = stream[field] + String(delta.text ?? "");
-  if (text.length > MAX_STREAM_CHARS) return { state: withStream(state, invocation, lost), outcome: "reread" };
-  return { state: withStream(state, invocation, { ...stream, [field]: text }), outcome: "applied" };
+  const stream: StreamState = { ...(previous ?? emptyStream(agent, invocation, order)), lastInvocationSeq: order };
+  const grown = grow(stream, delta);
+  if (grown === null) return { state: withStream(state, invocation, lost), outcome: "reread" };
+  return { state: withStream(state, invocation, grown), outcome: "applied" };
+}
+
+/** Adds one delta's text, reasoning or tool input to the tail; null when it outgrows the cap. */
+function grow(stream: StreamState, delta: Json): StreamState | null {
+  if (delta.delta === "text" || delta.delta === "thinking") {
+    const field = delta.delta;
+    const text = stream[field] + String(delta.text ?? "");
+    return text.length > MAX_STREAM_CHARS ? null : { ...stream, [field]: text };
+  }
+  if (delta.delta !== "tool_input") return stream;
+  const id = typeof delta.tool_use_id === "string" ? delta.tool_use_id : null;
+  const name = String(delta.name ?? "");
+  const chunk = String(delta.partial_json ?? "");
+  // A daemon without tool_use_id streams one call at a time, so its chunks join the last call.
+  const at = id === null ? stream.tools.length - 1 : stream.tools.findIndex((tool) => tool.id === id);
+  const target = at >= 0 && (id !== null || stream.tools[at]?.id === null) ? stream.tools[at] : undefined;
+  const tools = [...stream.tools];
+  if (target) tools[at] = { ...target, name: target.name || name, input: target.input + chunk };
+  else tools.push({ id, name, input: chunk });
+  const total = tools.reduce((sum, tool) => sum + tool.input.length, stream.text.length + stream.thinking.length);
+  invariant(id === null || tools.filter((tool) => tool.id === id).length === 1, "one tail entry per tool_use_id");
+  return total > MAX_STREAM_CHARS ? null : { ...stream, tools };
 }
 
 /** A transcript reread for this agent succeeded: its streams take later deltas again. */

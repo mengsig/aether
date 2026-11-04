@@ -203,6 +203,18 @@ describe("Aether resync review regressions", () => {
     expect(daemon.commands("get_attention")).toHaveLength(2);
   });
 
+  it("keeps a newer agent row when a refetch answers with an older one", async () => {
+    const agent = F.tree.data.nodes[F.agent as keyof typeof F.tree.data.nodes].agent;
+    const older = { ...agent, name: "older", updated_at: "2026-11-04T02:59:00Z" };
+    const { store, daemon, manager } = setup(healthy({ get_agent: () => ({ ok: { reply: "agent", data: older } }) }));
+    manager.start();
+    await settle();
+    daemon.push(agentEvent(4, "agent.usage_updated", { total: {}, turn_usage: {} }));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("get_agent")).toHaveLength(1);
+    expect(store.get().aether[CONN_A]?.agents[F.agent]?.name).toBe("worker");
+  });
+
   it("refetches the agent after a usage update", async () => {
     const { daemon, manager } = setup(healthy());
     manager.start();
