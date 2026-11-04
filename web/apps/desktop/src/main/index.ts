@@ -3,6 +3,8 @@
 import { app } from "electron";
 import { DeepLinkRouter } from "../native/deep-links.ts";
 import { registerDeepLinkScheme } from "../native/electron.ts";
+import { checkForUpdate, labelAboutPanel, readBuildInfo } from "../update/electron.ts";
+import { reportSmoke, SMOKE_ENV } from "./smoke.ts";
 import { registerAppScheme, startDesktop } from "./start.ts";
 
 app.enableSandbox();
@@ -22,8 +24,15 @@ app.on("second-instance", (_event, argv) => {
 deepLinks.acceptArgv(process.argv);
 registerDeepLinkScheme();
 
+const build = readBuildInfo();
+labelAboutPanel(build);
+
 app.whenReady()
-  .then(() => startDesktop({ offscreen: false, env: process.env, deepLinks }))
+  .then(() => startDesktop({ offscreen: false, env: process.env, deepLinks, build }))
+  .then(async (desktop) => {
+    if (process.env[SMOKE_ENV] === "1") await reportSmoke(desktop, build, app);
+    else checkForUpdate(desktop.appWindow, build);
+  })
   .catch((error: unknown) => {
     console.error("The desktop app could not start:", error);
     app.exit(1);

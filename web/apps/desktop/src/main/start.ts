@@ -15,6 +15,7 @@ import { notificationSink, pickFolder, windowTarget } from "../native/electron.t
 import { FolderTokens } from "../native/folder-tokens.ts";
 import { Notifier } from "../native/notifications.ts";
 import { RemoteWindows } from "../remote/remote-windows.ts";
+import type { BuildInfo } from "../update/updates.ts";
 import { APP_ENTRY, APP_ORIGIN, APP_SCHEME } from "../security/csp.ts";
 import { guardSession, pinContents } from "../security/navigation.ts";
 import { compileSchemas, readProtocolSchema } from "../security/schema.ts";
@@ -40,6 +41,8 @@ export interface DesktopOptions {
   readonly confirm?: BridgeHost["confirm"];
   /** Where deep links go; the entry makes it before the app is ready, to catch early links. */
   readonly deepLinks?: DeepLinkRouter;
+  /** The build's signing label, reported in diagnostics; a development run's when absent. */
+  readonly build?: BuildInfo;
 }
 
 export interface Desktop {
@@ -92,7 +95,7 @@ function host(options: DesktopOptions, parts: HostParts): BridgeHost {
     openRemote: async (origin) => { await remote.open(origin); },
     getPreference: (key) => preferences.get(key),
     setPreference: (key, value) => preferences.set(key, value),
-    versions: { app: version, electron: process.versions.electron ?? "", chrome: process.versions.chrome ?? "", node: process.versions.node },
+    versions: { app: version, build: options.build?.label ?? "unsigned build", electron: process.versions.electron ?? "", chrome: process.versions.chrome ?? "", node: process.versions.node },
     logPath: daemons.logDir,
     protocolVersions,
   };
