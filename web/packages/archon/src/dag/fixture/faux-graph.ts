@@ -107,7 +107,7 @@ export class FauxGraphArchond {
   private answer(command: Json): Json {
     const reply = (tag: string, data: unknown): Json => ({ Ok: { reply: tag, data } });
     switch (command.cmd) {
-      case "task_graph": return reply("task_graph", this.graph(Number(command.limit ?? 500)));
+      case "task_graph": return reply("task_graph", this.graphReply(Number(command.limit ?? 500)));
       case "item_history": {
         const id = String(command.item);
         if (!this.world.base.items.has(id)) return { Err: { code: "not_found", message: `no item ${id}` } };
@@ -123,7 +123,8 @@ export class FauxGraphArchond {
     }
   }
 
-  private graph(limit: number): Json {
+  /** The `task_graph` reply data for the world as it stands. */
+  graphReply(limit: number): Json {
     invariant(limit >= 1 && limit <= 2000, "task_graph limits are 1 to 2000");
     const summaries = [...this.world.base.items.values()].map((entry) => entry.summary)
       .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)));
