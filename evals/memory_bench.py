@@ -105,11 +105,12 @@ def cmd_run(args):
     run_dir = Path(args.out) if args.out else SCRATCH / time.strftime("%Y%m%d-%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
     results = {"set": f"{dataset['manifest']['name']}/{dataset['manifest']['version']}",
-               "commit": commit, "dirty": dirty, "arms": {}}
+               "commit": commit, "dirty": dirty, "consolidate": args.consolidate, "arms": {}}
     reports = {}
     for arm in arms:
         log(f"running index={arm}")
         plan = build_plan(dataset, index=arm, reps=args.reps, filler=args.filler)
+        plan["consolidate"] = args.consolidate
         reports[arm] = run_driver(driver, plan, run_dir, arm)
         results["arms"][arm] = compute(dataset, reports[arm])
     if args.task_arm:
@@ -190,6 +191,8 @@ def parser():
     run.add_argument("--filler", type=int, default=5000, help="synthetic memories in the scaled store")
     run.add_argument("--load-max", type=float, default=10.0, help="wait while the 1-minute load is above this")
     run.add_argument("--out", help="results directory (default target/memory-bench/<time>)")
+    run.add_argument("--consolidate", action="store_true",
+                     help="merge near-duplicates after seeding, as consolidate_memories does")
     run.add_argument("--check", action="store_true", help="exit 1 unless the baseline reproduces")
     run.add_argument("--write-baseline", action="store_true", help="record this run as the set's baseline")
     run.add_argument("--task-arm", action="store_true", help="also run the model-graded task arm (spends tokens)")
