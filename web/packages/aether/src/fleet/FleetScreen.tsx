@@ -3,7 +3,7 @@
 
 import { routeHref, useSelector } from "@aether-ui/core";
 import { Badge, Button, EmptyState, StatusPill, VirtualList } from "@aether-ui/ui";
-import { useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import "./fleet.css";
 import { FleetFilters } from "./FleetFilters.tsx";
 import { invariant } from "./invariant.ts";
@@ -21,7 +21,8 @@ export function RoleTag({ role }: { readonly role: string }) {
   return <span className="fleet-role" title={role}><Badge tone="accent">{label.text}</Badge></span>;
 }
 
-function FleetRowView({ row, runName }: { readonly row: FleetRow; readonly runName: string }) {
+// Memoized: a scroll step renders only the rows that came into view, not the whole screenful.
+const FleetRowView = memo(function FleetRowView({ row, runName }: { readonly row: FleetRow; readonly runName: string }) {
   const { agent } = row;
   const status = agentStatus(agent);
   return (
@@ -36,7 +37,7 @@ function FleetRowView({ row, runName }: { readonly row: FleetRow; readonly runNa
       <span className="fleet-run" title={agent.run}>{runName}</span>
     </div>
   );
-}
+});
 
 function FleetList({ rows, names }: { readonly rows: readonly FleetRow[]; readonly names: ReadonlyMap<string, string> }) {
   const renderRow = useCallback((index: number) => {
