@@ -25,6 +25,17 @@ async function item(id: string, world = demoWorld()) {
 }
 
 describe("an item's states", () => {
+  test("names the stage from the reread detail, not the older summary", async () => {
+    const { h, container } = await item("qi_dark_mode");
+    expect(container.querySelector(".item-fact:nth-child(1)")?.textContent).toContain("stage review");
+    const entry = h.world.items.get("qi_dark_mode");
+    if (!entry) throw new Error("the demo world has qi_dark_mode");
+    const runs = entry.detail.runs as Record<string, unknown>[];
+    entry.detail = { ...entry.detail, runs: runs.map((run) => ({ ...run, state: { state: "running", stage_id: "docs", attempt: 1 } })) };
+    h.faux.tell("qi_dark_mode", { subject: "stage", item: "qi_dark_mode", run: "run_dark", stage_id: "docs" });
+    await h.until(() => container.querySelector(".item-fact:nth-child(1)")?.textContent?.includes("stage docs") === true, "the reread stage", 2_000);
+  });
+
   test("rereads the links, reports and questions after a change names the item", async () => {
     const { h, container } = await item("qi_rate_limit");
     expect(facts(container)).toContain("Issue: Not linked");

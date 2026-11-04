@@ -47,28 +47,30 @@ export function useActivity(conn: string): string {
 }
 
 /**
- * A counter that moves `ms` after `value` first changes, then again for later changes: a burst rereads
- * once, and a steady stream still rereads every `ms`. It does not move on mount.
+ * `value` as it stood when it last settled: it follows `ms` after a change, so a burst rereads once and a
+ * steady stream still rereads every `ms`. Keyed reads follow it; it starts at the mounted value.
  */
-export function useSettled(value: unknown, ms: number): number {
+export function useSettled<T>(value: T, ms: number): T {
   invariant(ms > 0, "a settle window is positive");
-  const [count, setCount] = useState(0);
-  const seen = useRef(value);
+  const [settled, setSettled] = useState(value);
+  const latest = useRef(value);
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (Object.is(seen.current, value) || pending.current !== null) return;
-    seen.current = value;
-    pending.current = setTimeout(() => { pending.current = null; setCount((n) => n + 1); }, ms);
-  }, [value, ms]);
+    latest.current = value;
+    if (pending.current !== null || Object.is(settled, value)) return;
+    pending.current = setTimeout(() => { pending.current = null; setSettled(latest.current); }, ms);
+  }, [value, ms, settled]);
   useEffect(() => () => {
     if (pending.current !== null) clearTimeout(pending.current);
     pending.current = null;
   }, []);
-  return count;
+  return settled;
 }
 
 export interface Read<T> {
   readonly data: T | undefined;
+  /** The key the data was read under, so a caller can tell a reply to an older key. */
+  readonly dataKey: unknown;
   readonly error: string | null;
   readonly reload: () => void;
 }
@@ -80,7 +82,7 @@ export interface Read<T> {
 export function useRead<T>(access: ArchonAccess, command: Record<string, unknown> | null, tags: readonly string[], key: unknown = 0): Read<T> {
   invariant(tags.length > 0, "a read names the reply it expects");
   const send = useCommand(access.conn);
-  const [result, setResult] = useState<{ data?: T; dataFor: string | null; error: string | null; errorFor: string | null }>(
+  const [result, setResult] = useState<{ data?: T; dataFor: string | null; dataKey?: unknown; error: string | null; errorFor: string | null }>(
     { dataFor: null, error: null, errorFor: null });
   const [nonce, setNonce] = useState(0);
   const text = command === null ? null : JSON.stringify(command);
@@ -90,7 +92,7 @@ export function useRead<T>(access: ArchonAccess, command: Record<string, unknown
     let current = true;
     // A reply with the wrong tag fails the read like a daemon error does.
     send(JSON.parse(text) as Record<string, unknown>).then((reply) => replyOf<T>(reply, ...tagText.split(" "))).then(
-      (data) => { if (current) setResult({ data, dataFor: text, error: null, errorFor: null }); },
+      (data) => { if (current) setResult({ data, dataFor: text, dataKey: key, error: null, errorFor: null }); },
       (error: unknown) => { if (current) setResult((last) => ({ ...last, error: error instanceof Error ? error.message : String(error), errorFor: text })); },
     );
     return () => { current = false; };
@@ -98,7 +100,7 @@ export function useRead<T>(access: ArchonAccess, command: Record<string, unknown
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   // An answer to another command is not this command's answer.
   const data = result.dataFor === text ? result.data : undefined;
-  return { data, error: result.errorFor === text ? result.error : null, reload };
+  return { data, dataKey: data === undefined ? undefined : result.dataKey, error: result.errorFor === text ? result.error : null, reload };
 }
 
 /** Runs a change and reports how it went; core reports the failure too, and the daemon stays the gate. */

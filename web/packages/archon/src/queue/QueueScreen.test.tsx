@@ -14,6 +14,7 @@ afterEach(() => {
 
 const total = (container: HTMLElement) => container.querySelector(".queue-total")?.textContent ?? "";
 const titles = (container: HTMLElement) => [...container.querySelectorAll(".queue-title")].map((node) => node.textContent);
+const summaryReads = (harness: ArchonHarness) => harness.faux.commands("list_item_summaries").length;
 const chip = (container: HTMLElement, label: string) => byText(container, ".queue-chip", new RegExp(`^${label} \\d+$`));
 
 async function queue(options: Parameters<typeof archonHarness>[0] = { protocol: 24 }) {
@@ -69,22 +70,24 @@ describe("the queue list", () => {
   test("moves a row when the change stream says its state changed", async () => {
     const { h, container } = await queue();
     expect(h.faux.commands("subscribe_changes")).toHaveLength(1);
+    const before = summaryReads(h);
     h.faux.tell("qi_rate_limit", { subject: "item", item: "qi_rate_limit", state: "running", stage: "plan" });
     await h.until(() => container.querySelector('[data-item="qi_rate_limit"] .ui-pill')?.textContent === "Running", "the live state");
     expect(container.querySelector('[data-item="qi_rate_limit"] .queue-meta')?.textContent).toContain("stage plan");
-    expect(h.faux.commands("list_item_summaries")).toHaveLength(1);
+    expect(summaryReads(h)).toBe(before);
     h.faux.tell("qi_rate_limit", { subject: "item", item: "qi_rate_limit", state: "failed" });
     await h.until(() => total(container) === "3 of 7 items", "the failed item to leave the active list");
   });
 
   test("rereads the summaries at most once a second, even while changes keep coming", async () => {
     const { h } = await queue();
+    const before = summaryReads(h);
     for (let n = 0; n < 6; n += 1) {
       h.faux.tell("qi_rate_limit", { subject: "item", item: "qi_rate_limit", state: n % 2 ? "queued" : "running" });
       await h.tick(500);
     }
     // A debounce would reread only once the stream stops; a throttle rereads within it.
-    expect(h.faux.commands("list_item_summaries").length).toBeGreaterThanOrEqual(3);
+    expect(summaryReads(h)).toBeGreaterThanOrEqual(before + 2);
   });
 
   test("drops a stale prompt at once and rereads spend once the changes settle", async () => {
@@ -93,13 +96,33 @@ describe("the queue list", () => {
     if (!entry) throw new Error("the demo world has qi_pairing");
     entry.summary = { ...entry.summary, stage: "build", waiting_reason: null, waiting_on: null, spent_usd: 2.5, updated_at: "2026-11-04T10:00:30Z" };
     const row = () => container.querySelector('[data-item="qi_pairing"]');
+    const before = summaryReads(h);
     h.faux.tell("qi_pairing", { subject: "item", item: "qi_pairing", state: "running", stage: "build" });
     await h.until(() => row()?.querySelector(".ui-pill")?.textContent === "Running", "the live state");
     expect(row()?.querySelector(".queue-note")).toBeNull();
     expect(chip(container, "Waiting on you").textContent).toBe("Waiting on you 1");
-    expect(h.faux.commands("list_item_summaries")).toHaveLength(1);
+    expect(summaryReads(h)).toBe(before);
     await h.until(() => row()?.querySelector(".queue-spend")?.textContent === "$2.50", "the reread spend", 2_000);
-    expect(h.faux.commands("list_item_summaries")).toHaveLength(2);
+    expect(summaryReads(h)).toBe(before + 1);
+    // A queue opened again reads the summaries itself rather than core's older copy.
+    const reopened = await h.mount(<QueueScreen />);
+    await h.until(() => reopened.querySelector('[data-item="qi_pairing"] .queue-spend')?.textContent === "$2.50", "the reopened queue's spend", 500);
+  });
+
+  test("follows stage moves and resolved gates that reach it as other subjects than item", async () => {
+    const { h, container } = await queue();
+    const dark = h.world.items.get("qi_dark_mode");
+    const pairing = h.world.items.get("qi_pairing");
+    if (!dark || !pairing) throw new Error("the demo world has qi_dark_mode and qi_pairing");
+    dark.summary = { ...dark.summary, stage: "docs", updated_at: "2026-11-04T10:00:30Z" };
+    pairing.summary = { ...pairing.summary, stage: "build", waiting_reason: null, waiting_on: null, updated_at: "2026-11-04T10:00:30Z" };
+    h.faux.tell("qi_dark_mode", { subject: "stage", item: "qi_dark_mode", run: "run_dark", stage_id: "docs" });
+    h.faux.tell("qi_pairing", { subject: "question", item: "qi_pairing", question: "q_review_gate", open: false });
+    const row = (id: string) => container.querySelector(`[data-item="${id}"]`);
+    await h.until(() => row("qi_dark_mode")?.querySelector(".queue-meta")?.textContent?.includes("stage docs") === true, "the reread stage", 2_000);
+    expect(row("qi_pairing")?.querySelector(".ui-pill")?.textContent).toBe("Running");
+    expect(row("qi_pairing")?.querySelector(".queue-meta")?.textContent).toContain("stage build");
+    expect(chip(container, "Waiting on you").textContent).toBe("Waiting on you 1");
   });
 });
 

@@ -11,7 +11,7 @@ import { NotConnected, useNow } from "../queue/QueueScreen.tsx";
 import { QuestionList } from "../queue/Questions.tsx";
 import { Artifacts } from "./Artifacts.tsx";
 import { useItemDetail } from "./detail.ts";
-import { executionFact, issueFact, issueOf, objectFor, outcome, prFact, prOf, type Fact } from "./facts.ts";
+import { currentStage, executionFact, issueFact, issueOf, objectFor, outcome, prFact, prOf, type Fact } from "./facts.ts";
 import { ItemActions } from "./ItemActions.tsx";
 import { Details, Gates, Links, Reports, Runs, Section, Stages } from "./ItemSections.tsx";
 import "./item.css";
@@ -116,7 +116,7 @@ function Item({ info, item }: { readonly info: ConnectionInfo; readonly item: st
   const live = stored && isStateKind(stored.state) ? stored.state : null;
   const kind = live ?? detail.item.state.state;
   const summary = (stored?.summary ?? null) as archon.ItemSummary | null;
-  return <ItemPage access={access} detail={detail} kind={kind} summary={summary} stage={stored?.stage ?? summary?.stage ?? null} reload={read.reload} />;
+  return <ItemPage access={access} detail={detail} kind={kind} summary={summary} stage={currentStage(detail) ?? stored?.stage ?? summary?.stage ?? null} reload={read.reload} />;
 }
 
 export default function ItemRoute({ params }: RouteProps) {

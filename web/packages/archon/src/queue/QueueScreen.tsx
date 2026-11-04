@@ -110,32 +110,42 @@ function QueueList({ rows, names, now }: { readonly rows: readonly QueueRow[]; r
   return <div className="queue-list"><VirtualList label="Items" count={rows.length} rowHeight={ROW_HEIGHT} renderRow={renderRow} rowKey={rowKey} overscan={6} /></div>;
 }
 
-/** The newer of core's summary and a reread one; the live state, stage and reason stay core's. */
-export function withNewerSummary(item: ArchonItem, fresh: archon.ItemSummary | undefined): ArchonItem {
+/**
+ * The newer of core's summary and a reread one. Stage and waiting changes reach core as other subjects
+ * than `item`, so a newer summary read since the last change, in the live state, brings its stage and reason.
+ */
+export function withNewerSummary(item: ArchonItem, fresh: archon.ItemSummary | undefined, sinceLastChange: boolean): ArchonItem {
   if (fresh === undefined) return item;
   invariant(typeof fresh.updated_at === "string", `the reread summary of ${fresh.id} has a time`);
   const held = Date.parse(String(item.summary.updated_at));
-  return Number.isFinite(held) && held > Date.parse(fresh.updated_at) ? item : { ...item, summary: fresh as unknown as ArchonItem["summary"] };
+  if (Number.isFinite(held) && held > Date.parse(fresh.updated_at)) return item;
+  const summary = fresh as unknown as ArchonItem["summary"];
+  if (!sinceLastChange || fresh.state.state !== item.state) return { ...item, summary };
+  const reason = fresh.waiting_reason?.code;
+  return { summary, state: item.state, ...(fresh.stage ? { stage: fresh.stage } : {}), ...(reason ? { waitingReason: reason } : {}) };
 }
 
 /**
  * The rows. Change records move an item's state, stage and reason but not its summary (spend, prompt,
- * PR), so at protocol 24 the summaries are reread once activity settles; at 23 core rereads them itself.
+ * PR), so at protocol 24 the summaries are read on mount and reread once activity settles; at 23 core
+ * rereads them itself.
  */
-function useRows(access: ArchonAccess, settled: number): { items: Readonly<Record<string, ArchonItem>>; rows: QueueRow[] } {
+function useRows(access: ArchonAccess, activity: string, settled: string): { items: Readonly<Record<string, ArchonItem>>; rows: QueueRow[] } {
   const items = useSelector(useMemo(() => selectItems(access.conn), [access.conn]));
-  const fresh = useRead<archon.ItemSummary[]>(access, access.live && settled > 0 ? { cmd: "list_item_summaries" } : null, ["item_summaries"], settled);
+  const fresh = useRead<archon.ItemSummary[]>(access, access.live ? { cmd: "list_item_summaries" } : null, ["item_summaries"], settled);
+  const sinceLastChange = fresh.dataKey === activity;
   const rows = useMemo(() => {
     const byId = new Map((fresh.data ?? []).map((summary) => [summary.id, summary]));
-    return Object.entries(items).map(([id, item]) => queueRow(id, withNewerSummary(item, byId.get(id)))).sort(compareRows);
-  }, [items, fresh.data]);
+    return Object.entries(items).map(([id, item]) => queueRow(id, withNewerSummary(item, byId.get(id), sinceLastChange))).sort(compareRows);
+  }, [items, fresh.data, sinceLastChange]);
   return { items, rows };
 }
 
 function Queue({ info }: { readonly info: ConnectionInfo }) {
   const access = useArchonAccess(info);
-  const settled = useSettled(useActivity(access.conn), 1_000);
-  const { items, rows } = useRows(access, settled);
+  const activity = useActivity(access.conn);
+  const settled = useSettled(activity, 1_000);
+  const { items, rows } = useRows(access, activity, settled);
   const repos = useRead<archon.Repo[]>(access, { cmd: "repo_list" }, ["repos"]);
   const names = useMemo(() => new Map((repos.data ?? []).map((repo) => [repo.id, repo.name])), [repos.data]);
   const [query, setQuery] = useState<QueueQuery>(NO_QUERY);

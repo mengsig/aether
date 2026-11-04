@@ -45,7 +45,7 @@ function PauseControl({ access, status, onDone }: { readonly access: ArchonAcces
 }
 
 function Spend({ access, status, names, settled }: {
-  readonly access: ArchonAccess; readonly status: archon.DaemonStatus; readonly names: ReadonlyMap<string, string>; readonly settled: number;
+  readonly access: ArchonAccess; readonly status: archon.DaemonStatus; readonly names: ReadonlyMap<string, string>; readonly settled: string;
 }) {
   const cost = useRead<archon.CostReport>(access, { cmd: "cost_report", since: null, until: null, by: "repo" }, ["cost_report"], settled);
   const caps = status.caps;
@@ -63,9 +63,9 @@ function Spend({ access, status, names, settled }: {
   );
 }
 
-/** `settled` moves once archond's activity settles: status, counts and questions are reread then. */
+/** `settled` is archond's activity as of its last settle: status, counts and questions are reread when it moves. */
 export function QueueStatus({ access, items, names, settled }: {
-  readonly access: ArchonAccess; readonly items: Readonly<Record<string, ArchonItem>>; readonly names: ReadonlyMap<string, string>; readonly settled: number;
+  readonly access: ArchonAccess; readonly items: Readonly<Record<string, ArchonItem>>; readonly names: ReadonlyMap<string, string>; readonly settled: string;
 }) {
   const status = useRead<archon.DaemonStatus>(access, { cmd: "status" }, ["status"], settled);
   const questions = useRead<archon.Question[]>(access, { cmd: "list_questions", open_only: false }, ["questions"], settled);

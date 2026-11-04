@@ -30,6 +30,14 @@ export function executionFact(kind: StateKind, detail: archon.ItemDetail, stage:
   return { label: "Execution", status: pill.status, text: pill.label, detail: [where, why].filter(Boolean).join(" · ") || null };
 }
 
+/** The stage the item's active run stands at, from the detail itself; null when no run is active. */
+export function currentStage(detail: archon.ItemDetail): string | null {
+  const active = detail.runs.filter((run) => run.state.state === "running" || run.state.state === "awaiting_operator");
+  invariant(active.length <= 1, `item ${detail.item.id} has one active run at most, not ${active.length}`);
+  const state = active[0]?.state;
+  return state && "stage_id" in state ? state.stage_id : null;
+}
+
 const sameRef = (a: archon.GithubRef, b: archon.GithubRef): boolean =>
   a.host === b.host && a.repo.toLowerCase() === b.repo.toLowerCase() && a.number === b.number && a.kind === b.kind;
 
