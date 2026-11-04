@@ -9,7 +9,7 @@
 use aether_core::event::{Actor, EventDraft, EventKind};
 use aether_core::id::MemoryId;
 use aether_core::memory::{MemoryCandidate, MemoryProvenance, MemoryRecord};
-use aether_core::memory_admission::{MemoryAdmission, Verification};
+use aether_core::memory_admission::{MemoryAdmission, MemoryState, Verification};
 use aether_core::time::now;
 use aether_store::{Commit, Mutation};
 
@@ -164,7 +164,8 @@ impl MemoryService {
             )));
         }
         let hold = self.gate.hold();
-        let unchanged = |r: &MemoryRecord| r.is_current() && r.text == members[0].text;
+        // Pinned while the abstractor ran: a pinned memory is never retired.
+        let unchanged = |r: &MemoryRecord| r.is_current() && !r.pinned && r.text == members[0].text;
         let Some(survivor) = self.store.memory(id)?.filter(unchanged) else {
             return Ok(skipped(format!(
                 "survivor {id} changed while it was abstracted"
@@ -242,6 +243,12 @@ fn skipped(reason: String) -> AbstractionOutcome {
     AbstractionOutcome::Skipped { reason }
 }
 
+/// Whether `record` is an abstraction. Consolidation leaves one out, so its
+/// rollback never strands memories a later run merged into it.
+pub(super) fn is_abstraction(record: &MemoryRecord) -> bool {
+    abstracted_from(record).is_some()
+}
+
 /// The survivor an abstraction replaced, if `record` is one.
 fn abstracted_from(record: &MemoryRecord) -> Option<MemoryId> {
     let of = record.structured.as_ref()?.get(MARKER)?.get("of")?;
@@ -308,6 +315,7 @@ fn abstraction_commit(
 ) -> Commit {
     let old = survivor.id;
     survivor.superseded_by = Some(abstraction.id);
+    let candidate = admission.state == MemoryState::Candidate;
     Commit::new()
         .mutate(Mutation::PutMemory(abstraction.clone()))
         .mutate(Mutation::PutMemoryAdmission(admission))
@@ -316,7 +324,13 @@ fn abstraction_commit(
             by.clone(),
             EventKind::MemoryAccepted {
                 memory: abstraction.id,
-                reason: Some("the abstraction of a consolidated cluster".into()),
+                reason: Some(
+                    match candidate {
+                        true => "the abstraction of a consolidated cluster, a candidate as it was",
+                        false => "the abstraction of a consolidated cluster",
+                    }
+                    .into(),
+                ),
             },
         ))
         .event(EventDraft::new(

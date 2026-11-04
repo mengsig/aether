@@ -168,7 +168,7 @@ impl MemoryService {
         let mut scopes: BTreeMap<String, Vec<Standing>> = BTreeMap::new();
         for record in records {
             // A note read from a committed file is the file's to change.
-            if record.provenance.source.is_some() {
+            if record.provenance.source.is_some() || abstraction::is_abstraction(&record) {
                 continue;
             }
             let key = serde_json::to_string(&record.scope).map_err(|e| {

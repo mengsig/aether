@@ -14,6 +14,9 @@ use aether_core::memory_admission::{MemoryAdmission, MemoryState};
 
 use super::similarity::{self, Features, LINK, RELATED};
 
+/// Memories one word may be in and still propose the pairs that share it.
+const MAX_POSTING: usize = 256;
+
 /// A record with the admission it stands at.
 #[derive(Debug, Clone)]
 pub(crate) struct Standing {
@@ -55,10 +58,9 @@ pub(crate) fn clusters(mut records: Vec<Standing>) -> Vec<Vec<Standing>> {
     let mut out: Vec<Vec<Standing>> = groups
         .into_iter()
         .map(|group| {
-            let mut members: Vec<Standing> = group
-                .iter()
-                .map(|&i| slots[i].take().expect("a record sits in one cluster"))
-                .collect();
+            let mut members: Vec<Standing> =
+                group.iter().filter_map(|&i| slots[i].take()).collect();
+            debug_assert_eq!(members.len(), group.len(), "a record sits in one cluster");
             members.sort_by(survivor_order);
             members
         })
@@ -70,30 +72,34 @@ pub(crate) fn clusters(mut records: Vec<Standing>) -> Vec<Vec<Standing>> {
 }
 
 /// Every pair that may share a cluster, with its similarity. Only pairs that
-/// share a stemmed word are compared: the rest score zero by definition.
+/// share a stemmed word are compared: the rest score zero by definition. A
+/// word in more than [`MAX_POSTING`] memories proposes no pairs, so a scope
+/// full of one common word costs no more than one without it.
 fn compatible_pairs(records: &[Standing], features: &[Features]) -> BTreeMap<(usize, usize), f32> {
     let mut postings: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (i, f) in features.iter().enumerate() {
         f.stems()
             .for_each(|stem| postings.entry(stem).or_default().push(i));
     }
-    let mut candidates = BTreeSet::new();
-    for ids in postings.values() {
-        for (n, &i) in ids.iter().enumerate() {
-            candidates.extend(ids[n + 1..].iter().map(|&j| (i, j)));
-        }
-    }
+    postings.retain(|_, ids| ids.len() <= MAX_POSTING);
     let mut compatible = BTreeMap::new();
-    for (i, j) in candidates {
-        debug_assert!(i < j);
-        if records[i].fixed() && records[j].fixed() {
-            continue;
-        }
-        let score = similarity::similarity(&features[i], &features[j]);
-        if score >= RELATED && similarity::conflict(&features[i], &features[j]).is_none() {
-            compatible.insert((i, j), score);
+    for (i, f) in features.iter().enumerate() {
+        let later: BTreeSet<usize> = f
+            .stems()
+            .filter_map(|stem| postings.get(stem))
+            .flat_map(|ids| ids.iter().copied().filter(|&j| j > i))
+            .collect();
+        for j in later {
+            if records[i].fixed() && records[j].fixed() {
+                continue;
+            }
+            let score = similarity::similarity(f, &features[j]);
+            if score >= RELATED && similarity::conflict(f, &features[j]).is_none() {
+                compatible.insert((i, j), score);
+            }
         }
     }
+    debug_assert!(compatible.keys().all(|(i, j)| i < j && *j < records.len()));
     compatible
 }
 

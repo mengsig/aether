@@ -525,3 +525,110 @@ fn an_abstraction_keeps_its_members_and_rolls_back_to_the_survivor() {
         "not an abstraction"
     );
 }
+
+#[test]
+fn a_promoted_survivor_takes_over_the_memory_it_deferred_replacing() {
+    let (store, s) = seeded(&[]);
+    let older = remember(&s, APART[2], 0.7);
+    let strong = remember(&s, RELEASE[0], 0.8);
+    let weak = remember(&s, RELEASE[1], 0.7);
+    let mut deferred = record(store.as_ref(), strong);
+    deferred.supersedes = Some(older);
+    store
+        .commit(Commit::new().mutate(Mutation::PutMemory(deferred)))
+        .expect("commit");
+    supported(&s, strong, RunId::new(), Vec::new());
+    supported(&s, weak, RunId::new(), Vec::new());
+    let report = s
+        .consolidate(None, Actor::System, Default::default())
+        .expect("run");
+    assert_eq!(
+        report.clusters[0].outcome,
+        ClusterOutcome::Merged { promoted: true }
+    );
+    assert_eq!(record(store.as_ref(), older).superseded_by, Some(strong));
+    assert!(record(store.as_ref(), strong).is_current());
+}
+
+/// Pins the survivor while it writes, as a person might mid-run.
+struct PinsMidway<'s> {
+    service: &'s MemoryService,
+}
+
+impl Abstractor for PinsMidway<'_> {
+    fn abstract_cluster(&self, members: &[MemoryRecord]) -> Result<String> {
+        self.service.pin(members[0].id, true, Actor::user())?;
+        Ok("Summary: cut a release by tagging it after editing VERSION.".into())
+    }
+}
+
+#[test]
+fn a_survivor_pinned_while_it_is_abstracted_is_not_replaced() {
+    let (store, s) = seeded(&[(RELEASE[0], 0.8), (RELEASE[1], 0.7)]);
+    let pins = PinsMidway { service: &s };
+    let abstraction = AbstractionOptions {
+        abstractor: &pins,
+        budget: budget(1, 1_000),
+    };
+    let options = ConsolidationOptions {
+        dry_run: false,
+        abstraction: Some(abstraction),
+    };
+    let report = s.consolidate(None, Actor::System, options).expect("run");
+    let outcome = &report.abstractions[0].outcome;
+    assert!(
+        matches!(outcome, AbstractionOutcome::Skipped { reason } if reason.contains("changed"))
+    );
+    let survivor = record(store.as_ref(), report.clusters[0].survivor);
+    assert!(survivor.is_current() && survivor.pinned);
+    assert_eq!(
+        all_records(store.as_ref()).len(),
+        2,
+        "no abstraction was written"
+    );
+}
+
+#[test]
+fn a_crash_after_an_abstraction_leaves_it_whole_and_out_of_later_runs() {
+    let (store, s) = seeded(&fixture());
+    let summary = Summary::default();
+    let abstraction = AbstractionOptions {
+        abstractor: &summary,
+        budget: budget(2, 1_000),
+    };
+    let options = ConsolidationOptions {
+        dry_run: false,
+        abstraction: Some(abstraction),
+    };
+    let mut crash = |step: Step| match step == Step::Abstracted(0) {
+        true => Err(MemoryError::Invalid("injected crash".into())),
+        false => Ok(()),
+    };
+    let result = s.consolidate_with(None, Actor::System, options, &mut crash);
+    assert!(result.is_err(), "the crash stopped the run");
+    let all = all_records(store.as_ref());
+    assert_eq!(
+        all.len(),
+        fixture().len() + 1,
+        "every member kept, one abstraction written"
+    );
+    let written = all
+        .iter()
+        .find(|r| abstraction::is_abstraction(r))
+        .expect("written");
+    let survivor = written.supersedes.expect("it replaces the survivor");
+    assert_eq!(
+        record(store.as_ref(), survivor).superseded_by,
+        Some(written.id)
+    );
+    let again = s
+        .consolidate(None, Actor::System, Default::default())
+        .expect("again");
+    assert!(
+        again.clusters.is_empty(),
+        "an abstraction is never merged again"
+    );
+    s.rollback_abstraction(written.id, Actor::user())
+        .expect("rollback");
+    assert!(record(store.as_ref(), survivor).is_current());
+}
