@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+
 //! Candidate admission through the service's public path: a candidate is
 //! stored but never injected, and becomes active once two independent tasks
 //! (distinct runs) state it, or an operator promotes it.

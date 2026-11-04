@@ -81,24 +81,12 @@ impl MemoryService {
         // The same text, still standing: a restatement, which supports it.
         let restated = old.as_ref().filter(|old| {
             old.is_current()
+                && old.scope == candidate.scope
                 && !superseded.contains(&old.id)
                 && old.text.trim() == candidate.text.trim()
         });
         if let Some(reason) = reason {
-            if let (Some(old), Some(supporter)) = (restated, supporter)
-                && let Some((promoted, reinforced)) = self.reinforce(old, supporter, &actor)?
-            {
-                append(&mut commit, reinforced);
-                let record = old.clone();
-                return Ok((Admission::Reinforced { record, promoted }, commit));
-            }
-            commit.push_event(EventDraft::new(
-                actor,
-                EventKind::MemoryRejected {
-                    reason: reason.clone(),
-                },
-            ));
-            return Ok((Admission::Rejected { reason }, commit));
+            return self.refusal(commit, reason, actor, restated.zip(supporter));
         }
         debug_assert!(old.as_ref().is_none_or(MemoryRecord::is_current));
         debug_assert!(old.as_ref().is_none_or(|m| m.scope == candidate.scope));
@@ -194,6 +182,32 @@ impl MemoryService {
         ));
         let old = old.id;
         Ok((Admission::Superseded { record, old }, commit))
+    }
+
+    /// Not stored. A restatement from a task that has not supported the memory
+    /// yet still counts for it, and says so instead of a rejection.
+    fn refusal(
+        &self,
+        mut commit: Commit,
+        reason: String,
+        actor: Actor,
+        restatement: Option<(&MemoryRecord, Supporter)>,
+    ) -> Result<(Admission, Commit)> {
+        if let Some((old, supporter)) = restatement
+            && let Some((promoted, reinforced)) = self.reinforce(old, supporter, &actor)?
+        {
+            append(&mut commit, reinforced);
+            let record = old.clone();
+            return Ok((Admission::Reinforced { record, promoted }, commit));
+        }
+        debug_assert!(!reason.trim().is_empty());
+        commit.push_event(EventDraft::new(
+            actor,
+            EventKind::MemoryRejected {
+                reason: reason.clone(),
+            },
+        ));
+        Ok((Admission::Rejected { reason }, commit))
     }
 
     /// Count `supporter` for a memory restated as it stands. `None` when its
