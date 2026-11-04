@@ -124,6 +124,9 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
         let Flow::Go(publication) = self.plan(&access, &status).await? else {
             return Ok(());
         };
+        if self.funnel_over_mounts(&status, &publication) {
+            return Ok(());
+        }
         self.report.origin = Some(publication.origin.clone());
         let Flow::Go(status) = self.listener_step(&status, &publication).await? else {
             return Ok(());
@@ -331,6 +334,39 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
             funnel_exposed: false,
         };
         Ok(Flow::Go(publication(node, target, plan)))
+    }
+
+    /// Refuses a Funnel, asked for or already open, while the daemon mounts anything:
+    /// mounted daemons are never on the public internet (CONTRACTS.md §8). Before any change.
+    fn funnel_over_mounts(&mut self, status: &RemoteStatus, publication: &Publication) -> bool {
+        let mounts = status.settings.mounts.as_deref().unwrap_or_default();
+        let open = publication.serve.filter(|plan| plan.funnel_exposed);
+        if mounts.is_empty() || !(self.options.funnel || open.is_some()) {
+            return false;
+        }
+        let prefixes: Vec<&str> = mounts.iter().map(|mount| mount.prefix.as_str()).collect();
+        let detail = format!(
+            "this daemon mounts {} on its listener, and a mounted daemon is never published \
+             through Tailscale Funnel",
+            prefixes.join(", ")
+        );
+        let mut fix: Vec<String> = prefixes
+            .iter()
+            .map(|prefix| format!("Remove the mount: aether remote mount remove {prefix}"))
+            .collect();
+        match open {
+            Some(plan) => fix.push(format!(
+                "Or turn Funnel off: tailscale funnel --https={} off",
+                plan.port
+            )),
+            None => {
+                fix.push("Or publish privately: aether remote setup (without --funnel)".to_owned())
+            }
+        }
+        self.say(&format!("[!!] {detail}"));
+        self.report
+            .push(Step::new(StepId::Publish, StepState::Blocked, detail).fix(fix));
+        true
     }
 
     fn proxy_publication(&self, status: &RemoteStatus) -> Publication {

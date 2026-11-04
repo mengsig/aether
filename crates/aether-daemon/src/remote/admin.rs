@@ -7,6 +7,7 @@ use aether_protocol::remote::{
     RemoteStatus,
 };
 use aether_remote::auth::{self, DeviceRecord};
+use aether_remote::mount::Publication;
 use aether_remote::pairing::{Enrolment, PairingError};
 use aether_runtime::RuntimeError;
 use aether_store::{Commit, Mutation};
@@ -161,6 +162,9 @@ impl RemoteControl {
             ));
         }
         settings.mounts = kept_mounts(settings.mounts.take(), &previous.settings)?;
+        if adds_a_mount(&settings, &previous.settings) {
+            self.check_unpublished().await?;
+        }
         let revision = current.checked_add(1).ok_or_else(|| {
             AdminError::Internal("the remote settings revision overflowed".into())
         })?;
@@ -190,6 +194,24 @@ impl RemoteControl {
             .await
             .map_err(|e| AdminError::Internal(format!("{e:#}")))?;
         Ok(self.server.status(revision)?)
+    }
+
+    /// A mount may be added only while a fresh status read shows no Funnel (CONTRACTS.md §8).
+    async fn check_unpublished(&self) -> Admin<()> {
+        let refused = |why: String| {
+            AdminError::Transition(format!(
+                "a mount cannot be added {why}; mounted daemons are never served through Funnel"
+            ))
+        };
+        match self.server.host().publication().await {
+            Ok(Publication::Private) => Ok(()),
+            Ok(Publication::Funnel) => Err(refused(
+                "while this listener is published through Tailscale Funnel (`tailscale funnel reset` stops it)".into(),
+            )),
+            Err(error) => Err(refused(format!(
+                "while the listener's publication status is unknown ({error})"
+            ))),
+        }
     }
 
     pub async fn start_pairing(&self, role: DeviceRole, by: Actor) -> Admin<Pairing> {
@@ -408,6 +430,13 @@ fn check_reason(reason: &str) -> Admin<String> {
     Ok(reason.to_owned())
 }
 
+/// Whether `asked` has a mount `saved` does not: a new prefix, or a new target or kind.
+fn adds_a_mount(asked: &RemoteSettings, saved: &RemoteSettings) -> bool {
+    let saved = saved.mounts.as_deref().unwrap_or_default();
+    let asked = asked.mounts.as_deref().unwrap_or_default();
+    asked.iter().any(|mount| !saved.contains(mount))
+}
+
 /// The mounts to save: absent keeps the saved ones, an empty list removes
 /// them, so a client that never heard of mounts cannot clear them.
 fn kept_mounts(
@@ -484,9 +513,14 @@ mod tests {
         );
         let daemon = Arc::new(fixture.daemon);
         let remote = crate::remote::configured(&RemoteSection::default()).expect("remote config");
-        let control =
-            crate::remote::assemble(&daemon, remote, Some(notifier), CancellationToken::new())
-                .expect("control");
+        let control = crate::remote::assemble(
+            &daemon,
+            remote,
+            Some(notifier),
+            crate::remote::TailscaleStatus::system(),
+            CancellationToken::new(),
+        )
+        .expect("control");
 
         let device = DeviceRecord {
             id: DeviceId::new(),
@@ -563,6 +597,101 @@ mod tests {
         assert!(matches!(not_claimed.into(), AdminError::Transition(_)));
         let disabled = PairingError::Disabled("pairing is disabled");
         assert!(matches!(disabled.into(), AdminError::Invalid(_)));
+    }
+
+    const FUNNEL: &str = r#"{"AllowFunnel":{"box.ts.net:443":true}}"#;
+
+    /// A `tailscale` that prints `status` as its serve status, or fails when there is none.
+    fn fake_tailscale(
+        dir: &std::path::Path,
+        status: Option<&str>,
+    ) -> crate::remote::TailscaleStatus {
+        use std::os::unix::fs::PermissionsExt as _;
+        static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let made = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = dir.join(format!("tailscale-{made}"));
+        let script = match status {
+            Some(json) => format!("#!/bin/sh\ncat <<'EOF'\n{json}\nEOF\n"),
+            None => "#!/bin/sh\necho 'failed to connect to local tailscaled' >&2\nexit 1\n".into(),
+        };
+        std::fs::write(&path, script).expect("write the fake");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        crate::remote::TailscaleStatus::at(path)
+    }
+
+    fn archon(port: u16) -> aether_protocol::remote::RemoteMount {
+        aether_protocol::remote::RemoteMount {
+            prefix: "/archon".into(),
+            kind: aether_protocol::remote::MountKind::Archon,
+            target: format!("http://127.0.0.1:{port}"),
+        }
+    }
+
+    fn control(
+        daemon: &Arc<crate::Daemon>,
+        status: crate::remote::TailscaleStatus,
+    ) -> Arc<RemoteControl> {
+        let remote = crate::remote::configured(&RemoteSection::default()).expect("remote config");
+        crate::remote::assemble(daemon, remote, None, status, CancellationToken::new())
+            .expect("control")
+    }
+
+    /// Ask for `mounts` with the listener closed, at the current revision.
+    async fn ask(
+        control: &RemoteControl,
+        mounts: Option<Vec<aether_protocol::remote::RemoteMount>>,
+    ) -> Admin<RemoteStatus> {
+        let revision = control.status().await.expect("status").revision;
+        let settings = RemoteSettings {
+            mounts,
+            ..RemoteSettings::default()
+        };
+        control.configure(settings, revision, Actor::user()).await
+    }
+
+    #[tokio::test]
+    async fn a_mount_is_added_only_while_a_fresh_status_read_shows_no_funnel() {
+        let fixture = Fixture::start().await;
+        let daemon = Arc::new(fixture.daemon);
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (status, why) in [(Some(FUNNEL), "Funnel"), (None, "unknown")] {
+            let refusing = control(&daemon, fake_tailscale(dir.path(), status));
+            let refused = ask(&refusing, Some(vec![archon(8378)]))
+                .await
+                .expect_err(why);
+            assert!(matches!(refused, AdminError::Transition(_)), "{refused}");
+            assert!(refused.to_string().contains(why), "{refused}");
+            assert_eq!(refusing.settings().mounts, None, "nothing was applied");
+        }
+        let private = control(&daemon, fake_tailscale(dir.path(), Some("{}")));
+        let added = ask(&private, Some(vec![archon(8378)]))
+            .await
+            .expect("no Funnel");
+        assert_eq!(added.settings.mounts, Some(vec![archon(8378)]));
+        daemon.runtime.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn under_a_funnel_mounts_may_be_kept_or_removed_but_not_changed() {
+        let fixture = Fixture::start().await;
+        let daemon = Arc::new(fixture.daemon);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let private = control(&daemon, fake_tailscale(dir.path(), Some("{}")));
+        ask(&private, Some(vec![archon(8378)]))
+            .await
+            .expect("added");
+        let funnel = control(&daemon, fake_tailscale(dir.path(), Some(FUNNEL)));
+        let kept = ask(&funnel, None)
+            .await
+            .expect("absent keeps the saved mounts");
+        assert_eq!(kept.settings.mounts, Some(vec![archon(8378)]));
+        let retargeted = ask(&funnel, Some(vec![archon(9000)])).await;
+        assert!(matches!(retargeted, Err(AdminError::Transition(_))));
+        let removed = ask(&funnel, Some(vec![]))
+            .await
+            .expect("removing is always allowed");
+        assert_eq!(removed.settings.mounts, None);
+        daemon.runtime.shutdown().await;
     }
 
     #[test]
