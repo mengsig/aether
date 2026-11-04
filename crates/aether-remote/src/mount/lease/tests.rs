@@ -49,9 +49,6 @@ async fn an_unheld_lease_expires_on_its_own_timer_and_the_next_admission_reads_a
     let host = StatusHost::new(Status::Private);
     let (lease, _stop) = guarded(&host);
     drop(lease.admit().await.expect("admitted"));
-    let ticket = lease.admit().await.expect("still fresh: no second read");
-    assert_eq!(reads(&host), 1);
-    drop(ticket);
     tokio::time::sleep(LEASE_AGE + Duration::from_millis(1)).await;
     assert!(
         lease.state.lock().expires.is_none(),
@@ -59,6 +56,42 @@ async fn an_unheld_lease_expires_on_its_own_timer_and_the_next_admission_reads_a
     );
     lease.admit().await.expect("read again");
     assert_eq!(reads(&host), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn with_nothing_open_every_admission_waits_for_a_read_of_its_own() {
+    let host = StatusHost::new(Status::Private);
+    let (lease, _stop) = guarded(&host);
+    drop(lease.admit().await.expect("admitted"));
+    host.set(Status::Funnel);
+    let refused = lease.admit().await.err();
+    assert_eq!(
+        refused,
+        Some(Blocked::Funnel),
+        "a fresh lease is not reused once idle"
+    );
+    assert_eq!(reads(&host), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn with_something_open_admissions_share_its_refreshed_lease() {
+    let host = StatusHost::new(Status::Private);
+    let (lease, _stop) = guarded(&host);
+    let open = lease.admit().await.expect("admitted");
+    for _ in 0..10 {
+        drop(
+            lease
+                .admit()
+                .await
+                .expect("under the open connection's lease"),
+        );
+    }
+    assert_eq!(
+        reads(&host),
+        1,
+        "no read per request while the lease is refreshed"
+    );
+    drop(open);
 }
 
 #[tokio::test(start_paused = true)]
@@ -139,8 +172,8 @@ async fn a_stopped_guard_ends_the_lease() {
 #[tokio::test(start_paused = true)]
 async fn no_frame_reaches_the_target_once_the_lease_is_over_even_before_its_timer_fires() {
     let lease = Arc::new(Lease::default());
-    lease.renew(Instant::now());
-    let ticket = lease.try_admit().expect("a live lease");
+    lease.renew(Instant::now(), 1);
+    let ticket = lease.try_admit(0).expect("a live lease");
     let (client_end, relay_client) = tokio::io::duplex(64 * 1024);
     let (relay_target, target_end) = tokio::io::duplex(64 * 1024);
     let ends = Ends {
@@ -171,4 +204,24 @@ async fn no_frame_reaches_the_target_once_the_lease_is_over_even_before_its_time
         after.iter().all(|read| read.is_err()),
         "nothing, not even a close frame, reached the target: {after:?}"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_target_socket_takes_no_byte_once_the_lease_is_over() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let lease = Arc::new(Lease::default());
+    lease.renew(Instant::now(), 1);
+    let ticket = lease.try_admit(0).expect("a live lease");
+    let (ours, mut theirs) = tokio::io::duplex(1024);
+    let mut leased = crate::mount::leased::Leased::new(ours, ticket.standing());
+    leased.write_all(b"early").await.expect("under the lease");
+    tokio::time::advance(LEASE_AGE).await;
+    assert!(!ticket.epoch.is_cancelled(), "no timer has ended the lease");
+    let late = leased.write_all(b"late").await.expect_err("past the lease");
+    assert_eq!(late.kind(), std::io::ErrorKind::BrokenPipe);
+    assert!(leased.flush().await.is_err());
+    drop(leased);
+    let mut reached = Vec::new();
+    theirs.read_to_end(&mut reached).await.expect("read");
+    assert_eq!(reached, b"early");
 }

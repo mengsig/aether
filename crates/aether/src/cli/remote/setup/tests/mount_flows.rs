@@ -63,7 +63,7 @@ async fn an_open_funnel_is_not_kept_while_a_mount_is_present() {
     assert!(
         step.fix
             .iter()
-            .any(|fix| fix.contains("tailscale funnel --https=443 off"))
+            .any(|fix| fix.contains("box.tail1234.ts.net:443"))
     );
     assert!(!fx.runner.ran_anything_but_probes());
     assert!(fx.daemon.configures.is_empty());
@@ -83,4 +83,31 @@ async fn a_private_setup_with_a_mount_goes_ahead() {
         asked.mounts, None,
         "setup keeps the saved mounts as they are"
     );
+}
+
+#[tokio::test]
+async fn a_funnel_on_another_port_is_not_kept_while_a_mount_is_present() {
+    let mut fx = mounting(Fixture::complete());
+    fx.runner = FakeRunner::default();
+    fx.runner.on("tailscale version", out(0, "1.102.4", ""));
+    fx.runner.on(
+        "tailscale status --json",
+        out(0, &tailscale_json("Running", true, true), ""),
+    );
+    let private_443 = serve_json(443, TARGET, false);
+    let mut both: serde_json::Value = serde_json::from_str(&private_443).expect("json");
+    both["AllowFunnel"] = serde_json::json!({"box.tail1234.ts.net:8443": true});
+    fx.runner.on(
+        "tailscale serve status --json",
+        out(0, &both.to_string(), ""),
+    );
+    let report = fx.run(&yes(), Mode::Yes).await.expect("runs");
+    assert_eq!(state_of(&report, StepId::Publish), StepState::Blocked);
+    let step = report.step(StepId::Publish).expect("a publish step");
+    assert!(
+        step.fix.iter().any(|fix| fix.contains(":8443")),
+        "{:?}",
+        step.fix
+    );
+    assert!(fx.daemon.configures.is_empty());
 }

@@ -3,6 +3,7 @@
 
 mod forward;
 mod lease;
+pub(crate) mod leased;
 pub(crate) mod tunnel;
 
 use std::net::SocketAddr;

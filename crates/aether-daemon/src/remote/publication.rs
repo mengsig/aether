@@ -11,8 +11,15 @@ use serde_json::{Map, Value};
 const READ_TIMEOUT: Duration = aether_remote::mount::LEASE_AGE;
 /// Deepest nesting of serve scopes read: sessions and services inside the top level.
 const MAX_SCOPE_DEPTH: usize = 4;
-/// Where Tailscale's command line lives on macOS when it is not on `PATH`.
-const MACOS_APP: &str = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+/// Where Tailscale's command line is looked for, `PATH` first: a daemon started as a
+/// service may have a `PATH` without it.
+const PROGRAMS: [&str; 5] = [
+    "tailscale",
+    "/usr/bin/tailscale",
+    "/usr/local/bin/tailscale",
+    "/opt/homebrew/bin/tailscale",
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+];
 
 /// The `tailscale` programs to ask, first found first.
 #[derive(Debug, Clone)]
@@ -23,7 +30,7 @@ pub struct TailscaleStatus {
 impl TailscaleStatus {
     pub fn system() -> Self {
         Self {
-            programs: vec!["tailscale".into(), MACOS_APP.into()],
+            programs: PROGRAMS.iter().map(PathBuf::from).collect(),
         }
     }
 
@@ -34,8 +41,8 @@ impl TailscaleStatus {
         }
     }
 
-    /// Whether anything on this machine is published through Funnel. No Tailscale at all is
-    /// private: then nothing can be. A Tailscale that cannot answer is an error.
+    /// Whether anything on this machine is published through Funnel. A Tailscale that cannot
+    /// be found or cannot answer is an error: tailscaled may serve a Funnel all the same.
     pub async fn read(&self) -> Result<Publication, String> {
         assert!(!self.programs.is_empty(), "there is a program to ask");
         for program in &self.programs {
@@ -52,11 +59,15 @@ impl TailscaleStatus {
                 }
             }
         }
-        Ok(Publication::Private)
+        Err(format!(
+            "the `tailscale` command was not found (looked on PATH and in {}), so whether \
+             this machine publishes through Funnel cannot be read",
+            PROGRAMS[1..].join(", ")
+        ))
     }
 }
 
-/// The output of `<program> serve status --json`; `None` when the program is not installed.
+/// The output of `<program> serve status --json`; `None` when there is no such program.
 async fn serve_status(program: &PathBuf) -> Result<Option<String>, String> {
     let mut command = tokio::process::Command::new(program);
     command
@@ -177,10 +188,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_tailscale_installed_is_private_and_a_failing_one_is_an_error() {
+    async fn a_missing_or_failing_tailscale_is_an_error_never_private() {
         let dir = tempfile::tempdir().expect("tempdir");
         let missing = TailscaleStatus::at(dir.path().join("no-such-tailscale"));
-        assert_eq!(missing.read().await, Ok(Publication::Private));
+        assert!(missing.read().await.unwrap_err().contains("not found"));
         let failing = TailscaleStatus::at("false".into());
         assert!(failing.read().await.unwrap_err().contains("failed"));
     }

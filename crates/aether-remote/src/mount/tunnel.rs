@@ -9,6 +9,7 @@ use hyper::upgrade::{OnUpgrade, Upgraded};
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::OwnedSemaphorePermit;
+use tokio::time::Instant;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
@@ -89,30 +90,54 @@ where
         _ = ticket.ended() => End::LeaseEnded,
         _ = ends.stop.cancelled() => End::Stopping,
         _ = ends.remounted.cancelled() => End::Remounted,
-        end = relay(&mut client, &mut target, ticket, tuning.stall_timeout) => end,
+        end = relay(&mut client, &mut target, ticket, &tuning) => end,
     };
+    // A side that failed because the lease ended failed for that reason.
+    let end = if ticket.live() { end } else { End::LeaseEnded };
     finish(&mut client, &mut target, end, ticket, tuning.close_timeout).await;
 }
 
+/// Relay data frames both ways. Ping and Pong belong to each hop: each side's pings are
+/// answered here, and the client is pinged so that one gone silent is let go.
 async fn relay<C, T>(
     client: &mut WebSocketStream<C>,
     target: &mut WebSocketStream<T>,
     ticket: &Ticket,
-    stall: Duration,
+    tuning: &Tuning,
 ) -> End
 where
     C: AsyncRead + AsyncWrite + Unpin,
     T: AsyncRead + AsyncWrite + Unpin,
 {
+    assert!(
+        tuning.ping_interval > Duration::ZERO,
+        "a ping interval is set"
+    );
+    let stall = tuning.stall_timeout;
+    let mut ping =
+        tokio::time::interval_at(Instant::now() + tuning.ping_interval, tuning.ping_interval);
+    let mut heard = Instant::now();
     loop {
         tokio::select! {
+            _ = ping.tick() => {
+                if heard.elapsed() >= tuning.pong_timeout {
+                    return End::ClientGone;
+                }
+                if !pass(client, Message::Ping(Default::default()), stall).await {
+                    return End::ClientGone;
+                }
+            }
             read = client.next() => {
+                heard = Instant::now();
                 let message = match read {
                     Some(Ok(Message::Close(frame))) => return End::ClientClosed(frame),
                     Some(Ok(message)) => message,
                     Some(Err(WsError::Capacity(_))) => return End::TooBig,
                     Some(Err(_)) | None => return End::ClientGone,
                 };
+                if hop_only(&message) {
+                    continue;
+                }
                 // The lease is checked frame by frame: its timer may not have fired yet.
                 if !ticket.live() {
                     return End::LeaseEnded;
@@ -127,6 +152,9 @@ where
                     Some(Ok(message)) => message,
                     Some(Err(_)) | None => return End::TargetGone,
                 };
+                if hop_only(&message) {
+                    continue;
+                }
                 if !ticket.live() {
                     return End::LeaseEnded;
                 }
@@ -138,14 +166,19 @@ where
     }
 }
 
+/// A peer's own Ping and Pong stay on its hop: tungstenite has answered the Ping already.
+fn hop_only(message: &Message) -> bool {
+    matches!(
+        message,
+        Message::Ping(_) | Message::Pong(_) | Message::Frame(_)
+    )
+}
+
 /// Send one message, giving up on a peer that takes none of it for `stall`.
 async fn pass<S>(to: &mut WebSocketStream<S>, message: Message, stall: Duration) -> bool
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    if matches!(message, Message::Frame(_)) {
-        return true;
-    }
     matches!(
         tokio::time::timeout(stall, to.send(message)).await,
         Ok(Ok(()))

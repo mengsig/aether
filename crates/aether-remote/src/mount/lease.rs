@@ -68,6 +68,10 @@ struct State {
     holders: usize,
     /// An admission is waiting for a read.
     wanted: bool,
+    /// Status reads begun so far, and which of them renewed the lease: an admission while
+    /// nothing is open needs a read begun after it asked.
+    reads_begun: u64,
+    renewed_by: u64,
 }
 
 impl State {
@@ -95,6 +99,8 @@ impl Default for Lease {
                 blocked: None,
                 holders: 0,
                 wanted: false,
+                reads_begun: 0,
+                renewed_by: 0,
             }),
             wake: Notify::new(),
             settled: watch::Sender::new(0),
@@ -102,7 +108,14 @@ impl Default for Lease {
     }
 }
 
-type Reading = Pin<Box<dyn Future<Output = (Instant, Result<Publication, String>)> + Send>>;
+/// One status read: when and in what order it began, and what it found.
+struct Read {
+    started: Instant,
+    number: u64,
+    found: Result<Publication, String>,
+}
+
+type Reading = Pin<Box<dyn Future<Output = Read> + Send>>;
 
 impl Lease {
     /// Read the status on demand and every [`REFRESH_EVERY`] while anything
@@ -118,7 +131,7 @@ impl Lease {
                 _ = at(expires) => self.expire(),
                 read = settle(&mut reading) => {
                     reading = None;
-                    self.settle(read.0, read.1);
+                    self.settle(read);
                 }
                 _ = at(refresh) => {
                     if !self.needs_read() {
@@ -126,8 +139,8 @@ impl Lease {
                     }
                     let started = Instant::now();
                     last_read = Some(started);
-                    self.state.lock().wanted = false;
-                    reading = Some(read_status(host.clone(), started));
+                    let number = self.begin_read();
+                    reading = Some(read_status(host.clone(), started, number));
                 }
                 _ = self.wake.notified() => {}
             }
@@ -186,11 +199,18 @@ impl Lease {
         self.settled.send_modify(|n| *n = n.wrapping_add(1));
     }
 
-    fn settle(&self, started: Instant, read: Result<Publication, String>) {
-        // Whoever wanted a read is answered by this one.
-        self.state.lock().wanted = false;
-        match read {
-            Ok(Publication::Private) => self.renew(started),
+    /// Number the read about to begin; whoever wanted one is answered by it.
+    fn begin_read(&self) -> u64 {
+        let mut state = self.state.lock();
+        state.wanted = false;
+        state.reads_begun += 1;
+        state.reads_begun
+    }
+
+    fn settle(&self, read: Read) {
+        assert!(read.number > 0, "reads are numbered from one");
+        match read.found {
+            Ok(Publication::Private) => self.renew(read.started, read.number),
             Ok(Publication::Funnel) => self.end(Blocked::Funnel),
             Err(error) => {
                 tracing::warn!(%error, "could not read the listener's publication status");
@@ -200,7 +220,7 @@ impl Lease {
     }
 
     /// A successful read taken at `started` keeps traffic flowing until it is too old.
-    fn renew(&self, started: Instant) {
+    fn renew(&self, started: Instant, number: u64) {
         let expires = started + LEASE_AGE;
         {
             let mut state = self.state.lock();
@@ -216,6 +236,8 @@ impl Lease {
                 "reads settle in order"
             );
             state.expires = Some(expires);
+            assert!(number > state.renewed_by, "reads settle in order");
+            state.renewed_by = number;
             state.blocked = None;
         }
         self.settled.send_modify(|n| *n = n.wrapping_add(1));
@@ -240,13 +262,15 @@ impl Lease {
         self.settled.send_modify(|n| *n = n.wrapping_add(1));
     }
 
-    /// A ticket under a live lease, reading the status first if there is none.
+    /// A ticket under a live lease. With nothing mounted open, only a status read begun
+    /// after this call admits; with something open, the lease its refreshes keep does.
     pub(crate) async fn admit(self: &Arc<Self>) -> Result<Ticket, Blocked> {
         let deadline = Instant::now() + ADMIT_WAIT;
+        let asked = self.state.lock().reads_begun;
         let mut settled = self.settled.subscribe();
         loop {
             settled.borrow_and_update();
-            match self.try_admit() {
+            match self.try_admit(asked) {
                 Ok(ticket) => return Ok(ticket),
                 Err(Some(why)) => return Err(why),
                 Err(None) => self.wake.notify_one(),
@@ -259,10 +283,13 @@ impl Lease {
     }
 
     /// A ticket now; else the fresh reason to refuse, or `None` to wait for a read.
-    fn try_admit(self: &Arc<Self>) -> Result<Ticket, Option<Blocked>> {
+    /// `asked` is how many reads had begun when the admission was asked for.
+    fn try_admit(self: &Arc<Self>, asked: u64) -> Result<Ticket, Option<Blocked>> {
         let now = Instant::now();
         let mut state = self.state.lock();
-        if state.live(now) {
+        debug_assert!(asked <= state.reads_begun, "reads are only ever counted up");
+        let read_since = state.renewed_by > asked;
+        if state.live(now) && (state.holders > 0 || read_since) {
             state.holders += 1;
             let first = state.holders == 1;
             let epoch = state.epoch.clone();
@@ -284,18 +311,39 @@ impl Lease {
     }
 }
 
-/// One mounted connection's or request's standing under the lease.
+/// One mounted connection's or request's place under the lease.
 #[derive(Debug)]
 pub(crate) struct Ticket {
     lease: Arc<Lease>,
     epoch: CancellationToken,
 }
 
-impl Ticket {
-    /// Whether a byte may be forwarded right now. Checked before each one is.
+/// A ticket's standing without its place: what the sockets under it check on every byte.
+#[derive(Debug, Clone)]
+pub(crate) struct Standing {
+    lease: Arc<Lease>,
+    epoch: CancellationToken,
+}
+
+impl Standing {
+    /// Whether a byte may be forwarded right now, even if the expiry timer has yet to fire.
     pub(crate) fn live(&self) -> bool {
         let state = self.lease.state.lock();
         !self.epoch.is_cancelled() && state.live(Instant::now())
+    }
+}
+
+impl Ticket {
+    /// Whether a byte may be forwarded right now. Checked before each one is.
+    pub(crate) fn live(&self) -> bool {
+        self.standing().live()
+    }
+
+    pub(crate) fn standing(&self) -> Standing {
+        Standing {
+            lease: self.lease.clone(),
+            epoch: self.epoch.clone(),
+        }
     }
 
     /// Fires when the lease this ticket was admitted under ends.
@@ -312,20 +360,24 @@ impl Drop for Ticket {
     }
 }
 
-fn read_status(host: Arc<dyn RemoteHost>, started: Instant) -> Reading {
+fn read_status(host: Arc<dyn RemoteHost>, started: Instant, number: u64) -> Reading {
     Box::pin(async move {
-        let read = match tokio::time::timeout(READ_LIMIT, host.publication()).await {
-            Ok(read) => read,
+        let found = match tokio::time::timeout(READ_LIMIT, host.publication()).await {
+            Ok(found) => found,
             Err(_) => Err(format!(
                 "the status read took over {}s",
                 READ_LIMIT.as_secs()
             )),
         };
-        (started, read)
+        Read {
+            started,
+            number,
+            found,
+        }
     })
 }
 
-async fn settle(reading: &mut Option<Reading>) -> (Instant, Result<Publication, String>) {
+async fn settle(reading: &mut Option<Reading>) -> Read {
     match reading {
         Some(read) => read.await,
         None => std::future::pending().await,

@@ -339,21 +339,27 @@ forwarded.
   each up to the carrier's message limit (larger is `1009`), and
   `Sec-WebSocket-Extensions` is not offered, so frames pass as they are. Close
   codes pass through; a mount removed or changed closes its WebSockets with
-  `1001`.
+  `1001`. Ping and Pong belong to each hop and are not relayed: the listener
+  answers each side's pings itself, pings the client every 30 s, and lets a
+  client silent for 90 s go, closing the target's side with `1001`.
 - **The Funnel lease.** Mounted traffic flows only under a lease: a
   successful read of `tailscale serve status --json` showing no Funnel
   anywhere on the machine, at most 5 s old. While a mounted connection is
-  open the status is read every 2 s; otherwise an admission reads it first.
-  When a read shows a Funnel, fails, hangs, or the lease ages out, every open
-  mounted WebSocket closes with `1008` (nothing more, not even a close frame,
-  reaches the target) and requests are `503` until a read shows no Funnel
-  again. A refusal is reused for 1 s, so a stream of refused requests does
+  open the status is read every 2 s; otherwise an admission waits for a read
+  begun after it arrived. A `tailscale` command that cannot be found (on
+  `PATH` or in the usual install locations) is a failed read, never a
+  private one. When a read shows a Funnel, fails, hangs, or the lease ages
+  out, every open mounted WebSocket closes with `1008` and requests are `503`
+  until a read shows no Funnel again. The target's socket refuses every byte
+  once the lease is over, even before its timer has fired: nothing more, not
+  even a close frame, reaches the target. A refusal is reused for 1 s, so a stream of refused requests does
   not become a stream of reads.
 - **Host only.** Mounts are set with `aether remote mount` or
   `configure_remote` from the local socket. Adding one is refused
   (`invalid_transition`) unless a fresh status read shows no Funnel;
   removing or keeping one never is. `aether remote setup --funnel`, or setup
-  keeping a Funnel already open, is refused while any mount is present.
+  keeping a Funnel already open on any port, is refused while any mount is
+  present.
 
 ### Assets
 

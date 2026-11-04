@@ -14,7 +14,7 @@ use super::guidance::{self, Guidance};
 use super::platform::Platform;
 use super::report::{Mode, Report, Step, StepId, StepState};
 use super::runner::CommandRunner;
-use super::tailscale::{Node, PortUse, SERVE_PORTS, Tailscale, TailscaleState};
+use super::tailscale::{Node, PortUse, SERVE_PORTS, ServeConfig, Tailscale, TailscaleState};
 use super::ui::{Ui, Wait};
 
 /// Re-checks of Tailscale after a person says they fixed something.
@@ -124,9 +124,6 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
         let Flow::Go(publication) = self.plan(&access, &status).await? else {
             return Ok(());
         };
-        if self.funnel_over_mounts(&status, &publication) {
-            return Ok(());
-        }
         self.report.origin = Some(publication.origin.clone());
         let Flow::Go(status) = self.listener_step(&status, &publication).await? else {
             return Ok(());
@@ -306,6 +303,9 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
             bail!("Tailscale was ready a moment ago and is not found now");
         };
         let config = tailscale.serve_config().await?;
+        if self.funnel_over_mounts(status, &config) {
+            return Ok(Flow::Stop);
+        }
         let (mut free, mut unreadable) = (None, None);
         for port in SERVE_PORTS {
             match config.port_use(&node.dns_name, port, &target) {
@@ -336,12 +336,12 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
         Ok(Flow::Go(publication(node, target, plan)))
     }
 
-    /// Refuses a Funnel, asked for or already open, while the daemon mounts anything:
+    /// Refuses a Funnel, asked for or open on any port, while the daemon mounts anything:
     /// mounted daemons are never on the public internet (CONTRACTS.md §8). Before any change.
-    fn funnel_over_mounts(&mut self, status: &RemoteStatus, publication: &Publication) -> bool {
+    fn funnel_over_mounts(&mut self, status: &RemoteStatus, config: &ServeConfig) -> bool {
         let mounts = status.settings.mounts.as_deref().unwrap_or_default();
-        let open = publication.serve.filter(|plan| plan.funnel_exposed);
-        if mounts.is_empty() || !(self.options.funnel || open.is_some()) {
+        let open = config.funnels();
+        if mounts.is_empty() || !(self.options.funnel || !open.is_empty()) {
             return false;
         }
         let prefixes: Vec<&str> = mounts.iter().map(|mount| mount.prefix.as_str()).collect();
@@ -354,14 +354,12 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
             .iter()
             .map(|prefix| format!("Remove the mount: aether remote mount remove {prefix}"))
             .collect();
-        match open {
-            Some(plan) => fix.push(format!(
-                "Or turn Funnel off: tailscale funnel --https={} off",
-                plan.port
+        match open.is_empty() {
+            true => fix.push("Or publish privately: aether remote setup (without --funnel)".into()),
+            false => fix.push(format!(
+                "Or turn Funnel off where it is open ({}): see `tailscale funnel status`",
+                open.join(", ")
             )),
-            None => {
-                fix.push("Or publish privately: aether remote setup (without --funnel)".to_owned())
-            }
         }
         self.say(&format!("[!!] {detail}"));
         self.report

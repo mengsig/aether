@@ -15,6 +15,7 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
 
+use super::leased::Leased;
 use super::{Mounted, Ticket, Tunnel, end_to_end};
 use crate::RemoteServer;
 use crate::http::{MAX_BODY_BYTES, Refusal};
@@ -212,7 +213,7 @@ async fn exchange(
     };
     let (mut sender, connection) = hyper::client::conn::http1::Builder::new()
         .max_buf_size(crate::listener::MAX_HEAD_BYTES)
-        .handshake(TokioIo::new(stream))
+        .handshake(TokioIo::new(Leased::new(stream, ticket.standing())))
         .await
         .map_err(|_| {
             Failure::Gateway(
@@ -228,16 +229,25 @@ async fn exchange(
     if !ticket.live() {
         return Err(lease_ended());
     }
-    match tokio::time::timeout(ANSWER_TIMEOUT, sender.send_request(request)).await {
-        Ok(Ok(response)) => Ok((response, connection)),
-        Ok(Err(_)) => Err(Failure::Gateway(
+    let failed = match tokio::time::timeout(ANSWER_TIMEOUT, sender.send_request(request)).await {
+        Ok(Ok(response)) => return Ok((response, connection)),
+        Ok(Err(_)) => Failure::Gateway(
             StatusCode::BAD_GATEWAY,
             "the mounted daemon broke off its answer",
-        )),
-        Err(_) => Err(Failure::Gateway(
+        ),
+        Err(_) => Failure::Gateway(
             StatusCode::GATEWAY_TIMEOUT,
             "the mounted daemon did not answer in time",
-        )),
+        ),
+    };
+    Err(unless_lease_ended(failed, ticket))
+}
+
+/// A target socket fails once the lease is over: then that, not the target, is the cause.
+fn unless_lease_ended(failed: Failure, ticket: &Ticket) -> Failure {
+    match ticket.live() {
+        true => failed,
+        false => lease_ended(),
     }
 }
 
@@ -252,7 +262,10 @@ async fn passed_on(
     let body = tokio::select! {
         read = tokio::time::timeout(ANSWER_TIMEOUT, reading) => match read {
             Ok(Ok(body)) => body.to_bytes(),
-            Ok(Err(_)) => return Err(Failure::Gateway(StatusCode::BAD_GATEWAY, "the mounted daemon's answer was too large or broken")),
+            Ok(Err(_)) => {
+                let broken = Failure::Gateway(StatusCode::BAD_GATEWAY, "the mounted daemon's answer was too large or broken");
+                return Err(unless_lease_ended(broken, ticket));
+            }
             Err(_) => return Err(Failure::Gateway(StatusCode::GATEWAY_TIMEOUT, "the mounted daemon did not answer in time")),
         },
         _ = ticket.ended() => return Err(lease_ended()),
@@ -280,16 +293,19 @@ async fn switched(
         match tokio::time::timeout(CONNECT_TIMEOUT, hyper::upgrade::on(&mut answered)).await {
             Ok(Ok(target)) => target,
             Ok(Err(_)) | Err(_) => {
-                return Err(Failure::Gateway(
+                let failed = Failure::Gateway(
                     StatusCode::BAD_GATEWAY,
                     "the mounted daemon's upgrade did not complete",
-                ));
+                );
+                return Err(unless_lease_ended(failed, &ticket));
             }
         };
     let mut response = Response::new(Full::new(Bytes::new()));
     *response.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
     let headers = response.headers_mut();
     *headers = end_to_end(answered.headers());
+    // None was offered; one accepted anyway would have the client expect bytes no relay keeps.
+    headers.remove(SEC_WEBSOCKET_EXTENSIONS);
     headers.insert(CONNECTION, HeaderValue::from_static("Upgrade"));
     headers.insert(UPGRADE, HeaderValue::from_static("websocket"));
     let tunnel = Tunnel {

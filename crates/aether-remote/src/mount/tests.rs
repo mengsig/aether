@@ -196,6 +196,7 @@ async fn echo(on_upgrade: hyper::upgrade::OnUpgrade, seen: Arc<Seen>) {
                 seen.frames.lock().push(format!("close {code}"));
                 return;
             }
+            Message::Ping(_) => seen.frames.lock().push("ping".to_owned()),
             _ => {}
         }
     }
@@ -698,5 +699,41 @@ async fn an_idle_listener_reads_the_status_only_when_traffic_asks() {
     assert!(
         mounted.host.reads.load(Ordering::SeqCst) >= 1,
         "admission read the status"
+    );
+}
+
+#[tokio::test]
+async fn ping_and_pong_stay_on_their_hop() {
+    let (target, seen) = archond().await;
+    let mounted = mounted(target).await;
+    let mut socket = tunnel(mounted.bound).await;
+    socket
+        .send(Message::Ping(Bytes::from_static(b"p")))
+        .await
+        .expect("ping");
+    socket.send(Message::text("after")).await.expect("send");
+    let mut pongs = 0;
+    loop {
+        let next = tokio::time::timeout(Duration::from_secs(10), socket.next()).await;
+        match next.expect("in time").expect("open").expect("a frame") {
+            Message::Pong(payload) => {
+                assert_eq!(payload.as_ref(), b"p");
+                pongs += 1;
+            }
+            Message::Text(text) => {
+                assert_eq!(text.as_str(), "echo:after");
+                break;
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert_eq!(
+        pongs, 1,
+        "the listener's answer only, not archond's as well"
+    );
+    assert_eq!(
+        *seen.frames.lock(),
+        ["hi", "after"],
+        "no ping reached archond"
     );
 }
