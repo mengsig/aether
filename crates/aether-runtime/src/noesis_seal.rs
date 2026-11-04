@@ -315,6 +315,7 @@ fn seal_mutations(agents: &mut NoesisAgents<'_>, mutations: &mut [Mutation]) -> 
             | Mutation::RecordToolOutcome(..)
             | Mutation::RecordSubmission(..)
             | Mutation::PutMemory(..)
+            | Mutation::PutMemoryAdmission(..)
             | Mutation::RecordMemoryFeedback(..)
             | Mutation::RetractMemoryFeedback { .. }
             | Mutation::PutArtifact(..)
