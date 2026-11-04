@@ -728,7 +728,7 @@ mod tests {
             kept_mounts(Some(vec![outside]), &saved),
             Err(AdminError::Invalid(_))
         ));
-        for own in ["/api", "/ws", "/assets"] {
+        for own in ["/api", "/ws", "/pair", "/assets", "/icons"] {
             let shadowing = RemoteMount {
                 prefix: own.into(),
                 ..archon.clone()
