@@ -368,3 +368,122 @@ fn native_compaction_round_trips_and_omits_unknown_counts() {
     let decoded: EventKind = serde_json::from_value(full.clone()).unwrap();
     assert_eq!(serde_json::to_value(decoded).unwrap(), full);
 }
+
+fn noesis_session() -> crate::noesis::NoesisSession {
+    use crate::noesis::{NoesisSession, Phase, SessionMode};
+    let now = crate::time::now();
+    NoesisSession {
+        id: "ns_1".into(),
+        goal: "learn".into(),
+        mode: SessionMode::Teach,
+        phase: Phase::Probe,
+        agent: crate::id::AgentId::new(),
+        plan: None,
+        open_question: None,
+        active_problem: None,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn noesis_job() -> crate::noesis::Job {
+    use crate::noesis::{Job, JobKind, JobState};
+    let now = crate::time::now();
+    Job {
+        id: "j_1".into(),
+        kind: JobKind::ExtractSession,
+        target: "ns_1".into(),
+        state: JobState::Queued,
+        stats: None,
+        error: None,
+        usage: crate::model::Usage::default(),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+#[test]
+fn noesis_events_are_durable_noesis_family_events_that_survive_the_log() {
+    use crate::noesis::*;
+    let settings = NoesisSettingsView::default();
+    let kinds = [
+        (
+            "noesis.session_created",
+            EventKind::NoesisSessionCreated {
+                session: noesis_session(),
+            },
+        ),
+        (
+            "noesis.phase_changed",
+            EventKind::NoesisPhaseChanged {
+                session: "ns_1".into(),
+                from: Phase::Probe,
+                to: Phase::Plan,
+            },
+        ),
+        (
+            "noesis.answer_recorded",
+            EventKind::NoesisAnswerRecorded {
+                session: "ns_1".into(),
+                result: QuestionResult {
+                    question: "q_1".into(),
+                    correct: Some(true),
+                    answer_key: Some(AnswerKey::Many(vec!["a".into()])),
+                    explanation: None,
+                },
+            },
+        ),
+        (
+            "noesis.practice_concluded",
+            EventKind::NoesisPracticeConcluded {
+                session: "ns_1".into(),
+                problem: "p_1".into(),
+                outcome: PracticeOutcome::SolvedWithHints,
+                rung: Some(2),
+                miss_class: None,
+                retest: true,
+                solution: "x = 1".into(),
+            },
+        ),
+        (
+            "noesis.job_updated",
+            EventKind::NoesisJobUpdated { job: noesis_job() },
+        ),
+        (
+            "noesis.graph_merged",
+            EventKind::NoesisGraphMerged {
+                job: "j_1".into(),
+                stats: JobStats {
+                    nodes: 3,
+                    chains: 2,
+                    dropped_chains: 1,
+                },
+            },
+        ),
+        (
+            "noesis.learner_updated",
+            EventKind::NoesisLearnerUpdated {
+                concepts: vec!["k_1".into()],
+            },
+        ),
+        (
+            "noesis.settings_changed",
+            EventKind::NoesisSettingsChanged {
+                settings: settings.clone(),
+                effective: settings,
+            },
+        ),
+    ];
+    for (name, kind) in kinds {
+        assert_eq!(kind.type_name(), name);
+        assert_eq!(kind.family(), "noesis");
+        let draft = EventDraft::new(Actor::System, kind.clone());
+        let event = Event::from_draft(draft, EventId::new(), 3, crate::time::now());
+        let json = serde_json::to_string(&event).expect("ser");
+        assert_eq!(
+            serde_json::from_str::<Event>(&json).expect("de"),
+            event,
+            "{name}"
+        );
+    }
+}

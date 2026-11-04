@@ -28,6 +28,7 @@ pub mod mcp;
 pub mod memory;
 pub mod memory_feedback;
 pub mod model;
+pub mod noesis;
 pub mod note;
 pub mod notification;
 pub mod private_file;
