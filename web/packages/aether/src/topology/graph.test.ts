@@ -3,7 +3,7 @@ import { visibleGraph } from "@aether-ui/graph";
 import { describe, expect, test } from "vitest";
 import { fixtureAgents, fixtureConnection, seedFleet } from "../fleet/fixture/agents.ts";
 import { selectFleetSources } from "../fleet/rows.ts";
-import { buildTopology, COLLAPSE_ABOVE, collapsedRuns, EXPANDED_LIMIT, nodeId, runGroupId, toggledForAll, topologyModel } from "./graph.ts";
+import { buildTopology, COLLAPSE_ABOVE, collapsedRuns, EXPANDED_LIMIT, nodeId, overridesForAll, runGroupId, toggleRun, topologyModel } from "./graph.ts";
 
 function topologyOf(...fleets: Array<[string, number]>) {
   const store = new Store(INITIAL_STATE, () => undefined);
@@ -43,17 +43,40 @@ describe("collapse per run", () => {
 
   test("starts with large runs collapsed, and every run in a crowded fleet", () => {
     expect(COLLAPSE_ABOVE).toBeGreaterThan(12);
-    expect(collapsedRuns(topology, new Set())).toEqual(new Set());
-    expect(collapsedRuns(big, new Set())).toEqual(new Set(["run:aether:a/run_00001"]));
+    expect(collapsedRuns(topology, new Map())).toEqual(new Set());
+    expect(collapsedRuns(big, new Map())).toEqual(new Set(["run:aether:a/run_00001"]));
     const crowded = topologyOf(["aether:a", EXPANDED_LIMIT + 1]);
-    expect(collapsedRuns(crowded, new Set()).size).toBe(crowded.groups.length);
-    expect(collapsedRuns(topologyOf(["aether:a", EXPANDED_LIMIT]), new Set()).size).toBe(0);
+    expect(collapsedRuns(crowded, new Map()).size).toBe(crowded.groups.length);
+    expect(collapsedRuns(topologyOf(["aether:a", EXPANDED_LIMIT]), new Map()).size).toBe(0);
   });
 
-  test("flips a run's default when toggled, and collapses or expands every run", () => {
-    expect(collapsedRuns(big, new Set(["run:aether:a/run_00001", "run:aether:a/run_00000"]))).toEqual(new Set(["run:aether:a/run_00000"]));
-    expect(collapsedRuns(big, toggledForAll(big, true)).size).toBe(3);
-    expect(collapsedRuns(big, toggledForAll(big, false)).size).toBe(0);
+  test("records a toggle as an explicit choice, and collapses or expands every run", () => {
+    const one = toggleRun(big, new Map(), "run:aether:a/run_00001");
+    expect(one).toEqual(new Map([["run:aether:a/run_00001", false]]));
+    expect(collapsedRuns(big, toggleRun(big, one, "run:aether:a/run_00000"))).toEqual(new Set(["run:aether:a/run_00000"]));
+    expect(collapsedRuns(big, overridesForAll(big, true)).size).toBe(3);
+    expect(collapsedRuns(big, overridesForAll(big, false)).size).toBe(0);
+  });
+
+  test("keeps the user's choices when the fleet grows past EXPANDED_LIMIT", () => {
+    const before = topologyOf(["aether:a", EXPANDED_LIMIT]);
+    const allCollapsed = overridesForAll(before, true);
+    const after = topologyOf(["aether:a", EXPANDED_LIMIT + 1]);
+    expect(after.groups.length).toBeGreaterThanOrEqual(before.groups.length);
+    const collapsed = collapsedRuns(after, allCollapsed);
+    expect(before.groups.every((group) => collapsed.has(group.id))).toBe(true);
+    const expandedByHand = new Map([["run:aether:a/run_00000", false]]);
+    expect(collapsedRuns(after, expandedByHand).has("run:aether:a/run_00000")).toBe(false);
+    expect(collapsedRuns(after, expandedByHand).has("run:aether:a/run_00001")).toBe(true);
+  });
+
+  test("keeps a run the user collapsed collapsed when it grows past COLLAPSE_ABOVE", () => {
+    const small = topologyOf(["aether:a", 20]);
+    const chosen = toggleRun(small, new Map(), "run:aether:a/run_00001");
+    expect(collapsedRuns(small, chosen).has("run:aether:a/run_00001")).toBe(true);
+    const grown = { ...small, startCollapsed: new Set(["run:aether:a/run_00001"]) };
+    expect(collapsedRuns(grown, chosen).has("run:aether:a/run_00001")).toBe(true);
+    expect(collapsedRuns(grown, toggleRun(grown, chosen, "run:aether:a/run_00001")).has("run:aether:a/run_00001")).toBe(false);
   });
 
   test("shows a collapsed run as one node standing for its members", () => {

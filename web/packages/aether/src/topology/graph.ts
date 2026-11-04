@@ -55,22 +55,29 @@ export function buildTopology(sources: readonly FleetSource[]): Topology {
   return { nodes, edges, groups: [...groups.values()], agentOf, startCollapsed };
 }
 
-/**
- * The runs collapsed now: those that start collapsed unless the user toggled them, others only if toggled.
- * Toggles are kept as a difference from the default, so a run that arrives later opens by its size.
- */
-export function collapsedRuns(topology: Topology, toggled: ReadonlySet<string>): ReadonlySet<string> {
-  const collapsed = new Set<string>();
-  for (const group of topology.groups) {
-    if (topology.startCollapsed.has(group.id) !== toggled.has(group.id)) collapsed.add(group.id);
-  }
+/** The user's explicit choice per run: true collapsed, false expanded. Untouched runs keep their default. */
+export type RunOverrides = ReadonlyMap<string, boolean>;
+
+/** A choice outlives a change of default, so a run the user expanded stays open as the fleet grows. */
+export function isCollapsed(topology: Topology, overrides: RunOverrides, group: string): boolean {
+  return overrides.get(group) ?? topology.startCollapsed.has(group);
+}
+
+export function collapsedRuns(topology: Topology, overrides: RunOverrides): ReadonlySet<string> {
+  const collapsed = new Set(topology.groups.map((group) => group.id).filter((id) => isCollapsed(topology, overrides, id)));
   invariant(collapsed.size <= topology.groups.length, "only known runs collapse");
   return collapsed;
 }
 
-/** The toggles that make every run collapsed (`collapse`) or every run expanded. */
-export function toggledForAll(topology: Topology, collapse: boolean): ReadonlySet<string> {
-  return new Set(topology.groups.map((group) => group.id).filter((id) => topology.startCollapsed.has(id) !== collapse));
+/** Flips one run, recording the choice explicitly. */
+export function toggleRun(topology: Topology, overrides: RunOverrides, group: string): RunOverrides {
+  invariant(topology.groups.some((g) => g.id === group), `toggleRun: unknown run group ${group}`);
+  return new Map(overrides).set(group, !isCollapsed(topology, overrides, group));
+}
+
+/** Every current run collapsed (`collapse`) or expanded; runs that arrive later open by their default. */
+export function overridesForAll(topology: Topology, collapse: boolean): RunOverrides {
+  return new Map(topology.groups.map((group) => [group.id, collapse]));
 }
 
 export function topologyModel(topology: Topology, collapsed: ReadonlySet<string>): GraphModel {

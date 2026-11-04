@@ -17,16 +17,16 @@ function scenario() {
   const store = new Store(INITIAL_STATE, () => undefined);
   seedFleet(store, fixtureConnection(), fixtureAgents(300));
   const gate = new LayoutGate(placeAll);
-  let toggled: ReadonlySet<string> = new Set();
+  let overrides: ReadonlyMap<string, boolean> = new Map();
   const relayout = async () => {
     const topology = buildTopology(selectFleetSources(store.get()));
-    await gate.layout(topologyModel(topology, collapsedRuns(topology, toggled)));
+    await gate.layout(topologyModel(topology, collapsedRuns(topology, overrides)));
     return gate.requests;
   };
   const patch = (id: string, change: (agent: aether.Agent) => aether.Agent) =>
     store.updateAether(FIXTURE_CONN, (state) => ({ ...state, agents: { ...state.agents, [id]: change(must(state.agents[id], id)) } }));
   const add = (agent: aether.Agent) => store.updateAether(FIXTURE_CONN, (state) => ({ ...state, agents: { ...state.agents, [agent.id]: agent } }));
-  return { store, relayout, patch, add, toggle: (next: ReadonlySet<string>) => { toggled = next; } };
+  return { store, relayout, patch, add, choose: (next: ReadonlyMap<string, boolean>) => { overrides = next; } };
 }
 
 const STATES: aether.AgentStatus[] = [{ state: "running" }, { state: "completed" }, { state: "failed", error: "x" }, { state: "ready" }];
@@ -43,11 +43,11 @@ describe("topology relayout", () => {
 
     s.add({ ...must(fixtureAgents(2).agt_00001, "agt_00001"), id: "agt_00300", parent: "agt_00000", run: "run_00000" });
     expect(await s.relayout()).toBe(2);
-    s.toggle(new Set(["run:aether:fixture/run_00000"]));
+    s.choose(new Map([["run:aether:fixture/run_00000", true]]));
     expect(await s.relayout()).toBe(3);
     s.patch("agt_00003", (agent) => ({ ...agent, status: { state: "cancelled" } }));
     expect(await s.relayout()).toBe(3);
-    s.toggle(new Set());
+    s.choose(new Map());
     expect(await s.relayout()).toBe(4);
     s.store.updateAether(FIXTURE_CONN, (state) => {
       const agents = { ...state.agents };

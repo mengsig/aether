@@ -7,11 +7,11 @@ import type { Layout } from "@aether-ui/protocol";
 import { Button, EmptyState, ErrorState } from "@aether-ui/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { sameSources, selectFleetSources } from "../fleet/rows.ts";
-import { buildTopology, collapsedRuns, toggledForAll, topologyModel } from "./graph.ts";
+import { buildTopology, collapsedRuns, overridesForAll, toggleRun, topologyModel, type RunOverrides } from "./graph.ts";
 import { LayoutGate, type LayoutFn } from "./relayout.ts";
 import "./topology.css";
 
-const NO_TOGGLES: ReadonlySet<string> = new Set();
+const NO_OVERRIDES: RunOverrides = new Map();
 
 const errorText = (error: unknown): string => (error instanceof Error && error.message !== "" ? error.message : String(error) || "the layout failed");
 
@@ -23,8 +23,8 @@ export interface TopologyScreenProps {
 export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) {
   const sources = useSelector(selectFleetSources, sameSources);
   const topology = useMemo(() => buildTopology(sources), [sources]);
-  const [toggled, setToggled] = useState<ReadonlySet<string>>(NO_TOGGLES);
-  const model = useMemo(() => topologyModel(topology, collapsedRuns(topology, toggled)), [topology, toggled]);
+  const [overrides, setOverrides] = useState<RunOverrides>(NO_OVERRIDES);
+  const model = useMemo(() => topologyModel(topology, collapsedRuns(topology, overrides)), [topology, overrides]);
   const gate = useMemo(() => new LayoutGate(layout), [layout]);
   const [placed, setPlaced] = useState<Layout>();
   const [failure, setFailure] = useState<string>();
@@ -39,11 +39,7 @@ export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) 
     return () => { live = false; };
   }, [gate, model, attempt]);
 
-  const toggle = useCallback((group: string) => setToggled((old) => {
-    const next = new Set(old);
-    if (!next.delete(group)) next.add(group);
-    return next;
-  }), []);
+  const toggle = useCallback((group: string) => setOverrides((old) => toggleRun(topology, old, group)), [topology]);
   const activate = useCallback((id: string) => {
     const ref = topology.agentOf.get(id);
     if (ref !== undefined) navigate(routeHref("#/agents/:conn/:agent", { conn: ref.conn, agent: ref.agent }));
@@ -58,8 +54,8 @@ export function TopologyScreen({ layout = layeredLayout }: TopologyScreenProps) 
     <section className="topology" aria-label="Delegation topology">
       <div className="topology-bar">
         <p className="topology-count">{topology.nodes.length.toLocaleString("en")} agents in {topology.groups.length.toLocaleString("en")} runs</p>
-        <Button onClick={() => setToggled(toggledForAll(topology, false))}>Expand all runs</Button>
-        <Button onClick={() => setToggled(toggledForAll(topology, true))}>Collapse all runs</Button>
+        <Button onClick={() => setOverrides(overridesForAll(topology, false))}>Expand all runs</Button>
+        <Button onClick={() => setOverrides(overridesForAll(topology, true))}>Collapse all runs</Button>
         <a className="ui-link" href="#/fleet">Fleet list</a>
       </div>
       <div className="topology-canvas">
