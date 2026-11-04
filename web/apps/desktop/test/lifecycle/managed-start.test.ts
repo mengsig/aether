@@ -2,7 +2,7 @@
 // detached, in its own session, with output in a log file. Launchers here are stub scripts.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -122,33 +122,57 @@ test("concurrent starts of one daemon share one launch, and a slow one is never 
   }
 });
 
-test("managed start launches in home and where discovery looks, whatever HOME and relative overrides say", async () => {
+test("an empty HOME neither breaks managed start nor enables it", async () => {
   const fx = fixture();
   try {
-    const mainCwd = path.join(fx.dir, "main");
-    const passwdHome = path.join(fx.dir, "pw");
-    mkdirSync(mainCwd);
-    mkdirSync(passwdHome);
-    mkdirSync(path.join(mainCwd, "relhome"));
-    launcher(fx, `echo "cwd=$(pwd -P) socket=$AETHER_SOCKET data=$AETHER_DATA_DIR home=$HOME" >> '${fx.marker}'; exit 0`);
-    const deps = { isReachable: async () => false, logDir: fx.logDir };
-    const off = managedStartOn(machineOf({ HOME: "" }, "linux", passwdHome), mainCwd, { ...deps, isEnabled: () => false });
-    await assert.rejects(off.start("aether"), /is off/, "an empty HOME neither breaks startup nor enables anything");
+    const off = managedStartOn(machineOf({ HOME: "" }, "linux", fx.dir), fx.dir, {
+      isEnabled: () => false, isReachable: async () => false, logDir: fx.logDir,
+    });
+    await assert.rejects(off.start("aether"), /is off/);
+    assert.deepEqual(launchEnv({ HOME: "", AETHER_SOCKET: "", AETHER_DATA_DIR: "", ARCHON_SOCKET: "/abs/r.sock" }, "/main"),
+      { HOME: "", AETHER_SOCKET: "", AETHER_DATA_DIR: "/main", ARCHON_SOCKET: "/abs/r.sock" });
+    assert.deepEqual(launchEnv({ HOME: "h", ARCHON_DATA_DIR: "x/../d", AETHER_SOCKET: "l/../a.sock" }, "/"),
+      { HOME: "/h", ARCHON_DATA_DIR: "/x/../d", AETHER_SOCKET: "/l/../a.sock" }, "prefixed, never normalized");
+  } finally {
+    fx.cleanup();
+  }
+});
 
-    const cases: ReadonlyArray<readonly [Env, string, string]> = [
-      [{ HOME: "", AETHER_SOCKET: "rel/a.sock" }, passwdHome, `socket=${mainCwd}/rel/a.sock data= home=`],
-      [{ HOME: "relhome", AETHER_DATA_DIR: "" }, path.join(mainCwd, "relhome"), `socket= data=${mainCwd} home=${mainCwd}/relhome`],
-      [{ HOME: passwdHome, AETHER_DATA_DIR: "d/../data" }, passwdHome, `socket= data=${mainCwd}/data home=${passwdHome}`],
-    ];
-    for (const [env, cwd, recorded] of cases) {
-      rmSync(fx.marker, { force: true });
-      const machine = machineOf({ PATH: `${fx.bin}:/usr/bin:/bin`, ...env }, "linux", passwdHome);
-      await managedStartOn(machine, mainCwd, { ...deps, isEnabled: () => true }).start("aether");
-      const line = readFileSync(fx.marker, "utf8").trim().split("\n").at(-1) ?? "";
-      assert.equal(line, `cwd=${realpathSync(cwd)} ${recorded}`, JSON.stringify(env));
-      const discovered = path.resolve(mainCwd, socketPath("aether", machine));
-      const launched = path.resolve(cwd, socketPath("aether", machineOf(launchEnv(machine.env, mainCwd), "linux", passwdHome)));
-      assert.equal(launched, discovered, `the daemon listens where discovery looks: ${JSON.stringify(env)}`);
+/** A launcher for `kind` that makes its socket and data dir and records where it ran. */
+function placingLauncher(fx: Fixture, kind: "aether" | "archon"): void {
+  const upper = kind.toUpperCase();
+  const script = path.join(fx.bin, kind);
+  writeFileSync(script, `#!/bin/sh
+mkdir -p "$${upper}_DATA_DIR" && touch "$${upper}_DATA_DIR/state" "$${upper}_SOCKET"
+pwd -P > '${fx.marker}'
+`);
+  chmodSync(script, 0o755);
+}
+
+test("managed start launches where discovery looks, through symlinks and relative overrides", async () => {
+  const fx = fixture();
+  try {
+    // main runs in main/; main/link points into target/child, so link/.. is target, not main.
+    const main = path.join(fx.dir, "main");
+    const target = path.join(main, "target");
+    mkdirSync(path.join(target, "child"), { recursive: true });
+    mkdirSync(path.join(target, "home"));
+    symlinkSync(path.join(target, "child"), path.join(main, "link"));
+    for (const kind of ["aether", "archon"] as const) {
+      placingLauncher(fx, kind);
+      const upper = kind.toUpperCase();
+      const env: Env = {
+        PATH: `${fx.bin}:/usr/bin:/bin`, HOME: "link/../home",
+        [`${upper}_SOCKET`]: `link/../${kind}.sock`, [`${upper}_DATA_DIR`]: `link/../${kind}-data`,
+      };
+      const machine = machineOf(env, "linux", fx.dir);
+      await managedStartOn(machine, main, { isEnabled: () => true, isReachable: async () => false, logDir: fx.logDir }).start(kind);
+      assert.equal(readFileSync(fx.marker, "utf8").trim(), realpathSync(path.join(target, "home")), `${kind} ran in HOME as main reads it`);
+      const discovered = socketPath(kind, machine);
+      assert.equal(discovered, `link/../${kind}.sock`, "discovery reads the relative path from main's directory");
+      assert.ok(existsSync(path.join(target, `${kind}.sock`)), `${kind}'s socket is where main's ${discovered} leads`);
+      assert.ok(existsSync(path.join(target, `${kind}-data`, "state")), `${kind}'s data is where main's override leads`);
+      assert.ok(!existsSync(path.join(main, `${kind}.sock`)) && !existsSync(path.join(main, `${kind}-data`)), "nothing went to a normalized path");
     }
   } finally {
     fx.cleanup();

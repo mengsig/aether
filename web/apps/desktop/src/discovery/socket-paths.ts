@@ -28,7 +28,7 @@ export const DAEMON_PATHS: Readonly<Record<DaemonKind, DaemonPaths>> = {
 };
 
 /** Rust's `Path::join` on Unix: no normalizing, so `..` and doubled slashes stay as written. */
-function join(base: string, rest: string): string {
+export function join(base: string, rest: string): string {
   if (base === "" || rest.startsWith("/")) return rest;
   return base.endsWith("/") ? `${base}${rest}` : `${base}/${rest}`;
 }

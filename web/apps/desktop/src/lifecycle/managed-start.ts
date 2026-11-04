@@ -3,28 +3,31 @@
 
 import type { ChildProcess } from "node:child_process";
 import path from "node:path";
-import { absoluteHome, DAEMON_PATHS, type Env, type Machine } from "../discovery/socket-paths.ts";
+import { absoluteHome, DAEMON_PATHS, join, type Env, type Machine } from "../discovery/socket-paths.ts";
 import type { DaemonKind } from "../security/classes.ts";
 import { BridgeRefusal } from "../security/validate.ts";
 import { LAUNCHERS, launchDetached } from "./launch.ts";
 
 /**
  * The launcher's environment: `env` with a relative HOME and each relative socket or data dir
- * override made absolute against main's own directory, where discovery reads them, since the
- * launcher runs in home. An empty data dir means that directory; an empty socket reaches nothing.
+ * override put under main's own directory, where discovery reads them, since the launcher runs
+ * in home. Only prefixed, never normalized: `..` after a symlink must keep its meaning. An empty
+ * data dir means that directory; an empty socket stays empty and reaches nothing.
  */
 export function launchEnv(env: Env, mainCwd: string): Env {
-  if (!path.isAbsolute(mainCwd)) throw new Error(`main's directory is absolute, not ${mainCwd}`);
-  const launch: Record<string, string | undefined> = { ...env };
-  const home = env.HOME;
-  if (home !== undefined && home !== "" && !path.isAbsolute(home)) launch.HOME = path.resolve(mainCwd, home);
+  if (!mainCwd.startsWith("/")) throw new Error(`main's directory is absolute, not ${mainCwd}`);
+  const moved: Record<string, string> = {};
+  const put = (name: string, emptyIsHere: boolean) => {
+    const value = env[name];
+    if (value === undefined || value.startsWith("/") || (value === "" && !emptyIsHere)) return;
+    moved[name] = value === "" ? mainCwd : join(mainCwd, value);
+  };
+  put("HOME", false);
   for (const rules of Object.values(DAEMON_PATHS)) {
-    const socket = env[rules.socketVar];
-    if (socket !== undefined && socket !== "" && !path.isAbsolute(socket)) launch[rules.socketVar] = path.resolve(mainCwd, socket);
-    const data = env[rules.dataVar];
-    if (data !== undefined && !path.isAbsolute(data)) launch[rules.dataVar] = path.resolve(mainCwd, data);
+    put(rules.socketVar, false);
+    put(rules.dataVar, true);
   }
-  return launch;
+  return { ...env, ...moved };
 }
 
 /** Managed start on `machine`, launching in the user's home, from main running in `mainCwd`. */
