@@ -243,3 +243,62 @@ fn a_later_step_cannot_show_the_active_solution_or_a_recall_key_dressed_as_an_op
     let texts = crate::tools::sealed_texts(ASK, &dressed).unwrap();
     assert_eq!(texts, [SECRET], "a recall key is never swapped for a label");
 }
+
+#[test]
+fn tool_inputs_and_results_never_repeat_an_active_solution() {
+    let (_dir, noesis) = fixture();
+    add_proposition(&noesis, "p_cell", "the organelle", "powerhouse");
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise cells", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let problem =
+        json!({"statement": "Name the powerhouse", "mode": "recall", "solution": "the organelle"});
+    let search = json!({"query": "the organelle"});
+    let practitioner = t.engine_mut();
+    practitioner.script(Agent::Practitioner, "", vec![(PROBLEM, problem)]);
+    practitioner.script(
+        Agent::Practitioner,
+        "",
+        vec![("noesis.graph_search", search)],
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert!(
+        !format!("{report:?}").contains("the organelle"),
+        "{report:?}"
+    );
+    let agent = session(&t, &id).agent;
+    let inputs = format!("{:?}", t.engine().inputs_of(&agent));
+    assert!(!inputs.contains("the organelle"), "{inputs}");
+}
+
+#[test]
+fn visible_fields_that_repeat_a_sealed_value_are_refused_before_anything_is_stored() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let mut tagged = recall("Name the organelle", SECRET);
+    tagged["plan_node"] = json!(SECRET);
+    let mut tagged_concept = recall("Name the organelle", SECRET);
+    tagged_concept["concepts"] = json!([SECRET]);
+    let in_prompt = recall(&format!("Name it. Answer: {SECRET}"), SECRET);
+    for input in [tagged, tagged_concept, in_prompt] {
+        let error = error_of(&call(&mut t, &id, ASK, input, ""));
+        assert!(!error.contains(SECRET), "{error}");
+        assert!(error.contains("gives away"), "{error}");
+    }
+    assert!(session(&t, &id).open_question.is_none());
+
+    let practice = t
+        .create_session("Practise algebra", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    t.take_events();
+    let told = json!({"statement": "Solve 2x = 8. Answer: x = 4 by halving.", "mode": "recall",
+        "solution": "x = 4 by halving"});
+    let error = error_of(&call(&mut t, &practice, PROBLEM, told, ""));
+    assert!(error.contains("gives away the solution"), "{error}");
+    assert!(session(&t, &practice).active_problem.is_none());
+    assert!(t.take_events().is_empty(), "nothing was posed");
+}

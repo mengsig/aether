@@ -9,6 +9,7 @@ use super::records::{
     Answer, CONFIDENCE_STOPS, ChoiceOption, DEFAULT_CONFIDENCE, EvidenceKind, Intent, Phase,
     QuestionKind,
 };
+use super::seal;
 use crate::tools::args::AskArgs;
 
 pub const MAX_OPTIONS: usize = 12;
@@ -43,9 +44,9 @@ pub fn author(
     if let Some(node) = &args.plan_node {
         match plan {
             None => problems.push("`plan_node` needs a plan; call noesis.plan first".to_string()),
-            Some(plan) if !plan.has_node(node) => problems.push(format!(
-                "`plan_node` `{node}` is not a node of the current plan"
-            )),
+            Some(plan) if !plan.has_node(node) => {
+                problems.push("`plan_node` is not a node of the current plan".to_string())
+            }
             Some(_) => {}
         }
     }
@@ -54,6 +55,12 @@ pub fn author(
         QuestionKind::Recall => author_recall(args, &mut problems),
         QuestionKind::Goal => author_goal(args, &mut problems),
     };
+    if shown_fields_reveal(args) {
+        problems.push(
+            "the prompt, an option, a concept or the plan node gives away the answer or its explanation; rewrite it"
+                .to_string(),
+        );
+    }
     if reveals_key(args, visible_text) {
         problems.push(
             "your visible message gives away the answer; rewrite it without the answer and pose again"
@@ -137,6 +144,37 @@ fn author_goal(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
         answer_key: Vec::new(),
         multi: args.multi.unwrap_or(false),
     }
+}
+
+/// Whether a field the learner sees repeats a sealed text: a recall key or
+/// the explanation in the prompt or a label, or any key or the explanation in a tag.
+fn shown_fields_reveal(args: &AskArgs) -> bool {
+    let explanation: Vec<String> = args.explanation.iter().cloned().collect();
+    let key: Vec<String> = match args.kind {
+        QuestionKind::Choice => args
+            .options
+            .iter()
+            .filter(|option| args.answer_key.contains(&option.value))
+            .map(|option| option.label.clone())
+            .collect(),
+        _ => args.answer_key.clone(),
+    };
+    let prose_key: &[String] = if args.kind == QuestionKind::Choice {
+        &[]
+    } else {
+        &key
+    };
+    let mut prose = vec![args.prompt.as_str()];
+    prose.extend(args.options.iter().map(|option| option.label.as_str()));
+    let mut tags: Vec<&str> = args.concepts.iter().map(String::as_str).collect();
+    tags.extend(args.plan_node.as_deref());
+    let in_prose = prose
+        .iter()
+        .any(|text| seal::holds(text, prose_key) || seal::holds(text, &explanation));
+    let in_tags = tags
+        .iter()
+        .any(|tag| seal::holds(tag, &key) || seal::holds(tag, &explanation));
+    in_prose || in_tags
 }
 
 /// Whether the posing turn's visible text holds a correct option's label or

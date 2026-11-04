@@ -6,12 +6,9 @@ use super::engine::{Engine, EngineError, Input, Step, ToolResult};
 use super::service::{
     CallRecord, Caller, MAX_STEPS, StepRecord, Teaching, TurnEnd, TurnReport, driving_agent,
 };
-use super::{TeachError, question, role_of};
+use super::{TeachError, question, role_of, seal};
 use crate::budget::Lane;
 use crate::tools;
-
-/// What a step's visible text reads as once it gave away a sealed answer.
-pub const WITHHELD: &str = "<withheld: this message gave away a sealed answer>";
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
@@ -75,7 +72,7 @@ impl<E: Engine> Teaching<'_, E> {
             calls: Vec::with_capacity(step.calls.len()),
         };
         if step.calls.is_empty() {
-            record.text = shown_text(step, &self.live_secrets(session)?);
+            record.text = seal::shown_text(step, Some(&self.live_secrets(session)?));
             return Ok((record, Some(TurnEnd::AwaitingLearner), Vec::new()));
         }
         let mut end = None;
@@ -95,14 +92,40 @@ impl<E: Engine> Teaching<'_, E> {
             }
         }
         debug_assert_eq!(record.calls.len(), step.calls.len());
-        // Checked after the calls: a conclude in this step reveals its solution.
-        record.text = shown_text(step, &self.live_secrets(session)?);
+        self.seal_step(session, step, &mut record, &mut results)?;
         Ok((record, end, results))
+    }
+
+    /// Seal what a step shows and delivers against the secrets left after its
+    /// calls ran (a conclude in the step reveals its solution) and its own.
+    fn seal_step(
+        &self,
+        session: &str,
+        step: &Step,
+        record: &mut StepRecord,
+        results: &mut [ToolResult],
+    ) -> Result<(), TeachError> {
+        let own = seal::step_secrets(step);
+        let readable = own.is_some();
+        let mut secrets = self.live_secrets(session)?;
+        secrets.extend(own.unwrap_or_default());
+        record.text = seal::shown_text(step, readable.then_some(secrets.as_slice()));
+        for call in &mut record.calls {
+            seal::scrub(&mut call.input, &secrets);
+            if !call.is_error {
+                seal::scrub(&mut call.result, &secrets);
+            }
+        }
+        for result in results.iter_mut().filter(|result| !result.is_error) {
+            seal::scrub(&mut result.content, &secrets);
+        }
+        debug_assert!(readable || record.text == seal::WITHHELD);
+        Ok(())
     }
 
     /// The session's sealed texts still unrevealed: the active problem's
     /// solution and the open question's key and explanation.
-    fn live_secrets(&self, session: &str) -> Result<Vec<String>, TeachError> {
+    pub(super) fn live_secrets(&self, session: &str) -> Result<Vec<String>, TeachError> {
         let active = db::active_problem(self.conn(), session)?;
         let open = db::open_question(self.conn(), session)?;
         debug_assert!(
@@ -157,26 +180,5 @@ impl<E: Engine> Teaching<'_, E> {
             // Dropping the admission charges the estimate: the call may have run.
             Err(error) => Err(error.into()),
         }
-    }
-}
-
-/// The step's text as it may be shown: withheld when it holds a live sealed
-/// text of the session or of a call in the step, or a sealed input is unreadable.
-fn shown_text(step: &Step, live: &[String]) -> String {
-    let haystack = step.text.to_lowercase();
-    let holds = |secrets: &[String]| {
-        secrets
-            .iter()
-            .any(|secret| question::contains_phrase(&haystack, &secret.trim().to_lowercase()))
-    };
-    let reveals = holds(live)
-        || step
-            .calls
-            .iter()
-            .any(|call| tools::sealed_texts(&call.name, &call.input).is_none_or(|s| holds(&s)));
-    if reveals {
-        WITHHELD.to_string()
-    } else {
-        step.text.clone()
     }
 }

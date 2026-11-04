@@ -9,6 +9,7 @@ pub mod phase;
 pub mod plan;
 pub mod question;
 pub mod records;
+mod seal;
 mod service;
 mod turn;
 
@@ -25,8 +26,8 @@ pub use engine::{
     AgentSpec, Engine, EngineError, Input, NOESIS_RUN, SUBSYSTEM, Step, ToolCall, ToolResult,
 };
 pub use handlers::CallOutcome;
+pub use seal::WITHHELD;
 pub use service::{CallRecord, Caller, StepRecord, Teaching, TurnEnd, TurnReport};
-pub use turn::WITHHELD;
 
 use crate::budget::{ModelRefusal, Refusal};
 use crate::prompts::{Agent, PromptError};

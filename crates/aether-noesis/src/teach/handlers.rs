@@ -11,7 +11,7 @@ use super::records::{
     EvidenceDraft, EvidenceKind, EvidenceOutcome, NoesisEvent, Outcome, Phase, Problem, Question,
 };
 use super::service::{Caller, Teaching, TurnEnd, driving_agent};
-use super::{PROBE_DONE_ACK, TeachError, agent_for_role, plan, question};
+use super::{PROBE_DONE_ACK, TeachError, agent_for_role, plan, question, seal};
 use crate::prompts::Agent;
 use crate::tools::args::{AskArgs, ConcludeArgs, PlanArgs, ProbeDoneArgs, ProblemArgs};
 use crate::tools::{self, ToolArgs, ToolName};
@@ -40,10 +40,16 @@ impl<E: Engine> Teaching<'_, E> {
         visible_text: &str,
     ) -> Result<CallOutcome, TeachError> {
         let handled = self.handle(session, caller, call, visible_text)?;
-        let (content, is_error, ends) = match handled {
+        let (mut content, is_error, ends) = match handled {
             Ok((content, ends)) => (content, false, ends),
             Err(problem) => (json!({ "error": problem }), true, None),
         };
+        // A result never repeats a sealed text; refusals are ours and quote none.
+        if !is_error {
+            let mut secrets = self.live_secrets(session)?;
+            secrets.extend(tools::sealed_texts(&call.name, &call.input).unwrap_or_default());
+            seal::scrub(&mut content, &secrets);
+        }
         debug_assert!(
             !is_error || ends.is_none(),
             "a refused call never ends the turn"
@@ -238,6 +244,13 @@ impl<E: Engine> Teaching<'_, E> {
     }
 
     fn plan(&mut self, row: &SessionRow, args: &PlanArgs) -> Handled {
+        // Checked before validation, whose problems quote node ids.
+        let live = self.live_secrets(&row.id)?;
+        let named = args.nodes.iter().flat_map(|node| [&node.id, &node.title]);
+        let linked = args.edges.iter().flat_map(|edge| [&edge.from, &edge.to]);
+        if named.chain(linked).any(|text| seal::holds(text, &live)) {
+            return refuse("the plan gives away a sealed answer; rewrite it");
+        }
         let dag = match plan::validate(args) {
             Ok(dag) => dag,
             Err(problems) => {
@@ -276,6 +289,12 @@ impl<E: Engine> Teaching<'_, E> {
     fn problem(&mut self, row: &SessionRow, args: ProblemArgs) -> Handled {
         if db::active_problem(self.conn(), &row.id)?.is_some() {
             return refuse("a problem is already active; noesis.conclude it first");
+        }
+        let solution = [args.solution.clone()];
+        if seal::holds(&args.statement, &solution)
+            || args.targets.iter().any(|t| seal::holds(t, &solution))
+        {
+            return refuse("the statement or a target gives away the solution; rewrite it");
         }
         let mut targets = Vec::with_capacity(args.targets.len());
         let mut unknown = Vec::new();
