@@ -1,10 +1,9 @@
-// An item's detail. With the change stream, core keeps it current once the item is shown (§5.3); a protocol
-// 23 archond has no stream, so the page polls as the retired app did (§5.3.5).
+// An item's detail, read from core's store. With the change stream, core keeps it current once the item is
+// shown (§5.3); a protocol 23 archond has no stream, so the page asks core to reread it on a poll (§5.3.5).
 
-import { selectFeed, selectItem, selectItemDetail, useApp, useSelector } from "@aether-ui/core";
-import type { archon } from "@aether-ui/protocol";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useRead, type ArchonAccess } from "../queue/archon.ts";
+import { selectFeed, selectItem, selectItemDetail, useApp, useSelector, type Stamped } from "@aether-ui/core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ArchonAccess } from "../queue/archon.ts";
 import { invariant, isStateKind, isTerminal } from "../queue/model.ts";
 
 /** A feed entry naming the item is followed this long after, so a burst rereads once. */
@@ -13,8 +12,9 @@ export const FOLLOW_MS = 300;
 export const POLL_MS = 15_000;
 
 export interface ItemDetailRead {
-  /** A new object on every reread, live or polled: reads tied to the item (links, artifacts, plans) key on it. */
-  readonly detail: archon.ItemDetail | undefined;
+  /** Core's stored detail: a new object on every reread, so reads tied to the item (artifacts, reports) key on it. */
+  readonly detail: Stamped | undefined;
+  /** Why the last reread this page asked for failed; core keeps the last good detail beside it. */
   readonly error: string | null;
   readonly reload: () => void;
 }
@@ -61,9 +61,20 @@ export function useItemDetail(access: ArchonAccess, item: string): ItemDetailRea
     app.manager.showItems(conn, [item]);
     return () => app.manager.showItems(conn, []);
   }, [app, conn, item, live, ready]);
-  const stored = useSelector(useMemo(() => selectItemDetail(conn, item), [conn, item])) as archon.ItemDetail | undefined;
+  const detail = useSelector(useMemo(() => selectItemDetail(conn, item), [conn, item]));
+  const [error, setError] = useState<{ item: string; text: string } | null>(null);
+  const [nonce, setNonce] = useState(0);
   const key = usePollKey(access, item, !live);
-  const polled = useRead<archon.ItemDetail>(access, live ? null : { cmd: "get_item", item }, ["item_detail"], key);
-  if (live) return { detail: stored, error: null, reload: () => undefined };
-  return { detail: polled.data, error: polled.error, reload: polled.reload };
+  useEffect(() => {
+    // Live, core rereads on change; a reload or a protocol 23 poll asks it to reread now.
+    if (!ready || (live && nonce === 0)) return;
+    let current = true;
+    app.manager.refreshItem(conn, item).then(
+      () => { if (current) setError(null); },
+      (failure: unknown) => { if (current) setError({ item, text: failure instanceof Error ? failure.message : String(failure) }); },
+    );
+    return () => { current = false; };
+  }, [app, conn, item, live, ready, key, nonce]);
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+  return { detail, error: error?.item === item ? error.text : null, reload };
 }

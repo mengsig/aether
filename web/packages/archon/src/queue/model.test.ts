@@ -9,7 +9,7 @@ function stored(id: string, live: Partial<ArchonItem> = {}): ArchonItem {
   if (!summary) throw new Error(`the demo world has ${id}`);
   const state = (summary.state as { state: string }).state;
   const reason = (summary.waiting_reason as { code?: string } | null)?.code;
-  return { summary, state, ...(reason ? { waitingReason: reason } : {}), ...live };
+  return { summary, state, ...(reason ? { waitingReason: reason } : {}), asOf: null, ...live };
 }
 
 describe("a queue row", () => {
@@ -27,7 +27,7 @@ describe("a queue row", () => {
 
   test("drops the summary's prompt and reason once the live reason has moved on", () => {
     const { summary, state } = stored("qi_pairing");
-    const moved = queueRow("qi_pairing", { summary, state, stage: "build" });
+    const moved = queueRow("qi_pairing", { summary, state, stage: "build", asOf: 120 });
     expect(moved).toMatchObject({ waitsOnYou: false, waitingText: null, waitingCode: null });
     expect(queueRow("qi_pairing", stored("qi_pairing")).waitingText).toBe("Approve the proposal to shorten pairing codes to eight characters?");
   });

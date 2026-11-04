@@ -1,9 +1,10 @@
 // What an item page states about an item. Execution, pull request and issue are three facts with three
 // sources, never merged: a succeeded item can have an open PR, and a delivered PR leaves its issue open.
 
+import { replaces, type ArchonItem, type Stamped } from "@aether-ui/core";
 import type { archon } from "@aether-ui/protocol";
 import type { Status } from "@aether-ui/ui";
-import { invariant, isTerminal, reasonLabel, safeHttpUrl, statePill, type StateKind } from "../queue/model.ts";
+import { invariant, isStateKind, isTerminal, reasonLabel, safeHttpUrl, statePill, type StateKind } from "../queue/model.ts";
 
 export interface Fact {
   readonly label: string;
@@ -16,16 +17,46 @@ export interface Fact {
 /** Waiting reasons only the operator can clear. */
 const OPERATOR_REASONS: ReadonlySet<string> = new Set(["operator_gate", "dependency_failed", "blocked"]);
 
-export function waitsOnYou(kind: StateKind, detail: Pick<archon.ItemDetail, "waiting_on" | "waiting_reason">): boolean {
-  if (isTerminal(kind)) return false;
-  return Boolean(detail.waiting_on) || kind === "blocked" || OPERATOR_REASONS.has(detail.waiting_reason?.code ?? "");
+/** Where the item stands, each part from the newest object in the store that carries it. */
+export interface ItemView {
+  readonly kind: StateKind;
+  /** The tagged state when the newest object carries it whole; a change record gives only its kind. */
+  readonly state: archon.QueueState | null;
+  readonly stage: string | null;
+  readonly reason: archon.WaitingReason | null;
+  readonly waitingOn: archon.WaitingOn | null;
 }
 
-export function executionFact(kind: StateKind, detail: archon.ItemDetail, stage: string | null): Fact {
-  invariant(detail.item.id.length > 0, "an execution fact describes an item");
-  const pill = statePill(kind, waitsOnYou(kind, detail));
-  const reason = isTerminal(kind) ? null : detail.waiting_reason ?? null;
-  const where = stage && !isTerminal(kind) ? `stage ${stage}` : null;
+/**
+ * The item page's view: from the detail (its current run's state) unless the stored item is newer, by
+ * as_of; a tie goes to the detail, which says more. Neither is ever merged field by field into the other.
+ */
+export function itemView(item: ArchonItem | undefined, detail: Stamped): ItemView {
+  const value = detail.value as unknown as archon.ItemDetail;
+  invariant(typeof value.item?.id === "string", "an item view reads an item detail");
+  if (item === undefined || replaces(detail.asOf, item.asOf)) {
+    const state = value.item.state;
+    return { kind: state.state, state, stage: currentStage(value), reason: value.waiting_reason ?? null, waitingOn: value.waiting_on ?? null };
+  }
+  invariant(isStateKind(item.state), `item ${value.item.id} has a known state, not ${item.state}`);
+  const summary = item.summary as unknown as archon.ItemSummary;
+  const code = item.waitingReason ?? null;
+  // A change moved the kind or reason past the summary's words, which then describe an older position.
+  const whole = summary.state.state === item.state && (summary.waiting_reason?.code ?? null) === code;
+  const reason = code === null ? null : whole && summary.waiting_reason ? summary.waiting_reason : { code, message: reasonLabel(code) } as archon.WaitingReason;
+  return { kind: item.state, state: whole ? summary.state : null, stage: item.stage ?? null, reason, waitingOn: whole ? summary.waiting_on ?? null : null };
+}
+
+export function waitsOnYou(view: Pick<ItemView, "kind" | "waitingOn" | "reason">): boolean {
+  if (isTerminal(view.kind)) return false;
+  return Boolean(view.waitingOn) || view.kind === "blocked" || OPERATOR_REASONS.has(view.reason?.code ?? "");
+}
+
+export function executionFact(view: ItemView): Fact {
+  invariant(isStateKind(view.kind), `an execution fact reads a known state, not ${String(view.kind)}`);
+  const pill = statePill(view.kind, waitsOnYou(view));
+  const reason = isTerminal(view.kind) ? null : view.reason;
+  const where = view.stage && !isTerminal(view.kind) ? `stage ${view.stage}` : null;
   const why = reason ? reason.message || reasonLabel(reason.code) : null;
   return { label: "Execution", status: pill.status, text: pill.label, detail: [where, why].filter(Boolean).join(" · ") || null };
 }
@@ -99,31 +130,57 @@ export function prFromUrl(url: string | null | undefined): archon.PrRef | null {
   return { host: parsed.host, repo: match[1], number, kind: "pull_request" };
 }
 
+/** The newest delivered pull request link as archond picks the summary's PR: the last one in `item_links`' stored order. */
+export function newestDelivered(links: readonly archon.GithubLink[]): archon.GithubLink | null {
+  return links.findLast((entry) => entry.ref.kind === "pull_request" && entry.relation === "delivered") ?? null;
+}
+
 /**
- * The item's PR: the newest delivered pull request link, which the page rereads with the detail, else the
- * summary's. The summary's PR keeps its recorded state while it names the same pull request.
+ * The item's PR: the summary's, or the newest delivered link when the links list was read no earlier than
+ * the summary, by as_of. The summary's PR keeps its recorded state while it names the same pull request.
  */
-export function prOf(summary: archon.ItemSummary | null, links: readonly archon.GithubLink[]): archon.PrRef | null {
+export function prOf(item: ArchonItem | undefined, links: Stamped | undefined): archon.PrRef | null {
+  const summary = (item?.summary ?? null) as archon.ItemSummary | null;
   const recorded = summary?.pr ?? prFromUrl(summary?.pr_url);
-  const delivered = links.filter((entry) => entry.ref.kind === "pull_request" && entry.relation === "delivered");
-  const newest = delivered.reduce<archon.GithubLink | null>((best, entry) => (best === null || entry.created_at > best.created_at ? entry : best), null);
+  const newest = newestDelivered(linksOf(links).links);
   if (newest === null) return recorded;
   invariant(newest.ref.kind === "pull_request", "a delivered PR link names a pull request");
-  return recorded !== null && sameRef(recorded, newest.ref) ? recorded : { ...newest.ref };
+  if (recorded !== null && sameRef(recorded, newest.ref)) return recorded;
+  const linksNewer = links !== undefined && (item === undefined || recorded === null || replaces(links.asOf, item.asOf));
+  return linksNewer ? { ...newest.ref } : recorded;
+}
+
+export interface LinksReply { readonly links: archon.GithubLink[]; readonly objects: archon.GithubObject[] }
+const NO_LINKS: LinksReply = { links: [], objects: [] };
+
+export function linksOf(links: Stamped | undefined): LinksReply {
+  if (links === undefined) return NO_LINKS;
+  const value = links.value as unknown as LinksReply;
+  invariant(Array.isArray(value.links) && Array.isArray(value.objects), "an item_links reply lists links and objects");
+  return value;
 }
 
 export interface Outcome { readonly tone: "success" | "danger" | "warning" | "neutral"; readonly title: string; readonly text: string }
 
+const BARE_OUTCOMES: Readonly<Partial<Record<StateKind, Outcome>>> = {
+  failed: { tone: "danger", title: "Failed", text: "The item failed; its runs say where." },
+  succeeded: { tone: "success", title: "Done", text: "The item succeeded." },
+  cancelled: { tone: "neutral", title: "Cancelled", text: "Cancelled by the operator." },
+  blocked: { tone: "warning", title: "Blocked", text: "The item is blocked." },
+};
+
 /** What finished or holds the item, as the retired app's callout said it; null while it simply runs. */
-export function outcome(detail: archon.ItemDetail): Outcome | null {
-  const state = detail.item.state;
-  if (state.state === "failed") return { tone: "danger", title: "Failed", text: state.error };
-  if (state.state === "succeeded") return { tone: "success", title: "Done", text: state.summary };
-  if (state.state === "cancelled") return { tone: "neutral", title: "Cancelled", text: state.reason ?? "Cancelled by the operator." };
-  if (state.state === "blocked") return { tone: "warning", title: "Blocked", text: state.reason };
-  const on = detail.waiting_on;
+export function outcome(view: ItemView): Outcome | null {
+  const state = view.state;
+  invariant(state === null || state.state === view.kind, "a view's tagged state is its kind");
+  if (state === null && BARE_OUTCOMES[view.kind]) return BARE_OUTCOMES[view.kind] ?? null;
+  if (state?.state === "failed") return { tone: "danger", title: "Failed", text: state.error };
+  if (state?.state === "succeeded") return { tone: "success", title: "Done", text: state.summary };
+  if (state?.state === "cancelled") return { tone: "neutral", title: "Cancelled", text: state.reason ?? "Cancelled by the operator." };
+  if (state?.state === "blocked") return { tone: "warning", title: "Blocked", text: state.reason };
+  const on = view.waitingOn;
   if (on) return { tone: "warning", title: `Waiting on you · ${on.subject}`, text: on.prompt };
-  const reason = detail.waiting_reason;
+  const reason = view.reason;
   if (reason) return { tone: OPERATOR_REASONS.has(reason.code) ? "warning" : "neutral", title: "Waiting", text: reason.message || reasonLabel(reason.code) };
   return null;
 }

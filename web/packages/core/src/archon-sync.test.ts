@@ -312,7 +312,7 @@ describe("Archon resync, third review", () => {
     manager.showItems(CONN, ["qi_1"]);
     daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_1", state: "waiting" } });
     await vi.advanceTimersByTimeAsync(250);
-    expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1" });
+    expect(store.get().archon[CONN]?.details.qi_1?.value).toEqual({ id: "qi_1" });
     daemon.drop(1006);
     await vi.advanceTimersByTimeAsync(300 + 250);
     expect(daemon.commands("subscribe_changes").map((c) => c.after)).toEqual([null, 130, 100]);
@@ -333,7 +333,7 @@ describe("Archon resync, third review", () => {
     manager.showItems(CONN, ["qi_1"]);
     await vi.advanceTimersByTimeAsync(250);
     expect(daemon.commands("get_item")).toHaveLength(2);
-    expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1" });
+    expect(store.get().archon[CONN]?.details.qi_1?.value).toEqual({ id: "qi_1" });
   });
 
   it("does not install a detail read that an off-screen change overtook", async () => {
@@ -353,7 +353,7 @@ describe("Archon resync, third review", () => {
     manager.showItems(CONN, ["qi_1"]);
     await vi.advanceTimersByTimeAsync(250);
     expect(daemon.commands("get_item")).toHaveLength(2);
-    expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1", state: "succeeded" });
+    expect(store.get().archon[CONN]?.details.qi_1?.value).toEqual({ id: "qi_1", state: "succeeded" });
   });
 
   it("keeps a feed replay that arrives with the subscribe answer", async () => {

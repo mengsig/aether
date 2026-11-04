@@ -1,23 +1,20 @@
 // `#/archon/items/:item`: one item's execution, pull request and issue states side by side, what holds it,
 // the operator's actions, its runs, stages, gates, questions, links, artifacts and reports.
 
-import { routeHref, selectItem, selectItems, useSelector } from "@aether-ui/core";
+import { routeHref, selectItem, selectItemLinks, selectItems, useSelector, type ArchonItem, type Stamped } from "@aether-ui/core";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
 import { EmptyState, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
 import { useActivity, useArchonAccess, useArchonConnection, useRead, useSettled, type ArchonAccess } from "../queue/archon.ts";
-import { invariant, isStateKind, type StateKind } from "../queue/model.ts";
+import { invariant } from "../queue/model.ts";
 import { NotConnected, useNow } from "../queue/QueueScreen.tsx";
 import { QuestionList } from "../queue/Questions.tsx";
 import { Artifacts } from "./Artifacts.tsx";
 import { useItemDetail } from "./detail.ts";
-import { currentStage, executionFact, issueFact, issueOf, objectFor, outcome, prFact, prOf, type Fact } from "./facts.ts";
+import { executionFact, issueFact, issueOf, itemView, linksOf, objectFor, outcome, prFact, prOf, type Fact, type ItemView } from "./facts.ts";
 import { ItemActions } from "./ItemActions.tsx";
 import { Details, Gates, Links, Reports, Runs, Section, Stages } from "./ItemSections.tsx";
 import "./item.css";
-
-interface LinksReply { readonly links: archon.GithubLink[]; readonly objects: archon.GithubObject[] }
-const NO_LINKS: LinksReply = { links: [], objects: [] };
 
 function FactCard({ fact }: { readonly fact: Fact }) {
   return (
@@ -29,19 +26,17 @@ function FactCard({ fact }: { readonly fact: Fact }) {
   );
 }
 
-function Facts({ kind, detail, summary, links, stage }: {
-  readonly kind: StateKind; readonly detail: archon.ItemDetail; readonly summary: archon.ItemSummary | null;
-  readonly links: LinksReply; readonly stage: string | null;
-}) {
-  const issue = issueOf(summary, links.links);
-  const pr = prOf(summary, links.links);
-  const facts = [executionFact(kind, detail, stage), prFact(pr, objectFor(pr, links.objects)), issueFact(issue, objectFor(issue, links.objects))];
+function Facts({ view, stored, links }: { readonly view: ItemView; readonly stored: ArchonItem | undefined; readonly links: Stamped | undefined }) {
+  const { links: list, objects } = linksOf(links);
+  const issue = issueOf((stored?.summary ?? null) as archon.ItemSummary | null, list);
+  const pr = prOf(stored, links);
+  const facts = [executionFact(view), prFact(pr, objectFor(pr, objects)), issueFact(issue, objectFor(issue, objects))];
   invariant(new Set(facts.map((fact) => fact.label)).size === 3, "execution, PR and issue are three separate facts");
   return <div className="item-facts" role="group" aria-label="States">{facts.map((fact) => <FactCard key={fact.label} fact={fact} />)}</div>;
 }
 
-function Outcome({ detail }: { readonly detail: archon.ItemDetail }) {
-  const said = outcome(detail);
+function Outcome({ view }: { readonly view: ItemView }) {
+  const said = outcome(view);
   if (!said) return null;
   return (
     <div className="item-callout" data-tone={said.tone} role="note">
@@ -52,12 +47,13 @@ function Outcome({ detail }: { readonly detail: archon.ItemDetail }) {
 }
 
 interface PageProps {
-  readonly access: ArchonAccess; readonly detail: archon.ItemDetail; readonly kind: StateKind;
-  readonly summary: archon.ItemSummary | null; readonly stage: string | null; readonly reload: () => void;
+  readonly access: ArchonAccess; readonly detail: archon.ItemDetail; readonly view: ItemView;
+  readonly stored: ArchonItem | undefined; readonly reload: () => void;
 }
 
-function ItemPage({ access, detail, kind, summary, stage, reload }: PageProps) {
+function ItemPage({ access, detail, view, stored, reload }: PageProps) {
   const item = detail.item;
+  const summary = (stored?.summary ?? null) as archon.ItemSummary | null;
   const now = useNow();
   // The pause and the questions move with any activity; the rest follows each reread of this detail.
   const settled = useSettled(useActivity(access.conn), 1_000);
@@ -65,7 +61,8 @@ function ItemPage({ access, detail, kind, summary, stage, reload }: PageProps) {
   const status = useRead<archon.DaemonStatus>(access, { cmd: "status" }, ["status"], settled);
   const questions = useRead<archon.Question[]>(access, { cmd: "list_questions", open_only: false }, ["questions"], settled);
   const reports = useRead<archon.ReportSummary[]>(access, { cmd: "list_reports" }, ["reports"], detail);
-  const links = useRead<LinksReply>(access, access.has("github_links") ? { cmd: "item_links", item: item.id } : null, ["item_links"], detail);
+  const links = useSelector(useMemo(() => selectItemLinks(access.conn, item.id), [access.conn, item.id]));
+  const { links: linkList, objects } = linksOf(links);
   const repoName = item.repo ? repos.data?.find((repo) => repo.id === item.repo)?.name ?? null : null;
   const mine = (questions.data ?? []).filter((question) => question.item === item.id && !question.answer);
   const reported = (reports.data ?? []).filter((report) => report.item === item.id);
@@ -77,10 +74,10 @@ function ItemPage({ access, detail, kind, summary, stage, reload }: PageProps) {
         <a className="ui-link item-back" href={routeHref("#/archon/queue", {})}>Queue</a>
         <h1 id="item-title" className="item-title">{item.title}</h1>
         <p className="item-muted">{[repoName ?? item.repo ?? "no repository", pipeline, item.id].join(" · ")}{access.live ? "" : " · polled (protocol 23)"}</p>
-        <Facts kind={kind} detail={detail} summary={summary} links={links.data ?? NO_LINKS} stage={stage} />
+        <Facts view={view} stored={stored} links={links} />
       </header>
-      <Outcome detail={detail} />
-      <ItemActions access={access} item={item} kind={kind} repoName={repoName} pause={status.data?.pause ?? null} onDone={done} />
+      <Outcome view={view} />
+      <ItemActions access={access} item={item} kind={view.kind} repoName={repoName} pause={status.data?.pause ?? null} onDone={done} />
       {mine.length > 0 ? <QuestionList access={access} questions={mine} titles={null} onAnswered={done} /> : null}
       <div className="item-grid">
         <Section title="Details"><Details detail={detail} repoName={repoName} pipeline={pipeline} prUrl={summary?.pr_url ?? null} /></Section>
@@ -89,9 +86,8 @@ function ItemPage({ access, detail, kind, summary, stage, reload }: PageProps) {
         <Section title="Stages"><Stages detail={detail} now={now} /></Section>
         {detail.gates?.length ? <Section title="Gates"><Gates gates={detail.gates} /></Section> : null}
         <Section title="Links">
-          {access.has("github_links") ? <Links links={links.data?.links ?? []} objects={links.data?.objects ?? []} />
+          {access.has("github_links") ? <Links links={linkList} objects={objects} />
             : <p className="item-muted">This archond does not list GitHub links; the PR and issue above come from the queue summary.</p>}
-          {links.error ? <p role="alert" className="item-error">{links.error}</p> : null}
         </Section>
         <Section title="Artifacts"><Artifacts access={access} item={item.id} version={detail} /></Section>
         {reported.length > 0 ? <Section title="Reports"><Reports reports={reported} /></Section> : null}
@@ -105,18 +101,16 @@ function Item({ info, item }: { readonly info: ConnectionInfo; readonly item: st
   const stored = useSelector(useMemo(() => selectItem(access.conn, item), [access.conn, item]));
   const known = useSelector(useMemo(() => selectItems(access.conn), [access.conn]));
   const read = useItemDetail(access, item);
-  const detail = read.detail;
-  if (!detail) {
+  const stamped = read.detail;
+  if (!stamped) {
     if (read.error) return <ErrorState title="Could not load the item" message={read.error} onRetry={read.reload} />;
     const missing = access.ready && stored === undefined && Object.keys(known).length > 0;
     if (missing) return <EmptyState title="Item not found">Archon has no item {item}. <a className="ui-link" href={routeHref("#/archon/queue", {})}>Back to the queue</a></EmptyState>;
     return <div className="item" aria-busy="true" aria-label="Loading the item"><Skeleton height="2rem" width="60%" /><Skeleton height="6rem" /><Skeleton height="12rem" /></div>;
   }
+  const detail = stamped.value as unknown as archon.ItemDetail;
   invariant(detail.item.id === item, `the detail of ${item} describes ${detail.item.id}`);
-  const live = stored && isStateKind(stored.state) ? stored.state : null;
-  const kind = live ?? detail.item.state.state;
-  const summary = (stored?.summary ?? null) as archon.ItemSummary | null;
-  return <ItemPage access={access} detail={detail} kind={kind} summary={summary} stage={currentStage(detail) ?? stored?.stage ?? summary?.stage ?? null} reload={read.reload} />;
+  return <ItemPage access={access} detail={detail} view={itemView(stored, stamped)} stored={stored} reload={read.reload} />;
 }
 
 export default function ItemRoute({ params }: RouteProps) {

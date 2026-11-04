@@ -1,14 +1,14 @@
 // `#/archon/items/:item/runs/:run`: one run's pipeline from `run_plan`, each planned stage with its stage
 // runs. A protocol 23 archond has no `run_plan`, so the view lists the stages the run has started instead.
 
-import { routeHref, useSelector, selectItem } from "@aether-ui/core";
+import { routeHref, selectItem, selectRunPlan, useApp, useSelector } from "@aether-ui/core";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
 import { Badge, EmptyState, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useItemDetail } from "../item/detail.ts";
 import { runPill } from "../item/facts.ts";
 import { StageNode } from "../item/ItemSections.tsx";
-import { useArchonAccess, useArchonConnection, useRead, type ArchonAccess } from "../queue/archon.ts";
+import { useArchonAccess, useArchonConnection, type ArchonAccess } from "../queue/archon.ts";
 import { invariant, usd } from "../queue/model.ts";
 import { NotConnected, useNow } from "../queue/QueueScreen.tsx";
 import { pipelineView, stageTerms, type PipelineStep, type PipelineView } from "./plan.ts";
@@ -42,11 +42,32 @@ function PlanSource({ view, error }: { readonly view: PipelineView; readonly err
   return <p className="pipeline-note" role="note">{why} Showing the stages this run has started, in order.</p>;
 }
 
+/** The run's plan from core's store, read once when missing; the item's rereads keep it current. */
+function usePlan(access: ArchonAccess, item: string, run: string): { plan: archon.RunPlan | null; error: string | null; waiting: boolean } {
+  const app = useApp();
+  const served = access.has("run_plan");
+  const stored = useSelector(useMemo(() => selectRunPlan(access.conn, run), [access.conn, run]));
+  const [error, setError] = useState<{ run: string; text: string } | null>(null);
+  const missing = stored === undefined;
+  useEffect(() => {
+    if (!served || !access.ready || !missing) return;
+    let current = true;
+    app.manager.readPlan(access.conn, item, run).then(
+      () => { if (current) setError(null); },
+      (failure: unknown) => { if (current) setError({ run, text: failure instanceof Error ? failure.message : String(failure) }); },
+    );
+    return () => { current = false; };
+  }, [app, access.conn, access.ready, served, missing, item, run]);
+  const plan = stored ? (stored.value as unknown as archon.RunPlan) : null;
+  invariant(plan === null || stored?.item === item, `the plan of ${run} belongs to ${item}`);
+  const failed = error?.run === run ? error.text : null;
+  return { plan, error: failed, waiting: served && plan === null && failed === null };
+}
+
 function RunView({ access, detail, run, title }: { readonly access: ArchonAccess; readonly detail: archon.ItemDetail; readonly run: archon.PipelineRun; readonly title: string }) {
   const now = useNow();
-  const plan = useRead<archon.RunPlan>(access, access.has("run_plan") ? { cmd: "run_plan", run: run.id } : null, ["run_plan"], detail);
-  const waitingForPlan = access.has("run_plan") && plan.data === undefined && plan.error === null;
-  const view = useMemo(() => pipelineView(run, detail.stages, plan.data ?? null), [run, detail.stages, plan.data]);
+  const { plan, error, waiting: waitingForPlan } = usePlan(access, detail.item.id, run.id);
+  const view = useMemo(() => pipelineView(run, detail.stages, plan), [run, detail.stages, plan]);
   const pill = runPill(run.state);
   const number = detail.runs.findIndex((entry) => entry.id === run.id) + 1;
   invariant(number > 0, `run ${run.id} is one of the item's runs`);
@@ -59,7 +80,7 @@ function RunView({ access, detail, run, title }: { readonly access: ArchonAccess
           <StatusPill status={pill.status} label={pill.label} />
           <span className="item-muted">{[run.branch, usd(run.cost_usd), run.id].join(" · ")}</span>
         </div>
-        {waitingForPlan ? <Skeleton height="1.5rem" width="40%" /> : <PlanSource view={view} error={plan.error} />}
+        {waitingForPlan ? <Skeleton height="1.5rem" width="40%" /> : <PlanSource view={view} error={error} />}
       </header>
       {view.steps.length === 0 ? <EmptyState title="No stages yet">Stages appear once the run starts its first one.</EmptyState> : (
         <ol className="pipeline-steps" aria-label="Pipeline">
@@ -74,14 +95,15 @@ function Pipeline({ info, item, run }: { readonly info: ConnectionInfo; readonly
   const access = useArchonAccess(info);
   const stored = useSelector(useMemo(() => selectItem(access.conn, item), [access.conn, item]));
   const read = useItemDetail(access, item);
-  if (!read.detail) {
+  const detail = read.detail?.value as unknown as archon.ItemDetail | undefined;
+  if (!detail) {
     if (read.error) return <ErrorState title="Could not load the run" message={read.error} onRetry={read.reload} />;
     return <div className="pipeline" aria-busy="true" aria-label="Loading the run"><Skeleton height="2rem" width="50%" /><Skeleton height="10rem" /></div>;
   }
-  const found = read.detail.runs.find((entry) => entry.id === run);
+  const found = detail.runs.find((entry) => entry.id === run);
   if (!found) return <EmptyState title="Run not found">Item {item} has no run {run}. <a className="ui-link" href={routeHref("#/archon/items/:item", { item })}>Back to the item</a></EmptyState>;
-  const title = typeof stored?.summary.title === "string" ? stored.summary.title : read.detail.item.title;
-  return <RunView access={access} detail={read.detail} run={found} title={title} />;
+  const title = typeof stored?.summary.title === "string" ? stored.summary.title : detail.item.title;
+  return <RunView access={access} detail={detail} run={found} title={title} />;
 }
 
 export default function PipelineRoute({ params }: RouteProps) {

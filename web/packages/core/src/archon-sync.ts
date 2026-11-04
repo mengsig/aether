@@ -6,10 +6,12 @@ import { codeOf } from "./errors.ts";
 import { array, errorText, invariant, object, omit, seq, string, type Json } from "./guards.ts";
 import { LINK_LOST, replyData, replyObject, subscriptionId } from "./replies.ts";
 import type { SyncContext } from "./aether-sync.ts";
-import { EMPTY_ARCHON, type ArchonConnState, type ArchonGraph, type ArchonItem } from "./store.ts";
+import { EMPTY_ARCHON, replaces, type ArchonConnState, type ArchonGraph, type ArchonItem, type ArchonPlan } from "./store.ts";
 
 export const FALLBACK_REFETCH_MS = 350;
 const ENTITY_REFETCH_MS = 250;
+/** Summaries are one list read, so a burst of changes across items rereads it once. */
+const SUMMARY_REFETCH_MS = 500;
 const FEED_KEEP = 200;
 
 /** A queue state is a bare kind or an object tagged by `state`. */
@@ -17,11 +19,26 @@ function stateKind(value: unknown): string {
   return typeof value === "string" ? value : string(object(value, "item state").state, "item state kind");
 }
 
-export function itemFromSummary(summary: Json): ArchonItem {
+export function itemFromSummary(summary: Json, asOf: number | null): ArchonItem {
   const stage = typeof summary.stage === "string" ? summary.stage : undefined;
   const waiting = summary.waiting_reason;
   const waitingReason = typeof waiting === "string" ? waiting : waiting && typeof waiting === "object" ? String((waiting as Json).code ?? "") : undefined;
-  return { summary, state: stateKind(summary.state), ...(stage ? { stage } : {}), ...(waitingReason ? { waitingReason } : {}) };
+  return { summary, state: stateKind(summary.state), ...(stage ? { stage } : {}), ...(waitingReason ? { waitingReason } : {}), asOf };
+}
+
+/**
+ * Installs a summaries read stamped `asOf`: each row replaces its whole item unless the held item is newer,
+ * and an item the read lacks is gone unless a change newer than the read put it there.
+ */
+export function installSummaries(held: Readonly<Record<string, ArchonItem>>, rows: readonly Json[], asOf: number | null): Record<string, ArchonItem> {
+  const next: Record<string, ArchonItem> = {};
+  for (const [id, item] of Object.entries(held)) if (!replaces(asOf, item.asOf)) next[id] = item;
+  for (const row of rows) {
+    const id = string(row.id, "item summary id");
+    invariant(!(id in next) || next[id] === held[id], `item ${id} appears once in a summaries read`);
+    if (!(id in next)) next[id] = itemFromSummary(row, asOf);
+  }
+  return next;
 }
 
 /** A Change's subject fields sit beside `seq` and `at`, tagged by `subject` (CONTRACTS.md §1.3). */
@@ -42,8 +59,12 @@ export function patchSnapshots(state: ArchonConnState, value: Json): ArchonConnS
   if (subject.subject === "item") {
     const live = { state: string(subject.state, "change.state"), stage: subject.stage, waitingReason: subject.waiting_reason };
     const current = next.items[item];
-    if (current && (next.itemsAsOf === null || at > next.itemsAsOf)) {
-      const patched: ArchonItem = { summary: current.summary, state: live.state, ...(typeof live.stage === "string" ? { stage: live.stage } : {}), ...(typeof live.waitingReason === "string" ? { waitingReason: live.waitingReason } : {}) };
+    if (current && (current.asOf === null || at > current.asOf)) {
+      // §5.3.3 moves the live position in place; the summary stays whole until its reread replaces it.
+      const patched: ArchonItem = {
+        summary: current.summary, state: live.state, asOf: at,
+        ...(typeof live.stage === "string" ? { stage: live.stage } : {}), ...(typeof live.waitingReason === "string" ? { waitingReason: live.waitingReason } : {}),
+      };
       next = { ...next, items: { ...next.items, [item]: patched } };
     }
     const node = graph?.nodes[item];
@@ -120,7 +141,15 @@ function withDependency(graph: ArchonGraph, subject: Json): ArchonGraph {
   return { ...graph, edges };
 }
 
-/** The serial key of protocol 23 summary reads; item ids never start with a colon. */
+/** Drops what an off-screen item's change made old; its screen reads them again when shown. */
+function withoutItem(state: ArchonConnState, item: string): ArchonConnState {
+  const runs = Object.entries(state.plans).filter(([, plan]) => plan.item === item).map(([run]) => run);
+  if (!(item in state.details) && !(item in state.links) && runs.length === 0) return state;
+  const plans = runs.reduce<Readonly<Record<string, ArchonPlan>>>((rest, run) => omit(rest, run), state.plans);
+  return { ...state, details: omit(state.details, item), links: omit(state.links, item), plans };
+}
+
+/** The serial key of summary reads; item ids never start with a colon. */
 const SUMMARIES = ":summaries";
 
 export class ArchonSync {
@@ -133,6 +162,7 @@ export class ArchonSync {
   private readonly refetch = new Debouncer(ENTITY_REFETCH_MS);
   private readonly fallback = new Debouncer(FALLBACK_REFETCH_MS);
   private readonly structure = new Debouncer(ENTITY_REFETCH_MS);
+  private readonly summaries = new Debouncer(SUMMARY_REFETCH_MS);
   private readonly serial = new KeyedSerial();
   /** Every change applied while snapshots are reread, replayed onto them once installed. */
   private collecting: Json[] | null = null;
@@ -187,7 +217,7 @@ export class ArchonSync {
   /** §5.3.4: a fresh task_graph, then changes after its as_of; skipped changes may have moved any detail. */
   private async expired(): Promise<void> {
     const onScreen = [...this.onScreen];
-    this.set((s) => ({ ...s, changeCursor: null, details: {}, staleItems: [...new Set([...s.staleItems, ...onScreen])] }));
+    this.set((s) => ({ ...s, changeCursor: null, details: {}, links: {}, plans: {}, staleItems: [...new Set([...s.staleItems, ...onScreen])] }));
     await this.readSnapshots();
     const asOf = this.state.changeCursor;
     this.changeSub = subscriptionId(await this.ctx.request({ cmd: "subscribe_changes", after: asOf }));
@@ -201,6 +231,7 @@ export class ArchonSync {
     this.refetch.cancelAll();
     this.fallback.cancelAll();
     this.structure.cancelAll();
+    this.summaries.cancelAll();
     this.collecting = null;
     this.rereadAgain = false;
   }
@@ -229,18 +260,24 @@ export class ArchonSync {
     if (item !== undefined) this.changed.set(item, (this.changed.get(item) ?? 0) + 1);
     const visible = item !== undefined && this.onScreen.has(item);
     const detail = visible && !state.staleItems.includes(item);
-    const details = item !== undefined && !visible && item in state.details ? omit(state.details, item) : state.details;
+    const summary = item !== undefined && !state.staleSummaries.includes(item);
+    const forgotten = item !== undefined && !visible ? withoutItem(state, item) : state;
     // Marked with the cursor advance, so a reconnect cannot skip what this change asked for.
-    this.set(() => ({ ...state, details, ...(unknown ? { staleSnapshots: true } : {}), ...(detail ? { staleItems: [...state.staleItems, item] } : {}) }));
+    this.set(() => ({
+      ...forgotten, ...(unknown ? { staleSnapshots: true } : {}), ...(detail ? { staleItems: [...state.staleItems, item] } : {}),
+      ...(summary ? { staleSummaries: [...state.staleSummaries, item] } : {}),
+    }));
     this.collecting?.push(change);
     this.scheduleStale();
   }
 
   private scheduleStale(): void {
-    const { staleSnapshots, staleItems } = this.state;
+    const { staleSnapshots, staleItems, staleSummaries } = this.state;
     if (staleSnapshots) this.structure.schedule("snapshots", () => void this.rereadSnapshots());
+    if (staleSummaries.length > 0) this.summaries.schedule("summaries", () => void this.serial.run(SUMMARIES, () => this.refetchSummaries()));
     for (const item of staleItems) this.refetch.schedule(item, () => void this.serial.run(item, () => this.refetchItem(item)));
-    invariant(this.changeSub !== null || (!staleSnapshots && staleItems.length === 0), "stale entities come from a change subscription");
+    const stale = staleSnapshots || staleItems.length > 0 || staleSummaries.length > 0;
+    invariant(this.changeSub !== null || !stale, "stale entities come from a change subscription");
   }
 
   onFeed(frame: Json): void {
@@ -338,31 +375,84 @@ export class ArchonSync {
     this.set((s) => ({ ...s, graph: snapshot }));
   }
 
-  /** Protocol 24 wraps the rows with their `as_of`; protocol 23 answers the bare list. */
+  /** Protocol 24 asks `with_as_of` and gets `item_summaries_at`; protocol 23 answers the bare list. */
   private async readSummaries(): Promise<void> {
-    const data = replyData(await this.ctx.request({ cmd: "list_item_summaries" }), "item_summaries");
+    const reply = await this.ctx.request(this.usesChanges ? { cmd: "list_item_summaries", with_as_of: true } : { cmd: "list_item_summaries" });
+    const data = replyData(reply, reply.reply === "item_summaries_at" ? "item_summaries_at" : "item_summaries");
     const wrapped = Array.isArray(data) ? null : object(data, "item_summaries");
-    const rows = array(wrapped ? wrapped.summaries ?? wrapped.items : data, "item summaries");
+    const rows = array(wrapped ? wrapped.summaries ?? wrapped.items : data, "item summaries").map((row) => object(row, "item summary"));
     const asOf = wrapped ? seq(wrapped.as_of, "item_summaries.as_of") : null;
-    const items = Object.fromEntries(rows.map((row) => {
-      const summary = object(row, "item summary");
-      return [string(summary.id, "item summary id"), itemFromSummary(summary)];
+    this.set((s) => ({ ...s, items: installSummaries(s.items, rows, asOf), itemsAsOf: asOf }));
+  }
+
+  /** Rereads the summaries changes named; a change during the read marks its item again. */
+  private async refetchSummaries(): Promise<void> {
+    const marked = new Set(this.state.staleSummaries);
+    if (marked.size === 0) return;
+    this.set((s) => ({ ...s, staleSummaries: s.staleSummaries.filter((id) => !marked.has(id)) }));
+    try {
+      await this.readSummaries();
+    } catch (error) {
+      if (!LINK_LOST.has(codeOf(error) ?? "")) return this.fail("the queue", error);
+      this.set((s) => ({ ...s, staleSummaries: [...new Set([...s.staleSummaries, ...marked])] }));
+      this.retryAfterTimeout("the queue", error);
+    }
+  }
+
+  /** Rereads an item's detail, links and plans into the store now: protocol 23 polling, or after an action. */
+  refresh(item: string): Promise<void> {
+    invariant(item.length > 0, "a refresh names an item");
+    return this.serial.run(item, () => this.readItem(item));
+  }
+
+  /** Reads a run's plan into the store; the item's later rereads keep it current. */
+  readPlan(item: string, run: string): Promise<void> {
+    invariant(this.ctx.features.has("run_plan"), "run_plan is read only where archond serves it");
+    return this.serial.run(item, async () => {
+      const version = this.changed.get(item) ?? 0;
+      const plan = await this.fetchPlan(item, run);
+      if (this.overtaken(item, version)) return;
+      this.set((s) => ({ ...s, plans: { ...s.plans, [run]: plan } }));
+    });
+  }
+
+  private async fetchPlan(item: string, run: string): Promise<ArchonPlan> {
+    const value = replyObject(await this.ctx.request({ cmd: "run_plan", run }), "run_plan");
+    invariant(value.run === undefined || value.run === run, `the plan of ${run} describes ${String(value.run)}`);
+    return { value, asOf: this.state.changeCursor, item };
+  }
+
+  /** Whether a change to `item` arrived since `version`; it re-marked the item if visible, or dropped its rereads. */
+  private overtaken(item: string, version: number): boolean {
+    if ((this.changed.get(item) ?? 0) === version) return false;
+    invariant(!this.onScreen.has(item) || !this.usesChanges || this.state.staleItems.includes(item), "an overtaken visible item is refetched again");
+    return true;
+  }
+
+  /**
+   * Every reply is stamped with the change cursor at install. No change to the item arrived since it was
+   * asked for, so it reflects at least every change of the item seen; an overtaken reply is not installed.
+   */
+  private async readItem(item: string): Promise<void> {
+    const version = this.changed.get(item) ?? 0;
+    const detail = replyObject(await this.ctx.request({ cmd: "get_item", item }), "item_detail");
+    const links = this.ctx.features.has("github_links") ? replyObject(await this.ctx.request({ cmd: "item_links", item }), "item_links") : null;
+    const runs = Object.entries(this.state.plans).filter(([, plan]) => plan.item === item).map(([run]) => run);
+    const plans = await Promise.all(runs.map((run) => this.fetchPlan(item, run)));
+    if (this.overtaken(item, version)) return;
+    const asOf = this.state.changeCursor;
+    this.set((s) => ({
+      ...s, details: { ...s.details, [item]: { value: detail, asOf } },
+      links: links === null ? s.links : { ...s.links, [item]: { value: links, asOf } },
+      plans: { ...s.plans, ...Object.fromEntries(runs.map((run, index) => [run, plans[index] as ArchonPlan])) },
     }));
-    this.set((s) => ({ ...s, items, itemsAsOf: asOf }));
   }
 
   /** Clears the marker first; a lost link puts it back for the next ready, a daemon answer does not. */
   private async refetchItem(item: string): Promise<void> {
     this.set((s) => ({ ...s, staleItems: s.staleItems.filter((id) => id !== item) }));
-    const version = this.changed.get(item) ?? 0;
     try {
-      const detail = replyObject(await this.ctx.request({ cmd: "get_item", item }), "item_detail");
-      if ((this.changed.get(item) ?? 0) !== version) {
-        // A later change made this reply old: it re-marked the item if visible, or dropped its detail.
-        invariant(!this.onScreen.has(item) || this.state.staleItems.includes(item), "an overtaken visible item is refetched again");
-        return;
-      }
-      this.set((s) => ({ ...s, details: { ...s.details, [item]: detail } }));
+      await this.readItem(item);
     } catch (error) {
       if (!LINK_LOST.has(codeOf(error) ?? "")) return this.fail(`item ${item}`, error);
       this.set((s) => (s.staleItems.includes(item) ? s : { ...s, staleItems: [...s.staleItems, item] }));

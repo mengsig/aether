@@ -18,7 +18,7 @@ const steps = (container: HTMLElement) => [...container.querySelectorAll(".pipel
 async function pipeline(item: string, run: string) {
   h = await archonHarness({ protocol: 24 });
   const container = await h.mount(<PipelineRoute params={{ item, run }} />);
-  await h.until(() => container.querySelectorAll(".pipeline-step").length > 0, "the pipeline steps");
+  await h.until(() => container.querySelectorAll(".pipeline-step").length > 0 && container.querySelector(".pipeline-note") !== null, "the pipeline steps and their plan");
   return { h, container };
 }
 
