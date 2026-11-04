@@ -6,10 +6,29 @@ import { at, invariant, must } from "./invariant.ts";
 import { visibleGraph, type VisibleGraph } from "./model.ts";
 import type { Algorithm, LayoutReply, LayoutRequest } from "./worker-protocol.ts";
 
+/** A Layout from a worker reply, or the reason the reply cannot be used. */
+function readReply(reply: Partial<LayoutReply>, graph: VisibleGraph): Layout | Error {
+  if (reply.ok === false) return new Error(`layout failed: ${String(reply.error)}`);
+  const { xs, ys } = reply as { xs?: unknown; ys?: unknown };
+  if (reply.ok !== true || !(xs instanceof Float64Array) || !(ys instanceof Float64Array)) return new Error("the layout reply is malformed");
+  const { nodes, hash } = graph;
+  if (xs.length !== nodes.length || ys.length !== nodes.length) {
+    return new Error(`layout reply has ${xs.length} positions for ${nodes.length} nodes`);
+  }
+  const positions = new Map<string, { x: number; y: number }>();
+  for (let i = 0; i < nodes.length; i++) {
+    const x = at(xs, i), y = at(ys, i);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return new Error(`layout reply has a non-finite position for ${at(nodes, i).id}`);
+    positions.set(at(nodes, i).id, { x, y });
+  }
+  return { hash, positions };
+}
+
 /** The part of a Worker the engine uses; tests pass a Node worker_threads adapter. */
 export interface LayoutWorker {
   postMessage(request: LayoutRequest): void;
-  onReply(listener: (reply: LayoutReply) => void): void;
+  /** Replies are checked before use: a worker is a boundary. */
+  onReply(listener: (reply: unknown) => void): void;
   onFailure(listener: (error: Error) => void): void;
   terminate(): void;
 }
@@ -91,18 +110,14 @@ export class LayoutEngine {
     return worker;
   }
 
-  private settle(reply: LayoutReply): void {
-    const pending = this.pending.get(reply.id);
-    invariant(pending !== undefined, `layout reply ${reply.id} matches no request`);
-    this.pending.delete(reply.id);
-    if (!reply.ok) return pending.reject(new Error(`layout failed: ${reply.error}`));
-    const { nodes, hash } = pending.graph;
-    if (reply.xs.length !== nodes.length || reply.ys.length !== nodes.length) {
-      return pending.reject(new Error(`layout reply has ${reply.xs.length} positions for ${nodes.length} nodes`));
-    }
-    const positions = new Map<string, { x: number; y: number }>();
-    nodes.forEach((node, i) => positions.set(node.id, { x: at(reply.xs, i), y: at(reply.ys, i) }));
-    pending.resolve({ hash, positions });
+  private settle(reply: unknown): void {
+    const id = (reply as { id?: unknown } | null)?.id;
+    const pending = typeof id === "number" ? this.pending.get(id) : undefined;
+    // A reply we cannot match leaves every waiting request in doubt, so the worker is replaced.
+    if (typeof id !== "number" || pending === undefined) return this.failAll(new Error("the layout worker sent a reply that matches no request"));
+    this.pending.delete(id);
+    const layout = readReply(reply as Partial<LayoutReply>, pending.graph);
+    if (layout instanceof Error) pending.reject(layout); else pending.resolve(layout);
   }
 
   /** Rejects every waiting request and drops the worker; the next request starts a new one. */

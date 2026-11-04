@@ -2,13 +2,12 @@
 
 import type { GraphModel, Layout } from "@aether-ui/protocol";
 import { LayoutEngine, type LayoutWorker } from "./engine.ts";
-import type { LayoutReply } from "./worker-protocol.ts";
 
 /** Adapts a browser Worker running layout.worker.ts. */
 export function browserLayoutWorker(worker: Worker): LayoutWorker {
   return {
     postMessage: (request) => worker.postMessage(request),
-    onReply: (listener) => worker.addEventListener("message", (event: MessageEvent<LayoutReply>) => listener(event.data)),
+    onReply: (listener) => worker.addEventListener("message", (event: MessageEvent<unknown>) => listener(event.data)),
     onFailure: (listener) => {
       worker.addEventListener("error", (event) => listener(new Error(event.message || "worker error")));
       worker.addEventListener("messageerror", () => listener(new Error("a layout reply could not be read")));

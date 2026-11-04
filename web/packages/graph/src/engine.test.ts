@@ -61,6 +61,29 @@ describe("LayoutEngine", () => {
     expect(engine.stats).toEqual({ computed: 2, cacheHits: 0 });
   });
 
+  it("rejects replies with missing or non-finite positions, without caching them", async () => {
+    const bad: Array<(r: LayoutReply) => unknown> = [
+      (r) => ({ id: r.id, ok: true }),
+      (r) => (r.ok ? { ...r, xs: Float64Array.from(r.xs, (x, i) => (i === 3 ? NaN : x)) } : r),
+      (r) => (r.ok ? { ...r, ys: [...r.ys] } : r),
+    ];
+    for (const tamper of bad) {
+      const engine = new LayoutEngine({ createWorker: fakeWorker(tamper as (r: LayoutReply) => LayoutReply) });
+      await expect(engine.layout(model, "layered")).rejects.toThrow(/malformed|non-finite/);
+      await expect(engine.layout(model, "layered")).rejects.toThrow(/malformed|non-finite/);
+      expect(engine.stats).toEqual({ computed: 2, cacheHits: 0 });
+    }
+  });
+
+  it("replaces the worker when a reply matches no request", async () => {
+    let started = 0;
+    const make = fakeWorker((r) => ({ ...r, id: r.id + 100 }));
+    const engine = new LayoutEngine({ createWorker: () => { started++; return make(); } });
+    await expect(engine.layout(model, "layered")).rejects.toThrow(/matches no request/);
+    await expect(engine.layout({ ...model, edges: [] }, "layered")).rejects.toThrow(/matches no request/);
+    expect(started).toBe(2);
+  });
+
   it("rejects waiting layouts when the worker fails, then starts a new worker", async () => {
     let started = 0;
     let fail: (error: Error) => void = () => undefined;

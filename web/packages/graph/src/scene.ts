@@ -34,11 +34,17 @@ export const GROUP_HEADER = 20;
 export class GridIndex {
   private readonly cells = new Map<string, SceneNode[]>();
   private readonly cell: number;
+  /** Each node's place in draw order, so culled results stack like hit testing does. */
+  private readonly order = new Map<SceneNode, number>();
 
   constructor(nodes: readonly SceneNode[], cell: number) {
     invariant(cell > 0, "a grid cell has a positive size");
     this.cell = cell;
-    for (const node of nodes) this.each(node, (bucket) => bucket.push(node));
+    nodes.forEach((node, i) => {
+      this.order.set(node, i);
+      this.each(node, (bucket) => bucket.push(node));
+    });
+    invariant(this.order.size === nodes.length, "a node is indexed once");
   }
 
   /** The topmost node containing the world point. */
@@ -51,7 +57,8 @@ export class GridIndex {
   query(rect: Rect): SceneNode[] {
     const found = new Set<SceneNode>();
     this.each(rect, (bucket) => { for (const node of bucket) if (overlaps(node, rect)) found.add(node); }, false);
-    return [...found];
+    const rank = (node: SceneNode) => this.order.get(node) ?? 0;
+    return [...found].sort((a, b) => rank(a) - rank(b));
   }
 
   private each(rect: Rect, visit: (bucket: SceneNode[]) => void, create = true): void {
