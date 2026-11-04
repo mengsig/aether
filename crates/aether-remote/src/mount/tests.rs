@@ -414,6 +414,45 @@ fn prefixes_the_listener_serves_itself_cannot_be_mounted() {
     assert!(!super::is_endpoint("/archon/api/health"));
 }
 
+/// The reserved prefixes follow the bundle: every top-level directory of `web/dist`, the
+/// endpoints and the pairing page, and no other segment, the legacy app's directories included.
+#[test]
+fn the_reserved_prefixes_are_the_bundle_directories_and_the_endpoints() {
+    let dist =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::assets::selection::BUNDLE_DIR);
+    let mut directories: Vec<String> = std::fs::read_dir(&dist)
+        .expect("web/dist is readable")
+        .map(|entry| entry.expect("a directory entry").path())
+        .filter(|path| path.is_dir())
+        .filter_map(|path| Some(format!("/{}", path.file_name()?.to_str()?)))
+        .filter(|prefix| crate::assets::selection::is_shipped_name(&prefix[1..]))
+        .collect();
+    directories.sort();
+    assert!(
+        directories.contains(&"/assets".to_owned()),
+        "{directories:?}"
+    );
+    let mut expected = directories.clone();
+    expected.extend(["/api", "/pair", "/ws"].map(String::from));
+    expected.sort();
+
+    // Every first segment the listener could know of, served or not.
+    let mut candidates: Vec<String> = crate::assets::ASSETS
+        .iter()
+        .filter_map(|(path, _)| path[1..].split_once('/'))
+        .map(|(first, _)| format!("/{first}"))
+        .chain(["/api", "/ws", "/pair", "/archon", "/index", "/sw"].map(String::from))
+        .chain(["/ui", "/core", "/features", "/dev", "/tests"].map(String::from))
+        .collect();
+    candidates.sort();
+    candidates.dedup();
+    let reserved: Vec<&String> = candidates
+        .iter()
+        .filter(|prefix| super::is_served_here(prefix))
+        .collect();
+    assert_eq!(reserved, expected.iter().collect::<Vec<_>>());
+}
+
 #[tokio::test]
 async fn a_mount_over_the_api_never_takes_health_from_the_listener() {
     let (target, seen) = archond().await;

@@ -6,6 +6,6 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["scripts", "packages/*/test", "eslint.config.js", "apps/web/*.config.ts"],
+  "include": ["scripts", "dev", "packages/*/test", "eslint.config.js", "apps/web/*.config.ts"],
   "exclude": ["scripts/fixtures"]
 }

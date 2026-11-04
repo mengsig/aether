@@ -518,7 +518,12 @@ async fn a_peer_that_stops_reading_its_responses_is_dropped() {
         ..Tuning::default()
     };
     let (_server, bound, _shutdown) = listening(tuning).await;
-    let request = format!("GET /styles.css HTTP/1.1\r\nHost: {bound}\r\n\r\n");
+    // The largest file, so the answers outgrow the kernel's buffers soonest.
+    let (largest, _) = crate::assets::ASSETS
+        .iter()
+        .max_by_key(|(_, bytes)| bytes.len())
+        .expect("the bundle is embedded");
+    let request = format!("GET {largest} HTTP/1.1\r\nHost: {bound}\r\n\r\n");
     let mut stream = TcpStream::connect(bound).await.expect("connect");
     let asked = request.repeat(UNREAD_REQUESTS);
     stream.write_all(asked.as_bytes()).await.expect("write");

@@ -12,6 +12,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./app.css";
 import { detectHost } from "./host.ts";
+import { acceptPairLink } from "./pair-link.ts";
 import { ShellRoot } from "./root.tsx";
 import { appRoutes } from "./routes.ts";
 
@@ -25,6 +26,8 @@ async function boot(): Promise<void> {
   const preference: ThemePreference = isThemePreference(stored) ? stored : "system";
   applyTheme(document.documentElement, resolveTheme(preference, systemPrefersDark()));
 
+  // Before the router reads the hash: a pairing URL becomes the pairing route.
+  acceptPairLink(window.location, window.history);
   registerRoutes(appRoutes);
   const app = createApp(host);
   const persist = (next: ThemePreference) => {

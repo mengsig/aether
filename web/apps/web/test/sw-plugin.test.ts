@@ -30,6 +30,8 @@ describe("service worker plugin", () => {
       // Lazy screens too, so a tab keeps loading its own build's chunks until the new worker takes over.
       expect(list.some((file) => /^\.\/assets\/pair-screen-[\w-]+\.js$/.test(file))).toBe(true);
       expect(worker).not.toMatch(/skipWaiting|\.claim\(/);
+      // On activation it also clears the retired phone app's caches, which shared its scope.
+      expect(worker).toContain('"aether-shell-"');
       const manifest = JSON.parse(readFileSync(path.join(outDir, "manifest.webmanifest"), "utf8")) as { start_url: string; icons: unknown[] };
       expect(manifest.start_url).toBe("./#/");
       expect(manifest.icons.length).toBeGreaterThan(0);

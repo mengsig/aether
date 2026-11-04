@@ -115,11 +115,11 @@ pub(crate) fn target_address(target: &str) -> Option<SocketAddr> {
     Some(address)
 }
 
-/// Whether the listener answers paths under `prefix` itself: its endpoints, or an embedded
-/// file. A mount there would shadow them, so none may be made.
+/// Whether the listener answers paths under `prefix` itself: its endpoints, the pairing page
+/// the pairing URL opens, or an embedded file. A mount there would shadow them, so none may be made.
 pub fn is_served_here(prefix: &str) -> bool {
     debug_assert!(prefix.starts_with('/'), "{prefix}");
-    let own = [crate::http::WEBSOCKET, API_ROOT];
+    let own = [crate::http::WEBSOCKET, API_ROOT, crate::pairing::PAIR_ROUTE];
     own.iter()
         .any(|path| under(path, prefix) || under(prefix, path))
         || crate::assets::ASSETS

@@ -1,8 +1,7 @@
-//! The web app, compiled into the binary by `build.rs` from `web/`.
+//! The web app: the committed bundle `web/dist/`, compiled into the binary by `build.rs`.
 
 pub mod selection;
 
-use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
@@ -10,22 +9,9 @@ include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 /// The document every app route falls back to.
 pub const INDEX: &str = "/index.html";
 
-/// The default: a cached copy is only ever used after its `ETag` matched.
+/// Every asset: a cached copy is only ever used after its `ETag` matched. The service worker
+/// keeps the offline copy, so a new release shows on the next load.
 pub const CACHE_CONTROL: &str = "no-cache";
-
-/// For a URL that names the content it expects (`?v=<hash>`): the bytes
-/// behind that URL can never change, so nothing needs revalidating.
-pub const CACHE_CONTROL_IMMUTABLE: &str = "public, max-age=31536000, immutable";
-
-/// The query parameter carrying an asset's content hash.
-pub const VERSION_PARAMETER: &str = "v";
-
-/// Path of the generated table of every asset's content hash.
-pub const MANIFEST: &str = "/asset-manifest.json";
-
-/// Scripts a browser must always revalidate: a stale service worker would
-/// pin the whole app to an old release.
-const SERVICE_WORKERS: &[&str] = &["/sw.js", "/service-worker.js"];
 
 /// One embedded file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,61 +33,36 @@ static HASHES: LazyLock<Vec<String>> = LazyLock::new(|| {
         .collect()
 });
 
-/// `{"<path>": "<hash>"}` for every embedded file, so a service worker can
-/// precache `path?v=hash` without a build step. Body and its own hash.
-static MANIFEST_BODY: LazyLock<Option<(Vec<u8>, String)>> = LazyLock::new(|| {
-    use sha2::Digest as _;
-    let table: BTreeMap<&str, &str> = ASSETS
-        .iter()
-        .zip(HASHES.iter())
-        .map(|((path, _), hash)| (*path, hash.as_str()))
-        .collect();
-    let body = serde_json::to_vec(&table)
-        .inspect_err(|e| tracing::error!(error = %e, "could not encode the asset manifest"))
-        .ok()?;
-    let hash = hex::encode(sha2::Sha256::digest(&body));
-    Some((body, hash))
-});
-
 /// The asset served at exactly `path`.
 pub fn get(path: &str) -> Option<Asset> {
     debug_assert!(
         ASSETS.windows(2).all(|pair| pair[0].0 < pair[1].0),
         "build.rs emits the table sorted and without duplicates"
     );
-    if path == MANIFEST {
-        return manifest();
-    }
     let index = ASSETS
         .binary_search_by(|(known, _)| (*known).cmp(path))
         .ok()?;
     let (path, bytes) = ASSETS[index];
+    let hash = HASHES.get(index)?;
+    debug_assert_eq!(hash.len(), 64, "a hex SHA-256");
     Some(Asset {
         path,
         bytes,
         content_type: content_type(path),
-        hash: HASHES.get(index)?,
-    })
-}
-
-fn manifest() -> Option<Asset> {
-    let (body, hash) = MANIFEST_BODY.as_ref()?;
-    Some(Asset {
-        path: MANIFEST,
-        bytes: body,
-        content_type: content_type(MANIFEST),
         hash,
     })
 }
 
-/// The asset for a `GET`: the file itself, or the app shell for a route
-/// that names no file. A path with an extension that is missing stays missing.
+/// The asset for a `GET`: the file itself, or the app shell for a route at the top of the site
+/// (`/`, `/pair`). The shell links its files as `./…`, so only there do they resolve; a deeper
+/// path, or one with an extension, that names no file stays missing.
 pub fn resolve(path: &str) -> Option<Asset> {
+    debug_assert!(path.starts_with('/'), "{path}");
     if let Some(asset) = get(path) {
         return Some(asset);
     }
-    let last = path.rsplit('/').next().unwrap_or_default();
-    if last.contains('.') {
+    let route = path.strip_prefix('/')?;
+    if route.contains('/') || route.contains('.') {
         return None;
     }
     get(INDEX)
@@ -110,25 +71,6 @@ pub fn resolve(path: &str) -> Option<Asset> {
 /// The strong validator for an asset: its SHA-256, quoted.
 pub fn etag(asset: &Asset) -> String {
     format!("\"{}\"", asset.hash)
-}
-
-/// How long a response for `asset` may be reused, given the request's query.
-/// Only a URL naming the exact content it got is immutable.
-pub fn cache_control(asset: &Asset, query: Option<&str>) -> &'static str {
-    let revalidated =
-        asset.path == INDEX || asset.path == MANIFEST || SERVICE_WORKERS.contains(&asset.path);
-    if !revalidated && version(query) == Some(asset.hash) {
-        return CACHE_CONTROL_IMMUTABLE;
-    }
-    CACHE_CONTROL
-}
-
-/// The value of the `v` parameter in a raw query string.
-fn version(query: Option<&str>) -> Option<&str> {
-    query?
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .find_map(|(name, value)| (name == VERSION_PARAMETER).then_some(value))
 }
 
 /// Whether an `If-None-Match` header names this asset's content. A weak
@@ -166,99 +108,134 @@ pub fn content_type(path: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::selection::{is_embedded, is_embedded_dir};
+    use std::path::{Path, PathBuf};
+
+    use super::selection::{BUNDLE_DIR, REQUIRED, is_shipped_name, is_url_safe};
     use super::*;
 
-    #[test]
-    fn the_app_shell_is_embedded_and_typed() {
-        let index = get(INDEX).expect("web/index.html is embedded");
-        assert!(!index.bytes.is_empty());
-        assert_eq!(index.content_type, "text/html; charset=utf-8");
-        assert_eq!(etag(&index).len(), 64 + 2, "a quoted SHA-256");
+    /// Every shipped file of the bundle on disk, as `(URL path, file)`, sorted.
+    fn bundle_on_disk() -> Vec<(String, PathBuf)> {
+        fn walk(dir: &Path, prefix: &str, files: &mut Vec<(String, PathBuf)>) {
+            for entry in std::fs::read_dir(dir).expect("the bundle is readable") {
+                let path = entry.expect("a directory entry").path();
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("UTF-8");
+                if !is_shipped_name(name) {
+                    continue;
+                }
+                let relative = format!("{prefix}/{name}");
+                if path.is_dir() {
+                    walk(&path, &relative, files);
+                } else {
+                    files.push((relative, path));
+                }
+            }
+        }
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(BUNDLE_DIR);
+        let mut files = Vec::new();
+        walk(&root, "", &mut files);
+        files.sort();
+        files
     }
 
     #[test]
-    fn an_app_route_gets_the_shell_and_a_missing_file_does_not() {
-        assert_eq!(resolve("/pair").map(|asset| asset.path), Some(INDEX));
-        assert_eq!(resolve("/").map(|asset| asset.path), Some(INDEX));
-        assert_eq!(resolve("/missing.js"), None);
+    fn the_app_shell_and_its_worker_are_embedded_and_typed() {
+        let index = get(INDEX).expect("web/dist/index.html is embedded");
+        assert!(index.bytes.starts_with(b"<!doctype html>"));
+        assert_eq!(index.content_type, "text/html; charset=utf-8");
+        assert_eq!(etag(&index).len(), 64 + 2, "a quoted SHA-256");
+        // At the root, so the worker's default scope is the whole app.
+        let worker = get("/sw.js").expect("the service worker is embedded");
+        assert_eq!(worker.content_type, "text/javascript; charset=utf-8");
+        for required in REQUIRED {
+            assert!(get(required).is_some(), "{required}");
+        }
+    }
+
+    #[test]
+    fn the_committed_bundle_is_embedded_byte_for_byte() {
+        let on_disk = bundle_on_disk();
+        assert!(on_disk.len() >= REQUIRED.len(), "{on_disk:?}");
+        let embedded: Vec<&str> = ASSETS.iter().map(|(path, _)| *path).collect();
+        let expected: Vec<&str> = on_disk.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(embedded, expected, "build.rs embeds exactly web/dist");
+        for (path, file) in &on_disk {
+            let asset = get(path).expect("embedded");
+            let bytes = std::fs::read(file).expect("the bundle file is readable");
+            assert!(
+                asset.bytes == bytes.as_slice(),
+                "{path} differs from web/dist"
+            );
+        }
+    }
+
+    #[test]
+    fn a_top_level_route_gets_the_shell_and_nothing_else_does() {
+        for route in ["/", "/pair", "/fleet"] {
+            assert_eq!(
+                resolve(route).map(|asset| asset.path),
+                Some(INDEX),
+                "{route}"
+            );
+        }
+        for missing in ["/missing.js", "/pair/deeper", "/assets/", "/archon/x"] {
+            assert_eq!(resolve(missing), None, "{missing}");
+        }
         assert_eq!(
-            content_type("/app/main.js"),
+            content_type("/assets/main.js"),
             "text/javascript; charset=utf-8"
         );
         assert_eq!(content_type("/blob"), "application/octet-stream");
     }
 
     #[test]
-    fn only_runtime_files_ship() {
-        for shipped in [
-            "index.html",
-            "app.js",
-            "sw.js",
-            "styles.css",
-            "manifest.webmanifest",
-            "assets/icons/icon-192.png",
-            "ui/shell.js",
-            "core/protocol/frames.js",
-            "features/pairing/pair.css",
+    fn the_legacy_app_is_gone() {
+        for legacy in [
+            "/app.js",
+            "/boot.js",
+            "/precache.js",
+            "/push-renewal.js",
+            "/styles.css",
+            "/types.js",
+            "/asset-manifest.json",
+            "/service-worker.js",
+            "/ui/shell.js",
+            "/core/protocol/frames.js",
+            "/features/start/pair.js",
+            "/assets/icons/icon-192.png",
         ] {
-            assert!(is_embedded(shipped), "{shipped}");
+            assert_eq!(resolve(legacy), None, "{legacy}");
         }
-        for left_out in [
-            "README.md",
-            "ui/NOTES.md",
-            "package.json",
-            "package-lock.json",
-            "playwright.config.js",
-            "ui/shell.test.js",
-            "app.test.js",
-            "dev/server.js",
-            "tests/pair.spec.js",
-            "scripts/build.js",
-            "node_modules/left-pad/index.js",
-            "ui/node_modules/x/index.js",
-            "core/tests/frames.js",
-            "test-results/report.js",
-            "playwright-report/index.html",
-            ".eslintrc.js",
-            "ui/.cache/x.js",
-            "other/thing.js",
-            "notes.html",
-            "data.json",
-        ] {
-            assert!(!is_embedded(left_out), "{left_out}");
+        let legacy_dirs = ["/ui/", "/core/", "/features/", "/dev/", "/tests/"];
+        for (path, _) in ASSETS {
+            assert!(
+                !legacy_dirs.iter().any(|dir| path.starts_with(dir)),
+                "{path}"
+            );
         }
-        assert!(is_embedded_dir("features/pairing"));
-        assert!(!is_embedded_dir("node_modules"));
-        assert!(!is_embedded_dir("features/dev"));
     }
 
     #[test]
-    fn a_url_naming_its_content_is_immutable_and_the_shell_never_is() {
-        let index = get(INDEX).expect("shell");
-        let exact = format!("v={}", index.hash);
-        assert_eq!(cache_control(&index, Some(&exact)), CACHE_CONTROL);
-        let manifest = get(MANIFEST).expect("generated");
-        assert_eq!(manifest.content_type, "application/json");
-        let listed: BTreeMap<String, String> =
-            serde_json::from_slice(manifest.bytes).expect("a JSON object");
-        assert_eq!(listed.get(INDEX).map(String::as_str), Some(index.hash));
-
-        let script = Asset {
-            path: "/ui/app.js",
-            ..index
-        };
-        assert_eq!(cache_control(&script, None), CACHE_CONTROL);
-        assert_eq!(cache_control(&script, Some("v=stale")), CACHE_CONTROL);
-        assert_eq!(
-            cache_control(&script, Some(&format!("x=1&{exact}"))),
-            CACHE_CONTROL_IMMUTABLE
+    fn hidden_and_unsafe_names_never_ship() {
+        for shipped in [
+            "index.html",
+            "assets/index-DK-nI2hR.css",
+            "icons/icon-192.png",
+            "a~b_c",
+        ] {
+            assert!(is_url_safe(shipped), "{shipped}");
+        }
+        for refused in [
+            "", "a//b", "../x", "a/../b", ".hidden", "a b", "%2e", "é.js", "a\\b", "a/",
+        ] {
+            assert!(!is_url_safe(refused), "{refused:?}");
+        }
+        assert!(is_shipped_name("sw.js") && is_shipped_name("assets"));
+        assert!(
+            !is_shipped_name(".DS_Store") && !is_shipped_name(".gitkeep") && !is_shipped_name("")
         );
-        let worker = Asset {
-            path: "/sw.js",
-            ..index
-        };
-        assert_eq!(cache_control(&worker, Some(&exact)), CACHE_CONTROL);
     }
 
     #[test]
