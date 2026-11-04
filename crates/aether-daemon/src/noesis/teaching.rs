@@ -198,12 +198,12 @@ impl NoesisService {
     }
 
     /// Start the turn of every session owed an answer, as after a restart.
+    /// Only the turns count as calls in flight; the short scan does not, so
+    /// a settings change right after an enable is not refused for it.
     pub(crate) fn resume_teaching(self: &Arc<Self>, runtime: &Arc<Runtime>) {
-        let call = CallGuard::enter(self);
         let service = self.clone();
         let runtime = runtime.clone();
         tokio::spawn(async move {
-            let _call = call;
             if let Err(error) = service.resume_owed(&runtime).await {
                 tracing::error!(%error.message, "resuming Noesis sessions owed an answer failed");
             }
