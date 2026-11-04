@@ -3,13 +3,17 @@
 //!
 //! ```sh
 //! cargo run --release -p aether-memory --example memory_bench -- <plan.json> <empty-sandbox-dir>
+//! cargo run --release -p aether-memory --example memory_bench -- --profile <plan.json> <empty-sandbox-dir>
 //! ```
+//!
+//! `--profile` times each stage of retrieval instead (`profile.rs`).
 //!
 //! It drives the code agents use: `MemoryService::admit` (the `remember`
 //! path), `retrieve` with the request a turn builds, and the context layer a
 //! model is sent. It prints one JSON document; it never calls a model.
 
 mod plan;
+mod profile;
 mod recovery;
 mod retrieval;
 mod seed;
@@ -48,12 +52,18 @@ pub struct Report {
 
 fn main() -> BenchResult<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [plan_path, sandbox] = args.as_slice() else {
-        return Err("usage: memory_bench <plan.json> <empty-sandbox-dir>".into());
+    let (profiling, plan_path, sandbox) = match args.as_slice() {
+        [flag, plan, sandbox] if flag == "--profile" => (true, plan, sandbox),
+        [plan, sandbox] => (false, plan, sandbox),
+        _ => return Err("usage: memory_bench [--profile] <plan.json> <empty-sandbox-dir>".into()),
     };
     let plan = Plan::read(Path::new(plan_path))?;
-    let report = run(&plan, Path::new(sandbox))?;
-    println!("{}", serde_json::to_string(&report)?);
+    let json = if profiling {
+        serde_json::to_string(&profile::run(&plan, Path::new(sandbox))?)?
+    } else {
+        serde_json::to_string(&run(&plan, Path::new(sandbox))?)?
+    };
+    println!("{json}");
     Ok(())
 }
 

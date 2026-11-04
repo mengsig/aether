@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import memory_bench
+import memory_bench_profile as profiling
 import memory_bench_task as task_arm
 from memory_bench_dataset import DatasetError, build_plan, load_set, validate
 from memory_bench_metrics import compute, differences, percentile
@@ -288,6 +289,33 @@ class TaskArmTest(unittest.TestCase):
     def test_a_failing_model_command_is_an_error_not_a_miss(self):
         with self.assertRaises(RuntimeError):
             task_arm.ask("false", "prompt")
+
+
+def profiled_row(qid, retrieve):
+    stages = {name: [10.0, 10.0] for name in profiling.STAGES}
+    return dict(stages, id=qid, scopes=5, reads=13, pool=8, retrieved=6, retrieve=retrieve, layer=[1.0, 3.0])
+
+
+class ProfileTest(unittest.TestCase):
+    def profile(self):
+        store = {"memories": 48, "queries": [profiled_row("a", [70.0, 90.0]), profiled_row("b", [80.0, 40.0])]}
+        return {"index": "none", "reps": 2, "small": store, "scaled": copy.deepcopy(store)}
+
+    def test_rank_is_what_retrieve_spends_beyond_the_stages_never_negative(self):
+        summary = profiling.summarise(self.profile())
+        small = summary["small"]["stages"]
+        # Stages sum to 50 per pass: rank is 20, 40, 30 and (40 - 50) clamped to 0.
+        self.assertEqual(small["rank"]["mean"], 22.5)
+        self.assertEqual(small["retrieve"]["mean"], 70.0)
+        self.assertEqual(small["lexical"]["share"], round(10.0 / 70.0, 4))
+        self.assertEqual(summary["small"]["reads_per_retrieval"], 13)
+        self.assertIn("| rank | 20.0 |", profiling.render(summary))
+
+    def test_a_row_missing_samples_is_refused(self):
+        profile = self.profile()
+        profile["scaled"]["queries"][1]["lexical"] = [10.0]
+        with self.assertRaises(AssertionError):
+            profiling.summarise(profile)
 
 
 if __name__ == "__main__":

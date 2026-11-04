@@ -7,6 +7,7 @@
            records them. No model is called unless --task-arm is given.
   report   re-render the report of an earlier run's results.json.
   compare  two results.json files, metric by metric (a baseline and a change).
+  profile  time each stage of retrieval on the same stores (driver --profile).
 
 See docs/memory/BASELINE.md. `make bench-memory` runs the baseline check.
 """
@@ -21,6 +22,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import memory_bench_profile as profiling
 import memory_bench_task as task_arm
 from memory_bench_dataset import build_plan, load_set, memory_index, queries
 from memory_bench_metrics import compute, differences
@@ -75,7 +77,7 @@ def build_driver(repo):
     return driver
 
 
-def run_driver(driver, plan, run_dir, arm):
+def run_driver(driver, plan, run_dir, arm, mode=()):
     """One arm in a fresh sandbox, removed afterwards whatever happens."""
     plan_path = run_dir / f"plan-{arm}.json"
     save_json(plan_path, plan)
@@ -83,7 +85,7 @@ def run_driver(driver, plan, run_dir, arm):
     sandbox = Path(tempfile.mkdtemp(prefix=f"sandbox-{arm}-", dir=SCRATCH))
     try:
         with open(run_dir / f"driver-{arm}.log", "w") as stderr:
-            completed = subprocess.run([str(driver), str(plan_path), str(sandbox)], stdout=subprocess.PIPE,
+            completed = subprocess.run([str(driver), *mode, str(plan_path), str(sandbox)], stdout=subprocess.PIPE,
                                        stderr=stderr, text=True, timeout=DRIVER_TIMEOUT_SECONDS)
     finally:
         shutil.rmtree(sandbox, ignore_errors=False)
@@ -164,6 +166,33 @@ def check(path, results):
     return 0
 
 
+def cmd_profile(args):
+    """The stage split of retrieval per arm, raw samples and a summary."""
+    dataset = load_set(args.set)
+    arms = [a.strip() for a in args.index.split(",") if a.strip()]
+    if not arms or any(a not in ARMS for a in arms):
+        raise SystemExit(f"--index takes a comma list of {', '.join(ARMS)}")
+    wait_for_load(args.load_max)
+    driver = Path(args.driver) if args.driver else build_driver(Path(args.repo))
+    commit, dirty = git_state(Path(args.repo))
+    run_dir = Path(args.out) if args.out else SCRATCH / time.strftime("profile-%Y%m%d-%H%M%S")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    raw, summaries = {}, {"commit": commit, "dirty": dirty, "arms": {}}
+    for arm in arms:
+        log(f"profiling index={arm}")
+        plan = build_plan(dataset, index=arm, reps=args.reps, filler=args.filler)
+        raw[arm] = run_driver(driver, plan, run_dir, arm, mode=("--profile",))
+        assert raw[arm]["index"] == arm, raw[arm]["index"]
+        summaries["arms"][arm] = profiling.summarise(raw[arm])
+    save_json(run_dir / "profile-raw.json", raw)
+    save_json(run_dir / "profile.json", summaries)
+    text = "\n".join(profiling.render(s) for s in summaries["arms"].values())
+    (run_dir / "profile.md").write_text(text)
+    print(text)
+    log(f"profile in {run_dir}")
+    return 0
+
+
 def cmd_report(args):
     print(render(json.loads(Path(args.results).read_text())))
     return 0
@@ -197,6 +226,16 @@ def parser():
                      help="model command: prompt on stdin, answer on stdout")
     run.add_argument("--task-max-calls", type=int, default=24, help="refuse a task arm needing more calls")
     run.set_defaults(func=cmd_run)
+    prof = sub.add_parser("profile", help="time each stage of retrieval")
+    prof.add_argument("--set", default=str(DEFAULT_SET), help="dataset directory")
+    prof.add_argument("--repo", default=str(REPO_ROOT), help="checkout whose driver is built and measured")
+    prof.add_argument("--driver", help="a prebuilt driver binary instead of building one")
+    prof.add_argument("--index", default=",".join(ARMS), help="arms: none (the default config), local")
+    prof.add_argument("--reps", type=int, default=30, help="timed passes per query")
+    prof.add_argument("--filler", type=int, default=5000, help="synthetic memories in the scaled store")
+    prof.add_argument("--load-max", type=float, default=10.0, help="wait while the 1-minute load is above this")
+    prof.add_argument("--out", help="results directory (default target/memory-bench/profile-<time>)")
+    prof.set_defaults(func=cmd_profile)
     report = sub.add_parser("report", help="re-render a results.json")
     report.add_argument("results")
     report.set_defaults(func=cmd_report)

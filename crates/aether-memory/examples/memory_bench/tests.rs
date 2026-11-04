@@ -74,3 +74,36 @@ fn a_sandbox_that_is_not_empty_is_refused() {
     let error = run(&plan(), sandbox.path()).unwrap_err().to_string();
     assert!(error.contains("must be an empty directory"), "{error}");
 }
+
+#[test]
+fn a_profile_times_every_stage_of_every_query_on_both_stores() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let profile = crate::profile::run(&plan(), sandbox.path()).unwrap();
+    assert_eq!(profile.small.memories, 1);
+    assert_eq!(profile.scaled.memories, 41);
+    assert_eq!(
+        profile.small.queries[0].retrieved, 1,
+        "only the current fact"
+    );
+    for store in [&profile.small, &profile.scaled] {
+        let row = &store.queries[0];
+        assert_eq!(row.id, "port");
+        assert!((1..=6).contains(&row.retrieved), "{}", row.retrieved);
+        assert!(row.pool >= row.retrieved);
+        assert_eq!(
+            row.scopes, 5,
+            "repository, its worker notes, role, agent, subtree"
+        );
+        assert_eq!(row.reads, 2 + 2 * 5 + 1);
+        for stage in [
+            &row.resolve,
+            &row.structural,
+            &row.lexical,
+            &row.feedback,
+            &row.semantic,
+        ] {
+            assert_eq!(stage.len(), 2);
+        }
+        assert_eq!((row.retrieve.len(), row.layer.len()), (2, 2));
+    }
+}
