@@ -1,0 +1,47 @@
+name: web
+
+# The web workspace (web/): `npm run check` runs the protocol drift check, types,
+# lint, unit tests, the licence check and the build. The runner has a read-only
+# token and no secrets.
+on:
+  # No PR path filter: a workflow that a path filter skips leaves a required check
+  # waiting forever, and this one is quick.
+  pull_request:
+    branches: [main, next]
+  push:
+    branches: [main, next]
+    paths:
+      - "web/**"
+      - "clients/protocol.schema.json"
+      - ".github/workflows/web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+    working-directory: web
+
+jobs:
+  check:
+    name: npm run check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: install the locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: npm run check
+        run: npm run check

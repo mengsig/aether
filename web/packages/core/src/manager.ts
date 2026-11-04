@@ -1,0 +1,143 @@
+// ConnectionManager: every daemon connection of the app, the commands sent
+// through them, and the Capabilities they add up to.
+
+import type { ConnectionInfo, ConnId, HostAdapter } from "@aether-ui/protocol";
+import { computeCapabilities, sameCapabilities } from "./capabilities.ts";
+import { aetherAccess, archonAccess, checkAllowed, withIdempotencyKey } from "./commands.ts";
+import { Connection, type Endpoint } from "./connection.ts";
+import { codeOf, DaemonError, RefusedError } from "./errors.ts";
+import { errorText, invariant, omit, string, type Json } from "./guards.ts";
+import { dropConnection, type State, type Store, type Submission } from "./store.ts";
+
+export interface ManagerOptions {
+  readonly store: Store;
+  readonly host: HostAdapter;
+  readonly clientVersion: string;
+  readonly managedStart?: boolean;
+  readonly random?: () => number;
+}
+
+/** Errors after which a sent command may or may not have acted; any other is its own answer. */
+const UNKNOWN_OUTCOME = new Set(["timeout", "disconnected"]);
+
+export class ConnectionManager {
+  private readonly options: ManagerOptions;
+  private readonly connections: Connection[] = [];
+  private managedStart: boolean;
+
+  constructor(options: ManagerOptions) {
+    this.options = options;
+    this.managedStart = options.managedStart === true;
+    this.refreshCapabilities();
+  }
+
+  /** The `desktop.managed_start` preference changed. */
+  setManagedStart(enabled: boolean): void {
+    this.managedStart = enabled;
+    this.refreshCapabilities();
+  }
+
+  add(endpoint: Endpoint): Connection {
+    invariant(!this.connections.some((c) => c.endpoint.daemon === endpoint.daemon && c.endpoint.target === endpoint.target), `${endpoint.target} is added once`);
+    const connection = new Connection(endpoint, {
+      store: this.options.store,
+      clientVersion: this.options.clientVersion,
+      ...(this.options.random ? { random: this.options.random } : {}),
+      publish: (info, previous) => this.publish(info, previous),
+      settingsChanged: () => this.refreshCapabilities(),
+    });
+    this.connections.push(connection);
+    return connection;
+  }
+
+  start(): void {
+    for (const connection of this.connections) connection.start();
+  }
+
+  stop(): void {
+    for (const connection of this.connections) connection.stop();
+  }
+
+  get(conn: ConnId): Connection | undefined {
+    return this.connections.find((connection) => connection.id === conn);
+  }
+
+  all(): readonly Connection[] {
+    return this.connections;
+  }
+
+  /**
+   * Sends a command after checking the connection's standing; a keyed
+   * mutation gets an idempotency key and sits in the outbox until answered.
+   */
+  async send(conn: ConnId, input: Json): Promise<Json> {
+    const connection = this.get(conn);
+    if (!connection) throw new RefusedError(`No connection ${conn}`);
+    const aether = connection.endpoint.daemon === "aether";
+    const access = aether ? aetherAccess(input) : archonAccess(input);
+    checkAllowed(access, connection.current.standing);
+    const command = aether ? withIdempotencyKey(input) : input;
+    const key = typeof command.idempotency_key === "string" ? command.idempotency_key : null;
+    if (key) this.track(conn, aether, { conn, key, command, state: "pending" });
+    try {
+      const reply = await connection.request({ ...command, cmd: string(command.cmd, "command.cmd") });
+      if (key) this.untrack(conn, aether, key);
+      return reply;
+    } catch (error) {
+      if (key && UNKNOWN_OUTCOME.has(codeOf(error) ?? "")) this.track(conn, aether, { conn, key, command, state: "unknown", error: errorText(error) });
+      else if (key) this.untrack(conn, aether, key);
+      throw error;
+    }
+  }
+
+  private track(conn: ConnId, aether: boolean, submission: Submission): void {
+    const put = <T extends { outbox: readonly Submission[] }>(s: T): T => ({ ...s, outbox: [...s.outbox.filter((x) => x.key !== submission.key), submission] });
+    if (aether) this.options.store.updateAether(conn, put);
+    else this.options.store.updateArchon(conn, put);
+  }
+
+  private untrack(conn: ConnId, aether: boolean, key: string): void {
+    const drop = <T extends { outbox: readonly Submission[] }>(s: T): T => (s.outbox.some((x) => x.key === key) ? { ...s, outbox: s.outbox.filter((x) => x.key !== key) } : s);
+    if (aether) this.options.store.updateAether(conn, drop);
+    else this.options.store.updateArchon(conn, drop);
+  }
+
+  /** §5.2.2: the agents on screen for one Aether connection; resumed after reconnects. */
+  watchAgents(conn: ConnId, agents: readonly string[]): Promise<void> {
+    const connection = this.get(conn);
+    if (connection?.endpoint.daemon !== "aether") return Promise.reject(new DaemonError("not_found", `${conn} is not an Aether connection`));
+    return connection.show(agents);
+  }
+
+  /** §5.3.3: the items on screen for one archond connection; resumed after reconnects. */
+  showItems(conn: ConnId, items: readonly string[]): void {
+    const connection = this.get(conn);
+    invariant(connection?.endpoint.daemon === "archon", `${conn} is not an archond connection`);
+    void connection.show(items);
+  }
+
+  private publish(info: ConnectionInfo, previous?: ConnId): void {
+    this.options.store.update((state) => {
+      let next: State = state;
+      if (previous !== undefined && previous !== info.id) {
+        // §5.1: a new instance_id drops the old id's cache; its unconfirmed submissions go to review.
+        next = dropConnection(next, previous);
+        next = { ...next, connections: omit(next.connections, previous) };
+      }
+      return { ...next, connections: { ...next.connections, [info.id]: info } };
+    });
+    this.refreshCapabilities();
+  }
+
+  refreshCapabilities(): void {
+    const { host } = this.options;
+    this.options.store.update((state) => {
+      const noesis = Object.fromEntries(Object.entries(state.aether).map(([id, s]) => [id, s.noesis]));
+      const capabilities = computeCapabilities({
+        host: host.kind, desktop: host.desktop !== undefined, managedStart: this.managedStart,
+        connections: state.connections, noesis,
+      });
+      return sameCapabilities(capabilities, state.capabilities) ? state : { ...state, capabilities };
+    });
+  }
+}

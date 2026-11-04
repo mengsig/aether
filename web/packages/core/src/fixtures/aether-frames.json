@@ -1,0 +1,354 @@
+{
+ "agent": "agt_01J00000000000000000000001",
+ "child": "agt_01J00000000000000000000002",
+ "invocation": "inv_01J00000000000000000000001",
+ "welcome_a": {
+  "reply": "welcome",
+  "data": {
+   "protocol_version": 25,
+   "daemon_version": "1.2.9",
+   "pid": 4242,
+   "schema_version": 28,
+   "instance_id": "inst-a",
+   "min_protocol_version": 17,
+   "features": [
+    "deltas",
+    "delta_order",
+    "transcript_paging"
+   ],
+   "device": {
+    "id": "dev_01J00000000000000000000001",
+    "name": "phone",
+    "role": "operator"
+   },
+   "idle_timeout_secs": null
+  }
+ },
+ "welcome_b": {
+  "reply": "welcome",
+  "data": {
+   "protocol_version": 25,
+   "daemon_version": "1.2.9",
+   "pid": 4242,
+   "schema_version": 28,
+   "instance_id": "inst-b",
+   "min_protocol_version": 17,
+   "features": [
+    "deltas",
+    "delta_order",
+    "transcript_paging"
+   ],
+   "device": {
+    "id": "dev_01J00000000000000000000001",
+    "name": "phone",
+    "role": "operator"
+   },
+   "idle_timeout_secs": null
+  }
+ },
+ "welcome_observer": {
+  "reply": "welcome",
+  "data": {
+   "protocol_version": 25,
+   "daemon_version": "1.2.9",
+   "pid": 4242,
+   "schema_version": 28,
+   "instance_id": "inst-a",
+   "min_protocol_version": 17,
+   "features": [
+    "deltas",
+    "delta_order",
+    "transcript_paging"
+   ],
+   "device": {
+    "id": "dev_01J00000000000000000000001",
+    "name": "phone",
+    "role": "observer"
+   },
+   "idle_timeout_secs": null
+  }
+ },
+ "subscribed_durable": {
+  "reply": "subscribed",
+  "data": {
+   "id": 1,
+   "last_seq": 3
+  }
+ },
+ "subscribed_deltas": {
+  "reply": "subscribed",
+  "data": {
+   "id": 2,
+   "last_seq": 3
+  }
+ },
+ "attention": {
+  "reply": "attention",
+  "data": {
+   "agents": [],
+   "approvals": [],
+   "questions": [],
+   "last_seq": 2
+  }
+ },
+ "tree": {
+  "reply": "tree",
+  "data": {
+   "roots": [
+    "agt_01J00000000000000000000001"
+   ],
+   "nodes": {
+    "agt_01J00000000000000000000001": {
+     "agent": {
+      "id": "agt_01J00000000000000000000001",
+      "name": "worker",
+      "role": "worker",
+      "run": "run_01J00000000000000000000001",
+      "model": {
+       "provider": "claude-code",
+       "model": "opus"
+      },
+      "config": {},
+      "scope": {},
+      "status": {
+       "status": "running"
+      },
+      "created_at": "2026-11-04T03:00:00Z",
+      "updated_at": "2026-11-04T03:00:00Z"
+     },
+     "children": [
+      "agt_01J00000000000000000000002"
+     ],
+     "subtree_usage": {}
+    },
+    "agt_01J00000000000000000000002": {
+     "agent": {
+      "id": "agt_01J00000000000000000000002",
+      "name": "worker",
+      "role": "worker",
+      "run": "run_01J00000000000000000000001",
+      "model": {
+       "provider": "claude-code",
+       "model": "opus"
+      },
+      "config": {},
+      "scope": {},
+      "status": {
+       "status": "running"
+      },
+      "created_at": "2026-11-04T03:00:00Z",
+      "updated_at": "2026-11-04T03:00:00Z",
+      "parent": "agt_01J00000000000000000000001"
+     },
+     "children": [],
+     "subtree_usage": {}
+    }
+   }
+  }
+ },
+ "events_first": [
+  {
+   "frame": "event",
+   "sub": 1,
+   "event": {
+    "seq": 1,
+    "id": "evt_01J00000000000000000000001",
+    "at": "2026-11-04T03:00:01Z",
+    "actor": {
+     "actor": "system"
+    },
+    "kind": {
+     "type": "agent.ready"
+    },
+    "agent_id": "agt_01J00000000000000000000001"
+   }
+  },
+  {
+   "frame": "event",
+   "sub": 1,
+   "event": {
+    "seq": 2,
+    "id": "evt_01J00000000000000000000002",
+    "at": "2026-11-04T03:00:02Z",
+    "actor": {
+     "actor": "system"
+    },
+    "kind": {
+     "type": "agent.started",
+     "turn": 1
+    },
+    "agent_id": "agt_01J00000000000000000000001"
+   }
+  },
+  {
+   "frame": "event",
+   "sub": 1,
+   "event": {
+    "seq": 3,
+    "id": "evt_01J00000000000000000000003",
+    "at": "2026-11-04T03:00:03Z",
+    "actor": {
+     "actor": "system"
+    },
+    "kind": {
+     "type": "agent.started",
+     "turn": 2
+    },
+    "agent_id": "agt_01J00000000000000000000001"
+   }
+  }
+ ],
+ "events_replay": [
+  {
+   "frame": "event",
+   "sub": 1,
+   "event": {
+    "seq": 4,
+    "id": "evt_01J00000000000000000000004",
+    "at": "2026-11-04T03:00:04Z",
+    "actor": {
+     "actor": "system"
+    },
+    "kind": {
+     "type": "agent.started",
+     "turn": 3
+    },
+    "agent_id": "agt_01J00000000000000000000001"
+   }
+  },
+  {
+   "frame": "event",
+   "sub": 1,
+   "event": {
+    "seq": 5,
+    "id": "evt_01J00000000000000000000005",
+    "at": "2026-11-04T03:00:05Z",
+    "actor": {
+     "actor": "system"
+    },
+    "kind": {
+     "type": "agent.message",
+     "role": "assistant",
+     "content": [
+      {
+       "type": "text",
+       "text": "done"
+      }
+     ],
+     "invocation": "inv_01J00000000000000000000001"
+    },
+    "agent_id": "agt_01J00000000000000000000001"
+   }
+  }
+ ],
+ "event_stale": {
+  "frame": "event",
+  "sub": 1,
+  "event": {
+   "seq": 4,
+   "id": "evt_01J00000000000000000000004",
+   "at": "2026-11-04T03:00:04Z",
+   "actor": {
+    "actor": "system"
+   },
+   "kind": {
+    "type": "agent.started",
+    "turn": 9
+   },
+   "agent_id": "agt_01J00000000000000000000001"
+  }
+ },
+ "event_next": {
+  "frame": "event",
+  "sub": 1,
+  "event": {
+   "seq": 6,
+   "id": "evt_01J00000000000000000000006",
+   "at": "2026-11-04T03:00:06Z",
+   "actor": {
+    "actor": "system"
+   },
+   "kind": {
+    "type": "agent.started",
+    "turn": 4
+   },
+   "agent_id": "agt_01J00000000000000000000001"
+  }
+ },
+ "history_expired": {
+  "code": "history_expired",
+  "message": "cursor 3 is older than retained history",
+  "first_seq": 40,
+  "last_seq": 90
+ },
+ "deltas_gap": [
+  {
+   "frame": "delta",
+   "sub": 2,
+   "agent": "agt_01J00000000000000000000001",
+   "invocation": "inv_01J00000000000000000000001",
+   "invocation_seq": 1,
+   "delta": {
+    "delta": "text",
+    "text": "Hel"
+   }
+  },
+  {
+   "frame": "delta",
+   "sub": 2,
+   "agent": "agt_01J00000000000000000000001",
+   "invocation": "inv_01J00000000000000000000001",
+   "invocation_seq": 2,
+   "delta": {
+    "delta": "text",
+    "text": "lo"
+   }
+  },
+  {
+   "frame": "delta",
+   "sub": 2,
+   "agent": "agt_01J00000000000000000000001",
+   "invocation": "inv_01J00000000000000000000001",
+   "invocation_seq": 4,
+   "delta": {
+    "delta": "text",
+    "text": " lost"
+   }
+  }
+ ],
+ "delta_midway": {
+  "frame": "delta",
+  "sub": 2,
+  "agent": "agt_01J00000000000000000000001",
+  "invocation": "inv_01J00000000000000000000001",
+  "invocation_seq": 7,
+  "delta": {
+   "delta": "text",
+   "text": "tail"
+  }
+ },
+ "transcript_page": {
+  "reply": "transcript_page",
+  "data": {
+   "entries": [
+    {
+     "seq": 5,
+     "at": "2026-11-04T03:00:05Z",
+     "invocation": "inv_01J00000000000000000000001",
+     "message": {
+      "role": "assistant",
+      "content": [
+       {
+        "type": "text",
+        "text": "Hello"
+       }
+      ]
+     }
+    }
+   ],
+   "has_before": false,
+   "has_after": false,
+   "last_seq": 5
+  }
+ }
+}
