@@ -1,0 +1,24 @@
+{
+  "name": "aether-desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Electron shell of the Aether app: app:// serves the committed web/dist; main holds the bridge.",
+  "type": "module",
+  "main": "src/main/index.ts",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "postinstall": "install-electron",
+    "start": "electron .",
+    "typecheck": "../../node_modules/.bin/tsc -p tsconfig.json",
+    "test": "node --test test/security/*.test.ts",
+    "check": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "electron": "44.1.0"
+  }
+}

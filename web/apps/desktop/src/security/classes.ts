@@ -1,0 +1,142 @@
+// The class allowlist of ARCHITECTURE.md §c: which commands `request` and `subscribe` pass
+// through. Aether `observe` and `operate` pass; Archon `Read` and `Change` pass where the
+// remote allowlist lets a device send them. Everything else, `shutdown` first, is refused.
+
+export type DaemonKind = "aether" | "archon";
+
+/** Aether's `Access` classes (crates/aether-protocol/src/access.rs), command by command. */
+export const AETHER_OBSERVE: ReadonlySet<string> = new Set([
+  "auth_status", "get_agent", "get_artifact", "get_attention", "get_checkpoint", "get_events",
+  "get_github_watcher", "get_inbox", "get_invocation", "get_notification", "get_push_config",
+  "get_run_report", "get_schedule", "get_snapshot", "get_task", "get_transcript", "get_transcript_page",
+  "get_tree", "hello", "latest_checkpoint", "list_agents", "list_agents_page", "list_approval_rules",
+  "list_approvals", "list_artifacts", "list_invocations", "list_models", "list_notifications",
+  "list_repository_aliases", "list_runs", "list_schedules", "list_tasks", "list_workspaces", "memories",
+  "noesis_get_session", "noesis_graph", "noesis_jobs", "noesis_learner", "noesis_learner_evidence",
+  "noesis_list_sessions", "noesis_status", "ping", "preview_retention", "providers", "read_artifact",
+  "replay", "schedule_history", "status", "storage_status", "subscribe", "unsubscribe", "usage_breakdown",
+]);
+
+export const AETHER_OPERATE: ReadonlySet<string> = new Set([
+  "answer_notification", "append_note", "archive", "cancel", "compact", "complete_path",
+  "configure_github_watcher", "create_agent", "create_memory", "create_schedule", "create_task",
+  "forget_memory", "get_git_summary", "interrupt", "mark_notification_read", "noesis_answer",
+  "noesis_cancel_job", "noesis_correct_learner", "noesis_create_session", "noesis_delete_proposition",
+  "noesis_delete_session", "noesis_delete_source", "noesis_extract", "noesis_import_source", "noesis_send",
+  "pause", "pin_memory", "post_notification", "publish_artifact", "refresh_provider_usage",
+  "reply_to_question", "resolve_notification", "restart", "restore_memory", "resume", "revoke_approval_rule",
+  "send_message", "set_approvals", "sync_repository_knowledge", "trigger", "update_schedule",
+  "validate_workspace", "wake", "workspace_diff", "workspace_discard", "workspace_integrate",
+]);
+
+export const AETHER_HOST_ONLY: ReadonlySet<string> = new Set([
+  "accept_memory", "alias_repository", "engine_tool", "engine_tools", "export_run", "import_run",
+  "memories_in_context", "memory_feedback", "record_memory_feedback", "reject_memory",
+  "retract_memory_feedback", "shutdown", "storage_gc",
+]);
+
+export const AETHER_REMOTE_ADMIN: ReadonlySet<string> = new Set([
+  "cancel_pairing", "configure_remote", "confirm_pairing", "get_pairing", "get_remote", "revoke_device",
+  "start_pairing", "update_device",
+]);
+
+/** A paired device acting on its own record: never the desktop's to send. */
+export const AETHER_DEVICE_SELF: ReadonlySet<string> = new Set(["subscribe_push", "test_push", "unsubscribe_push"]);
+
+/** Commands whose class a field decides; `aetherFieldClass` mirrors each rule. */
+export const AETHER_BY_FIELD: ReadonlySet<string> = new Set([
+  "add_approval_rule", "create_memory", "list_devices", "mcp_servers", "memories", "noesis_configure",
+  "resolve_approval", "resolve_submission", "update_agent",
+]);
+
+/**
+ * What Archon lets a device send (archon-remote `allow.rs`, Archon 9a8d63d1) that is `Read`
+ * or `Change` (`RequestClass`). `answer` and `say` are `OperatorChange`, so they stay out.
+ */
+export const ARCHON_PASS: ReadonlySet<string> = new Set([
+  "hello", "status", "repo_list", "list_items", "list_item_summaries", "get_item", "get_stage",
+  "resolve_item", "list_pipelines", "list_questions", "feed_history", "subscribe_feed", "list_reports",
+  "orchestrator_status", "cost_report", "list_artifacts", "read_artifact", "item_diff", "settings",
+  "autonomy", "subscribe_changes", "changes_page", "item_history", "task_graph", "run_plan", "item_links",
+  "issue_items", "list_github_objects", "enqueue", "cancel_item", "retry_item", "pause", "resume",
+  "link_issue", "unlink_issue", "import_issue",
+]);
+
+type Frame = Readonly<Record<string, unknown>>;
+type AetherClass = "observe" | "operate" | "host_only" | "remote_admin" | "device_self";
+
+function isSet(value: unknown): boolean {
+  return value !== undefined && value !== null;
+}
+
+function field(frame: Frame, name: string): Frame {
+  const value = frame[name];
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Frame) : {};
+}
+
+/** A remembered rule for every agent (`RuleScope` `everywhere`) is the host's own policy. */
+function ruleClass(scope: Frame): AetherClass {
+  return scope.scope === "everywhere" ? "host_only" : "operate";
+}
+
+function noesisConfigureClass(patch: Frame): AetherClass {
+  const budget = field(patch, "budget");
+  const setsBudget = ["interactive_usd_daily", "background_usd_daily", "background_tokens_daily"]
+    .some((key) => isSet(budget[key]));
+  const hostOnly = isSet(patch.enabled) || setsBudget || isSet(field(patch, "billing").allow_api)
+    || isSet(field(patch, "prompts").overrides);
+  return hostOnly ? "host_only" : "operate";
+}
+
+/** The field rules of `Command::access`, one per command of AETHER_BY_FIELD. */
+function aetherFieldClass(cmd: string, frame: Frame, depth: number): AetherClass | undefined {
+  switch (cmd) {
+    case "create_memory": return field(frame, "spec").proposed === true ? "host_only" : "operate";
+    case "memories": return field(frame, "query").proposed === true ? "host_only" : "observe";
+    case "mcp_servers": return frame.refresh === true ? "operate" : "observe";
+    case "list_devices": return frame.include_revoked === true ? "remote_admin" : "operate";
+    case "update_agent": {
+      const patch = field(frame, "patch");
+      return isSet(patch.backend) || isSet(patch.tools) ? "host_only" : "operate";
+    }
+    case "resolve_approval": return ruleClass(field(field(frame, "remember"), "scope"));
+    case "add_approval_rule": return ruleClass(field(frame, "scope"));
+    case "noesis_configure": return noesisConfigureClass(field(frame, "patch"));
+    case "resolve_submission": {
+      if (depth > 0) return "host_only";
+      const inner = aetherClass(field(frame, "command"), depth + 1);
+      return inner === "observe" ? "operate" : inner;
+    }
+    default: throw new Error(`${cmd} has no field rule`);
+  }
+}
+
+export function aetherClass(frame: Frame, depth = 0): AetherClass | undefined {
+  const cmd = frame.cmd;
+  if (typeof cmd !== "string") return undefined;
+  if (AETHER_BY_FIELD.has(cmd)) return aetherFieldClass(cmd, frame, depth);
+  if (AETHER_OBSERVE.has(cmd)) return "observe";
+  if (AETHER_OPERATE.has(cmd)) return "operate";
+  if (AETHER_HOST_ONLY.has(cmd)) return "host_only";
+  if (AETHER_REMOTE_ADMIN.has(cmd)) return "remote_admin";
+  if (AETHER_DEVICE_SELF.has(cmd)) return "device_self";
+  return undefined;
+}
+
+/** Why `frame` may not pass through `request`, or undefined when it may. */
+export function passThroughRefusal(kind: DaemonKind, frame: Frame): string | undefined {
+  const cmd = frame.cmd;
+  if (typeof cmd !== "string") return "A frame names its command in cmd";
+  if (cmd === "shutdown") return "shutdown is never sent from the desktop app";
+  if (kind === "archon") return archonRefusal(cmd, frame);
+  const access = aetherClass(frame);
+  if (access === undefined) return `Unknown command ${cmd}`;
+  if (access === "observe" || access === "operate") return undefined;
+  return `${cmd} is ${access} and needs a privileged action`;
+}
+
+function archonRefusal(cmd: string, frame: Frame): string | undefined {
+  if (!ARCHON_PASS.has(cmd)) return `${cmd} is not open to the desktop app's requests`;
+  if ((cmd === "pause" || cmd === "resume") && frame.hard === true) return `${cmd} with hard is for the archon CLI`;
+  return undefined;
+}
