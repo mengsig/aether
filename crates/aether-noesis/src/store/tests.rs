@@ -23,7 +23,7 @@ fn add_session(conn: &Connection, id: &str) {
 }
 
 #[test]
-fn n1_creates_every_table_the_contract_names() {
+fn the_migrations_create_every_table_the_contract_names() {
     let (_dir, store) = open_temp();
     assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
     let expected = [
@@ -32,7 +32,10 @@ fn n1_creates_every_table_the_contract_names() {
         "chains",
         "cluster_members",
         "clusters",
+        "concept_state",
+        "concepts",
         "coverage",
+        "evidence",
         "jobs",
         "meta",
         "plans",
@@ -44,8 +47,34 @@ fn n1_creates_every_table_the_contract_names() {
         "session_messages",
         "sessions",
         "sources",
+        "sqlite_sequence",
     ];
     assert_eq!(tables(store.connection()), expected);
+}
+
+#[test]
+fn an_n1_store_upgrades_to_n2_keeping_its_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("noesis.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;
+         INSERT INTO meta VALUES ('schema_version', '1');",
+    )
+    .unwrap();
+    conn.execute_batch(schema::MIGRATIONS[0]).unwrap();
+    add_session(&conn, "ns_1");
+    drop(conn);
+    let store = NoesisStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 2);
+    let conn = store.connection();
+    for table in ["concepts", "evidence", "concept_state"] {
+        assert!(tables(conn).contains(&table.to_string()), "{table}");
+    }
+    let sessions: i64 = conn
+        .query_row("SELECT count(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(sessions, 1);
 }
 
 #[test]
