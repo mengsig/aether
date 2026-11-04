@@ -330,4 +330,17 @@ describe("Aether resync, second review", () => {
       expect(applyEvent(base, at(2, type)).staleAttention).toBe(false);
     }
   });
+
+  it("retries an attention refresh that timed out on a live link", async () => {
+    const { store, daemon, manager } = setup(healthy({ get_attention: () => (daemon.commands("get_attention").length === 2 ? undefined : { ok: F.attention }) }));
+    manager.start();
+    await settle();
+    daemon.push(event(4, "approval.requested", F.agent));
+    await vi.advanceTimersByTimeAsync(250 + 20_000);
+    expect(store.get().reports).toEqual([expect.objectContaining({ code: "timeout" })]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("get_attention")).toHaveLength(3);
+    expect(store.get().aether[CONN_A]?.staleAttention).toBe(false);
+  });
 });
+

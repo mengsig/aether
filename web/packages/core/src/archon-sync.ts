@@ -293,8 +293,11 @@ export class ArchonSync {
       await this.readGraph();
       await this.readSummaries();
     } catch (error) {
-      if (LINK_LOST.has(codeOf(error) ?? "")) this.set((s) => ({ ...s, staleSnapshots: true }));
-      else this.fail("the queue", error);
+      if (!LINK_LOST.has(codeOf(error) ?? "")) this.fail("the queue", error);
+      else {
+        this.set((s) => ({ ...s, staleSnapshots: true }));
+        this.retryAfterTimeout("the queue", error);
+      }
     } finally {
       // Whichever snapshots were installed get the changes that arrived while they were read.
       this.set((s) => collected.reduce(patchSnapshots, s));
@@ -344,7 +347,15 @@ export class ArchonSync {
     } catch (error) {
       if (!LINK_LOST.has(codeOf(error) ?? "")) return this.fail(`item ${item}`, error);
       this.set((s) => (s.staleItems.includes(item) ? s : { ...s, staleItems: [...s.staleItems, item] }));
+      this.retryAfterTimeout(`item ${item}`, error);
     }
+  }
+
+  /** A lost link refetches on the next ready; a timeout on a live one must be retried now, and seen. */
+  private retryAfterTimeout(what: string, error: unknown): void {
+    if (codeOf(error) !== "timeout" || this.changeSub === null) return;
+    this.fail(what, error);
+    this.scheduleStale();
   }
 
   private fail(what: string, error: unknown): void {

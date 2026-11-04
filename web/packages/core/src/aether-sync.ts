@@ -211,7 +211,11 @@ export class AetherSync {
       .then(() => {
         // A read that began before the latest ask cannot end recovery; the next one will.
         if (!this.again.has(agent)) this.ctx.store.updateAether(this.ctx.conn, (s) => endRecovery(s, agent));
-      }, (error: unknown) => this.ctx.store.report(`Could not read the transcript of ${agent}: ${errorText(error)}`, this.ctx.conn, codeOf(error)))
+      }, (error: unknown) => {
+        this.ctx.store.report(`Could not read the transcript of ${agent}: ${errorText(error)}`, this.ctx.conn, codeOf(error));
+        // Its streams stay in recovery until a read succeeds, so a timeout is read again.
+        if (codeOf(error) === "timeout") this.again.add(agent);
+      })
       .finally(() => {
         this.rereading.delete(agent);
         if (this.again.delete(agent) && this.running) void this.reread(agent);
@@ -252,6 +256,7 @@ export class AetherSync {
     } catch (error) {
       if (!LINK_LOST.has(codeOf(error) ?? "")) return this.ctx.store.report(`Could not refresh agent ${agent}: ${errorText(error)}`, this.ctx.conn, codeOf(error));
       this.ctx.store.updateAether(this.ctx.conn, (s) => (s.staleAgents.includes(agent) ? s : { ...s, staleAgents: [...s.staleAgents, agent] }));
+      this.retryAfterTimeout(`agent ${agent}`, error);
     }
   }
 
@@ -264,7 +269,15 @@ export class AetherSync {
     } catch (error) {
       if (!LINK_LOST.has(codeOf(error) ?? "")) return this.ctx.store.report(`Could not refresh attention: ${errorText(error)}`, this.ctx.conn, codeOf(error));
       this.ctx.store.updateAether(this.ctx.conn, (s) => ({ ...s, staleAttention: true }));
+      this.retryAfterTimeout("attention", error);
     }
+  }
+
+  /** A lost link refetches on the next ready; a timeout on a live one must be retried now, and seen. */
+  private retryAfterTimeout(what: string, error: unknown): void {
+    if (codeOf(error) !== "timeout" || !this.running) return;
+    this.ctx.store.report(`Could not refresh ${what} in time; retrying: ${errorText(error)}`, this.ctx.conn, "timeout");
+    this.scheduleStale();
   }
 }
 

@@ -345,5 +345,21 @@ describe("Archon resync, third review", () => {
     expect(daemon.commands("task_graph")).toHaveLength(2);
     expect(store.get().archon[CONN]?.graph?.edges).toEqual([{ ...edge, satisfied: true }]);
   });
+
+  it("retries a snapshot reread that timed out on a live link, and reports it", async () => {
+    const { store, daemon, manager } = setup(archond({
+      subscribe_changes: () => ({ ok: F.subscribed_changes }),
+      task_graph: () => (daemon.commands("task_graph").length === 2 ? undefined : { ok: F.task_graph }),
+    }));
+    manager.start();
+    await settle();
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_new", state: "queued" } } });
+    await vi.advanceTimersByTimeAsync(250 + 20_000);
+    expect(store.get().archon[CONN]?.staleSnapshots).toBe(true);
+    expect(store.get().reports).toEqual([expect.objectContaining({ code: "timeout" })]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("task_graph")).toHaveLength(3);
+    expect(store.get().connections[CONN]?.state).toBe("ready");
+  });
 });
 
