@@ -12621,7 +12621,7 @@
           "type": "object"
         },
         {
-          "description": "Reply to `list_agents_page`. `next_after` is the cursor for the next\npage, absent on the last one.",
+          "description": "Reply to `list_agents_page`. `next_after` is the cursor for the next\npage, absent on the last one. Ids are only ordered, not committed in\norder, so a walk covers the agents present when it began; a client\nsubscribes first and applies the buffered events for creations during it.",
           "properties": {
             "data": {
               "properties": {
