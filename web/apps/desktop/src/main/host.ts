@@ -3,7 +3,7 @@
 
 import { spawn } from "node:child_process";
 import {
-  BrowserWindow, dialog, Notification, shell, webContents,
+  BrowserWindow, dialog, shell, webContents,
   type IpcMain, type IpcMainInvokeEvent,
 } from "electron";
 import type { Bridge } from "../bridge/bridge.ts";
@@ -74,11 +74,6 @@ export function openTerminal(argv: readonly string[]): Promise<void> {
       resolve();
     });
   });
-}
-
-export function showNotification(note: { title: string; body: string }): void {
-  if (!Notification.isSupported()) throw new Error("This system shows no notifications");
-  new Notification({ title: note.title, body: note.body, silent: false }).show();
 }
 
 export function openExternalLink(url: string): Promise<void> {

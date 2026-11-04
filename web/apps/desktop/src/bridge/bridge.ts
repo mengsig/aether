@@ -2,6 +2,7 @@
 // only then reaches the method that serves it. Electron-specific effects come in through BridgeHost.
 
 import type { LocalDaemon, PreferenceKey, PrivilegedAction } from "@aether-ui/protocol";
+import type { DaemonKind } from "../security/classes.ts";
 import type { Confirmation } from "../security/confirm.ts";
 import { normalizeOrigin } from "../security/origins.ts";
 import { BridgeRefusal, Validator, type Sender, type ValidCall } from "../security/validate.ts";
@@ -11,12 +12,17 @@ import { planAction } from "./privileged.ts";
 
 /** What the bridge needs from Electron and the machine; tests hand in fakes. */
 export interface BridgeHost {
-  findDaemons(): Promise<Array<LocalDaemonRecord & { reachable: boolean }>>;
+  /** Every local daemon kind with its socket and health; the socket never leaves main. */
+  findDaemons(): Promise<Array<LocalDaemonRecord & { reachable: boolean; version?: string }>>;
   openLink(socket: string): Promise<DaemonLink>;
   push(owner: number, conn: string, frame: Frame): void;
   confirm(owner: number, confirmation: Confirmation): Promise<boolean>;
   openTerminal(argv: readonly string[]): Promise<void>;
-  notify(note: { title: string; body: string }): void;
+  notify(note: { title: string; body: string; route?: string }): void;
+  /** Managed start: refused unless desktop.managed_start is on. */
+  startDaemon(kind: DaemonKind): Promise<void>;
+  /** The native folder picker; an opaque single-use grant for the choice, or null. */
+  pickDirectory(owner: number, purpose: string): Promise<string | null>;
   openExternal(url: string): Promise<void>;
   openRemote(origin: string): Promise<void>;
   getPreference(key: PreferenceKey): unknown;
@@ -56,9 +62,9 @@ export class Bridge {
       case "subscribe": return this.connections.subscribe(owner, call.conn, call.frame, call.text);
       case "close": return this.connections.close(owner, call.conn);
       case "privileged": return this.privileged(owner, call.action);
-      case "startDaemon": return this.startDaemon();
-      case "pickDirectory": throw new BridgeRefusal("Choosing a folder is not available in this build yet");
-      case "notify": return this.host.notify({ title: call.note.title, body: call.note.body });
+      case "startDaemon": return this.host.startDaemon(call.kind);
+      case "pickDirectory": return this.host.pickDirectory(owner, call.purpose);
+      case "notify": return this.host.notify(call.note);
       case "openExternal": return this.host.openExternal(externalUrl(call.url));
       case "openRemote": return this.openRemote(call.origin);
       case "diagnostics": return this.diagnostics();
@@ -93,18 +99,8 @@ export class Bridge {
     }
   }
 
-  private hello(kind: "aether" | "archon"): Frame {
-    const protocol_version = this.host.protocolVersions[kind];
-    const client_version = this.host.versions.app ?? "0.0.0";
-    if (kind === "archon") return { cmd: "hello", req: HELLO_REQ, protocol_version, client: "archon-cli", client_version };
-    return { cmd: "hello", req: HELLO_REQ, protocol_version, client_name: "aether-desktop", client_version };
-  }
-
-  private startDaemon(): never {
-    if (this.host.getPreference("desktop.managed_start") !== true) {
-      throw new BridgeRefusal("Starting daemons from the app is off; turn on desktop.managed_start first");
-    }
-    throw new BridgeRefusal("Starting daemons from the app is not available in this build yet");
+  private hello(kind: DaemonKind): Frame {
+    return helloFrame(kind, this.host.protocolVersions[kind], this.host.versions.app ?? "0.0.0");
   }
 
   private async openRemote(value: string): Promise<void> {
@@ -120,9 +116,18 @@ export class Bridge {
   }
 }
 
-/** What the renderer learns of a daemon: never its socket path. */
-function publicDaemon(daemon: LocalDaemonRecord & { reachable: boolean }): LocalDaemon {
-  return { id: daemon.id, kind: daemon.kind, label: daemon.label, reachable: daemon.reachable };
+/** Main's hello to a local daemon, request 1: on a control link, and for a health probe. */
+export function helloFrame(kind: DaemonKind, protocol_version: number, client_version: string): Frame {
+  if (!Number.isSafeInteger(protocol_version) || protocol_version < 1) throw new Error("a protocol version is a positive integer");
+  if (kind === "archon") return { cmd: "hello", req: HELLO_REQ, protocol_version, client: "archon-cli", client_version };
+  return { cmd: "hello", req: HELLO_REQ, protocol_version, client_name: "aether-desktop", client_version };
+}
+
+/** What the renderer learns of a daemon: its health, never its socket path. */
+function publicDaemon(daemon: LocalDaemonRecord & { reachable: boolean; version?: string }): LocalDaemon {
+  const found: LocalDaemon = { id: daemon.id, kind: daemon.kind, label: daemon.label, reachable: daemon.reachable };
+  if (daemon.version !== undefined) found.version = daemon.version;
+  return found;
 }
 
 /** An https: URL with no user name or password, as given; anything else is refused. */

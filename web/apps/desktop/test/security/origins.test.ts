@@ -23,6 +23,7 @@ function hostWith(origins: unknown, opened: string[]): BridgeHost {
   return {
     findDaemons: async () => [], openLink: async () => { throw new Error("no daemon"); }, push: () => {},
     confirm: async () => false, openTerminal: async () => {}, notify: () => {},
+    startDaemon: async () => {}, pickDirectory: async () => null,
     openExternal: async (url) => { opened.push(`external ${url}`); },
     openRemote: async (origin) => { opened.push(origin); },
     getPreference: (key) => (key === "remote.origins" ? origins : undefined), setPreference: async () => {},
