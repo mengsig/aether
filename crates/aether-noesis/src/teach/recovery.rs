@@ -342,3 +342,27 @@ fn unknown_field_names_and_option_values_cannot_carry_a_sealed_value() {
     hidden["explanation"] = json!(why);
     assert!(error_of(&call(&mut t, &teach, ASK, hidden, "")).contains("gives away"));
 }
+
+#[test]
+fn a_numeric_argument_cannot_carry_a_numeric_solution() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise sums", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let problem = json!({"statement": "What is six times seven?", "mode": "recall", "solution": "9876543210"});
+    let practitioner = t.engine_mut();
+    practitioner.script(Agent::Practitioner, "", vec![(PROBLEM, problem)]);
+    practitioner.script(
+        Agent::Practitioner,
+        "",
+        vec![("noesis.graph_search", json!({"query": 9876543210_u64}))],
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(
+        report.steps[1].calls[0].input,
+        json!({"query": crate::tools::SEALED})
+    );
+    assert!(!format!("{report:?}").contains("9876543210"), "{report:?}");
+}

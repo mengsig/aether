@@ -21,11 +21,15 @@ pub(super) fn holds(text: &str, secrets: &[String]) -> bool {
         .any(|secret| contains_phrase(&haystack, &secret.trim().to_lowercase()))
 }
 
-/// Replace every string in `value`, object keys included, that holds a
-/// secret by [`SEALED`]; keys that collide once sealed are numbered.
+/// Replace every scalar in `value`, object keys included, whose text holds
+/// a secret by [`SEALED`]; keys that collide once sealed are numbered.
 pub(super) fn scrub(value: &mut Value, secrets: &[String]) {
     match value {
         Value::String(text) if holds(text, secrets) => *value = Value::String(SEALED.into()),
+        // The parser reads a number or boolean as its text, so sealing does too.
+        Value::Number(_) | Value::Bool(_) if holds(&value.to_string(), secrets) => {
+            *value = Value::String(SEALED.into());
+        }
         Value::Array(items) => items.iter_mut().for_each(|item| scrub(item, secrets)),
         Value::Object(map) => {
             let entries = std::mem::take(map);
@@ -79,13 +83,19 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn scrubbing_seals_every_string_holding_a_secret_at_any_depth() {
+    fn scrubbing_seals_every_scalar_holding_a_secret_at_any_depth() {
         let secrets = vec!["x = 4".to_string()];
         let mut value = json!({"a": "so x = 4.", "b": ["fine", {"c": "X = 4"}], "d": 4});
         scrub(&mut value, &secrets);
         assert_eq!(
             value,
             json!({"a": SEALED, "b": ["fine", {"c": SEALED}], "d": 4})
+        );
+        let mut scalars = json!({"query": [42], "other": 7, "flag": true, "off": false});
+        scrub(&mut scalars, &["42".to_string(), "true".to_string()]);
+        assert_eq!(
+            scalars,
+            json!({"query": [SEALED], "other": 7, "flag": SEALED, "off": false})
         );
         assert!(!holds("anything", &[]));
     }
