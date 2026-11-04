@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import memory_bench
 import memory_bench_profile as profiling
+import memory_bench_series as series
 import memory_bench_task as task_arm
 from memory_bench_dataset import DatasetError, build_plan, load_set, validate
 from memory_bench_metrics import compute, differences, percentile
@@ -316,6 +317,28 @@ class ProfileTest(unittest.TestCase):
         profile["scaled"]["queries"][1]["lexical"] = [10.0]
         with self.assertRaises(AssertionError):
             profiling.summarise(profile)
+
+
+def series_result(p95, precision=0.25):
+    latency = {"median": 100.0, "p95": p95, "scaled_median": 900.0, "scaled_p95": 1200.0}
+    arm = {"deterministic": {"retrieval": {"precision@3": precision, "precision@6": 0.16},
+                             "injection": {"tokens_on_queries_without_relevant": 305.0,
+                                           "tokens_per_turn_mean": 323.0}},
+           "measured": {"latency_us": latency}}
+    return {"commit": "c" * 40, "arms": {"none": arm}}
+
+
+class SeriesTest(unittest.TestCase):
+    def test_latency_is_summarised_by_median_and_relative_range(self):
+        summary = series.summarise([series_result(p) for p in (300.0, 330.0, 270.0)])
+        p95 = summary["arms"]["none"]["latency_us"]["p95"]
+        self.assertEqual((p95["median"], p95["range_pct"]), (300.0, 20.0))
+        self.assertEqual(summary["arms"]["none"]["deterministic"]["precision@3"], 0.25)
+        self.assertIn("| p95 | 300, 330, 270 | 300.0 | 20.0 |", series.render(summary))
+
+    def test_runs_that_rank_differently_are_refused(self):
+        with self.assertRaises(AssertionError):
+            series.summarise([series_result(300.0), series_result(300.0, precision=0.3)])
 
 
 if __name__ == "__main__":
