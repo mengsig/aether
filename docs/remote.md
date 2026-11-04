@@ -317,9 +317,12 @@ successful claim.
 A request whose path is a mount's prefix or lies below it (`/archon`,
 `/archon/…`, never `/archonx`) is forwarded to the mount's loopback target
 with the prefix stripped (`/archon` becomes `/`) and the query unchanged,
-after the Host check and before every other route. A path below a prefix
-with an empty, `.` or `..` segment, a `%` or a `\` is `400` and is not
-forwarded.
+after the Host check and before every route but the listener's own
+endpoints (`/ws` and everything under `/api`), which no mount takes over. A
+prefix the listener serves itself (`/api`, `/ws`, or a directory of the
+embedded web app such as `/assets`) is refused when mounts are saved. A path
+below a prefix with an empty, `.` or `..` segment, a `%` or a `\` is `400` and
+is not forwarded.
 
 - **Unchanged.** The method, body and every end-to-end header go as they
   came, `Origin` and `Cookie` included; `Host` becomes the target. Hop-by-hop
