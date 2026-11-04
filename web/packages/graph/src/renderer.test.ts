@@ -6,11 +6,11 @@ import { buildScene } from "./scene.ts";
 
 /** A 2D context that records the labels and status colours it draws. */
 function recordingContext() {
-  const drawn = { labels: [] as string[], fills: [] as string[] };
+  const drawn = { labels: [] as string[], fills: [] as string[], curves: 0 };
   const ctx = {
     fillStyle: "", strokeStyle: "", lineWidth: 1, font: "", textBaseline: "alphabetic",
     setTransform: () => undefined, clearRect: () => undefined, strokeRect: () => undefined,
-    beginPath: () => undefined, moveTo: () => undefined, lineTo: () => undefined, bezierCurveTo: () => undefined, stroke: () => undefined,
+    beginPath: () => undefined, moveTo: () => undefined, lineTo: () => undefined, bezierCurveTo: () => { drawn.curves++; }, stroke: () => undefined,
     fillRect(this: { fillStyle: string }) { drawn.fills.push(this.fillStyle); },
     fillText: (text: string) => { drawn.labels.push(text); },
     measureText: (text: string) => ({ width: text.length * 7 }),
@@ -73,6 +73,17 @@ describe("GraphRenderer", () => {
     renderer.update({ width: 800, camera: { x: 0, y: 0, scale: 0.2 } });
     frames.flush();
     expect(drawn.labels).toEqual([]);
+  });
+
+  it("draws a backward edge whose bend alone is on screen", () => {
+    const { renderer, frames, drawn } = setup();
+    const cycle = visibleGraph({ nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+      edges: [{ from: "b", to: "a", kind: "x" }], groups: [], collapsed: new Set() });
+    const layout = { hash: "c", positions: new Map([["a", { x: 84, y: 22 }], ["b", { x: 324, y: 22 }]]) };
+    // Node boxes end at x = 408; the curve from b's right side bends out to x ≈ 440.
+    renderer.update({ scene: buildScene(cycle, layout, "box"), camera: { x: -435, y: 0, scale: 1 }, width: 10, height: 44 });
+    frames.flush();
+    expect(drawn.curves).toBe(1);
   });
 
   it("cuts long labels to the node width with an ellipsis and stops after dispose", () => {

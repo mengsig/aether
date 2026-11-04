@@ -5,13 +5,13 @@ import { invariant } from "./invariant.ts";
 export interface Camera { readonly x: number; readonly y: number; readonly scale: number }
 export interface Rect { x: number; y: number; width: number; height: number }
 
+/** The zoom-out floor, lowered by `fit` when a whole graph needs a smaller scale. */
 export const MIN_SCALE = 0.05;
 export const MAX_SCALE = 4;
 
-const clampScale = (scale: number): number => Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
-
 export class Viewport {
   private current: Camera = { x: 0, y: 0, scale: 1 };
+  private minScale = MIN_SCALE;
   /** True once the user panned or zoomed; a new scene then keeps their view instead of refitting. */
   moved = false;
 
@@ -31,18 +31,23 @@ export class Viewport {
     invariant(Number.isFinite(factor) && factor > 0, "a zoom factor is positive");
     invariant(Number.isFinite(sx) && Number.isFinite(sy), "a zoom origin is finite");
     const { x, y, scale } = this.current;
-    const next = clampScale(scale * factor);
+    const next = Math.min(MAX_SCALE, Math.max(this.minScale, scale * factor));
     this.current = { x: sx - ((sx - x) * next) / scale, y: sy - ((sy - y) * next) / scale, scale: next };
     this.moved = true;
     return this.current;
   }
 
-  /** Centres `bounds` in a width × height screen with `padding` px around it, never above 1:1. */
+  /**
+   * Centres `bounds` in a width × height screen with `padding` px around it, never above 1:1.
+   * A graph too large for MIN_SCALE still fits whole, and zooming may then go down to that scale.
+   */
   fit(bounds: Rect, width: number, height: number, padding = 24): Camera {
     invariant(width > 0 && height > 0, "fit needs a screen with an area");
     invariant(bounds.width >= 0 && bounds.height >= 0, "fit needs nonnegative bounds");
     const room = (size: number, extent: number) => (extent === 0 ? MAX_SCALE : Math.max(1, size - 2 * padding) / extent);
-    const scale = clampScale(Math.min(1, room(width, bounds.width), room(height, bounds.height)));
+    const scale = Math.min(1, room(width, bounds.width), room(height, bounds.height));
+    invariant(scale > 0 && Number.isFinite(scale), "a fitted scale is positive and finite");
+    this.minScale = Math.min(MIN_SCALE, scale);
     this.current = {
       scale,
       x: width / 2 - (bounds.x + bounds.width / 2) * scale,

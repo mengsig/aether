@@ -81,7 +81,8 @@ export class GraphRenderer {
     ctx.font = theme.font;
     ctx.textBaseline = "middle";
     for (const group of scene.groups) if (overlaps(group, view)) this.drawGroup(group, camera.scale);
-    this.drawEdges(scene.edges.filter((e) => overlaps(edgeBox(e), view)), scene.shape === "box");
+    const layered = scene.shape === "box";
+    this.drawEdges(scene.edges.filter((e) => overlaps(curveBox(edgeCurve(e, layered)), view)), layered);
     const visible = scene.index.query(view);
     for (const node of visible) this.drawNode(node, scene.shape === "box", camera.scale);
   }
@@ -101,17 +102,10 @@ export class GraphRenderer {
     ctx.strokeStyle = this.state.theme.edge;
     ctx.lineWidth = 1 / this.state.camera.scale;
     ctx.beginPath();
-    for (const { from, to } of edges) {
-      if (!layered) {
-        ctx.moveTo(from.x + from.width / 2, from.y + from.height / 2);
-        ctx.lineTo(to.x + to.width / 2, to.y + to.height / 2);
-        continue;
-      }
-      const x0 = from.x + from.width, y0 = from.y + from.height / 2;
-      const x1 = to.x, y1 = to.y + to.height / 2;
-      const bend = Math.max(24, Math.abs(x1 - x0) / 2);
-      ctx.moveTo(x0, y0);
-      ctx.bezierCurveTo(x0 + bend, y0, x1 - bend, y1, x1, y1);
+    for (const edge of edges) {
+      const [start, c1, c2, end] = edgeCurve(edge, layered);
+      ctx.moveTo(start.x, start.y);
+      if (layered) ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, end.x, end.y); else ctx.lineTo(end.x, end.y);
     }
     ctx.stroke();
   }
@@ -156,9 +150,29 @@ export class GraphRenderer {
   }
 }
 
-function edgeBox({ from, to }: SceneEdge) {
-  const x = Math.min(from.x, to.x), y = Math.min(from.y, to.y);
-  return { x, y, width: Math.max(from.x + from.width, to.x + to.width) - x, height: Math.max(from.y + from.height, to.y + to.height) - y };
+type Point = { x: number; y: number };
+
+/**
+ * An edge as a cubic Bezier: right side of the source to left side of the target for layered
+ * graphs, a straight centre-to-centre line (controls on the ends) otherwise.
+ */
+export function edgeCurve({ from, to }: SceneEdge, layered: boolean): [Point, Point, Point, Point] {
+  if (!layered) {
+    const a = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
+    const b = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
+    return [a, a, b, b];
+  }
+  const x0 = from.x + from.width, y0 = from.y + from.height / 2;
+  const x1 = to.x, y1 = to.y + to.height / 2;
+  const bend = Math.max(24, Math.abs(x1 - x0) / 2);
+  return [{ x: x0, y: y0 }, { x: x0 + bend, y: y0 }, { x: x1 - bend, y: y1 }, { x: x1, y: y1 }];
+}
+
+/** The control points' bounding box, which contains the whole curve, padded for the stroke. */
+function curveBox(points: readonly Point[]) {
+  const xs = points.map((p) => p.x), ys = points.map((p) => p.y);
+  const x = Math.min(...xs) - 2, y = Math.min(...ys) - 2;
+  return { x, y, width: Math.max(...xs) + 2 - x, height: Math.max(...ys) + 2 - y };
 }
 
 /** The browser's animation frames. */
