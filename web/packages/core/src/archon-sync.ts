@@ -3,7 +3,7 @@
 
 import { Debouncer, KeyedSerial } from "./debounce.ts";
 import { codeOf } from "./errors.ts";
-import { array, errorText, invariant, object, seq, string, type Json } from "./guards.ts";
+import { array, errorText, invariant, object, omit, seq, string, type Json } from "./guards.ts";
 import { LINK_LOST, replyData, replyObject, subscriptionId } from "./replies.ts";
 import type { SyncContext } from "./aether-sync.ts";
 import { EMPTY_ARCHON, type ArchonConnState, type ArchonGraph, type ArchonItem } from "./store.ts";
@@ -179,9 +179,15 @@ export class ArchonSync {
     this.rereadAgain = false;
   }
 
-  /** Entities on screen are refetched on change; others are updated in place only. */
+  /** Items on screen are refetched on change; off-screen details are dropped then and fetched on return. */
   show(items: readonly string[]): void {
     this.onScreen = new Set(items);
+    if (!this.usesChanges) return;
+    const missing = items.filter((item) => !(item in this.state.details) && !this.state.staleItems.includes(item));
+    if (missing.length === 0) return;
+    this.set((s) => ({ ...s, staleItems: [...s.staleItems, ...missing] }));
+    // Before the change subscription exists, finishStart schedules the markers.
+    if (this.changeSub !== null && this.buffer === null) this.scheduleStale();
   }
 
   onChange(frame: Json): void {
@@ -194,9 +200,11 @@ export class ArchonSync {
     const before = this.state;
     const { state, item, unknown } = applyChange(before, change);
     if (state === before) return;
-    const detail = item !== undefined && this.onScreen.has(item) && !state.staleItems.includes(item);
+    const visible = item !== undefined && this.onScreen.has(item);
+    const detail = visible && !state.staleItems.includes(item);
+    const details = item !== undefined && !visible && item in state.details ? omit(state.details, item) : state.details;
     // Marked with the cursor advance, so a reconnect cannot skip what this change asked for.
-    this.set(() => ({ ...state, ...(unknown ? { staleSnapshots: true } : {}), ...(detail ? { staleItems: [...state.staleItems, item] } : {}) }));
+    this.set(() => ({ ...state, details, ...(unknown ? { staleSnapshots: true } : {}), ...(detail ? { staleItems: [...state.staleItems, item] } : {}) }));
     this.collecting?.push(change);
     this.scheduleStale();
   }
