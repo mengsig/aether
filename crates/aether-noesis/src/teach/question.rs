@@ -171,6 +171,26 @@ pub(super) fn contains_phrase(haystack: &str, phrase: &str) -> bool {
     })
 }
 
+/// A stored question's key as the learner would recognise it: a choice key
+/// as its options' labels, any other key as written.
+pub(super) fn shown_key(row: &super::db::QuestionRow) -> Vec<String> {
+    let options = row.question.options.as_deref().unwrap_or_default();
+    if row.question.kind != QuestionKind::Choice {
+        return row.answer_key.clone();
+    }
+    let labels: Vec<String> = options
+        .iter()
+        .filter(|option| row.answer_key.contains(&option.value))
+        .map(|option| option.label.clone())
+        .collect();
+    debug_assert_eq!(
+        labels.len(),
+        row.answer_key.len(),
+        "a stored key names options"
+    );
+    labels
+}
+
 /// The display order of a question's options: a Fisher-Yates shuffle seeded
 /// by the question id, so every read and every restart shows the same order.
 pub fn shuffle(question_id: &str, options: &[ChoiceOption]) -> Vec<ChoiceOption> {

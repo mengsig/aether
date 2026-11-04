@@ -71,10 +71,11 @@ impl<E: Engine> Teaching<'_, E> {
         step: &Step,
     ) -> Result<(StepRecord, Option<TurnEnd>, Vec<ToolResult>), TeachError> {
         let mut record = StepRecord {
-            text: shown_text(step),
+            text: String::new(),
             calls: Vec::with_capacity(step.calls.len()),
         };
         if step.calls.is_empty() {
+            record.text = shown_text(step, &self.live_secrets(session)?);
             return Ok((record, Some(TurnEnd::AwaitingLearner), Vec::new()));
         }
         let mut end = None;
@@ -94,7 +95,26 @@ impl<E: Engine> Teaching<'_, E> {
             }
         }
         debug_assert_eq!(record.calls.len(), step.calls.len());
+        // Checked after the calls: a conclude in this step reveals its solution.
+        record.text = shown_text(step, &self.live_secrets(session)?);
         Ok((record, end, results))
+    }
+
+    /// The session's sealed texts still unrevealed: the active problem's
+    /// solution and the open question's key and explanation.
+    fn live_secrets(&self, session: &str) -> Result<Vec<String>, TeachError> {
+        let active = db::active_problem(self.conn(), session)?;
+        let open = db::open_question(self.conn(), session)?;
+        debug_assert!(
+            active.is_none() || open.is_none(),
+            "practice poses problems and teaching poses questions, never both"
+        );
+        let mut secrets: Vec<String> = active.map(|row| row.solution).into_iter().collect();
+        if let Some(open) = open {
+            secrets.extend(question::shown_key(&open));
+            secrets.extend(open.explanation);
+        }
+        Ok(secrets)
     }
 
     /// Deliver what is queued for `agent`, then `input`. On a failure the
@@ -140,19 +160,20 @@ impl<E: Engine> Teaching<'_, E> {
     }
 }
 
-/// The step's text as it may be shown: withheld when it holds any sealed
-/// text a call of the step carries, or when a sealed input is unreadable.
-fn shown_text(step: &Step) -> String {
+/// The step's text as it may be shown: withheld when it holds a live sealed
+/// text of the session or of a call in the step, or a sealed input is unreadable.
+fn shown_text(step: &Step, live: &[String]) -> String {
     let haystack = step.text.to_lowercase();
-    let reveals =
-        step.calls
+    let holds = |secrets: &[String]| {
+        secrets
             .iter()
-            .any(|call| match tools::sealed_texts(&call.name, &call.input) {
-                None => true,
-                Some(secrets) => secrets.iter().any(|secret| {
-                    question::contains_phrase(&haystack, &secret.trim().to_lowercase())
-                }),
-            });
+            .any(|secret| question::contains_phrase(&haystack, &secret.trim().to_lowercase()))
+    };
+    let reveals = holds(live)
+        || step
+            .calls
+            .iter()
+            .any(|call| tools::sealed_texts(&call.name, &call.input).is_none_or(|s| holds(&s)));
     if reveals {
         WITHHELD.to_string()
     } else {

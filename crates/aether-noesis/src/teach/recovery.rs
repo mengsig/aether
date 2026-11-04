@@ -36,7 +36,7 @@ fn raw_tool_calls_and_steps_debug_only_the_sealed_projection() {
         input: json!({"statement": "Solve", "mode": "recall", "solution": "x-equals-4"}),
     };
     let step = Step {
-        text: String::new(),
+        text: format!("Hint: {SECRET}."),
         calls: vec![ask.clone(), problem],
         usage: Default::default(),
     };
@@ -211,4 +211,35 @@ fn a_practice_solution_in_the_step_text_is_withheld_until_conclude() {
         "the problem itself is posed"
     );
     assert!(!format!("{report:?}").contains("halving"));
+}
+
+#[test]
+fn a_later_step_cannot_show_the_active_solution_or_a_recall_key_dressed_as_an_option() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise algebra", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let solution = "x = 4 by halving";
+    let problem = json!({"statement": "Solve 2x = 8", "mode": "recall", "solution": solution});
+    let conclude = json!({"outcome": "solved", "retest": false});
+    let practitioner = t.engine_mut();
+    practitioner.script(Agent::Practitioner, "Here it is.", vec![(PROBLEM, problem)]);
+    practitioner.script(Agent::Practitioner, solution, vec![]);
+    let report = t.advance(&id).unwrap().remove(0);
+    let texts: Vec<&str> = report.steps.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(texts, ["Here it is.", WITHHELD]);
+    t.engine_mut()
+        .script(Agent::Practitioner, solution, vec![(CONCLUDE, conclude)]);
+    let after = t.advance(&id).unwrap().remove(0);
+    assert_eq!(
+        after.steps[0].text, solution,
+        "conclude reveals the solution"
+    );
+
+    let dressed = json!({"kind": "recall", "prompt": "Name the organelle", "answer_key": SECRET,
+        "options": [{"value": SECRET, "label": "organelle"}]});
+    let texts = crate::tools::sealed_texts(ASK, &dressed).unwrap();
+    assert_eq!(texts, [SECRET], "a recall key is never swapped for a label");
 }

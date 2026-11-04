@@ -75,11 +75,22 @@ pub enum Input {
 }
 
 /// One model call's output: visible text and a batch of tool calls.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Clone, PartialEq, Default)]
 pub struct Step {
     pub text: String,
     pub calls: Vec<ToolCall>,
     pub usage: Spend,
+}
+
+/// Debug omits the text, which may hold a sealed answer until it is checked.
+impl std::fmt::Debug for Step {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Step")
+            .field("text_chars", &self.text.chars().count())
+            .field("calls", &self.calls)
+            .field("usage", &self.usage)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
