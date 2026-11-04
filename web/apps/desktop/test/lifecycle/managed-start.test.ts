@@ -138,12 +138,28 @@ test("an empty HOME neither breaks managed start nor enables it", async () => {
   }
 });
 
+test("relative config dirs keep meaning main's directory, not home", () => {
+  assert.deepEqual(
+    launchEnv({ HOME: "/home/u", AETHER_CONFIG_DIR: "cfg", ARCHON_CONFIG_DIR: "l/../c" }, "/project"),
+    { HOME: "/home/u", AETHER_CONFIG_DIR: "/project/cfg", ARCHON_CONFIG_DIR: "/project/l/../c" },
+  );
+  assert.deepEqual(
+    launchEnv({ AETHER_CONFIG_DIR: "/abs/a", ARCHON_CONFIG_DIR: "/abs/r" }, "/project"),
+    { AETHER_CONFIG_DIR: "/abs/a", ARCHON_CONFIG_DIR: "/abs/r" }, "absolute ones are untouched",
+  );
+  assert.deepEqual(
+    launchEnv({ AETHER_CONFIG_DIR: "", ARCHON_CONFIG_DIR: "" }, "/project"),
+    { AETHER_CONFIG_DIR: "", ARCHON_CONFIG_DIR: "/project" }, "empty: as each CLI reads it",
+  );
+});
+
 /** A launcher for `kind` that makes its socket and data dir and records where it ran. */
 function placingLauncher(fx: Fixture, kind: "aether" | "archon"): void {
   const upper = kind.toUpperCase();
   const script = path.join(fx.bin, kind);
   writeFileSync(script, `#!/bin/sh
 mkdir -p "$${upper}_DATA_DIR" && touch "$${upper}_DATA_DIR/state" "$${upper}_SOCKET"
+cat "$${upper}_CONFIG_DIR/config" >> '${fx.marker}.config'
 pwd -P > '${fx.marker}'
 `);
   chmodSync(script, 0o755);
@@ -164,7 +180,10 @@ test("managed start launches where discovery looks, through symlinks and relativ
       const env: Env = {
         PATH: `${fx.bin}:/usr/bin:/bin`, HOME: "link/../home",
         [`${upper}_SOCKET`]: `link/../${kind}.sock`, [`${upper}_DATA_DIR`]: `link/../${kind}-data`,
+        [`${upper}_CONFIG_DIR`]: `link/../${kind}-config`,
       };
+      mkdirSync(path.join(target, `${kind}-config`));
+      writeFileSync(path.join(target, `${kind}-config`, "config"), `${kind} as main reads it\n`);
       const machine = machineOf(env, "linux", fx.dir);
       await managedStartOn(machine, main, { isEnabled: () => true, isReachable: async () => false, logDir: fx.logDir }).start(kind);
       assert.equal(readFileSync(fx.marker, "utf8").trim(), realpathSync(path.join(target, "home")), `${kind} ran in HOME as main reads it`);
@@ -172,6 +191,7 @@ test("managed start launches where discovery looks, through symlinks and relativ
       assert.equal(discovered, `link/../${kind}.sock`, "discovery reads the relative path from main's directory");
       assert.ok(existsSync(path.join(target, `${kind}.sock`)), `${kind}'s socket is where main's ${discovered} leads`);
       assert.ok(existsSync(path.join(target, `${kind}-data`, "state")), `${kind}'s data is where main's override leads`);
+      assert.match(readFileSync(`${fx.marker}.config`, "utf8"), new RegExp(`^${kind} as main reads it$`, "m"), `${kind} read main's config`);
       assert.ok(!existsSync(path.join(main, `${kind}.sock`)) && !existsSync(path.join(main, `${kind}-data`)), "nothing went to a normalized path");
     }
   } finally {

@@ -9,10 +9,19 @@ import { BridgeRefusal } from "../security/validate.ts";
 import { LAUNCHERS, launchDetached } from "./launch.ts";
 
 /**
- * The launcher's environment: `env` with a relative HOME and each relative socket or data dir
- * override put under main's own directory, where discovery reads them, since the launcher runs
- * in home. Only prefixed, never normalized: `..` after a symlink must keep its meaning. An empty
- * data dir means that directory; an empty socket stays empty and reaches nothing.
+ * Config dir overrides, and whether the CLIs read an empty one as the working directory. Archon
+ * does; Aether's readers disagree (one reads it as unset), so an empty one is left as it is.
+ */
+const CONFIG_VARS: ReadonlyArray<readonly [string, boolean]> = [
+  ["AETHER_CONFIG_DIR", false],
+  ["ARCHON_CONFIG_DIR", true],
+];
+
+/**
+ * The launcher's environment: `env` with a relative HOME and each relative socket, data or config
+ * dir override put under main's own directory, where the CLIs would read them, since the launcher
+ * runs in home. Only prefixed, never normalized: `..` after a symlink must keep its meaning. An
+ * empty data dir means that directory; an empty socket stays empty and reaches nothing.
  */
 export function launchEnv(env: Env, mainCwd: string): Env {
   if (!mainCwd.startsWith("/")) throw new Error(`main's directory is absolute, not ${mainCwd}`);
@@ -27,6 +36,7 @@ export function launchEnv(env: Env, mainCwd: string): Env {
     put(rules.socketVar, false);
     put(rules.dataVar, true);
   }
+  for (const [name, emptyIsHere] of CONFIG_VARS) put(name, emptyIsHere);
   return { ...env, ...moved };
 }
 
