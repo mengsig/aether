@@ -4,6 +4,8 @@
 // A new build's worker waits until every tab of the old build has closed (no skipWaiting, no
 // claim), so an open tab keeps the precache its lazy chunks were built against.
 
+import { pushRoute } from "./push-route.ts";
+
 interface ExtendableEvent extends Event { waitUntil(promise: Promise<unknown>): void }
 interface FetchEvent extends ExtendableEvent { readonly request: Request; respondWith(response: Promise<Response>): void }
 interface PushEvent extends ExtendableEvent { readonly data: { json(): unknown } | null }
@@ -82,7 +84,7 @@ async function cacheFirst(request: Request): Promise<Response> {
 worker.addEventListener("push", (event) => {
   const payload = event.data?.json() as { title?: string; preview?: string | null; url?: string } | undefined;
   if (!payload?.title) throw new Error("A push arrived without a title");
-  const route = payload.url?.startsWith("#") ? payload.url : null;
+  const route = pushRoute(payload.url);
   event.waitUntil(worker.registration.showNotification(payload.title, { body: payload.preview ?? "", data: { route } }));
 });
 

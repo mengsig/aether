@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useApp, usePermission, useReread } from "@aether-ui/core";
+import { useApp, useReadPermission, useReread } from "@aether-ui/core";
 import type { aether, RouteProps } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, Tabs } from "@aether-ui/ui";
 import { Section, StandingNotice } from "../controls/kit.tsx";
@@ -16,10 +16,12 @@ export default function MemoryScreen({ params }: RouteProps) {
   const [kind, setKind] = useState("all");
   const [forgotten, setForgotten] = useState(false);
   const [open, setOpen] = useState(false);
-  const command = { cmd: "memories", query: { text, limit: 100, include_forgotten: forgotten, include_superseded: true,
+  const search = text.trim();
+  // A blank text must be omitted: the store orders by FTS rank whenever text is present.
+  const command = { cmd: "memories", query: { ...(search === "" ? {} : { text: search }), limit: 100, include_forgotten: forgotten, include_superseded: true,
     kinds: kind === "all" ? [] : [kind], scope: scope === "all" ? null : scope === "global" ? { scope } : { scope, id: repository } } };
   const entry = useReread(conn, "memory:list", command, ["memories"]);
-  const permission = usePermission(conn, proposed);
+  const permission = useReadPermission(conn, proposed);
   const proposals = useReread(conn, "memory:proposals", permission.refusal === null ? proposed : null, ["memories"]);
   const refresh = async () => {
     await app.reread(conn, "memory:list", command, ["memories"]);

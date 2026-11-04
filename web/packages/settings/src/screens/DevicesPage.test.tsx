@@ -2,7 +2,6 @@
 // Devices: listed from the stored reply, revoked and paired only by the host through the desktop's
 // confirmation, with the list reread into core's store after a revoke.
 
-import { act } from "react";
 import { afterEach, describe, expect, test } from "vitest";
 import { connected, click, buttonNamed, type, type Harness } from "../kit/fixture/harness.test-util.tsx";
 import { fakeDesktop } from "../kit/fixture/desktop.test-util.ts";
@@ -13,7 +12,6 @@ afterEach(() => { current?.unmount(); current = null; });
 
 const phone = { id: "dev_phone", name: "Pixel phone", role: "operator", created_at: "2026-10-01T08:00:00Z", last_seen_at: "2026-11-03T10:00:00Z", current: true, push: true };
 const tablet = { id: "dev_tablet", name: "Kitchen tablet", role: "observer", created_at: "2026-10-05T08:00:00Z" };
-const old = { id: "dev_old", name: "Old laptop", role: "operator", created_at: "2026-09-01T08:00:00Z", revoked_at: "2026-09-30T08:00:00Z" };
 
 describe("DevicesPage", () => {
   test("lists the devices from the stored reply, with the current and push marks", async () => {
@@ -46,18 +44,12 @@ describe("DevicesPage", () => {
     expect(root.querySelector(".st-reason")?.textContent).toBe("Only the daemon's own host can do this");
   });
 
-  test("the host can show revoked devices, which sends include_revoked", async () => {
-    const h = current = await connected({ role: "local", desktop: fakeDesktop().bridge, script: { list_devices: (c) => ({ tag: "devices", data: c.include_revoked ? [tablet, old] : [tablet] }) } });
+  test("the host is not offered revoked devices, since that listing is host-only and not passed through", async () => {
+    const h = current = await connected({ role: "local", desktop: fakeDesktop().bridge, script: { list_devices: () => ({ tag: "devices", data: [tablet] }) } });
     const root = await h.mount(<DevicesPage conn={h.conn} />);
-    expect(root.textContent).not.toContain("Old laptop");
-    const toggle = root.querySelector<HTMLInputElement>("input[type=checkbox]");
-    expect(toggle).not.toBeNull();
-    await act(async () => toggle?.click());
-    await h.settle();
-    await h.settle();
-    expect(h.daemon.commands("list_devices").at(-1)).toMatchObject({ include_revoked: true });
-    expect(root.textContent).toContain("Old laptop");
-    expect(root.textContent).toContain("Revoked");
+    expect(root.textContent).toContain("Kitchen tablet");
+    expect(root.textContent).not.toContain("Show revoked devices");
+    expect(h.daemon.commands("list_devices").every((c) => c.include_revoked !== true)).toBe(true);
   });
 
   test("revoking asks first, then goes through the desktop and rereads the list into the store", async () => {

@@ -139,7 +139,7 @@ export class ScriptedDaemon {
     const role = this.options.role ?? "operator";
     return {
       protocol_version: 26, daemon_version: "1.3.0-faux", pid: 1, schema_version: 29, instance_id: this.options.instance ?? "b3",
-      min_protocol_version: 17, features: this.options.features ?? ["agents_paging", "transcript_paging", "deltas", "delta_order"],
+      min_protocol_version: 17, submission_horizon: "hz_b3_1", features: this.options.features ?? ["agents_paging", "transcript_paging", "deltas", "delta_order"],
       idle_timeout_secs: null, ...(role === "local" ? {} : { device: { id: "dev_faux", name: "Faux phone", role } }),
     };
   }

@@ -64,11 +64,20 @@ test("remote proposals actions display host-only marks and refusal", async () =>
   expect(root.textContent).toContain("Only the daemon's own host can do this");
 });
 
-test("local proposals accept and confirmed reject use desktop privileged and refresh the store", async () => {
+test("on the host the proposals listing is refused with its reason and never sent", async () => {
+  const desktop = { version: 1, connect: async () => "bridge", close: async () => {}, privileged: vi.fn(), getPreference: async () => false } as unknown as DesktopBridge;
+  h = await connected({ role: "local", desktop, script: { memories: () => ({ tag: "memories", data: [] }) } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  expect(h.daemon.commands("memories").some(c => (c.query as { proposed?: boolean }).proposed)).toBe(false);
+  expect(root.textContent).toContain("The desktop does not pass this host-only read to the daemon yet");
+});
+
+test("a proposal row accepts and, after confirming, rejects through desktop privileged", async () => {
   const privileged = vi.fn(async () => ({ reply: "ok" }));
   const desktop = { version: 1, connect: async () => "bridge", close: async () => {}, privileged, getPreference: async () => false } as unknown as DesktopBridge;
-  h = await connected({ role: "local", desktop, script: { memories: c => ({ tag: "memories", data: (c.query as { proposed?: boolean }).proposed ? [memory] : [] }) } });
-  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  h = await connected({ role: "local", desktop });
+  const refresh = vi.fn(async () => {});
+  const root = await h.mount(<MemoryRow conn={h.conn} memory={memory} proposal refresh={refresh} />);
   await click(h, root, "Accept");
   await h.settle();
   expect(privileged).toHaveBeenCalledWith({ conn: "bridge", kind: "memory.accept", memory: memory.id });
@@ -77,15 +86,26 @@ test("local proposals accept and confirmed reject use desktop privileged and ref
   await click(h, document.body, "Reject proposal");
   await h.settle();
   expect(privileged).toHaveBeenLastCalledWith({ conn: "bridge", kind: "memory.reject", memory: memory.id });
-  expect(h.daemon.commands("memories")).toHaveLength(6);
+  expect(refresh).toHaveBeenCalledTimes(2);
 });
 
-test("lost mutation reply is unconfirmed without retry", async () => {
+test("a blank search omits text, and a repository scope is named by its id", async () => {
+  const scoped = { ...memory, scope: { scope: "repository", id: "/srv/repo" } } as aether.MemoryRecord;
+  h = await connected({ script: { memories: () => ({ tag: "memories", data: [scoped] }) } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  expect(h.daemon.commands("memories")[0]?.query).not.toHaveProperty("text");
+  expect(root.textContent).toContain("Repository /srv/repo");
+  await type(h, root, "Search memories", "  invariant ");
+  expect(h.daemon.commands("memories").at(-1)).toMatchObject({ query: { text: "invariant" } });
+});
+
+test("a lost unkeyed pin is reported unknown, never retried, and not sent to the recovery review", async () => {
   h = await connected({ script: { memories: () => ({ tag: "memories", data: [memory] }), pin_memory: () => "hold" } });
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
   await click(h, root, "Pin");
   h.daemon.drop(); await h.settle();
-  expect(root.querySelector('[data-state="unconfirmed"]')).not.toBeNull();
+  expect(root.querySelector('[data-state="failed"]')?.textContent).toContain("Check its current state before trying again");
+  expect(root.textContent).not.toContain("Open the recovery review");
   expect(h.daemon.commands("pin_memory")).toHaveLength(1);
 });
 

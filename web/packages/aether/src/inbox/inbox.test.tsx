@@ -87,7 +87,7 @@ describe("recovery review", () => {
     expect(root.querySelector('[aria-label="Recovery review"]')?.textContent).toContain("Cancel · release-captain");
     expect(() => buttonNamed(root, "Send again")).toThrow();
     await click(h, root, "Check what happened");
-    expect(h.daemon.commands("resolve_submission")[0]?.command).toMatchObject({ cmd: "cancel", idempotency_key: key });
+    expect(h.daemon.commands("resolve_submission")[0]).toMatchObject({ command: { cmd: "cancel", idempotency_key: key }, horizon: "hz_b3_1" });
     expect(root.textContent).toContain("It never reached the daemon");
     expect(h.daemon.commands("cancel")).toHaveLength(1);
     lost = false;

@@ -2,7 +2,7 @@
 // (disabled with the reason shown, host-only marked), an explicit confirm step for destructive or
 // privileged actions, and the outcome of a run. Nothing here holds daemon data.
 
-import { codeOf, usePermission, useApp, useCommand, type CommandInput, type LocalAction, type ReadEntry } from "@aether-ui/core";
+import { codeOf, isKeyed, usePermission, useApp, useCommand, type CommandInput, type LocalAction, type ReadEntry } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { Badge, Button, Dialog, EmptyState, ErrorState, Skeleton, type ButtonVariant } from "@aether-ui/ui";
 import { useCallback, useId, useState, type ReactNode } from "react";
@@ -30,13 +30,12 @@ export function useRun(conn: ConnId): Run {
   const app = useApp();
   const command = useCommand(conn);
   const [status, setStatus] = useState<RunStatus>({ state: "idle" });
-  const fail = useCallback((error: unknown) => {
+  /** `tracked` says whether core keeps the command for the recovery review when its reply is lost. */
+  const fail = useCallback((error: unknown, tracked: boolean) => {
     const message = error instanceof Error ? error.message : String(error);
-    if (UNCONFIRMED.has(codeOf(error) ?? "")) {
-      setStatus({ state: "unconfirmed", message: "The reply never arrived, so it is not known whether this happened. It waits in the recovery review." });
-    } else {
-      setStatus({ state: "failed", message });
-    }
+    if (!UNCONFIRMED.has(codeOf(error) ?? "")) setStatus({ state: "failed", message });
+    else if (tracked) setStatus({ state: "unconfirmed", message: "The reply never arrived, so it is not known whether this happened. It waits in the recovery review." });
+    else setStatus({ state: "failed", message: "The reply never arrived, so it is not known whether this happened. Check its current state before trying again." });
   }, []);
   const send = useCallback(async (input: CommandInput, done = "Done") => {
     const json = input as Json;
@@ -47,7 +46,7 @@ export function useRun(conn: ConnId): Run {
       setStatus({ state: "done", message: done });
       return reply;
     } catch (error) {
-      fail(error);
+      fail(error, isKeyed(json));
       return null;
     }
   }, [command, fail]);
@@ -58,7 +57,7 @@ export function useRun(conn: ConnId): Run {
       setStatus({ state: "done", message: done });
       return true;
     } catch (error) {
-      fail(error);
+      fail(error, false);
       return false;
     }
   }, [app, conn, fail]);

@@ -2,7 +2,7 @@
 // (disabled with the reason shown, host-only marked), an explicit confirm step for destructive or
 // privileged actions, and the outcome of a run. Nothing here holds daemon data.
 
-import { codeOf, usePermission, useApp, useCommand, type LocalAction } from "@aether-ui/core";
+import { codeOf, isKeyed, usePermission, useApp, useCommand, type LocalAction } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { Badge, Button, Dialog, type ButtonVariant } from "@aether-ui/ui";
 import { useCallback, useId, useState, type ReactNode } from "react";
@@ -32,7 +32,8 @@ export function useRun(conn: ConnId): Run {
   const app = useApp();
   const command = useCommand(conn);
   const [status, setStatus] = useState<RunStatus>({ state: "idle" });
-  const attempt = useCallback(async (work: () => Promise<unknown>, done = "Done") => {
+  /** `tracked` says whether core keeps the work's command for the recovery review when its reply is lost. */
+  const run = useCallback(async (work: () => Promise<unknown>, done: string, tracked: boolean) => {
     setStatus({ state: "busy" });
     try {
       await work();
@@ -40,20 +41,19 @@ export function useRun(conn: ConnId): Run {
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (UNCONFIRMED.has(codeOf(error) ?? "")) {
-        setStatus({ state: "unconfirmed", message: "The reply never arrived, so it is not known whether this happened. It waits in the recovery review." });
-      } else {
-        setStatus({ state: "failed", message: message || "The action failed" });
-      }
+      if (!UNCONFIRMED.has(codeOf(error) ?? "")) setStatus({ state: "failed", message: message || "The action failed" });
+      else if (tracked) setStatus({ state: "unconfirmed", message: "The reply never arrived, so it is not known whether this happened. It waits in the recovery review." });
+      else setStatus({ state: "failed", message: "The reply never arrived, so it is not known whether this happened. Check its current state before trying again." });
       return false;
     }
   }, []);
+  const attempt = useCallback((work: () => Promise<unknown>, done = "Done") => run(work, done, false), [run]);
   const send = useCallback(async (input: Json, done = "Done") => {
     invariant(typeof input.cmd === "string", "a control sends a named command");
     let reply: Json | null = null;
-    await attempt(async () => { reply = await command(input); }, done);
+    await run(async () => { reply = await command(input); }, done, isKeyed(input));
     return reply;
-  }, [command, attempt]);
+  }, [command, run]);
   const privileged = useCallback((action: LocalAction, done = "Done") => {
     invariant(typeof action.kind === "string", "a privileged action names its kind");
     return attempt(() => app.privileged(conn, action), done);

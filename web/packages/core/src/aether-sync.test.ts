@@ -284,6 +284,38 @@ describe("Aether resync review regressions", () => {
   });
 });
 
+describe("submission horizon", () => {
+  const withHorizon = (horizon: string) => ({ ...F.welcome_a, data: { ...F.welcome_a.data, submission_horizon: horizon } });
+
+  it("records the welcome's horizon on a lost keyed command and keeps the first one across a resend", async () => {
+    let welcome = withHorizon("hz_first");
+    const { store, daemon, manager } = setup(healthy({ hello: () => ({ ok: welcome }), send_message: () => undefined }));
+    manager.start();
+    await settle();
+    const first = manager.send(CONN_A, { cmd: "send_message", to: F.agent, body: "hi" });
+    welcome = withHorizon("hz_later");
+    daemon.drop(1006);
+    await expect(first).rejects.toMatchObject({ code: "disconnected" });
+    await vi.advanceTimersByTimeAsync(300);
+    const lost = store.get().aether[CONN_A]?.outbox[0];
+    expect(lost).toMatchObject({ state: "unknown", horizon: "hz_first" });
+    const again = manager.send(CONN_A, lost?.command ?? {});
+    expect(store.get().aether[CONN_A]?.outbox[0]).toMatchObject({ key: lost?.key, horizon: "hz_first" });
+    daemon.drop(1006);
+    await expect(again).rejects.toMatchObject({ code: "disconnected" });
+  });
+
+  it("records no horizon when the daemon names none", async () => {
+    const { store, manager, daemon } = setup(healthy({ send_message: () => undefined }));
+    manager.start();
+    await settle();
+    const sending = manager.send(CONN_A, { cmd: "send_message", to: F.agent, body: "hi" });
+    expect(store.get().aether[CONN_A]?.outbox[0]).not.toHaveProperty("horizon");
+    daemon.drop(1006);
+    await expect(sending).rejects.toMatchObject({ code: "disconnected" });
+  });
+});
+
 describe("Aether resync, second review", () => {
   const event = (n: number, type: string, agent: string, extra: Json = {}) => ({ frame: "event", sub: 1, event: { seq: n, id: `evt_${n}`, at: "2026-11-04T03:02:00Z", actor: { actor: "system" }, kind: { type, ...extra }, agent_id: agent } });
 

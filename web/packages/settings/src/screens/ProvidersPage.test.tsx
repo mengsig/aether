@@ -91,14 +91,15 @@ describe("ProvidersPage", () => {
     expect(root.querySelector("input")).toBeNull();
   });
 
-  test("a lost reply on refreshing usage is reported unconfirmed, not retried", async () => {
+  test("a lost reply on refreshing usage, which is unkeyed, is reported unknown without the recovery review", async () => {
     const h = current = await connected({ role: "operator", script: { ...script, refresh_provider_usage: () => "hold" } });
     const root = await h.mount(<ProvidersPage conn={h.conn} />);
     await click(h, root, "Refresh usage");
     h.daemon.drop();
     await h.settle();
-    expect(root.querySelector(".st-note")?.getAttribute("data-state")).toBe("unconfirmed");
-    expect(root.textContent).toContain("Open the recovery review");
+    expect(root.querySelector(".st-note")?.textContent).toContain("Check its current state before trying again");
+    expect(root.textContent).not.toContain("Open the recovery review");
+    expect(h.app.store.get().aether[h.conn]?.outbox ?? []).toEqual([]);
     expect(h.daemon.commands("refresh_provider_usage")).toHaveLength(1);
   });
 

@@ -115,4 +115,19 @@ export function usePermission(conn: ConnId, command: CommandInput): Permission {
   return useSelector(select, samePermission);
 }
 
+/** Host-only reads cannot be sent as plain requests: a remote device is refused, and the desktop bridge passes only
+ * observe and operate requests (host-only work goes through its privileged actions, which have no reads yet). */
+export function readPermissionFor(state: State, conn: ConnId, command: CommandInput): Permission {
+  const permission = permissionFor(state, conn, command);
+  if (permission.refusal !== null || permission.access !== "host_only") return permission;
+  return { ...permission, refusal: "The desktop does not pass this host-only read to the daemon yet" };
+}
+
+/** Like `usePermission`, for a read a screen is about to send with `useReread`. */
+export function useReadPermission(conn: ConnId, command: CommandInput): Permission {
+  const text = JSON.stringify(command);
+  const select = useCallback((state: State) => readPermissionFor(state, conn, JSON.parse(text) as Json), [conn, text]);
+  return useSelector(select, samePermission);
+}
+
 const samePermission = (a: Permission, b: Permission): boolean => a.access === b.access && a.refusal === b.refusal;

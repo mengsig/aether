@@ -43,7 +43,8 @@ function Unconfirmed({ conn, submission, names }: { readonly conn: ConnId; reado
   const app = useApp();
   const run = useRun(conn);
   const key = `submission:${submission.key}`;
-  const check = useMemo(() => ({ cmd: "resolve_submission", command: submission.command }), [submission.command]);
+  const check = useMemo(() => ({ cmd: "resolve_submission", command: submission.command, ...(submission.horizon ? { horizon: submission.horizon } : {}) }),
+    [submission.command, submission.horizon]);
   const read = useSelector(useMemo(() => selectRead(conn, key), [conn, key]));
   const resolution = (read?.value ?? null) as Resolution | null;
   const { title, detail } = describeCommand(submission.command, names);

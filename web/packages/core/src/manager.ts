@@ -79,16 +79,27 @@ export class ConnectionManager {
     checkAllowed(access, connection.current.standing);
     const command = aether ? withIdempotencyKey(input) : input;
     const key = typeof command.idempotency_key === "string" ? command.idempotency_key : null;
-    if (key) this.track(conn, aether, { conn, key, command, state: "pending" });
+    const horizon = key ? this.horizonOf(conn, key, connection.horizon) : null;
+    const submission = { conn, key: key ?? "", command, ...(horizon === null ? {} : { horizon }) };
+    if (key) this.track(conn, aether, { ...submission, state: "pending" });
     try {
       const reply = await connection.request({ ...command, cmd: string(command.cmd, "command.cmd") });
       if (key) this.untrack(conn, aether, key);
       return reply;
     } catch (error) {
-      if (key && UNKNOWN_OUTCOME.has(codeOf(error) ?? "")) this.track(conn, aether, { conn, key, command, state: "unknown", error: errorText(error) });
+      if (key && UNKNOWN_OUTCOME.has(codeOf(error) ?? "")) this.track(conn, aether, { ...submission, state: "unknown", error: errorText(error) });
       else if (key) this.untrack(conn, aether, key);
       throw error;
     }
+  }
+
+  /** A resend under the same key keeps the first send's horizon: a later one would vouch for dropped receipts. */
+  private horizonOf(conn: ConnId, key: string, current: string | null): string | null {
+    invariant(key !== "", "only keyed submissions carry a horizon");
+    const state = this.options.store.get();
+    const held = [...(state.aether[conn]?.outbox ?? []), ...state.review].find((s) => s.key === key);
+    if (held === undefined) return current;
+    return held.horizon ?? null;
   }
 
   private track(conn: ConnId, aether: boolean, submission: Submission): void {

@@ -37,9 +37,13 @@ export function MemoryRow({ conn, memory, refresh, proposal = false }: {
 }
 
 /** "Global", or the repository a memory belongs to, in words. */
-function scopeText(scope: aether.MemoryRecord["scope"]): string {
-  const record = scope as { scope?: string; repository?: string };
-  if (record.scope === "global") return "Global";
-  if (record.scope === "repository") return `Repository ${record.repository ?? ""}`.trim();
-  return record.scope ?? "Unknown scope";
+function scopeText(scope: aether.MemoryScope): string {
+  switch (scope.scope) {
+    case "global": return "Global";
+    case "repository": return `Repository ${scope.id}`;
+    case "role": return `Role ${scope.role}`;
+    case "agent": return `Agent ${scope.id}`;
+    case "repository_role": return `Repository ${scope.id} · role ${scope.role}`;
+    case "subtree": return `Subtree of ${scope.root}`;
+  }
 }

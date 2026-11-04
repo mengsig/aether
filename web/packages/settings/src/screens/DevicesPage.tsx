@@ -1,7 +1,7 @@
 // Paired devices: listed from core's store, revoked and paired through the desktop's native
 // confirmation (host only). Whatever a pairing returns is never shown, as it may be a credential.
 
-import { normalizeDeviceName, useApp, usePermission, useReread } from "@aether-ui/core";
+import { normalizeDeviceName, useApp, usePermission, useReadPermission, useReread } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
 import { Badge, EmptyState, Field } from "@aether-ui/ui";
 import { useState } from "react";
@@ -78,7 +78,7 @@ export function DevicesPage({ conn }: { readonly conn: ConnId }) {
   const app = useApp();
   const [showRevoked, setShowRevoked] = useState(false);
   const listing = usePermission(conn, { cmd: "list_devices" });
-  const revokedListing = usePermission(conn, devicesCommand(true));
+  const revokedListing = useReadPermission(conn, devicesCommand(true));
   const includeRevoked = showRevoked && revokedListing.refusal === null;
   const command = listing.refusal === null ? devicesCommand(includeRevoked) : null;
   const entry = useReread(conn, KEY, command, ["devices"]);

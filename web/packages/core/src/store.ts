@@ -46,6 +46,8 @@ export interface Submission {
   readonly command: Json;
   readonly state: "pending" | "unknown";
   readonly error?: string;
+  /** The daemon's submission horizon when first sent; never rewritten by a resend. */
+  readonly horizon?: string;
 }
 
 export interface AetherConnState {
