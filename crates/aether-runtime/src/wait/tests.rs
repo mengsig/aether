@@ -18,6 +18,7 @@ fn flight(runtime: &crate::Runtime, owner: AgentId, task: TaskId) {
             provider: "claude-code".into(),
             engine: true,
             on_provider: true,
+            noesis: None,
         },
     );
 }

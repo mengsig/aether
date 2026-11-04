@@ -1,7 +1,7 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 63b93961cb2b8409867ee63898c547d0967732b392ff009c5760f229408d064d
+// Schema SHA-256: 7de5e71528d41c6f78bcb51e835235810153530c7864ed8f1cc4aa77f34857c3
 
 export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
@@ -269,6 +269,23 @@ export interface AgentTree {
   "roots": Array<AgentId>;
 }
 
+/**
+ * A learner's answer to an open question.
+ */
+export interface AnswerInput {
+  "choices"?: Array<string> | null;
+  "confidence"?: number | null;
+  "dont_know": boolean;
+  "text"?: string | null;
+  "thinking"?: string | null;
+}
+
+/**
+ * What an answer revealed: one value for a recall question, several for a
+ * multiple choice one.
+ */
+export type AnswerKey = Array<string> | string;
+
 export type ApprovalDecision = "approved" | "denied";
 
 /**
@@ -490,6 +507,18 @@ export interface AuthInfo {
   "subscription"?: boolean;
 }
 
+export type BackgroundDisable = "cancel_at_model_boundary";
+
+export type BackgroundPriority = "low" | "normal";
+
+export interface BillingPatch {
+  "allow_api"?: boolean | null;
+}
+
+export interface BillingSettings {
+  "allow_api": boolean;
+}
+
 /**
  * Why an agent is Blocked. One variant per cause, each carrying what that
  * cause needs, so a Blocked agent is never ambiguous about what would clear
@@ -546,6 +575,18 @@ export type BlockReason =
   | BlockReasonInspection
   | BlockReasonExhausted;
 
+export interface BudgetPatch {
+  "background_tokens_daily"?: number | null;
+  "background_usd_daily"?: number | null;
+  "interactive_usd_daily"?: number | null;
+}
+
+export interface BudgetSettings {
+  "background_tokens_daily": number;
+  "background_usd_daily": number;
+  "interactive_usd_daily": number;
+}
+
 /**
  * What an occurrence does when the target is busy. Either way at most one
  * trigger from a schedule is ever pending in the target's inbox.
@@ -570,6 +611,14 @@ export interface CapabilityProfile {
   "thinking"?: ThinkingSupport;
   "tools"?: boolean;
   "vision"?: boolean;
+}
+
+export interface Chain {
+  "conclusion": string;
+  "created_at": string;
+  "id": string;
+  "premises": Array<string>;
+  "provenance": Array<NoesisProvenance>;
 }
 
 export interface ChangedFile {
@@ -631,6 +680,12 @@ export interface CheckpointProvenance {
  */
 export type ClientFrame = { "req": number } & Command;
 
+export interface Cluster {
+  "id": string;
+  "members": Array<string>;
+  "session": string;
+}
+
 /**
  * What triggered a compaction.
  * Tagged by `trigger`.
@@ -678,6 +733,38 @@ export type CompactionTrigger =
   | CompactionTriggerLongWait
   | CompactionTriggerExplicit
   | CompactionTriggerHandoff;
+
+export type ConceptKind = "proposition" | "plan_node" | "topic";
+
+export interface ConceptRef {
+  "id": string;
+  "kind": ConceptKind;
+  "ref": string;
+  "title": string;
+}
+
+export interface ConceptState {
+  "as_of_evidence": number;
+  "calibration"?: number | null;
+  "concept": ConceptRef;
+  "last_success_at"?: string | null;
+  "misconceptions": Array<string>;
+  "review_due_at"?: string | null;
+  "state": ConceptStateKind;
+  "strength": number;
+}
+
+export type ConceptStateKind = "unseen" | "exposed" | "demonstrated" | "fragile" | "misconception";
+
+export interface ConcurrencyPatch {
+  "background"?: number | null;
+  "interactive"?: number | null;
+}
+
+export interface ConcurrencySettings {
+  "background": number;
+  "interactive": number;
+}
 
 /**
  * A block inside a message.
@@ -859,6 +946,16 @@ export interface DaemonStatus {
 export type DeadlineUpdate = "clear" | Record<string, unknown>;
 
 /**
+ * What deleting a session does to the propositions it produced.
+ */
+export type DeleteSessionGraph = "preserve" | "delete_nodes";
+
+/**
+ * What deleting a source does to the propositions it produced.
+ */
+export type DeleteSourceGraph = "preserve" | "delete_unsupported";
+
+/**
  * Transient streaming signal. Not persisted; durable events reconcile it.
  * Tagged by `delta`.
  */
@@ -950,6 +1047,22 @@ export interface DeviceProof {
  */
 export type DeviceRole = "operator" | "observer";
 
+export interface DisablePatch {
+  "grace_seconds"?: number | null;
+}
+
+/**
+ * What a disable does to work in flight.
+ */
+export interface DisablePolicy {
+  "background": BackgroundDisable;
+  "grace_seconds": number;
+}
+
+export interface DisableSettings {
+  "grace_seconds": number;
+}
+
 /**
  * A constraint the compactor decided no longer applies, with its reason.
  */
@@ -1028,6 +1141,8 @@ export interface EngineSessionUsage {
   "total": Usage;
 }
 
+export type EngineeringExtraction = "off" | "auto";
+
 export type ErrorCode = "not_found" | "invalid_transition" | "invalid_argument" | "internal" | "incompatible" | "unauthorized" | "unavailable" | "forbidden" | "unimplemented" | "no_model" | "history_expired";
 
 export interface ErrorReply {
@@ -1035,6 +1150,7 @@ export interface ErrorReply {
   "first_seq"?: number | null;
   "last_seq"?: number | null;
   "message": string;
+  "reason"?: string | null;
 }
 
 /**
@@ -1708,6 +1824,78 @@ export interface EventKindDaemonStopped {
   "type": "daemon.stopped";
 }
 
+export interface EventKindNoesisSessionCreated {
+  "session": NoesisSession;
+  "type": "noesis.session_created";
+}
+
+export interface EventKindNoesisPhaseChanged {
+  "from": Phase;
+  "session": string;
+  "to": Phase;
+  "type": "noesis.phase_changed";
+}
+
+export interface EventKindNoesisQuestionPosed {
+  "question": Question;
+  "session": string;
+  "type": "noesis.question_posed";
+}
+
+export interface EventKindNoesisAnswerRecorded {
+  "result": QuestionResult;
+  "session": string;
+  "type": "noesis.answer_recorded";
+}
+
+export interface EventKindNoesisPlanUpdated {
+  "plan": PlanTree;
+  "session": string;
+  "type": "noesis.plan_updated";
+}
+
+export interface EventKindNoesisProblemPosed {
+  "problem": Problem;
+  "session": string;
+  "type": "noesis.problem_posed";
+}
+
+/**
+ * The only place a problem's sealed solution is revealed.
+ */
+export interface EventKindNoesisPracticeConcluded {
+  "miss_class"?: MissClass | null;
+  "outcome": PracticeOutcome;
+  "problem": string;
+  "retest": boolean;
+  "rung"?: number | null;
+  "session": string;
+  "solution": string;
+  "type": "noesis.practice_concluded";
+}
+
+export interface EventKindNoesisJobUpdated {
+  "job": Job;
+  "type": "noesis.job_updated";
+}
+
+export interface EventKindNoesisGraphMerged {
+  "job": string;
+  "stats": JobStats;
+  "type": "noesis.graph_merged";
+}
+
+export interface EventKindNoesisLearnerUpdated {
+  "concepts": Array<string>;
+  "type": "noesis.learner_updated";
+}
+
+export interface EventKindNoesisSettingsChanged {
+  "effective": NoesisSettingsView;
+  "settings": NoesisSettingsView;
+  "type": "noesis.settings_changed";
+}
+
 /**
  * Escape hatch for orchestration layers to record their own events.
  */
@@ -1800,6 +1988,17 @@ export type EventKind =
   | EventKindRunHardStop
   | EventKindDaemonStarted
   | EventKindDaemonStopped
+  | EventKindNoesisSessionCreated
+  | EventKindNoesisPhaseChanged
+  | EventKindNoesisQuestionPosed
+  | EventKindNoesisAnswerRecorded
+  | EventKindNoesisPlanUpdated
+  | EventKindNoesisProblemPosed
+  | EventKindNoesisPracticeConcluded
+  | EventKindNoesisJobUpdated
+  | EventKindNoesisGraphMerged
+  | EventKindNoesisLearnerUpdated
+  | EventKindNoesisSettingsChanged
   | EventKindCustom;
 
 export interface EventQuery {
@@ -1811,6 +2010,52 @@ export interface EventQuery {
   "task"?: TaskId | null;
   "types"?: Array<string>;
 }
+
+/**
+ * One append-only row of the learner's history.
+ */
+export interface Evidence {
+  "at": string;
+  "concept": string;
+  "confidence"?: number | null;
+  "hint_rung"?: number | null;
+  "id": number;
+  "kind": EvidenceKind;
+  "miss_class"?: MissClass | null;
+  "mode"?: ProblemMode | null;
+  "note"?: string | null;
+  "outcome": EvidenceOutcome;
+  "session"?: string | null;
+}
+
+/**
+ * What the frontend gathered from reads the user can already make, stored
+ * with the session that starts from it.
+ */
+export interface EvidenceBundle {
+  "items": Array<EvidenceItem>;
+  "title": string;
+}
+
+export interface EvidenceItem {
+  "excerpt": string;
+  "ref": EvidenceRef;
+  "status": EvidenceStatus;
+}
+
+export type EvidenceKind = "probe_answer" | "predict_answer" | "check_answer" | "recall_judged" | "practice_conclude" | "exposure" | "misconception_observed" | "operator_correction";
+
+export type EvidenceOutcome = "correct" | "incorrect" | "dont_know" | "exposed" | "observed" | "corrected";
+
+export interface EvidenceRef {
+  "id": string;
+  "kind": EvidenceRefKind;
+  "url"?: string | null;
+}
+
+export type EvidenceRefKind = "pr" | "issue" | "item" | "run" | "stage" | "commit" | "file" | "agent";
+
+export type EvidenceStatus = "verified" | "reviewed" | "preliminary";
 
 /**
  * Where an agent's tools actually run.
@@ -1857,6 +2102,16 @@ export interface ExportSummary {
   "run": RunId;
   "snapshots": number;
   "tasks": number;
+}
+
+export interface ExtractionPatch {
+  "engineering"?: EngineeringExtraction | null;
+  "sessions"?: SessionExtraction | null;
+}
+
+export interface ExtractionSettings {
+  "engineering": EngineeringExtraction;
+  "sessions": SessionExtraction;
 }
 
 /**
@@ -2216,6 +2471,28 @@ export interface InvocationSnapshot {
   "turn": number;
 }
 
+export interface Job {
+  "created_at": string;
+  "error"?: string | null;
+  "id": string;
+  "kind": JobKind;
+  "state": JobState;
+  "stats"?: JobStats | null;
+  "target": string;
+  "updated_at": string;
+  "usage": Usage;
+}
+
+export type JobKind = "extract_session" | "extract_source" | "extract_engineering";
+
+export type JobState = "queued" | "running" | "merging" | "succeeded" | "failed" | "cancelled";
+
+export interface JobStats {
+  "chains": number;
+  "dropped_chains": number;
+  "nodes": number;
+}
+
 /**
  * Rows and payload bytes written for one kind of record: an event type such
  * as `agent.usage_updated`, or a table such as `table:agents`.
@@ -2504,6 +2781,8 @@ export interface Milestone {
   "kind": string;
 }
 
+export type MissClass = "cue" | "discrimination" | "execution" | "careless" | "structural";
+
 /**
  * When several occurrences elapsed between scheduler ticks, coalescing
  * delivers one trigger; skipping advances the clock without delivering one.
@@ -2561,6 +2840,19 @@ export interface ModelRef {
 }
 
 /**
+ * Unset means the first ready subscription model.
+ */
+export interface ModelSettings {
+  "cheap"?: string | null;
+  "strong"?: string | null;
+}
+
+export interface ModelsPatch {
+  "cheap"?: string | null;
+  "strong"?: string | null;
+}
+
+/**
  * What a mount forwards to.
  */
 export type MountKind = "archon";
@@ -2576,6 +2868,72 @@ export interface NewApprovalRule {
   "match": RuleMatch;
   "note"?: string | null;
   "scope": RuleScope;
+}
+
+/**
+ * Where a proposition or chain came from.
+ */
+export interface NoesisProvenance {
+  "message_ref"?: string | null;
+  "source": string;
+}
+
+export interface NoesisSession {
+  "active_problem"?: Problem | null;
+  "agent": AgentId;
+  "created_at": string;
+  "goal": string;
+  "id": string;
+  "mode": SessionMode;
+  "open_question"?: Question | null;
+  "phase": Phase;
+  "plan"?: PlanTree | null;
+  "updated_at": string;
+}
+
+/**
+ * A subset of the `[noesis]` table to write. Absent keys keep their value.
+ */
+export interface NoesisSettingsPatch {
+  "billing"?: BillingPatch | null;
+  "budget"?: BudgetPatch | null;
+  "concurrency"?: ConcurrencyPatch | null;
+  "disable"?: DisablePatch | null;
+  "enabled"?: boolean | null;
+  "engineering_context"?: boolean | null;
+  "extraction"?: ExtractionPatch | null;
+  "models"?: ModelsPatch | null;
+  "priority"?: PriorityPatch | null;
+  "prompts"?: PromptsPatch | null;
+}
+
+/**
+ * The `[noesis]` config table (§6.1) as one JSON object of the same shape.
+ */
+export interface NoesisSettingsView {
+  "billing": BillingSettings;
+  "budget": BudgetSettings;
+  "concurrency": ConcurrencySettings;
+  "disable": DisableSettings;
+  "enabled": boolean;
+  "engineering_context": boolean;
+  "extraction": ExtractionSettings;
+  "models": ModelSettings;
+  "priority": PrioritySettings;
+  "prompts": PromptSettings;
+}
+
+/**
+ * Reply to `noesis_status` and `noesis_configure`.
+ */
+export interface NoesisStatus {
+  "disable_policy": DisablePolicy;
+  "effective": NoesisSettingsView;
+  "enabled": boolean;
+  "jobs_running": number;
+  "prompt_overrides": Array<string>;
+  "settings": NoesisSettingsView;
+  "spend_today": SpendToday;
 }
 
 /**
@@ -2834,7 +3192,69 @@ export interface PendingQuestion {
   "question_seq": number;
 }
 
+export type Phase = "probe" | "plan" | "teach" | "practice";
+
+export interface PlanEdge {
+  "from": string;
+  "to": string;
+}
+
+export interface PlanNode {
+  "id": string;
+  "status": PlanNodeStatus;
+  "title": string;
+}
+
+export type PlanNodeStatus = "upcoming" | "current" | "visited";
+
+export interface PlanTree {
+  "edges": Array<PlanEdge>;
+  "nodes": Array<PlanNode>;
+  "revision": number;
+}
+
+export type PracticeOutcome = "solved" | "solved_with_hints" | "moved_on" | "surrendered" | "dismissed";
+
 export type Priority = "low" | "normal" | "high" | "critical";
+
+export interface PriorityPatch {
+  "background"?: BackgroundPriority | null;
+}
+
+export interface PrioritySettings {
+  "background": BackgroundPriority;
+}
+
+/**
+ * A practice problem. Its solution is revealed only by
+ * `noesis.practice_concluded`.
+ */
+export interface Problem {
+  "id": string;
+  "mode": ProblemMode;
+  "posed_at": string;
+  "statement": string;
+  "targets": Array<string>;
+}
+
+export type ProblemMode = "recall" | "discrimination" | "composition";
+
+export interface PromptSettings {
+  "overrides": boolean;
+}
+
+export interface PromptsPatch {
+  "overrides"?: boolean | null;
+}
+
+export interface Proposition {
+  "aliases": Array<string>;
+  "created_at": string;
+  "id": string;
+  "name": string;
+  "provenance": Array<NoesisProvenance>;
+  "statement": string;
+}
 
 /**
  * Where an imported run came from. Absent on a run this daemon ran itself.
@@ -2957,6 +3377,36 @@ export interface PushSubscription {
   "auth": string;
   "endpoint": string;
   "p256dh": string;
+}
+
+/**
+ * A question put to the learner. The answer key is never part of it: it
+ * is revealed in a [`QuestionResult`] once the answer is recorded.
+ */
+export interface Question {
+  "collapsed": boolean;
+  "concepts": Array<string>;
+  "id": string;
+  "kind": QuestionKind;
+  "multi": boolean;
+  "options"?: Array<QuestionOption> | null;
+  "plan_node"?: string | null;
+  "posed_at": string;
+  "prompt": string;
+}
+
+export type QuestionKind = "choice" | "recall" | "goal";
+
+export interface QuestionOption {
+  "label": string;
+  "value": string;
+}
+
+export interface QuestionResult {
+  "answer_key"?: AnswerKey | null;
+  "correct"?: boolean | null;
+  "explanation"?: string | null;
+  "question": string;
 }
 
 /**
@@ -3506,6 +3956,65 @@ export interface ReplySubmissionResolved {
   "reply": "submission_resolved";
 }
 
+export interface ReplyNoesisStatus {
+  "data": NoesisStatus;
+  "reply": "noesis_status";
+}
+
+export interface ReplyNoesisSession {
+  "data": NoesisSession;
+  "reply": "noesis_session";
+}
+
+/**
+ * `next_after` is the cursor for the next page, absent on the last one.
+ */
+export interface ReplyNoesisSessions {
+  "data": Record<string, unknown>;
+  "reply": "noesis_sessions";
+}
+
+/**
+ * `truncated` is set when `limit` cut the graph short.
+ */
+export interface ReplyNoesisGraph {
+  "data": Record<string, unknown>;
+  "reply": "noesis_graph";
+}
+
+export interface ReplyNoesisJob {
+  "data": Record<string, unknown>;
+  "reply": "noesis_job";
+}
+
+export interface ReplyNoesisImport {
+  "data": Record<string, unknown>;
+  "reply": "noesis_import";
+}
+
+export interface ReplyNoesisJobs {
+  "data": Record<string, unknown>;
+  "reply": "noesis_jobs";
+}
+
+export interface ReplyNoesisLearner {
+  "data": Record<string, unknown>;
+  "reply": "noesis_learner";
+}
+
+/**
+ * `next_before` is the cursor for the next page, absent on the last one.
+ */
+export interface ReplyNoesisEvidence {
+  "data": Record<string, unknown>;
+  "reply": "noesis_evidence";
+}
+
+export interface ReplyConceptState {
+  "data": ConceptState;
+  "reply": "concept_state";
+}
+
 export type Reply =
   | ReplyStorageReport
   | ReplyRetentionPreview
@@ -3579,7 +4088,17 @@ export type Reply =
   | ReplyDevice
   | ReplyDevices
   | ReplyPushConfig
-  | ReplySubmissionResolved;
+  | ReplySubmissionResolved
+  | ReplyNoesisStatus
+  | ReplyNoesisSession
+  | ReplyNoesisSessions
+  | ReplyNoesisGraph
+  | ReplyNoesisJob
+  | ReplyNoesisImport
+  | ReplyNoesisJobs
+  | ReplyNoesisLearner
+  | ReplyNoesisEvidence
+  | ReplyConceptState;
 
 /**
  * An old repository name memory used to be filed under, and the id it now
@@ -4004,6 +4523,10 @@ export type ServerFrame =
   | ServerFrameDelta
   | ServerFrameChallenge;
 
+export type SessionExtraction = "manual" | "auto";
+
+export type SessionMode = "teach" | "practice";
+
 /**
  * What a tool does to the world. Drives retry policy, idempotency tracking
  * and approval requirements.
@@ -4043,6 +4566,14 @@ export interface SpawnSpec {
   "objective": string;
   "role": string;
   "scope"?: Scope | null;
+}
+
+/**
+ * What Noesis spent today, split by who asked for the work.
+ */
+export interface SpendToday {
+  "background": Usage;
+  "interactive": Usage;
 }
 
 /**
@@ -5499,6 +6030,246 @@ export function memoryFeedback(args: Omit<MemoryFeedbackCommand, "cmd">): Memory
 }
 
 /**
+ * Answer the session's open question.
+ */
+export interface NoesisAnswerCommand {
+  "cmd": "noesis_answer";
+  "answer": AnswerInput;
+  "idempotency_key"?: string | null;
+  "question": string;
+  "session": string;
+}
+
+export function noesisAnswer(args: Omit<NoesisAnswerCommand, "cmd">): NoesisAnswerCommand {
+  return { cmd: "noesis_answer", ...args };
+}
+
+export interface NoesisCancelJobCommand {
+  "cmd": "noesis_cancel_job";
+  "idempotency_key"?: string | null;
+  "job": string;
+}
+
+export function noesisCancelJob(args: Omit<NoesisCancelJobCommand, "cmd">): NoesisCancelJobCommand {
+  return { cmd: "noesis_cancel_job", ...args };
+}
+
+/**
+ * Write a subset of the `[noesis]` settings and answer with the new
+ * status. Works while Noesis is disabled. Host only when the patch sets
+ * `enabled`, a budget, billing or prompt overrides.
+ */
+export interface NoesisConfigureCommand {
+  "cmd": "noesis_configure";
+  "idempotency_key"?: string | null;
+  "patch": NoesisSettingsPatch;
+}
+
+export function noesisConfigure(args: Omit<NoesisConfigureCommand, "cmd">): NoesisConfigureCommand {
+  return { cmd: "noesis_configure", ...args };
+}
+
+/**
+ * Record the operator's correction of a concept's state.
+ */
+export interface NoesisCorrectLearnerCommand {
+  "cmd": "noesis_correct_learner";
+  "concept": string;
+  "idempotency_key"?: string | null;
+  "reason": string;
+  "state": ConceptStateKind;
+}
+
+export function noesisCorrectLearner(args: Omit<NoesisCorrectLearnerCommand, "cmd">): NoesisCorrectLearnerCommand {
+  return { cmd: "noesis_correct_learner", ...args };
+}
+
+/**
+ * Start a teaching or practice session. Answered with `noesis_session`.
+ */
+export interface NoesisCreateSessionCommand {
+  "cmd": "noesis_create_session";
+  "context"?: EvidenceBundle | null;
+  "goal": string;
+  "idempotency_key"?: string | null;
+  "mode": SessionMode;
+  "practice_targets"?: Array<string> | null;
+}
+
+export function noesisCreateSession(args: Omit<NoesisCreateSessionCommand, "cmd">): NoesisCreateSessionCommand {
+  return { cmd: "noesis_create_session", ...args };
+}
+
+/**
+ * Delete a proposition; its chains go with it.
+ */
+export interface NoesisDeletePropositionCommand {
+  "cmd": "noesis_delete_proposition";
+  "idempotency_key"?: string | null;
+  "proposition": string;
+}
+
+export function noesisDeleteProposition(args: Omit<NoesisDeletePropositionCommand, "cmd">): NoesisDeletePropositionCommand {
+  return { cmd: "noesis_delete_proposition", ...args };
+}
+
+export interface NoesisDeleteSessionCommand {
+  "cmd": "noesis_delete_session";
+  "graph": DeleteSessionGraph;
+  "idempotency_key"?: string | null;
+  "session": string;
+}
+
+export function noesisDeleteSession(args: Omit<NoesisDeleteSessionCommand, "cmd">): NoesisDeleteSessionCommand {
+  return { cmd: "noesis_delete_session", ...args };
+}
+
+/**
+ * Refused as a conflict while a job on the source runs.
+ */
+export interface NoesisDeleteSourceCommand {
+  "cmd": "noesis_delete_source";
+  "graph": DeleteSourceGraph;
+  "idempotency_key"?: string | null;
+  "source": string;
+}
+
+export function noesisDeleteSource(args: Omit<NoesisDeleteSourceCommand, "cmd">): NoesisDeleteSourceCommand {
+  return { cmd: "noesis_delete_source", ...args };
+}
+
+/**
+ * Extract the graph of exactly one of `session` and `source`.
+ */
+export interface NoesisExtractCommand {
+  "cmd": "noesis_extract";
+  "idempotency_key"?: string | null;
+  "session"?: string | null;
+  "source"?: string | null;
+}
+
+export function noesisExtract(args: Omit<NoesisExtractCommand, "cmd">): NoesisExtractCommand {
+  return { cmd: "noesis_extract", ...args };
+}
+
+export interface NoesisGetSessionCommand {
+  "cmd": "noesis_get_session";
+  "session": string;
+}
+
+export function noesisGetSession(args: Omit<NoesisGetSessionCommand, "cmd">): NoesisGetSessionCommand {
+  return { cmd: "noesis_get_session", ...args };
+}
+
+/**
+ * Propositions, chains and clusters, filtered by text, session or
+ * source. `limit` is 1 to 5000.
+ */
+export interface NoesisGraphCommand {
+  "cmd": "noesis_graph";
+  "limit"?: number | null;
+  "query"?: string | null;
+  "session"?: string | null;
+  "source"?: string | null;
+}
+
+export function noesisGraph(args: Omit<NoesisGraphCommand, "cmd">): NoesisGraphCommand {
+  return { cmd: "noesis_graph", ...args };
+}
+
+/**
+ * Import an artifact as a source and extract it.
+ */
+export interface NoesisImportSourceCommand {
+  "cmd": "noesis_import_source";
+  "artifact": ArtifactId;
+  "idempotency_key"?: string | null;
+  "name": string;
+}
+
+export function noesisImportSource(args: Omit<NoesisImportSourceCommand, "cmd">): NoesisImportSourceCommand {
+  return { cmd: "noesis_import_source", ...args };
+}
+
+export interface NoesisJobsCommand {
+  "cmd": "noesis_jobs";
+  "state"?: JobState | null;
+}
+
+export function noesisJobs(args: Omit<NoesisJobsCommand, "cmd">): NoesisJobsCommand {
+  return { cmd: "noesis_jobs", ...args };
+}
+
+/**
+ * Learner state of the named concepts, or of those matching `query`.
+ * `limit` is 1 to 1000.
+ */
+export interface NoesisLearnerCommand {
+  "cmd": "noesis_learner";
+  "concepts"?: Array<string> | null;
+  "limit"?: number | null;
+  "query"?: string | null;
+}
+
+export function noesisLearner(args: Omit<NoesisLearnerCommand, "cmd">): NoesisLearnerCommand {
+  return { cmd: "noesis_learner", ...args };
+}
+
+/**
+ * A concept's evidence, newest first, from before the evidence id
+ * `before`. `limit` is 1 to 500.
+ */
+export interface NoesisLearnerEvidenceCommand {
+  "cmd": "noesis_learner_evidence";
+  "before"?: number | null;
+  "concept": string;
+  "limit"?: number | null;
+}
+
+export function noesisLearnerEvidence(args: Omit<NoesisLearnerEvidenceCommand, "cmd">): NoesisLearnerEvidenceCommand {
+  return { cmd: "noesis_learner_evidence", ...args };
+}
+
+/**
+ * One page of sessions, from just after `after`. `limit` is 1 to 200.
+ */
+export interface NoesisListSessionsCommand {
+  "cmd": "noesis_list_sessions";
+  "after"?: string | null;
+  "limit"?: number | null;
+}
+
+export function noesisListSessions(args: Omit<NoesisListSessionsCommand, "cmd">): NoesisListSessionsCommand {
+  return { cmd: "noesis_list_sessions", ...args };
+}
+
+/**
+ * Say something to the session's teacher. 1 to 20000 characters.
+ */
+export interface NoesisSendCommand {
+  "cmd": "noesis_send";
+  "idempotency_key"?: string | null;
+  "session": string;
+  "text": string;
+}
+
+export function noesisSend(args: Omit<NoesisSendCommand, "cmd">): NoesisSendCommand {
+  return { cmd: "noesis_send", ...args };
+}
+
+/**
+ * Noesis state: whether it is enabled, its settings as stored and as
+ * effective, running jobs and today's spend. Needs `features::NOESIS`.
+ */
+export interface NoesisStatusCommand {
+  "cmd": "noesis_status";
+}
+
+export function noesisStatus(): NoesisStatusCommand {
+  return { cmd: "noesis_status" };
+}
+
+/**
  * Pause an agent: a durable flag, orthogonal to its status. With
  * `subtree` it reaches every live agent beneath it too (§3.1).
  */
@@ -6171,6 +6942,24 @@ export type Command =
   | MemoriesCommand
   | MemoriesInContextCommand
   | MemoryFeedbackCommand
+  | NoesisAnswerCommand
+  | NoesisCancelJobCommand
+  | NoesisConfigureCommand
+  | NoesisCorrectLearnerCommand
+  | NoesisCreateSessionCommand
+  | NoesisDeletePropositionCommand
+  | NoesisDeleteSessionCommand
+  | NoesisDeleteSourceCommand
+  | NoesisExtractCommand
+  | NoesisGetSessionCommand
+  | NoesisGraphCommand
+  | NoesisImportSourceCommand
+  | NoesisJobsCommand
+  | NoesisLearnerCommand
+  | NoesisLearnerEvidenceCommand
+  | NoesisListSessionsCommand
+  | NoesisSendCommand
+  | NoesisStatusCommand
   | PauseCommand
   | PinMemoryCommand
   | PingCommand

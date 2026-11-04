@@ -397,7 +397,8 @@ pub(super) fn release_resources(
 }
 
 pub(super) fn describe_call(call: &ToolCall) -> String {
-    let input = serde_json::to_string(&call.input).unwrap_or_default();
+    let input = crate::noesis_seal::sealed_view(&call.name, &call.input);
+    let input = serde_json::to_string(&*input).unwrap_or_default();
     let input = if input.chars().count() > 300 {
         format!("{}…", input.chars().take(300).collect::<String>())
     } else {

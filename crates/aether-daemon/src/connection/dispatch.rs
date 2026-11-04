@@ -174,6 +174,9 @@ pub(super) async fn dispatch_authorized(
     if notifications::owns(&command) {
         return notifications::dispatch(daemon, command, by).await;
     }
+    if crate::noesis::owns(&command) {
+        return crate::noesis::dispatch(daemon, command, by, submission).await;
+    }
     Err(ErrorReply::internal("no handler for this command"))
 }
 

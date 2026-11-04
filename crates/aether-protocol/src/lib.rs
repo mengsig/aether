@@ -11,7 +11,7 @@
 //! correlation key receives an ID-zero diagnostic followed by connection closure;
 //! clients fail all pending requests on closure. See docs/protocol.md.
 //!
-//! Eighteen commands take an optional `idempotency_key` so a lost acknowledgement
+//! Twenty-nine commands take an optional `idempotency_key` so a lost acknowledgement
 //! can be retried safely (docs/remote.md).
 //!
 //! This crate is types and paths only. The client and daemon crates own the
@@ -20,6 +20,7 @@
 pub mod auth;
 pub mod command_hint;
 pub mod compat;
+pub mod noesis;
 pub mod paths;
 pub mod read_models;
 pub mod remote;
@@ -176,7 +177,8 @@ use serde::{Deserialize, Serialize};
 /// 26: read models for one frontend, each behind its own feature:
 /// `list_agents_page` and the `get_tree` filters, `get_transcript_page`,
 /// `usage_breakdown`, `RemoteSettings.mounts`, and delta frames numbered per
-/// invocation for a client listing `delta_order`. Older clients get every
+/// invocation for a client listing `delta_order`, and the `noesis` feature: its
+/// eighteen commands, replies and `noesis.*` events. Older clients get every
 /// frame byte for byte as before.
 pub const PROTOCOL_VERSION: u32 = 26;
 
@@ -242,6 +244,9 @@ pub mod features {
     pub const USAGE_BREAKDOWN: &str = "usage_breakdown";
     /// `get_remote` and `configure_remote` carry `RemoteSettings.mounts`.
     pub const REMOTE_MOUNTS: &str = "remote_mounts";
+    /// The daemon serves the `noesis_*` commands and sends `noesis.*` events.
+    /// A client without it reads those events as `custom`.
+    pub const NOESIS: &str = "noesis";
 }
 
 mod handshake;
@@ -256,8 +261,8 @@ pub use command::{Command, KeyedRequest};
 mod replies;
 pub use replies::{
     AgentTree, AuthInfo, DaemonStatus, ENGINES_STARTING, ErrorCode, ErrorReply, MessageDelivery,
-    ModelInfo, ProviderInfo, Reply, RunListing, StatusStale, SubmissionResolution, TranscriptEntry,
-    TreeNode,
+    ModelInfo, NOESIS_DISABLED, ProviderInfo, Reply, RunListing, StatusStale, SubmissionResolution,
+    TranscriptEntry, TreeNode,
 };
 mod frames;
 pub use frames::{ClientFrame, Delta, ServerFrame, decode, encode};

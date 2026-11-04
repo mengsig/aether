@@ -33,6 +33,16 @@ import type {
   PushConfig,
   RemoteStatus,
   ReplayFrame,
+  ReplyConceptState,
+  ReplyNoesisEvidence,
+  ReplyNoesisGraph,
+  ReplyNoesisImport,
+  ReplyNoesisJob,
+  ReplyNoesisJobs,
+  ReplyNoesisLearner,
+  ReplyNoesisSession,
+  ReplyNoesisSessions,
+  ReplyNoesisStatus,
   RepositoryAlias,
   RepositoryAliasReport,
   RetentionPreview,
@@ -529,5 +539,15 @@ export type Reply =
     ReplyDevice |
     ReplyDevices |
     ReplyPushConfig |
-    ReplySubmissionResolved
+    ReplySubmissionResolved |
+    ReplyNoesisStatus |
+    ReplyNoesisSession |
+    ReplyNoesisSessions |
+    ReplyNoesisGraph |
+    ReplyNoesisJob |
+    ReplyNoesisImport |
+    ReplyNoesisJobs |
+    ReplyNoesisLearner |
+    ReplyNoesisEvidence |
+    ReplyConceptState
 ;

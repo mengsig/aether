@@ -17,6 +17,14 @@ use super::{
 
 use aether_core::attachment::{AttachmentId, ImageAttachment};
 
+use crate::noesis::{
+    AnswerInput, ConceptId, ConceptStateKind, DeleteSessionGraph, DeleteSourceGraph,
+    EvidenceBundle, JobId, JobState, NoesisSettingsPatch, PropositionId, QuestionId, SessionId,
+    SessionMode, SourceId,
+};
+
+mod noesis;
+
 /// Everything a client can ask the daemon to do.
 // Wire types are built once and serialized; variant size differences are irrelevant.
 #[allow(clippy::large_enum_variant)]
@@ -661,6 +669,151 @@ pub enum Command {
     /// Send the calling device one `test` notification.
     TestPush,
 
+    /// Noesis state: whether it is enabled, its settings as stored and as
+    /// effective, running jobs and today's spend. Needs `features::NOESIS`.
+    NoesisStatus,
+    /// Write a subset of the `[noesis]` settings and answer with the new
+    /// status. Works while Noesis is disabled. Host only when the patch sets
+    /// `enabled`, a budget, billing or prompt overrides.
+    NoesisConfigure {
+        patch: NoesisSettingsPatch,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Start a teaching or practice session. Answered with `noesis_session`.
+    NoesisCreateSession {
+        /// 1 to 2000 characters.
+        goal: String,
+        mode: SessionMode,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<EvidenceBundle>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        practice_targets: Option<Vec<PropositionId>>,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Say something to the session's teacher. 1 to 20000 characters.
+    NoesisSend {
+        session: SessionId,
+        text: String,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Answer the session's open question.
+    NoesisAnswer {
+        session: SessionId,
+        question: QuestionId,
+        answer: AnswerInput,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    NoesisGetSession {
+        session: SessionId,
+    },
+    /// One page of sessions, from just after `after`. `limit` is 1 to 200.
+    NoesisListSessions {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<SessionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    NoesisDeleteSession {
+        session: SessionId,
+        graph: DeleteSessionGraph,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Propositions, chains and clusters, filtered by text, session or
+    /// source. `limit` is 1 to 5000.
+    NoesisGraph {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<SessionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<SourceId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Delete a proposition; its chains go with it.
+    NoesisDeleteProposition {
+        proposition: PropositionId,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Refused as a conflict while a job on the source runs.
+    NoesisDeleteSource {
+        source: SourceId,
+        graph: DeleteSourceGraph,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Extract the graph of exactly one of `session` and `source`.
+    NoesisExtract {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session: Option<SessionId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source: Option<SourceId>,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Import an artifact as a source and extract it.
+    NoesisImportSource {
+        /// 1 to 200 characters.
+        name: String,
+        artifact: ArtifactId,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    NoesisJobs {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        state: Option<JobState>,
+    },
+    NoesisCancelJob {
+        job: JobId,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+    /// Learner state of the named concepts, or of those matching `query`.
+    /// `limit` is 1 to 1000.
+    NoesisLearner {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        concepts: Option<Vec<ConceptId>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        query: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// A concept's evidence, newest first, from before the evidence id
+    /// `before`. `limit` is 1 to 500.
+    NoesisLearnerEvidence {
+        concept: ConceptId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// Record the operator's correction of a concept's state.
+    NoesisCorrectLearner {
+        concept: ConceptId,
+        state: ConceptStateKind,
+        /// 1 to 500 characters.
+        reason: String,
+        /// Makes the request retryable; see [`CreateAgent::idempotency_key`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
+    },
+
     /// Ask what became of a keyed command whose acknowledgement was lost.
     /// Read-only, within the caller's own keys; needs `command`'s standing.
     ResolveSubmission {
@@ -967,7 +1120,7 @@ impl Command {
                     "scope": rule.scope, "note": rule.note,
                 }),
             ),
-            _ => return None,
+            _ => return self.noesis_keyed_request(),
         };
         Some(Ok(KeyedRequest { key, fields }))
     }

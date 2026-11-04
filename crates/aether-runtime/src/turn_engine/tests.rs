@@ -476,10 +476,12 @@ pub(super) async fn started_agent_ctx(runtime: &Arc<Runtime>) -> TurnCtx {
         user_reply_pending: false,
         reply_given_unrecorded: false,
         start_handoff: None,
+        noesis: None,
     }
 }
 
 mod context;
+mod noesis_boundary;
 mod receipt_cost;
 mod steering;
 mod store_lock;

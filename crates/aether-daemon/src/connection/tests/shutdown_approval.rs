@@ -96,6 +96,7 @@ async fn daemon_shutdown_releases_an_engine_tool_waiting_for_approval() {
         .unwrap()
         .unwrap();
     let daemon = Arc::new(Daemon {
+        noesis: crate::noesis::NoesisService::detached(&runtime, &models),
         runtime: runtime.clone(),
         models,
         instance_id: "inst".into(),

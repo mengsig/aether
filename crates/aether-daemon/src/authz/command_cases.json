@@ -812,5 +812,141 @@
       "id": "ntf_00000000000000000000000000",
       "action": "fixture"
     }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "noesis_status"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_configure",
+      "patch": {
+        "concurrency": {
+          "background": 0
+        }
+      }
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_create_session",
+      "goal": "fixture",
+      "mode": "teach"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_send",
+      "session": "ns_fixture",
+      "text": "fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_answer",
+      "session": "ns_fixture",
+      "question": "q_fixture",
+      "answer": {
+        "dont_know": true
+      }
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "noesis_get_session",
+      "session": "ns_fixture"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "noesis_list_sessions"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_delete_session",
+      "session": "ns_fixture",
+      "graph": "preserve"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "noesis_graph"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_delete_proposition",
+      "proposition": "p_fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_delete_source",
+      "source": "s_fixture",
+      "graph": "preserve"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_extract",
+      "session": "ns_fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_import_source",
+      "name": "fixture",
+      "artifact": "art_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "noesis_jobs"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_cancel_job",
+      "job": "j_fixture"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "noesis_learner"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "noesis_learner_evidence",
+      "concept": "k_fixture"
+    }
+  },
+  {
+    "access": "operate",
+    "command": {
+      "cmd": "noesis_correct_learner",
+      "concept": "k_fixture",
+      "state": "fragile",
+      "reason": "fixture"
+    }
   }
 ]

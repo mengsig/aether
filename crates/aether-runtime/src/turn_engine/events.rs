@@ -147,7 +147,21 @@ impl StreamState {
             .is_some_and(|call| call.tool == format!("mcp__aether__{name}") && &call.input == input)
     }
 
+    /// An unsealed stream's state, for tests of the accounting it carries.
+    #[cfg(test)]
     pub(super) fn new(pricing: TurnPricing, configured: ResolvedModel) -> Self {
+        Self::sealed(
+            pricing,
+            configured,
+            crate::noesis_seal::StreamSeal::Ordinary,
+        )
+    }
+
+    pub(super) fn sealed(
+        pricing: TurnPricing,
+        configured: ResolvedModel,
+        seal: crate::noesis_seal::StreamSeal,
+    ) -> Self {
         Self {
             calls: BTreeMap::new(),
             interruption: None,
@@ -165,7 +179,7 @@ impl StreamState {
             configured,
             protocol_notes: 0,
             invocation_since: tokio::time::Instant::now(),
-            deltas: DeltaStream::new(InvocationId::new()),
+            deltas: DeltaStream::new(InvocationId::new(), seal),
             thinking: String::new(),
             thinking_truncated: false,
             text: String::new(),
@@ -483,9 +497,9 @@ pub(super) fn handle_event(
             // with it.
             let started_at =
                 at - chrono::Duration::milliseconds(i64::try_from(duration_ms).unwrap_or(i64::MAX));
+            let next = state.deltas.next_invocation();
             let invocation = Invocation {
-                id: std::mem::replace(&mut state.deltas, DeltaStream::new(InvocationId::new()))
-                    .invocation(),
+                id: std::mem::replace(&mut state.deltas, next).invocation(),
                 snapshot_id: snapshot.id,
                 agent_id: ctx.agent.id,
                 turn: ctx.turn,
@@ -524,7 +538,7 @@ pub(super) fn handle_event(
                         .retry_policy()
                         .record_key
                         .then(|| IdempotencyKey::derive(name, input));
-                    let call = ToolCall {
+                    let mut call = ToolCall {
                         id: ToolCallId::new(),
                         provider_call_id: id.clone(),
                         name: name.clone(),
@@ -536,6 +550,7 @@ pub(super) fn handle_event(
                         idempotency_key,
                         requested_at: at,
                     };
+                    crate::noesis_seal::seal_call_key(&mut call);
                     state.calls.insert(
                         id.clone(),
                         PendingCall {

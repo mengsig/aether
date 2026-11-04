@@ -155,6 +155,7 @@ async fn live_or_resumable_owners_keep_their_build_output() {
                     provider: "mock".into(),
                     engine: true,
                     on_provider: false,
+                    noesis: None,
                 },
             );
         },

@@ -11,6 +11,8 @@ use aether_core::id::{AgentId, InvocationId};
 use aether_core::model::Usage;
 use tokio::sync::broadcast;
 
+use crate::noesis_seal::StreamSeal;
+
 /// Transient streaming signal. Never persisted.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeltaKind {
@@ -63,14 +65,22 @@ pub enum BusMessage {
 pub struct DeltaStream {
     invocation: InvocationId,
     last: u64,
+    /// Which deltas this stream withholds, decided once when it is made.
+    seal: StreamSeal,
 }
 
 impl DeltaStream {
-    pub fn new(invocation: InvocationId) -> Self {
+    pub fn new(invocation: InvocationId, seal: StreamSeal) -> Self {
         Self {
             invocation,
             last: 0,
+            seal,
         }
+    }
+
+    /// A fresh stream for the next invocation of the same agent, sealed alike.
+    pub fn next_invocation(&self) -> Self {
+        Self::new(InvocationId::new(), self.seal)
     }
 
     pub fn invocation(&self) -> InvocationId {
@@ -131,8 +141,12 @@ impl EventBus {
     }
 
     /// Number `delta` within its stream and fan it out. One producer owns a
-    /// stream, so the channel carries its deltas in seq order.
+    /// stream, so the channel carries its deltas in seq order. A delta the
+    /// stream's seal withholds is dropped before it takes a number.
     pub fn publish_delta(&self, agent: AgentId, stream: &mut DeltaStream, delta: DeltaKind) {
+        if !stream.seal.admits(&delta) {
+            return;
+        }
         let seq = stream.advance();
         // No receivers is not an error: deltas are transient, and the gap a
         // later subscriber sees is how it knows to read the transcript.
@@ -177,8 +191,8 @@ mod tests {
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
         let agent = AgentId::new();
-        let mut first = DeltaStream::new(InvocationId::new());
-        let mut second = DeltaStream::new(InvocationId::new());
+        let mut first = DeltaStream::new(InvocationId::new(), StreamSeal::Ordinary);
+        let mut second = DeltaStream::new(InvocationId::new(), StreamSeal::Ordinary);
         for n in 0..1000 {
             bus.publish_delta(agent, &mut first, text(n));
             if n % 3 == 0 {
@@ -202,7 +216,7 @@ mod tests {
     fn two_subscriptions_see_the_same_numbers_and_a_late_one_is_never_renumbered() {
         let bus = EventBus::new();
         let agent = AgentId::new();
-        let mut stream = DeltaStream::new(InvocationId::new());
+        let mut stream = DeltaStream::new(InvocationId::new(), StreamSeal::Ordinary);
         let mut early = bus.subscribe();
         let mut other = bus.subscribe();
         for n in 0..5 {
@@ -224,7 +238,7 @@ mod tests {
         let bus = EventBus::with_capacity(4);
         let mut rx = bus.subscribe();
         let agent = AgentId::new();
-        let mut stream = DeltaStream::new(InvocationId::new());
+        let mut stream = DeltaStream::new(InvocationId::new(), StreamSeal::Ordinary);
         for n in 0..10 {
             bus.publish_delta(agent, &mut stream, text(n));
         }
@@ -238,10 +252,10 @@ mod tests {
     fn a_long_silent_stream_keeps_its_count_however_many_others_ran() {
         let bus = EventBus::new();
         let agent = AgentId::new();
-        let mut silent = DeltaStream::new(InvocationId::new());
+        let mut silent = DeltaStream::new(InvocationId::new(), StreamSeal::Ordinary);
         bus.publish_delta(agent, &mut silent, text(0));
         for n in 0..100_000 {
-            let mut other = DeltaStream::new(InvocationId::new());
+            let mut other = DeltaStream::new(InvocationId::new(), StreamSeal::Ordinary);
             bus.publish_delta(agent, &mut other, text(n));
         }
         let mut rx = bus.subscribe();

@@ -1,5 +1,5 @@
 //! What protocol 26 added that an older client, or one not listing
-//! `features::DELTA_ORDER`, must not see: frames reach it as before, byte for byte.
+//! `features::DELTA_ORDER` or `features::NOESIS`, must not see: frames reach it as before, byte for byte.
 
 use crate::{Delta, Reply, ServerFrame};
 
@@ -9,7 +9,9 @@ pub(super) fn older_frame(version: u32, frame: &ServerFrame) -> Option<ServerFra
         return None;
     }
     let mut older = frame.clone();
-    let changed = withhold_delta_order(&mut older) | withhold_mounts(&mut older);
+    let changed = withhold_delta_order(&mut older)
+        | withhold_mounts(&mut older)
+        | super::withhold_noesis_events(&mut older);
     changed.then_some(older)
 }
 

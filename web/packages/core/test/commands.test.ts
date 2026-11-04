@@ -77,6 +77,12 @@ describe("command access", () => {
     expect(aetherAccess({ cmd: "resolve_submission", command: { cmd: "get_agent" } })).toBe("operate");
     expect(aetherAccess({ cmd: "resolve_submission", command: { cmd: "shutdown" } })).toBe("host_only");
     expect(aetherAccess({ cmd: "not_a_command_yet" })).toBe("operate");
+    expect(aetherAccess({ cmd: "noesis_configure", patch: { engineering_context: true } })).toBe("operate");
+    expect(aetherAccess({ cmd: "noesis_configure", patch: { enabled: false } })).toBe("host_only");
+    expect(aetherAccess({ cmd: "noesis_configure", patch: { budget: { background_tokens_daily: 9 } } })).toBe("host_only");
+    expect(aetherAccess({ cmd: "noesis_configure", patch: { budget: {} } })).toBe("operate");
+    expect(aetherAccess({ cmd: "noesis_configure", patch: { billing: { allow_api: true } } })).toBe("host_only");
+    expect(aetherAccess({ cmd: "noesis_configure", patch: { prompts: { overrides: false } } })).toBe("host_only");
   });
 
   it("keeps archond's host commands and global hard pause off devices", () => {

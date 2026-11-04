@@ -15,6 +15,7 @@ from ._ReplyArtifacts import ReplyArtifacts
 from ._ReplyAttention import ReplyAttention
 from ._ReplyAuth import ReplyAuth
 from ._ReplyCheckpoint import ReplyCheckpoint
+from ._ReplyConceptState import ReplyConceptState
 from ._ReplyDevice import ReplyDevice
 from ._ReplyDevices import ReplyDevices
 from ._ReplyEngineTool import ReplyEngineTool
@@ -36,6 +37,15 @@ from ._ReplyMemorySeeded import ReplyMemorySeeded
 from ._ReplyMessageSent import ReplyMessageSent
 from ._ReplyMessagesSent import ReplyMessagesSent
 from ._ReplyModels import ReplyModels
+from ._ReplyNoesisEvidence import ReplyNoesisEvidence
+from ._ReplyNoesisGraph import ReplyNoesisGraph
+from ._ReplyNoesisImport import ReplyNoesisImport
+from ._ReplyNoesisJob import ReplyNoesisJob
+from ._ReplyNoesisJobs import ReplyNoesisJobs
+from ._ReplyNoesisLearner import ReplyNoesisLearner
+from ._ReplyNoesisSession import ReplyNoesisSession
+from ._ReplyNoesisSessions import ReplyNoesisSessions
+from ._ReplyNoesisStatus import ReplyNoesisStatus
 from ._ReplyNoteAppended import ReplyNoteAppended
 from ._ReplyNotification import ReplyNotification
 from ._ReplyNotificationAnswered import ReplyNotificationAnswered
@@ -151,5 +161,15 @@ Reply = (
     ReplyDevice |
     ReplyDevices |
     ReplyPushConfig |
-    ReplySubmissionResolved
+    ReplySubmissionResolved |
+    ReplyNoesisStatus |
+    ReplyNoesisSession |
+    ReplyNoesisSessions |
+    ReplyNoesisGraph |
+    ReplyNoesisJob |
+    ReplyNoesisImport |
+    ReplyNoesisJobs |
+    ReplyNoesisLearner |
+    ReplyNoesisEvidence |
+    ReplyConceptState
 )

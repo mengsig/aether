@@ -12,6 +12,7 @@ mod env_tests;
 mod instance_lock;
 pub mod listen;
 mod mcp;
+mod noesis;
 mod projections;
 pub mod push;
 pub mod remote;
@@ -171,6 +172,8 @@ pub struct Daemon {
     pub remote: remote::RemoteSlot,
     /// The reads behind `status`, shared by every request.
     pub(crate) status_reads: status_reads::StatusReads<status_reads::Figures>,
+    /// Noesis, dormant unless `[noesis] enabled`; the runtime's guard follows it.
+    pub(crate) noesis: Arc<noesis::NoesisService>,
 }
 
 /// Run until `shutdown` fires or a client asks to stop.
@@ -369,6 +372,20 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
         unstopped_calls.extend(interrupted.iter().copied());
     }
     clock.finished("containers");
+    // Before recovery, so a Noesis agent resumed at boot meets the guard.
+    let noesis = Arc::new(noesis::NoesisService::new(
+        &config_dir,
+        store_path.parent().unwrap_or(std::path::Path::new(".")),
+        models.clone(),
+        aether_runtime::noesis_guard::NoesisGate::new(),
+    ));
+    let store_dyn: Arc<dyn aether_store::Store> = store.clone();
+    match noesis.start_at_boot(&store_dyn).await {
+        Ok(true) => tracing::info!("Noesis started"),
+        Ok(false) => {}
+        Err(error) => tracing::error!(%error, "Noesis did not start; it stays disabled"),
+    }
+    clock.finished("noesis");
     let runtime = Runtime::start(
         RuntimeConfig {
             holder: format!("aetherd-{}-{}", instance_id, std::process::id()),
@@ -431,6 +448,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             redactor,
             // The daemon runs on a multi-threaded runtime and no `LocalSet`.
             store_writes_off_worker: true,
+            noesis: noesis.gate().clone(),
             ..Default::default()
         },
         store.clone(),
@@ -476,6 +494,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
             push: Some(push),
             remote: remote::RemoteSlot::default(),
             status_reads: Default::default(),
+            noesis: noesis.clone(),
         });
         // Supervised with the connections: it opens the listener the stored
         // settings ask for, and closes it when the daemon stops.
@@ -527,6 +546,7 @@ pub async fn run(config: DaemonConfig, shutdown: CancellationToken) -> anyhow::R
     tracing::info!("aetherd shutting down");
     shutdown.cancel();
     shutdown_connections(&runtime, &mut connections).await;
+    noesis.shutdown().await;
     let store_sync = match store.sync() {
         Ok(true) => Ok(()),
         // A reader on an older snapshot keeps frames in the WAL; the next open still reads them.

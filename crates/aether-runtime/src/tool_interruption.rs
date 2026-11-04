@@ -38,6 +38,7 @@ pub(crate) fn push_note(
     input: &serde_json::Value,
     cause: &str,
 ) {
+    let input = crate::noesis_seal::sealed_view(tool, input);
     let tool = aether_model::http::safe_provider_text(tool, 64);
     let cause = aether_model::http::safe_provider_text(cause, 1024);
     let short_input = aether_model::http::safe_provider_text(&input.to_string(), 200);

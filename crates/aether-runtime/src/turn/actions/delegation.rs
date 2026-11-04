@@ -108,6 +108,11 @@ async fn delegate(
     effects: &mut ToolEffects,
     request: DelegateRequest,
 ) -> Result<ToolOutcome> {
+    if ctx.noesis.is_some() && !runtime.noesis_gate().is_enabled() {
+        return Ok(ToolOutcome::error(
+            "delegation refused: Noesis is disabled, so its agents start no new work",
+        ));
+    }
     let parent = match load_delegating_parent(runtime, ctx)? {
         Ok(parent) => parent,
         Err(refusal) => return Ok(refusal),
@@ -481,7 +486,11 @@ fn child_spec(
         config.host_context = host_context;
     }
     CreateAgentSpec {
-        subsystem: None,
+        // A Noesis agent's children belong to Noesis, under its gate and budget.
+        subsystem: ctx
+            .noesis
+            .as_ref()
+            .map(|_| crate::noesis_guard::NOESIS_SUBSYSTEM.to_owned()),
         role: request.role,
         name: request.name,
         objective: Some(request.objective),
