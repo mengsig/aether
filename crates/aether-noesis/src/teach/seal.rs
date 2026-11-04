@@ -46,10 +46,20 @@ pub(super) fn scrub(value: &mut Value, secrets: &[String]) {
                 };
                 map.insert(key, item);
             }
-            debug_assert!(map.keys().all(|key| !holds(key, secrets)));
+            debug_assert!(
+                map.keys()
+                    .all(|key| !holds(key, secrets) || is_sealed_key(key)),
+                "every key holding a secret was replaced"
+            );
         }
         _ => {}
     }
+}
+
+/// A key [`scrub`] wrote; it may still match a secret that is the marker's word.
+fn is_sealed_key(key: &str) -> bool {
+    key.strip_prefix(SEALED)
+        .is_some_and(|index| index.parse::<usize>().is_ok())
 }
 
 /// Whether any scalar or key in `value` holds a secret.
@@ -129,6 +139,12 @@ mod tests {
         let mut empty = json!({"query": null, "keep": null});
         scrub(&mut empty, &["null".to_string()]);
         assert_eq!(empty, json!({"query": SEALED, "keep": SEALED}));
+        let mut marker = json!({"query": "vocabulary", "sealed": true});
+        scrub(&mut marker, &["sealed".to_string()]);
+        assert_eq!(
+            marker,
+            json!({"query": "vocabulary", format!("{SEALED}1"): true})
+        );
         assert!(!holds("anything", &[]));
     }
 

@@ -416,3 +416,50 @@ fn a_null_argument_cannot_carry_a_null_solution() {
     );
     assert!(!format!("{report:?}").contains("null"), "{report:?}");
 }
+
+#[test]
+fn an_overlapping_or_marker_like_solution_is_still_sealed() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise grammar", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let doubled = json!({"statement": "Which two words repeat in the past perfect of have?",
+        "mode": "recall", "solution": "had had"});
+    let practitioner = t.engine_mut();
+    practitioner.script(Agent::Practitioner, "", vec![(PROBLEM, doubled)]);
+    practitioner.script(Agent::Practitioner, "Chad had had enough.", vec![]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.steps[1].text, WITHHELD);
+    assert!(!format!("{report:?}").contains("had had"), "{report:?}");
+
+    let marked = t
+        .create_session("Practise words", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let problem = json!({"statement": "Which word means closed tight?", "mode": "recall",
+        "solution": "sealed"});
+    let search = json!({"query": "vocabulary", "sealed": true});
+    let practitioner = t.engine_mut();
+    practitioner.script(Agent::Practitioner, "", vec![(PROBLEM, problem)]);
+    practitioner.script(
+        Agent::Practitioner,
+        "",
+        vec![("noesis.graph_search", search)],
+    );
+    let report = t.advance(&marked).unwrap().remove(0);
+    assert!(
+        report.steps[1].calls[0].is_error,
+        "an unknown field is refused"
+    );
+
+    let authored = t
+        .create_session("Practise tenses", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let told = json!({"statement": "Chad had had enough. Which two words repeat?",
+        "mode": "recall", "solution": "had had"});
+    let error = error_of(&call(&mut t, &authored, PROBLEM, told, ""));
+    assert!(error.contains("gives away the solution"), "{error}");
+}

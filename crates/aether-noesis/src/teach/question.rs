@@ -206,11 +206,24 @@ pub(super) fn contains_phrase(haystack: &str, phrase: &str) -> bool {
         return false;
     }
     let is_word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
-    haystack.match_indices(phrase).any(|(start, _)| {
+    // Matches may overlap ("had had" in "chad had had"), so a rejected match
+    // resumes one character later rather than after the match.
+    let mut from = 0;
+    while let Some(found) = haystack[from..].find(phrase) {
+        let start = from + found;
         let before = haystack[..start].chars().next_back();
         let after = haystack[start + phrase.len()..].chars().next();
-        !is_word(before) && !is_word(after)
-    })
+        if !is_word(before) && !is_word(after) {
+            return true;
+        }
+        let first = haystack[start..].chars().next();
+        debug_assert!(
+            first.is_some(),
+            "a match of a non-empty phrase has a first character"
+        );
+        from = start + first.map_or(1, char::len_utf8);
+    }
+    false
 }
 
 /// A stored question's key as the learner would recognise it: a choice key
@@ -393,5 +406,8 @@ mod tests {
         assert!(contains_phrase("it is paris, i think", "paris"));
         assert!(!contains_phrase("comparison", "paris"));
         assert!(!contains_phrase("anything", ""));
+        assert!(contains_phrase("chad had had enough", "had had"));
+        assert!(contains_phrase("ééa é", "é"));
+        assert!(!contains_phrase("chad hadhad", "had"));
     }
 }
