@@ -1,0 +1,99 @@
+// Starts the desktop app: the app:// scheme, the guarded default session, the bridge and the
+// app window. The entry and the headless security harness both start it through here.
+
+import path from "node:path";
+import { app, BrowserWindow, ipcMain, protocol, session } from "electron";
+import { Bridge, type BridgeHost } from "../bridge/bridge.ts";
+import { DaemonLink, type Frame } from "../bridge/daemon-link.ts";
+import { RemoteWindows } from "../remote/remote-windows.ts";
+import { APP_ENTRY, APP_ORIGIN, APP_SCHEME } from "../security/csp.ts";
+import { guardSession, pinContents } from "../security/navigation.ts";
+import { compileSchemas, readProtocolSchema } from "../security/schema.ts";
+import { Validator } from "../security/validate.ts";
+import { serveApp } from "./app-protocol.ts";
+import { appWindowOptions } from "./app-window.ts";
+import { findDaemons } from "./daemons.ts";
+import { confirmNatively, openExternalLink, openTerminal, pushFrame, registerIpc, showNotification } from "./host.ts";
+import { AETHER_SCHEMA, ARCHON_SCHEMA, PRELOAD, WEB_DIST } from "./paths.ts";
+import { PreferenceStore } from "./preferences.ts";
+
+/** Must run before the app is ready: app:// is a standard, secure scheme with fetch. */
+export function registerAppScheme(): void {
+  protocol.registerSchemesAsPrivileged([
+    { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
+  ]);
+}
+
+export interface DesktopOptions {
+  /** Render offscreen and never show a window: the headless tests. */
+  readonly offscreen: boolean;
+  readonly env: Readonly<Record<string, string | undefined>>;
+  /** Overrides how a privileged action is confirmed; the native dialog otherwise. */
+  readonly confirm?: BridgeHost["confirm"];
+}
+
+export interface Desktop {
+  readonly appWindow: BrowserWindow;
+  readonly bridge: Bridge;
+  readonly remote: RemoteWindows;
+  readonly preferences: PreferenceStore;
+  readonly appWindowIds: ReadonlySet<number>;
+}
+
+interface HostParts {
+  readonly remote: RemoteWindows;
+  readonly preferences: PreferenceStore;
+  readonly protocolVersions: BridgeHost["protocolVersions"];
+  push(owner: number, conn: string, frame: Frame): void;
+}
+
+function host(options: DesktopOptions, { remote, preferences, protocolVersions, push }: HostParts): BridgeHost {
+  return {
+    findDaemons: async () => findDaemons(options.env),
+    openLink: (socket) => DaemonLink.connect(socket),
+    push,
+    confirm: options.confirm ?? confirmNatively,
+    openTerminal,
+    notify: showNotification,
+    openExternal: openExternalLink,
+    openRemote: async (origin) => { await remote.open(origin); },
+    getPreference: (key) => preferences.get(key),
+    setPreference: (key, value) => preferences.set(key, value),
+    versions: { app: app.getVersion(), electron: process.versions.electron ?? "", chrome: process.versions.chrome ?? "", node: process.versions.node },
+    logPath: app.getPath("logs"),
+    protocolVersions,
+  };
+}
+
+export async function startDesktop(options: DesktopOptions): Promise<Desktop> {
+  if (!app.isReady()) throw new Error("startDesktop runs once the app is ready");
+  const schemas = compileSchemas(readProtocolSchema(AETHER_SCHEMA), readProtocolSchema(ARCHON_SCHEMA));
+  session.defaultSession.protocol.handle(APP_SCHEME, (request) => serveApp(WEB_DIST, request));
+  guardSession(session.defaultSession);
+  app.on("web-contents-created", (_event, contents) => {
+    contents.on("will-attach-webview", (event) => event.preventDefault());
+    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  });
+  const extra = options.offscreen ? { offscreen: true } : {};
+  const remote = new RemoteWindows(extra);
+  const preferences = new PreferenceStore(path.join(app.getPath("userData"), "preferences.json"), (origin) => remote.forget(origin));
+  const appWindowIds = new Set<number>();
+  const protocolVersions = { aether: schemas.frames.aether.protocolVersion, archon: schemas.frames.archon.protocolVersion };
+  const bridge: Bridge = new Bridge(new Validator(schemas), host(options, {
+    remote, preferences, protocolVersions,
+    push: (owner, conn, frame) => { if (!pushFrame(owner, conn, frame)) bridge.connections.closeOwner(owner); },
+  }));
+  registerIpc(ipcMain, bridge, appWindowIds);
+  const base = appWindowOptions(PRELOAD);
+  const appWindow = new BrowserWindow({ ...base, webPreferences: { ...base.webPreferences, ...extra } });
+  const id = appWindow.webContents.id;
+  appWindowIds.add(id);
+  pinContents(appWindow.webContents, APP_ORIGIN);
+  appWindow.on("closed", () => {
+    appWindowIds.delete(id);
+    bridge.connections.closeOwner(id);
+  });
+  await appWindow.loadURL(APP_ENTRY);
+  if (!options.offscreen) appWindow.show();
+  return { appWindow, bridge, remote, preferences, appWindowIds };
+}
