@@ -489,6 +489,7 @@ fn child_spec(
         // A Noesis agent's children belong to Noesis, under its gate and budget.
         subsystem: ctx
             .noesis
+            .as_ref()
             .map(|_| crate::noesis_guard::NOESIS_SUBSYSTEM.to_owned()),
         role: request.role,
         name: request.name,

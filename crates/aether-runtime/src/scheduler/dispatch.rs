@@ -102,9 +102,12 @@ fn start_turns(
     while let Some(index) = pick(runtime, &remaining, &sched, lineage, &limits, &engines) {
         // Not swap_remove: `pick`'s index tiebreak is the ready order.
         let Runnable { agent, addressed } = remaining.remove(index);
-        // Admitted before this lock: once the gate is fully disabled it must
-        // not start, as a cancel that read `running` already went past it.
-        if admitted.contains_key(&agent.id) && runtime.config.noesis.is_disabled() {
+        // Admitted before this lock: once the gate is fully disabled, or the
+        // service that admitted it retired, it must not start - a cancel
+        // that read `running` already went past it.
+        if let Some(turn) = admitted.get(&agent.id)
+            && (runtime.config.noesis.is_disabled() || !turn.is_current())
+        {
             continue;
         }
         // Only a turn selected to start reserves spend under the hard stop.
@@ -132,7 +135,7 @@ fn start_turns(
                 engine: engines.contains(&provider),
                 provider,
                 on_provider: true,
-                noesis: noesis.as_ref().map(|turn| turn.lane),
+                noesis: noesis.as_ref().map(AdmittedTurn::turn),
             },
         );
         spawn_turn(runtime.clone(), agent.id, cancel, interrupt, noesis);

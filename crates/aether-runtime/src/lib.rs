@@ -175,7 +175,7 @@ pub(crate) struct RunningTurn {
     /// no provider call, so it holds no concurrency slot of any kind.
     pub on_provider: bool,
     /// The Noesis lane of a Noesis agent's turn; `None` for every other agent.
-    pub noesis: Option<noesis_guard::NoesisLane>,
+    pub noesis: Option<noesis_guard::NoesisTurn>,
 }
 
 /// A provider the scheduler is avoiding, and why.

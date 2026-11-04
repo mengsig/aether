@@ -49,7 +49,7 @@ struct Live {
 
 impl Live {
     fn stop(self) -> Result<(), aether_noesis::NoesisError> {
-        self.budget.close();
+        self.budget.retire();
         self.noesis.stop()
     }
 }
@@ -153,7 +153,7 @@ impl NoesisService {
             .ok_or(NoesisStartError::Disabled)?;
         let budget = Arc::new(ServiceBudget::new(
             noesis.accountant().clone(),
-            settings.billing_allow_api,
+            settings,
             self.models.clone(),
         ));
         self.gate.enable(budget.clone());

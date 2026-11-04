@@ -337,6 +337,10 @@ pub(crate) async fn compact(
     child_tasks: &[Task],
     cancel: &CancellationToken,
 ) -> Result<Option<aether_core::checkpoint::Checkpoint>> {
+    // The agent's model and its compactor are every model a compaction calls.
+    if let Some(cause) = crate::noesis_guard::refused_model(ctx, &ctx.agent.model) {
+        return Err(RuntimeError::Invalid(cause));
+    }
     let PendingCompaction { trigger, request } = pending;
     // Asked for by someone: an engine that folds its own session does it in place.
     if matches!(trigger, CompactionTrigger::Explicit { .. })

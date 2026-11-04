@@ -7,20 +7,33 @@ use aether_core::id::AgentId;
 use aether_core::model::Usage;
 use tokio_util::sync::CancellationToken;
 
-use super::{NoesisCharge, NoesisLane, NoesisRefusal};
+use super::{NoesisCharge, NoesisLane, NoesisRefusal, NoesisTurn};
 use crate::Runtime;
 use crate::problems::Subject;
 
 /// A Noesis turn the budget admitted, carried into the task that runs it.
 pub(crate) struct AdmittedTurn {
     pub(crate) lane: NoesisLane,
-    charge: Box<dyn NoesisCharge>,
+    charge: Arc<dyn NoesisCharge>,
 }
 
 impl AdmittedTurn {
     /// Give the claim back unspent: the scheduler did not start the turn.
     pub(crate) fn release(self) {
         self.charge.settle(&Usage::default());
+    }
+
+    /// Whether the service that admitted it still runs.
+    pub(crate) fn is_current(&self) -> bool {
+        self.charge.is_current()
+    }
+
+    /// What the running turn carries: its lane and the charge it spends.
+    pub(crate) fn turn(&self) -> NoesisTurn {
+        NoesisTurn {
+            lane: self.lane,
+            charge: self.charge.clone(),
+        }
     }
 }
 
@@ -65,7 +78,7 @@ impl Runtime {
         match budget.admit(agent, admission.lane) {
             Ok(charge) => Dispatch::Admitted(AdmittedTurn {
                 lane: admission.lane,
-                charge,
+                charge: Arc::from(charge),
             }),
             Err(NoesisRefusal::Busy(reason)) => {
                 tracing::debug!(agent = %agent.id, %reason, "Noesis cap busy; the turn waits");

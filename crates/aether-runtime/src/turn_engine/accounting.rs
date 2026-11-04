@@ -374,6 +374,9 @@ pub(super) fn budget_crossed(
     ctx: &TurnCtx,
     subtree: &mut SubtreeUsage,
 ) -> Result<Option<Crossed>> {
+    // Every site here is a model boundary of the engine: usage moved, or a
+    // bridge call is about to act. The Noesis budgets and gate apply there.
+    crate::noesis_guard::interrupt_at_boundary(runtime, ctx);
     if ctx.agent.config.token_budget.is_none() && ctx.agent.config.cost_budget.is_none() {
         return Ok(None);
     }

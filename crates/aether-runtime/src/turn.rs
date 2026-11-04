@@ -240,7 +240,7 @@ pub(crate) struct TurnCtx {
     /// selections could replace the ledger's latest request.
     pub(crate) start_handoff: Option<compaction::PendingCompaction>,
     /// The Noesis lane dispatch admitted this turn in; `None` outside Noesis.
-    pub(crate) noesis: Option<crate::noesis_guard::NoesisLane>,
+    pub(crate) noesis: Option<crate::noesis_guard::NoesisTurn>,
 }
 
 impl TurnCtx {
@@ -399,7 +399,7 @@ fn begin_turn(
         .lock()
         .running
         .get(&agent_id)
-        .and_then(|running| running.noesis);
+        .and_then(|running| running.noesis.clone());
     let mut ctx = TurnCtx {
         agent: agent.clone(),
         task: task.clone(),

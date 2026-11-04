@@ -49,8 +49,12 @@ impl NoesisService {
         if !ours || !self.current_drain(generation) {
             return;
         }
-        // Disabled first: a turn admitted earlier and registered after this
-        // is refused by the scheduler, one registered before is cancelled.
+        // Retired and disabled first: a turn admitted earlier and registered
+        // after this is refused by the scheduler, one registered before is
+        // cancelled. A later re-enable cannot revive the retired admissions.
+        if let State::Draining { live, .. } = &*state {
+            live.budget.retire();
+        }
         self.gate.disable();
         match runtime.cancel_noesis_turns(None).await {
             Ok(0) => {}

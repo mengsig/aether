@@ -7,7 +7,19 @@ struct Unlimited;
 struct Free;
 
 impl NoesisCharge for Free {
-    fn settle(self: Box<Self>, _usage: &Usage) {}
+    fn is_current(&self) -> bool {
+        true
+    }
+
+    fn record(&self, _spent: &Usage) -> Option<String> {
+        None
+    }
+
+    fn refuses_model(&self, _model: &ModelRef) -> Option<String> {
+        None
+    }
+
+    fn settle(&self, _usage: &Usage) {}
 }
 
 impl NoesisBudget for Unlimited {

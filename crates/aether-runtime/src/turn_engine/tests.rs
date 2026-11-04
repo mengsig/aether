@@ -481,6 +481,7 @@ pub(super) async fn started_agent_ctx(runtime: &Arc<Runtime>) -> TurnCtx {
 }
 
 mod context;
+mod noesis_boundary;
 mod receipt_cost;
 mod steering;
 mod store_lock;

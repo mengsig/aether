@@ -385,7 +385,9 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
         panic!("running");
     };
     let accountant = live.noesis.accountant().clone();
-    let budget = ServiceBudget::new(accountant.clone(), false, harness.daemon.models.clone());
+    let mut settings = live.noesis.settings().clone();
+    settings.billing_allow_api = false;
+    let budget = ServiceBudget::new(accountant.clone(), &settings, harness.daemon.models.clone());
     let refused = budget
         .admit(&api, NoesisLane::Interactive)
         .err()
@@ -395,7 +397,22 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
         "{refused:?}"
     );
     assert!(budget.admit(&subscription, NoesisLane::Interactive).is_ok());
-    let allowed = ServiceBudget::new(accountant, true, harness.daemon.models.clone());
+    let charge = budget
+        .admit(&subscription, NoesisLane::Interactive)
+        .expect("admitted");
+    assert!(
+        charge
+            .refuses_model(&ModelRef::new("anthropic", "claude-sonnet-5-5"))
+            .is_some_and(|why| why.contains("allow_api")),
+        "a model changed after admission is refused at its call"
+    );
+    assert_eq!(
+        charge.refuses_model(&ModelRef::new("claude-code", "opus")),
+        None
+    );
+    charge.settle(&Usage::default());
+    settings.billing_allow_api = true;
+    let allowed = ServiceBudget::new(accountant, &settings, harness.daemon.models.clone());
     assert!(allowed.admit(&api, NoesisLane::Interactive).is_ok());
     drop(state);
     let status = harness
@@ -511,4 +528,96 @@ async fn a_keyed_configure_replays_its_first_outcome() {
         .await
         .expect_err("same key, other request");
     assert_ne!(other.code, ErrorCode::Unavailable, "{other:?}");
+}
+
+/// A budget of $1 a day on each lane, nothing spent yet.
+fn one_dollar_budget(harness: &Harness) -> ServiceBudget {
+    let mut settings = aether_noesis::settings::NoesisSettings {
+        enabled: true,
+        ..Default::default()
+    };
+    settings.budget.interactive_usd_daily = 1.0;
+    let accountant = aether_noesis::budget::Accountant::new(
+        &settings,
+        budget::today(),
+        aether_noesis::budget::LaneSpend::default(),
+    );
+    ServiceBudget::new(accountant, &settings, harness.daemon.models.clone())
+}
+
+fn costing(usd: f64) -> Usage {
+    Usage {
+        cost_usd: usd,
+        ..Usage::default()
+    }
+}
+
+#[tokio::test]
+async fn a_running_turn_s_spend_counts_against_the_budget_before_it_settles() {
+    let harness = Harness::new().await;
+    harness.configure(enable(true)).await;
+    let tutor = noesis_agent(
+        &harness,
+        "noesis.tutor",
+        ModelRef::new("claude-code", "opus"),
+    );
+    let budget = one_dollar_budget(&harness);
+    let first = budget
+        .admit(&tutor, NoesisLane::Interactive)
+        .expect("admitted");
+    assert_eq!(first.record(&costing(0.4)), None, "under the limit");
+    let second = budget
+        .admit(&tutor, NoesisLane::Interactive)
+        .expect("room left");
+    let spent = first
+        .record(&costing(1.0))
+        .expect("the limit is reached mid-turn");
+    assert!(spent.contains("budget"), "{spent}");
+    let refused = budget
+        .admit(&tutor, NoesisLane::Interactive)
+        .err()
+        .expect("spent out");
+    assert!(
+        matches!(refused, NoesisRefusal::Exhausted(_)),
+        "{refused:?}"
+    );
+    assert!(
+        second.record(&Usage::default()).is_some(),
+        "the other turn stops too"
+    );
+    first.settle(&costing(1.0));
+    second.settle(&Usage::default());
+    assert_eq!(budget.outstanding(), 0);
+    assert!(
+        budget.admit(&tutor, NoesisLane::Interactive).is_err(),
+        "the settled spend still counts"
+    );
+}
+
+#[tokio::test]
+async fn a_retired_budget_s_admissions_start_nothing() {
+    let harness = Harness::new().await;
+    harness.configure(enable(true)).await;
+    let tutor = noesis_agent(
+        &harness,
+        "noesis.tutor",
+        ModelRef::new("claude-code", "opus"),
+    );
+    let budget = one_dollar_budget(&harness);
+    let charge = budget
+        .admit(&tutor, NoesisLane::Interactive)
+        .expect("admitted");
+    assert!(charge.is_current());
+    budget.retire();
+    assert!(
+        !charge.is_current(),
+        "a retired service's claim starts no turn"
+    );
+    let refused = budget
+        .admit(&tutor, NoesisLane::Interactive)
+        .err()
+        .expect("closed");
+    assert!(matches!(refused, NoesisRefusal::Busy(_)), "{refused:?}");
+    charge.settle(&Usage::default());
+    assert_eq!(budget.outstanding(), 0);
 }

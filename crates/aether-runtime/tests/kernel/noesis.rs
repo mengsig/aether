@@ -25,6 +25,10 @@ pub(super) struct Recording {
     drain_on_admit: Option<NoesisGate>,
     pub(super) admits: std::sync::Mutex<Vec<(AgentId, NoesisLane)>>,
     pub(super) settled: Arc<std::sync::Mutex<Vec<(AgentId, Usage)>>>,
+    /// Cleared as the service that admitted the charges retires.
+    pub(super) current: Arc<std::sync::atomic::AtomicBool>,
+    /// Whether the billing rule refuses every model for every charge.
+    pub(super) refuse_models: bool,
 }
 
 impl Recording {
@@ -34,6 +38,32 @@ impl Recording {
             drain_on_admit: None,
             admits: Default::default(),
             settled: Default::default(),
+            current: Arc::new(true.into()),
+            refuse_models: false,
+        })
+    }
+
+    /// Admits every turn, but its billing rule refuses every model.
+    pub(super) fn refusing_models() -> Arc<Self> {
+        Arc::new(Self {
+            answer: Answer::Admit,
+            drain_on_admit: None,
+            admits: Default::default(),
+            settled: Default::default(),
+            current: Arc::new(true.into()),
+            refuse_models: true,
+        })
+    }
+
+    /// Admits every turn on behalf of a service that has already retired.
+    pub(super) fn retired() -> Arc<Self> {
+        Arc::new(Self {
+            answer: Answer::Admit,
+            drain_on_admit: None,
+            admits: Default::default(),
+            settled: Default::default(),
+            current: Arc::new(false.into()),
+            refuse_models: false,
         })
     }
 
@@ -44,6 +74,8 @@ impl Recording {
             drain_on_admit: Some(gate.clone()),
             admits: Default::default(),
             settled: Default::default(),
+            current: Arc::new(true.into()),
+            refuse_models: false,
         })
     }
 
@@ -59,10 +91,25 @@ impl Recording {
 struct Charge {
     agent: AgentId,
     settled: Arc<std::sync::Mutex<Vec<(AgentId, Usage)>>>,
+    current: Arc<std::sync::atomic::AtomicBool>,
+    refuse_models: bool,
 }
 
 impl NoesisCharge for Charge {
-    fn settle(self: Box<Self>, usage: &Usage) {
+    fn is_current(&self) -> bool {
+        self.current.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn record(&self, _spent: &Usage) -> Option<String> {
+        None
+    }
+
+    fn refuses_model(&self, model: &ModelRef) -> Option<String> {
+        self.refuse_models
+            .then(|| format!("`{}` is billed per request", model.provider))
+    }
+
+    fn settle(&self, usage: &Usage) {
         self.settled.lock().unwrap().push((self.agent, *usage));
     }
 }
@@ -88,6 +135,8 @@ impl NoesisBudget for Recording {
         Ok(Box::new(Charge {
             agent: agent.id,
             settled: self.settled.clone(),
+            current: self.current.clone(),
+            refuse_models: self.refuse_models,
         }))
     }
 }
@@ -405,6 +454,54 @@ async fn an_exhausted_budget_parks_the_agent_without_a_model_call() {
         "nothing was admitted to settle"
     );
     assert!(h.client.requests().is_empty());
+}
+
+#[tokio::test]
+async fn a_model_the_billing_rule_refuses_at_the_call_is_never_called() {
+    let gate = NoesisGate::new();
+    let budget = Recording::refusing_models();
+    gate.enable(budget.clone());
+    let h = noesis_harness(vec![ScriptedClient::text("unused")], &gate, |_| {}, |_| {}).await;
+    let (tutor, _) = h
+        .runtime
+        .create_agent(noesis_spec("noesis.tutor", "teach"), Actor::user())
+        .expect("created");
+    let status = h.wait_until(tutor.id, AgentStatus::is_terminal).await;
+    assert!(
+        matches!(&status, AgentStatus::Failed { error } if error.contains("billed per request")),
+        "{status:?}"
+    );
+    assert!(h.client.requests().is_empty(), "no call on a refused model");
+    h.wait_for("the charge settled", || budget.settled().len() == 1)
+        .await;
+}
+
+#[tokio::test]
+async fn an_admission_from_a_retired_service_starts_no_turn() {
+    let gate = NoesisGate::new();
+    let budget = Recording::retired();
+    gate.enable(budget.clone());
+    let h = noesis_harness(vec![ScriptedClient::text("unused")], &gate, |_| {}, |_| {}).await;
+    let (tutor, _) = h
+        .runtime
+        .create_agent(noesis_spec("noesis.tutor", "teach"), Actor::user())
+        .expect("created");
+    h.wait_for("an admission released unstarted", || {
+        !budget.settled().is_empty()
+    })
+    .await;
+    assert!(
+        h.client.requests().is_empty(),
+        "the stale claim made no call"
+    );
+    assert!(
+        budget
+            .settled()
+            .iter()
+            .all(|(id, usage)| *id == tutor.id && usage.total_tokens() == 0),
+        "released with nothing spent"
+    );
+    assert!(h.runtime.noesis_turns_running().is_empty());
 }
 
 /// An agent of `role` admitted just as the gate drains, before its model call.

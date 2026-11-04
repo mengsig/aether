@@ -14,7 +14,7 @@ use aether_core::agent::Agent;
 use aether_core::event::Actor;
 use aether_core::id::AgentId;
 use aether_core::idempotency::{Submission, SubmissionOutcome};
-use aether_core::model::Usage;
+use aether_core::model::{ModelRef, Usage};
 use tokio_util::sync::CancellationToken;
 
 use crate::{Result, Runtime, RuntimeError};
@@ -60,9 +60,34 @@ pub trait NoesisBudget: Send + Sync + std::fmt::Debug {
     ) -> std::result::Result<Box<dyn NoesisCharge>, NoesisRefusal>;
 }
 
-/// One admitted turn's claim on the budget, settled once the turn ends.
-pub trait NoesisCharge: Send {
-    fn settle(self: Box<Self>, usage: &Usage);
+/// One admitted turn's claim on the budget, shared by the turn that spends
+/// it and the task that settles it once the turn ends.
+pub trait NoesisCharge: Send + Sync {
+    /// Whether the service that admitted the turn still runs; a claim on a
+    /// retired one must start nothing.
+    fn is_current(&self) -> bool;
+    /// The turn's spend so far, reported at a model boundary so concurrent
+    /// admissions see it; `Some` names the budget it has now spent.
+    fn record(&self, spent: &Usage) -> Option<String>;
+    /// Why `model`, or the compactor it would use, may not carry the turn.
+    fn refuses_model(&self, model: &ModelRef) -> Option<String>;
+    /// Charge what the turn spent and free its slot; later calls do nothing.
+    fn settle(&self, usage: &Usage);
+}
+
+/// The Noesis side of a running turn: its lane and the charge it spends.
+#[derive(Clone)]
+pub(crate) struct NoesisTurn {
+    pub(crate) lane: NoesisLane,
+    pub(crate) charge: Arc<dyn NoesisCharge>,
+}
+
+impl std::fmt::Debug for NoesisTurn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NoesisTurn")
+            .field("lane", &self.lane)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Why the budget refused a turn.
@@ -240,7 +265,7 @@ impl Runtime {
             .lock()
             .running
             .iter()
-            .filter_map(|(id, turn)| turn.noesis.map(|lane| (*id, lane)))
+            .filter_map(|(id, turn)| turn.noesis.as_ref().map(|noesis| (*id, noesis.lane)))
             .collect()
     }
 
@@ -254,7 +279,8 @@ impl Runtime {
             .iter()
             .filter(|(_, turn)| {
                 turn.noesis
-                    .is_some_and(|l| lane.is_none_or(|want| want == l))
+                    .as_ref()
+                    .is_some_and(|noesis| lane.is_none_or(|want| want == noesis.lane))
             })
             .map(|(id, turn)| (*id, turn.interrupt.clone()))
             .collect();
@@ -325,6 +351,43 @@ pub fn record_noesis_receipt(
 /// background job stops there once the gate leaves Enabled.
 pub(crate) fn stops_at_model_boundary(runtime: &Runtime, lane: Option<NoesisLane>) -> bool {
     lane == Some(NoesisLane::Background) && !runtime.config.noesis.is_enabled()
+}
+
+/// Why a Noesis turn must not make another model call: a background job
+/// once the gate left Enabled, or any turn whose spend used up its budget.
+pub(crate) fn boundary_stop(runtime: &Runtime, ctx: &crate::turn::TurnCtx) -> Option<String> {
+    let turn = ctx.noesis.as_ref()?;
+    debug_assert!(
+        ctx.turn_usage.cost_usd.is_finite(),
+        "a turn's spend is a real amount"
+    );
+    if stops_at_model_boundary(runtime, Some(turn.lane)) {
+        return Some("Noesis is not enabled".to_owned());
+    }
+    turn.charge.record(&ctx.turn_usage)
+}
+
+/// At a native engine's model boundary: interrupt the turn when
+/// [`boundary_stop`] says so. The engine winds down as for any interrupt.
+pub(crate) fn interrupt_at_boundary(runtime: &Runtime, ctx: &crate::turn::TurnCtx) {
+    let Some(reason) = boundary_stop(runtime, ctx) else {
+        return;
+    };
+    let sched = runtime.sched.lock();
+    let Some(running) = sched.running.get(&ctx.agent.id) else {
+        debug_assert!(false, "a turn at its model boundary holds its slot");
+        return;
+    };
+    if !running.interrupt.is_cancelled() {
+        tracing::info!(agent = %ctx.agent.id, %reason, "interrupting a Noesis turn at its model boundary");
+        running.interrupt.cancel();
+    }
+}
+
+/// Why the Noesis billing rule forbids `model` for this turn, if it does.
+pub(crate) fn refused_model(ctx: &crate::turn::TurnCtx, model: &ModelRef) -> Option<String> {
+    let turn = ctx.noesis.as_ref()?;
+    turn.charge.refuses_model(model)
 }
 
 /// Whether the role is reserved for Noesis agents.

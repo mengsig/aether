@@ -141,14 +141,15 @@ async fn manual_compaction(
     )))
 }
 
-/// A Noesis background job whose gate left Enabled ends before its next model
-/// call, as an interrupt: the agent keeps what it committed and waits.
+/// A Noesis background job whose gate left Enabled, or a Noesis turn whose
+/// budget is spent, ends before its next model call as an interrupt: the
+/// agent keeps what it committed and waits.
 fn stopped_at_model_boundary(runtime: &Runtime, ctx: &TurnCtx) -> bool {
-    let stops = crate::noesis_guard::stops_at_model_boundary(runtime, ctx.noesis);
-    if stops {
-        tracing::info!(agent = %ctx.agent.id, "Noesis is not enabled; the background turn stops before its model call");
-    }
-    stops
+    let Some(reason) = crate::noesis_guard::boundary_stop(runtime, ctx) else {
+        return false;
+    };
+    tracing::info!(agent = %ctx.agent.id, %reason, "the Noesis turn stops before its model call");
+    true
 }
 
 /// Count the maintenance turn and read `items`, the requests it served.
@@ -296,6 +297,11 @@ pub(super) async fn run_link(
     };
     if stopped_at_model_boundary(runtime, ctx) {
         return Ok(LinkOutcome::Done(Next::Interrupted));
+    }
+    // Checked on the row this turn runs, not the one admission read: the
+    // model may have been changed in between.
+    if let Some(cause) = crate::noesis_guard::refused_model(ctx, model) {
+        return unusable_link(runtime, ctx, model, rest, cause);
     }
     if runtime.client_override.is_none() {
         prepare_fallback_session(runtime, ctx, model)?;
