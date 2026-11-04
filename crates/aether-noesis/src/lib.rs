@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use chrono::NaiveDate;
 
 pub mod budget;
+pub mod extract;
+pub mod graph;
 pub mod learner;
 pub mod prompts;
 pub mod settings;
