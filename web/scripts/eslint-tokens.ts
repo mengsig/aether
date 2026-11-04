@@ -92,6 +92,15 @@ function enclosingAttribute(node: Rule.Node): string | undefined {
   return undefined;
 }
 
+/** A number written in the source, signed or not: `200`, `-200`, `+0.5`. */
+function numberValue(node: unknown): number | undefined {
+  const expression = node as { type?: string; value?: unknown; operator?: string; argument?: unknown };
+  if (expression.type === "Literal") return typeof expression.value === "number" ? expression.value : undefined;
+  if (expression.type !== "UnaryExpression" || (expression.operator !== "-" && expression.operator !== "+")) return undefined;
+  const magnitude = numberValue(expression.argument);
+  return magnitude === undefined || expression.operator === "+" ? magnitude : -magnitude;
+}
+
 function stringValue(node: unknown): string | undefined {
   const literal = node as { type?: string; value?: unknown; quasis?: Array<{ value: { cooked?: unknown } }> };
   if (literal.type === "Literal") return typeof literal.value === "string" ? literal.value : undefined;
@@ -136,9 +145,9 @@ const rule: Rule.RuleModule = {
       const timing = TIMING_KEY.test(key);
       // A custom property may carry a duration into `transition: ... var(--x)`.
       const durations = timing || key.startsWith("--");
-      const literal = value as { type?: string; value?: unknown };
-      if (timing && literal.type === "Literal" && typeof literal.value === "number" && literal.value !== 0) {
-        return context.report({ node, message: `raw duration ${literal.value} for ${key}: ${DURATION_HINT}` });
+      const number = numberValue(value);
+      if (timing && number !== undefined && number !== 0) {
+        return context.report({ node, message: `raw duration ${number} for ${key}: ${DURATION_HINT}` });
       }
       const text = stringValue(value);
       if (text === undefined || enclosingAttribute(node) === "style") return;
@@ -153,13 +162,15 @@ const rule: Rule.RuleModule = {
         if (node.left.type !== "MemberExpression") return;
         checkStyleKey(node, staticKey(node.left.property, node.left.computed), node.right as Rule.Node);
       },
-      // `el.style.setProperty("--x", "200ms")` sets a style key like an assignment does.
+      // `el.style.setProperty("--x", "200ms")` sets a style key like an assignment does, and
+      // `el.animate(keyframes, 200)` is the duration-only form of `animate(keyframes, { duration })`.
       CallExpression: (node) => {
         const callee = node.callee;
-        if (callee.type !== "MemberExpression" || staticKey(callee.property, callee.computed) !== "setProperty") return;
-        const [name, value] = node.arguments;
-        const key = stringValue(name);
-        if (key !== undefined && value !== undefined && value.type !== "SpreadElement") checkStyleKey(node, key, value as Rule.Node);
+        const method = callee.type === "MemberExpression" ? staticKey(callee.property, callee.computed) : undefined;
+        const [first, second] = node.arguments;
+        if (second === undefined || second.type === "SpreadElement") return;
+        if (method === "setProperty") checkStyleKey(node, stringValue(first), second as Rule.Node);
+        if (method === "animate") checkStyleKey(node, "duration", second as Rule.Node);
       },
       ImportDeclaration: (node) => {
         const specifier = node.source.value;

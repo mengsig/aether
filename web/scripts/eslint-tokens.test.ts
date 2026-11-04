@@ -73,6 +73,18 @@ describe("design tokens only (CONTRACTS.md §4)", () => {
     ]);
   });
 
+  it("rejects literal Web Animations timings, signed or in the duration-only form", async () => {
+    const messages = await lint(COMPONENT, [
+      "export function a(el: HTMLElement) { el.animate([{ opacity: 0 }, { opacity: 1 }], 200); }",
+      "export function b(el: HTMLElement) { el.animate([], { delay: -200, endDelay: +0, duration: -0 }); }",
+      "export function c(el: HTMLElement, ms: number) { el.animate([], ms); }",
+    ].join("\n"));
+    expect(messages).toEqual([
+      "raw duration 200 for duration: use a --motion-* token from tokens.css, so reduced motion can zero it (CONTRACTS.md §4)",
+      "raw duration -200 for delay: use a --motion-* token from tokens.css, so reduced motion can zero it (CONTRACTS.md §4)",
+    ]);
+  });
+
   it("rejects raw values in every stylesheet a component imports", async () => {
     const messages = await lint(COMPONENT, 'import "../test/fixtures/raw.css";\nexport const x = 1;\n');
     expect(messages).toEqual([

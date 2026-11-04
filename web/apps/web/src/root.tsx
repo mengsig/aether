@@ -1,4 +1,5 @@
 import { navigate, selectConnections, selectReports, useApp, useCapabilities, useEntityActions, useRoute, useRoutes, useSelector } from "@aether-ui/core";
+import type { Report } from "@aether-ui/core";
 import type { EntityAction } from "@aether-ui/protocol";
 import { AppShell, type ToastMessage } from "@aether-ui/ui";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
@@ -12,6 +13,14 @@ function subscribeHash(listener: () => void): () => void {
 }
 
 const readHash = (): string => window.location.hash || "#/";
+
+const UNEXPLAINED_REPORT = "Something failed without saying why";
+
+/** A report as a toast. Daemons may send a blank message, and a toast must have a title. */
+export function reportNotice(report: Report): ToastMessage {
+  const title = report.message.trim() === "" ? UNEXPLAINED_REPORT : report.message;
+  return { id: report.id, title, tone: "danger", ...(report.code ? { body: report.code } : {}) };
+}
 
 /** Feeds the shell everything it renders from core: routes, actions, capabilities, the route, connections and reports. */
 export function ShellRoot() {
@@ -29,7 +38,7 @@ export function ShellRoot() {
   const notices = useMemo(() => reports
     .filter((report) => !dismissed.has(report.id))
     .slice(-VISIBLE_NOTICES)
-    .map((report): ToastMessage => ({ id: report.id, title: report.message, tone: "danger", ...(report.code ? { body: report.code } : {}) })),
+    .map(reportNotice),
   [reports, dismissed]);
   const dismiss = useCallback((id: ToastMessage["id"]) => setDismissed((old) => new Set([...old, id])), []);
   const onActionError = useCallback((action: EntityAction, error: unknown) => {
