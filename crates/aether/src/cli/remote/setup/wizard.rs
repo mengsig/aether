@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use aether_client::ClientError;
-use aether_protocol::remote::{RemoteSettings, RemoteStatus};
+use aether_protocol::remote::{RemoteMount, RemoteSettings, RemoteStatus};
 use anyhow::{Context as _, bail};
 
 use super::Options;
@@ -14,7 +14,7 @@ use super::guidance::{self, Guidance};
 use super::platform::Platform;
 use super::report::{Mode, Report, Step, StepId, StepState};
 use super::runner::CommandRunner;
-use super::tailscale::{Node, PortUse, SERVE_PORTS, Tailscale, TailscaleState};
+use super::tailscale::{Node, PortUse, SERVE_PORTS, ServeConfig, Tailscale, TailscaleState};
 use super::ui::{Ui, Wait};
 
 /// Re-checks of Tailscale after a person says they fixed something.
@@ -303,6 +303,9 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
             bail!("Tailscale was ready a moment ago and is not found now");
         };
         let config = tailscale.serve_config().await?;
+        if self.funnel_over_mounts(status, &config) {
+            return Ok(Flow::Stop);
+        }
         let (mut free, mut unreadable) = (None, None);
         for port in SERVE_PORTS {
             match config.port_use(&node.dns_name, port, &target) {
@@ -331,6 +334,59 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
             funnel_exposed: false,
         };
         Ok(Flow::Go(publication(node, target, plan)))
+    }
+
+    /// Refuses a Funnel, asked for or open on any port, while the daemon mounts anything:
+    /// mounted daemons are never on the public internet (CONTRACTS.md §8). Before any change.
+    fn funnel_over_mounts(&mut self, status: &RemoteStatus, config: &ServeConfig) -> bool {
+        let mounts = status.settings.mounts.as_deref().unwrap_or_default();
+        let open = config.funnels();
+        if mounts.is_empty() || !(self.options.funnel || !open.is_empty()) {
+            return false;
+        }
+        self.refuse_funnel(mounts, open);
+        true
+    }
+
+    /// Whether a mount has appeared since planning, read fresh from the daemon just before
+    /// Funnel is turned on: prompts, a stale-revision retry or a retried publish all wait.
+    pub(super) async fn mounted_since_plan(&mut self) -> anyhow::Result<bool> {
+        assert!(
+            self.options.funnel,
+            "only a Funnel publication is rechecked"
+        );
+        let status = self.daemon.remote().await?;
+        let mounts = status.settings.mounts.as_deref().unwrap_or_default();
+        if mounts.is_empty() {
+            return Ok(false);
+        }
+        self.refuse_funnel(mounts, &[]);
+        Ok(true)
+    }
+
+    /// Records why Funnel is refused: what is mounted, and the ways out.
+    fn refuse_funnel(&mut self, mounts: &[RemoteMount], open: &[String]) {
+        assert!(!mounts.is_empty(), "a refusal names the mounts in the way");
+        let prefixes: Vec<&str> = mounts.iter().map(|mount| mount.prefix.as_str()).collect();
+        let detail = format!(
+            "this daemon mounts {} on its listener, and a mounted daemon is never published \
+             through Tailscale Funnel",
+            prefixes.join(", ")
+        );
+        let mut fix: Vec<String> = prefixes
+            .iter()
+            .map(|prefix| format!("Remove the mount: aether remote mount remove {prefix}"))
+            .collect();
+        match open.is_empty() {
+            true => fix.push("Or publish privately: aether remote setup (without --funnel)".into()),
+            false => fix.push(format!(
+                "Or turn Funnel off where it is open ({}): see `tailscale funnel status`",
+                open.join(", ")
+            )),
+        }
+        self.say(&format!("[!!] {detail}"));
+        self.report
+            .push(Step::new(StepId::Publish, StepState::Blocked, detail).fix(fix));
     }
 
     fn proxy_publication(&self, status: &RemoteStatus) -> Publication {

@@ -442,7 +442,10 @@ async fn an_upgrade_is_answered_with_101_until_the_connection_cap() {
         );
         assert_eq!(switched.header(SEC_WEBSOCKET_PROTOCOL), ws::SUBPROTOCOL);
         assert_eq!(switched.header(UPGRADE), "websocket");
-        let pending = slot.take().expect("the upgrade is left for the connection");
+        let taken = slot.take().expect("the upgrade is left for the connection");
+        let Upgrade::Carrier(pending) = taken else {
+            panic!("a device upgrade is the carrier's");
+        };
         assert_eq!(pending.origin, site.origin);
         held.push(pending);
     }

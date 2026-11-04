@@ -702,7 +702,7 @@ mod id_references {
     /// Strict on purpose: engines spawn it with the full id of their agent.
     const STRICT: &[&str] = &["aether mcp-bridge agent"];
     /// Named like an id argument but holding something else.
-    const NOT_IDS: &[&str] = &["aether set approval"];
+    const NOT_IDS: &[&str] = &["aether set approval", "aether remote mount add target"];
 
     fn arguments(command: &clap::Command, prefix: &str, out: &mut Vec<(String, clap::Arg)>) {
         let path = if prefix.is_empty() {

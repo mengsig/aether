@@ -354,6 +354,11 @@ enum Scope {
 }
 
 impl ServeConfig {
+    /// Every `host:port` open to the internet through Funnel, services and sessions included.
+    pub(super) fn funnels(&self) -> &[String] {
+        &self.funnel
+    }
+
     fn absorb(&mut self, raw: RawServe, scope: Scope) {
         for (key, web) in raw.web {
             let root = web.handlers.get("/").map(describe_handler);
