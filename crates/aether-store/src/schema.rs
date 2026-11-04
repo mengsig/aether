@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::{Result, StoreError};
 
-pub const SCHEMA_VERSION: u32 = 29;
+pub const SCHEMA_VERSION: u32 = 30;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -510,9 +510,21 @@ CREATE INDEX IF NOT EXISTS agents_run_id ON agents(run, id);
 CREATE INDEX IF NOT EXISTS events_run_type ON events(run, type, seq);
 "#;
 
+// Memory admission: tier, candidate or active, supporting tasks, verification
+// and refs, one row per memory. Every memory stored before it is backfilled as
+// active by `backfill_memory_admission`; the record rows are not touched.
+const V30: &str = r#"
+CREATE TABLE IF NOT EXISTS memory_admission (
+    memory_id TEXT PRIMARY KEY,
+    state     TEXT NOT NULL CHECK (state IN ('candidate', 'active')),
+    tier      TEXT NOT NULL,
+    body      TEXT NOT NULL
+);
+"#;
+
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18, V19, V20, V21,
-    V22, V23, V24, V25, V26, V27, V28, V29,
+    V22, V23, V24, V25, V26, V27, V28, V29, V30,
 ];
 
 /// Rewrites that SQL cannot express, run in the same transaction as the
@@ -547,6 +559,7 @@ fn add_missing_column(tx: &Connection, table: &str, column: &str, kind: &str) ->
 fn data_migration(tx: &Connection, to: u32) -> Result<()> {
     match to {
         8 => normalize_repository_scopes(tx),
+        30 => backfill_memory_admission(tx),
         _ => Ok(()),
     }
 }
@@ -618,6 +631,44 @@ fn normalize_repository_scopes(tx: &Connection) -> Result<()> {
         tx.execute(
             "UPDATE agents SET body = ?1 WHERE id = ?2",
             rusqlite::params![value.to_string(), id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Give every memory without an admission row the one it always had: active,
+/// its tier, verification and refs read from the record. A replay keeps the
+/// rows already there. An unreadable body is skipped, as in V8: nothing can
+/// load that record, and a record with no row is read as active anyway.
+fn backfill_memory_admission(tx: &Connection) -> Result<()> {
+    use aether_core::memory::MemoryRecord;
+    use aether_core::memory_admission::{MemoryAdmission, MemoryState};
+    let mut pending: Vec<(String, String)> = Vec::new();
+    {
+        let mut stmt = tx.prepare(
+            "SELECT m.id, m.body FROM memories m
+             WHERE NOT EXISTS (SELECT 1 FROM memory_admission a WHERE a.memory_id = m.id)",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows {
+            pending.push(row?);
+        }
+    }
+    for (id, body) in pending {
+        let record = serde_json::from_str::<MemoryRecord>(&body).ok();
+        let Some(record) = record.filter(|r| r.id.to_string() == id) else {
+            tracing::warn!(memory = %id, "memory body is unreadable; admission left implicit");
+            continue;
+        };
+        let admission = MemoryAdmission::derived(&record, MemoryState::Active);
+        tx.execute(
+            "INSERT INTO memory_admission(memory_id, state, tier, body) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                id,
+                admission.state.as_str(),
+                admission.tier.as_str(),
+                serde_json::to_string(&admission)?,
+            ],
         )?;
     }
     Ok(())

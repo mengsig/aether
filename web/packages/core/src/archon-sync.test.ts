@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Json } from "./guards.ts";
 import { ConnectionManager } from "./manager.ts";
-import { INITIAL_STATE, Store } from "./store.ts";
+import { INITIAL_STATE, replaces, Store } from "./store.ts";
+import { installSummaries, itemFromSummary } from "./archon-sync.ts";
 import { FakeDaemon, type Answer, type Handler } from "./fixtures/fake-daemon.ts";
 import F from "./fixtures/archon-frames.json";
 
@@ -29,7 +30,7 @@ function archond(overrides: Overrides = {}): Handler {
       case "list_item_summaries": return { ok: F.summaries_24 };
       case "feed_history": return { ok: F.feed_history };
       case "subscribe_feed": return { ok: F.subscribed_feed };
-      case "get_item": return { ok: { reply: "item", data: { id: command.item } } };
+      case "get_item": return { ok: { reply: "item_detail", data: { id: command.item } } };
       default: throw new Error(`unscripted ${String(command.cmd)}`);
     }
   };
@@ -175,7 +176,7 @@ describe("Archon change cursor (CONTRACTS.md §5.3)", () => {
     manager.start();
     await settle();
     manager.showItems(CONN, ["qi_1"]);
-    const change = (n: number, item: string) => ({ frame: "change", sub: 6, change: { seq: n, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item, state: "running" } } });
+    const change = (n: number, item: string) => ({ frame: "change", sub: 6, change: { seq: n, at: "2026-11-04T03:00:09Z", subject: "item", item, state: "running" } });
     daemon.push(change(120, "qi_1"));
     daemon.push(change(121, "qi_1"));
     daemon.push(change(122, "qi_2"));
@@ -190,13 +191,13 @@ describe("Archon change cursor (CONTRACTS.md §5.3)", () => {
       task_graph: () => {
         if (daemon.commands("task_graph").length === 1) return { ok: F.task_graph };
         // A change committed after the reread's as_of arrives before its answer.
-        daemon.push({ frame: "change", sub: 6, change: { seq: 131, at: "2026-11-04T03:00:10Z", subject: { subject: "item", item: "qi_new", state: "dispatching" } } });
+        daemon.push({ frame: "change", sub: 6, change: { seq: 131, at: "2026-11-04T03:00:10Z", subject: "item", item: "qi_new", state: "dispatching" } });
         return { ok: graphAt125 };
       },
     }));
     manager.start();
     await settle();
-    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_new", state: "queued" } } });
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_new", state: "queued" } });
     await vi.advanceTimersByTimeAsync(250);
     expect(daemon.commands("task_graph")).toHaveLength(2);
     expect(daemon.commands("list_item_summaries")).toHaveLength(2);
@@ -213,14 +214,14 @@ describe("Archon change cursor (CONTRACTS.md §5.3)", () => {
     manager.showItems(CONN, ["qi_2"]);
     daemon.drop(1006);
     await vi.advanceTimersByTimeAsync(300);
-    daemon.push({ frame: "change", sub: 6, change: { seq: 140, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_2", state: "failed" } } });
+    daemon.push({ frame: "change", sub: 6, change: { seq: 140, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_2", state: "failed" } });
     await vi.advanceTimersByTimeAsync(250);
     expect(daemon.commands("get_item")).toEqual([expect.objectContaining({ item: "qi_2" })]);
   });
 });
 
 describe("Archon resync, second review", () => {
-  const change = (n: number, item: string, state: string) => ({ frame: "change", sub: 6, change: { seq: n, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item, state } } });
+  const change = (n: number, item: string, state: string) => ({ frame: "change", sub: 6, change: { seq: n, at: "2026-11-04T03:00:09Z", subject: "item", item, state } });
 
   it("rereads snapshots after a reconnect when an unknown item's change preceded it", async () => {
     const { daemon, manager } = setup(archond());
@@ -267,7 +268,7 @@ describe("Archon resync, second review", () => {
 });
 
 describe("Archon resync, third review", () => {
-  const initiative = (n: number, id: string, state: string) => ({ frame: "change", sub: 6, change: { seq: n, at: "2026-11-04T03:00:09Z", subject: { subject: "initiative", initiative: id, state } } });
+  const initiative = (n: number, id: string, state: string) => ({ frame: "change", sub: 6, change: { seq: n, at: "2026-11-04T03:00:09Z", subject: "initiative", initiative: id, state } });
   const withInitiative = { ...F.task_graph, data: { ...F.task_graph.data, initiatives: [{ id: "in_1", title: "one", state: "active", atomic: false }] } };
 
   it("applies an initiative change to the graph it is newer than", async () => {
@@ -298,7 +299,7 @@ describe("Archon resync, third review", () => {
     const { store, daemon, manager } = setup(archond({ task_graph: () => ({ ok: graph }) }));
     manager.start();
     await settle();
-    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_1", state: "running", stage: "test" } } });
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_1", state: "running", stage: "test" } });
     expect(store.get().archon[CONN]?.graph?.nodes.qi_1).toEqual({ id: "qi_1", state: "running", stage: "test", title: "item qi_1" });
     expect(store.get().archon[CONN]?.items.qi_1).toMatchObject({ state: "running", stage: "test" });
   });
@@ -310,9 +311,9 @@ describe("Archon resync, third review", () => {
     manager.start();
     await settle();
     manager.showItems(CONN, ["qi_1"]);
-    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_1", state: "waiting" } } });
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_1", state: "waiting" } });
     await vi.advanceTimersByTimeAsync(250);
-    expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1" });
+    expect(store.get().archon[CONN]?.details.qi_1?.value).toEqual({ id: "qi_1" });
     daemon.drop(1006);
     await vi.advanceTimersByTimeAsync(300 + 250);
     expect(daemon.commands("subscribe_changes").map((c) => c.after)).toEqual([null, 130, 100]);
@@ -328,32 +329,32 @@ describe("Archon resync, third review", () => {
     await vi.advanceTimersByTimeAsync(250);
     expect(daemon.commands("get_item")).toHaveLength(1);
     manager.showItems(CONN, []);
-    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_1", state: "succeeded" } } });
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_1", state: "succeeded" } });
     expect(store.get().archon[CONN]?.details.qi_1).toBeUndefined();
     manager.showItems(CONN, ["qi_1"]);
     await vi.advanceTimersByTimeAsync(250);
     expect(daemon.commands("get_item")).toHaveLength(2);
-    expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1" });
+    expect(store.get().archon[CONN]?.details.qi_1?.value).toEqual({ id: "qi_1" });
   });
 
   it("does not install a detail read that an off-screen change overtook", async () => {
     let hold = true;
-    const { store, daemon, manager } = setup(archond({ get_item: () => (hold ? undefined : { ok: { reply: "item", data: { id: "qi_1", state: "succeeded" } } }) }));
+    const { store, daemon, manager } = setup(archond({ get_item: () => (hold ? undefined : { ok: { reply: "item_detail", data: { id: "qi_1", state: "succeeded" } } }) }));
     manager.start();
     await settle();
     manager.showItems(CONN, ["qi_1"]);
     await vi.advanceTimersByTimeAsync(250);
     const pending = daemon.commands("get_item")[0];
     manager.showItems(CONN, []);
-    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_1", state: "succeeded" } } });
-    daemon.push({ frame: "reply", id: pending?.req, result: { Ok: { reply: "item", data: { id: "qi_1", state: "running" } } } });
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_1", state: "succeeded" } });
+    daemon.push({ frame: "reply", id: pending?.req, result: { Ok: { reply: "item_detail", data: { id: "qi_1", state: "running" } } } });
     await settle();
     expect(store.get().archon[CONN]?.details.qi_1).toBeUndefined();
     hold = false;
     manager.showItems(CONN, ["qi_1"]);
     await vi.advanceTimersByTimeAsync(250);
     expect(daemon.commands("get_item")).toHaveLength(2);
-    expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1", state: "succeeded" });
+    expect(store.get().archon[CONN]?.details.qi_1?.value).toEqual({ id: "qi_1", state: "succeeded" });
   });
 
   it("keeps a feed replay that arrives with the subscribe answer", async () => {
@@ -374,10 +375,10 @@ describe("Archon resync, third review", () => {
     const { store, daemon, manager } = setup(archond({ subscribe_changes: () => ({ ok: F.subscribed_changes }), task_graph: () => ({ ok: daemon.commands("task_graph").length === 1 ? graph(false, 100) : graph(true, 130) }) }));
     manager.start();
     await settle();
-    daemon.push({ frame: "change", sub: 6, change: { seq: 120, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_2", state: "running" } } });
+    daemon.push({ frame: "change", sub: 6, change: { seq: 120, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_2", state: "running" } });
     await vi.advanceTimersByTimeAsync(250);
     expect(daemon.commands("task_graph")).toHaveLength(1);
-    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_1", state: "succeeded" } } });
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_1", state: "succeeded" } });
     expect(store.get().archon[CONN]?.staleSnapshots).toBe(true);
     await vi.advanceTimersByTimeAsync(250);
     expect(daemon.commands("task_graph")).toHaveLength(2);
@@ -391,7 +392,7 @@ describe("Archon resync, third review", () => {
     }));
     manager.start();
     await settle();
-    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_new", state: "queued" } } });
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: "item", item: "qi_new", state: "queued" } });
     await vi.advanceTimersByTimeAsync(250 + 20_000);
     expect(store.get().archon[CONN]?.staleSnapshots).toBe(true);
     expect(store.get().reports).toEqual([expect.objectContaining({ code: "timeout" })]);
@@ -401,3 +402,69 @@ describe("Archon resync, third review", () => {
   });
 });
 
+
+describe("Archon rereads replace whole entities by as_of", () => {
+  const row = (id: string, state: string, extra: Json = {}): Json => ({ id, title: `item ${id}`, state: { state }, pipeline: "adaptive", priority: "normal", ...extra });
+  const at = (n: number, subject: Json) => ({ frame: "change", sub: 6, change: { seq: n, at: "2026-11-04T03:00:09Z", ...subject } });
+
+  it("installs a read whole over an older item, never over a newer one", () => {
+    const held = { qi_1: itemFromSummary(row("qi_1", "running", { stage: "build" }), 130), qi_2: itemFromSummary(row("qi_2", "queued"), 140), qi_3: itemFromSummary(row("qi_3", "queued"), 120) };
+    const next = installSummaries(held, [row("qi_1", "running", { spent_usd: 2 }), row("qi_2", "failed")], 135);
+    expect(next.qi_1).toEqual({ summary: row("qi_1", "running", { spent_usd: 2 }), state: "running", asOf: 135 });
+    expect(next.qi_2).toBe(held.qi_2);
+    expect("qi_3" in next).toBe(false);
+    expect(replaces(135, 135)).toBe(true);
+    expect(replaces(null, 135)).toBe(true);
+  });
+
+  it("rereads the summaries once, with as_of, after changes of any subject naming items", async () => {
+    const { store, daemon, manager } = setup(archond());
+    manager.start();
+    // The startup changes name items the snapshots lack; let their reread finish first.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(store.get().archon[CONN]?.staleSnapshots).toBe(false);
+    const before = daemon.commands("list_item_summaries").length;
+    daemon.push(at(200, { subject: "stage", stage_run: "sr_1", run: "run_1", item: "qi_1", stage_id: "docs", attempt: 1, fan_index: 0, state: "running" }));
+    daemon.push(at(201, { subject: "question", question: "q_1", item: "qi_2", open: false }));
+    daemon.push(at(202, { subject: "link", item: "qi_1", host: "github.com", repo: "acme/site", number: 58, relation: "delivered" }));
+    expect(store.get().archon[CONN]?.staleSummaries).toEqual(["qi_1", "qi_2"]);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(daemon.commands("list_item_summaries")).toHaveLength(before);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(daemon.commands("list_item_summaries").slice(before)).toEqual([expect.objectContaining({ with_as_of: true })]);
+    await settle();
+    expect(store.get().archon[CONN]?.staleSummaries).toEqual([]);
+  });
+
+  it("keeps a change that overtook a summaries read in flight, and reads again", async () => {
+    let hold = false;
+    const { store, daemon, manager } = setup(archond({ list_item_summaries: () => (hold ? undefined : { ok: F.summaries_24 }) }));
+    manager.start();
+    await settle();
+    hold = true;
+    daemon.push(at(200, { subject: "run", run: "run_1", item: "qi_1", state: "running" }));
+    await vi.advanceTimersByTimeAsync(500);
+    const pending = daemon.commands("list_item_summaries").at(-1);
+    daemon.push(at(210, { subject: "item", item: "qi_1", state: "running", stage: "review" }));
+    daemon.push({ frame: "reply", id: pending?.req, result: { Ok: { reply: "item_summaries_at", data: { summaries: [row("qi_1", "queued"), row("qi_2", "running")], as_of: 205 } } } });
+    await settle();
+    expect(store.get().archon[CONN]?.items.qi_1).toMatchObject({ state: "running", stage: "review", asOf: 210 });
+    expect(store.get().archon[CONN]?.items.qi_2).toMatchObject({ state: "running", asOf: 205 });
+    expect(store.get().archon[CONN]?.staleSummaries).toEqual(["qi_1"]);
+  });
+
+  it("drops an off-screen item's detail and links on its change, and refetches both for a shown one", async () => {
+    const { store, daemon, manager } = setup(archond({ item_links: (command) => ({ ok: { reply: "item_links", data: { links: [], objects: [], item: command.item } } }) }));
+    manager.start();
+    await settle();
+    manager.showItems(CONN, ["qi_1"]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(store.get().archon[CONN]?.details.qi_1?.asOf).toBe(store.get().archon[CONN]?.changeCursor);
+    manager.showItems(CONN, []);
+    daemon.push(at(200, { subject: "gate", run: "run_1", item: "qi_1", stage_id: "review" }));
+    expect(store.get().archon[CONN]?.details.qi_1).toBeUndefined();
+    manager.showItems(CONN, ["qi_1"]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(store.get().archon[CONN]?.details.qi_1).toEqual({ value: { id: "qi_1" }, asOf: 200 });
+  });
+});

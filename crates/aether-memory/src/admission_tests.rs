@@ -50,6 +50,9 @@ fn outcome(admission: &Admission) -> String {
         Admission::Accepted { .. } => "accepted".into(),
         Admission::Superseded { old, .. } => format!("superseded {old}"),
         Admission::Rejected { reason } => format!("rejected: {reason}"),
+        Admission::Reinforced { record, promoted } => {
+            format!("reinforced {} {promoted}", record.id)
+        }
     }
 }
 

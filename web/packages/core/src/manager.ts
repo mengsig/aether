@@ -2,6 +2,7 @@
 // through them, and the Capabilities they add up to.
 
 import type { ConnectionInfo, ConnId, HostAdapter } from "@aether-ui/protocol";
+import type { ArchonSync } from "./archon-sync.ts";
 import { computeCapabilities, sameCapabilities } from "./capabilities.ts";
 import { aetherAccess, archonAccess, checkAllowed, withIdempotencyKey } from "./commands.ts";
 import { Connection, type Endpoint } from "./connection.ts";
@@ -114,6 +115,24 @@ export class ConnectionManager {
     const connection = this.get(conn);
     invariant(connection?.endpoint.daemon === "archon", `${conn} is not an archond connection`);
     void connection.show(items);
+  }
+
+  /** Rereads one item's detail, links and plans into the store; the caller sees the failure. */
+  refreshItem(conn: ConnId, item: string): Promise<void> {
+    return this.archonSync(conn).refresh(item);
+  }
+
+  /** Reads one run's plan into the store; the item's rereads keep it current. */
+  readPlan(conn: ConnId, item: string, run: string): Promise<void> {
+    return this.archonSync(conn).readPlan(item, run);
+  }
+
+  private archonSync(conn: ConnId): ArchonSync {
+    const connection = this.get(conn);
+    if (connection?.endpoint.daemon !== "archon") throw new DaemonError("not_found", `${conn} is not an archond connection`);
+    const sync = connection.archonSync;
+    if (sync === null) throw new DaemonError("not_connected", `${conn} is not connected`);
+    return sync;
   }
 
   private publish(info: ConnectionInfo, previous?: ConnId): void {

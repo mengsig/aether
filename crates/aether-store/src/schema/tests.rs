@@ -1356,3 +1356,223 @@ fn v29_leaves_existing_agents_without_a_subsystem_and_fixes_it_from_then_on() {
         .expect("names");
     assert_eq!(indexes, ["agents_run_id", "events_run_type"]);
 }
+
+/// The memory and feedback tables, definitions and rows: what usefulness is
+/// read from, and what V30 must leave exactly as it found it.
+fn dump_memories_and_feedback(conn: &Connection) -> Vec<String> {
+    let lines: Vec<String> = dump(conn)
+        .into_iter()
+        .filter(|line| {
+            [
+                "memories ",
+                "memory_feedback ",
+                "table memories ",
+                "table memory_feedback ",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("memory_feedback "))
+    );
+    lines
+}
+
+fn admission_rows(conn: &Connection) -> Vec<(String, String, String)> {
+    conn.prepare("SELECT memory_id, state, tier FROM memory_admission ORDER BY memory_id")
+        .expect("prepare")
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .expect("query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("rows")
+}
+
+fn insert_v29_feedback(conn: &Connection, memory: aether_core::id::MemoryId, verdict: &str) {
+    use aether_core::id::{MemoryFeedbackId, TaskId};
+    let (id, task) = (MemoryFeedbackId::new(), TaskId::new());
+    let body = serde_json::json!({
+        "id": id, "memory": memory, "verdict": verdict, "evidence": "review", "task": task,
+        "reason": "seeded at v29", "actor": {"actor": "user"}, "created_at": "2026-01-02T00:00:00Z",
+    });
+    conn.execute(
+        "INSERT INTO memory_feedback(id, memory_id, task_id, verdict, evidence, created_at, body)
+         VALUES (?1, ?2, ?3, ?4, 'review', '2026-01-02T00:00:00Z', ?5)",
+        rusqlite::params![
+            id.to_string(),
+            memory.to_string(),
+            task.to_string(),
+            verdict,
+            body.to_string()
+        ],
+    )
+    .expect("v29 feedback");
+}
+
+#[test]
+fn v30_admits_every_memory_of_a_v29_store_as_active_and_leaves_its_usefulness_alone() {
+    use crate::{MemoryQuery, Store};
+    use aether_core::{
+        id::MemoryId,
+        memory::{MemoryKind, MemoryRecord, MemoryScope},
+        memory_admission::{MemoryState, MemoryTier},
+        time::now,
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let v29 = database_at(&path, 29);
+    let mut legacy: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    legacy.scope = MemoryScope::Global;
+    legacy.retrieval_count = 7;
+    let mut records = Vec::new();
+    for (state, kind) in [
+        ("active", MemoryKind::Fact),
+        ("pinned", MemoryKind::Decision),
+        ("forgotten", MemoryKind::Lesson),
+        ("superseded", MemoryKind::Constraint),
+    ] {
+        let mut record = legacy.clone();
+        record.id = MemoryId::new();
+        record.kind = kind;
+        record.pinned = state == "pinned";
+        record.forgotten_at = (state == "forgotten").then(now);
+        record.superseded_by = (state == "superseded").then(MemoryId::new);
+        insert_legacy_memory(&v29, &record);
+        records.push(record);
+    }
+    for verdict in ["helped", "helped", "hurt"] {
+        insert_v29_feedback(&v29, records[0].id, verdict);
+    }
+    let before = dump_memories_and_feedback(&v29);
+    drop(v29);
+
+    let store = crate::SqliteStore::open(&path).unwrap();
+    assert_eq!(
+        store.meta("schema_version").unwrap(),
+        Some(SCHEMA_VERSION.to_string())
+    );
+    for record in &records {
+        assert_eq!(store.memory(record.id).unwrap().as_ref(), Some(record));
+        let admission = store
+            .memory_admission(record.id)
+            .unwrap()
+            .expect("backfilled");
+        assert_eq!(admission.state, MemoryState::Active);
+        assert_eq!(admission.tier, MemoryTier::for_kind(record.kind));
+        assert!(admission.support.is_empty() && admission.promoted_at.is_none());
+    }
+    let tallies = store.memory_feedback_tallies(&[records[0].id]).unwrap();
+    assert_eq!(
+        (tallies[&records[0].id].helped, tallies[&records[0].id].hurt),
+        (2, 1)
+    );
+    let live = store.memories(&MemoryQuery::default()).unwrap();
+    assert_eq!(
+        live.len(),
+        2,
+        "the active and the pinned memory are still recalled"
+    );
+    drop(store);
+
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(
+        dump_memories_and_feedback(&conn),
+        before,
+        "no record or feedback row moved"
+    );
+    let states: Vec<String> = admission_rows(&conn).into_iter().map(|row| row.1).collect();
+    assert_eq!(states, ["active"; 4]);
+}
+
+/// The upgrade lane undoes V30 with REWINDS[30] in
+/// scripts/upgrade_compat_migration.py; V30 must then replay in full.
+#[test]
+fn v30_replays_over_the_upgrade_lanes_undo_and_keeps_what_it_finds() {
+    use crate::{Commit, Mutation, Store};
+    use aether_core::{
+        id::MemoryId,
+        memory::MemoryRecord,
+        memory_admission::{MemoryAdmission, MemoryState},
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("aether.db");
+    let mut record: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    record.scope = aether_core::memory::MemoryScope::Global;
+    let mut candidate = record.clone();
+    candidate.id = MemoryId::new();
+    let store = crate::SqliteStore::open(&path).unwrap();
+    store
+        .commit(
+            Commit::new()
+                .mutate(Mutation::PutMemory(record.clone()))
+                .mutate(Mutation::PutMemory(candidate.clone()))
+                .mutate(Mutation::PutMemoryAdmission(MemoryAdmission::derived(
+                    &candidate,
+                    MemoryState::Candidate,
+                ))),
+        )
+        .unwrap();
+    assert_eq!(store.memory_admission(record.id).unwrap(), None);
+    drop(store);
+
+    // A stamp rewound without the undo keeps the candidate a candidate.
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("UPDATE meta SET value = '29' WHERE key = 'schema_version';")
+        .unwrap();
+    migrate(&conn).unwrap();
+    let rows = admission_rows(&conn);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.contains(&(
+        candidate.id.to_string(),
+        "candidate".into(),
+        "operational".into()
+    )));
+    assert!(rows.contains(&(record.id.to_string(), "active".into(), "operational".into())));
+
+    conn.execute_batch(
+        "DROP TABLE memory_admission;
+         UPDATE meta SET value = '29' WHERE key = 'schema_version';",
+    )
+    .expect("the lane's undo applies to a real v30 store");
+    migrate(&conn).unwrap();
+    assert_eq!(version(&conn), SCHEMA_VERSION);
+    let states: Vec<String> = admission_rows(&conn).into_iter().map(|row| row.1).collect();
+    assert_eq!(
+        states,
+        ["active", "active"],
+        "the undo forgets candidates; nothing is hidden"
+    );
+}
+
+#[test]
+fn an_admission_needs_its_record_and_a_storable_state() {
+    use crate::{Commit, Mutation, Store};
+    use aether_core::memory::MemoryRecord;
+    use aether_core::memory_admission::{MemoryAdmission, MemoryState};
+    let store = crate::SqliteStore::open_in_memory().unwrap();
+    let record: MemoryRecord = serde_json::from_str(V1_MEMORY_BODY).unwrap();
+    let orphan = MemoryAdmission::derived(&record, MemoryState::Active);
+    let refused = store.commit(Commit::new().mutate(Mutation::PutMemoryAdmission(orphan.clone())));
+    assert!(
+        matches!(refused, Err(StoreError::Corrupt(_))),
+        "{refused:?}"
+    );
+    let mut superseded = orphan;
+    superseded.state = MemoryState::Superseded;
+    let refused = store.commit(
+        Commit::new()
+            .mutate(Mutation::PutMemory(record.clone()))
+            .mutate(Mutation::PutMemoryAdmission(superseded)),
+    );
+    assert!(
+        matches!(refused, Err(StoreError::Corrupt(_))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        store.memory(record.id).unwrap(),
+        None,
+        "the whole commit failed"
+    );
+}
