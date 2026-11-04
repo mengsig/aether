@@ -51,6 +51,8 @@ export class Connection {
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   /** What the screen shows; kept across reconnects so each new sync resumes it. */
   private onScreen: readonly string[] = [];
+  /** The welcome's `submission_horizon`, which a lost keyed command's resolution needs. */
+  private submissionHorizon: string | null = null;
 
   constructor(endpoint: Endpoint, hooks: ConnectionHooks) {
     string(endpoint.target, "endpoint target");
@@ -67,6 +69,10 @@ export class Connection {
 
   get current(): ConnectionInfo {
     return this.info;
+  }
+
+  get horizon(): string | null {
+    return this.submissionHorizon;
   }
 
   get aetherSync(): AetherSync | null {
@@ -156,6 +162,8 @@ export class Connection {
     const previous = this.info.id;
     // Entities of a replaced daemon instance do not exist on the new one.
     if (previous !== id && this.info.protocol !== undefined) this.onScreen = [];
+    const horizon = welcome.submission_horizon;
+    this.submissionHorizon = typeof horizon === "string" && horizon !== "" ? horizon : null;
     this.info = { ...this.info, id, protocol, features, standing: this.standing(welcome), state: "ready" };
     const ctx = this.syncContext(new Set(features));
     this.sync = this.endpoint.daemon === "aether" ? new AetherSync(ctx) : new ArchonSync(ctx);
