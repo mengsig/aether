@@ -19,7 +19,12 @@ worker, timer, tool or role exists. `Noesis::start_if_enabled` checks the
 - `store`: `noesis.db`, kept private to its owner (an existing file and its
   `-wal`/`-shm` are set to 0600, symlinks are refused), with migration N1
   (sessions, the messages index, questions and problems, plans, the graph
-  ledgers, coverage and jobs).
+  ledgers, coverage and jobs) and N2 (the learner tables).
+- `learner`: the learner model. `evidence` is append-only (a correction is
+  a new row), and `concept_state` is a cache rebuilt only from it by a pure
+  derivation of the concept's state, strength, review time, calibration and
+  open misconceptions. The learner tables share only proposition ids with
+  the graph, as plain values, so deleting the graph leaves them intact.
 - `budget`: daily budgets and concurrency caps for interactive and
   background calls. A call is admitted before it is made, so a budget of 0,
   or one already used up, refuses the call before any model sees it. Spend is

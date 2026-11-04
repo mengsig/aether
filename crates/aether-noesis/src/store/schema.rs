@@ -1,5 +1,5 @@
 //! The `noesis.db` schema. Migration numbers are pre-assigned by CONTRACTS.md
-//! §1.4: N1 (this task), N2 learner tables (F4), N3 evidence bundles (F6).
+//! §1.4: N1 (F1), N2 learner tables (F4), N3 evidence bundles (F6).
 //! Each later task appends exactly its own entry.
 
 use rusqlite::{Connection, OptionalExtension};
@@ -174,10 +174,77 @@ CREATE INDEX jobs_by_state ON jobs(state, created_at);
 CREATE INDEX jobs_by_target ON jobs(target);
 "#;
 
-pub(crate) const MIGRATIONS: &[&str] = &[N1];
+/// N2: the learner model (NOESIS.md §5). It shares only ids with the
+/// proposition graph, as plain values: no key, trigger or view joins them.
+const N2: &str = r#"
+CREATE TABLE concepts (
+    id         TEXT PRIMARY KEY CHECK (id LIKE 'k\_%' ESCAPE '\'),
+    kind       TEXT NOT NULL CHECK (kind IN ('proposition', 'plan_node', 'topic')),
+    ref        TEXT NOT NULL CHECK (length(ref) > 0),
+    title      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE (kind, ref)
+) STRICT;
+
+-- Append-only: history is never edited, and a correction is a new row.
+CREATE TABLE evidence (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    concept         TEXT NOT NULL REFERENCES concepts(id),
+    session         TEXT CHECK (session IS NULL OR length(session) > 0),
+    at              TEXT NOT NULL,
+    kind            TEXT NOT NULL CHECK (kind IN
+                        ('probe_answer', 'predict_answer', 'check_answer', 'recall_judged',
+                         'practice_conclude', 'exposure', 'misconception_observed',
+                         'operator_correction')),
+    outcome         TEXT NOT NULL CHECK (outcome IN
+                        ('correct', 'incorrect', 'dont_know', 'exposed', 'observed', 'corrected')),
+    confidence      INTEGER CHECK (confidence IS NULL OR confidence IN (0, 30, 50, 70, 90, 100)),
+    dont_know       INTEGER NOT NULL DEFAULT 0 CHECK (dont_know IN (0, 1)),
+    mode            TEXT CHECK (mode IS NULL OR mode IN ('recall', 'discrimination', 'composition')),
+    hint_rung       INTEGER CHECK (hint_rung IS NULL OR hint_rung BETWEEN 0 AND 5),
+    miss_class      TEXT CHECK (miss_class IS NULL OR miss_class IN
+                        ('cue', 'discrimination', 'execution', 'careless', 'structural')),
+    note            TEXT,
+    corrected_state TEXT CHECK (corrected_state IS NULL OR corrected_state IN
+                        ('unseen', 'exposed', 'demonstrated', 'fragile', 'misconception')),
+    CHECK (dont_know = (outcome = 'dont_know')),
+    CHECK (dont_know = 0 OR confidence IS NULL),
+    CHECK ((kind = 'exposure') = (outcome = 'exposed')),
+    CHECK ((kind = 'misconception_observed') = (outcome = 'observed')),
+    CHECK ((kind = 'operator_correction') = (outcome = 'corrected')),
+    CHECK ((kind = 'operator_correction') = (corrected_state IS NOT NULL))
+) STRICT;
+CREATE INDEX evidence_by_concept ON evidence(concept, id);
+
+CREATE TRIGGER evidence_is_append_only
+BEFORE UPDATE ON evidence
+BEGIN
+    SELECT RAISE(ABORT, 'learner evidence is append-only');
+END;
+
+-- Derived from `evidence` by the learner model's rebuild, and by nothing else.
+CREATE TABLE concept_state (
+    concept         TEXT PRIMARY KEY REFERENCES concepts(id),
+    state           TEXT NOT NULL CHECK (state IN
+                        ('unseen', 'exposed', 'demonstrated', 'fragile', 'misconception')),
+    strength        REAL NOT NULL CHECK (strength BETWEEN 0 AND 1),
+    last_success_at TEXT,
+    review_due_at   TEXT,
+    calibration     REAL CHECK (calibration IS NULL OR calibration BETWEEN 0 AND 1),
+    misconceptions  TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(misconceptions)),
+    as_of_evidence  INTEGER NOT NULL CHECK (as_of_evidence >= 0),
+    derived_at      TEXT NOT NULL,
+    CHECK ((last_success_at IS NULL) = (review_due_at IS NULL))
+) STRICT;
+CREATE INDEX concept_state_by_state ON concept_state(state);
+CREATE INDEX concept_state_by_review ON concept_state(review_due_at)
+    WHERE review_due_at IS NOT NULL;
+"#;
+
+pub(crate) const MIGRATIONS: &[&str] = &[N1, N2];
 
 /// The schema version this binary writes and reads.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 const _: () = assert!(MIGRATIONS.len() == SCHEMA_VERSION as usize);
 

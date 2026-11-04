@@ -20,6 +20,7 @@ mod budget;
 mod config_file;
 mod configure;
 mod drain;
+mod learner;
 mod status;
 #[cfg(test)]
 mod tests;
@@ -233,8 +234,13 @@ pub(crate) async fn dispatch(
                 return Err(ErrorReply::noesis_disabled());
             }
             aether_protocol::noesis::validate(&other).map_err(ErrorReply::invalid)?;
+            if learner::is_learner(&other) {
+                return service
+                    .learner(&daemon.runtime, other, by, submission.as_ref())
+                    .await;
+            }
             Err(ErrorReply::unimplemented(format!(
-                "`{}` (the Noesis teaching, learner and graph services)",
+                "`{}` (the Noesis teaching and graph services)",
                 other.name()
             )))
         }

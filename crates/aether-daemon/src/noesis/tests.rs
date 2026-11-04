@@ -693,3 +693,100 @@ async fn a_rebuild_counts_a_failed_invocation_and_a_compaction_as_settlement_did
     assert_eq!(rebuilt.interactive.usd, settled.usd, "so does the rebuild");
     assert_eq!(rebuilt.background.usd, 0.0);
 }
+
+/// A topic concept with one exposure, written straight into `noesis.db`.
+async fn seed_concept(harness: &Harness, title: &str) -> String {
+    use aether_noesis::learner::{self, NewEvidence};
+    use aether_protocol::noesis::{ConceptKind, EvidenceKind, EvidenceOutcome};
+    let state = harness.daemon.noesis.state.lock().await;
+    let super::State::Running(live) = &*state else {
+        panic!("the service runs");
+    };
+    let conn = live.noesis.store().connection();
+    let now = chrono::Utc::now();
+    let concept = learner::ensure_concept(conn, ConceptKind::Topic, title, title, now).unwrap();
+    let exposure = NewEvidence {
+        concept: concept.id.clone(),
+        session: None,
+        kind: EvidenceKind::Exposure,
+        outcome: EvidenceOutcome::Exposed,
+        confidence: None,
+        mode: None,
+        hint_rung: None,
+        miss_class: None,
+        note: None,
+    };
+    learner::append(conn, &[exposure], now).unwrap();
+    concept.id
+}
+
+fn learner_events(harness: &Harness) -> Vec<Vec<String>> {
+    let events = harness
+        .daemon
+        .runtime
+        .store()
+        .events(0, 10_000, &aether_store::EventFilter::default())
+        .expect("events");
+    let updated = events.into_iter().filter_map(|event| match event.kind {
+        EventKind::NoesisLearnerUpdated { concepts } => Some(concepts),
+        _ => None,
+    });
+    updated.collect()
+}
+
+#[tokio::test]
+async fn the_learner_commands_read_and_correct_the_learner_model() {
+    use aether_protocol::noesis::{ConceptStateKind, EvidenceKind};
+    let harness = Harness::new().await;
+    harness.configure(enable(true)).await;
+    let concept = seed_concept(&harness, "Limits").await;
+    let read = Command::NoesisLearner {
+        concepts: None,
+        query: Some("lim".into()),
+        limit: None,
+    };
+    let Reply::NoesisLearner { concepts } = harness.send(read).await.expect("read") else {
+        panic!("a learner reply");
+    };
+    assert_eq!(concepts.len(), 1);
+    assert_eq!(concepts[0].state, ConceptStateKind::Exposed);
+    let correct = |concept: &str| {
+        let json = format!(
+            r#"{{"cmd":"noesis_correct_learner","concept":"{concept}","state":"fragile","reason":"shaky","idempotency_key":"c1"}}"#
+        );
+        serde_json::from_str::<Command>(&json).expect("command")
+    };
+    let missing = harness
+        .send(correct("k_missing"))
+        .await
+        .expect_err("unknown");
+    assert_eq!(missing.code, ErrorCode::NotFound, "{missing:?}");
+    let Reply::ConceptState(first) = harness.send(correct(&concept)).await.expect("correct") else {
+        panic!("a concept state");
+    };
+    assert_eq!(first.state, ConceptStateKind::Fragile);
+    let Reply::ConceptState(again) = harness.send(correct(&concept)).await.expect("retry") else {
+        panic!("a concept state");
+    };
+    assert_eq!(again, first, "the retry replays the first correction");
+    assert_eq!(learner_events(&harness), [vec![concept.clone()]]);
+    let page = Command::NoesisLearnerEvidence {
+        concept,
+        before: None,
+        limit: None,
+    };
+    let Reply::NoesisEvidence {
+        evidence,
+        next_before,
+    } = harness.send(page).await.expect("page")
+    else {
+        panic!("an evidence page");
+    };
+    let kinds: Vec<_> = evidence.iter().map(|e| e.kind).collect();
+    assert_eq!(
+        kinds,
+        [EvidenceKind::OperatorCorrection, EvidenceKind::Exposure]
+    );
+    assert_eq!(evidence[0].note.as_deref(), Some("fragile: shaky"));
+    assert_eq!(next_before, None);
+}
