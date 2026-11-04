@@ -1,10 +1,13 @@
 // React bindings: one store read through useSyncExternalStore (ARCHITECTURE.md §a).
 
 import type { Capabilities, ConnId, EntityAction, RouteDef } from "@aether-ui/protocol";
-import { createContext, createElement, useCallback, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import type { App } from "./app.ts";
 import type { Json } from "./guards.ts";
 import { currentHash, matchRoute, onHashChange, type RouteMatch } from "./router.ts";
+import { aetherAccess, archonAccess, checkAllowed, type Access } from "./commands.ts";
+import { errorText } from "./guards.ts";
+import type { ReadEntry } from "./reads.ts";
 import type { State, Store } from "./store.ts";
 
 const AppContext = createContext<App | null>(null);
@@ -65,3 +68,47 @@ export function useRoute(): RouteMatch | null {
   const hash = useSyncExternalStore(onHashChange, currentHash, () => "#/");
   return useMemo(() => matchRoute(routes, hash), [routes, hash]);
 }
+
+/**
+ * Rereads `command` into the store under `key` while `conn` is ready, and again whenever `refresh`
+ * changes; returns the stored entry, so the screen derives from the store and keeps no copy.
+ * A null command reads nothing (the screen lacks what the read needs, or may not send it).
+ */
+export function useReread(conn: ConnId, key: string, command: Json | null, tags: readonly string[], refresh: unknown = 0): ReadEntry | undefined {
+  const app = useApp();
+  const ready = useSelector(useCallback((state: State) => state.connections[conn]?.state === "ready", [conn]));
+  const text = command === null ? null : JSON.stringify(command);
+  const tagText = tags.join(" ");
+  useEffect(() => {
+    if (!ready || text === null) return;
+    void app.reread(conn, key, JSON.parse(text) as Json, tagText.split(" "));
+  }, [app, conn, key, ready, text, tagText, refresh]);
+  return useSelector(useCallback((state: State) => state.reads[conn]?.[key], [conn, key]));
+}
+
+export interface Permission {
+  readonly access: Access;
+  /** Why this device may not send the command now, shown beside the disabled control; null when it may. */
+  readonly refusal: string | null;
+}
+
+/** What sending `command` on `conn` needs, and why it is refused now: the same check `useCommand` makes. */
+export function permissionFor(state: State, conn: ConnId, command: Json): Permission {
+  const info = state.connections[conn];
+  const access = info?.daemon === "archon" ? archonAccess(command) : aetherAccess(command);
+  if (!info || info.state !== "ready") return { access, refusal: `${info?.label ?? "The daemon"} is not connected` };
+  try {
+    checkAllowed(access, info.standing);
+    return { access, refusal: null };
+  } catch (error) {
+    return { access, refusal: errorText(error) };
+  }
+}
+
+export function usePermission(conn: ConnId, command: Json): Permission {
+  const text = JSON.stringify(command);
+  const select = useCallback((state: State) => permissionFor(state, conn, JSON.parse(text) as Json), [conn, text]);
+  return useSelector(select, samePermission);
+}
+
+const samePermission = (a: Permission, b: Permission): boolean => a.access === b.access && a.refusal === b.refusal;

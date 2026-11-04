@@ -2,6 +2,7 @@
 // by the state, never a fresh copy, so useSelector stays quiet.
 
 import type { aether, Capabilities, ConnectionInfo, ConnId } from "@aether-ui/protocol";
+import type { ReadEntry } from "./reads.ts";
 import type { ArchonGraph, ArchonItem, ArchonPlan, Report, Stamped, State, StreamState, Submission, TranscriptState } from "./store.ts";
 
 type Selector<T> = (state: State) => T;
@@ -33,3 +34,6 @@ export const selectItemLinks = (conn: ConnId, item: string): Selector<Stamped | 
 export const selectRunPlan = (conn: ConnId, run: string): Selector<ArchonPlan | undefined> => (s) => s.archon[conn]?.plans[run];
 export const selectTaskGraph = (conn: ConnId): Selector<ArchonGraph | null> => (s) => s.archon[conn]?.graph ?? null;
 export const selectFeed = (conn: ConnId): Selector<readonly unknown[]> => (s) => s.archon[conn]?.feed ?? NONE;
+
+// Rereads stored whole (reads.ts), and every submission whose outcome is not known.
+export const selectRead = (conn: ConnId, key: string): Selector<ReadEntry | undefined> => (s) => s.reads[conn]?.[key];
