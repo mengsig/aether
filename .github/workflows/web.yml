@@ -13,6 +13,8 @@ on:
     paths:
       - "web/**"
       - "clients/protocol.schema.json"
+      - "crates/aether-protocol/src/access.rs"
+      - "crates/aether-remote/src/assets/selection.rs"
       - ".github/workflows/web.yml"
   workflow_dispatch:
 
@@ -44,4 +46,13 @@ jobs:
       - name: install the locked dependencies
         run: npm ci --no-audit --no-fund
       - name: npm run check
+        run: npm run check
+      # Electron's sandbox needs unprivileged user namespaces, which Ubuntu's AppArmor restricts.
+      - name: allow unprivileged user namespaces for the Electron sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: install the desktop app's locked dependencies
+        working-directory: web/apps/desktop
+        run: npm ci --no-audit --no-fund
+      - name: desktop typecheck and headless security tests
+        working-directory: web/apps/desktop
         run: npm run check
