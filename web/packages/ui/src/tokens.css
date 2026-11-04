@@ -1,0 +1,161 @@
+/* Design tokens (CONTRACTS.md §4). The only file in the UI kit that may hold
+   raw colours and durations; components read these custom properties. A
+   `data-theme` on any element re-themes its subtree (the nav rail is always dark). */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Bone paper and spruce ink, from the Aether mark. */
+  --color-bg: #f2f0e9;
+  --color-surface-1: #fbfaf6;
+  --color-surface-2: #f5f3ec;
+  --color-surface-3: #ece9e0;
+  --color-border: #dbd7cb;
+  --color-border-strong: #87837a;
+  --color-text: #14231f;
+  --color-text-muted: #47554f;
+  --color-text-faint: #5e6a64;
+  --color-accent: #08775b;
+  --color-accent-contrast: #ffffff;
+  --color-focus: #2348b8;
+  --color-danger: #b02434;
+  --color-warning: #855700;
+  --color-success: #1d7442;
+  --color-info: #1b5f94;
+
+  --status-queued: #5f6873;
+  --status-dispatching: #4d4fc4;
+  --status-running: #08775b;
+  --status-waiting: #8a5c00;
+  --status-operator: #a2337f;
+  --status-blocked: #b23d0b;
+  --status-succeeded: #2c7331;
+  --status-failed: #b02434;
+  --status-cancelled: #67635a;
+  --pr-open: #1d7442;
+  --pr-draft: #5f6873;
+  --pr-merged: #6b44b8;
+  --pr-closed: #b02434;
+  --issue-open: #1d7442;
+  --issue-closed: #6b44b8;
+  --mastery-unseen: #66635a;
+  --mastery-exposed: #2f69ad;
+  --mastery-demonstrated: #18704b;
+  --mastery-fragile: #8a5900;
+  --mastery-misconception: #b02434;
+
+  --elevation-1: 0 1px 0 #14231f0f, 0 1px 3px #14231f0d;
+  --elevation-2: 0 2px 4px #14231f0f, 0 8px 24px #14231f14;
+  --elevation-3: 0 4px 8px #14231f14, 0 24px 64px #14231f29;
+
+}
+
+:root {
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", sans-serif;
+  --font-prose: "Iowan Old Style", "Charter", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  --font-display: "Iowan Old Style", "Charter", "Palatino Linotype", Palatino, Georgia, serif;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.375rem;
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-prose: 1.7;
+  --weight-regular: 400;
+  --weight-medium: 560;
+  --weight-bold: 680;
+
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-9: 36px;
+  --space-10: 40px;
+  --space-11: 44px;
+  --space-12: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* A background-coloured gap, then the ring, so it shows on any fill. */
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-focus);
+
+  --motion-instant: 60ms;
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 360ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.3, 0, 0, 1.15);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Night spruce with the mint of the mark's dot. */
+  --color-bg: #0a1311;
+  --color-surface-1: #101b18;
+  --color-surface-2: #15221e;
+  --color-surface-3: #1d2d28;
+  --color-border: #24342e;
+  --color-border-strong: #62776e;
+  --color-text: #e8f0ec;
+  --color-text-muted: #a9b8b1;
+  --color-text-faint: #8a9a93;
+  --color-accent: #69d7b4;
+  --color-accent-contrast: #062019;
+  --color-focus: #9cb8ff;
+  --color-danger: #ff8d9a;
+  --color-warning: #f2c56a;
+  --color-success: #7fdc9c;
+  --color-info: #80c4f7;
+
+  --status-queued: #9aa4ae;
+  --status-dispatching: #a7a8ff;
+  --status-running: #69d7b4;
+  --status-waiting: #f2c56a;
+  --status-operator: #f39ad5;
+  --status-blocked: #ffa071;
+  --status-succeeded: #8ddb8f;
+  --status-failed: #ff8d9a;
+  --status-cancelled: #9b968a;
+  --pr-open: #7fdc9c;
+  --pr-draft: #9aa4ae;
+  --pr-merged: #c5a9ff;
+  --pr-closed: #ff8d9a;
+  --issue-open: #7fdc9c;
+  --issue-closed: #c5a9ff;
+  --mastery-unseen: #899892;
+  --mastery-exposed: #84b6f0;
+  --mastery-demonstrated: #69d7b4;
+  --mastery-fragile: #f2c56a;
+  --mastery-misconception: #ff8d9a;
+
+  --elevation-1: 0 1px 0 #00000040, 0 1px 3px #00000033;
+  --elevation-2: 0 2px 4px #00000040, 0 8px 24px #00000059;
+  --elevation-3: 0 4px 8px #00000052, 0 24px 64px #0000008c;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root,
+  :root[data-theme] {
+    --motion-instant: 0ms;
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+    --motion-slow: 0ms;
+  }
+}

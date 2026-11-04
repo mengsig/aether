@@ -1,0 +1,11 @@
+{
+  "name": "@aether-ui/archon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Archon screens: queue, items, pipelines, the task graph, initiatives and history.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": ["./src/index.ts", "./src/*/routes.ts"]
+}

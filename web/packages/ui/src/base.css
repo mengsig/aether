@@ -1,0 +1,42 @@
+/* The kit's cascade: everything sits in ui.* layers, so feature CSS (unlayered)
+   wins over it, and the focus layer comes last so no primitive hides the ring. */
+@layer ui.base, ui.primitives, ui.shell, ui.focus;
+
+@layer ui.base {
+  *, *::before, *::after { box-sizing: border-box; }
+  html {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font: var(--weight-regular) var(--text-md) / var(--leading-normal) var(--font-ui);
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body { margin: 0; min-block-size: 100dvh; }
+  button, input, select, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
+  h1, h2, h3, h4, p { margin: 0; overflow-wrap: anywhere; }
+  code, kbd, pre, samp { font-family: var(--font-mono); }
+  ::selection { background: color-mix(in srgb, var(--color-accent) 30%, transparent); }
+  [hidden] { display: none !important; }
+  .ui-link { color: var(--color-accent); text-underline-offset: 3px; border-radius: var(--radius-sm); }
+  .ui-kbd {
+    padding: 2px var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-2);
+    color: var(--color-text-muted);
+    font: var(--weight-medium) var(--text-xs) / 1.4 var(--font-mono);
+  }
+  .ui-prose { font-family: var(--font-prose); line-height: var(--leading-prose); max-inline-size: 68ch; }
+}
+
+@layer ui.focus {
+  /* CONTRACTS.md §4: focus is always visible. The transparent outline shows in forced-colours mode. */
+  :where(a[href], button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    box-shadow: var(--focus-ring);
+  }
+  :where(.ui-field-input, .ui-palette-input):focus-visible { border-color: var(--color-focus); }
+  /* The shell moves focus to <main> after a navigation; that is a reading position, not a control. */
+  .ui-shell-main:focus-visible { box-shadow: none; }
+}
