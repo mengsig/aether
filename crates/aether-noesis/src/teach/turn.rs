@@ -115,7 +115,7 @@ impl<E: Engine> Teaching<'_, E> {
         record.text = seal::shown_text(step, readable.then_some(secrets.as_slice()));
         for call in &mut record.calls {
             call.name = seal::sealed_text(&call.name, &secrets);
-            seal::scrub(&mut call.input, &secrets);
+            seal::withhold(&mut call.input, &secrets);
             seal_result(&mut call.result, call.is_error, &secrets, &live);
         }
         for result in results.iter_mut() {
@@ -192,6 +192,6 @@ fn seal_result(content: &mut Value, is_error: bool, secrets: &[String], live: &[
     if is_error {
         seal::seal_refusal(content, live);
     } else {
-        seal::scrub(content, secrets);
+        seal::withhold(content, secrets);
     }
 }

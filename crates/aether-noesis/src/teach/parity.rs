@@ -719,7 +719,7 @@ fn t11_the_solution_is_sealed_on_every_read_path_until_conclude_and_practice_nev
         vec![(PROBLEM, problem("d/dx x^5?", json!(["power law"]), SECRET))],
     );
     let report = t.run_turn(&id).unwrap();
-    assert_eq!(report.steps[0].calls[0].input["solution"], json!(SEALED));
+    assert_eq!(report.steps[0].calls[0].input, json!(SEALED));
     t.send(&id, "is it 5x^4?").unwrap();
     let mut events = t.take_events();
     let evidence = t.take_evidence();

@@ -360,10 +360,7 @@ fn a_numeric_argument_cannot_carry_a_numeric_solution() {
         vec![("noesis.graph_search", json!({"query": 9876543210_u64}))],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(
-        report.steps[1].calls[0].input,
-        json!({"query": crate::tools::SEALED})
-    );
+    assert_eq!(report.steps[1].calls[0].input, json!(crate::tools::SEALED));
     assert!(!format!("{report:?}").contains("9876543210"), "{report:?}");
 }
 
@@ -410,10 +407,7 @@ fn a_null_argument_cannot_carry_a_null_solution() {
         vec![("noesis.learner_read", json!({"query": null}))],
     );
     let report = t.advance(&id).unwrap().remove(0);
-    assert_eq!(
-        report.steps[1].calls[0].input,
-        json!({"query": crate::tools::SEALED})
-    );
+    assert_eq!(report.steps[1].calls[0].input, json!(crate::tools::SEALED));
     assert!(!format!("{report:?}").contains("null"), "{report:?}");
 }
 
@@ -483,4 +477,28 @@ fn a_target_whose_proposition_id_repeats_the_solution_is_refused() {
     assert!(view.active_problem.is_none());
     assert!(!format!("{view:?}").contains(SECRET), "{view:?}");
     assert!(t.take_events().is_empty(), "nothing was posed");
+}
+
+#[test]
+fn the_record_of_a_choice_never_marks_which_options_are_correct() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let options = [("a", "Paris"), ("b", "Rome"), ("c", "Madrid")];
+    let single = choice("Which city is a capital in Europe?", &options, &["a"]);
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, single.clone())]);
+    let first = t.advance(&id).unwrap().remove(0);
+    assert_eq!(first.steps[0].calls[0].input, json!(crate::tools::SEALED));
+    answer_choice(&mut t, &id, &["a"]);
+
+    let mut multi = choice("Which cities are capitals?", &options, &["a", "c"]);
+    multi["multi"] = json!(true);
+    t.engine_mut()
+        .script(Agent::Teacher, "", vec![(ASK, multi), (ASK, single)]);
+    let second = t.advance(&id).unwrap().remove(0);
+    for call in &second.steps[0].calls {
+        assert_eq!(call.input, json!(crate::tools::SEALED), "{call:?}");
+    }
+    assert!(!format!("{second:?}").contains("Paris"), "{second:?}");
 }

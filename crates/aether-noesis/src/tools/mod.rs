@@ -90,31 +90,17 @@ pub fn tools_for(agent: Agent) -> &'static [ToolName] {
     }
 }
 
-/// The input of a tool call as it may be persisted, streamed or logged:
-/// each sealed field reads [`SEALED`]. Input of a sealed tool that is not an
-/// object might hold sealed text in any shape, so all of it is sealed.
+/// The input of a tool call as it may be persisted, streamed or logged. A
+/// tool with sealed fields has its input withheld whole: the posed question
+/// or problem is published by its event, and masking only the sealed fields
+/// would leave the parts a reader could match them against.
 pub fn seal_input(tool: &str, input: &Value) -> Value {
-    let Some(sealed) = ToolName::parse(tool).map(ToolName::sealed_fields) else {
-        return input.clone();
-    };
-    if sealed.is_empty() {
+    let sealed = ToolName::parse(tool).is_some_and(|tool| !tool.sealed_fields().is_empty());
+    if !sealed {
         return input.clone();
     }
-    let Value::Object(map) = input else {
-        return Value::String(SEALED.to_string());
-    };
-    let mut projected = map.clone();
-    for name in sealed {
-        if let Some(value) = projected.get_mut(*name) {
-            *value = Value::String(SEALED.to_string());
-        }
-    }
-    debug_assert!(sealed.iter().all(|name| {
-        projected
-            .get(*name)
-            .is_none_or(|value| value.as_str() == Some(SEALED))
-    }));
-    Value::Object(projected)
+    debug_assert!(matches!(tool, "noesis.ask" | "noesis.problem"));
+    Value::String(SEALED.to_string())
 }
 
 /// Every sealed text a call carries, read as the parser reads it: the sealed
@@ -348,13 +334,9 @@ mod tests {
     }
 
     #[test]
-    fn sealing_replaces_sealed_fields_and_whole_malformed_inputs() {
+    fn sealing_withholds_the_whole_input_of_a_sealing_tool() {
         let input = json!({"kind": "recall", "prompt": "Name it", "answer_key": "mitochondria", "explanation": "because"});
-        let sealed = seal_input("noesis.ask", &input);
-        assert_eq!(
-            sealed,
-            json!({"kind": "recall", "prompt": "Name it", "answer_key": SEALED, "explanation": SEALED})
-        );
+        assert_eq!(seal_input("noesis.ask", &input), json!(SEALED));
         let text_input = Value::String(r#"{"solution": "x = 4"}"#.into());
         assert_eq!(seal_input("noesis.problem", &text_input), json!(SEALED));
         let plan = json!({"nodes": []});

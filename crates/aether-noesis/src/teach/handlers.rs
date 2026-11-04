@@ -51,7 +51,7 @@ impl<E: Engine> Teaching<'_, E> {
             seal::seal_refusal(&mut content, &secrets);
         } else {
             secrets.extend(tools::sealed_texts(&call.name, &call.input).unwrap_or_default());
-            seal::scrub(&mut content, &secrets);
+            seal::withhold(&mut content, &secrets);
         }
         debug_assert!(
             !is_error || ends.is_none(),
