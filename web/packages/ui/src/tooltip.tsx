@@ -1,32 +1,39 @@
-import { cloneElement, useId, useState, type FocusEvent, type KeyboardEvent, type PointerEvent, type ReactElement } from "react";
+import { cloneElement, useEffect, useId, useState, type FocusEvent, type ReactElement } from "react";
 import { invariant } from "./classes.ts";
 
 interface TriggerProps {
   "aria-describedby"?: string;
   onFocus?: (event: FocusEvent) => void;
   onBlur?: (event: FocusEvent) => void;
-  onPointerEnter?: (event: PointerEvent) => void;
-  onPointerLeave?: (event: PointerEvent) => void;
-  onKeyDown?: (event: KeyboardEvent) => void;
 }
 
-/** A description shown on hover and focus, dismissed with Escape (WCAG 1.4.13); the trigger stays focusable. */
+/**
+ * A description shown on hover and focus (WCAG 1.4.13): Escape dismisses it wherever focus is,
+ * and the pointer can move onto it without closing it. The trigger stays focusable.
+ */
 export function Tooltip({ content, children }: { readonly content: string; readonly children: ReactElement<TriggerProps> }) {
   invariant(content.trim().length > 0, "a tooltip needs text");
   const id = useId();
-  const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const open = (hovered || focused) && !dismissed;
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") setDismissed(true); };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
   const own = children.props;
-  const describedBy = [own["aria-describedby"], id].filter(Boolean).join(" ");
   const trigger = cloneElement(children, {
-    "aria-describedby": describedBy,
-    onFocus: (event: FocusEvent) => { own.onFocus?.(event); setOpen(true); },
-    onBlur: (event: FocusEvent) => { own.onBlur?.(event); setOpen(false); },
-    onPointerEnter: (event: PointerEvent) => { own.onPointerEnter?.(event); setOpen(true); },
-    onPointerLeave: (event: PointerEvent) => { own.onPointerLeave?.(event); setOpen(false); },
-    onKeyDown: (event: KeyboardEvent) => { own.onKeyDown?.(event); if (event.key === "Escape") setOpen(false); },
+    "aria-describedby": [own["aria-describedby"], id].filter(Boolean).join(" "),
+    onFocus: (event: FocusEvent) => { own.onFocus?.(event); setFocused(true); setDismissed(false); },
+    onBlur: (event: FocusEvent) => { own.onBlur?.(event); setFocused(false); },
   });
+  // Hover is tracked on the anchor, which holds the tooltip too, so moving onto the text keeps it open.
   return (
-    <span className="ui-tooltip-anchor">
+    <span className="ui-tooltip-anchor" onPointerEnter={() => { setHovered(true); setDismissed(false); }}
+      onPointerLeave={() => setHovered(false)}>
       {trigger}
       <span className="ui-tooltip" role="tooltip" id={id} data-open={open ? "true" : undefined}>{content}</span>
     </span>

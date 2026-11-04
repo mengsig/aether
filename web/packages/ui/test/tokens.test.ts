@@ -45,6 +45,11 @@ export function missing(required: readonly string[], defined: ReadonlySet<string
   return required.filter((name) => !defined.has(name));
 }
 
+/** Custom properties a sheet declares anywhere, in any block or at-rule, that §4 does not name. */
+function beyondContract(css: string): string[] {
+  return [...names(...cssBlocks(css))].filter((name) => !CONTRACT_TOKENS.includes(name));
+}
+
 describe("tokens.css", () => {
   test("defines every §4 name for the light theme", () => {
     expect(lightBlock?.selector).toContain(":root");
@@ -62,9 +67,13 @@ describe("tokens.css", () => {
     expect(missing(CONTRACT_TOKENS, names(light, sharedBlock))).toEqual(["--status-operator"]);
   });
 
-  test("defines nothing beyond §4", () => {
-    const extra = [...names(lightBlock, sharedBlock, darkBlock)].filter((name) => !CONTRACT_TOKENS.includes(name));
-    expect(extra).toEqual([]);
+  test("defines nothing beyond §4, in any block", () => {
+    expect(blocks.length).toBeGreaterThanOrEqual(4);
+    expect(beyondContract(tokens)).toEqual([]);
+    const extraRoot = `${tokens}\n:root { --color-uncontracted: #ff0000; }\n`;
+    const extraMedia = `${tokens}\n@media (min-width: 1px) { [data-theme="dark"] { --space-13: 52px; } }\n`;
+    expect(beyondContract(extraRoot)).toEqual(["--color-uncontracted"]);
+    expect(beyondContract(extraMedia)).toEqual(["--space-13"]);
   });
 
   test("spaces sit on the 4 px grid", () => {

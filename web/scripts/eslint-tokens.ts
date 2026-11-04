@@ -7,8 +7,9 @@ import type { Rule } from "eslint";
 
 const HEX_COLOUR = /(?<![\w&-])#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})(?![\w-])/i;
 const COLOUR_FUNCTION = /(?<![\w-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
-const DURATION = /(?<![\w.#-])(?:\d+\.?\d*|\.\d+)m?s(?![\w-])/i;
-const ZERO_DURATION = /^(?:0+\.?0*|\.0+)m?s$/i;
+// A leading minus belongs to the duration (`-200ms`), but not one inside a name such as `fade-2s`.
+const DURATION = /(?<![\w.#-])-?(?:\d+\.?\d*|\.\d+)m?s(?![\w-])/i;
+const ZERO_DURATION = /^-?(?:0+\.?0*|\.0+)m?s$/i;
 // The CSS named colours; `transparent` and `currentColor` carry no colour of their own.
 const NAMED_COLOURS = new Set(`aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue
   blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue
@@ -75,10 +76,10 @@ export function stylesheetProblems(css: string): string[] {
   return problems.sort((a, b) => Number.parseInt(a, 10) - Number.parseInt(b, 10));
 }
 
-function keyName(property: { key?: { type?: string; name?: unknown; value?: unknown }; computed?: boolean }): string | undefined {
-  if (property.computed === true) return undefined;
-  const name = property.key?.type === "Identifier" ? property.key.name : property.key?.value;
-  return typeof name === "string" ? name : undefined;
+/** A key known without running the code: `a`, `"a"` or `["a"]`, but not `[a]`. */
+function staticKey(key: { type?: string; name?: unknown; value?: unknown } | undefined, computed: boolean | undefined): string | undefined {
+  if (key?.type === "Literal") return typeof key.value === "string" ? key.value : undefined;
+  return key?.type === "Identifier" && computed !== true && typeof key.name === "string" ? key.name : undefined;
 }
 
 /** The name of the JSX attribute whose value holds this node, without crossing a function, or undefined. */
@@ -133,24 +134,32 @@ const rule: Rule.RuleModule = {
     const checkStyleKey = (node: Rule.Node, key: string | undefined, value: Rule.Node) => {
       if (key === undefined) return;
       const timing = TIMING_KEY.test(key);
+      // A custom property may carry a duration into `transition: ... var(--x)`.
+      const durations = timing || key.startsWith("--");
       const literal = value as { type?: string; value?: unknown };
       if (timing && literal.type === "Literal" && typeof literal.value === "number" && literal.value !== 0) {
         return context.report({ node, message: `raw duration ${literal.value} for ${key}: ${DURATION_HINT}` });
       }
       const text = stringValue(value);
       if (text === undefined || enclosingAttribute(node) === "style") return;
-      const raw = rawValueProblem(text, { colours: false, durations: timing, named: COLOUR_KEY.test(key) });
+      const raw = rawValueProblem(text, { colours: false, durations, named: COLOUR_KEY.test(key) });
       if (raw !== undefined) context.report({ node, message: raw.message });
     };
     return {
       Literal: (node) => checkString(node, stringValue(node)),
       TemplateLiteral: (node) => checkString(node, stringValue(node)),
-      Property: (node) => checkStyleKey(node, keyName(node as unknown as Parameters<typeof keyName>[0]), node.value as Rule.Node),
+      Property: (node) => checkStyleKey(node, staticKey(node.key, node.computed), node.value as Rule.Node),
       AssignmentExpression: (node) => {
-        const target = node.left as { type: string; computed?: boolean; property?: { type?: string; name?: unknown } };
-        const key = target.type === "MemberExpression" && target.computed !== true && typeof target.property?.name === "string"
-          ? target.property.name : undefined;
-        checkStyleKey(node, key, node.right as Rule.Node);
+        if (node.left.type !== "MemberExpression") return;
+        checkStyleKey(node, staticKey(node.left.property, node.left.computed), node.right as Rule.Node);
+      },
+      // `el.style.setProperty("--x", "200ms")` sets a style key like an assignment does.
+      CallExpression: (node) => {
+        const callee = node.callee;
+        if (callee.type !== "MemberExpression" || staticKey(callee.property, callee.computed) !== "setProperty") return;
+        const [name, value] = node.arguments;
+        const key = stringValue(name);
+        if (key !== undefined && value !== undefined && value.type !== "SpreadElement") checkStyleKey(node, key, value as Rule.Node);
       },
       ImportDeclaration: (node) => {
         const specifier = node.source.value;

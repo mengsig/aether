@@ -24,6 +24,23 @@ async function axe(page: Page): Promise<string[]> {
   });
 }
 
+/** WCAG 1.4.13 in a real browser: a hover tooltip survives the pointer moving onto it, and Escape hides it. */
+async function tooltipProbe(page: Page): Promise<Record<string, boolean>> {
+  const anchor = page.locator(".ui-tooltip-anchor").first();
+  const tip = anchor.locator("[role=tooltip]");
+  const isOpen = async () => (await tip.getAttribute("data-open")) === "true";
+  await anchor.locator("button").hover();
+  const onHover = await isOpen();
+  const box = await tip.boundingBox();
+  if (box === null) throw new Error("the tooltip has no box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 8 });
+  const onTooltip = await isOpen();
+  await page.keyboard.press("Escape");
+  const afterEscape = await isOpen();
+  await page.mouse.move(0, 0);
+  return { onHover, onTooltip, afterEscape };
+}
+
 async function tabStops(page: Page, limit: number): Promise<Array<{ element: string; ring: boolean }>> {
   const stops: Array<{ element: string; ring: boolean }> = [];
   for (let step = 0; step < limit; step += 1) {
@@ -63,6 +80,7 @@ try {
     const rows = list.querySelectorAll(".ui-vlist-row");
     return { rows: rows.length, nodes: list.querySelectorAll("*").length + 1, setSize: rows[0]?.getAttribute("aria-setsize") };
   });
+  report.tooltip = await tooltipProbe(page);
   report.tabStops = await tabStops(page, 30);
   await page.emulateMedia({ reducedMotion: "reduce" });
   report.reducedMotion = await page.evaluate(() => ["instant", "fast", "base", "slow"].map((name) => getComputedStyle(document.documentElement).getPropertyValue(`--motion-${name}`).trim()));

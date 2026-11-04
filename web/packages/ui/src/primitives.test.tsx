@@ -131,6 +131,29 @@ describe("Toast and Tooltip", () => {
     await press(trigger, "Escape");
     expect(tip.dataset.open).toBeUndefined();
   });
+
+  test("a hovered tooltip stays open on its own text and Escape dismisses it without focus", async () => {
+    const { container } = await render(<Tooltip content="Stops every agent"><Button>Cancel</Button></Tooltip>);
+    const trigger = byText(container, "button", "Cancel");
+    const tip = container.querySelector("[role=tooltip]") as HTMLElement;
+    // React derives enter and leave from pointerout/pointerover pairs.
+    const move = (from: Element, to: Element) => act(async () => {
+      from.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, relatedTarget: to }));
+      to.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, relatedTarget: from }));
+    });
+    await move(document.body, trigger);
+    expect(tip.dataset.open).toBe("true");
+    await move(trigger, tip);
+    expect(tip.dataset.open).toBe("true");
+    expect(document.activeElement).not.toBe(trigger);
+    await press(document.body, "Escape");
+    expect(tip.dataset.open).toBeUndefined();
+    await move(tip, document.body);
+    await move(document.body, trigger);
+    expect(tip.dataset.open).toBe("true");
+    await move(trigger, document.body);
+    expect(tip.dataset.open).toBeUndefined();
+  });
 });
 
 describe("status colours", () => {

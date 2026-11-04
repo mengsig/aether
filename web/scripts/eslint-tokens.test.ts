@@ -61,6 +61,18 @@ describe("design tokens only (CONTRACTS.md §4)", () => {
     ]);
   });
 
+  it("rejects raw durations in custom properties, negative delays and computed style keys", async () => {
+    const messages = await lint(COMPONENT, [
+      'export const style = { "--fade-duration": "200ms" };',
+      'export const X = () => <div style={{ animationDelay: "-200ms", transitionDelay: "-0ms" }} />;',
+      'export function a(el: HTMLElement) { el.style["transitionDuration"] = "250ms"; }',
+      'export function b(el: HTMLElement) { el.style.setProperty("--fade", "1s"); el.style.setProperty("color", "red"); }',
+    ].join("\n"));
+    expect(messages.map((message) => message.split(":")[0])).toEqual([
+      'raw duration "200ms"', 'raw duration "-200ms"', 'raw duration "250ms"', 'raw duration "1s"', 'raw colour "red"',
+    ]);
+  });
+
   it("rejects raw values in every stylesheet a component imports", async () => {
     const messages = await lint(COMPONENT, 'import "../test/fixtures/raw.css";\nexport const x = 1;\n');
     expect(messages).toEqual([

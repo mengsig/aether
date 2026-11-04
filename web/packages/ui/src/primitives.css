@@ -107,7 +107,9 @@
     pointer-events: none; opacity: 0; visibility: hidden;
     transition: opacity var(--motion-fast) var(--ease-standard), visibility var(--motion-fast) var(--ease-standard);
   }
-  .ui-tooltip[data-open] { opacity: 1; visibility: visible; }
+  .ui-tooltip[data-open] { opacity: 1; visibility: visible; pointer-events: auto; }
+  /* Bridges the gap to the trigger, so the pointer can cross onto the tooltip without leaving. */
+  .ui-tooltip::after { content: ""; position: absolute; inset-inline: 0; inset-block-start: 100%; block-size: var(--space-2); }
 
   .ui-badge {
     display: inline-flex; align-items: center; padding: 1px var(--space-2);
