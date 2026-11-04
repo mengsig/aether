@@ -20,4 +20,4 @@ export { ipcTransport } from "./transports/ipc.ts";
 export { indexedDbIdentity, type DeviceIdentity, type IdentityStore } from "./transports/identity.ts";
 export type { SocketFactory, SocketLike } from "./transports/socket.ts";
 export * from "./selectors.ts";
-export { AppProvider, useApp, useSelector, useCapabilities, useCommand, useRoutes, useEntityActions, useRoute, useReread, usePermission, permissionFor, type Permission } from "./react.ts";
+export { AppProvider, useApp, useSelector, useCapabilities, useCommand, useRoutes, useEntityActions, useRoute, useReread, usePermission, permissionFor, type Permission, type CommandInput } from "./react.ts";

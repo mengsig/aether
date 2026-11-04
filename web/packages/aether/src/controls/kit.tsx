@@ -2,9 +2,9 @@
 // (disabled with the reason shown, host-only marked), an explicit confirm step for destructive or
 // privileged actions, and the outcome of a run. Nothing here holds daemon data.
 
-import { codeOf, usePermission, useApp, useCommand, type LocalAction } from "@aether-ui/core";
+import { codeOf, usePermission, useApp, useCommand, type CommandInput, type LocalAction, type ReadEntry } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
-import { Badge, Button, Dialog, type ButtonVariant } from "@aether-ui/ui";
+import { Badge, Button, Dialog, EmptyState, ErrorState, Skeleton, type ButtonVariant } from "@aether-ui/ui";
 import { useCallback, useId, useState, type ReactNode } from "react";
 import { invariant } from "../fleet/invariant.ts";
 import "./kit.css";
@@ -21,7 +21,7 @@ export type RunStatus =
 export interface Run {
   readonly status: RunStatus;
   /** Sends one command through `useCommand`; resolves to its reply, or null when it failed. */
-  readonly send: (command: Json, done?: string) => Promise<Json | null>;
+  readonly send: (command: CommandInput, done?: string) => Promise<Json | null>;
   /** Runs a host-only action through the desktop's native confirmation. */
   readonly privileged: (action: LocalAction, done?: string) => Promise<boolean>;
 }
@@ -38,11 +38,12 @@ export function useRun(conn: ConnId): Run {
       setStatus({ state: "failed", message });
     }
   }, []);
-  const send = useCallback(async (input: Json, done = "Done") => {
-    invariant(typeof input.cmd === "string", "a control sends a named command");
+  const send = useCallback(async (input: CommandInput, done = "Done") => {
+    const json = input as Json;
+    invariant(typeof json.cmd === "string", "a control sends a named command");
     setStatus({ state: "busy" });
     try {
-      const reply = await command(input);
+      const reply = await command(json);
       setStatus({ state: "done", message: done });
       return reply;
     } catch (error) {
@@ -88,10 +89,10 @@ export interface Confirm {
 export interface ActionProps {
   readonly conn: ConnId;
   /** The command as it will be sent; it decides the access check, so pass it even for a privileged action. */
-  readonly command: Json;
+  readonly command: CommandInput;
   readonly label: string;
   readonly onRun: (reason: string) => unknown;
-  readonly confirm?: Confirm;
+  readonly confirm?: Confirm | undefined;
   readonly variant?: ButtonVariant;
   readonly busy?: boolean;
   /** Disables the control for a reason of the screen's own (nothing selected, nothing to change). */
@@ -164,3 +165,34 @@ export function StandingNotice({ conn }: { readonly conn: ConnId }) {
   if (refusal === null) return null;
   return <p className="b3-standing" role="note">{refusal}. Every control here is read-only on this device.</p>;
 }
+
+export interface ReadViewProps<T> {
+  readonly entry: ReadEntry | undefined;
+  /** What is being read, in words: "the schedules". */
+  readonly what: string;
+  readonly empty: string;
+  /** Checks the stored reply has the shape this view renders; a mismatch is a protocol bug. */
+  readonly guard: (value: unknown) => value is T;
+  readonly isEmpty: (value: T) => boolean;
+  readonly retry: () => void;
+  readonly children: (value: T) => ReactNode;
+}
+
+/** Renders one store-held reread: loading, failed with a retry, empty, or its value (with a stale-read note). */
+export function ReadView<T>({ entry, what, empty, guard, isEmpty, retry, children }: ReadViewProps<T>) {
+  invariant(what.trim() !== "" && empty.trim() !== "", "a read view names what it reads");
+  if (entry === undefined || entry.value === null) {
+    if (entry?.error) return <ErrorState title={`Could not load ${what}`} message={entry.error} onRetry={retry} />;
+    return <div className="b3-stack" aria-busy="true" aria-label={`Loading ${what}`}><Skeleton height="2.5rem" /><Skeleton height="2.5rem" /></div>;
+  }
+  invariant(guard(entry.value), `the stored reply for ${what} has the expected shape`);
+  const value = entry.value;
+  return (
+    <>
+      {entry.error ? <p className="b3-note" role="alert" data-state="failed">Showing the last answer; the newest read failed: {entry.error}</p> : null}
+      {isEmpty(value) ? <EmptyState title={empty} /> : children(value)}
+    </>
+  );
+}
+
+export const isList = (value: unknown): value is readonly unknown[] => Array.isArray(value);

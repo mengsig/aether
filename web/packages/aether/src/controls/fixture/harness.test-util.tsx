@@ -71,9 +71,10 @@ export function buttonNamed(root: ParentNode, label: string | RegExp): HTMLButto
   return matches[0] as HTMLButtonElement;
 }
 
-/** Types into the input or textarea labelled `label`, as React sees a user's typing. */
+/** Types into the input, textarea or select labelled `label`, as React sees a user's typing. */
 export async function type(h: Harness, root: ParentNode, label: string, value: string): Promise<void> {
-  const labelled = [...root.querySelectorAll("label")].find((l) => l.textContent?.trim() === label);
+  const named = (l: HTMLLabelElement) => (l.querySelector(".ui-field-label")?.textContent ?? l.textContent)?.trim() === label;
+  const labelled = [...root.querySelectorAll("label")].find(named);
   invariant(labelled !== undefined, `a field labelled ${label}`);
   const input = labelled.htmlFor ? root.querySelector(`[id="${labelled.htmlFor}"]`) : labelled.querySelector("input, textarea, select");
   invariant(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement || input instanceof HTMLSelectElement, `${label} labels an input`);

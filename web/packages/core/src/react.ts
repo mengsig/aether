@@ -74,7 +74,10 @@ export function useRoute(): RouteMatch | null {
  * changes; returns the stored entry, so the screen derives from the store and keeps no copy.
  * A null command reads nothing (the screen lacks what the read needs, or may not send it).
  */
-export function useReread(conn: ConnId, key: string, command: Json | null, tags: readonly string[], refresh: unknown = 0): ReadEntry | undefined {
+/** A command as a builder in `@aether-ui/protocol` makes it, or as a plain record. */
+export type CommandInput = Json | { readonly cmd: string };
+
+export function useReread(conn: ConnId, key: string, command: CommandInput | null, tags: readonly string[], refresh: unknown = 0): ReadEntry | undefined {
   const app = useApp();
   const ready = useSelector(useCallback((state: State) => state.connections[conn]?.state === "ready", [conn]));
   const text = command === null ? null : JSON.stringify(command);
@@ -93,7 +96,8 @@ export interface Permission {
 }
 
 /** What sending `command` on `conn` needs, and why it is refused now: the same check `useCommand` makes. */
-export function permissionFor(state: State, conn: ConnId, command: Json): Permission {
+export function permissionFor(state: State, conn: ConnId, input: CommandInput): Permission {
+  const command = input as Json;
   const info = state.connections[conn];
   const access = info?.daemon === "archon" ? archonAccess(command) : aetherAccess(command);
   if (!info || info.state !== "ready") return { access, refusal: `${info?.label ?? "The daemon"} is not connected` };
@@ -105,7 +109,7 @@ export function permissionFor(state: State, conn: ConnId, command: Json): Permis
   }
 }
 
-export function usePermission(conn: ConnId, command: Json): Permission {
+export function usePermission(conn: ConnId, command: CommandInput): Permission {
   const text = JSON.stringify(command);
   const select = useCallback((state: State) => permissionFor(state, conn, JSON.parse(text) as Json), [conn, text]);
   return useSelector(select, samePermission);
