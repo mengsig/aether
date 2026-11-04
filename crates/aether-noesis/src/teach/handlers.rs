@@ -289,6 +289,38 @@ impl<E: Engine> Teaching<'_, E> {
         Ok(())
     }
 
+    /// The proposition ids a problem's targets name. The ids are stored and
+    /// shown with the problem, so one that repeats the solution is refused.
+    fn problem_targets(
+        &self,
+        names: &[String],
+        solution: &[String],
+    ) -> Result<Result<Vec<String>, String>, TeachError> {
+        let mut targets = Vec::with_capacity(names.len());
+        let mut unknown = Vec::new();
+        for name in names {
+            match db::resolve_target(self.conn(), name)? {
+                Some(id) if !targets.contains(&id) => targets.push(id),
+                Some(_) => {}
+                None => unknown.push(printable(name)),
+            }
+        }
+        if !unknown.is_empty() {
+            let named = unknown.join(", ");
+            return Ok(Err(format!(
+                "no proposition is named {named}; use noesis.graph_search"
+            )));
+        }
+        if targets.iter().any(|id| seal::holds(id, solution)) {
+            return Ok(Err(
+                "a target's proposition id gives away the solution; target another proposition"
+                    .to_string(),
+            ));
+        }
+        debug_assert!(targets.len() <= names.len(), "targets are deduplicated");
+        Ok(Ok(targets))
+    }
+
     fn problem(&mut self, row: &SessionRow, args: ProblemArgs) -> Handled {
         if db::active_problem(self.conn(), &row.id)?.is_some() {
             return refuse("a problem is already active; noesis.conclude it first");
@@ -299,21 +331,10 @@ impl<E: Engine> Teaching<'_, E> {
         {
             return refuse("the statement or a target gives away the solution; rewrite it");
         }
-        let mut targets = Vec::with_capacity(args.targets.len());
-        let mut unknown = Vec::new();
-        for target in &args.targets {
-            match db::resolve_target(self.conn(), target)? {
-                Some(id) if !targets.contains(&id) => targets.push(id),
-                Some(_) => {}
-                None => unknown.push(printable(target)),
-            }
-        }
-        if !unknown.is_empty() {
-            return refuse(format!(
-                "no proposition is named {}; use noesis.graph_search",
-                unknown.join(", ")
-            ));
-        }
+        let targets = match self.problem_targets(&args.targets, &solution)? {
+            Ok(targets) => targets,
+            Err(problem) => return refuse(problem),
+        };
         let problem = Problem {
             id: db::fresh_id("pb"),
             statement: args.statement,

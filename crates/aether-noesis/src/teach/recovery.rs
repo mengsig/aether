@@ -463,3 +463,24 @@ fn an_overlapping_or_marker_like_solution_is_still_sealed() {
     let error = error_of(&call(&mut t, &authored, PROBLEM, told, ""));
     assert!(error.contains("gives away the solution"), "{error}");
 }
+
+#[test]
+fn a_target_whose_proposition_id_repeats_the_solution_is_refused() {
+    let (_dir, noesis) = fixture();
+    add_proposition(&noesis, "p_mitochondria", "the organelle", "powerhouse");
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise cells", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    t.take_events();
+    let problem = json!({"statement": "Name the organelle that supplies ATP", "mode": "recall",
+        "targets": ["powerhouse"], "solution": SECRET});
+    let error = error_of(&call(&mut t, &id, PROBLEM, problem, ""));
+    assert!(error.contains("gives away the solution"), "{error}");
+    assert!(!error.contains(SECRET), "{error}");
+    let view = session(&t, &id);
+    assert!(view.active_problem.is_none());
+    assert!(!format!("{view:?}").contains(SECRET), "{view:?}");
+    assert!(t.take_events().is_empty(), "nothing was posed");
+}
