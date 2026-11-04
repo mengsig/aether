@@ -219,10 +219,13 @@ async fn enabling_writes_first_then_opens_the_database_and_announces() {
     );
     assert_eq!(harness.settings_events(), 1);
     let sessions = serde_json::from_str(r#"{"cmd":"noesis_list_sessions"}"#).expect("command");
-    let error = harness.send(sessions).await.expect_err("not built yet");
-    assert_ne!(
-        error.reason.as_deref(),
-        Some(aether_protocol::NOESIS_DISABLED)
+    let reply = harness
+        .send(sessions)
+        .await
+        .expect("the enabled service answers");
+    assert!(
+        matches!(reply, Reply::NoesisSessions { ref sessions, .. } if sessions.is_empty()),
+        "{reply:?}"
     );
 }
 
@@ -386,8 +389,10 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
     let super::State::Running(live) = &*state else {
         panic!("running");
     };
-    let accountant = live.noesis.accountant().clone();
-    let mut settings = live.noesis.settings().clone();
+    let desk = live.desk.lock().await;
+    let noesis = desk.noesis.as_ref().expect("open");
+    let accountant = noesis.accountant().clone();
+    let mut settings = noesis.settings().clone();
     settings.billing_allow_api = false;
     let budget = ServiceBudget::new(accountant.clone(), &settings, harness.daemon.models.clone());
     // Admission reads a snapshot of the row; the rule binds the chain the turn runs.
@@ -417,6 +422,7 @@ async fn an_api_billed_link_is_refused_unless_api_billing_is_allowed() {
     settings.billing_allow_api = true;
     let allowed = ServiceBudget::new(accountant, &settings, harness.daemon.models.clone());
     assert!(allowed.admit(&api, NoesisLane::Interactive).is_ok());
+    drop(desk);
     drop(state);
     let status = harness
         .configure(NoesisSettingsPatch {
@@ -706,7 +712,8 @@ async fn seed_concept(harness: &Harness, title: &str) -> String {
     let super::State::Running(live) = &*state else {
         panic!("the service runs");
     };
-    let conn = live.noesis.store().connection();
+    let desk = live.desk.lock().await;
+    let conn = desk.noesis.as_ref().expect("open").store().connection();
     let now = chrono::Utc::now();
     let concept = learner::ensure_concept(conn, ConceptKind::Topic, title, title, now).unwrap();
     let exposure = NewEvidence {

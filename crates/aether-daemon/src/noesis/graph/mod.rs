@@ -17,7 +17,8 @@ use aether_runtime::Runtime;
 use aether_runtime::noesis_guard::record_noesis_receipt;
 use aether_store::Commit;
 
-use super::{Live, NoesisService, State};
+use super::routes::{Group, group_of};
+use super::{NoesisService, State};
 use crate::connection::map_err;
 
 mod jobs;
@@ -25,20 +26,6 @@ mod jobs;
 mod tests;
 
 pub(super) use jobs::Extraction;
-
-/// Whether `command` is one [`NoesisService::graph`] answers.
-pub(super) fn is_graph(command: &Command) -> bool {
-    matches!(
-        command,
-        Command::NoesisGraph { .. }
-            | Command::NoesisDeleteProposition { .. }
-            | Command::NoesisDeleteSource { .. }
-            | Command::NoesisExtract { .. }
-            | Command::NoesisImportSource { .. }
-            | Command::NoesisJobs { .. }
-            | Command::NoesisCancelJob { .. }
-    )
-}
 
 impl NoesisService {
     /// Answer a validated graph command. Writes that a client may retry
@@ -49,12 +36,20 @@ impl NoesisService {
         command: Command,
         submission: Option<&Submission>,
     ) -> Result<Reply, ErrorReply> {
-        debug_assert!(is_graph(&command), "only graph commands reach here");
-        let state = self.state.lock().await;
-        let State::Running(live) = &*state else {
+        debug_assert_eq!(
+            group_of(&command),
+            Group::Graph,
+            "only graph commands reach here"
+        );
+        let (desk, extraction) = self
+            .graph_parts()
+            .await
+            .ok_or_else(ErrorReply::noesis_disabled)?;
+        let desk = desk.lock().await;
+        let Some(noesis) = &desk.noesis else {
             return Err(ErrorReply::noesis_disabled());
         };
-        let conn = live.noesis.store().connection();
+        let conn = noesis.store().connection();
         match command {
             Command::NoesisGraph {
                 query,
@@ -83,7 +78,8 @@ impl NoesisService {
             other => mutate(
                 &Writer {
                     runtime,
-                    live,
+                    noesis,
+                    extraction: &extraction,
                     submission,
                 },
                 other,
@@ -93,22 +89,22 @@ impl NoesisService {
 
     /// The hook a finished teaching turn calls: queue and start an extraction
     /// of `session` when `extraction.sessions = auto` and enough prose is new.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the teaching service calls it once it is wired")
-    )]
+    /// Called without the desk held: it takes the desk itself.
     pub(in crate::noesis) async fn after_teaching_turn(
         &self,
         runtime: &Arc<Runtime>,
         session: &str,
     ) -> Result<Option<Job>, ErrorReply> {
-        let state = self.state.lock().await;
-        let State::Running(live) = &*state else {
+        let Some((desk, extraction)) = self.graph_parts().await else {
             return Ok(None);
         };
-        let store = live.noesis.store();
+        let desk = desk.lock().await;
+        let Some(noesis) = &desk.noesis else {
+            return Ok(None);
+        };
+        let store = noesis.store();
         let corpus = jobs::StoreCorpus::new(store, runtime.store().clone());
-        let effective = live.noesis.effective();
+        let effective = noesis.effective();
         let queued = extract::after_teaching_turn(store.connection(), &effective, &corpus, session)
             .map_err(extract_error)?;
         let Some(job) = queued else {
@@ -117,21 +113,33 @@ impl NoesisService {
         debug_assert_eq!(job.kind, JobKind::ExtractSession);
         let commit = Commit::new().event(job_event(&job));
         runtime.apply(commit).map_err(map_err)?;
-        live.extraction.pump(runtime);
+        extraction.pump(runtime);
         Ok(Some(job))
+    }
+
+    /// The running service's desk and extraction jobs, taken under the state
+    /// lock and used after it is released, as teaching calls do.
+    async fn graph_parts(&self) -> Option<(Arc<tokio::sync::Mutex<super::Desk>>, Arc<Extraction>)> {
+        let state = self.state.lock().await;
+        let State::Running(live) = &*state else {
+            return None;
+        };
+        Some((live.desk.clone(), live.extraction.clone()))
     }
 }
 
-/// What a write needs: the runtime for events and receipts, the live service.
+/// What a write needs: the runtime for events and receipts, the open store
+/// and the extraction jobs.
 struct Writer<'a> {
     runtime: &'a Arc<Runtime>,
-    live: &'a Live,
+    noesis: &'a aether_noesis::Noesis,
+    extraction: &'a Arc<Extraction>,
     submission: Option<&'a Submission>,
 }
 
 impl Writer<'_> {
     fn store(&self) -> &NoesisStore {
-        self.live.noesis.store()
+        self.noesis.store()
     }
 
     /// The reply an earlier request under the same key recorded.
@@ -202,7 +210,7 @@ fn mutate(writer: &Writer<'_>, command: Command) -> Result<Reply, ErrorReply> {
     writer.record(events, &reply)?;
     if starts_jobs {
         // Also starts a queued job left without a worker.
-        writer.live.extraction.pump(writer.runtime);
+        writer.extraction.pump(writer.runtime);
     }
     Ok(reply)
 }
@@ -278,7 +286,7 @@ fn check_session(store: &NoesisStore, session: &str) -> Result<(), ErrorReply> {
 
 /// With `noesis.concurrency.background = 0` no job could ever run, so none is made.
 fn check_slots(writer: &Writer<'_>) -> Result<(), ErrorReply> {
-    if writer.live.noesis.settings().concurrency_background == 0 {
+    if writer.noesis.settings().concurrency_background == 0 {
         return Err(ErrorReply::invalid(
             "noesis.concurrency.background is 0, so no background job can run",
         ));
@@ -360,7 +368,7 @@ fn cancel(writer: &Writer<'_>, job: &str) -> Result<(Reply, Vec<EventDraft>), Er
             JobState::Queued,
             "a queued job was cancelled above"
         );
-        writer.live.extraction.cancel(job);
+        writer.extraction.cancel(job);
     }
     Ok((Reply::NoesisJob { job: now }, Vec::new()))
 }
