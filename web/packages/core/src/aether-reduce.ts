@@ -3,7 +3,7 @@
 
 import type { aether } from "@aether-ui/protocol";
 import { invariant, object, omit, seq, string, type Json } from "./guards.ts";
-import type { AetherConnState, StreamState, TranscriptState } from "./store.ts";
+import type { AetherConnState, StreamState, StreamTool, TranscriptState } from "./store.ts";
 
 const RECENT_EVENTS = 500;
 const MAX_STREAM_CHARS = 2_000_000;
@@ -140,15 +140,24 @@ function grow(stream: StreamState, delta: Json): StreamState | null {
   const id = typeof delta.tool_use_id === "string" ? delta.tool_use_id : null;
   const name = String(delta.name ?? "");
   const chunk = String(delta.partial_json ?? "");
-  // A daemon without tool_use_id streams one call at a time, so its chunks join the last call.
-  const at = id === null ? stream.tools.length - 1 : stream.tools.findIndex((tool) => tool.id === id);
-  const target = at >= 0 && (id !== null || stream.tools[at]?.id === null) ? stream.tools[at] : undefined;
+  const at = id === null ? (continuesLast(stream.tools.at(-1), name, chunk) ? stream.tools.length - 1 : -1) : stream.tools.findIndex((tool) => tool.id === id);
+  const target = at >= 0 ? stream.tools[at] : undefined;
   const tools = [...stream.tools];
   if (target) tools[at] = { ...target, name: target.name || name, input: target.input + chunk };
   else tools.push({ id, name, input: chunk });
   const total = tools.reduce((sum, tool) => sum + tool.input.length, stream.text.length + stream.thinking.length);
   invariant(id === null || tools.filter((tool) => tool.id === id).length === 1, "one tail entry per tool_use_id");
   return total > MAX_STREAM_CHARS ? null : { ...stream, tools };
+}
+
+/**
+ * A daemon without tool_use_id streams one call at a time: a chunk joins the last call unless it
+ * names another tool or opens a new call with an empty chunk, as each call's first delta does.
+ */
+function continuesLast(last: StreamTool | undefined, name: string, chunk: string): boolean {
+  if (!last || last.id !== null) return false;
+  if (name !== "" && last.name !== "" && name !== last.name) return false;
+  return chunk !== "" || last.input === "";
 }
 
 /** A transcript reread for this agent succeeded: its streams take later deltas again. */

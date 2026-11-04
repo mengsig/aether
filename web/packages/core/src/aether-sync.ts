@@ -286,10 +286,26 @@ function withAgent(state: AetherConnState, agent: aether.Agent): AetherConnState
   string(agent.id, "agent.id");
   // A reread replaces the whole row, but never with one older than the row it would replace.
   const held = state.agents[agent.id];
-  if (held && Date.parse(held.updated_at) > Date.parse(agent.updated_at)) return state;
+  if (held && compareStamps(held.updated_at, agent.updated_at) > 0) return state;
   const isRoot = !agent.parent;
   const listed = state.roots.includes(agent.id);
   const roots = isRoot && !listed ? [...state.roots, agent.id] : !isRoot && listed ? state.roots.filter((id) => id !== agent.id) : state.roots;
   invariant(roots.includes(agent.id) === isRoot, "an agent is a root exactly when it has no parent");
   return { ...state, agents: { ...state.agents, [agent.id]: agent }, roots };
+}
+
+const STAMP = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$/i;
+
+/** Orders two RFC 3339 stamps to the nanosecond; Date.parse alone stops at the millisecond. */
+export function compareStamps(a: string, b: string): number {
+  const [left, right] = [stampParts(a), stampParts(b)];
+  return left.seconds - right.seconds || left.nanos - right.nanos;
+}
+
+function stampParts(stamp: string): { seconds: number; nanos: number } {
+  const match = STAMP.exec(stamp);
+  invariant(match !== null, `${stamp} is an RFC 3339 timestamp`);
+  const seconds = Date.parse(`${match[1]}${match[3]}`);
+  invariant(Number.isFinite(seconds), `${stamp} names a real instant`);
+  return { seconds, nanos: Number((match[2] ?? "").padEnd(9, "0")) };
 }

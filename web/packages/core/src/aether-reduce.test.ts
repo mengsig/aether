@@ -64,6 +64,20 @@ describe("the streamed tail of an invocation", () => {
     expect(late.outcome).toBe("ignored");
   });
 
+  it("splits tool calls from a daemon that sends no tool_use_id at each call's start", () => {
+    const tool = (order: number, name: string, chunk: string) => delta(order, { delta: "tool_input", name, partial_json: chunk });
+    const state = feed(EMPTY_AETHER, [
+      tool(1, "bash", ""), tool(2, "bash", "{\"cmd\":"), tool(3, "bash", "\"ls\"}"),
+      tool(4, "read_file", ""), tool(5, "read_file", "{\"path\":\"a\"}"),
+      tool(6, "read_file", ""), tool(7, "read_file", "{\"path\":\"b\"}"),
+    ]);
+    expect(state.streams[INV]?.tools).toEqual([
+      { id: null, name: "bash", input: "{\"cmd\":\"ls\"}" },
+      { id: null, name: "read_file", input: "{\"path\":\"a\"}" },
+      { id: null, name: "read_file", input: "{\"path\":\"b\"}" },
+    ]);
+  });
+
   it("marks text resumed after a gap as partial", () => {
     let state = feed(EMPTY_AETHER, [text(1, "Hello"), text(3, " lost")]);
     expect(state.streams[INV]).toMatchObject({ text: "", recovering: true, partial: true });

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Json } from "./guards.ts";
 import { applyEvent } from "./aether-reduce.ts";
+import { compareStamps } from "./aether-sync.ts";
 import { ConnectionManager } from "./manager.ts";
 import { EMPTY_AETHER, INITIAL_STATE, Store } from "./store.ts";
 import { FakeDaemon, type Handler } from "./fixtures/fake-daemon.ts";
@@ -356,3 +357,15 @@ describe("Aether resync, second review", () => {
   });
 });
 
+describe("timestamp order", () => {
+  it("tells apart stamps within one millisecond, across precisions and offsets", () => {
+    expect(compareStamps("2026-11-04T03:00:00.123456Z", "2026-11-04T03:00:00.123123Z")).toBeGreaterThan(0);
+    expect(compareStamps("2026-11-04T03:00:00.1Z", "2026-11-04T03:00:00.100000000Z")).toBe(0);
+    expect(compareStamps("2026-11-04T04:00:00.5+01:00", "2026-11-04T03:00:00.4Z")).toBeGreaterThan(0);
+    expect(compareStamps("2026-11-04T03:00:00Z", "2026-11-04T03:00:01Z")).toBeLessThan(0);
+  });
+
+  it("refuses a stamp that is not RFC 3339", () => {
+    expect(() => compareStamps("yesterday", "2026-11-04T03:00:00Z")).toThrow(/RFC 3339/);
+  });
+});

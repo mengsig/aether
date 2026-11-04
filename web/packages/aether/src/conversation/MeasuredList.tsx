@@ -1,7 +1,7 @@
 // A virtual list whose rows have their own heights: rows start at an estimate, are measured once
 // drawn, and only those in view (plus overscan) are in the DOM. Messages vary too much for fixed rows.
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invariant } from "../fleet/invariant.ts";
 
 const FALLBACK_VIEWPORT = 600;
@@ -104,10 +104,32 @@ function useMeasures(onResize: (index: number, change: number) => void): Measure
   return { heights, version, observe };
 }
 
+/** The viewport's height, kept current as the window or the layout around the list resizes. */
+function useViewportHeight(ref: RefObject<HTMLDivElement | null>): number {
+  const [viewport, setViewport] = useState(FALLBACK_VIEWPORT);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    invariant(element !== null, "the list viewport is mounted");
+    const measure = () => {
+      if (element.clientHeight > 0) setViewport(element.clientHeight);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    observer?.observe(element);
+    return () => {
+      window.removeEventListener("resize", measure);
+      observer?.disconnect();
+    };
+  }, [ref]);
+  invariant(viewport > 0, "the viewport has a height");
+  return viewport;
+}
+
 export function MeasuredList({ label, count, rowKey, estimate, renderRow, follow = false, className }: MeasuredListProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(0);
-  const [viewport, setViewport] = useState(FALLBACK_VIEWPORT);
+  const viewport = useViewportHeight(ref);
   const atEnd = useRef(follow);
   const firstShown = useRef(0);
   // A row above the view that grows would push the view down; scroll by as much to hold it still.
@@ -128,7 +150,6 @@ export function MeasuredList({ label, count, rowKey, estimate, renderRow, follow
   useLayoutEffect(() => {
     const element = ref.current;
     invariant(element !== null, "the list viewport is mounted");
-    if (element.clientHeight > 0 && element.clientHeight !== viewport) setViewport(element.clientHeight);
     if (!follow || !atEnd.current) return;
     const end = Math.max(0, total - (element.clientHeight || viewport));
     element.scrollTop = end;

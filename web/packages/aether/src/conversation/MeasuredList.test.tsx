@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { MeasuredList, rowAt, rowOffsets, rowRange } from "./MeasuredList.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,5 +36,51 @@ describe("the measured list", () => {
     expect(container.querySelector(".conv-spacer")?.getAttribute("style")).toContain("1000000px");
     act(() => root.unmount());
     container.remove();
+  });
+
+  describe("when the viewport resizes", () => {
+    let height = 400;
+    afterEach(() => vi.restoreAllMocks());
+
+    async function mountList(follow: boolean) {
+      height = 400;
+      vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains("conv-list") ? height : 0;
+      });
+      vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(() => 1_000 * 50);
+      const container = document.createElement("div");
+      document.body.append(container);
+      const root = createRoot(container);
+      await act(async () => root.render(
+        <MeasuredList label="Rows" count={1_000} rowKey={(i) => `r${i}`} estimate={() => 50} renderRow={(i) => <span>row {i}</span>} follow={follow} />,
+      ));
+      const list = container.querySelector<HTMLElement>(".conv-list");
+      if (!list) throw new Error("the list is drawn");
+      const resize = async (next: number) => {
+        height = next;
+        await act(async () => window.dispatchEvent(new Event("resize")));
+      };
+      const lastDrawn = () => Number([...container.querySelectorAll("[role=listitem]")].at(-1)?.getAttribute("aria-posinset"));
+      return { list, resize, lastDrawn, unmount: () => { act(() => root.unmount()); container.remove(); } };
+    }
+
+    test("draws rows down to the bottom of a viewport that grew", async () => {
+      const { list, resize, lastDrawn, unmount } = await mountList(false);
+      await act(async () => {
+        list.scrollTop = 10_000;
+        list.dispatchEvent(new Event("scroll"));
+      });
+      await resize(1_600);
+      expect(lastDrawn() * 50).toBeGreaterThanOrEqual(10_000 + 1_600);
+      unmount();
+    });
+
+    test("keeps the last row in view while following", async () => {
+      const { list, resize, lastDrawn, unmount } = await mountList(true);
+      await resize(250);
+      expect(list.scrollTop).toBe(50_000 - 250);
+      expect(lastDrawn()).toBe(1_000);
+      unmount();
+    });
   });
 });
