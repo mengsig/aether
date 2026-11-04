@@ -26,6 +26,8 @@ impl Runtime {
                 agent.status.kind()
             )));
         }
+        // A fold calls a model, and its wake gives the agent a turn.
+        self.refuse_noesis_while_off(&agent)?;
         // A handoff already owes a full checkpoint. A later explicit request
         // must not replace it with an ordinary, tail-retaining compaction.
         let handoff_pending = matches!(
@@ -123,6 +125,9 @@ impl Runtime {
                 "agent {id} was already restarted as {successor}"
             )));
         }
+        self.refuse_noesis_while_off(&old)?;
+        // The successor stays in the subsystem its predecessor was created under.
+        let subsystem = self.store.agent_subsystem(id)?;
         self.refuse_collected_workspace(&old)?;
         self.models.resolve(&old.model)?;
         // §16: the successor is a new agent under the same parent, and the
@@ -306,7 +311,10 @@ impl Runtime {
         }
         agent.transition(AgentStatus::Ready, at)?;
         commit.push_event(base(EventKind::AgentReady));
-        commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
+        commit.push_mutation(Mutation::CreateAgent {
+            agent: agent.clone(),
+            subsystem,
+        });
         old.restarted_as = Some(new_id);
         old.updated_at = at;
         commit.push_mutation(Mutation::UpsertAgent(old));
@@ -335,6 +343,7 @@ impl Runtime {
                 agent.status.kind()
             )));
         };
+        self.refuse_noesis_while_off(&agent)?;
         self.refuse_unwakeable(&hold, &agent)?;
 
         let at = now();

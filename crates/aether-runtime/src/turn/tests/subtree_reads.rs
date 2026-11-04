@@ -64,6 +64,7 @@ fn hold_turn(runtime: &Runtime, agent: AgentId) {
             provider: "anthropic".into(),
             engine: false,
             on_provider: true,
+            noesis: None,
         },
     );
 }

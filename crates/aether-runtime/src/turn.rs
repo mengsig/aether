@@ -239,6 +239,8 @@ pub(crate) struct TurnCtx {
     /// The handoff this model owed when the turn started, before later
     /// selections could replace the ledger's latest request.
     pub(crate) start_handoff: Option<compaction::PendingCompaction>,
+    /// The Noesis lane dispatch admitted this turn in; `None` outside Noesis.
+    pub(crate) noesis: Option<crate::noesis_guard::NoesisLane>,
 }
 
 impl TurnCtx {
@@ -252,6 +254,11 @@ impl TurnCtx {
             task_id: self.task.as_ref().map(|task| task.id),
             spawns: spawns.clone(),
         }
+    }
+
+    /// Which deltas this turn's streams publish.
+    pub(crate) fn stream_seal(&self) -> crate::noesis_seal::StreamSeal {
+        crate::noesis_seal::StreamSeal::of(self.noesis.is_some())
     }
 
     pub(crate) fn add_usage(&mut self, usage: aether_core::model::Usage) {
@@ -386,6 +393,13 @@ fn begin_turn(
     );
     let mut task = turn_task(runtime, &agent)?;
     let start_handoff = compaction::handoff_at_turn_start(runtime, &agent)?;
+    // Dispatch read the subsystem when it admitted the turn; the slot carries the verdict.
+    let noesis = runtime
+        .sched
+        .lock()
+        .running
+        .get(&agent_id)
+        .and_then(|running| running.noesis);
     let mut ctx = TurnCtx {
         agent: agent.clone(),
         task: task.clone(),
@@ -397,6 +411,7 @@ fn begin_turn(
         user_reply_pending: reply_obligation::load(runtime, agent_id)?,
         reply_given_unrecorded: false,
         start_handoff,
+        noesis,
     };
     let mut commit = start_commit(&ctx, &lease, task.as_mut(), at)?;
     commit.push_mutation(Mutation::UpsertAgent(agent.clone()));

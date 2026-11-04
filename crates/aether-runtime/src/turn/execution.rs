@@ -42,6 +42,9 @@ pub(super) async fn execute_inner(
     // A stop may land after tool outcomes but before their transcript message.
     compose_tool_results(runtime, ctx)?;
 
+    if stopped_at_model_boundary(runtime, ctx) {
+        return Ok(Next::Interrupted);
+    }
     if let Some(next) = manual_compaction(runtime, ctx, &cancel).await? {
         return Ok(next);
     }
@@ -136,6 +139,16 @@ async fn manual_compaction(
             .clone()
             .unwrap_or(WaitCondition::Inbox),
     )))
+}
+
+/// A Noesis background job whose gate left Enabled ends before its next model
+/// call, as an interrupt: the agent keeps what it committed and waits.
+fn stopped_at_model_boundary(runtime: &Runtime, ctx: &TurnCtx) -> bool {
+    let stops = crate::noesis_guard::stops_at_model_boundary(runtime, ctx.noesis);
+    if stops {
+        tracing::info!(agent = %ctx.agent.id, "Noesis is not enabled; the background turn stops before its model call");
+    }
+    stops
 }
 
 /// Count the maintenance turn and read `items`, the requests it served.
@@ -281,6 +294,9 @@ pub(super) async fn run_link(
         Ok(r) => r,
         Err(e) => return unusable_link(runtime, ctx, model, rest, e.to_string()),
     };
+    if stopped_at_model_boundary(runtime, ctx) {
+        return Ok(LinkOutcome::Done(Next::Interrupted));
+    }
     if runtime.client_override.is_none() {
         prepare_fallback_session(runtime, ctx, model)?;
     }
@@ -353,6 +369,10 @@ pub(super) async fn run_link(
         .await?
     {
         checkpoint = Some(fresh);
+    }
+    // Compaction can take a while; check again before the inbox is consumed.
+    if stopped_at_model_boundary(runtime, ctx) {
+        return Ok(LinkOutcome::Done(Next::Interrupted));
     }
     let transcript_after = checkpoint
         .as_ref()
@@ -497,7 +517,7 @@ pub(super) async fn run_link(
     }
 
     // ---- 4. invoke the model -------------------------------------------------
-    let mut deltas = DeltaStream::new(InvocationId::new());
+    let mut deltas = DeltaStream::new(InvocationId::new(), ctx.stream_seal());
     let invocation_id = deltas.invocation();
     let started_at = now();
     runtime.bus.publish_delta(

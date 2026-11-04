@@ -97,6 +97,7 @@ impl Runtime {
             return Ok(receipt);
         }
         let mut agent = self.live_agent(root, "resume target")?;
+        self.refuse_noesis_while_off(&agent)?;
         let at = now();
         let run = agent.run;
         let mut commit = Commit::new();
@@ -206,6 +207,10 @@ impl Runtime {
             return Ok(receipt);
         }
         let targets = self.resume_targets(root)?;
+        // Checked for every agent the sweep would move, before any of them moves.
+        for agent in targets.iter().filter(|a| a.paused || suspended(a)) {
+            self.refuse_noesis_while_off(agent)?;
+        }
         let at = now();
         let mut commit = Commit::new();
         let mut changed = Vec::new();
@@ -214,13 +219,7 @@ impl Runtime {
             // Waiting for a provider's allowance is not a judgement a person
             // has to make per agent, unlike a wait or an inspection: the sweep
             // makes every suspended descendant probe now.
-            let suspended = matches!(
-                &agent.status,
-                AgentStatus::Blocked {
-                    reason: BlockReason::Exhausted { .. }
-                }
-            );
-            if !agent.paused && !suspended {
+            if !agent.paused && !suspended(&agent) {
                 continue;
             }
             let via = (agent.id != root).then_some(root);
@@ -284,4 +283,14 @@ impl Runtime {
             .cloned()
             .collect())
     }
+}
+
+/// Blocked on provider exhaustion, which a subtree resume makes probe now.
+fn suspended(agent: &Agent) -> bool {
+    matches!(
+        &agent.status,
+        AgentStatus::Blocked {
+            reason: BlockReason::Exhausted { .. }
+        }
+    )
 }

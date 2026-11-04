@@ -21,6 +21,8 @@ mod inspection;
 pub mod memory_context;
 pub mod memory_curation;
 mod memory_feedback;
+pub mod noesis_guard;
+pub mod noesis_seal;
 pub mod notes;
 pub mod notifications;
 mod orphans;
@@ -95,6 +97,9 @@ pub enum RuntimeError {
     /// A startup probe this needs has not finished; retrying soon succeeds.
     #[error("daemon starting: {0}")]
     Starting(String),
+    /// A Noesis agent asked for work while Noesis is disabled or draining.
+    #[error("agent {0} belongs to Noesis, which is disabled")]
+    NoesisDisabled(AgentId),
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -169,6 +174,8 @@ pub(crate) struct RunningTurn {
     /// Set while the turn is parked waiting for a resource key. It is making
     /// no provider call, so it holds no concurrency slot of any kind.
     pub on_provider: bool,
+    /// The Noesis lane of a Noesis agent's turn; `None` for every other agent.
+    pub noesis: Option<noesis_guard::NoesisLane>,
 }
 
 /// A provider the scheduler is avoiding, and why.
@@ -563,13 +570,14 @@ impl Runtime {
     /// and take no turns.
     pub fn apply_imported(
         &self,
-        events: Vec<aether_store::ImportedEvent>,
-        mutations: Vec<aether_store::Mutation>,
+        mut events: Vec<aether_store::ImportedEvent>,
+        mut mutations: Vec<aether_store::Mutation>,
     ) -> Result<Vec<Event>> {
         if events.is_empty() && mutations.is_empty() {
             return Ok(Vec::new());
         }
         let hold = self.hold();
+        noesis_seal::seal_import(self.store.as_ref(), &mut events, &mut mutations)?;
         let events = self.store.import(events, mutations)?;
         // Published under the hold, as `apply_held` does.
         for event in &events {
@@ -643,9 +651,11 @@ impl Runtime {
     fn apply_held_by(
         &self,
         hold: CommitHold<'_>,
-        commit: Commit,
+        mut commit: Commit,
         write: impl FnOnce(&dyn Store, Commit) -> Result<Vec<Event>>,
     ) -> Result<Vec<Event>> {
+        // Before anything is written or published: no read path sees a sealed value.
+        noesis_seal::seal_commit(self.store.as_ref(), &mut commit)?;
         if commit.is_empty() {
             return Ok(Vec::new());
         }

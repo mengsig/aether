@@ -148,6 +148,7 @@ async fn explicit_requests_do_not_replace_a_pending_model_handoff() {
         user_reply_pending: false,
         reply_given_unrecorded: false,
         start_handoff: None,
+        noesis: None,
     };
     let outcome = apply_action(
         &runtime,

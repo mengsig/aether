@@ -284,7 +284,7 @@ pub(super) async fn drive(
     steer(runtime, ctx, &mut steering, &mut input).await?;
     // A question the engine is blocked on; the next message answers it.
     let mut question: Option<String> = None;
-    let mut state = StreamState::new(pricing, resolved.clone());
+    let mut state = StreamState::sealed(pricing, resolved.clone(), ctx.stream_seal());
     runtime.bus.publish_delta(
         ctx.agent.id,
         &mut state.deltas,

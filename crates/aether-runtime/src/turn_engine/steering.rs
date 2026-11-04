@@ -58,6 +58,10 @@ pub(super) async fn steer(
     let Some(tx) = input.as_ref() else {
         return Ok(());
     };
+    // Noesis off or draining: nothing new reaches its agent; the items stay queued.
+    if ctx.noesis.is_some() && !runtime.noesis_gate().is_enabled() {
+        return Ok(());
+    }
     let Some(pending) = steering.pending(runtime, ctx)? else {
         return Ok(());
     };
