@@ -122,3 +122,13 @@ export async function forgetChecks(ctx: Context): Promise<void> {
     assert.deepEqual(await partition.cookies.get({}), []);
   });
 }
+
+export async function failedLoadChecks(ctx: Context): Promise<void> {
+  await ctx.check("a remote window whose load fails is not kept", async () => {
+    const unreachable = "https://localhost:1";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await assert.rejects(ctx.desktop.remote.open(unreachable), /Could not open https:\/\/localhost:1/);
+      assert.equal(ctx.desktop.remote.window(unreachable), undefined, `attempt ${attempt}`);
+    }
+  });
+}

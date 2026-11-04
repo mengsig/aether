@@ -9,7 +9,9 @@ import { remotePartition } from "../../../src/security/origins.ts";
 import { appIsolationChecks, appWindowChecks, bridgeChecks } from "./app-checks.ts";
 import { Context } from "./context.ts";
 import { fakeDaemon, makeCertificate, remoteServer, type TlsFixture } from "./fixtures.ts";
-import { forgetChecks, openRemoteChecks, remoteIsolationChecks, remoteWindowChecks } from "./remote-checks.ts";
+import {
+  failedLoadChecks, forgetChecks, openRemoteChecks, remoteIsolationChecks, remoteWindowChecks,
+} from "./remote-checks.ts";
 
 export const RESULT_PREFIX = "DESKTOP-SECURITY-RESULTS ";
 
@@ -36,6 +38,7 @@ async function run(dir: string): Promise<Context> {
     await remoteWindowChecks(ctx);
     await remoteIsolationChecks(ctx);
     await forgetChecks(ctx);
+    await failedLoadChecks(ctx);
   } finally {
     await ctx.server.close();
     await ctx.daemon.close();

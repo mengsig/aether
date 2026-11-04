@@ -26,6 +26,7 @@ const EXPECTED = [
   "app window has no request in the remote session", "remote navigation is pinned to its origin",
   "remote redirects are pinned to its origin", "remote window opens no windows", "remote window gets no permissions",
   "no IPC handler answers a remote window", "removing an origin clears its partition",
+  "a remote window whose load fails is not kept",
 ];
 
 interface CheckResult { name: string; ok: boolean; ms: number; error?: string }

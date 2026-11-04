@@ -39,7 +39,14 @@ export class RemoteWindows {
     window.on("page-title-updated", (event) => event.preventDefault());
     window.on("closed", () => this.windows.delete(origin));
     this.windows.set(origin, window);
-    await window.loadURL(`${origin}/`);
+    try {
+      await window.loadURL(`${origin}/`);
+    } catch (error) {
+      // A window whose first load failed is never reused: the next open tries the origin again.
+      this.windows.delete(origin);
+      if (!window.isDestroyed()) window.destroy();
+      throw new Error(`Could not open ${origin}`, { cause: error });
+    }
     if (this.extra.offscreen !== true) window.show();
     return window;
   }
