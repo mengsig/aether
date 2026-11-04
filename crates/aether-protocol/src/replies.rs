@@ -316,7 +316,9 @@ pub enum Reply {
     Agent(Agent),
     Agents(Vec<Agent>),
     /// Reply to `list_agents_page`. `next_after` is the cursor for the next
-    /// page, absent on the last one.
+    /// page, absent on the last one. Ids are only ordered, not committed in
+    /// order, so a walk covers the agents present when it began; a client
+    /// subscribes first and applies the buffered events for creations during it.
     AgentsPage {
         agents: Vec<Agent>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

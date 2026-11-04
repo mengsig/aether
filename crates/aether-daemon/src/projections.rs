@@ -351,7 +351,8 @@ pub fn transcript_page(
         .last()
         .map(|event| event.seq)
         .or(after)
-        .or(before.map(|before| before.saturating_sub(1)));
+        .or(before.map(|before| before.saturating_sub(1)))
+        .unwrap_or(0);
     let has_after = has_after || newest_is_past(page_end, newest);
     let entries: Vec<TranscriptEntry> = events.into_iter().filter_map(transcript_entry).collect();
     let last_seq = newest
@@ -371,8 +372,8 @@ pub fn transcript_page(
 
 /// Whether the newest entry lies beyond where the page ends, whatever the
 /// page's own read saw: a commit between the two reads still shows.
-fn newest_is_past(page_end: Option<u64>, newest: Option<u64>) -> bool {
-    matches!((page_end, newest), (Some(end), Some(seq)) if seq > end)
+fn newest_is_past(page_end: u64, newest: Option<u64>) -> bool {
+    newest.is_some_and(|seq| seq > page_end)
 }
 
 fn transcript_entry(event: aether_core::event::Event) -> Option<TranscriptEntry> {
@@ -694,10 +695,13 @@ mod tests {
 
     #[test]
     fn a_commit_after_the_page_read_still_reports_has_after() {
-        assert!(newest_is_past(Some(4), Some(5)));
-        assert!(!newest_is_past(Some(5), Some(5)));
-        assert!(!newest_is_past(None, Some(5)));
-        assert!(!newest_is_past(Some(5), None));
+        assert!(newest_is_past(4, Some(5)));
+        assert!(!newest_is_past(5, Some(5)));
+        assert!(
+            newest_is_past(0, Some(5)),
+            "the first entry of an empty page"
+        );
+        assert!(!newest_is_past(0, None));
     }
 
     /// Delegation may cross runs: a run filter keeps a same-run grandchild
