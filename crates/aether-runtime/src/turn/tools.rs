@@ -308,6 +308,7 @@ pub(super) async fn run_tool_calls(
         };
         let descriptor = tool.descriptor();
         aether_tools::ToolRuntime::prepare(&mut call, tool.as_ref(), tool_ctx);
+        crate::noesis_seal::seal_call_key(&mut call);
         let class = gated_class(descriptor.side_effect, &call.input);
         commit.push_event(ctx.draft(EventKind::ToolRequested {
             call: call.clone(),

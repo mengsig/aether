@@ -15,6 +15,7 @@ type Inputs = Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
 struct RecordInput {
     name: &'static str,
     seen: Inputs,
+    side_effect: SideEffectClass,
 }
 
 #[async_trait::async_trait]
@@ -27,7 +28,7 @@ impl aether_tools::Tool for RecordInput {
                 input_schema: json!({"type": "object"}),
                 strict: false,
             },
-            side_effect: SideEffectClass::ReadOnly,
+            side_effect: self.side_effect,
             needs_network: false,
         }
     }
@@ -141,10 +142,12 @@ async fn run(noesis: bool) -> Sealed {
             registry.register(Arc::new(RecordInput {
                 name: "noesis_ask",
                 seen: tools.0,
+                side_effect: SideEffectClass::ReadOnly,
             }));
             registry.register(Arc::new(RecordInput {
                 name: "plain_probe",
                 seen: tools.1,
+                side_effect: SideEffectClass::ReadOnly,
             }));
         },
     )
@@ -436,6 +439,7 @@ async fn a_sealed_tool_that_needs_an_approval_fails_rather_than_parks() {
             registry.register(Arc::new(RecordInput {
                 name: "noesis_ask",
                 seen,
+                side_effect: SideEffectClass::ReadOnly,
             }));
         },
     )
@@ -584,4 +588,56 @@ fn records_text_any(h: &Harness, agent: AgentId) -> String {
         }
     }
     serde_json::to_string(&records).unwrap()
+}
+
+/// A keyed class records an idempotency key on `tool.requested`; for a sealed
+/// tool it must not digest the real answer, or a reader could test guesses.
+#[tokio::test]
+async fn a_sealed_tools_idempotency_key_does_not_digest_the_answer() {
+    let gate = NoesisGate::new();
+    gate.enable(Recording::new(Answer::Admit));
+    let asked = Inputs::default();
+    let seen = asked.clone();
+    let h = noesis_harness(
+        vec![
+            ScriptedClient::tool_call("noesis_ask", ask_input()),
+            ScriptedClient::tool_call("complete_task", json!({"summary": "done"})),
+        ],
+        &gate,
+        |_| {},
+        move |registry| {
+            registry.register(Arc::new(RecordInput {
+                name: "noesis_ask",
+                seen,
+                side_effect: SideEffectClass::IdempotentMutation,
+            }));
+        },
+    )
+    .await;
+    let (agent, _) = h
+        .runtime
+        .create_agent(noesis_spec("noesis.tutor", "ask"), Actor::user())
+        .expect("created");
+    h.wait_until(agent.id, AgentStatus::is_terminal).await;
+    assert_eq!(*asked.lock().unwrap(), vec![ask_input()], "it ran for real");
+
+    let (_, calls) = committed(&h, agent.id);
+    let call = calls
+        .iter()
+        .find(|c| c.name == "noesis_ask")
+        .expect("asked");
+    let sealed = json!({"question": "2+2?", "answer_key": SEALED, "explanation": SEALED});
+    assert_eq!(call.input, sealed);
+    assert_eq!(
+        call.idempotency_key,
+        Some(IdempotencyKey::derive("noesis_ask", &sealed)),
+        "the key covers only what is visible"
+    );
+    let real = IdempotencyKey::derive("noesis_ask", &ask_input());
+    let stored = h.store.events(0, 10_000, &EventFilter::default()).unwrap();
+    let text = serde_json::to_string(&stored).unwrap();
+    assert!(
+        !text.contains(&real.0),
+        "no digest of the real answer is stored"
+    );
 }

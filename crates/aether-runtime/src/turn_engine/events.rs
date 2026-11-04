@@ -538,7 +538,7 @@ pub(super) fn handle_event(
                         .retry_policy()
                         .record_key
                         .then(|| IdempotencyKey::derive(name, input));
-                    let call = ToolCall {
+                    let mut call = ToolCall {
                         id: ToolCallId::new(),
                         provider_call_id: id.clone(),
                         name: name.clone(),
@@ -550,6 +550,7 @@ pub(super) fn handle_event(
                         idempotency_key,
                         requested_at: at,
                     };
+                    crate::noesis_seal::seal_call_key(&mut call);
                     state.calls.insert(
                         id.clone(),
                         PendingCall {

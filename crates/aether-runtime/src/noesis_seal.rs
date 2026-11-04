@@ -9,7 +9,9 @@
 use std::borrow::Cow;
 
 use aether_core::id::AgentId;
+use aether_core::idempotency::IdempotencyKey;
 use aether_core::model::{ContentBlock, Message};
+use aether_core::tool::ToolCall;
 use aether_store::{Commit, Mutation, Store};
 use serde_json::Value;
 
@@ -26,13 +28,18 @@ const SEALED_TOOLS: &[(&str, &[&str])] = &[
     ("noesis_problem", &["solution"]),
 ];
 
-/// A tool name with any MCP prefix (`mcp__<server>__`) stripped and `.`
-/// read as `_`, so every spelling of one tool compares equal.
+/// A tool name with any MCP prefix (`mcp__<server>__`) or bridge prefix
+/// (`aether__`, `aether.`) stripped and `.` read as `_`, so every spelling
+/// of one tool compares equal.
 pub fn canonical_tool_name(name: &str) -> Cow<'_, str> {
-    let bare = name
+    let unbridged = ["mcp__aether.", "aether__", "aether."]
+        .iter()
+        .find_map(|prefix| name.strip_prefix(prefix))
+        .unwrap_or(name);
+    let bare = unbridged
         .strip_prefix("mcp__")
         .and_then(|rest| rest.split_once("__"))
-        .map_or(name, |(_server, tool)| tool);
+        .map_or(unbridged, |(_server, tool)| tool);
     if bare.contains('.') {
         Cow::Owned(bare.replace('.', "_"))
     } else {
@@ -78,6 +85,16 @@ pub fn seal_input(tool: &str, input: &mut Value) -> bool {
         "every sealed field present reads as sealed"
     );
     changed
+}
+
+/// Key a sealed call over its sealed input. The default key digests the real
+/// input, against which a reader could test candidate answers.
+pub fn seal_call_key(call: &mut ToolCall) {
+    if call.idempotency_key.is_none() || sealed_fields(&call.name).is_none() {
+        return;
+    }
+    let sealed = sealed_view(&call.name, &call.input);
+    call.idempotency_key = Some(IdempotencyKey::derive(&call.name, &sealed));
 }
 
 /// `input` as it may be shown or logged: sealed when its tool seals anything.
@@ -182,6 +199,7 @@ fn seal_event(
     use aether_core::event::EventKind;
     match kind {
         EventKind::ToolRequested { call, .. } => {
+            seal_call_key(call);
             seal_input(&call.name, &mut call.input);
             Ok(false)
         }
@@ -354,7 +372,13 @@ fn seal_content(
                 seal_input(name, input);
             }
             ContentBlock::Thinking { .. } => thinking = true,
-            _ => {}
+            // Decided variant by variant: a new block kind must say whether
+            // it carries a sealed value.
+            ContentBlock::Text { .. }
+            | ContentBlock::ToolResult { .. }
+            | ContentBlock::Image { .. }
+            | ContentBlock::ImageRef(_)
+            | ContentBlock::Compaction { .. } => {}
         }
     }
     let Some(agent) = agent.filter(|_| thinking) else {
