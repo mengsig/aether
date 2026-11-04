@@ -164,11 +164,9 @@
    "change": {
     "seq": 105,
     "at": "2026-11-04T03:00:00Z",
-    "subject": {
-     "subject": "item",
-     "item": "qi_1",
-     "state": "dispatching"
-    }
+    "subject": "item",
+    "item": "qi_1",
+    "state": "dispatching"
    }
   },
   {
@@ -177,11 +175,9 @@
    "change": {
     "seq": 115,
     "at": "2026-11-04T03:00:01Z",
-    "subject": {
-     "subject": "item",
-     "item": "qi_2",
-     "state": "succeeded"
-    }
+    "subject": "item",
+    "item": "qi_2",
+    "state": "succeeded"
    }
   },
   {
@@ -190,12 +186,10 @@
    "change": {
     "seq": 116,
     "at": "2026-11-04T03:00:02Z",
-    "subject": {
-     "subject": "dependency",
-     "item": "qi_2",
-     "depends_on": "qi_1",
-     "added": true
-    }
+    "subject": "dependency",
+    "item": "qi_2",
+    "depends_on": "qi_1",
+    "added": true
    }
   }
  ],

@@ -42,11 +42,12 @@ export const ARCHON_READ = words(`hello request_status status guide repo_list li
   lessons_why lesson_stats learning_why list_artifacts item_diff read_artifact subscribe_changes changes_page
   item_history task_graph run_plan item_links issue_items list_github_objects`);
 
-/** Archon OperatorRead and OperatorChange requests: the host's CLI standing, never a device. */
+/** Archon OperatorRead and OperatorChange requests a device may not send (archon-remote allow.rs). */
+// `answer` and `say` are OperatorChange, yet operator devices may send them.
 export const ARCHON_HOST_ONLY = words(`check_updates remote_status operator_command undo_authority shutdown repo_remove
-  repo_update set_caps set_settings reset_settings say orchestrator_restart orchestrator_attach upgrade gc
+  repo_update set_caps set_settings reset_settings orchestrator_restart orchestrator_attach upgrade gc
   configure_github_watcher update_lesson learning_correct learning_undo learning_restore_memory learning_retry_memory
-  merge_item configure_remote remote_pair remote_revoke answer`);
+  merge_item configure_remote remote_pair remote_revoke`);
 
 export function aetherAccess(command: Json): Access {
   const cmd = string(command.cmd, "command.cmd");

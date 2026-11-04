@@ -24,10 +24,16 @@ export function itemFromSummary(summary: Json): ArchonItem {
   return { summary, state: stateKind(summary.state), ...(stage ? { stage } : {}), ...(waitingReason ? { waitingReason } : {}) };
 }
 
+/** A Change's subject fields sit beside `seq` and `at`, tagged by `subject` (CONTRACTS.md §1.3). */
+function subjectOf(change: Json): Json {
+  string(change.subject, "change.subject");
+  return change;
+}
+
 /** Applies one Change to the snapshots older than it (§5.3.2); replaying a change is harmless. */
 export function patchSnapshots(state: ArchonConnState, value: Json): ArchonConnState {
   const at = seq(value.seq, "change.seq");
-  const subject = object(value.subject, "change.subject");
+  const subject = subjectOf(value);
   const graph = state.graph && at > state.graph.asOf ? state.graph : null;
   if (subject.subject === "initiative") return graph ? { ...state, graph: withInitiative(graph, subject) } : state;
   const item = typeof subject.item === "string" ? subject.item : undefined;
@@ -77,7 +83,7 @@ function edgesUnknown(before: ArchonConnState, at: number, subject: Json): boole
 export function applyChange(state: ArchonConnState, value: Json): { state: ArchonConnState; item?: string; unknown: boolean } {
   const at = seq(value.seq, "change.seq");
   if (state.changeCursor !== null && at <= state.changeCursor) return { state, unknown: false };
-  const subject = object(value.subject, "change.subject");
+  const subject = subjectOf(value);
   const item = typeof subject.item === "string" ? subject.item : undefined;
   const next = patchSnapshots({ ...state, changeCursor: at }, value);
   invariant(next.changeCursor === at, "an applied change advances the change cursor");
@@ -350,7 +356,7 @@ export class ArchonSync {
     this.set((s) => ({ ...s, staleItems: s.staleItems.filter((id) => id !== item) }));
     const version = this.changed.get(item) ?? 0;
     try {
-      const detail = replyObject(await this.ctx.request({ cmd: "get_item", item }), "item");
+      const detail = replyObject(await this.ctx.request({ cmd: "get_item", item }), "item_detail");
       if ((this.changed.get(item) ?? 0) !== version) {
         // A later change made this reply old: it re-marked the item if visible, or dropped its detail.
         invariant(!this.onScreen.has(item) || this.state.staleItems.includes(item), "an overtaken visible item is refetched again");
