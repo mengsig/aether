@@ -16,7 +16,8 @@ export interface CapabilityInputs {
 function noesisFlags(status: Json | null | undefined): { enabled: boolean; engineering: boolean } {
   const effective = (status?.effective ?? {}) as Json;
   const enabled = status?.enabled === true;
-  return { enabled, engineering: enabled && effective["noesis.engineering_context"] === true };
+  const engineering = effective.engineering_context ?? effective["noesis.engineering_context"];
+  return { enabled, engineering: enabled && engineering === true };
 }
 
 export function computeCapabilities(inputs: CapabilityInputs): Capabilities {

@@ -37,7 +37,9 @@ export function readTheme(element: Element): GraphTheme {
     status: (status) => {
       if (status === undefined) return muted;
       let colour = statuses.get(status);
-      if (colour === undefined) statuses.set(status, (colour = token(`--status-${status}`, "--color-text-muted")));
+      // `mastery-*` statuses take the learner tokens (§4); every other status a `--status-*` one.
+      const name = status.startsWith("mastery-") ? `--${status}` : `--status-${status}`;
+      if (colour === undefined) statuses.set(status, (colour = token(name, "--color-text-muted")));
       return colour;
     },
   };

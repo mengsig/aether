@@ -2,6 +2,8 @@
 // by the state, never a fresh copy, so useSelector stays quiet.
 
 import type { aether, Capabilities, ConnectionInfo, ConnId } from "@aether-ui/protocol";
+import type { NoesisCache } from "./noesis-cache.ts";
+import { EMPTY_NOESIS } from "./noesis-cache.ts";
 import type { ArchonGraph, ArchonItem, ArchonPlan, Report, Stamped, State, StreamState, Submission, TranscriptState } from "./store.ts";
 
 type Selector<T> = (state: State) => T;
@@ -33,3 +35,7 @@ export const selectItemLinks = (conn: ConnId, item: string): Selector<Stamped | 
 export const selectRunPlan = (conn: ConnId, run: string): Selector<ArchonPlan | undefined> => (s) => s.archon[conn]?.plans[run];
 export const selectTaskGraph = (conn: ConnId): Selector<ArchonGraph | null> => (s) => s.archon[conn]?.graph ?? null;
 export const selectFeed = (conn: ConnId): Selector<readonly unknown[]> => (s) => s.archon[conn]?.feed ?? NONE;
+
+// Noesis: the status core read at ready, and the learning entities (noesis-cache.ts).
+export const selectNoesisStatus = (conn: ConnId): Selector<Readonly<Record<string, unknown>> | null> => (s) => s.aether[conn]?.noesis ?? null;
+export const selectLearn = (conn: ConnId): Selector<NoesisCache> => (s) => s.aether[conn]?.learn ?? EMPTY_NOESIS;
