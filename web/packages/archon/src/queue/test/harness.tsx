@@ -23,6 +23,8 @@ export interface ArchonHarness {
   /** Ticks until `check` holds, failing with `what` after `limitMs` of fake time. */
   until(check: () => boolean, what: string, limitMs?: number): Promise<void>;
   mount(node: ReactNode): Promise<HTMLElement>;
+  /** Unmounts the screen `mount` put in `container`, as navigating away does. */
+  unmount(container: HTMLElement): Promise<void>;
   stop(): void;
 }
 
@@ -35,7 +37,7 @@ export async function archonHarness(options: FauxOptions, world: World = demoWor
     { kind: "browser", storage: { get: async (key) => memory.get(key), set: async (key, value) => { memory.set(key, value); } } },
     { scheduler: (flush) => frames.push(flush), endpoints: [{ daemon: "archon", transport: faux.transport, target: "wss://faux/archon/ws", label: "faux" }] },
   );
-  const roots: Root[] = [];
+  const roots = new Map<HTMLElement, Root>();
   const tick = async (ms = 0) => act(async () => {
     await vi.advanceTimersByTimeAsync(ms);
     for (const flush of frames.splice(0)) flush();
@@ -55,17 +57,26 @@ export async function archonHarness(options: FauxOptions, world: World = demoWor
     const container = document.createElement("main");
     document.body.append(container);
     const root = createRoot(container);
-    roots.push(root);
+    roots.set(container, root);
     await act(async () => root.render(<AppProvider app={app}><ThemeProvider initialPreference="light">{node}</ThemeProvider></AppProvider>));
     await tick();
     invariant(container.isConnected, "the screen mounted into the document");
     return container;
   };
+  const unmount = async (container: HTMLElement) => {
+    const root = roots.get(container);
+    invariant(root !== undefined, "only a mounted screen is unmounted");
+    roots.delete(container);
+    await act(async () => root.unmount());
+    container.remove();
+    await tick();
+  };
   const stop = () => {
-    for (const root of roots.splice(0)) act(() => root.unmount());
+    for (const root of roots.values()) act(() => root.unmount());
+    roots.clear();
     app.stop();
   };
-  return { app, faux, world, tick, until, mount, stop };
+  return { app, faux, world, tick, until, mount, unmount, stop };
 }
 
 /** The element `selector` names whose text is `text`, or a failure naming both. */

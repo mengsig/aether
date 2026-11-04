@@ -35,7 +35,7 @@ export function useArchonAccess(info: ConnectionInfo): ArchonAccess {
 
 /**
  * Moves whenever archond reports anything: a change record at protocol 24, a feed entry at 23. Read
- * models core does not keep (status, questions, summaries' spend) are reread when it settles.
+ * models core does not keep (status, questions, cost) are reread when it settles.
  */
 export function useActivity(conn: string): string {
   invariant(conn.length > 0, "activity is read for a connection");
