@@ -119,6 +119,18 @@ test("failed list read exposes retry and successful stored empty state", async (
   expect(root.textContent).toContain("No memories yet");
 });
 
+test("a late answer to an earlier search never hides the newer search's failure", async () => {
+  h = await connected({ script: { memories: (command) => (command.query as { text?: string }).text ? { code: "internal", message: "Search failed" } : "hold" } });
+  const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);
+  await type(h, root, "Search memories", "invariant");
+  expect(root.textContent).toContain("Search failed");
+  h.daemon.script = { memories: () => ({ tag: "memories", data: [memory] }) };
+  h.daemon.release(); await h.settle();
+  expect(root.textContent).toContain("Search failed");
+  expect(root.querySelector('[aria-busy="true"]')).toBeNull();
+  expect(buttonNamed(root, "Try again").disabled).toBe(false);
+});
+
 test("scope and kind filters and forgotten toggle use exact query fields", async () => {
   h = await connected({ script: { memories: () => ({ tag: "memories", data: [] }) } });
   const root = await h.mount(<MemoryScreen params={{ conn: h.conn }} />);

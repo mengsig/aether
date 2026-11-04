@@ -9,6 +9,7 @@ const VERBS: Readonly<Record<string, string>> = {
   pause: "Pause", resume: "Resume", restart: "Restart", archive: "Archive", update_agent: "Update", set_approvals: "Approval policy",
   add_approval_rule: "New rule", create_schedule: "New schedule", update_schedule: "Schedule change", create_agent: "Start agent",
   create_task: "New task", create_memory: "New memory", forget_memory: "Forget memory", pin_memory: "Pin memory",
+  subscribe_push: "Turn on notifications", unsubscribe_push: "Turn off notifications",
 };
 
 /** The agent or record a command acts on, as named by its own fields. */

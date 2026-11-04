@@ -1,4 +1,4 @@
-import { selectAgents, useSelector, type ReadEntry } from "@aether-ui/core";
+import { readInFlight, selectAgents, useSelector, type ReadEntry } from "@aether-ui/core";
 import { useMemo } from "react";
 import { ErrorState, Skeleton } from "@aether-ui/ui";
 import { invariant } from "../fleet/invariant.ts";
@@ -12,7 +12,7 @@ export function records<T>(value: unknown): T[] {
 
 export function ReadNote({ entry, retry }: { entry: ReadEntry | undefined; retry: () => unknown }) {
   if (entry?.error) return <ErrorState message={entry.error} onRetry={() => { void retry(); }} />;
-  if (!entry || entry.requested > entry.issued) return <div aria-busy="true"><Skeleton /></div>;
+  if (!entry || readInFlight(entry)) return <div aria-busy="true"><Skeleton /></div>;
   return null;
 }
 

@@ -1,7 +1,7 @@
 // Push notifications for this device. Whether push is on is the daemon's answer, read into core's
 // store; the browser's own subscription is made and dropped on demand and never held here.
 
-import { selectConnections, useApp, useCommand, useReread, useSelector } from "@aether-ui/core";
+import { selectConnections, useApp, useReread, useSelector } from "@aether-ui/core";
 import type { aether, ConnId } from "@aether-ui/protocol";
 import { Badge, EmptyState } from "@aether-ui/ui";
 import { invariant } from "../kit/invariant.ts";
@@ -16,27 +16,28 @@ interface PushControlsProps {
   readonly conn: ConnId;
   readonly config: aether.PushConfig;
   readonly run: Run;
-  readonly send: (command: Record<string, unknown>) => Promise<unknown>;
   readonly reread: () => Promise<void>;
   readonly blocked: string | null;
 }
 
-function PushControls({ conn, config, run, send, reread, blocked }: PushControlsProps) {
+// The browser step and the daemon command run apart, so a lost reply to the command reaches the
+// recovery review through `run.send` instead of passing as a plain failure.
+function PushControls({ conn, config, run, reread, blocked }: PushControlsProps) {
   const key = config.vapid_public_key;
   const subscribe = async () => {
     invariant(typeof key === "string" && key !== "", "the daemon gave a VAPID key to subscribe with");
-    const ok = await run.attempt(async () => {
-      const subscription = await subscribeBrowser(key);
-      await send({ cmd: "subscribe_push", subscription });
-    }, "Notifications are on for this device");
-    if (ok) await reread();
+    let subscription: aether.PushSubscription | null = null;
+    const prepared = await run.attempt(async () => { subscription = await subscribeBrowser(key); }, "This browser is ready for notifications");
+    if (!prepared) return;
+    invariant(subscription !== null, "a prepared browser gave a subscription");
+    const reply = await run.send({ cmd: "subscribe_push", subscription }, "Notifications are on for this device");
+    if (reply !== null) await reread();
   };
   const unsubscribe = async () => {
-    const ok = await run.attempt(async () => {
-      await send({ cmd: "unsubscribe_push" });
-      await unsubscribeBrowser();
-    }, "Notifications are off for this device");
-    if (ok) await reread();
+    const reply = await run.send({ cmd: "unsubscribe_push" }, "Notifications are off for this device");
+    if (reply === null) return;
+    await run.attempt(unsubscribeBrowser, "Notifications are off for this device");
+    await reread();
   };
   const test = () => run.send({ cmd: "test_push" }, "Test notification sent");
   if (!config.subscribed) {
@@ -51,7 +52,7 @@ function PushControls({ conn, config, run, send, reread, blocked }: PushControls
   );
 }
 
-function PushBody({ conn, value, run, send, reread }: Omit<PushControlsProps, "config" | "blocked"> & { readonly value: unknown }) {
+function PushBody({ conn, value, run, reread }: Omit<PushControlsProps, "config" | "blocked"> & { readonly value: unknown }) {
   const standing = useSelector(selectConnections)[conn]?.standing;
   const config = recordOf<aether.PushConfig>(value);
   if (config === null || typeof config.enabled !== "boolean") return <Unexpected label="the push settings" />;
@@ -66,7 +67,7 @@ function PushBody({ conn, value, run, send, reread }: Omit<PushControlsProps, "c
         {config.previews ? <Badge tone="info">Shows previews</Badge> : null}
       </div>
       {config.kinds && config.kinds.length > 0 ? <p className="st-meta">Alerts for: {config.kinds.join(", ").replaceAll("_", " ")}</p> : null}
-      <PushControls conn={conn} config={config} run={run} send={send} reread={reread} blocked={blocked} />
+      <PushControls conn={conn} config={config} run={run} reread={reread} blocked={blocked} />
     </>
   );
 }
@@ -75,14 +76,13 @@ export function NotificationsPage({ conn }: { readonly conn: ConnId }) {
   const app = useApp();
   const entry = useReread(conn, KEY, COMMAND, ["push_config"]);
   const run = useRun(conn);
-  const send = useCommand(conn);
   const reread = () => app.reread(conn, KEY, COMMAND, ["push_config"]);
   return (
     <div className="st-stack">
       <StandingNotice conn={conn} />
       <Section title="Notifications" hint="Alerts when an agent needs you, even with this page closed.">
         <ReadView label="notification settings" entry={entry} onRetry={() => void reread()}>
-          {(value) => <PushBody conn={conn} value={value} run={run} send={send} reread={reread} />}
+          {(value) => <PushBody conn={conn} value={value} run={run} reread={reread} />}
         </ReadView>
         <RunNote status={run.status} />
       </Section>

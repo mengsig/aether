@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { routeHref, selectConnections, selectEvents, useApp, useReread, useSelector } from "@aether-ui/core";
+import { readInFlight, routeHref, selectConnections, selectEvents, useApp, useReread, useSelector } from "@aether-ui/core";
 import type { aether } from "@aether-ui/protocol";
 import { Button, EmptyState, Field, VirtualList } from "@aether-ui/ui";
 import { Section } from "../controls/kit.tsx";
@@ -43,7 +43,7 @@ function ConnectionActivity({ conn, label }: { conn: string; label: string }) {
       rowKey={i => visible[i]?.id ?? i} renderRow={i => { const event = visible[i]; invariant(event, "virtual row exists"); return <EventRow conn={conn} event={event} />; }} /> :
       <div className="b3-stack">{visible.map(event => <EventRow key={event.id} conn={conn} event={event} />)}</div>}
     {cursors.map(before => <HistoryPage key={before} conn={conn} before={before} />)}
-    <Button disabled={Boolean(exhausted) || (lastRead !== undefined && !lastRead.error && lastRead.requested > lastRead.issued) || cursors.includes(oldest)}
+    <Button disabled={Boolean(exhausted) || (lastRead !== undefined && !lastRead.error && readInFlight(lastRead)) || cursors.includes(oldest)}
       onClick={() => setCursors([...cursors, oldest])}>{exhausted ? "Beginning of history" : "Show older"}</Button>
     {open && <StartAgent conn={conn} close={() => setOpen(false)} />}
   </Section>;

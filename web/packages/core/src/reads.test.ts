@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyRead, failRead, markRequested, readReplaces, settleSubmission, stampOf } from "./reads.ts";
+import { applyRead, failRead, markRequested, readInFlight, readReplaces, settleSubmission, stampOf } from "./reads.ts";
 import { dropConnection, EMPTY_AETHER, INITIAL_STATE, type State, type Submission } from "./store.ts";
 
 const CONN = "aether:a";
@@ -29,6 +29,23 @@ describe("rereads in the store", () => {
     expect(state.reads[CONN]?.devices?.error).toBeNull();
     state = failRead(state, CONN, "devices", 3, "disconnected");
     expect(state.reads[CONN]?.devices).toMatchObject({ value: { devices: ["phone"] }, error: "disconnected" });
+  });
+
+  it("never lets an older success clear a newer failure, and settles both", () => {
+    let state: State = markRequested(markRequested(INITIAL_STATE, CONN, "memories", 1), CONN, "memories", 2);
+    expect(readInFlight(state.reads[CONN]?.memories)).toBe(true);
+    state = failRead(state, CONN, "memories", 2, "search failed");
+    state = applyRead(state, CONN, "memories", 1, [{ id: "old" }]);
+    expect(state.reads[CONN]?.memories).toMatchObject({ error: "search failed", errorIssued: 2, settled: 2, requested: 2 });
+    expect(readInFlight(state.reads[CONN]?.memories)).toBe(false);
+    state = applyRead(markRequested(state, CONN, "memories", 3), CONN, "memories", 3, [{ id: "new" }]);
+    expect(state.reads[CONN]?.memories).toMatchObject({ value: [{ id: "new" }], error: null, errorIssued: 0 });
+  });
+
+  it("ignores a failure older than a newer failure", () => {
+    let state = failRead(INITIAL_STATE, CONN, "devices", 3, "newest");
+    state = failRead(state, CONN, "devices", 2, "older");
+    expect(state.reads[CONN]?.devices).toMatchObject({ error: "newest", errorIssued: 3, settled: 3 });
   });
 
   it("drops a connection's reads with the rest of its cache when its daemon identity changes", () => {

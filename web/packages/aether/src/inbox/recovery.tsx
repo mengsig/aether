@@ -1,7 +1,7 @@
 // The recovery review: every change whose reply never came. Nothing is retried on its own; the
 // operator asks the daemon what became of it (`resolve_submission`), then sends it again or discards it.
 
-import { selectAgents, selectConnections, selectOutbox, selectRead, selectReview, useApp, useSelector, type State, type Submission } from "@aether-ui/core";
+import { readInFlight, selectAgents, selectConnections, selectOutbox, selectRead, selectReview, useApp, useSelector, type State, type Submission } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { Button, Dialog } from "@aether-ui/ui";
 import { useEffect, useMemo, useState } from "react";
@@ -69,7 +69,7 @@ function Unconfirmed({ conn, submission, names }: { readonly conn: ConnId; reado
       {resolution ? <p className="b3-note" role="status" data-state={resolution.outcome === "absent_safe" ? "done" : "unconfirmed"}>{OUTCOME_TEXT[resolution.outcome]}</p> : null}
       {read?.error ? <p className="b3-note" role="alert" data-state="failed">The check failed: {read.error}</p> : null}
       <div className="b3-row">
-        <Action conn={conn} command={check} label={resolution ? "Check again" : "Check what happened"} busy={read !== undefined && read.requested > read.issued && read.error === null}
+        <Action conn={conn} command={check} label={resolution ? "Check again" : "Check what happened"} busy={readInFlight(read)}
           onRun={() => app.reread(conn, key, check, ["submission_resolved"])} />
         {again ? (
           <Action conn={conn} command={submission.command} label="Send again" variant={again === "unknown" ? "danger" : "primary"} busy={run.status.state === "busy"}

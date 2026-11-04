@@ -12,9 +12,18 @@ export interface ReadEntry {
   readonly asOf: number | null;
   /** The order the reread that produced `value` was issued in. */
   readonly issued: number;
-  /** The newest reread issued for this key; above `issued` while one is in flight. */
+  /** The newest reread issued for this key; above `settled` while one is in flight. */
   readonly requested: number;
+  /** The newest reread that answered, with a value or an error. */
+  readonly settled: number;
   readonly error: string | null;
+  /** The reread that produced `error`; only a newer success clears it. */
+  readonly errorIssued: number;
+}
+
+/** Whether the newest reread for this key has not answered yet. */
+export function readInFlight(entry: ReadEntry | undefined): boolean {
+  return entry !== undefined && entry.requested > entry.settled;
 }
 
 /** The stamp a reply carries about itself, if any. */
@@ -32,7 +41,7 @@ export function readReplaces(incoming: { asOf: number | null; issued: number }, 
   return incoming.issued >= held.issued;
 }
 
-const EMPTY_ENTRY: ReadEntry = Object.freeze({ value: null, asOf: null, issued: 0, requested: 0, error: null });
+const EMPTY_ENTRY: ReadEntry = Object.freeze({ value: null, asOf: null, issued: 0, requested: 0, settled: 0, error: null, errorIssued: 0 });
 
 function put(state: State, conn: ConnId, key: string, recipe: (held: ReadEntry | undefined) => ReadEntry | undefined): State {
   const forConn = state.reads[conn] ?? {};
@@ -47,18 +56,31 @@ export function markRequested(state: State, conn: ConnId, key: string, issued: n
   return put(state, conn, key, (held) => ({ ...(held ?? EMPTY_ENTRY), requested: Math.max(held?.requested ?? 0, issued) }));
 }
 
+/** Stores a reread's reply when it is at least as new as the held one; an older reply never clears a newer error. */
 export function applyRead(state: State, conn: ConnId, key: string, issued: number, value: unknown): State {
+  invariant(issued > 0, "a reread's issue number is positive");
   const asOf = stampOf(value);
   return put(state, conn, key, (held) => {
-    if (!readReplaces({ asOf, issued }, held)) return held;
-    return { value, asOf, issued, requested: Math.max(held?.requested ?? 0, issued), error: null };
+    const base = held ?? EMPTY_ENTRY;
+    const settled = Math.max(base.settled, issued);
+    const requested = Math.max(base.requested, issued);
+    if (!readReplaces({ asOf, issued }, held)) return { ...base, settled, requested };
+    const clears = issued > base.errorIssued;
+    return { value, asOf, issued, requested, settled, error: clears ? null : base.error, errorIssued: clears ? 0 : base.errorIssued };
   });
 }
 
 /** A failed reread keeps the last good value and shows its error, unless a newer reread already answered. */
 export function failRead(state: State, conn: ConnId, key: string, issued: number, error: string): State {
   invariant(error.length > 0, "a failed reread says why");
-  return put(state, conn, key, (held) => (held !== undefined && held.issued > issued ? held : { ...(held ?? EMPTY_ENTRY), error }));
+  invariant(issued > 0, "a reread's issue number is positive");
+  return put(state, conn, key, (held) => {
+    const base = held ?? EMPTY_ENTRY;
+    const settled = Math.max(base.settled, issued);
+    const newerAnswered = base.issued > issued || base.errorIssued > issued;
+    if (newerAnswered) return { ...base, settled };
+    return { ...base, settled, error, errorIssued: issued };
+  });
 }
 
 /** Removes one submission from the outbox and the review, once the operator settled what became of it. */

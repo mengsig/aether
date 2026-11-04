@@ -7,7 +7,7 @@ export { AetherSync, MAX_DELTA_AGENTS } from "./aether-sync.ts";
 export { ArchonSync } from "./archon-sync.ts";
 export { Store, dropConnection, INITIAL_STATE, replaces } from "./store.ts";
 export type { State, AetherConnState, ArchonConnState, ArchonItem, ArchonGraph, ArchonPlan, Stamped, StreamState, StreamTool, TranscriptState, Submission, Report, FrameScheduler } from "./store.ts";
-export { applyRead, failRead, markRequested, readReplaces, settleSubmission, stampOf, type ReadEntry } from "./reads.ts";
+export { applyRead, failRead, markRequested, readInFlight, readReplaces, settleSubmission, stampOf, type ReadEntry } from "./reads.ts";
 export { computeCapabilities } from "./capabilities.ts";
 export { aetherAccess, archonAccess, checkAllowed, isKeyed, withIdempotencyKey, type Access } from "./commands.ts";
 export { DaemonError, RefusedError, codeOf } from "./errors.ts";

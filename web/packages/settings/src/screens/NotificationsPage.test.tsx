@@ -76,6 +76,24 @@ describe("NotificationsPage", () => {
     expect(root.textContent).toContain("Off for this device");
   });
 
+  test.each([
+    ["subscribe_push", false, "Turn on notifications", null],
+    ["unsubscribe_push", true, "Turn off notifications", "Turn off"],
+  ])("a lost %s reply reaches the recovery review and is never resent", async (cmd, subscribed, label, confirm) => {
+    const stub = stubServiceWorker();
+    const h = current = await connected({ role: "operator", script: { get_push_config: () => ({ tag: "push_config", data: config(subscribed) }), [cmd]: () => "hold" } });
+    const root = await h.mount(<NotificationsPage conn={h.conn} />);
+    await click(h, root, label);
+    if (confirm !== null) await click(h, document.body, confirm);
+    h.daemon.drop();
+    await h.settle();
+    expect(root.querySelector(".st-note")?.getAttribute("data-state")).toBe("unconfirmed");
+    expect(h.app.store.get().aether[h.conn]?.outbox).toEqual([expect.objectContaining({ unkeyed: true, state: "unknown", command: expect.objectContaining({ cmd }) })]);
+    expect(h.daemon.commands(cmd)).toHaveLength(1);
+    expect(stub.unsubscribe).not.toHaveBeenCalled();
+    expect(root.textContent).not.toContain("auth-secret");
+  });
+
   test("push the daemon has turned off is shown as unavailable", async () => {
     stubServiceWorker();
     const h = current = await connected({ role: "operator", script: { get_push_config: () => ({ tag: "push_config", data: { enabled: false } }) } });
