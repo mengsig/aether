@@ -31,7 +31,7 @@ function SearchBar({ initial, onSearch }: { readonly initial: SearchForm; readon
   return (
     <form className="history-search" role="search" onSubmit={submit}>
       <Field label="Search" placeholder="Title or brief" maxLength={200} {...field("text")} className="history-text" />
-      <Field label="Moved from" type="date" {...field("from")} />
+      <Field label="Moved from" type="date" hint="Whole days, in UTC" {...field("from")} />
       <Field label="Until" type="date" {...field("to")} {...(error === undefined ? {} : { error })} />
       <Button type="submit" variant="primary">Search</Button>
     </form>
