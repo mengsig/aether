@@ -12,6 +12,8 @@ export const FALLBACK_REFETCH_MS = 350;
 const ENTITY_REFETCH_MS = 250;
 /** Summaries are one list read, so a burst of changes across items rereads it once. */
 const SUMMARY_REFETCH_MS = 500;
+/** A plan read changes keep overtaking is asked this many times before it is installed anyway. */
+const PLAN_READ_ATTEMPTS = 3;
 const FEED_KEEP = 200;
 
 /** A queue state is a bare kind or an object tagged by `state`. */
@@ -170,8 +172,6 @@ export class ArchonSync {
   private onScreen: ReadonlySet<string> = new Set();
   /** Changes applied per item, so a detail read that one overtook is not installed. */
   private readonly changed = new Map<string, number>();
-  /** Plans a screen asked for and the store lacks, run to item; the item's rereads read them until installed. */
-  private readonly wantedPlans = new Map<string, string>();
 
   constructor(ctx: SyncContext) {
     this.ctx = ctx;
@@ -407,33 +407,26 @@ export class ArchonSync {
     return this.serial.run(item, () => this.readItem(item));
   }
 
-  /** Reads a run's plan into the store; the item's later rereads keep it current. */
+  /**
+   * Reads a run's plan into the store, or rejects so the screen shows why; the item's rereads keep it current.
+   * A read a change overtook is asked again; the last one is stamped when asked and the item's reread replaces it.
+   */
   readPlan(item: string, run: string): Promise<void> {
     invariant(this.ctx.features.has("run_plan"), "run_plan is read only where archond serves it");
-    this.wantedPlans.set(run, item);
     return this.serial.run(item, async () => {
-      if (!this.wantedPlans.has(run)) return;
-      const version = this.changed.get(item) ?? 0;
-      let plan: ArchonPlan;
-      try {
-        plan = await this.fetchPlan(item, run);
-      } catch (error) {
-        // The screen shows the failure and asks again; the item's rereads stop asking for it.
-        this.wantedPlans.delete(run);
-        throw error;
+      if (this.state.plans[run] !== undefined) return;
+      for (let attempt = 1; attempt <= PLAN_READ_ATTEMPTS; attempt += 1) {
+        const version = this.changed.get(item) ?? 0;
+        const asked = this.state.changeCursor;
+        const plan = await this.fetchPlan(item, run);
+        if (!this.overtaken(item, version)) return this.installPlans([[run, plan]]);
+        if (attempt === PLAN_READ_ATTEMPTS) return this.installPlans([[run, { ...plan, asOf: asked }]]);
       }
-      // The change that overtook it marked the shown item stale, and that reread reads every wanted plan.
-      if (this.overtaken(item, version)) return;
-      this.installPlans([[run, plan]]);
     });
   }
 
   private installPlans(plans: readonly (readonly [string, ArchonPlan])[]): void {
-    for (const [run, plan] of plans) {
-      const owner = this.wantedPlans.get(run);
-      invariant(owner === undefined || owner === plan.item, `the plan of ${run} is installed for the item that wanted it`);
-      this.wantedPlans.delete(run);
-    }
+    invariant(plans.every(([run, plan]) => run.length > 0 && plan.item.length > 0), "an installed plan names its run and item");
     if (plans.length > 0) this.set((s) => ({ ...s, plans: { ...s.plans, ...Object.fromEntries(plans) } }));
   }
 
@@ -467,11 +460,9 @@ export class ArchonSync {
     await this.readItemPlans(item, version);
   }
 
-  /** Rereads the plans held or wanted for `item`; one the daemon refuses is reported and no longer asked for. */
+  /** Rereads the plans held for `item`; one the daemon refuses is reported and dropped from the store. */
   private async readItemPlans(item: string, version: number): Promise<void> {
-    const held = Object.entries(this.state.plans).filter(([, plan]) => plan.item === item).map(([run]) => run);
-    const wanted = [...this.wantedPlans].filter(([, owner]) => owner === item).map(([run]) => run);
-    const runs = [...new Set([...held, ...wanted])];
+    const runs = Object.entries(this.state.plans).filter(([, plan]) => plan.item === item).map(([run]) => run);
     const results = await Promise.allSettled(runs.map((run) => this.fetchPlan(item, run)));
     invariant(results.length === runs.length, "every plan read is answered");
     const lost = results.find((result) => result.status === "rejected" && LINK_LOST.has(codeOf(result.reason) ?? ""));
@@ -484,7 +475,6 @@ export class ArchonSync {
       if (result.status === "fulfilled") installed.push([run, result.value]);
       else {
         refused.push(run);
-        this.wantedPlans.delete(run);
         this.fail(`the plan of ${run}`, result.reason);
       }
     });

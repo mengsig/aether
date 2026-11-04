@@ -55,24 +55,48 @@ test("follows the change stream as the run moves on", async () => {
   expect(h.faux.commands("run_plan").length).toBeGreaterThanOrEqual(2);
 });
 
+/** Answers `run_plan` through `answer`, after telling a stage change first on each call `overtakes` picks. */
+function overtakePlans(harness: ArchonHarness, overtakes: (call: number) => boolean, answer?: (call: number) => unknown): void {
+  const faux = harness.faux as unknown as { answer(command: Record<string, unknown>): unknown };
+  const real = faux.answer.bind(harness.faux);
+  let calls = 0;
+  faux.answer = (command) => {
+    if (command.cmd !== "run_plan") return real(command);
+    calls += 1;
+    // The change frame is queued before the reply, so it arrives while the read is in flight.
+    if (overtakes(calls)) harness.faux.tell("qi_dark_mode", { subject: "stage", stage_run: `sr_x${calls}`, run: "run_dark", item: "qi_dark_mode", stage_id: "review", attempt: 1, fan_index: 1, state: "running" });
+    return answer?.(calls) ?? real(command);
+  };
+}
+
+const PLANNED = ["plan", "build", "review", "docs", "ship"];
+
 test("reads the plan again when a change overtakes its first read", async () => {
   h = await archonHarness({ protocol: 24 });
-  const faux = h.faux as unknown as { answer(command: Record<string, unknown>): unknown };
-  const answer = faux.answer.bind(h.faux);
-  let told = false;
-  faux.answer = (command) => {
-    // The change frame is queued before the reply, so it arrives while the read is in flight.
-    if (command.cmd === "run_plan" && !told) {
-      told = true;
-      h?.faux.tell("qi_dark_mode", { subject: "stage", stage_run: "sr_x", run: "run_dark", item: "qi_dark_mode", stage_id: "review", attempt: 1, fan_index: 1, state: "completed" });
-    }
-    return answer(command);
-  };
+  overtakePlans(h, (call) => call === 1);
   const container = await h.mount(<PipelineRoute params={{ item: "qi_dark_mode", run: "run_dark" }} />);
   await h.until(() => container.querySelector(".pipeline-note") !== null, "the plan after its overtaken read");
-  expect(told).toBe(true);
-  expect(h.faux.commands("run_plan")).toHaveLength(2);
-  expect(steps(container).map((step) => step.split(":")[0])).toEqual(["plan", "build", "review", "docs", "ship"]);
+  expect(h.faux.commands("run_plan").length).toBeGreaterThanOrEqual(2);
+  expect(container.querySelector(".pipeline-note")?.textContent).toBe("Plan revision r2 Edited after it started");
+  expect(steps(container).map((step) => step.split(":")[0])).toEqual(PLANNED);
+});
+
+test("shows why the plan failed when its read again is refused", async () => {
+  h = await archonHarness({ protocol: 24 });
+  overtakePlans(h, (call) => call === 1, (call) => (call > 1 ? { err: { code: "internal", message: "plan store unreadable" } } : undefined));
+  const container = await h.mount(<PipelineRoute params={{ item: "qi_dark_mode", run: "run_dark" }} />);
+  await h.until(() => container.querySelector(".pipeline-note") !== null, "the refused plan's note", 5_000);
+  expect(container.querySelector(".pipeline-header .ui-skeleton")).toBeNull();
+  expect(container.querySelector(".pipeline-note")?.textContent).toContain("run_plan failed");
+});
+
+test("shows the plan when changes keep overtaking its reads", async () => {
+  h = await archonHarness({ protocol: 24 });
+  overtakePlans(h, () => true);
+  const container = await h.mount(<PipelineRoute params={{ item: "qi_dark_mode", run: "run_dark" }} />);
+  await h.until(() => container.querySelector(".pipeline-note") !== null, "the plan despite the changes", 5_000);
+  expect(h.faux.commands("run_plan").length).toBeGreaterThanOrEqual(3);
+  expect(steps(container).map((step) => step.split(":")[0])).toEqual(PLANNED);
 });
 
 test("says when the item has no such run", async () => {
