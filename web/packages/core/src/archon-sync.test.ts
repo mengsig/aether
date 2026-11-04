@@ -252,5 +252,33 @@ describe("Archon resync, third review", () => {
     expect(daemon.commands("task_graph")).toHaveLength(2);
     expect(store.get().archon[CONN]?.changeCursor).toBe(130);
   });
+
+  it("moves a graph node's stage and waiting reason with an item change", async () => {
+    const waiting = { id: "qi_1", state: "waiting", state_detail: "approval of build", stage: "build", waiting_reason: "approval", title: "item qi_1" };
+    const graph = { ...F.task_graph, data: { ...F.task_graph.data, nodes: [waiting, F.task_graph.data.nodes[1]] } };
+    const { store, daemon, manager } = setup(archond({ task_graph: () => ({ ok: graph }) }));
+    manager.start();
+    await settle();
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_1", state: "running", stage: "test" } } });
+    expect(store.get().archon[CONN]?.graph?.nodes.qi_1).toEqual({ id: "qi_1", state: "running", stage: "test", title: "item qi_1" });
+    expect(store.get().archon[CONN]?.items.qi_1).toMatchObject({ state: "running", stage: "test" });
+  });
+
+  it("refetches on-screen items after history_expired, since skipped changes moved them", async () => {
+    const { store, daemon, manager } = setup(archond({
+      subscribe_changes: (command) => (command.after === 130 ? { err: F.history_expired } : { ok: F.subscribed_changes, then: command.after === null ? F.changes : [] }),
+    }));
+    manager.start();
+    await settle();
+    manager.showItems(CONN, ["qi_1"]);
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_1", state: "waiting" } } });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1" });
+    daemon.drop(1006);
+    await vi.advanceTimersByTimeAsync(300 + 250);
+    expect(daemon.commands("subscribe_changes").map((c) => c.after)).toEqual([null, 130, 100]);
+    expect(daemon.commands("get_item")).toHaveLength(2);
+    expect(store.get().archon[CONN]?.staleItems).toEqual([]);
+  });
 });
 

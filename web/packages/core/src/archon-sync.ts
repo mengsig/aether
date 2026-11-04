@@ -41,7 +41,7 @@ export function patchSnapshots(state: ArchonConnState, value: Json): ArchonConnS
       next = { ...next, items: { ...next.items, [item]: patched } };
     }
     const node = graph?.nodes[item];
-    if (graph && node) next = { ...next, graph: { ...graph, nodes: { ...graph.nodes, [item]: { ...node, state: live.state } } } };
+    if (graph && node) next = { ...next, graph: { ...graph, nodes: { ...graph.nodes, [item]: withLive(node, subject) } } };
   }
   if (subject.subject === "dependency" && graph) next = { ...next, graph: withDependency(graph, subject) };
   return next;
@@ -71,6 +71,20 @@ export function applyChange(state: ArchonConnState, value: Json): { state: Archo
   const next = patchSnapshots({ ...state, changeCursor: at }, value);
   invariant(next.changeCursor === at, "an applied change advances the change cursor");
   return { state: next, ...(item ? { item } : {}), unknown: namedMissing(next, subject) };
+}
+
+/** An item change carries the node's whole live position; `state_detail` describes the old state only. */
+function withLive(node: Json, subject: Json): Json {
+  const state = string(subject.state, "change.state");
+  invariant(subject.subject === "item", "only item changes move a node");
+  const rest = Object.fromEntries(Object.entries(node).filter(([key]) => !["stage", "waiting_reason", "state_detail"].includes(key)));
+  const detail = node.state_detail;
+  return {
+    ...rest, state,
+    ...(typeof subject.stage === "string" ? { stage: subject.stage } : {}),
+    ...(typeof subject.waiting_reason === "string" ? { waiting_reason: subject.waiting_reason } : {}),
+    ...(detail !== undefined && node.state === state ? { state_detail: detail } : {}),
+  };
 }
 
 function withInitiative(graph: ArchonGraph, subject: Json): ArchonGraph {
@@ -145,9 +159,10 @@ export class ArchonSync {
     this.scheduleStale();
   }
 
-  /** §5.3.4: a fresh task_graph, then changes after its as_of. */
+  /** §5.3.4: a fresh task_graph, then changes after its as_of; skipped changes may have moved any detail. */
   private async expired(): Promise<void> {
-    this.set((s) => ({ ...s, changeCursor: null }));
+    const onScreen = [...this.onScreen];
+    this.set((s) => ({ ...s, changeCursor: null, details: {}, staleItems: [...new Set([...s.staleItems, ...onScreen])] }));
     await this.readSnapshots();
     const asOf = this.state.changeCursor;
     this.changeSub = subscriptionId(await this.ctx.request({ cmd: "subscribe_changes", after: asOf }));
