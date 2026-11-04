@@ -89,6 +89,47 @@ describe("knowledge graph", () => {
     expect(h.daemon.sent.filter((c) => c.cmd === "noesis_graph").map((c) => c.query)).toEqual([undefined, "vote"]);
   });
 
+  test("deleting a source asks first, sends only on confirm, and carries the chosen graph option", async () => {
+    const { h, root } = await graphScreen(countingLayout().layout);
+    await click(h, byText(root, ".learn-graph-canvas button", "Up-to-date log rule"));
+    const panel = $(root, "aside[aria-label=Proposition]");
+    expect(panel.textContent).toContain("A voter refuses candidates");
+    const deletes = () => h.daemon.sent.filter((c) => c.cmd === "noesis_delete_source" || c.cmd === "noesis_delete_proposition");
+
+    await click(h, byText(panel, "button", "Delete source…"));
+    expect($(document, "dialog[open]").textContent).toContain("Delete this source?");
+    expect(deletes()).toEqual([]);
+    await click(h, byText($(document, "dialog[open]"), "button", "Keep it"));
+    expect(document.querySelector("dialog[open]")).toBeNull();
+    expect(deletes()).toEqual([]);
+
+    await click(h, byText(panel, "button", "Delete source…"));
+    const dialog = $(document, "dialog[open]");
+    await click(h, $(byText(dialog, "label", "Remove those nothing else supports"), "input"));
+    expect(deletes()).toEqual([]);
+    await click(h, byText(dialog, "button", "Delete"));
+    expect(deletes()).toMatchObject([{ cmd: "noesis_delete_source", source: "s_notes", graph: "delete_unsupported" }]);
+    expect(document.querySelector("dialog[open]")).toBeNull();
+  });
+
+  test("deleting a statement asks first, sends only on confirm, and closes its panel", async () => {
+    const { h, root } = await graphScreen(countingLayout().layout);
+    await click(h, byText(root, ".learn-graph-canvas button", "One vote per term"));
+    const panel = $(root, "aside[aria-label=Proposition]");
+    const deletes = () => h.daemon.sent.filter((c) => c.cmd === "noesis_delete_source" || c.cmd === "noesis_delete_proposition");
+
+    await click(h, byText(panel, "button", "Delete statement…"));
+    expect($(document, "dialog[open]").textContent).toContain("Delete this statement?");
+    await click(h, byText($(document, "dialog[open]"), "button", "Keep it"));
+    expect(deletes()).toEqual([]);
+    expect(root.querySelector("aside[aria-label=Proposition]")).not.toBeNull();
+
+    await click(h, byText(panel, "button", "Delete statement…"));
+    await click(h, byText($(document, "dialog[open]"), "button", "Delete"));
+    expect(deletes()).toMatchObject([{ cmd: "noesis_delete_proposition", proposition: "p_vote" }]);
+    expect(root.querySelector("aside[aria-label=Proposition]")).toBeNull();
+  });
+
   test("a failed layout shows an error with a retry", async () => {
     let calls = 0;
     const { h, root } = await graphScreen(async (model) => {
