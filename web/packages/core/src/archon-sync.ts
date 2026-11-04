@@ -246,7 +246,16 @@ export class ArchonSync {
     if (feedSeq !== null && at <= feedSeq) return;
     this.set((s) => ({ ...s, feedSeq: at, feed: [...s.feed, item].slice(-FEED_KEEP) }));
     // §5.3.5: without `changes`, summaries are refetched 350 ms after any feed item.
-    if (!this.usesChanges) this.fallback.schedule("summaries", () => void this.readSummaries().catch((error: unknown) => this.fail("summaries", error)));
+    if (!this.usesChanges) this.refreshSummaries();
+  }
+
+  /** A timeout on a live link reschedules; after a disconnect the next start reads the summaries. */
+  private refreshSummaries(): void {
+    invariant(!this.usesChanges, "only protocol 23 refetches summaries on feed items");
+    this.fallback.schedule("summaries", () => void this.readSummaries().catch((error: unknown) => {
+      this.fail("summaries", error);
+      if (codeOf(error) === "timeout" && this.feedSub !== null) this.refreshSummaries();
+    }));
   }
 
   private async subscribeFeed(): Promise<void> {

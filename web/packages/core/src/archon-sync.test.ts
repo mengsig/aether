@@ -78,6 +78,23 @@ describe("Archon protocol 23 fallback (CONTRACTS.md §5.3.5)", () => {
   });
 });
 
+describe("Archon protocol 23 fallback retries", () => {
+  it("refetches summaries again after a fallback refresh times out", async () => {
+    const { store, daemon, manager } = setup(archond({
+      hello: (command) => (command.protocol_version === 23 ? { ok: F.welcome_23 } : { frames: [F.incompatible], close: 1008 }),
+      list_item_summaries: () => (daemon.commands("list_item_summaries").length === 2 ? undefined : { ok: F.summaries_23 }),
+    }));
+    manager.start();
+    await vi.advanceTimersByTimeAsync(300);
+    daemon.push(F.feed_item);
+    await vi.advanceTimersByTimeAsync(350 + 20_000);
+    expect(store.get().reports).toEqual([expect.objectContaining({ code: "timeout" })]);
+    await vi.advanceTimersByTimeAsync(350);
+    expect(daemon.commands("list_item_summaries")).toHaveLength(3);
+    expect(store.get().connections[CONN]?.state).toBe("ready");
+  });
+});
+
 describe("Archon change cursor (CONTRACTS.md §5.3)", () => {
   it("applies buffered changes only to the snapshots they are newer than", async () => {
     const { store, daemon, manager } = setup(archond());
