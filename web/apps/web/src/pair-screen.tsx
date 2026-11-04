@@ -2,6 +2,7 @@ import { normalizeDeviceName, useApp } from "@aether-ui/core";
 import type { RouteProps } from "@aether-ui/protocol";
 import { Button, EmptyState, ErrorState, Field } from "@aether-ui/ui";
 import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
+import { forgetPairCode, offeredPairCode } from "./pair-link.ts";
 
 type Daemon = "aether" | "archon";
 const NAMES: Readonly<Record<Daemon, string>> = { aether: "Aether", archon: "Archon" };
@@ -21,7 +22,7 @@ function Pairing({ daemon }: { readonly daemon: Daemon }) {
   const app = useApp();
   const flow = useMemo(() => app.pairing(daemon), [app, daemon]);
   const state = useSyncExternalStore(flow.subscribe, flow.state, flow.state);
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(() => offeredPairCode(daemon));
   const [name, setName] = useState("This browser");
   useEffect(() => () => flow.cancel(), [flow]);
 
@@ -36,6 +37,7 @@ function Pairing({ daemon }: { readonly daemon: Daemon }) {
       return;
     }
     setNameError(null);
+    forgetPairCode();
     // PairingFlow turns every failure into its "failed" state, which this screen renders.
     void flow.start(code.trim(), device);
   };
