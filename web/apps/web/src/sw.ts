@@ -4,13 +4,27 @@
 // A new build's worker waits until every tab of the old build has closed (no skipWaiting, no
 // claim), so an open tab keeps the precache its lazy chunks were built against.
 
+import { pushRoute } from "./push-route.ts";
+
 interface ExtendableEvent extends Event { waitUntil(promise: Promise<unknown>): void }
 interface FetchEvent extends ExtendableEvent { readonly request: Request; respondWith(response: Promise<Response>): void }
+interface PushEvent extends ExtendableEvent { readonly data: { json(): unknown } | null }
+interface NotificationClickEvent extends ExtendableEvent { readonly notification: { close(): void; readonly data?: unknown } }
+interface WindowClientLike { readonly url: string; focus(): Promise<unknown>; navigate(url: string): Promise<unknown> }
 interface WorkerScope {
   readonly location: Location;
-  readonly registration: { readonly scope: string };
+  readonly registration: {
+    readonly scope: string;
+    showNotification(title: string, options: { body: string; data: { route: string | null } }): Promise<void>;
+  };
+  readonly clients: {
+    matchAll(options: { type: "window" }): Promise<readonly WindowClientLike[]>;
+    openWindow(url: string): Promise<unknown>;
+  };
   addEventListener(type: "install" | "activate", listener: (event: ExtendableEvent) => void): void;
   addEventListener(type: "fetch", listener: (event: FetchEvent) => void): void;
+  addEventListener(type: "push", listener: (event: PushEvent) => void): void;
+  addEventListener(type: "notificationclick", listener: (event: NotificationClickEvent) => void): void;
 }
 
 // The build replaces both placeholders with literals (serviceWorkerPlugin in vite.config.ts).
@@ -64,4 +78,30 @@ async function networkFirst(request: Request): Promise<Response> {
 async function cacheFirst(request: Request): Promise<Response> {
   const cached = await caches.match(request, { cacheName: CACHE });
   return cached ?? fetch(request);
+}
+
+/** The daemon's push payload (PushPayload): fixed title text, an optional preview, and a fragment route. */
+worker.addEventListener("push", (event) => {
+  const payload = event.data?.json() as { title?: string; preview?: string | null; url?: string } | undefined;
+  if (!payload?.title) throw new Error("A push arrived without a title");
+  const route = pushRoute(payload.url);
+  event.waitUntil(worker.registration.showNotification(payload.title, { body: payload.preview ?? "", data: { route } }));
+});
+
+worker.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const data = event.notification.data as { route?: string | null } | undefined;
+  const target = new URL(data?.route ?? "", worker.registration.scope).href;
+  event.waitUntil(focusOrOpen(target));
+});
+
+/** Focuses an open tab of the app and points it at the route, or opens a new one. */
+async function focusOrOpen(target: string): Promise<void> {
+  const open = (await worker.clients.matchAll({ type: "window" })).find((client) => client.url.startsWith(shellUrl));
+  if (!open) {
+    await worker.clients.openWindow(target);
+    return;
+  }
+  await open.focus();
+  await open.navigate(target);
 }
