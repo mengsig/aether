@@ -89,10 +89,14 @@ export class Validator {
     const argumentCheck = this.argumentChecks.get(method);
     if (argumentCheck === undefined) throw new BridgeRefusal(`Unknown bridge method ${method.slice(0, 64)}`);
     if (!Array.isArray(args)) throw new BridgeRefusal("bridge arguments are a list");
-    const text = checkSizes(method as BridgeMethod, args);
+    const texts = checkSizes(method as BridgeMethod, args);
     checkSender(sender);
-    if (!argumentCheck(args)) throw new BridgeRefusal(`${method}: ${schemaError(argumentCheck)}`);
-    return this.typed(method as BridgeMethod, args, text, connections);
+    // Everything after this point sees the arguments as JSON carries them, so what main words
+    // in a confirmation is exactly what it can serialize and send.
+    const canonical = JSON.parse(texts.all) as unknown[];
+    if (!Array.isArray(canonical) || canonical.length !== args.length) throw new BridgeRefusal("Bridge arguments are a JSON list");
+    if (!argumentCheck(canonical)) throw new BridgeRefusal(`${method}: ${schemaError(argumentCheck)}`);
+    return this.typed(method as BridgeMethod, canonical, texts.frame, connections);
   }
 
   private typed(method: BridgeMethod, args: readonly unknown[], text: string | undefined, connections: Connections): ValidCall {
@@ -142,18 +146,19 @@ export class Validator {
   }
 }
 
-/** The frame's JSON text, or a refusal; also bounds every other string and the whole call. */
-function checkSizes(method: BridgeMethod, args: readonly unknown[]): string | undefined {
-  const text = jsonText(args);
-  if (utf8Bytes(text) > MAX_FRAME_BYTES + MAX_STRING_BYTES) throw new BridgeRefusal("The call exceeds the 1 MiB frame limit");
-  if (method === "request" || method === "subscribe") {
-    const frame = jsonText(args[1]);
-    if (utf8Bytes(frame) > MAX_FRAME_BYTES) throw new BridgeRefusal("The frame exceeds the 1 MiB limit");
-    checkStrings(args[0], 0);
-    return frame;
-  }
-  for (const arg of args) checkStrings(arg, 0);
-  return undefined;
+/**
+ * The JSON text of the whole call and, for request and subscribe, of the frame; refuses
+ * oversize input and any value JSON would silently change.
+ */
+function checkSizes(method: BridgeMethod, args: readonly unknown[]): { all: string; frame?: string } {
+  const frameCall = method === "request" || method === "subscribe";
+  args.forEach((arg, index) => checkValues(arg, 0, frameCall && index === 1));
+  const all = jsonText(args);
+  if (utf8Bytes(all) > MAX_FRAME_BYTES + MAX_STRING_BYTES) throw new BridgeRefusal("The call exceeds the 1 MiB frame limit");
+  if (!frameCall) return { all };
+  const frame = jsonText(args[1]);
+  if (utf8Bytes(frame) > MAX_FRAME_BYTES) throw new BridgeRefusal("The frame exceeds the 1 MiB limit");
+  return { all, frame };
 }
 
 function jsonText(value: unknown): string {
@@ -168,17 +173,23 @@ function jsonText(value: unknown): string {
 }
 
 const MAX_DEPTH = 16;
+const MAX_FRAME_DEPTH = 256;
 
-function checkStrings(value: unknown, depth: number): void {
-  if (depth > MAX_DEPTH) throw new BridgeRefusal("The argument nests too deeply");
+/**
+ * Bounds strings outside a frame and refuses non-finite numbers, which JSON would turn into
+ * null after the confirmation had shown them. Validation then runs on the JSON form.
+ */
+function checkValues(value: unknown, depth: number, inFrame = false): void {
+  if (depth > (inFrame ? MAX_FRAME_DEPTH : MAX_DEPTH)) throw new BridgeRefusal("The argument nests too deeply");
   if (typeof value === "string") {
-    if (utf8Bytes(value) > MAX_STRING_BYTES) throw new BridgeRefusal("A string argument exceeds 4 KiB");
+    if (!inFrame && utf8Bytes(value) > MAX_STRING_BYTES) throw new BridgeRefusal("A string argument exceeds 4 KiB");
     return;
   }
+  if (typeof value === "number" && !Number.isFinite(value)) throw new BridgeRefusal("Numbers in bridge arguments are finite");
   if (typeof value !== "object" || value === null) return;
   for (const [key, item] of Object.entries(value)) {
-    checkStrings(key, depth + 1);
-    checkStrings(item, depth + 1);
+    if (!inFrame) checkValues(key, depth + 1);
+    checkValues(item, depth + 1, inFrame);
   }
 }
 

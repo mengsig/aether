@@ -91,3 +91,17 @@ test("frames on a connection that is not open, or remote, are refused", () => {
   refused("request", ["remote:dev_1", { cmd: "status", req: 1 }], /request/);
   refused("request", ["local:00000000-0000-4000-8000-00000000000f", { cmd: "status", req: 1 }], /not an open local/);
 });
+
+test("values JSON would change are refused, so what is confirmed is what is sent", () => {
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    const action = { kind: "archon.operator_change", conn: ARCHON_CONN, request: "settings", patch: { budget_usd_daily: bad } };
+    refused("privileged", [action], /finite/);
+    refused("request", [AETHER_CONN, { cmd: "status", req: 1, extra: bad }], /finite/);
+    refused("setPreference", ["window.bounds", { x: bad }], /finite/);
+  }
+  const call = check("request", [AETHER_CONN, { cmd: "status", req: 2, unset: undefined }]);
+  assert.ok(call.method === "request" && call.text === JSON.stringify({ cmd: "status", req: 2 }));
+  let deep: unknown = 1;
+  for (let i = 0; i < 300; i += 1) deep = [deep];
+  refused("request", [AETHER_CONN, { cmd: "status", req: 3, deep }], /nests too deeply/);
+});
