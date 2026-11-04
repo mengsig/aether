@@ -1,14 +1,14 @@
 @layer app {
-  .agent { display: grid; gap: var(--space-4); }
+  .agent { display: grid; gap: var(--space-5); animation: ui-rise var(--motion-base) var(--ease-standard); }
   .agent-head { display: grid; gap: var(--space-1); }
   .agent-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
   .agent-name { margin: 0; font: var(--weight-bold) var(--text-2xl) / var(--leading-tight) var(--font-display); }
   .agent-sub { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
   .agent-id { font-family: var(--font-mono); font-size: var(--text-xs); }
-  .agent-detail { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+  .agent-detail { margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); transition: color var(--motion-base) var(--ease-standard); }
   .agent-detail[data-state="failed"] { color: var(--color-danger); }
   .agent-facts {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: var(--space-3); margin: 0; padding: var(--space-4);
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: var(--space-4) var(--space-5); margin: 0; padding: var(--space-5);
     border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-1);
   }
   .agent-fact { display: grid; gap: var(--space-1); min-inline-size: 0; }
