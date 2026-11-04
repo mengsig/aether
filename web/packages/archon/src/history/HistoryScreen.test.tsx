@@ -71,6 +71,20 @@ describe("the history explorer", () => {
     expect(root.querySelector(".history-row")).not.toBeNull();
   });
 
+  it("titles the shown history from core, so a renamed item reads its new title", async () => {
+    h = await graphHarness();
+    const root = await h.mount(<HistoryScreen />);
+    await openHistory(h, root, "Ship dark mode for the docs");
+    const entry = h.faux.world.base.items.get("qi_dark_mode");
+    if (entry === undefined) throw new Error("the demo world has qi_dark_mode");
+    entry.summary = { ...entry.summary, title: "Renamed dark mode" };
+    entry.detail = { ...entry.detail, item: { ...(entry.detail.item as object), title: "Renamed dark mode" } };
+    h.faux.inner.tell("qi_dark_mode", { subject: "item", item: "qi_dark_mode", state: "running" });
+    await h.until(() => listed(root).includes("Renamed dark mode"), "the renamed result");
+    await h.until(() => root.querySelector(".history-detail-header h2")?.textContent === "Renamed dark mode", "the renamed heading");
+    expect(root.querySelector(".history-detail")?.getAttribute("aria-label")).toBe("History of Renamed dark mode");
+  });
+
   it("appends a live transition while the item's history is shown", async () => {
     h = await graphHarness();
     const root = await h.mount(<HistoryScreen />);

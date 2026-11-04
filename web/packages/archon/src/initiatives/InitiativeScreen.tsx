@@ -17,14 +17,19 @@ import { initiativePill, initiativeView, type InitiativeView, type MemberRow } f
 import { useStoreRead } from "./read.ts";
 import "./initiatives.css";
 
-/** A member's state settles this long before the initiative is read again, so a burst rereads once. */
+/** A change settles this long before the initiative is read again, so a burst rereads once. */
 export const SETTLE_MS = 500;
 
-/** The states of the items core holds for `id`: it moves when a member does, so the detail is reread. */
-function useMemberSignal(conn: string, id: string): string {
+/**
+ * Moves when the initiative or one of its members does in core's store: the initiative's entry in the
+ * graph (state, title) and the states of the items naming it. The detail is reread when it settles.
+ */
+function useInitiativeSignal(conn: string, id: string): string {
   const items = useSelector(useMemo(() => selectItems(conn), [conn]));
-  const signal = useMemo(() => Object.entries(items).filter(([, item]) => item.summary.initiative === id)
-    .map(([key, item]) => `${key}:${item.state}`).sort().join("|"), [items, id]);
+  const graph = useSelector(useMemo(() => selectTaskGraph(conn), [conn]));
+  const entry = graph?.initiatives.find((initiative) => initiative.id === id);
+  const signal = useMemo(() => [JSON.stringify(entry ?? null), ...Object.entries(items).filter(([, item]) => item.summary.initiative === id)
+    .map(([key, item]) => `${key}:${item.state}`).sort()].join("|"), [entry, items, id]);
   return useSettled(signal, SETTLE_MS);
 }
 
@@ -130,7 +135,7 @@ const EMPTY_DATA: DagData = dagData({ nodes: {}, edges: [], initiatives: [], asO
 function Initiative({ info, id, layout }: { readonly info: ConnectionInfo; readonly id: string; readonly layout: LayoutFn }) {
   const app = useApp();
   const access = useArchonAccess(info);
-  const signal = useMemberSignal(access.conn, id);
+  const signal = useInitiativeSignal(access.conn, id);
   const read = useMemo(() => access.ready ? () => app.manager.readInitiative(access.conn, id) : null, [app, access.conn, access.ready, id]);
   const { failure, reload } = useStoreRead(read, signal);
   const stored = useSelector(useMemo(() => selectInitiative(access.conn, id), [access.conn, id]));

@@ -40,6 +40,18 @@ describe("an initiative page", () => {
     expect(h.app.store.get().archon[CONN]?.initiatives.in_sync).toBeDefined();
   });
 
+  it("rereads the initiative when only the initiative itself changes", async () => {
+    h = await graphHarness();
+    const root = await h.mount(<InitiativeScreen params={{ id: "in_sync" }} layout={gridLayout} />);
+    await h.until(() => root.querySelector(".initiative-title") !== null, "the initiative");
+    const initiative = h.faux.world.initiatives.find((row) => row.id === "in_sync");
+    expect(initiative).toBeDefined();
+    Object.assign(initiative ?? {}, { state: "shipping" });
+    h.faux.inner.tell(null, { subject: "initiative", initiative: "in_sync", state: "shipping" });
+    await h.until(() => root.querySelector(".initiative-header")?.textContent?.includes("Shipping") === true, "the shipping initiative");
+    expect(h.app.store.get().archon[CONN]?.graph?.initiatives.find((row) => row.id === "in_sync")?.state).toBe("shipping");
+  });
+
   it("says when archond has no such initiative", async () => {
     h = await graphHarness();
     const root = await h.mount(<InitiativeScreen params={{ id: "in_gone" }} layout={gridLayout} />);
