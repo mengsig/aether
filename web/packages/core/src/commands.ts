@@ -124,6 +124,11 @@ export function checkAllowed(access: Access, standing: Standing | undefined): vo
   if (access === "operate" && standing === "observer") throw new RefusedError("Observer devices cannot change daemon state");
 }
 
+/** Whether core keys this Aether command, so a lost reply is tracked for the recovery review. */
+export function isKeyed(command: Json): boolean {
+  return AETHER_KEYED.has(string(command.cmd, "command.cmd"));
+}
+
 /** Adds an idempotency key to a keyed Aether command that has none, so a resend cannot act twice. */
 export function withIdempotencyKey(command: Json, makeKey: () => string = () => crypto.randomUUID()): Json {
   if (!AETHER_KEYED.has(string(command.cmd, "command.cmd")) || typeof command.idempotency_key === "string") return command;

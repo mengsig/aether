@@ -4,6 +4,7 @@
 import type { aether, Capabilities, ConnectionInfo, ConnId } from "@aether-ui/protocol";
 import type { NoesisCache } from "./noesis-cache.ts";
 import { EMPTY_NOESIS } from "./noesis-cache.ts";
+import type { ReadEntry } from "./reads.ts";
 import type { ArchonGraph, ArchonItem, ArchonPlan, Report, Stamped, State, StreamState, Submission, TranscriptState } from "./store.ts";
 
 type Selector<T> = (state: State) => T;
@@ -39,3 +40,6 @@ export const selectFeed = (conn: ConnId): Selector<readonly unknown[]> => (s) =>
 // Noesis: the status core read at ready, and the learning entities (noesis-cache.ts).
 export const selectNoesisStatus = (conn: ConnId): Selector<Readonly<Record<string, unknown>> | null> => (s) => s.aether[conn]?.noesis ?? null;
 export const selectLearn = (conn: ConnId): Selector<NoesisCache> => (s) => s.aether[conn]?.learn ?? EMPTY_NOESIS;
+
+// Rereads stored whole (reads.ts), and every submission whose outcome is not known.
+export const selectRead = (conn: ConnId, key: string): Selector<ReadEntry | undefined> => (s) => s.reads[conn]?.[key];

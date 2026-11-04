@@ -4,6 +4,7 @@
 import type { aether, Capabilities, ConnectionInfo, ConnId } from "@aether-ui/protocol";
 import { invariant, omit, type Json } from "./guards.ts";
 import { EMPTY_NOESIS, type NoesisCache } from "./noesis-cache.ts";
+import type { ReadEntry } from "./reads.ts";
 
 export interface TranscriptState {
   readonly entries: readonly aether.TranscriptEntry[];
@@ -46,6 +47,12 @@ export interface Submission {
   readonly command: Json;
   readonly state: "pending" | "unknown";
   readonly error?: string;
+  /** The daemon's submission horizon when first sent; never rewritten by a resend. */
+  readonly horizon?: string;
+  /** Which send under this key it is (1 for the first); a resolution answers one attempt only. */
+  readonly attempt?: number;
+  /** Sent without an idempotency key: it cannot be checked or safely resent, only reviewed. */
+  readonly unkeyed?: true;
 }
 
 export interface AetherConnState {
@@ -129,6 +136,8 @@ export interface State {
   /** Submissions whose outcome is unknown after their daemon's identity changed (§5.1). */
   readonly review: readonly Submission[];
   readonly reports: readonly Report[];
+  /** Rereads of read models no event keeps current, by connection and key (reads.ts). */
+  readonly reads: Readonly<Record<ConnId, Readonly<Record<string, ReadEntry>>>>;
 }
 
 export const EMPTY_AETHER: AetherConnState = Object.freeze({
@@ -142,7 +151,7 @@ export const EMPTY_ARCHON: ArchonConnState = Object.freeze({
 });
 
 export const INITIAL_STATE: State = Object.freeze({
-  connections: {}, aether: {}, archon: {}, capabilities: Object.freeze({}), review: [], reports: [],
+  connections: {}, aether: {}, archon: {}, capabilities: Object.freeze({}), review: [], reports: [], reads: {},
 });
 
 export type FrameScheduler = (flush: () => void) => void;
@@ -229,5 +238,5 @@ export function dropConnection(state: State, conn: ConnId): State {
   const aetherRest = omit(state.aether, conn);
   const archonRest = omit(state.archon, conn);
   const review = [...state.review, ...outbox.map((s) => ({ ...s, state: "unknown" as const }))];
-  return { ...state, aether: aetherRest, archon: archonRest, review };
+  return { ...state, aether: aetherRest, archon: archonRest, review, reads: omit(state.reads, conn) };
 }

@@ -1,15 +1,16 @@
 // @aether-ui/core: the only package that talks to daemons (CONTRACTS.md §2.1, §2.2).
 
-export { createApp, archonMounted, CLIENT_VERSION, type App, type AppOptions } from "./app.ts";
+export { createApp, archonMounted, CLIENT_VERSION, type App, type AppOptions, type LocalAction } from "./app.ts";
 export { ConnectionManager, type ManagerOptions } from "./manager.ts";
 export { Connection, ARCHON_VERSIONS, type Endpoint } from "./connection.ts";
 export { AetherSync, MAX_DELTA_AGENTS } from "./aether-sync.ts";
 export { ArchonSync } from "./archon-sync.ts";
 export { Store, dropConnection, INITIAL_STATE, replaces } from "./store.ts";
 export type { State, AetherConnState, ArchonConnState, ArchonItem, ArchonGraph, ArchonPlan, Stamped, StreamState, StreamTool, TranscriptState, Submission, Report, FrameScheduler } from "./store.ts";
+export { applyRead, failRead, markRequested, readInFlight, readReplaces, settleSubmission, stampOf, type ReadEntry } from "./reads.ts";
 export { computeCapabilities } from "./capabilities.ts";
-export { aetherAccess, archonAccess, checkAllowed, withIdempotencyKey, type Access } from "./commands.ts";
-export { DaemonError, RefusedError } from "./errors.ts";
+export { aetherAccess, archonAccess, checkAllowed, isKeyed, withIdempotencyKey, type Access } from "./commands.ts";
+export { DaemonError, RefusedError, codeOf } from "./errors.ts";
 export { registerRoutes, registerEntityAction, registry, Registry } from "./registry.ts";
 export { matchRoute, matchPattern, routeHref, navigate, currentHash, type RouteMatch } from "./router.ts";
 export { PairingFlow, aetherPairing, archonPairing, normalizeDeviceName, type PairingState, type PairRun } from "./pairing.ts";
@@ -22,4 +23,4 @@ export * from "./selectors.ts";
 export { EMPTY_NOESIS, noesisKey, type NoesisCache, type NoesisRead, type NoesisQuestionEntry, type NoesisProblemEntry } from "./noesis-cache.ts";
 export { noesisReadKey, type NoesisReadRequest } from "./noesis-reads.ts";
 export { compareStamps } from "./stamps.ts";
-export { AppProvider, useApp, useSelector, useCapabilities, useCommand, useRoutes, useEntityActions, useRoute } from "./react.ts";
+export { AppProvider, useApp, useSelector, useCapabilities, useCommand, useRoutes, useEntityActions, useRoute, useReread, usePermission, permissionFor, useReadPermission, readPermissionFor, type Permission, type CommandInput } from "./react.ts";
