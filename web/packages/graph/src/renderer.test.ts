@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sceneLayout, sceneModel } from "../test/graphs.ts";
 import { visibleGraph } from "./model.ts";
-import { GraphRenderer, type Context2D, type FrameScheduler, type GraphTheme, type RenderState } from "./renderer.ts";
+import { edgeKey, GraphRenderer, type Context2D, type FrameScheduler, type GraphTheme, type RenderState } from "./renderer.ts";
 import { buildScene } from "./scene.ts";
 
 /** A 2D context that records the labels and status colours it draws. */
@@ -98,5 +98,28 @@ describe("GraphRenderer", () => {
     renderer.dispose();
     frames.flush();
     expect(renderer.framesDrawn).toBe(1);
+  });
+  it("draws emphasized edges last in the accent and rings emphasized nodes unless another ring applies", () => {
+    const strokes: { style: string; curves: number }[] = [];
+    const rings = new Map<string, string>();
+    let curves = 0;
+    const { ctx } = recordingContext();
+    Object.assign(ctx, {
+      bezierCurveTo: () => { curves++; },
+      stroke(this: { strokeStyle: string }) { strokes.push({ style: this.strokeStyle, curves }); curves = 0; },
+      strokeRect(this: { strokeStyle: string }, x: number, y: number) { rings.set(`${x},${y}`, this.strokeStyle); },
+    });
+    const frames = manualFrames();
+    const scene = buildScene(visibleGraph(sceneModel), sceneLayout, "box");
+    const emphasis = { nodes: new Set(["a", "c"]), edges: new Set([edgeKey("a", "c")]) };
+    const renderer = new GraphRenderer(ctx, frames.scheduler, { scene, camera: { x: 0, y: 0, scale: 1 }, width: 800, height: 400, dpr: 1, theme, emphasis, selected: "c" });
+    frames.flush();
+    expect(strokes).toEqual([{ style: "edge", curves: 1 }, { style: "accent", curves: 1 }]);
+    const ringOf = (id: string) => rings.get(`${scene.byId.get(id)?.x},${scene.byId.get(id)?.y}`);
+    expect([ringOf("a"), ringOf("b"), ringOf("c")]).toEqual(["accent", "border", "accent"]);
+    renderer.update({ emphasis: { nodes: new Set(), edges: new Set() } });
+    strokes.length = 0;
+    frames.flush();
+    expect(strokes).toEqual([{ style: "edge", curves: 2 }]);
   });
 });

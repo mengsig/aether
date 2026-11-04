@@ -56,6 +56,16 @@ impl Harness {
     /// Boot as the daemon does: the service first, then the runtime over a
     /// file store, then the owed answers resumed.
     async fn open(home: &Home, client: Arc<ScriptedClient>) -> Self {
+        Self::open_with(home, client.clone(), client).await
+    }
+
+    /// [`Harness::open`] with `model_client` making the calls; `client`
+    /// still records what was asked.
+    async fn open_with(
+        home: &Home,
+        client: Arc<ScriptedClient>,
+        model_client: Arc<dyn aether_model::ModelClient>,
+    ) -> Self {
         let models = Arc::new(
             aether_model::Models::load(Some(home.config.path().to_path_buf())).expect("models"),
         );
@@ -70,7 +80,7 @@ impl Harness {
                 models.clone(),
                 gate.clone(),
             )
-            .with_model_client(client.clone()),
+            .with_model_client(model_client),
         );
         noesis.start_at_boot(&store).await.expect("boot");
         let runtime = aether_runtime::Runtime::start_with_engines(
@@ -895,3 +905,7 @@ fn the_dispatch_table_places_every_noesis_command_in_one_group() {
     );
     assert_eq!(placed, named, "every Noesis command has its group");
 }
+
+/// A pause, cancel or settings change racing a teaching call's reply.
+#[path = "teaching_race_tests.rs"]
+mod race;

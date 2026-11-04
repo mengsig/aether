@@ -112,6 +112,12 @@ export interface ArchonConnState {
   readonly links: Readonly<Record<string, Stamped>>;
   /** Keyed by run: `run_plan` replies, reread with their item. */
   readonly plans: Readonly<Record<string, ArchonPlan>>;
+  /** Keyed by item: `item_history` replies, reread with their item while it is on screen. */
+  readonly histories: Readonly<Record<string, Stamped>>;
+  /** Keyed by initiative: `get_initiative` replies. */
+  readonly initiatives: Readonly<Record<string, Stamped>>;
+  /** Keyed by `searchKey(query)`: the newest few `list_items` replies. */
+  readonly searches: Readonly<Record<string, Stamped>>;
   readonly feed: readonly Json[];
   readonly outbox: readonly Submission[];
   /** Refreshes an applied change asked for; they survive reconnects until done. */
@@ -146,7 +152,8 @@ export const EMPTY_AETHER: AetherConnState = Object.freeze({
 });
 
 export const EMPTY_ARCHON: ArchonConnState = Object.freeze({
-  changeCursor: null, feedSeq: null, items: {}, itemsAsOf: null, graph: null, details: {}, links: {}, plans: {}, feed: [], outbox: [],
+  changeCursor: null, feedSeq: null, items: {}, itemsAsOf: null, graph: null, details: {}, links: {}, plans: {},
+  histories: {}, initiatives: {}, searches: {}, feed: [], outbox: [],
   staleSnapshots: false, staleItems: [], staleSummaries: [],
 });
 

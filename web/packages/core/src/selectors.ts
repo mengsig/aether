@@ -35,6 +35,9 @@ export const selectItemDetail = (conn: ConnId, item: string): Selector<Stamped |
 export const selectItemLinks = (conn: ConnId, item: string): Selector<Stamped | undefined> => (s) => s.archon[conn]?.links[item];
 export const selectRunPlan = (conn: ConnId, run: string): Selector<ArchonPlan | undefined> => (s) => s.archon[conn]?.plans[run];
 export const selectTaskGraph = (conn: ConnId): Selector<ArchonGraph | null> => (s) => s.archon[conn]?.graph ?? null;
+export const selectItemHistory = (conn: ConnId, item: string): Selector<Stamped | undefined> => (s) => s.archon[conn]?.histories[item];
+export const selectInitiative = (conn: ConnId, initiative: string): Selector<Stamped | undefined> => (s) => s.archon[conn]?.initiatives[initiative];
+export const selectSearch = (conn: ConnId, key: string): Selector<Stamped | undefined> => (s) => s.archon[conn]?.searches[key];
 export const selectFeed = (conn: ConnId): Selector<readonly unknown[]> => (s) => s.archon[conn]?.feed ?? NONE;
 
 // Noesis: the status core read at ready, and the learning entities (noesis-cache.ts).
