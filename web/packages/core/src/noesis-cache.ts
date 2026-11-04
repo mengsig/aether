@@ -131,6 +131,8 @@ export function applyNoesisEvent(cache: NoesisCache, kind: Json, agent: string |
   } else if (type === "noesis.practice_concluded") {
     const concluded = kind as unknown as aether.EventKindNoesisPracticeConcluded;
     next = { ...next, conclusions: { ...next.conclusions, [string(concluded.problem, "concluded.problem")]: concluded } };
+  } else if (type === "noesis.settings_changed") {
+    next = stampStatus(next);
   }
   const stale = staleKeys(type, session);
   return stale.length === 0 ? next : { ...next, versions: bump(next.versions, ...stale) };
@@ -144,6 +146,13 @@ function staleKeys(type: string, session: string | null): string[] {
   if (type === "noesis.settings_changed") return [noesisKey.status];
   if (session === null) return [];
   return [noesisKey.session(session), noesisKey.sessions];
+}
+
+/** A settings event is newer than any status ask still in flight: its read takes a fresh ticket. */
+function stampStatus(cache: NoesisCache): NoesisCache {
+  const ticket = cache.ticket + 1;
+  invariant(Number.isSafeInteger(ticket), "the ticket counter stays a safe integer");
+  return { ...cache, ticket, reads: { ...cache.reads, [noesisKey.status]: { value: {}, ticket } } };
 }
 
 /** A committed message of a session's agent: its turn moved, so the session is reread. */

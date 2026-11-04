@@ -79,6 +79,14 @@ describe("applyNoesisEvent", () => {
     expect(next.versions).toMatchObject({ learner: 1, graph: 1, status: 1 });
   });
 
+  test("a settings event outranks a status reply asked before it, not one asked after", () => {
+    const asked = nextTicket(held);
+    const changed = applyNoesisEvent(asked, { type: "noesis.settings_changed" }, undefined);
+    expect(installRead(changed, noesisKey.status, { enabled: false }, asked.ticket)).toBe(changed);
+    const later = nextTicket(changed);
+    expect(installRead(later, noesisKey.status, { enabled: true }, later.ticket).reads.status?.value).toEqual({ enabled: true });
+  });
+
   test("events of other kinds change nothing", () => {
     expect(applyNoesisEvent(held, { type: "agent.created" }, "agt_1")).toBe(held);
   });
