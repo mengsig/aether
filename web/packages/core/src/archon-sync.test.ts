@@ -235,11 +235,12 @@ describe("Archon resync, third review", () => {
   it("applies an initiative change to the graph it is newer than", async () => {
     const { store, daemon, manager } = setup(archond({ task_graph: () => ({ ok: withInitiative }) }));
     manager.start();
-    await settle();
+    // The recorded changes add an edge whose satisfaction only a reread can tell.
+    await vi.advanceTimersByTimeAsync(250);
     daemon.push(initiative(130, "in_1", "completed"));
     await vi.advanceTimersByTimeAsync(250);
     expect(store.get().archon[CONN]?.graph?.initiatives).toEqual([{ id: "in_1", title: "one", state: "completed", atomic: false }]);
-    expect(daemon.commands("task_graph")).toHaveLength(1);
+    expect(daemon.commands("task_graph")).toHaveLength(2);
   });
 
   it("rereads the snapshots when a change names an unknown initiative", async () => {
@@ -327,6 +328,22 @@ describe("Archon resync, third review", () => {
     daemon.push({ ...F.feed_item, item: { ...F.feed_item.item, seq: 12 } });
     expect(store.get().archon[CONN]?.feed.map((item) => (item as Json).seq).slice(-2)).toEqual([11, 12]);
     expect(store.get().archon[CONN]?.feedSeq).toBe(12);
+  });
+
+  it("rereads the graph when a prerequisite moves, since archond derives edge satisfaction", async () => {
+    const edge = { from: "qi_1", to: "qi_2", kind: "depends_on", satisfied: false };
+    const graph = (satisfied: boolean, asOf: number) => ({ ...F.task_graph, data: { ...F.task_graph.data, edges: [{ ...edge, satisfied }], as_of: asOf } });
+    const { store, daemon, manager } = setup(archond({ subscribe_changes: () => ({ ok: F.subscribed_changes }), task_graph: () => ({ ok: daemon.commands("task_graph").length === 1 ? graph(false, 100) : graph(true, 130) }) }));
+    manager.start();
+    await settle();
+    daemon.push({ frame: "change", sub: 6, change: { seq: 120, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_2", state: "running" } } });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("task_graph")).toHaveLength(1);
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_1", state: "succeeded" } } });
+    expect(store.get().archon[CONN]?.staleSnapshots).toBe(true);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("task_graph")).toHaveLength(2);
+    expect(store.get().archon[CONN]?.graph?.edges).toEqual([{ ...edge, satisfied: true }]);
   });
 });
 

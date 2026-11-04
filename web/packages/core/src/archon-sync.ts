@@ -59,9 +59,20 @@ function namedMissing(state: ArchonConnState, subject: Json): boolean {
   return named.some((id) => !(id in state.items) || (graph !== null && !graph.truncated && !(id in graph.nodes)));
 }
 
+/** `satisfied` is derived by archond: a moved prerequisite or a new edge leaves it unknown here. */
+function edgesUnknown(before: ArchonConnState, at: number, subject: Json): boolean {
+  const graph = before.graph;
+  if (!graph || at <= graph.asOf) return false;
+  if (subject.subject === "dependency") return subject.added === true;
+  if (subject.subject !== "item" || typeof subject.item !== "string") return false;
+  const item = subject.item;
+  if (graph.nodes[item]?.state === subject.state) return false;
+  return graph.edges.some((edge) => edge.from === item);
+}
+
 /**
- * Applies one Change past the cursor (§5.3.2-3). `unknown` means it names an
- * entity missing from a snapshot, which then needs rereading.
+ * Applies one Change past the cursor (§5.3.2-3). `unknown` means a snapshot
+ * lacks what it names or cannot derive its effect, and needs rereading.
  */
 export function applyChange(state: ArchonConnState, value: Json): { state: ArchonConnState; item?: string; unknown: boolean } {
   const at = seq(value.seq, "change.seq");
@@ -70,7 +81,8 @@ export function applyChange(state: ArchonConnState, value: Json): { state: Archo
   const item = typeof subject.item === "string" ? subject.item : undefined;
   const next = patchSnapshots({ ...state, changeCursor: at }, value);
   invariant(next.changeCursor === at, "an applied change advances the change cursor");
-  return { state: next, ...(item ? { item } : {}), unknown: namedMissing(next, subject) };
+  const unknown = namedMissing(next, subject) || edgesUnknown(state, at, subject);
+  return { state: next, ...(item ? { item } : {}), unknown };
 }
 
 /** An item change carries the node's whole live position; `state_detail` describes the old state only. */
