@@ -58,7 +58,11 @@ pub fn build_tree(
         .collect();
     let all_children = children_of(&all_agents);
     let subtree_usage = roll_up_usage(&all_agents, &all_children);
-    let under_root = filter.root.map(|root| subtree_of(root, &all_children));
+    let under_root = match (filter.root, run) {
+        (Some(root), Some(_)) => Some(subtree_across_runs(store, root)?),
+        (Some(root), None) => Some(subtree_of(root, &all_children)),
+        (None, _) => None,
+    };
     let agents: Vec<_> = all_agents
         .into_iter()
         .filter(|agent| filter.shows(agent, under_root.as_ref()))
@@ -93,6 +97,21 @@ pub fn build_tree(
         );
     }
     Ok(AgentTree { roots, nodes })
+}
+
+/// The root's descendants over every run: delegation may cross runs, so a
+/// run filter must not cut the walk at an intermediate agent of another run.
+fn subtree_across_runs(
+    store: &dyn Store,
+    root: AgentId,
+) -> aether_store::Result<BTreeSet<AgentId>> {
+    let everyone = store.agents(&AgentFilter {
+        exclude_archived: false,
+        ..Default::default()
+    })?;
+    let subtree = subtree_of(root, &children_of(&everyone));
+    assert!(subtree.contains(&root), "a subtree holds its root");
+    Ok(subtree)
 }
 
 /// Every agent's children, in the order `agents` lists them.
@@ -328,8 +347,12 @@ pub fn transcript_page(
         .latest_events(1, &filter)?
         .first()
         .map(|event| event.seq);
-    let has_after =
-        has_after || before.is_some_and(|before| newest.is_some_and(|seq| seq >= before));
+    let page_end = events
+        .last()
+        .map(|event| event.seq)
+        .or(after)
+        .or(before.map(|before| before.saturating_sub(1)));
+    let has_after = has_after || newest_is_past(page_end, newest);
     let entries: Vec<TranscriptEntry> = events.into_iter().filter_map(transcript_entry).collect();
     let last_seq = newest
         .into_iter()
@@ -344,6 +367,12 @@ pub fn transcript_page(
         has_after,
         last_seq,
     })
+}
+
+/// Whether the newest entry lies beyond where the page ends, whatever the
+/// page's own read saw: a commit between the two reads still shows.
+fn newest_is_past(page_end: Option<u64>, newest: Option<u64>) -> bool {
+    matches!((page_end, newest), (Some(end), Some(seq)) if seq > end)
 }
 
 fn transcript_entry(event: aether_core::event::Event) -> Option<TranscriptEntry> {
@@ -661,5 +690,35 @@ mod tests {
         assert_eq!(page_seqs(&rest), &seqs[3..]);
         assert!(rest.has_before && !rest.has_after);
         assert_eq!(rest.last_seq, seqs[4]);
+    }
+
+    #[test]
+    fn a_commit_after_the_page_read_still_reports_has_after() {
+        assert!(newest_is_past(Some(4), Some(5)));
+        assert!(!newest_is_past(Some(5), Some(5)));
+        assert!(!newest_is_past(None, Some(5)));
+        assert!(!newest_is_past(Some(5), None));
+    }
+
+    /// Delegation may cross runs: a run filter keeps a same-run grandchild
+    /// whose intermediate parent ran elsewhere.
+    #[test]
+    fn a_rooted_run_filtered_tree_follows_a_cross_run_intermediate() {
+        let store = aether_store::SqliteStore::open_in_memory().expect("open");
+        let (run_a, run_b) = (RunId::new(), RunId::new());
+        let root = agent(None, run_a, false, 1);
+        let middle = agent(Some(root.id), run_b, false, 1);
+        let leaf = agent(Some(middle.id), run_a, false, 1);
+        for a in [&root, &middle, &leaf] {
+            upsert(&store, a);
+        }
+        let rooted = TreeFilter {
+            root: Some(root.id),
+            ..TreeFilter::default()
+        };
+        let tree = build_tree(&store, Some(run_a), &rooted).expect("tree");
+        let shown: BTreeSet<_> = tree.nodes.keys().copied().collect();
+        assert_eq!(shown, BTreeSet::from([root.id, leaf.id]));
+        assert_eq!(tree.roots.len(), 2, "the leaf's parent is not shown");
     }
 }
