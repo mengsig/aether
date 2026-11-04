@@ -154,8 +154,17 @@ function ScreenSkeleton() {
 }
 
 interface BoundaryState {
-  readonly error: Error | null;
+  /** What the user reads about the failure; never empty. */
+  readonly failure: string | null;
   readonly attempt: number;
+}
+
+const SILENT_FAILURE = "It stopped without saying why; the browser console has the details.";
+
+/** A readable message for anything a screen may throw, including errors with no message. */
+function failureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return message.trim() === "" ? SILENT_FAILURE : message;
 }
 
 interface BoundaryProps {
@@ -165,10 +174,10 @@ interface BoundaryProps {
 
 /** Shows a failed screen (a chunk that did not load, a render that threw) with a retry, and keeps the shell up. */
 class ScreenBoundary extends Component<BoundaryProps, BoundaryState> {
-  override state: BoundaryState = { error: null, attempt: 0 };
+  override state: BoundaryState = { failure: null, attempt: 0 };
 
   static getDerivedStateFromError(error: unknown): Partial<BoundaryState> {
-    return { error: error instanceof Error ? error : new Error(String(error)) };
+    return { failure: failureMessage(error) };
   }
 
   override componentDidCatch(error: unknown, info: ErrorInfo): void {
@@ -178,13 +187,12 @@ class ScreenBoundary extends Component<BoundaryProps, BoundaryState> {
   /** A lazy component keeps its rejection, so a retry needs a fresh one. */
   private retry(): void {
     screens.delete(this.props.route);
-    this.setState((state) => ({ error: null, attempt: state.attempt + 1 }));
+    this.setState((state) => ({ failure: null, attempt: state.attempt + 1 }));
   }
 
   override render(): ReactNode {
-    if (this.state.error) {
-      return <ErrorState title="This screen failed" message={this.state.error.message}
-        onRetry={() => this.retry()} />;
+    if (this.state.failure !== null) {
+      return <ErrorState title="This screen failed" message={this.state.failure} onRetry={() => this.retry()} />;
     }
     // The screen is looked up here, not passed in, so a retry picks up the fresh lazy component.
     return (

@@ -28,6 +28,10 @@ const NAMED_COLOURS = new Set(`aliceblue antiquewhite aqua aquamarine azure beig
 const TIMING_KEY = /^(?:duration|delay|endDelay|transition\w*|animation\w*)$/i;
 const TOKEN_SHEET = path.join("packages", "ui", "src", "tokens.css");
 const COLOUR_ATTRIBUTES = new Set(["fill", "stroke", "color", "stopColor", "stop-color", "floodColor", "flood-color"]);
+// Style keys whose strings may hold a named colour, in a style object anywhere; `--*` are custom properties.
+const COLOUR_KEY = /colou?r|background|border|outline|shadow|fill|stroke|^--/i;
+// Text in a CSS value that names no colour: url(...) targets and quoted strings such as font names.
+const CSS_NON_COLOUR = /url\([^)]*\)|"[^"]*"|'[^']*'/gi;
 
 const COLOUR_HINT = "use a --color-* token from tokens.css (CONTRACTS.md §4)";
 const DURATION_HINT = "use a --motion-* token from tokens.css, so reduced motion can zero it (CONTRACTS.md §4)";
@@ -62,7 +66,9 @@ export function stylesheetProblems(css: string): string[] {
   // Only declaration values, which end at `;` or `}`: a selector such as `#id` or `:is(.red)` ends at `{`.
   for (const declaration of text.matchAll(/(?:^|[;{])\s*(?:--[\w-]+|[a-z-]+)\s*:([^;{}]*)(?=[;}])/gim)) {
     const value = declaration[1] ?? "";
-    const raw = rawValueProblem(value, { colours: true, durations: true, named: true });
+    // Blanked rather than removed, so the index of a raw value still points into the sheet.
+    const checked = value.replace(CSS_NON_COLOUR, (text) => " ".repeat(text.length));
+    const raw = rawValueProblem(checked, { colours: true, durations: true, named: true });
     const valueStart = declaration.index + declaration[0].length - value.length;
     if (raw !== undefined) problems.push(`${lineOf(valueStart + raw.index)}: ${raw.message}`);
   }
@@ -111,33 +117,40 @@ const rule: Rule.RuleModule = {
     schema: [],
   },
   create(context) {
+    // Any string: hex and colour functions. In JSX, only `style` and colour attributes are style
+    // values, so `href="#abc"` and the like are left alone.
     const checkString = (node: Rule.Node, text: string | undefined) => {
       if (text === undefined) return;
       const attribute = enclosingAttribute(node);
       const style = attribute === "style";
-      const named = style || (attribute !== undefined && COLOUR_ATTRIBUTES.has(attribute));
-      const raw = rawValueProblem(text, { colours: true, durations: style, named });
+      const colourAttribute = attribute !== undefined && COLOUR_ATTRIBUTES.has(attribute);
+      if (attribute !== undefined && !style && !colourAttribute) return;
+      const raw = rawValueProblem(text, { colours: true, durations: style, named: style || colourAttribute });
       if (raw !== undefined) context.report({ node, message: raw.message });
     };
-    // A timing key outside a style attribute, as in `{ duration: 200 }` or `el.style.transition = "1s"`.
-    const checkTiming = (node: Rule.Node, key: string | undefined, value: { type?: string; value?: unknown }) => {
-      if (key === undefined || !TIMING_KEY.test(key) || value.type !== "Literal") return;
-      if (typeof value.value === "number" && value.value !== 0) {
-        context.report({ node, message: `raw duration ${value.value} for ${key}: ${DURATION_HINT}` });
-      } else if (typeof value.value === "string" && enclosingAttribute(node) !== "style") {
-        const raw = rawValueProblem(value.value, { colours: false, durations: true, named: false });
-        if (raw !== undefined) context.report({ node, message: raw.message });
+    // A style key outside an inline style attribute, which checkString already covers: a reusable
+    // style object, `{ duration: 200 }` for Element.animate(), or `el.style.transition = "1s"`.
+    const checkStyleKey = (node: Rule.Node, key: string | undefined, value: Rule.Node) => {
+      if (key === undefined) return;
+      const timing = TIMING_KEY.test(key);
+      const literal = value as { type?: string; value?: unknown };
+      if (timing && literal.type === "Literal" && typeof literal.value === "number" && literal.value !== 0) {
+        return context.report({ node, message: `raw duration ${literal.value} for ${key}: ${DURATION_HINT}` });
       }
+      const text = stringValue(value);
+      if (text === undefined || enclosingAttribute(node) === "style") return;
+      const raw = rawValueProblem(text, { colours: false, durations: timing, named: COLOUR_KEY.test(key) });
+      if (raw !== undefined) context.report({ node, message: raw.message });
     };
     return {
       Literal: (node) => checkString(node, stringValue(node)),
       TemplateLiteral: (node) => checkString(node, stringValue(node)),
-      Property: (node) => checkTiming(node, keyName(node as unknown as Parameters<typeof keyName>[0]), node.value),
+      Property: (node) => checkStyleKey(node, keyName(node as unknown as Parameters<typeof keyName>[0]), node.value as Rule.Node),
       AssignmentExpression: (node) => {
         const target = node.left as { type: string; computed?: boolean; property?: { type?: string; name?: unknown } };
         const key = target.type === "MemberExpression" && target.computed !== true && typeof target.property?.name === "string"
           ? target.property.name : undefined;
-        checkTiming(node, key, node.right);
+        checkStyleKey(node, key, node.right as Rule.Node);
       },
       ImportDeclaration: (node) => {
         const specifier = node.source.value;

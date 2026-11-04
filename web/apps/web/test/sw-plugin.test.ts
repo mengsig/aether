@@ -27,6 +27,9 @@ describe("service worker plugin", () => {
       expect(list[0]).toBe("./");
       expect(list).toContain("./manifest.webmanifest");
       expect(list.some((file) => /^\.\/assets\/index-[\w-]+\.js$/.test(file))).toBe(true);
+      // Lazy screens too, so a tab keeps loading its own build's chunks until the new worker takes over.
+      expect(list.some((file) => /^\.\/assets\/pair-screen-[\w-]+\.js$/.test(file))).toBe(true);
+      expect(worker).not.toMatch(/skipWaiting|\.claim\(/);
       const manifest = JSON.parse(readFileSync(path.join(outDir, "manifest.webmanifest"), "utf8")) as { start_url: string; icons: unknown[] };
       expect(manifest.start_url).toBe("./#/");
       expect(manifest.icons.length).toBeGreaterThan(0);

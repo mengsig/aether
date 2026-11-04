@@ -1,4 +1,4 @@
-import { useId, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { invariant } from "./classes.ts";
 import { Dialog } from "./dialog.tsx";
 
@@ -47,6 +47,14 @@ function PaletteSearch({ commands, onClose }: { readonly commands: readonly Comm
   const [cursor, setCursor] = useState(0);
   const shown = filterCommands(commands, query);
   const active = shown.length === 0 ? -1 : Math.min(cursor, shown.length - 1);
+  const list = useRef<HTMLUListElement>(null);
+  // Focus stays in the input, so the browser never scrolls the active option into view by itself.
+  useEffect(() => {
+    if (active < 0) return;
+    const option = list.current?.children[active];
+    invariant(option instanceof HTMLElement, "the active option is rendered in the list");
+    option.scrollIntoView({ block: "nearest" });
+  }, [active]);
   const run = (command: Command | undefined) => {
     if (command === undefined) return;
     onClose();
@@ -68,7 +76,7 @@ function PaletteSearch({ commands, onClose }: { readonly commands: readonly Comm
         aria-controls={`${id}-list`} aria-autocomplete="list" aria-activedescendant={active < 0 ? undefined : `${id}-${active}`}
         placeholder="Type a screen or command" value={query} data-autofocus
         onChange={(event) => { setQuery(event.currentTarget.value); setCursor(0); }} onKeyDown={onKeyDown} />
-      <ul className="ui-palette-list" role="listbox" id={`${id}-list`} aria-label="Matching commands">
+      <ul ref={list} className="ui-palette-list" role="listbox" id={`${id}-list`} aria-label="Matching commands">
         {shown.map((command, index) => (
           <li key={command.id} id={`${id}-${index}`} role="option" aria-selected={index === active} className="ui-palette-option"
             onPointerMove={() => setCursor(index)} onClick={() => run(command)}>

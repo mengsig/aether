@@ -43,7 +43,8 @@ function Pairing({ daemon }: { readonly daemon: Daemon }) {
     return <EmptyState title={`Paired with ${NAMES[daemon]}`} action={<a className="ui-link" href="#/">Open the overview</a>}>This device can now reach the daemon.</EmptyState>;
   }
   if (state.phase === "failed") {
-    return <ErrorState title="Pairing failed" message={state.message} retryLabel="Start again" onRetry={() => flow.cancel()} />;
+    const message = state.message.trim() === "" ? "The daemon refused without giving a reason." : state.message;
+    return <ErrorState title="Pairing failed" message={message} retryLabel="Start again" onRetry={() => flow.cancel()} />;
   }
   if (state.phase === "confirm") {
     return (

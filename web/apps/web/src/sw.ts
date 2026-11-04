@@ -1,13 +1,14 @@
 // The service worker: precaches the built shell and serves it offline. It never
 // answers daemon traffic (/api, /ws, the /archon mount): those stay live.
+//
+// A new build's worker waits until every tab of the old build has closed (no skipWaiting, no
+// claim), so an open tab keeps the precache its lazy chunks were built against.
 
 interface ExtendableEvent extends Event { waitUntil(promise: Promise<unknown>): void }
 interface FetchEvent extends ExtendableEvent { readonly request: Request; respondWith(response: Promise<Response>): void }
 interface WorkerScope {
   readonly location: Location;
   readonly registration: { readonly scope: string };
-  readonly clients: { claim(): Promise<void> };
-  skipWaiting(): Promise<void>;
   addEventListener(type: "install" | "activate", listener: (event: ExtendableEvent) => void): void;
   addEventListener(type: "fetch", listener: (event: FetchEvent) => void): void;
 }
@@ -29,14 +30,13 @@ function isLive(url: URL): boolean {
 }
 
 worker.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll([...precached])).then(() => worker.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll([...precached])));
 });
 
 worker.addEventListener("activate", (event) => {
+  // Activation comes only once no tab runs an older build, so its caches have no reader left.
   const stale = (name: string) => name.startsWith(CACHE_PREFIX) && name !== CACHE;
-  event.waitUntil(caches.keys()
-    .then((names) => Promise.all(names.filter(stale).map((name) => caches.delete(name))))
-    .then(() => worker.clients.claim()));
+  event.waitUntil(caches.keys().then((names) => Promise.all(names.filter(stale).map((name) => caches.delete(name)))));
 });
 
 worker.addEventListener("fetch", (event) => {

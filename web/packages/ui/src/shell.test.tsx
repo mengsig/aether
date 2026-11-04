@@ -3,7 +3,7 @@ import type { EntityAction, RouteDef } from "@aether-ui/protocol";
 import { act } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { AppShell, type AppShellProps } from "./app-shell.tsx";
-import { filterCommands } from "./command-palette.tsx";
+import { CommandPalette, filterCommands } from "./command-palette.tsx";
 import { EntityActionMenu } from "./entity-actions.tsx";
 import { activeHref, navHref, navSections } from "./nav-rail.tsx";
 import { byText, click, press, render, type } from "./render.test-util.tsx";
@@ -99,6 +99,19 @@ describe("AppShell", () => {
     error.mockRestore();
   });
 
+  test("a screen that throws without a message, or throws a non-Error, still keeps the shell up", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (const thrown of [new Error(""), undefined, "  "]) {
+      const route: RouteDef = { path: "#/silent", owner: "test", load: async () => { throw thrown; } };
+      const { container } = await render(shell({ routes: [route], match: { route, params: {} }, hash: "#/silent" }).node);
+      await settle();
+      expect(container.querySelector(".ui-shell")).not.toBeNull();
+      expect(container.querySelector("[role=alert] .ui-state-body")?.textContent).toMatch(/stopped without saying why/);
+      document.body.innerHTML = "";
+    }
+    error.mockRestore();
+  });
+
   test("Ctrl+K opens the palette, typing filters, Enter navigates", async () => {
     const { node, props } = shell();
     const { container } = await render(node);
@@ -111,6 +124,22 @@ describe("AppShell", () => {
     await press(input as HTMLInputElement, "Enter");
     expect(props.onNavigate).toHaveBeenCalledWith("#/fleet/topology");
     expect(container.querySelector("[role=combobox]")).toBeNull();
+  });
+
+  test("arrow keys scroll the active command into view, wrapping at either end", async () => {
+    const commands = Array.from({ length: 40 }, (_, index) => ({ id: `c${index}`, label: `Command ${index}`, group: "Test", run: vi.fn() }));
+    const scrolled: string[] = [];
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(function (this: HTMLElement) {
+      scrolled.push(this.firstChild?.textContent ?? "");
+    });
+    const { container } = await render(<CommandPalette open onClose={vi.fn()} commands={commands} />);
+    const input = container.querySelector<HTMLInputElement>("[role=combobox]") as HTMLInputElement;
+    for (let step = 0; step < 25; step += 1) await press(input, "ArrowDown");
+    expect(scrolled.at(-1)).toBe("Command 25");
+    expect(document.getElementById(input.getAttribute("aria-activedescendant") ?? "")?.firstChild?.textContent).toBe("Command 25");
+    for (let step = 0; step < 26; step += 1) await press(input, "ArrowUp");
+    expect(scrolled.at(-1)).toBe("Command 39");
+    scroll.mockRestore();
   });
 
   test("palette theme commands switch <html data-theme>", async () => {

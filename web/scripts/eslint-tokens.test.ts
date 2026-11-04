@@ -46,6 +46,21 @@ describe("design tokens only (CONTRACTS.md §4)", () => {
     ]);
   });
 
+  it("rejects raw values in reusable style objects, not only inline ones", async () => {
+    const messages = await lint(COMPONENT, [
+      'const style = { color: "red", backgroundColor: "white", transition: `opacity 200ms` };',
+      "export const X = () => <div style={style} />;",
+      'export const y = { "--pill-color": "gold", animationDelay: `${1}s, 300ms` };',
+    ].join("\n"));
+    expect(messages).toEqual([
+      'raw colour "red": use a --color-* token from tokens.css (CONTRACTS.md §4)',
+      'raw colour "white": use a --color-* token from tokens.css (CONTRACTS.md §4)',
+      'raw duration "200ms": use a --motion-* token from tokens.css, so reduced motion can zero it (CONTRACTS.md §4)',
+      'raw colour "gold": use a --color-* token from tokens.css (CONTRACTS.md §4)',
+      'raw duration "300ms": use a --motion-* token from tokens.css, so reduced motion can zero it (CONTRACTS.md §4)',
+    ]);
+  });
+
   it("rejects raw values in every stylesheet a component imports", async () => {
     const messages = await lint(COMPONENT, 'import "../test/fixtures/raw.css";\nexport const x = 1;\n');
     expect(messages).toEqual([
@@ -70,6 +85,8 @@ describe("design tokens only (CONTRACTS.md §4)", () => {
     const messages = await lint(COMPONENT, [
       'export const a = <div style={{ color: "var(--color-text)", transition: "opacity var(--motion-fast)" }} />;',
       'export const b = <a href="#/fleet" data-x="#ui-main">Fleet</a>;',
+      'export const b2 = <a href="#abc" id="cafe">Fragment</a>;',
+      'export const b3 = { label: "Fade", color: "var(--color-text)", transition: `opacity var(--motion-${"fast"})` };',
       'export const c = { transitionDelay: "0ms", duration: 0, label: "Retry in 5s", tone: "red" };',
     ].join("\n"));
     expect(messages).toEqual([]);
@@ -77,6 +94,10 @@ describe("design tokens only (CONTRACTS.md §4)", () => {
 
   it("reads only declaration values of a sheet", () => {
     expect(stylesheetProblems("a:hover,\n.b:is(.red) { color: var(--c) }\n#abc { --x: 1px }")).toEqual([]);
+    expect(stylesheetProblems('.a { background: url("/images/white.png"); font-family: "Tan Sans", serif; content: \'2s\' }')).toEqual([]);
+    expect(stylesheetProblems('.a { background: url(x.png) red }')).toEqual([
+      '1: raw colour "red": use a --color-* token from tokens.css (CONTRACTS.md §4)',
+    ]);
     expect(stylesheetProblems("/* #fff 2s */\n.a { animation: spin 2s linear }")).toEqual([
       '2: raw duration "2s": use a --motion-* token from tokens.css, so reduced motion can zero it (CONTRACTS.md §4)',
     ]);
