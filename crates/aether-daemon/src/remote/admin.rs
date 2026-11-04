@@ -722,7 +722,7 @@ mod tests {
         assert_eq!(kept_mounts(Some(vec![]), &saved).unwrap(), None);
         let outside = RemoteMount {
             target: "http://example.com:80".into(),
-            ..archon
+            ..archon.clone()
         };
         assert!(matches!(
             kept_mounts(Some(vec![outside]), &saved),
