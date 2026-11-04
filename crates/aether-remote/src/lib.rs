@@ -130,6 +130,9 @@ pub(crate) struct Live {
     pub bound: Option<SocketAddr>,
     /// Why the listener is closed although enabled.
     pub error: Option<String>,
+    /// Cancelled once these mounts are no longer in force: what a request routed by them
+    /// holds, so it never outlives them.
+    pub remounted: CancellationToken,
 }
 
 /// The open listener: how to stop it, and the task to wait for.
@@ -280,11 +283,6 @@ impl RemoteServer {
         self.mount_slots.clone().try_acquire_owned().ok()
     }
 
-    /// Fires when the mounts in force change.
-    pub(crate) fn remounted(&self) -> CancellationToken {
-        self.remounted.lock().clone()
-    }
-
     /// A place for a WebSocket until its hello is accepted; `None` when
     /// every one is held by a connection that has only just arrived.
     pub(crate) fn greeting_seat(&self) -> Option<Seat> {
@@ -412,11 +410,14 @@ impl RemoteServer {
                 OriginPolicy::new(&settings.public_origins, bound).map_err(anyhow::Error::msg)?
             }
         };
+        // Rotated by `follow_mounts` before this, so new routes never get a cancelled token.
+        let remounted = self.remounted.lock().clone();
         *self.live.write() = Arc::new(Live {
             settings,
             policy,
             bound,
             error,
+            remounted,
         });
         Ok(())
     }

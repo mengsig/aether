@@ -41,6 +41,8 @@ pub(crate) enum Status {
     Funnel,
     Failing,
     Hanging,
+    /// Private, after a pause long enough to change the mounts during it.
+    Slow,
 }
 
 /// A daemon whose publication status the test sets; it serves devices as [`EchoHost`] does.
@@ -86,6 +88,10 @@ impl RemoteHost for StatusHost {
             Status::Funnel => Ok(Publication::Funnel),
             Status::Failing => Err("tailscaled is not answering".into()),
             Status::Hanging => std::future::pending().await,
+            Status::Slow => {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                Ok(Publication::Private)
+            }
         }
     }
 }
@@ -735,5 +741,39 @@ async fn ping_and_pong_stay_on_their_hop() {
         *seen.frames.lock(),
         ["hi", "after"],
         "no ping reached archond"
+    );
+}
+
+#[tokio::test]
+async fn a_request_waiting_for_its_status_read_when_the_mount_goes_is_never_forwarded() {
+    let (target, seen) = archond().await;
+    let mounted = mounted(target).await;
+    mounted.host.set(Status::Slow);
+    let bound = mounted.bound;
+    let upgrading = tokio::spawn(async move {
+        let mut request = format!("ws://{bound}/archon/ws")
+            .into_client_request()
+            .expect("request");
+        request
+            .headers_mut()
+            .insert("host", PUBLIC_HOST.parse().expect("host"));
+        let stream = TcpStream::connect(bound).await.expect("connect");
+        tokio_tungstenite::client_async(request, stream)
+            .await
+            .map(|_| ())
+    });
+    let plain = tokio::spawn(async move { raw(bound, &get("/archon/api/x")).await });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    mounted.server.apply(settings(None)).await.expect("unmount");
+    let refused = upgrading
+        .await
+        .expect("joined")
+        .expect_err("no upgrade under a removed mount");
+    assert!(refused.to_string().contains("503"), "{refused}");
+    let (status, _, body) = plain.await.expect("joined");
+    assert_eq!(status, 503, "{body}");
+    assert!(
+        seen.requests.lock().is_empty(),
+        "nothing reached the removed mount's target"
     );
 }

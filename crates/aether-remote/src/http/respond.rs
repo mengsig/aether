@@ -107,7 +107,8 @@ where
     let mounts = live.settings.mounts.as_deref().unwrap_or_default();
     let uri = request.uri();
     if let Some(found) = mount::find(mounts, uri.path(), uri.query()) {
-        return mounted(server, found, request, upgrade).await;
+        let remounted = live.remounted.clone();
+        return mounted(server, found, remounted, request, upgrade).await;
     }
     endpoint(server, live, request, upgrade)
         .await
@@ -118,6 +119,7 @@ where
 async fn mounted<B>(
     server: &RemoteServer,
     found: Result<Mounted, BadPath>,
+    remounted: tokio_util::sync::CancellationToken,
     request: Request<B>,
     upgrade: &UpgradeSlot,
 ) -> Result<Answered, Refusal>
@@ -127,7 +129,7 @@ where
 {
     let mounted = found
         .map_err(|BadPath| bad_request("the request path is not one this listener forwards"))?;
-    match mount::forward(server, mounted, request).await {
+    match mount::forward(server, mounted, remounted, request).await {
         Ok(Forwarded::Answer(response)) => Ok(Answered::Mounted(response)),
         Ok(Forwarded::Upgraded(response, tunnel)) => {
             debug_assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);

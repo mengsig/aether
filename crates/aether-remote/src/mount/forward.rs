@@ -14,6 +14,7 @@ use hyper::upgrade::OnUpgrade;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpStream;
+use tokio_util::sync::CancellationToken;
 
 use super::leased::Leased;
 use super::{Mounted, Ticket, Tunnel, end_to_end};
@@ -44,10 +45,12 @@ pub(crate) enum Failure {
     Gateway(StatusCode, &'static str),
 }
 
-/// Forward `request` to the target `mounted` names, if the lease allows it.
+/// Forward `request` to the target `mounted` names, while the lease allows it and the mounts
+/// it was routed by, whose `remounted` token it holds, are still in force.
 pub(crate) async fn forward<B>(
     server: &RemoteServer,
     mounted: Mounted,
+    remounted: CancellationToken,
     mut request: Request<B>,
 ) -> Result<Forwarded, Failure>
 where
@@ -73,16 +76,20 @@ where
         .admit()
         .await
         .map_err(|why| refused(HttpErrorCode::Unavailable, why.message()))?;
-    let remounted = server.remounted();
     let client_upgrade = upgrade.then(|| hyper::upgrade::on(&mut request));
     let (parts, body) = request.into_parts();
     let body = read_body(&parts.headers, body, server.tuning().body_timeout).await?;
     let outbound = outbound(&parts, &mounted, body, upgrade)?;
     // Held to the end: the answer's body and an upgrade both arrive through the connection.
     let (answered, _connection) = tokio::select! {
-        answered = exchange(&mounted, outbound, &ticket) => answered?,
+        biased;
         _ = ticket.ended() => return Err(lease_ended()),
+        _ = remounted.cancelled() => return Err(mount_changed()),
+        answered = exchange(&mounted, outbound, &ticket) => answered?,
     };
+    if remounted.is_cancelled() {
+        return Err(mount_changed());
+    }
     match (client_upgrade, slot) {
         (Some(client), Some(slot)) if answered.status() == StatusCode::SWITCHING_PROTOCOLS => {
             switched(answered, client, ticket, slot, remounted).await
@@ -93,6 +100,13 @@ where
 
 fn refused(code: HttpErrorCode, message: &'static str) -> Failure {
     Failure::Refused(Refusal::new(code, message))
+}
+
+fn mount_changed() -> Failure {
+    refused(
+        HttpErrorCode::Unavailable,
+        "the mount this request was routed by was changed or removed",
+    )
 }
 
 fn lease_ended() -> Failure {
@@ -287,7 +301,7 @@ async fn switched(
     client: OnUpgrade,
     ticket: Ticket,
     slot: tokio::sync::OwnedSemaphorePermit,
-    remounted: tokio_util::sync::CancellationToken,
+    remounted: CancellationToken,
 ) -> Result<Forwarded, Failure> {
     let target =
         match tokio::time::timeout(CONNECT_TIMEOUT, hyper::upgrade::on(&mut answered)).await {
