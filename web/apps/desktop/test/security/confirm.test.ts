@@ -114,7 +114,8 @@ function fakeHost(recorded: Recorded, shown: Confirmation[], answer: boolean): B
     push: () => {},
     confirm: async (_owner, confirmation) => { shown.push(confirmation); return answer; },
     openTerminal: async () => { throw new Error("no terminal in this test"); },
-    notify: () => {}, openExternal: async () => {}, openRemote: async () => {},
+    notify: () => {}, startDaemon: async () => {}, pickDirectory: async () => null,
+    openExternal: async () => {}, openRemote: async () => {},
     getPreference: () => undefined, setPreference: async () => {},
     versions: { app: "0.0.0" }, logPath: "/tmp/log", protocolVersions: { aether: 26, archon: 24 },
   };

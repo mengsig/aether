@@ -109,7 +109,7 @@ export class Validator {
       case "privileged": return { method, action: this.privilegedAction(first, connections) };
       case "startDaemon": return { method, kind: first as DaemonKind };
       case "pickDirectory": return { method, purpose: first as string };
-      case "notify": return { method, note: first as { title: string; body: string } };
+      case "notify": return { method, note: first as { title: string; body: string; route?: string } };
       case "openExternal": return { method, url: first as string };
       case "openRemote": return { method, origin: first as string };
       case "getPreference": return { method, key: first as PreferenceKey };
