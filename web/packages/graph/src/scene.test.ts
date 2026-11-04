@@ -2,7 +2,8 @@ import type { Layout } from "@aether-ui/protocol";
 import { describe, expect, it } from "vitest";
 import { sceneLayout, sceneModel } from "../test/graphs.ts";
 import { visibleGraph } from "./model.ts";
-import { buildScene, GROUP_HEADER, hitTest } from "./scene.ts";
+import { GROUP_HEADER } from "./layered.ts";
+import { buildScene, hitTest } from "./scene.ts";
 
 describe("scene and hit testing", () => {
   const scene = buildScene(visibleGraph(sceneModel), sceneLayout, "box");

@@ -1,6 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { describe, expect, it } from "vitest";
-import { LayoutEngine, type LayoutWorker } from "../src/engine.ts";
+import { LayoutEngine, layoutInput, type LayoutWorker } from "../src/engine.ts";
 import { layered } from "../src/layered.ts";
 import { visibleGraph } from "../src/model.ts";
 import type { LayoutReply } from "../src/worker-protocol.ts";
@@ -30,9 +30,7 @@ describe("layeredLayout in a worker thread", () => {
     expect(layout.positions.size).toBe(visibleGraph(model).nodes.length);
 
     const graph = visibleGraph(model);
-    const index = new Map(graph.nodes.map((n, i) => [n.id, i]));
-    const local = layered({ nodes: graph.nodes.map((n) => n.id), clusters: graph.nodes.map((n) => n.group ?? ""),
-      edges: graph.edges.flatMap((e) => [index.get(e.from) ?? -1, index.get(e.to) ?? -1]) });
+    const local = layered(layoutInput(graph));
     const expected = new Map(graph.nodes.map((n, i) => [n.id, { x: local.xs[i] ?? NaN, y: local.ys[i] ?? NaN }]));
     expect(positionBytes(layout.positions)).toBe(positionBytes(expected));
   });

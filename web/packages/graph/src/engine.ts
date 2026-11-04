@@ -4,7 +4,28 @@
 import type { GraphModel, Layout } from "@aether-ui/protocol";
 import { at, invariant, must } from "./invariant.ts";
 import { visibleGraph, type VisibleGraph } from "./model.ts";
+import type { LayoutInput } from "./layered.ts";
 import type { Algorithm, LayoutReply, LayoutRequest } from "./worker-protocol.ts";
+
+/** The worker's input for a visible graph: indices in its node order and each node's group path. */
+export function layoutInput(graph: VisibleGraph): LayoutInput {
+  const index = new Map(graph.nodes.map((node, i) => [node.id, i]));
+  const edges: number[] = [];
+  for (const edge of graph.edges) edges.push(must(index, edge.from), must(index, edge.to));
+  const parents = new Map(graph.groups.map((group) => [group.id, group.parent]));
+  const paths = new Map<string, readonly string[]>();
+  const pathOf = (group: string): readonly string[] => {
+    const known = paths.get(group);
+    if (known !== undefined) return known;
+    invariant(parents.has(group), `group ${group} is not a visible group`);
+    const parent = parents.get(group);
+    const path = [...(parent === undefined ? [] : pathOf(parent)), group];
+    paths.set(group, path);
+    return path;
+  };
+  const groups = graph.nodes.map((node) => (node.group === undefined ? [] : pathOf(node.group)));
+  return { nodes: graph.nodes.map((node) => node.id), groups, edges };
+}
 
 /** A Layout from a worker reply, or the reason the reply cannot be used. */
 function readReply(reply: Partial<LayoutReply>, graph: VisibleGraph): Layout | Error {
@@ -85,14 +106,7 @@ export class LayoutEngine {
 
   private compute(graph: VisibleGraph, algorithm: Algorithm): Promise<Layout> {
     this.counts.computed++;
-    const index = new Map(graph.nodes.map((node, i) => [node.id, i]));
-    const edges: number[] = [];
-    for (const edge of graph.edges) edges.push(must(index, edge.from), must(index, edge.to));
-    const request: LayoutRequest = {
-      id: this.nextId++, algorithm, edges,
-      nodes: graph.nodes.map((node) => node.id),
-      clusters: graph.nodes.map((node) => node.group ?? ""),
-    };
+    const request: LayoutRequest = { id: this.nextId++, algorithm, ...layoutInput(graph) };
     return new Promise<Layout>((resolve, reject) => {
       this.pending.set(request.id, { graph, resolve, reject });
       this.ensureWorker().postMessage(request);

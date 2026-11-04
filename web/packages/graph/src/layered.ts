@@ -1,29 +1,34 @@
 // Deterministic layered (Sugiyama-style) layout for DAGs, run inside the layout worker.
-// Back edges are reversed, layers come from longest paths, and barycenter sweeps order each
-// layer with groups kept contiguous. Every tie breaks on node index, so output depends only on input.
+// Back edges are reversed, layers come from longest paths and barycenter sweeps order each layer.
+// Each group then gets its own horizontal band, so group boxes never cover another group's nodes.
+// Every tie breaks on node index or group id, so output depends only on input.
 
 import { at, invariant } from "./invariant.ts";
 
 export interface LayoutInput {
   /** Node ids in canonical (sorted) order; positions come back in the same order. */
   nodes: readonly string[];
-  /** One entry per node: its group, or "" for none. Nodes of a group stay together in a layer. */
-  clusters: readonly string[];
+  /** One entry per node: its expanded groups, outermost first ([] for none). */
+  groups: readonly (readonly string[])[];
   /** Flattened [from, to] index pairs. */
   edges: readonly number[];
 }
 export interface Coordinates { xs: Float64Array; ys: Float64Array }
 
 export const LAYERED_SHAPE = { width: 168, height: 44 } as const;
+/** A group box's padding around its contents and its label band; the scene draws the same box. */
+export const GROUP_PADDING = 12;
+export const GROUP_HEADER = 20;
 const LAYER_GAP = 72;
 const ROW_GAP = 20;
+const ROW_PITCH = LAYERED_SHAPE.height + ROW_GAP;
 const SWEEPS = 8;
 
 type Adjacency = number[][];
 
 export function checkInput(input: LayoutInput): void {
   const n = input.nodes.length;
-  invariant(input.clusters.length === n, "layout input needs one cluster per node");
+  invariant(input.groups.length === n, "layout input needs one group path per node");
   invariant(input.edges.length % 2 === 0, "layout edges are [from, to] pairs");
   for (const end of input.edges) invariant(Number.isInteger(end) && end >= 0 && end < n, `layout edge end ${end} is out of range`);
 }
@@ -118,7 +123,8 @@ function reorder(row: number[], neighbours: Adjacency, relative: Float64Array, c
   placeRow(row, relative);
 }
 
-function orderLayers(layer: Int32Array, out: Adjacency, clusters: readonly string[]): number[][] {
+/** Each node's relative position (0..1) within its layer after the barycenter sweeps. */
+function orderLayers(layer: Int32Array, out: Adjacency, clusters: readonly string[]): Float64Array {
   const depth = layer.reduce((max, l) => Math.max(max, l), 0) + 1;
   const rows: number[][] = Array.from({ length: depth }, () => []);
   layer.forEach((l, v) => at(rows, l).push(v));
@@ -133,26 +139,76 @@ function orderLayers(layer: Int32Array, out: Adjacency, clusters: readonly strin
     const down = sweep % 2 === 0;
     for (let k = 1; k < depth; k++) reorder(at(rows, down ? k : depth - 1 - k), down ? into : out, relative, clusters, bary);
   }
-  return rows;
+  invariant(rows.reduce((sum, row) => sum + row.length, 0) === layer.length, "every node is in exactly one layer");
+  return relative;
 }
 
-/** Centre positions, layers left to right, each layer centred on the tallest. */
+/** A group's band, or the root; `direct` holds the nodes in no deeper group. */
+interface Lane { id: string; group: boolean; direct: number[]; children: Map<string, Lane>; sum: number; count: number }
+
+const newLane = (id: string, group: boolean): Lane => ({ id, group, direct: [], children: new Map(), sum: 0, count: 0 });
+
+function laneTree(groups: readonly (readonly string[])[], relative: Float64Array): Lane {
+  const root = newLane("", false);
+  groups.forEach((path, v) => {
+    let lane = root;
+    for (const id of path) {
+      let child = lane.children.get(id);
+      if (child === undefined) lane.children.set(id, (child = newLane(id, true)));
+      lane.sum += at(relative, v);
+      lane.count++;
+      lane = child;
+    }
+    lane.sum += at(relative, v);
+    lane.count++;
+    lane.direct.push(v);
+  });
+  return root;
+}
+
+/** Stacks a lane's direct rows and child bands top to bottom; returns the bottom edge. */
+function placeLane(lane: Lane, top: number, layer: Int32Array, relative: Float64Array, ys: Float64Array): number {
+  type Item = { key: string; mean: number; lane?: Lane };
+  const items: Item[] = [...lane.children.values()].map((child) => ({ key: child.id, mean: child.sum / child.count, lane: child }));
+  if (lane.direct.length > 0) {
+    const mean = lane.direct.reduce((sum, v) => sum + at(relative, v), 0) / lane.direct.length;
+    items.push({ key: "", mean });
+  }
+  items.sort((a, b) => a.mean - b.mean || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  let y = top + (lane.group ? GROUP_PADDING + GROUP_HEADER : 0);
+  items.forEach((item, i) => {
+    if (i > 0) y += ROW_GAP;
+    y = item.lane !== undefined ? placeLane(item.lane, y, layer, relative, ys) : placeRows(lane.direct, y, layer, relative, ys);
+  });
+  invariant(items.length > 0 || !lane.group, `group ${lane.id} has no nodes`);
+  return y + (lane.group ? GROUP_PADDING : 0);
+}
+
+/** Each layer's nodes of one band in sweep order, one row per node; returns the bottom edge. */
+function placeRows(nodes: readonly number[], top: number, layer: Int32Array, relative: Float64Array, ys: Float64Array): number {
+  const sorted = [...nodes].sort((a, b) => at(layer, a) - at(layer, b) || at(relative, a) - at(relative, b) || a - b);
+  let rows = 0;
+  let row = 0;
+  sorted.forEach((v, i) => {
+    row = i > 0 && at(layer, at(sorted, i - 1)) === at(layer, v) ? row + 1 : 0;
+    ys[v] = top + row * ROW_PITCH + LAYERED_SHAPE.height / 2;
+    rows = Math.max(rows, row + 1);
+  });
+  return top + rows * ROW_PITCH - ROW_GAP;
+}
+
+/** Centre positions, layers left to right, groups as nested horizontal bands. */
 export function layered(input: LayoutInput): Coordinates {
   checkInput(input);
   const n = input.nodes.length;
+  const clusters = input.groups.map((path) => path.at(-1) ?? "");
   const dag = breakCycles(adjacency(n, input.edges));
-  const rows = orderLayers(assignLayers(dag), dag, input.clusters);
-  const tallest = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const layer = assignLayers(dag);
+  const relative = orderLayers(layer, dag, clusters);
   const xs = new Float64Array(n);
   const ys = new Float64Array(n);
-  const rowPitch = LAYERED_SHAPE.height + ROW_GAP;
-  rows.forEach((row, l) => {
-    const offset = ((tallest - row.length) / 2) * rowPitch;
-    row.forEach((v, i) => {
-      xs[v] = l * (LAYERED_SHAPE.width + LAYER_GAP) + LAYERED_SHAPE.width / 2;
-      ys[v] = offset + i * rowPitch + LAYERED_SHAPE.height / 2;
-    });
-  });
-  invariant(rows.reduce((sum, row) => sum + row.length, 0) === n, "every node is placed exactly once");
+  layer.forEach((l, v) => { xs[v] = l * (LAYERED_SHAPE.width + LAYER_GAP) + LAYERED_SHAPE.width / 2; });
+  placeLane(laneTree(input.groups, relative), 0, layer, relative, ys);
+  invariant(xs.every(Number.isFinite) && ys.every(Number.isFinite), "every node gets a finite position");
   return { xs, ys };
 }
