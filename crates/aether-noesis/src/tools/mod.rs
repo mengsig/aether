@@ -104,8 +104,8 @@ pub fn seal_input(tool: &str, input: &Value) -> Value {
 }
 
 /// Every sealed text a call carries, read as the parser reads it: the sealed
-/// fields, a choice key shown as its options' labels (posing re-keys the
-/// values, so no reader sees them). `None` when a sealed input is no object.
+/// fields, a choice key both as its options' labels and as the model's own
+/// values, which posing re-keys. `None` when a sealed input is no object.
 pub fn sealed_texts(tool: &str, input: &Value) -> Option<Vec<String>> {
     let Some(tool) = ToolName::parse(tool) else {
         return Some(Vec::new());
@@ -132,8 +132,8 @@ pub fn sealed_texts(tool: &str, input: &Value) -> Option<Vec<String>> {
     Some(texts)
 }
 
-/// The key as the learner would recognise it: an entry naming an option (by
-/// its trimmed value, as the parser compares) is that option's label.
+/// The key as a reader could recognise it: each entry, and for an entry naming
+/// an option (by its trimmed value, as the parser compares) that option's label.
 fn shown_key(map: &serde_json::Map<String, Value>, key: &Value) -> Vec<String> {
     let mut entries = Vec::new();
     collect_texts(key, &mut entries);
@@ -144,17 +144,15 @@ fn shown_key(map: &serde_json::Map<String, Value>, key: &Value) -> Vec<String> {
         .filter_map(|o| Some((o.get("value")?.as_str()?.trim(), o.get("label")?.as_str()?)))
         .collect();
     let count = entries.len();
-    let shown: Vec<String> = entries
-        .into_iter()
-        .map(|entry| {
-            let label = labels.iter().find(|(value, _)| *value == entry.trim());
-            match label {
-                Some((_, label)) if !label.trim().is_empty() => label.to_string(),
-                _ => entry,
-            }
-        })
-        .collect();
-    debug_assert_eq!(shown.len(), count, "each key entry is shown once");
+    let mut shown = Vec::with_capacity(count * 2);
+    for entry in entries {
+        let label = labels.iter().find(|(value, _)| *value == entry.trim());
+        if let Some((_, label)) = label.filter(|(_, label)| !label.trim().is_empty()) {
+            shown.push(label.to_string());
+        }
+        shown.push(entry);
+    }
+    debug_assert!(shown.len() >= count, "every key entry stays sealed");
     shown
 }
 
@@ -345,12 +343,12 @@ mod tests {
     }
 
     #[test]
-    fn sealed_texts_show_keyed_labels_by_trimmed_value_and_keep_every_other_text() {
+    fn sealed_texts_hold_keyed_labels_and_values_and_every_other_text() {
         let input = json!({"kind": "choice", "prompt": "?", "answer_key": ["a"], "explanation": "b",
             "options": [{"value": " a ", "label": "Paris"}, {"value": "b", "label": "Rome"}]});
         assert_eq!(
             sealed_texts("noesis.ask", &input),
-            Some(vec!["Paris".into(), "b".into()])
+            Some(vec!["Paris".into(), "a".into(), "b".into()])
         );
         let stringified = Value::String(r#"{"solution": "x = 4"}"#.into());
         assert_eq!(

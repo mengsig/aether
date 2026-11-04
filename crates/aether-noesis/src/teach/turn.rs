@@ -1,16 +1,19 @@
 //! The turn loop: model steps admitted against the budget, their tool calls
-//! run, and results delivered in order, even after a failed delivery.
+//! run, results delivered in order even after a failed delivery, and the
+//! whole turn sealed once at its end.
+
+use std::collections::HashMap;
 
 use serde_json::Value;
 
 use super::db;
 use super::engine::{Engine, EngineError, Input, Step, ToolResult};
+use super::seal::{self, Sealer};
 use super::service::{
     CallRecord, Caller, MAX_STEPS, StepRecord, Teaching, TurnEnd, TurnReport, driving_agent,
 };
-use super::{TeachError, question, role_of, seal};
+use super::{TeachError, question, role_of};
 use crate::budget::Lane;
-use crate::tools::{self, SEALED};
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
@@ -30,123 +33,150 @@ impl<E: Engine> Teaching<'_, E> {
     /// One turn of the session's current agent: model calls, each admitted
     /// against the interactive budget, until the agent waits. A session with
     /// an open question waits for the learner and makes no model call.
+    ///
+    /// Nothing the turn produces is published before it ends: its steps and
+    /// events are sealed together against the secrets left at its end.
     pub fn run_turn(&mut self, session: &str) -> Result<TurnReport, TeachError> {
         let row = db::session(self.conn(), session)?;
         let caller = Caller {
             agent: row.agent.clone(),
             role: role_of(driving_agent(&row)),
         };
-        let mut report = TurnReport {
-            agent: caller.agent.clone(),
-            steps: Vec::new(),
-            end: TurnEnd::StepLimit,
+        let mut turn = Turn::new(self.events.len());
+        let ran = self.drive_turn(session, &caller, &mut turn);
+        let sealer = match self.turn_sealer(session, &turn) {
+            Ok(sealer) => sealer,
+            Err(error) => {
+                // Without the secrets nothing can be sealed, so nothing is published.
+                self.events.truncate(turn.events_from);
+                return Err(error);
+            }
         };
+        for event in &mut self.events[turn.events_from..] {
+            sealer.event(event);
+        }
+        let end = ran?;
+        let steps = turn.seal(&sealer);
+        debug_assert!(end != TurnEnd::StepLimit || steps.len() == MAX_STEPS);
+        Ok(TurnReport {
+            agent: caller.agent,
+            steps,
+            end,
+        })
+    }
+
+    fn drive_turn(
+        &mut self,
+        session: &str,
+        caller: &Caller,
+        turn: &mut Turn,
+    ) -> Result<TurnEnd, TeachError> {
         self.deliver_queued(session, &caller.agent, None)?;
         if db::open_question(self.conn(), session)?.is_some() {
-            report.end = TurnEnd::AwaitingAnswer;
-            return Ok(report);
+            return Ok(TurnEnd::AwaitingAnswer);
         }
         for _ in 0..MAX_STEPS {
             let step = self.model_step(&caller.agent)?;
-            let (record, end, results) = self.run_calls(session, &caller, &step)?;
-            report.steps.push(record);
+            let (end, results) = self.run_calls(session, caller, step, turn)?;
             if !results.is_empty() {
                 let input = Input::ToolResults(results);
                 self.deliver_queued(session, &caller.agent, Some(input))?;
             }
             if let Some(end) = end {
-                report.end = end;
-                self.reseal_turn(session, &mut report)?;
-                return Ok(report);
+                return Ok(end);
             }
         }
-        debug_assert_eq!(report.steps.len(), MAX_STEPS);
-        self.reseal_turn(session, &mut report)?;
-        Ok(report)
+        debug_assert_eq!(turn.steps.len(), MAX_STEPS);
+        Ok(TurnEnd::StepLimit)
     }
 
+    /// Run a step's calls and buffer the step raw; return how the turn ends,
+    /// if it does, and the results owed to the engine.
     fn run_calls(
         &mut self,
         session: &str,
         caller: &Caller,
-        step: &Step,
-    ) -> Result<(StepRecord, Option<TurnEnd>, Vec<ToolResult>), TeachError> {
-        let mut record = StepRecord {
-            text: String::new(),
+        step: Step,
+        turn: &mut Turn,
+    ) -> Result<(Option<TurnEnd>, Vec<ToolResult>), TeachError> {
+        let own = seal::step_secrets(&step);
+        let mut pending = PendingStep {
+            fail_closed: own.is_none(),
+            text: step.text,
             calls: Vec::with_capacity(step.calls.len()),
         };
+        let own = own.unwrap_or_default();
+        turn.own.extend(own.iter().cloned());
         if step.calls.is_empty() {
-            record.text = seal::shown_text(step, Some(&self.live_secrets(session)?));
-            return Ok((record, Some(TurnEnd::AwaitingLearner), Vec::new()));
+            turn.steps.push(pending);
+            return Ok((Some(TurnEnd::AwaitingLearner), Vec::new()));
         }
         let mut end = None;
-        let mut results = Vec::new();
-        for call in &step.calls {
-            let outcome = self.call_tool(session, caller, call, &step.text)?;
-            record.calls.push(CallRecord {
-                id: call.id.clone(),
-                name: call.name.clone(),
-                input: tools::seal_input(&call.name, &call.input),
-                result: outcome.result.content.clone(),
+        let mut owed = Vec::new();
+        for call in step.calls {
+            let outcome = self.call_tool(session, caller, &call, &pending.text)?;
+            let public = turn.public_id(call.id);
+            if outcome.ends.is_none() {
+                owed.push(pending.calls.len());
+            }
+            end = end.or(outcome.ends);
+            pending.calls.push(PendingCall {
+                id: public,
+                name: call.name,
+                input: call.input,
+                result: outcome.result.content,
                 is_error: outcome.result.is_error,
             });
-            match outcome.ends {
-                Some(ends) => end = end.or(Some(ends)),
-                None => results.push(outcome.result),
-            }
         }
-        debug_assert_eq!(record.calls.len(), step.calls.len());
-        self.seal_step(session, step, &mut record, &mut results)?;
-        Ok((record, end, results))
+        let results = self.engine_results(session, &own, &pending, &owed, turn)?;
+        turn.steps.push(pending);
+        Ok((end, results))
     }
 
-    /// Seal what a step shows and delivers against the secrets left after its
-    /// calls ran (a conclude in the step reveals its solution) and its own.
-    fn seal_step(
+    /// The results the engine is owed for a step, keyed by its own call ids
+    /// and sealed against the secrets live after the step and its own.
+    fn engine_results(
         &self,
         session: &str,
-        step: &Step,
-        record: &mut StepRecord,
-        results: &mut [ToolResult],
-    ) -> Result<(), TeachError> {
-        let own = seal::step_secrets(step);
-        let readable = own.is_some();
+        own: &[String],
+        step: &PendingStep,
+        owed: &[usize],
+        turn: &Turn,
+    ) -> Result<Vec<ToolResult>, TeachError> {
         let live = self.live_secrets(session)?;
-        let mut secrets = live.clone();
-        secrets.extend(own.unwrap_or_default());
-        record.text = seal::shown_text(step, readable.then_some(secrets.as_slice()));
-        for call in &mut record.calls {
-            seal_call(call, &secrets, &live);
+        let committed = Sealer::new(&live);
+        let all = Sealer::new(live.iter().chain(own));
+        let mut results = Vec::with_capacity(owed.len());
+        for &index in owed {
+            let call = &step.calls[index];
+            let mut content = call.result.clone();
+            // A refused call committed nothing, so only committed secrets
+            // seal its reason and the agent still reads what to fix.
+            if call.is_error {
+                committed.refusal(&mut content);
+            } else {
+                all.value(&mut content);
+            }
+            results.push(ToolResult {
+                call: turn.engine_id(&call.id).to_string(),
+                content,
+                is_error: call.is_error,
+            });
         }
-        for result in results.iter_mut() {
-            seal_result(&mut result.content, result.is_error, &secrets, &live);
-        }
-        debug_assert!(readable || record.text == seal::WITHHELD);
-        Ok(())
+        debug_assert_eq!(results.len(), owed.len());
+        Ok(results)
     }
 
-    /// Re-seal every step of the turn against the secrets live at its end: a
-    /// later step's pose or problem seals what an earlier step showed.
-    fn reseal_turn(&self, session: &str, report: &mut TurnReport) -> Result<(), TeachError> {
+    /// The final secret set of a turn: what is still sealed at its end and
+    /// every sealed text a call of the turn carried, posed or refused.
+    fn turn_sealer(&self, session: &str, turn: &Turn) -> Result<Sealer, TeachError> {
         let live = self.live_secrets(session)?;
-        if live.is_empty() {
-            return Ok(());
-        }
-        for step in &mut report.steps {
-            if seal::holds(&step.text, &live) {
-                step.text = seal::WITHHELD.to_string();
-            }
-            for call in &mut step.calls {
-                seal_call(call, &live, &live);
-            }
-        }
+        let sealer = Sealer::new(live.iter().chain(&turn.own));
         debug_assert!(
-            report
-                .steps
-                .iter()
-                .all(|step| step.text == seal::WITHHELD || !seal::holds(&step.text, &live))
+            live.iter()
+                .all(|secret| secret.trim().is_empty() || sealer.holds(secret))
         );
-        Ok(())
+        Ok(sealer)
     }
 
     /// The session's sealed texts still unrevealed: the active problem's
@@ -243,24 +273,98 @@ impl<E: Engine> Teaching<'_, E> {
     }
 }
 
-/// A call as a turn report may show it: the engine's id and the name are
-/// model text, so each is sealed like the input.
-fn seal_call(call: &mut CallRecord, secrets: &[String], live: &[String]) {
-    call.id = seal::sealed_text(&call.id, secrets);
-    call.name = seal::sealed_text(&call.name, secrets);
-    seal::withhold(&mut call.input, secrets);
-    seal_result(&mut call.result, call.is_error, secrets, live);
-    let sealed = |text: &str| text == SEALED || !seal::holds(text, secrets);
-    debug_assert!(sealed(&call.id) && sealed(&call.name));
+/// A tool call as the turn ran it, held raw until the turn is sealed.
+struct PendingCall {
+    /// The opaque public id; the engine's own id stays in [`Turn`].
+    id: String,
+    name: String,
+    input: Value,
+    result: Value,
+    is_error: bool,
 }
 
-/// A result as it may be recorded or delivered. A refusal is withheld whole
-/// when it quotes a committed secret; anything else has each secret masked.
-fn seal_result(content: &mut Value, is_error: bool, secrets: &[String], live: &[String]) {
-    debug_assert!(live.iter().all(|secret| secrets.contains(secret)));
-    if is_error {
-        seal::seal_refusal(content, live);
-    } else {
-        seal::withhold(content, secrets);
+struct PendingStep {
+    text: String,
+    calls: Vec<PendingCall>,
+    /// A sealing call's input was unreadable, so its secrets are unknown.
+    fail_closed: bool,
+}
+
+/// What one turn produced, unpublished until [`Turn::seal`].
+struct Turn {
+    steps: Vec<PendingStep>,
+    /// Every sealed text the turn's calls carried.
+    own: Vec<String>,
+    /// Public call id to the engine's own id, for delivering results.
+    engine_ids: HashMap<String, String>,
+    /// Where the turn's events start in the pending event list.
+    events_from: usize,
+}
+
+/// Debug shows only counts: the buffer holds unsealed model text.
+impl std::fmt::Debug for Turn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Turn")
+            .field("steps", &self.steps.len())
+            .field("secrets", &self.own.len())
+            .field("events_from", &self.events_from)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Turn {
+    fn new(events_from: usize) -> Self {
+        Self {
+            steps: Vec::new(),
+            own: Vec::new(),
+            engine_ids: HashMap::new(),
+            events_from,
+        }
+    }
+
+    /// A fresh opaque id for an engine call id; only [`Turn::engine_id`]
+    /// maps it back.
+    fn public_id(&mut self, engine_id: String) -> String {
+        let public = db::fresh_id("call");
+        let previous = self.engine_ids.insert(public.clone(), engine_id);
+        debug_assert!(previous.is_none(), "public ids are fresh");
+        public
+    }
+
+    fn engine_id(&self, public: &str) -> &str {
+        let engine_id = self.engine_ids.get(public);
+        assert!(engine_id.is_some(), "every buffered call has an engine id");
+        engine_id.map_or("", String::as_str)
+    }
+
+    /// The turn's steps as they may be published, sealed by `sealer`.
+    fn seal(self, sealer: &Sealer) -> Vec<StepRecord> {
+        let mut steps = Vec::with_capacity(self.steps.len());
+        for pending in self.steps {
+            let text = if pending.fail_closed {
+                seal::WITHHELD.to_string()
+            } else {
+                pending.text
+            };
+            let calls = pending.calls.into_iter().map(|call| CallRecord {
+                id: call.id,
+                name: call.name,
+                input: call.input,
+                result: call.result,
+                is_error: call.is_error,
+            });
+            let mut record = StepRecord {
+                text,
+                calls: calls.collect(),
+            };
+            sealer.step(&mut record);
+            steps.push(record);
+        }
+        debug_assert!(
+            steps
+                .iter()
+                .all(|step| !sealer.holds(&step.text) || step.text == seal::WITHHELD)
+        );
+        steps
     }
 }

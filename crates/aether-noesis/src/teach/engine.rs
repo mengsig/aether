@@ -122,6 +122,8 @@ pub trait Engine {
     fn spawn(&mut self, spec: AgentSpec) -> Result<String, EngineError>;
     /// Persist an input for the agent's next step. A failed delivery may be
     /// repeated, so a tool result or answer seen twice (same id) is ignored.
+    /// Inputs are the agent's private context, sealed only against what is
+    /// committed when they go: a host publishes turn reports, never them.
     fn deliver(&mut self, agent: &str, input: Input) -> Result<(), EngineError>;
     /// The estimated spend of the agent's next step, admitted before it runs.
     fn estimate(&self, agent: &str) -> Spend;

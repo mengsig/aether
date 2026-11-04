@@ -10,8 +10,9 @@ use super::phase::{Trigger, advance};
 use super::records::{
     EvidenceDraft, EvidenceKind, EvidenceOutcome, NoesisEvent, Outcome, Phase, Problem, Question,
 };
+use super::seal::Sealer;
 use super::service::{Caller, Teaching, TurnEnd, driving_agent};
-use super::{PROBE_DONE_ACK, TeachError, agent_for_role, plan, question, seal};
+use super::{PROBE_DONE_ACK, TeachError, agent_for_role, plan, question};
 use crate::prompts::Agent;
 use crate::tools::args::{AskArgs, ConcludeArgs, PlanArgs, ProbeDoneArgs, ProblemArgs};
 use crate::tools::{self, ToolArgs, ToolName};
@@ -49,10 +50,10 @@ impl<E: Engine> Teaching<'_, E> {
         // quotes the model; a refused call committed nothing of its own.
         let mut secrets = self.live_secrets(session)?;
         if is_error {
-            seal::seal_refusal(&mut content, &secrets);
+            Sealer::new(&secrets).refusal(&mut content);
         } else {
             secrets.extend(tools::sealed_texts(&call.name, &call.input).unwrap_or_default());
-            seal::withhold(&mut content, &secrets);
+            Sealer::new(&secrets).value(&mut content);
         }
         debug_assert!(
             !is_error || ends.is_none(),
@@ -158,12 +159,15 @@ impl<E: Engine> Teaching<'_, E> {
             answer_key,
             explanation: args.explanation.clone(),
         };
-        // The plan is shown in full while the question is open.
+        // The plan is shown in full while the question is open, and plan
+        // events not yet published go out with this pose.
         let mut sealed = question::shown_key(&stored);
         sealed.extend(stored.explanation.iter().cloned());
-        if plan.as_ref().is_some_and(|plan| plan_holds(plan, &sealed)) {
+        let sealer = Sealer::new(&sealed);
+        let shown_plan = plan.as_ref().is_some_and(|plan| plan_holds(plan, &sealer));
+        if shown_plan || self.pending_plans_hold(&sealer) {
             return refuse(
-                "the current plan gives away this question's answer or explanation; rewrite the plan or the question",
+                "the plan gives away this question's answer or explanation; rewrite the plan or the question",
             );
         }
         self.commit_pose(row, stored)?;
@@ -262,10 +266,10 @@ impl<E: Engine> Teaching<'_, E> {
 
     fn plan(&mut self, row: &SessionRow, args: &PlanArgs) -> Handled {
         // Checked before validation, whose problems quote node ids.
-        let live = self.live_secrets(&row.id)?;
+        let live = Sealer::new(self.live_secrets(&row.id)?);
         let named = args.nodes.iter().flat_map(|node| [&node.id, &node.title]);
         let linked = args.edges.iter().flat_map(|edge| [&edge.from, &edge.to]);
-        if named.chain(linked).any(|text| seal::holds(text, &live)) {
+        if named.chain(linked).any(|text| live.holds(text)) {
             return refuse("the plan gives away a sealed answer; rewrite it");
         }
         let dag = match plan::validate(args) {
@@ -291,6 +295,18 @@ impl<E: Engine> Teaching<'_, E> {
         )))
     }
 
+    /// Whether a plan event not yet taken for publishing shows a secret of
+    /// `sealer`; a superseded revision posted earlier in the turn counts.
+    fn pending_plans_hold(&self, sealer: &Sealer) -> bool {
+        self.events.iter().any(|event| match event {
+            NoesisEvent::PlanUpdated { plan, .. } => plan
+                .nodes
+                .iter()
+                .any(|node| sealer.holds(&node.id) || sealer.holds(&node.title)),
+            _ => false,
+        })
+    }
+
     fn push_plan_event(&mut self, session: &str) -> Result<(), TeachError> {
         let Some((revision, dag)) = db::latest_plan(self.conn(), session)? else {
             return Ok(());
@@ -308,7 +324,7 @@ impl<E: Engine> Teaching<'_, E> {
     fn problem_targets(
         &self,
         names: &[String],
-        solution: &[String],
+        solution: &Sealer,
     ) -> Result<Result<Vec<String>, String>, TeachError> {
         let mut targets = Vec::with_capacity(names.len());
         let mut unknown = Vec::new();
@@ -325,7 +341,7 @@ impl<E: Engine> Teaching<'_, E> {
                 "no proposition is named {named}; use noesis.graph_search"
             )));
         }
-        if targets.iter().any(|id| seal::holds(id, solution)) {
+        if targets.iter().any(|id| solution.holds(id)) {
             return Ok(Err(
                 "a target's proposition id gives away the solution; target another proposition"
                     .to_string(),
@@ -339,10 +355,8 @@ impl<E: Engine> Teaching<'_, E> {
         if db::active_problem(self.conn(), &row.id)?.is_some() {
             return refuse("a problem is already active; noesis.conclude it first");
         }
-        let solution = [args.solution.clone()];
-        if seal::holds(&args.statement, &solution)
-            || args.targets.iter().any(|t| seal::holds(t, &solution))
-        {
+        let solution = Sealer::new([&args.solution]);
+        if solution.holds(&args.statement) || args.targets.iter().any(|t| solution.holds(t)) {
             return refuse("the statement or a target gives away the solution; rewrite it");
         }
         let targets = match self.problem_targets(&args.targets, &solution)? {
@@ -415,10 +429,10 @@ impl<E: Engine> Teaching<'_, E> {
 
 /// Whether a node id or title of `plan` holds any of `secrets`; edges name
 /// only node ids, so the nodes cover everything a plan shows.
-fn plan_holds(plan: &plan::PlanDag, secrets: &[String]) -> bool {
+fn plan_holds(plan: &plan::PlanDag, sealer: &Sealer) -> bool {
     plan.nodes
         .iter()
-        .any(|node| seal::holds(&node.id, secrets) || seal::holds(&node.title, secrets))
+        .any(|node| sealer.holds(&node.id) || sealer.holds(&node.title))
 }
 
 fn strand_problems(args: &ProbeDoneArgs) -> Vec<String> {

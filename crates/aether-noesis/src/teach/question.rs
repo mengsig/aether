@@ -9,7 +9,7 @@ use super::records::{
     Answer, CONFIDENCE_STOPS, ChoiceOption, DEFAULT_CONFIDENCE, EvidenceKind, Intent, Phase,
     QuestionKind,
 };
-use super::seal;
+use super::seal::Sealer;
 use crate::tools::args::AskArgs;
 
 pub const MAX_OPTIONS: usize = 12;
@@ -157,16 +157,16 @@ fn author_goal(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
 /// names it point at the key.
 fn prose_holds_a_value(args: &AskArgs, values: &BTreeSet<&str>) -> bool {
     debug_assert_eq!(args.kind, QuestionKind::Choice, "goal options have no key");
-    let values: Vec<String> = values.iter().map(|value| value.to_string()).collect();
+    let values = Sealer::new(values.iter());
     let mut prose = vec![args.prompt.as_str()];
     prose.extend(args.options.iter().map(|option| option.label.as_str()));
-    prose.iter().any(|text| seal::holds(text, &values))
+    prose.iter().any(|text| values.holds(text))
 }
 
 /// Whether a field the learner sees repeats a sealed text: the explanation
 /// anywhere, a recall key in the prompt or a label, any key in a tag.
 fn shown_fields_reveal(args: &AskArgs) -> bool {
-    let explanation: Vec<String> = args.explanation.iter().cloned().collect();
+    let explanation = Sealer::new(args.explanation.iter());
     let key: Vec<String> = match args.kind {
         QuestionKind::Choice => args
             .options
@@ -176,25 +176,26 @@ fn shown_fields_reveal(args: &AskArgs) -> bool {
             .collect(),
         _ => args.answer_key.clone(),
     };
-    let prose_key: &[String] = if args.kind == QuestionKind::Choice {
-        &[]
+    let prose_key = if args.kind == QuestionKind::Choice {
+        Sealer::default()
     } else {
-        &key
+        Sealer::new(&key)
     };
+    let key = Sealer::new(&key);
     let mut prose = vec![args.prompt.as_str()];
     prose.extend(args.options.iter().map(|option| option.label.as_str()));
     let in_values = args
         .options
         .iter()
-        .any(|option| seal::holds(&option.value, &explanation));
+        .any(|option| explanation.holds(&option.value));
     let mut tags: Vec<&str> = args.concepts.iter().map(String::as_str).collect();
     tags.extend(args.plan_node.as_deref());
     let in_prose = prose
         .iter()
-        .any(|text| seal::holds(text, prose_key) || seal::holds(text, &explanation));
+        .any(|text| prose_key.holds(text) || explanation.holds(text));
     let in_tags = tags
         .iter()
-        .any(|tag| seal::holds(tag, &key) || seal::holds(tag, &explanation));
+        .any(|tag| key.holds(tag) || explanation.holds(tag));
     in_prose || in_tags || in_values
 }
 
@@ -212,43 +213,7 @@ pub fn reveals_key(args: &AskArgs, visible_text: &str) -> bool {
         QuestionKind::Goal => Vec::new(),
     };
     debug_assert!(args.kind != QuestionKind::Goal || secrets.is_empty());
-    let haystack = visible_text.to_lowercase();
-    secrets
-        .iter()
-        .any(|secret| contains_phrase(&haystack, &secret.trim().to_lowercase()))
-}
-
-pub(super) fn contains_phrase(haystack: &str, phrase: &str) -> bool {
-    if phrase.is_empty() {
-        return false;
-    }
-    // A neighbour rejects a match only when it continues the phrase's edge
-    // run of letters or digits: "42" stands in "42kg" but not in "420".
-    let class = |c: char| (c.is_alphabetic(), c.is_numeric());
-    let continues = |edge: Option<char>, next: Option<char>| match (edge, next) {
-        (Some(edge), Some(next)) => edge.is_alphanumeric() && class(edge) == class(next),
-        _ => false,
-    };
-    let first_of_phrase = phrase.chars().next();
-    let last_of_phrase = phrase.chars().next_back();
-    // Matches may overlap ("had had" in "chad had had"), so a rejected match
-    // resumes one character later rather than after the match.
-    let mut from = 0;
-    while let Some(found) = haystack[from..].find(phrase) {
-        let start = from + found;
-        let before = haystack[..start].chars().next_back();
-        let after = haystack[start + phrase.len()..].chars().next();
-        if !continues(first_of_phrase, before) && !continues(last_of_phrase, after) {
-            return true;
-        }
-        let first = haystack[start..].chars().next();
-        debug_assert!(
-            first.is_some(),
-            "a match of a non-empty phrase has a first character"
-        );
-        from = start + first.map_or(1, char::len_utf8);
-    }
-    false
+    Sealer::new(secrets).holds(visible_text)
 }
 
 /// A stored question's key as the learner would recognise it: a choice key
@@ -459,25 +424,5 @@ pub fn evidence_kind(phase: Phase, kind: QuestionKind, collapsed: bool) -> Optio
         (_, Phase::Practice) => None,
         _ if collapsed => Some(EvidenceKind::CheckAnswer),
         _ => Some(EvidenceKind::PredictAnswer),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn phrases_match_whole_words_only() {
-        assert!(contains_phrase("it is paris, i think", "paris"));
-        assert!(!contains_phrase("comparison", "paris"));
-        assert!(!contains_phrase("anything", ""));
-        assert!(contains_phrase("chad had had enough", "had had"));
-        assert!(contains_phrase("ééa é", "é"));
-        assert!(!contains_phrase("chad hadhad", "had"));
-        assert!(contains_phrase("the answer is 42kg.", "42"));
-        assert!(contains_phrase("so 4x it is", "4"));
-        assert!(!contains_phrase("convert 42000 grams", "42"));
-        assert!(!contains_phrase("x = 45", "x = 4"));
-        assert!(contains_phrase("about 3.5", "3.5"));
     }
 }

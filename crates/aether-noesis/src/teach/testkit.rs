@@ -47,8 +47,8 @@ pub(super) fn choice(prompt: &str, options: &[(&str, &str)], key: &[&str]) -> Va
 pub(super) fn capital_question() -> Value {
     choice(
         "Capital of France?",
-        &[("a", "Paris"), ("b", "Rome"), ("c", "Madrid")],
-        &["a"],
+        &[("opt1", "Paris"), ("opt2", "Rome"), ("opt3", "Madrid")],
+        &["opt1"],
     )
 }
 
