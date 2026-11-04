@@ -70,9 +70,40 @@ function Preview({ conn, artifact }: { readonly conn: ConnId; readonly artifact:
   );
 }
 
+/** The artifact's stored metadata from get_artifact; it stays readable after the bytes are evicted. */
+function Details({ conn, id }: { readonly conn: ConnId; readonly id: string }) {
+  invariant(conn.trim() !== "", "artifact details target a daemon connection");
+  invariant(id.trim() !== "", "artifact details name their artifact");
+  const [refresh, setRefresh] = useState(0);
+  const read = useReread(conn, `artifact:${id}`, aether.getArtifact({ id }), ["artifact"], refresh);
+  return (
+    <ReadView entry={read} what="the artifact details" empty="No details" guard={isRecord} isEmpty={() => false} retry={() => setRefresh((n) => n + 1)}>
+      {(data) => {
+        const artifact = data as unknown as aether.Artifact;
+        invariant(artifact.id === id, "the details answer for the artifact asked about");
+        invariant(isRecord(artifact.kind) && typeof artifact.kind.kind === "string", "an artifact's kind is a tagged record");
+        return (
+          <dl className="b3-facts" aria-label="Artifact details">
+            <div><dt>Kind</dt><dd>{artifact.kind.kind.replaceAll("_", " ")}</dd></div>
+            <div><dt>Format</dt><dd>{artifact.content_type ?? "Unknown"}</dd></div>
+            <div><dt>Size</dt><dd>{artifact.size_bytes} bytes</dd></div>
+            <div><dt>Created</dt><dd>{new Date(artifact.created_at).toLocaleString()}</dd></div>
+            {artifact.path ? <div><dt>Path</dt><dd>{artifact.path}</dd></div> : null}
+            {artifact.digest ? <div><dt>Digest</dt><dd className="b3-code">{artifact.digest}</dd></div> : null}
+            {artifact.evicted_at ? <div><dt>Content removed</dt><dd>{new Date(artifact.evicted_at).toLocaleString()}</dd></div> : null}
+          </dl>
+        );
+      }}
+    </ReadView>
+  );
+}
+
+type Open = { readonly id: string; readonly view: "preview" | "details" } | null;
+
 function Artifacts({ conn, agent }: { readonly conn: ConnId; readonly agent: string }) {
   const [refresh, setRefresh] = useState(0);
-  const [open, setOpen] = useState<string | null>(null);
+  const [open, setOpen] = useState<Open>(null);
+  const toggle = (id: string, view: "preview" | "details") => setOpen((held) => (held?.id === id && held.view === view ? null : { id, view }));
   const list = useReread(conn, `artifacts:${agent}`, aether.listArtifacts({ query: { agent, limit: 50 } }), ["artifacts"], refresh);
   return (
     <ReadView entry={list} what="the artifacts" empty="No artifacts yet" guard={isList} isEmpty={(items) => items.length === 0} retry={() => setRefresh((n) => n + 1)}>
@@ -82,11 +113,16 @@ function Artifacts({ conn, agent }: { readonly conn: ConnId; readonly agent: str
             <li key={artifact.id} className="b3-item">
               <div className="b3-item-head">
                 <p className="b3-item-title">{artifact.name}</p>
-                <Button variant="quiet" size="sm" aria-expanded={open === artifact.id} disabled={artifact.evicted_at != null}
-                  onClick={() => setOpen((id) => (id === artifact.id ? null : artifact.id))}>{open === artifact.id ? "Hide" : "Preview"}</Button>
+                <span className="b3-row">
+                  <Button variant="quiet" size="sm" aria-expanded={open?.id === artifact.id && open.view === "details"}
+                    onClick={() => toggle(artifact.id, "details")}>{open?.id === artifact.id && open.view === "details" ? "Hide details" : "Details"}</Button>
+                  <Button variant="quiet" size="sm" aria-expanded={open?.id === artifact.id && open.view === "preview"} disabled={artifact.evicted_at != null}
+                    onClick={() => toggle(artifact.id, "preview")}>{open?.id === artifact.id && open.view === "preview" ? "Hide" : "Preview"}</Button>
+                </span>
               </div>
               <p className="b3-meta">{artifact.summary || artifact.content_type || "No summary"} · {artifact.size_bytes} bytes{artifact.evicted_at ? " · evicted" : ""}</p>
-              {open === artifact.id ? <Preview conn={conn} artifact={artifact} /> : null}
+              {open?.id === artifact.id && open.view === "details" ? <Details conn={conn} id={artifact.id} /> : null}
+              {open?.id === artifact.id && open.view === "preview" ? <Preview conn={conn} artifact={artifact} /> : null}
             </li>
           ))}
         </ul>
@@ -120,15 +156,23 @@ function Report({ conn, run }: { readonly conn: ConnId; readonly run: string }) 
 
 function Runs({ conn, current }: { readonly conn: ConnId; readonly current: string }) {
   const [refresh, setRefresh] = useState(0);
+  const [open, setOpen] = useState<string | null>(null);
   const runs = useReread(conn, "runs", aether.listRuns({ limit: 20 }), ["runs"], refresh);
   return (
     <ReadView entry={runs} what="the runs" empty="No runs recorded" guard={isList} isEmpty={(items) => items.length === 0} retry={() => setRefresh((n) => n + 1)}>
       {(items) => (
         <ul className="b3-list" aria-label="Runs">
           {(items as readonly aether.RunListing[]).map((run) => (
-            <li key={run.run} className="b3-meta">
-              {run.objective ?? run.run} · {run.agents_live}/{run.agents} live · ${run.usage.cost_usd.toFixed(2)}
-              {run.run === current ? <> <Badge tone="accent">This agent's run</Badge></> : null}
+            <li key={run.run} className="b3-item">
+              <div className="b3-item-head">
+                <p className="b3-meta">
+                  {run.objective ?? run.run} · {run.agents_live}/{run.agents} live · ${run.usage.cost_usd.toFixed(2)}
+                  {run.run === current ? <> <Badge tone="accent">This agent's run</Badge></> : null}
+                </p>
+                <Button variant="quiet" size="sm" aria-expanded={open === run.run}
+                  onClick={() => setOpen((held) => (held === run.run ? null : run.run))}>{open === run.run ? "Hide report" : "Report"}</Button>
+              </div>
+              {open === run.run ? <Report conn={conn} run={run.run} /> : null}
             </li>
           ))}
         </ul>

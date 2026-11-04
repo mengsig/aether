@@ -64,6 +64,7 @@ export function controlsScript(): Script {
     list_schedules: () => ({ tag: "schedules", data: SCHEDULES }),
     schedule_history: () => ({ tag: "schedule_history", data: [{ schedule: "sch_1", due: stamp(10), recorded_at: stamp(11), outcome: { outcome: "delivered", inbox: "inb_1" } }] }),
     list_artifacts: () => ({ tag: "artifacts", data: [{ id: "art_1", name: "release-notes.md", kind: "file", size_bytes: 28, summary: "Draft notes", created_at: stamp(5), created_by: { actor: "system" } }] }),
+    get_artifact: (command) => ({ tag: "artifact", data: { id: command.id, name: "release-notes.md", kind: { kind: "file" }, content_type: "text/markdown", size_bytes: 28, summary: "Draft notes", created_at: stamp(5), created_by: { actor: "system" } } }),
     read_artifact: () => ({ tag: "artifact_bytes", data: { base64: btoa("# 1.3\n\n- Faster fleet view\n"), truncated: false } }),
     get_run_report: () => ({ tag: "run_report", data: REPORT }),
     list_runs: () => ({ tag: "runs", data: [{ run: RUN, agents: 2, agents_live: 2, objective: "Ship the 1.3 release", started_at: stamp(1), updated_at: stamp(40), usage: REPORT.body.usage }] }),

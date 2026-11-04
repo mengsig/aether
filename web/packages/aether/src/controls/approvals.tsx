@@ -68,7 +68,7 @@ function RuleRow({ conn, agent, rule, run, changed }: { readonly conn: ConnId; r
       </div>
       <p className="b3-meta">{scopeLabel(rule.scope, agent)}{rule.note ? ` · ${rule.note}` : ""}</p>
       <div className="b3-row">
-        <Action conn={conn} command={revoke("")} label="Revoke" variant="danger" busy={run.status.state === "busy"}
+        <Action conn={conn} command={revoke("")} label="Revoke" variant="danger" busy={run.status.state === "busy"} hostOnly={rule.scope.scope === "everywhere"}
           confirm={{ title: "Revoke this rule?", body: `Tool calls matching ${match} will ask again.`, confirmLabel: "Revoke rule", reason: "optional" }}
           onRun={async (reason) => { if (await run.send(revoke(reason), "Rule revoked")) changed(); }} />
       </div>

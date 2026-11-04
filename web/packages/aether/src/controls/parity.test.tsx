@@ -184,6 +184,53 @@ describe("artifact download parity", () => {
   });
 });
 
+describe("records parity", () => {
+  test("an evicted artifact cannot be previewed, but its stored details still open", async () => {
+    const evicted = { id: "art_1", name: "release-notes.md", kind: { kind: "file" }, content_type: "text/markdown", size_bytes: 28, summary: "Draft notes",
+      created_at: "2026-11-04T09:00:35Z", created_by: { actor: "system" }, digest: "sha256:abc123", evicted_at: "2026-11-04T10:00:00Z" };
+    const { h, root } = await open("Records", { script: {
+      list_artifacts: () => ({ tag: "artifacts", data: [evicted] }),
+      get_artifact: () => ({ tag: "artifact", data: evicted }),
+    } });
+    expect(buttonNamed(root, "Preview").disabled).toBe(true);
+    await click(h, root, "Details");
+    expect(sent(h, "get_artifact")).toEqual([{ cmd: "get_artifact", id: "art_1" }]);
+    const details = root.querySelector('[aria-label="Artifact details"]');
+    expect(details?.textContent).toContain("sha256:abc123");
+    expect(details?.textContent).toContain("Content removed");
+    expect(h.daemon.commands("read_artifact")).toHaveLength(0);
+    await click(h, root, "Hide details");
+    expect(root.querySelector('[aria-label="Artifact details"]')).toBeNull();
+  });
+
+  test("each listed run opens its own report, not only this agent's run", async () => {
+    const other = "run_01J0B3CONTROLSOTHER0001";
+    const listing = (run: string, objective: string) => ({ run, agents: 1, agents_live: 0, objective, started_at: "2026-11-01T09:00:00Z", updated_at: "2026-11-01T10:00:00Z",
+      usage: { cost_usd: 1, cost_complete: true, input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_write_tokens: 0 } });
+    const base = controlsScript().get_run_report;
+    invariant(base !== undefined, "the demo answers run reports");
+    const { h, root } = await open("Records", { script: {
+      list_runs: () => ({ tag: "runs", data: [listing(demoAgents()[0]?.run ?? "", "Ship the 1.3 release"), listing(other, "An older run")] }),
+      get_run_report: (command) => {
+        const answer = base(command);
+        invariant(answer !== "hold" && "data" in answer, "the demo report is data");
+        const report = answer.data as { body: Record<string, unknown> };
+        return command.run === other ? { tag: "run_report", data: { ...report, run: other, body: { ...report.body, objective: "An older run" } } } : answer;
+      },
+    } });
+    const runs = root.querySelector<HTMLElement>('[aria-label="Runs"]');
+    invariant(runs !== null, "the runs are listed");
+    const before = h.daemon.commands("get_run_report").length;
+    const reports = [...runs.querySelectorAll("button")].filter((button) => button.textContent === "Report");
+    expect(reports).toHaveLength(2);
+    await act(async () => reports[1]?.click());
+    await h.settle();
+    expect(sent(h, "get_run_report").slice(before)).toEqual([{ cmd: "get_run_report", run: other }]);
+    expect(runs.textContent).toContain("An older run");
+    expect(runs.querySelector(".b3-facts")?.textContent).toContain("An older run");
+  });
+});
+
 describe("instructions parity", () => {
   test("clearing instructions asks first and sends an empty string only after confirmation", async () => {
     const { h, root } = await open("Model & limits");

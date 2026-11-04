@@ -2,7 +2,7 @@
 // (disabled with the reason shown, host-only marked), an explicit confirm step for destructive or
 // privileged actions, and the outcome of a run. Nothing here holds daemon data.
 
-import { codeOf, isKeyed, usePermission, useApp, useCommand, type CommandInput, type LocalAction, type ReadEntry } from "@aether-ui/core";
+import { checkAllowed, codeOf, isKeyed, usePermission, useApp, useCommand, useSelector, type CommandInput, type LocalAction, type ReadEntry } from "@aether-ui/core";
 import type { ConnId } from "@aether-ui/protocol";
 import { Badge, Button, Dialog, EmptyState, ErrorState, Skeleton, type ButtonVariant } from "@aether-ui/ui";
 import { useCallback, useId, useState, type ReactNode } from "react";
@@ -103,14 +103,32 @@ export interface ActionProps {
   readonly busy?: boolean;
   /** Disables the control for a reason of the screen's own (nothing selected, nothing to change). */
   readonly blocked?: string | null;
+  /** Host-only for a reason the command itself does not carry (the stored record's scope). */
+  readonly hostOnly?: boolean;
+}
+
+/** Core's own refusal for a host-only command on this connection, or null when this is the host. */
+function useHostOnlyRefusal(conn: ConnId, hostOnly: boolean): string | null {
+  const standing = useSelector(useCallback((state) => state.connections[conn]?.standing, [conn]));
+  if (!hostOnly) return null;
+  try {
+    checkAllowed("host_only", standing);
+    return null;
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    return error.message;
+  }
 }
 
 /**
  * One command button. It is disabled, with the reason beside it, whenever core would refuse the
  * command for this device; a host-only command is marked; a `confirm` asks before anything is sent.
  */
-export function Action({ conn, command, label, onRun, confirm, variant = "secondary", busy = false, blocked = null }: ActionProps) {
-  const { access, refusal } = usePermission(conn, command);
+export function Action({ conn, command, label, onRun, confirm, variant = "secondary", busy = false, blocked = null, hostOnly = false }: ActionProps) {
+  const permission = usePermission(conn, command);
+  const hostRefusal = useHostOnlyRefusal(conn, hostOnly);
+  const access = hostOnly ? "host_only" : permission.access;
+  const refusal = permission.refusal ?? hostRefusal;
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState("");
   const reasonId = useId();

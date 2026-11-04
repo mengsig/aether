@@ -4,6 +4,7 @@
 
 import { act } from "react";
 import { afterEach, describe, expect, test } from "vitest";
+import { invariant } from "../fleet/invariant.ts";
 import { ControlsScreen } from "./ControlsScreen.tsx";
 import { previewText } from "./records.tsx";
 import { AGENT_ID, controlsScript, demoAgents } from "./fixture/demo.ts";
@@ -145,6 +146,22 @@ describe("ControlsScreen", () => {
     await click(h, openDialog(), "Revoke rule");
     expect(sent(h, "revoke_approval_rule")).toEqual([{ cmd: "revoke_approval_rule", id: "rul_1" }]);
     expect(h.daemon.commands("list_approval_rules")).toHaveLength(3);
+  });
+
+  test.each([
+    ["operator", true],
+    ["local", false],
+  ] as const)("an everywhere rule's revoke is host-only, refused with its reason for a %s device: %s", async (role, refused) => {
+    const { root } = await open({ role }, "Approvals");
+    const rows = [...root.querySelectorAll<HTMLElement>('[aria-label="Standing rules"] li')];
+    const everywhere = rows.find((row) => row.textContent?.includes("Everywhere"));
+    const agentRule = rows.find((row) => !row.textContent?.includes("Everywhere"));
+    invariant(everywhere !== undefined && agentRule !== undefined, "the demo lists an everywhere rule and an agent rule");
+    expect(buttonNamed(everywhere, "Revoke").disabled).toBe(refused);
+    expect(everywhere.textContent).toContain("Host only");
+    expect(everywhere.querySelector(".b3-reason")?.textContent ?? null).toBe(refused ? "Only the daemon's own host can do this" : null);
+    expect(buttonNamed(agentRule, "Revoke").disabled).toBe(false);
+    expect(agentRule.textContent).not.toContain("Host only");
   });
 
   test("schedules: list, pause, confirmed cancel, history and a validated new schedule", async () => {
