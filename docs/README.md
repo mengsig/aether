@@ -31,6 +31,8 @@ Start with the [README](../README.md) for prerequisites, installation, and a fir
   non-technical reader, with troubleshooting and what protects you.
 - [Remote control](remote.md): the web app's contract (endpoints, device
   handshake, pairing, authorization matrix, push, reconnect) and SSH remotes.
+- [Desktop app](desktop.md): building, signing, installing and updating the
+  desktop packages, and what "unsigned build" means.
 - [GitHub watcher](github-watcher.md): fixed/per-thread routing, permissions,
   matching, and live configuration.
 - [Terminal UI](tui.md): layout, the agents board, approvals, keys, and

@@ -6,5 +6,5 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "build"]
 }
