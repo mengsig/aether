@@ -3,6 +3,7 @@
 
 import type { aether, Capabilities, ConnectionInfo, ConnId } from "@aether-ui/protocol";
 import { invariant, omit, type Json } from "./guards.ts";
+import { EMPTY_NOESIS, type NoesisCache } from "./noesis-cache.ts";
 import type { ReadEntry } from "./reads.ts";
 
 export interface TranscriptState {
@@ -64,6 +65,8 @@ export interface AetherConnState {
   /** Keyed by invocation id. */
   readonly streams: Readonly<Record<string, StreamState>>;
   readonly noesis: Json | null;
+  /** Noesis sessions, reads and reveals (noesis-cache.ts). */
+  readonly learn: NoesisCache;
   readonly outbox: readonly Submission[];
   /** Entities an applied event made stale; they survive reconnects until refetched. */
   readonly staleAgents: readonly string[];
@@ -144,7 +147,7 @@ export interface State {
 }
 
 export const EMPTY_AETHER: AetherConnState = Object.freeze({
-  lastSeq: null, agents: {}, roots: [], attention: null, events: [], transcripts: {}, streams: {}, noesis: null, outbox: [],
+  lastSeq: null, agents: {}, roots: [], attention: null, events: [], transcripts: {}, streams: {}, noesis: null, learn: EMPTY_NOESIS, outbox: [],
   staleAgents: [], staleAttention: false,
 });
 

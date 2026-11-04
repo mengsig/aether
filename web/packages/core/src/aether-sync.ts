@@ -8,7 +8,10 @@ import { codeOf } from "./errors.ts";
 import { array, errorText, invariant, object, seq, string, type Json } from "./guards.ts";
 import { LINK_LOST, RESYNC_CODES, replyData, replyObject, subscriptionId } from "./replies.ts";
 import type { Command } from "./rpc.ts";
+import { compareStamps } from "./stamps.ts";
 import { EMPTY_AETHER, type AetherConnState, type Store } from "./store.ts";
+
+export { compareStamps } from "./stamps.ts";
 
 export interface SyncContext {
   readonly conn: ConnId;
@@ -292,20 +295,4 @@ function withAgent(state: AetherConnState, agent: aether.Agent): AetherConnState
   const roots = isRoot && !listed ? [...state.roots, agent.id] : !isRoot && listed ? state.roots.filter((id) => id !== agent.id) : state.roots;
   invariant(roots.includes(agent.id) === isRoot, "an agent is a root exactly when it has no parent");
   return { ...state, agents: { ...state.agents, [agent.id]: agent }, roots };
-}
-
-const STAMP = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)$/i;
-
-/** Orders two RFC 3339 stamps to the nanosecond; Date.parse alone stops at the millisecond. */
-export function compareStamps(a: string, b: string): number {
-  const [left, right] = [stampParts(a), stampParts(b)];
-  return left.seconds - right.seconds || left.nanos - right.nanos;
-}
-
-function stampParts(stamp: string): { seconds: number; nanos: number } {
-  const match = STAMP.exec(stamp);
-  invariant(match !== null, `${stamp} is an RFC 3339 timestamp`);
-  const seconds = Date.parse(`${match[1]}${match[3]}`);
-  invariant(Number.isFinite(seconds), `${stamp} names a real instant`);
-  return { seconds, nanos: Number((match[2] ?? "").padEnd(9, "0")) };
 }

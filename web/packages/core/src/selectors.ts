@@ -2,6 +2,8 @@
 // by the state, never a fresh copy, so useSelector stays quiet.
 
 import type { aether, Capabilities, ConnectionInfo, ConnId } from "@aether-ui/protocol";
+import type { NoesisCache } from "./noesis-cache.ts";
+import { EMPTY_NOESIS } from "./noesis-cache.ts";
 import type { ReadEntry } from "./reads.ts";
 import type { ArchonGraph, ArchonItem, ArchonPlan, Report, Stamped, State, StreamState, Submission, TranscriptState } from "./store.ts";
 
@@ -37,6 +39,10 @@ export const selectItemHistory = (conn: ConnId, item: string): Selector<Stamped 
 export const selectInitiative = (conn: ConnId, initiative: string): Selector<Stamped | undefined> => (s) => s.archon[conn]?.initiatives[initiative];
 export const selectSearch = (conn: ConnId, key: string): Selector<Stamped | undefined> => (s) => s.archon[conn]?.searches[key];
 export const selectFeed = (conn: ConnId): Selector<readonly unknown[]> => (s) => s.archon[conn]?.feed ?? NONE;
+
+// Noesis: the status core read at ready, and the learning entities (noesis-cache.ts).
+export const selectNoesisStatus = (conn: ConnId): Selector<Readonly<Record<string, unknown>> | null> => (s) => s.aether[conn]?.noesis ?? null;
+export const selectLearn = (conn: ConnId): Selector<NoesisCache> => (s) => s.aether[conn]?.learn ?? EMPTY_NOESIS;
 
 // Rereads stored whole (reads.ts), and every submission whose outcome is not known.
 export const selectRead = (conn: ConnId, key: string): Selector<ReadEntry | undefined> => (s) => s.reads[conn]?.[key];

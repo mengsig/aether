@@ -21,4 +21,7 @@ export { ipcTransport } from "./transports/ipc.ts";
 export { indexedDbIdentity, type DeviceIdentity, type IdentityStore } from "./transports/identity.ts";
 export type { SocketFactory, SocketLike } from "./transports/socket.ts";
 export * from "./selectors.ts";
+export { EMPTY_NOESIS, noesisKey, type NoesisCache, type NoesisRead, type NoesisQuestionEntry, type NoesisProblemEntry } from "./noesis-cache.ts";
+export { noesisReadKey, type NoesisReadRequest } from "./noesis-reads.ts";
+export { compareStamps } from "./stamps.ts";
 export { AppProvider, useApp, useSelector, useCapabilities, useCommand, useRoutes, useEntityActions, useRoute, useReread, usePermission, permissionFor, useReadPermission, readPermissionFor, type Permission, type CommandInput } from "./react.ts";

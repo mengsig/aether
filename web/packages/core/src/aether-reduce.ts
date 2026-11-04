@@ -3,6 +3,7 @@
 
 import type { aether } from "@aether-ui/protocol";
 import { invariant, object, omit, seq, string, type Json } from "./guards.ts";
+import { applyNoesisEvent } from "./noesis-cache.ts";
 import type { AetherConnState, StreamState, StreamTool, TranscriptState } from "./store.ts";
 
 const RECENT_EVENTS = 500;
@@ -29,6 +30,8 @@ export function applyEvent(state: AetherConnState, event: aether.Event): AetherC
   }
   if ((type === "invocation.completed" || type === "invocation.failed") && invocation) next = withStream(next, invocation, undefined);
   if (type === "noesis.settings_changed") next = { ...next, noesis: withNoesisSettings(next.noesis, kind) };
+  const learn = applyNoesisEvent(next.learn, kind, agent);
+  if (learn !== next.learn) next = { ...next, learn };
   invariant(next.lastSeq === at, "an applied event advances last_seq to its own seq");
   return next;
 }
@@ -49,7 +52,8 @@ function markStale(state: AetherConnState, type: string, agent: string | undefin
 function withNoesisSettings(status: Json | null, kind: Json): Json {
   const changed = pick(kind, ["settings", "effective"]);
   const effective = object(changed.effective ?? status?.effective ?? {}, "noesis effective settings");
-  const enabled = effective["noesis.enabled"];
+  // The wire view nests the table (`effective.enabled`); older fixtures name keys in full.
+  const enabled = effective.enabled ?? effective["noesis.enabled"];
   return { ...(status ?? {}), ...changed, ...(typeof enabled === "boolean" ? { enabled } : {}) };
 }
 
