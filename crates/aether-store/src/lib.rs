@@ -32,6 +32,7 @@ use aether_core::idempotency::{
 use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::{MemoryKind, MemoryRecord, MemoryRecorder, MemoryScope};
+use aether_core::memory_admission::MemoryAdmission;
 use aether_core::model::{Message, ModelRef};
 use aether_core::notification::{Notification, NotificationState};
 use aether_core::repository::{RepositoryAlias, RepositoryAliasCounts};
@@ -206,6 +207,9 @@ pub enum Mutation {
     /// the duplicate creation it belongs to must not become durable.
     RecordSubmission(RecordedSubmission),
     PutMemory(MemoryRecord),
+    /// Insert or replace a memory's admission. Its record must already be
+    /// stored, earlier in the same commit or before it.
+    PutMemoryAdmission(MemoryAdmission),
     RecordMemoryFeedback(MemoryFeedback),
     RetractMemoryFeedback {
         id: MemoryFeedbackId,
@@ -482,6 +486,8 @@ pub struct MemoryQuery {
     pub include_forgotten: bool,
     /// Select pending proposals instead of admitted memories. Never enabled for recall.
     pub proposed: bool,
+    /// Include candidates still waiting for support. Never enabled for recall.
+    pub include_candidates: bool,
     /// One record by id, for a browser showing a supersession chain.
     pub id: Option<MemoryId>,
     pub limit: usize,
@@ -502,6 +508,7 @@ impl Default for MemoryQuery {
             include_superseded: false,
             include_forgotten: false,
             proposed: false,
+            include_candidates: false,
             id: None,
             limit: 20,
         }
@@ -815,6 +822,8 @@ pub trait Store: Send + Sync {
 
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>>;
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>>;
+    /// `None` for a record admitted before admission was tracked.
+    fn memory_admission(&self, id: MemoryId) -> Result<Option<MemoryAdmission>>;
 
     fn artifact(&self, id: ArtifactId) -> Result<Option<Artifact>>;
     fn artifacts_for_task(&self, task: TaskId) -> Result<Vec<Artifact>>;

@@ -588,6 +588,12 @@ impl Store for CommitLog {
     fn memory(&self, id: MemoryId) -> StoreResult<Option<MemoryRecord>> {
         self.inner.memory(id)
     }
+    fn memory_admission(
+        &self,
+        id: MemoryId,
+    ) -> StoreResult<Option<aether_core::memory_admission::MemoryAdmission>> {
+        self.inner.memory_admission(id)
+    }
     fn memories(&self, query: &MemoryQuery) -> StoreResult<Vec<MemoryRecord>> {
         self.inner.memories(query)
     }

@@ -33,6 +33,11 @@ pub(super) fn remember(
         aether_memory::Admission::Superseded { record, old } => {
             ToolOutcome::ok(format!("Remembered as {} (supersedes {old}).", record.id))
         }
+        aether_memory::Admission::Reinforced { record, promoted } => ToolOutcome::ok(format!(
+            "Already remembered as {}; this task's support was recorded{}.",
+            record.id,
+            if promoted { " and made it active" } else { "" }
+        )),
         aether_memory::Admission::Rejected { reason } => {
             ToolOutcome::ok(format!("Not stored: {reason}."))
         }

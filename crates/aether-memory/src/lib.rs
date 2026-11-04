@@ -10,6 +10,7 @@ pub mod index;
 pub mod repo;
 
 pub use index::{LocalEmbeddingIndex, MemoryIndex};
+pub use tiers::{AdmissionMode, PROMOTION_SUPPORT};
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -48,6 +49,7 @@ pub struct AdmissionPolicy {
     pub duplicate_threshold: f32,
     /// Phrases that mark a fact as transient rather than durable.
     pub transient_markers: Vec<&'static str>,
+    pub mode: AdmissionMode,
 }
 
 impl Default for AdmissionPolicy {
@@ -68,6 +70,7 @@ impl Default for AdmissionPolicy {
                 "todo:",
                 "in progress",
             ],
+            mode: AdmissionMode::default(),
         }
     }
 }
@@ -86,12 +89,20 @@ pub enum Admission {
     Rejected {
         reason: String,
     },
+    /// Not stored again: the same memory already stands, and this task now
+    /// supports it. `promoted` when that support made a candidate active.
+    Reinforced {
+        record: MemoryRecord,
+        promoted: bool,
+    },
 }
 
 impl Admission {
     pub fn record(&self) -> Option<&MemoryRecord> {
         match self {
-            Self::Accepted { record } | Self::Superseded { record, .. } => Some(record),
+            Self::Accepted { record }
+            | Self::Superseded { record, .. }
+            | Self::Reinforced { record, .. } => Some(record),
             Self::Rejected { .. } => None,
         }
     }
@@ -370,6 +381,7 @@ impl MemoryService {
             scope: Some(scope.clone()),
             exact_scope: true,
             text: Some(text.into()),
+            include_candidates: true,
             limit: 10,
             ..Default::default()
         })?;
@@ -527,6 +539,7 @@ mod admission;
 mod proposals;
 mod retrieval;
 mod seeding;
+mod tiers;
 
 #[cfg(test)]
 mod tests;

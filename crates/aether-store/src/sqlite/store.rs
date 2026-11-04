@@ -19,6 +19,7 @@ use aether_core::idempotency::{
 use aether_core::inbox::InboxItem;
 use aether_core::lease::Lease;
 use aether_core::memory::MemoryRecord;
+use aether_core::memory_admission::MemoryAdmission;
 use aether_core::model::{Message, Usage};
 use aether_core::notification::Notification;
 use aether_core::repository::RepositoryAlias;
@@ -762,6 +763,10 @@ impl Store for SqliteStore {
 
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>> {
         self.query_memories(query)
+    }
+
+    fn memory_admission(&self, id: MemoryId) -> Result<Option<MemoryAdmission>> {
+        self.read_memory_admission(id)
     }
 
     fn artifact(&self, id: ArtifactId) -> Result<Option<Artifact>> {
