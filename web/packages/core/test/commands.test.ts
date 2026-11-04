@@ -88,6 +88,8 @@ describe("command access", () => {
   it("keeps archond's host commands and global hard pause off devices", () => {
     expect(archonAccess({ cmd: "task_graph" })).toBe("observe");
     expect(archonAccess({ cmd: "merge_item" })).toBe("host_only");
+    expect(archonAccess({ cmd: "answer", question: "q_1", text: "yes" })).toBe("operate");
+    expect(archonAccess({ cmd: "say", text: "hello" })).toBe("operate");
     expect(archonAccess({ cmd: "pause", scope: "global", hard: true })).toBe("host_only");
     expect(archonAccess({ cmd: "pause", scope: "global" })).toBe("operate");
   });

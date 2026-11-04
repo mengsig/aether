@@ -52,6 +52,18 @@ export interface ArchonItem {
   readonly state: string;
   readonly stage?: string;
   readonly waitingReason?: string;
+  /** The change seq it reflects: its summary read's `as_of` or a later change; null when unordered (protocol 23). */
+  readonly asOf: number | null;
+}
+
+/** A reread reply, whole, with the change cursor it reflects at least; null when unordered (protocol 23). */
+export interface Stamped {
+  readonly value: Json;
+  readonly asOf: number | null;
+}
+
+export interface ArchonPlan extends Stamped {
+  readonly item: string;
 }
 
 export interface ArchonGraph {
@@ -69,12 +81,23 @@ export interface ArchonConnState {
   readonly items: Readonly<Record<string, ArchonItem>>;
   readonly itemsAsOf: number | null;
   readonly graph: ArchonGraph | null;
-  readonly details: Readonly<Record<string, Json>>;
+  /** Keyed by item: `get_item` and `item_links` replies. */
+  readonly details: Readonly<Record<string, Stamped>>;
+  readonly links: Readonly<Record<string, Stamped>>;
+  /** Keyed by run: `run_plan` replies, reread with their item. */
+  readonly plans: Readonly<Record<string, ArchonPlan>>;
   readonly feed: readonly Json[];
   readonly outbox: readonly Submission[];
   /** Refreshes an applied change asked for; they survive reconnects until done. */
   readonly staleSnapshots: boolean;
   readonly staleItems: readonly string[];
+  /** Items a change named since their summary was read; one coalesced reread serves them all. */
+  readonly staleSummaries: readonly string[];
+}
+
+/** Whether a reread stamped `incoming` replaces one stamped `held`: whole, and never an older over a newer. */
+export function replaces(incoming: number | null, held: number | null): boolean {
+  return held === null || incoming === null || incoming >= held;
 }
 
 export interface Report { readonly id: number; readonly conn?: ConnId; readonly message: string; readonly code?: string }
@@ -95,8 +118,8 @@ export const EMPTY_AETHER: AetherConnState = Object.freeze({
 });
 
 export const EMPTY_ARCHON: ArchonConnState = Object.freeze({
-  changeCursor: null, feedSeq: null, items: {}, itemsAsOf: null, graph: null, details: {}, feed: [], outbox: [],
-  staleSnapshots: false, staleItems: [],
+  changeCursor: null, feedSeq: null, items: {}, itemsAsOf: null, graph: null, details: {}, links: {}, plans: {}, feed: [], outbox: [],
+  staleSnapshots: false, staleItems: [], staleSummaries: [],
 });
 
 export const INITIAL_STATE: State = Object.freeze({
