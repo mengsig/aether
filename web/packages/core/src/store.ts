@@ -10,16 +10,32 @@ export interface TranscriptState {
   readonly lastEntrySeq: number;
 }
 
-/** The live text of one invocation, valid only while its deltas stay contiguous. */
+/** A tool call the model is still writing: its input JSON as streamed so far. */
+export interface StreamTool {
+  /** The `tool_use_id`, or null from a daemon that sends none. */
+  readonly id: string | null;
+  readonly name: string;
+  readonly input: string;
+}
+
+/**
+ * The live tail of one invocation's assistant message, valid only while its deltas
+ * stay contiguous. One invocation commits one assistant message, which replaces it.
+ */
 export interface StreamState {
   readonly agent: string;
   readonly invocation: string;
   readonly text: string;
   readonly thinking: string;
+  readonly tools: readonly StreamTool[];
   /** The last `invocation_seq` seen, or null when the daemon sends none. */
   readonly lastInvocationSeq: number | null;
   /** Deltas are dropped until the transcript reread this stream waits for succeeds (§5.2.4). */
   readonly recovering: boolean;
+  /** The text resumed after a gap, so it lacks the message's start. */
+  readonly partial: boolean;
+  /** The committed `agent.message` replaced this tail: later deltas are late copies and dropped. */
+  readonly committed: boolean;
 }
 
 /** A keyed mutation sent and not yet answered. */

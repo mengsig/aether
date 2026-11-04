@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Json } from "./guards.ts";
 import { applyEvent } from "./aether-reduce.ts";
+import { compareStamps } from "./aether-sync.ts";
 import { ConnectionManager } from "./manager.ts";
 import { EMPTY_AETHER, INITIAL_STATE, Store } from "./store.ts";
 import { FakeDaemon, type Handler } from "./fixtures/fake-daemon.ts";
@@ -203,6 +204,18 @@ describe("Aether resync review regressions", () => {
     expect(daemon.commands("get_attention")).toHaveLength(2);
   });
 
+  it("keeps a newer agent row when a refetch answers with an older one", async () => {
+    const agent = F.tree.data.nodes[F.agent as keyof typeof F.tree.data.nodes].agent;
+    const older = { ...agent, name: "older", updated_at: "2026-11-04T02:59:00Z" };
+    const { store, daemon, manager } = setup(healthy({ get_agent: () => ({ ok: { reply: "agent", data: older } }) }));
+    manager.start();
+    await settle();
+    daemon.push(agentEvent(4, "agent.usage_updated", { total: {}, turn_usage: {} }));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("get_agent")).toHaveLength(1);
+    expect(store.get().aether[CONN_A]?.agents[F.agent]?.name).toBe("worker");
+  });
+
   it("refetches the agent after a usage update", async () => {
     const { daemon, manager } = setup(healthy());
     manager.start();
@@ -344,3 +357,15 @@ describe("Aether resync, second review", () => {
   });
 });
 
+describe("timestamp order", () => {
+  it("tells apart stamps within one millisecond, across precisions and offsets", () => {
+    expect(compareStamps("2026-11-04T03:00:00.123456Z", "2026-11-04T03:00:00.123123Z")).toBeGreaterThan(0);
+    expect(compareStamps("2026-11-04T03:00:00.1Z", "2026-11-04T03:00:00.100000000Z")).toBe(0);
+    expect(compareStamps("2026-11-04T04:00:00.5+01:00", "2026-11-04T03:00:00.4Z")).toBeGreaterThan(0);
+    expect(compareStamps("2026-11-04T03:00:00Z", "2026-11-04T03:00:01Z")).toBeLessThan(0);
+  });
+
+  it("refuses a stamp that is not RFC 3339", () => {
+    expect(() => compareStamps("yesterday", "2026-11-04T03:00:00Z")).toThrow(/RFC 3339/);
+  });
+});

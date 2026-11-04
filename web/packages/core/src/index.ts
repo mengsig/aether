@@ -6,7 +6,7 @@ export { Connection, ARCHON_VERSIONS, type Endpoint } from "./connection.ts";
 export { AetherSync, MAX_DELTA_AGENTS } from "./aether-sync.ts";
 export { ArchonSync } from "./archon-sync.ts";
 export { Store, dropConnection, INITIAL_STATE, replaces } from "./store.ts";
-export type { State, AetherConnState, ArchonConnState, ArchonItem, ArchonGraph, ArchonPlan, Stamped, StreamState, TranscriptState, Submission, Report, FrameScheduler } from "./store.ts";
+export type { State, AetherConnState, ArchonConnState, ArchonItem, ArchonGraph, ArchonPlan, Stamped, StreamState, StreamTool, TranscriptState, Submission, Report, FrameScheduler } from "./store.ts";
 export { computeCapabilities } from "./capabilities.ts";
 export { aetherAccess, archonAccess, checkAllowed, withIdempotencyKey, type Access } from "./commands.ts";
 export { DaemonError, RefusedError } from "./errors.ts";
