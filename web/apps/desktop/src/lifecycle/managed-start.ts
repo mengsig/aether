@@ -3,16 +3,44 @@
 
 import type { ChildProcess } from "node:child_process";
 import path from "node:path";
+import { absoluteHome, DAEMON_PATHS, type Env, type Machine } from "../discovery/socket-paths.ts";
 import type { DaemonKind } from "../security/classes.ts";
 import { BridgeRefusal } from "../security/validate.ts";
 import { LAUNCHERS, launchDetached } from "./launch.ts";
+
+/**
+ * The launcher's environment: `env` with a relative HOME and each relative socket or data dir
+ * override made absolute against main's own directory, where discovery reads them, since the
+ * launcher runs in home. An empty data dir means that directory; an empty socket reaches nothing.
+ */
+export function launchEnv(env: Env, mainCwd: string): Env {
+  if (!path.isAbsolute(mainCwd)) throw new Error(`main's directory is absolute, not ${mainCwd}`);
+  const launch: Record<string, string | undefined> = { ...env };
+  const home = env.HOME;
+  if (home !== undefined && home !== "" && !path.isAbsolute(home)) launch.HOME = path.resolve(mainCwd, home);
+  for (const rules of Object.values(DAEMON_PATHS)) {
+    const socket = env[rules.socketVar];
+    if (socket !== undefined && socket !== "" && !path.isAbsolute(socket)) launch[rules.socketVar] = path.resolve(mainCwd, socket);
+    const data = env[rules.dataVar];
+    if (data !== undefined && !path.isAbsolute(data)) launch[rules.dataVar] = path.resolve(mainCwd, data);
+  }
+  return launch;
+}
+
+/** Managed start on `machine`, launching in the user's home, from main running in `mainCwd`. */
+export function managedStartOn(
+  machine: Machine, mainCwd: string, deps: Pick<ManagedStartDeps, "isEnabled" | "isReachable" | "logDir">,
+): ManagedStart {
+  const env = launchEnv(machine.env, mainCwd);
+  return new ManagedStart({ ...deps, env, cwd: absoluteHome({ ...machine, env }) });
+}
 
 export interface ManagedStartDeps {
   /** Whether the user turned on desktop.managed_start; it is off until they do. */
   isEnabled(): boolean;
   /** Whether the daemon answers on its socket now. */
   isReachable(kind: DaemonKind): Promise<boolean>;
-  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly env: Env;
   readonly cwd: string;
   readonly logDir: string;
   readonly deadlineMs?: number;

@@ -2,12 +2,13 @@
 // detached, in its own session, with output in a log file. Launchers here are stub scripts.
 
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { Bridge, type BridgeHost } from "../../src/bridge/bridge.ts";
-import { ManagedStart } from "../../src/lifecycle/managed-start.ts";
+import { machineOf, socketPath, type Env } from "../../src/discovery/socket-paths.ts";
+import { launchEnv, ManagedStart, managedStartOn } from "../../src/lifecycle/managed-start.ts";
 import { PreferenceStore } from "../../src/main/preferences.ts";
 import { APP_SENDER, VALIDATOR } from "../security/support.ts";
 
@@ -116,6 +117,39 @@ test("concurrent starts of one daemon share one launch, and a slow one is never 
     const end = Date.now() + 5_000;
     while (!readFileSync(fx.marker, "utf8").includes("finished") && Date.now() < end) await new Promise((done) => setTimeout(done, 50));
     assert.match(readFileSync(fx.marker, "utf8"), /finished/, "the launcher ran on after the app stopped waiting");
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("managed start launches in home and where discovery looks, whatever HOME and relative overrides say", async () => {
+  const fx = fixture();
+  try {
+    const mainCwd = path.join(fx.dir, "main");
+    const passwdHome = path.join(fx.dir, "pw");
+    mkdirSync(mainCwd);
+    mkdirSync(passwdHome);
+    mkdirSync(path.join(mainCwd, "relhome"));
+    launcher(fx, `echo "cwd=$(pwd -P) socket=$AETHER_SOCKET data=$AETHER_DATA_DIR home=$HOME" >> '${fx.marker}'; exit 0`);
+    const deps = { isReachable: async () => false, logDir: fx.logDir };
+    const off = managedStartOn(machineOf({ HOME: "" }, "linux", passwdHome), mainCwd, { ...deps, isEnabled: () => false });
+    await assert.rejects(off.start("aether"), /is off/, "an empty HOME neither breaks startup nor enables anything");
+
+    const cases: ReadonlyArray<readonly [Env, string, string]> = [
+      [{ HOME: "", AETHER_SOCKET: "rel/a.sock" }, passwdHome, `socket=${mainCwd}/rel/a.sock data= home=`],
+      [{ HOME: "relhome", AETHER_DATA_DIR: "" }, path.join(mainCwd, "relhome"), `socket= data=${mainCwd} home=${mainCwd}/relhome`],
+      [{ HOME: passwdHome, AETHER_DATA_DIR: "d/../data" }, passwdHome, `socket= data=${mainCwd}/data home=${passwdHome}`],
+    ];
+    for (const [env, cwd, recorded] of cases) {
+      rmSync(fx.marker, { force: true });
+      const machine = machineOf({ PATH: `${fx.bin}:/usr/bin:/bin`, ...env }, "linux", passwdHome);
+      await managedStartOn(machine, mainCwd, { ...deps, isEnabled: () => true }).start("aether");
+      const line = readFileSync(fx.marker, "utf8").trim().split("\n").at(-1) ?? "";
+      assert.equal(line, `cwd=${realpathSync(cwd)} ${recorded}`, JSON.stringify(env));
+      const discovered = path.resolve(mainCwd, socketPath("aether", machine));
+      const launched = path.resolve(cwd, socketPath("aether", machineOf(launchEnv(machine.env, mainCwd), "linux", passwdHome)));
+      assert.equal(launched, discovered, `the daemon listens where discovery looks: ${JSON.stringify(env)}`);
+    }
   } finally {
     fx.cleanup();
   }

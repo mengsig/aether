@@ -29,7 +29,8 @@ function socketExists(socket: string): boolean {
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") return false;
-    throw new Error(`Checking the daemon socket ${socket}`, { cause: error });
+    // The page must not learn the path: IPC hands it only `message`; the cause stays in main.
+    throw new Error(`A daemon socket could not be checked (${code ?? "unknown error"})`, { cause: error });
   }
 }
 

@@ -2,15 +2,16 @@
 // the `dirs` crate), and health comes from one hello: the table pins every rule and override.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { helloFrame } from "../../src/bridge/bridge.ts";
+import { Bridge, helloFrame, type BridgeHost } from "../../src/bridge/bridge.ts";
 import { findDaemons } from "../../src/discovery/daemons.ts";
 import { HELLO_REQ, probe } from "../../src/discovery/health.ts";
 import { machineOf, socketPath, type Env, type Platform } from "../../src/discovery/socket-paths.ts";
+import { APP_SENDER, VALIDATOR } from "../security/support.ts";
 
 const PW = "/home/pw";
 
@@ -145,6 +146,23 @@ test("findDaemons lists both kinds with health, from the CLI paths", async () =>
     ]);
   } finally {
     await aether.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a socket that cannot be checked fails discovery without naming its path to the page", async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "e2-loop-"));
+  const loop = path.join(dir, "loop.sock");
+  symlinkSync(loop, loop);
+  try {
+    const machine = machineOf({ AETHER_SOCKET: loop, ARCHON_SOCKET: path.join(dir, "r.sock") }, "linux", PW);
+    const host = { findDaemons: () => findDaemons(machine, (kind) => helloFrame(kind, 26, "0.0.0")), versions: {}, logPath: "/l" };
+    const bridge = new Bridge(VALIDATOR, host as Partial<BridgeHost> as BridgeHost);
+    for (const method of ["discover", "diagnostics"]) {
+      await assert.rejects(bridge.handle(APP_SENDER, 1, method, []), (error: Error) =>
+        error.message === "A daemon socket could not be checked (ELOOP)" && !error.message.includes(dir));
+    }
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });

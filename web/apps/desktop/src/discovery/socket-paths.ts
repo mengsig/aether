@@ -39,6 +39,12 @@ function homeDir(machine: Machine): string {
   return home !== undefined && home !== "" ? home : machine.passwdHome;
 }
 
+/** The home a process can start in: `dirs::home_dir` when absolute, else the password database's. */
+export function absoluteHome(machine: Machine): string {
+  const home = homeDir(machine);
+  return home.startsWith("/") ? home : machine.passwdHome;
+}
+
 /** `dirs` reads an XDG variable only when it holds an absolute path. */
 function absoluteVar(env: Env, name: string): string | undefined {
   const value = env[name];

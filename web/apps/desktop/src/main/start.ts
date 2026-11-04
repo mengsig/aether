@@ -9,7 +9,7 @@ import { DaemonLink, type Frame } from "../bridge/daemon-link.ts";
 import { findDaemons } from "../discovery/daemons.ts";
 import { probe, PROBE_TIMEOUT_MS } from "../discovery/health.ts";
 import { machineOf, socketPath, type Machine } from "../discovery/socket-paths.ts";
-import { ManagedStart } from "../lifecycle/managed-start.ts";
+import { managedStartOn } from "../lifecycle/managed-start.ts";
 import { DeepLinkRouter } from "../native/deep-links.ts";
 import { notificationSink, pickFolder, windowTarget } from "../native/electron.ts";
 import { FolderTokens } from "../native/folder-tokens.ts";
@@ -65,11 +65,9 @@ interface HostParts {
 /** Discovery, health and managed start over this machine's sockets, the CLIs' own. */
 function daemonsOf(machine: Machine, preferences: PreferenceStore, hello: (kind: "aether" | "archon") => Frame) {
   const logDir = app.getPath("logs");
-  const managed = new ManagedStart({
+  const managed = managedStartOn(machine, process.cwd(), {
     isEnabled: () => preferences.get("desktop.managed_start") === true,
     isReachable: async (kind) => (await probe(socketPath(kind, machine), { hello: hello(kind), timeoutMs: PROBE_TIMEOUT_MS })).reachable,
-    env: machine.env,
-    cwd: os.homedir(),
     logDir,
   });
   return { find: () => findDaemons(machine, hello), start: (kind: "aether" | "archon") => managed.start(kind), logDir };
