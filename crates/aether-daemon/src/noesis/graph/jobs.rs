@@ -99,6 +99,14 @@ impl Extraction {
             .cancel();
     }
 
+    #[cfg(test)]
+    pub(in crate::noesis) fn is_cancelling(&self, job: &str) -> bool {
+        self.flags
+            .lock()
+            .get(job)
+            .is_some_and(CancelFlag::is_cancelled)
+    }
+
     /// Stop taking jobs and cancel every running one at its next boundary;
     /// each keeps the merge it committed last.
     pub(in crate::noesis) fn stop(&self) {

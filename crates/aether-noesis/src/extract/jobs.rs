@@ -127,14 +127,8 @@ pub fn live_on(conn: &Connection, target: &str) -> Result<Option<Job>, ExtractEr
 }
 
 /// Move `job` to `state`, recording `error`, `stats` and `usage` as given.
+/// A job that has already ended is refused, in the same statement that writes.
 pub fn update(conn: &Connection, job: &Job) -> Result<Job, ExtractError> {
-    let stored = get(conn, &job.id)?;
-    if stored.state.is_terminal() {
-        return Err(ExtractError::Conflict(format!(
-            "job {} has already ended",
-            job.id
-        )));
-    }
     let stats = job
         .stats
         .map(|s| serde_json::to_string(&s))
@@ -142,21 +136,43 @@ pub fn update(conn: &Connection, job: &Job) -> Result<Job, ExtractError> {
         .map_err(|_| corrupt("stats"))?;
     let usage = serde_json::to_string(&job.usage).map_err(|_| corrupt("usage"))?;
     let changed = conn.execute(
-        "UPDATE jobs SET state = ?2, stats = ?3, error = ?4, usage = ?5, updated_at = ?6 WHERE id = ?1",
-        params![job.id, state_name(job.state), stats, job.error, usage, now_text()],
+        "UPDATE jobs SET state = ?2, stats = ?3, error = ?4, usage = ?5, updated_at = ?6
+         WHERE id = ?1 AND state NOT IN ('succeeded', 'failed', 'cancelled')",
+        params![
+            job.id,
+            state_name(job.state),
+            stats,
+            job.error,
+            usage,
+            now_text()
+        ],
     )?;
-    assert_eq!(changed, 1, "the job was read above");
-    get(conn, &job.id)
+    let stored = get(conn, &job.id)?;
+    if changed == 0 {
+        debug_assert!(
+            stored.state.is_terminal(),
+            "only an ended job is left unchanged"
+        );
+        return Err(ExtractError::Conflict(format!(
+            "job {} has already ended",
+            job.id
+        )));
+    }
+    assert_eq!(changed, 1, "job ids are unique");
+    Ok(stored)
 }
 
-/// End the job as cancelled if it is still queued; a running one is asked
-/// through its cancel flag instead. Returns the job as it now stands.
+/// End the job as cancelled if it is still queued, in one statement, so a
+/// worker's claim and this cancel never both win. Returns the job as it now
+/// stands: one a worker claimed first is asked through its cancel flag instead.
 pub fn cancel_queued(conn: &Connection, id: &str) -> Result<Job, ExtractError> {
-    let mut job = get(conn, id)?;
-    if job.state == JobState::Queued {
-        job.state = JobState::Cancelled;
-        job = update(conn, &job)?;
-    }
+    let changed = conn.execute(
+        "UPDATE jobs SET state = 'cancelled', updated_at = ?2 WHERE id = ?1 AND state = 'queued'",
+        params![id, now_text()],
+    )?;
+    let job = get(conn, id)?;
+    assert!(changed <= 1, "job ids are unique");
+    debug_assert!(changed == 0 || job.state == JobState::Cancelled);
     Ok(job)
 }
 

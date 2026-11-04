@@ -627,3 +627,36 @@ fn a_queued_job_cancels_at_once_and_interrupted_jobs_fail_at_start() {
     );
     assert!(jobs::live_on(conn, SESSION).unwrap().is_none());
 }
+
+#[test]
+fn a_cancel_never_overwrites_a_job_a_worker_claimed() {
+    let (_dir, store) = open();
+    let conn = store.connection();
+    let queued = jobs::create(conn, JobKind::ExtractSession, SESSION).unwrap();
+    let slots = Slots::new(1);
+    let (_slot, claimed) = claim_next(conn, &slots).unwrap().unwrap();
+    assert_eq!(claimed.id, queued.id);
+    let after = jobs::cancel_queued(conn, &queued.id).unwrap();
+    assert_eq!(
+        after.state,
+        JobState::Running,
+        "the claim won; the worker is asked instead"
+    );
+    let mut stale = queued.clone();
+    stale.state = JobState::Cancelled;
+    jobs::update(conn, &stale).unwrap();
+    let mut late = claimed;
+    late.state = JobState::Merging;
+    assert!(
+        matches!(jobs::update(conn, &late), Err(ExtractError::Conflict(_))),
+        "a write to an ended job is refused in the same statement"
+    );
+    assert_eq!(
+        jobs::get(conn, &queued.id).unwrap().state,
+        JobState::Cancelled
+    );
+    assert!(matches!(
+        jobs::cancel_queued(conn, "j_missing"),
+        Err(ExtractError::UnknownJob(_))
+    ));
+}

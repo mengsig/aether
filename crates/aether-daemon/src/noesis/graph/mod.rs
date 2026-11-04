@@ -166,6 +166,10 @@ fn mutate(writer: &Writer<'_>, command: Command) -> Result<Reply, ErrorReply> {
     if let Some(reply) = writer.replayed()? {
         return Ok(reply);
     }
+    let starts_jobs = matches!(
+        command,
+        Command::NoesisExtract { .. } | Command::NoesisImportSource { .. }
+    );
     let (reply, events) = match command {
         Command::NoesisDeleteProposition { proposition, .. } => {
             let conn = writer.store().connection();
@@ -196,6 +200,10 @@ fn mutate(writer: &Writer<'_>, command: Command) -> Result<Reply, ErrorReply> {
         }
     };
     writer.record(events, &reply)?;
+    if starts_jobs {
+        // Also starts a queued job left without a worker.
+        writer.live.extraction.pump(writer.runtime);
+    }
     Ok(reply)
 }
 
@@ -251,8 +259,8 @@ fn extract_target(
     if let Some(job) = job_rows::live_on(conn, &target).map_err(extract_error)? {
         return Ok((Reply::NoesisJob { job }, Vec::new()));
     }
-    let job = queue(writer, kind, &target)?;
-    let event = job_event(&job);
+    check_slots(writer)?;
+    let (job, event) = queue(writer, kind, &target)?;
     Ok((Reply::NoesisJob { job }, vec![event]))
 }
 
@@ -268,18 +276,27 @@ fn check_session(store: &NoesisStore, session: &str) -> Result<(), ErrorReply> {
     }
 }
 
-/// A new queued job, started at once if a background slot is free. With
-/// `noesis.concurrency.background = 0` no job could ever run, so none is made.
-fn queue(writer: &Writer<'_>, kind: JobKind, target: &str) -> Result<Job, ErrorReply> {
+/// With `noesis.concurrency.background = 0` no job could ever run, so none is made.
+fn check_slots(writer: &Writer<'_>) -> Result<(), ErrorReply> {
     if writer.live.noesis.settings().concurrency_background == 0 {
         return Err(ErrorReply::invalid(
             "noesis.concurrency.background is 0, so no background job can run",
         ));
     }
+    Ok(())
+}
+
+/// A new queued job and its announcement; the caller starts a worker once
+/// the announcement is recorded, so `queued` is never seen after `running`.
+fn queue(
+    writer: &Writer<'_>,
+    kind: JobKind,
+    target: &str,
+) -> Result<(Job, EventDraft), ErrorReply> {
     let job = job_rows::create(writer.store().connection(), kind, target).map_err(extract_error)?;
     debug_assert_eq!(job.state, JobState::Queued);
-    writer.live.extraction.pump(writer.runtime);
-    Ok(job)
+    let event = job_event(&job);
+    Ok((job, event))
 }
 
 /// `noesis_import_source`: record the artifact's text as a source (the same
@@ -289,13 +306,18 @@ fn import(
     name: &str,
     artifact: ArtifactId,
 ) -> Result<(Reply, Vec<EventDraft>), ErrorReply> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(ErrorReply::invalid("name must not be blank"));
+    }
+    check_slots(writer)?;
     let text = jobs::read_source(writer.runtime.store().as_ref(), artifact)?;
     if text.trim().is_empty() {
         return Err(ErrorReply::invalid("the source has no text to extract"));
     }
     let row = SourceRow {
         id: ids::source_id(&text),
-        name: name.trim().to_string(),
+        name: name.to_string(),
         artifact: artifact.to_string(),
         imported_at: graph_store::now_text(),
     };
@@ -306,8 +328,7 @@ fn import(
     let (job, events) = match live {
         Some(job) => (job, Vec::new()),
         None => {
-            let job = queue(writer, JobKind::ExtractSource, &stored.id)?;
-            let event = job_event(&job);
+            let (job, event) = queue(writer, JobKind::ExtractSource, &stored.id)?;
             (job, vec![event])
         }
     };
@@ -320,24 +341,28 @@ fn import(
     ))
 }
 
-/// A queued job ends here; a running one stops at its next model-call
-/// boundary, keeping its last committed merge. An ended job is returned as is.
+/// A queued job ends here; a running one, or one a worker claims meanwhile,
+/// stops at its next model-call boundary with its last committed merge.
 fn cancel(writer: &Writer<'_>, job: &str) -> Result<(Reply, Vec<EventDraft>), ErrorReply> {
-    let before = job_rows::get(writer.store().connection(), job).map_err(extract_error)?;
+    let conn = writer.store().connection();
+    let before = job_rows::get(conn, job).map_err(extract_error)?;
     if before.state.is_terminal() {
         return Ok((Reply::NoesisJob { job: before }, Vec::new()));
     }
-    if before.state == JobState::Queued {
-        let cancelled =
-            job_rows::cancel_queued(writer.store().connection(), job).map_err(extract_error)?;
-        if cancelled.state == JobState::Cancelled {
-            let event = job_event(&cancelled);
-            return Ok((Reply::NoesisJob { job: cancelled }, vec![event]));
-        }
-        return Ok((Reply::NoesisJob { job: cancelled }, Vec::new()));
+    let now = job_rows::cancel_queued(conn, job).map_err(extract_error)?;
+    if now.state == JobState::Cancelled {
+        let event = job_event(&now);
+        return Ok((Reply::NoesisJob { job: now }, vec![event]));
     }
-    writer.live.extraction.cancel(job);
-    Ok((Reply::NoesisJob { job: before }, Vec::new()))
+    if !now.state.is_terminal() {
+        debug_assert_ne!(
+            now.state,
+            JobState::Queued,
+            "a queued job was cancelled above"
+        );
+        writer.live.extraction.cancel(job);
+    }
+    Ok((Reply::NoesisJob { job: now }, Vec::new()))
 }
 
 fn job_event(job: &Job) -> EventDraft {

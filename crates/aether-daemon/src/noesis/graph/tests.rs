@@ -223,11 +223,6 @@ async fn a_live_job_holds_its_source_until_it_is_cancelled() {
         code(harness.send(command(delete)).await),
         ErrorCode::InvalidTransition
     );
-    let extract = r#"{"cmd":"noesis_extract","source":"s_notes"}"#;
-    let Reply::NoesisJob { job } = harness.send(command(extract)).await.expect("extract") else {
-        panic!("a job reply");
-    };
-    assert_eq!(job.id, queued.id, "a live job is returned, not doubled");
     let cancel = format!(r#"{{"cmd":"noesis_cancel_job","job":"{}"}}"#, queued.id);
     let Reply::NoesisJob { job } = harness.send(command(&cancel)).await.expect("cancel") else {
         panic!("a job reply");
@@ -257,7 +252,9 @@ async fn with_no_background_slot_no_job_is_made() {
         ..Default::default()
     };
     let harness = running(settings).await;
-    seed_source(&side_store(&harness), "s_notes");
+    let store = side_store(&harness);
+    seed_source(&store, "s_notes");
+    seed_source(&store, "s_other");
     let extract = r#"{"cmd":"noesis_extract","source":"s_notes"}"#;
     let error = harness.send(command(extract)).await.expect_err("no slot");
     assert_eq!(error.code, ErrorCode::InvalidArgument, "{error:?}");
@@ -266,6 +263,65 @@ async fn with_no_background_slot_no_job_is_made() {
         "{error:?}"
     );
     assert!(jobs(&harness).await.is_empty());
+    let queued =
+        job_rows::create(store.connection(), JobKind::ExtractSource, "s_other").expect("job");
+    let again = r#"{"cmd":"noesis_extract","source":"s_other"}"#;
+    let Reply::NoesisJob { job } = harness.send(command(again)).await.expect("extract") else {
+        panic!("a job reply");
+    };
+    assert_eq!(job.id, queued.id, "a live job is returned, not doubled");
+    assert_eq!(jobs(&harness).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_blank_import_name_is_refused_before_anything_is_stored() {
+    let harness = running(NoesisSettingsPatch::default()).await;
+    let artifact = publish(&harness, "Alpha holds.").await;
+    let import =
+        format!(r#"{{"cmd":"noesis_import_source","name":"   ","artifact":"{artifact}"}}"#);
+    let error = harness.send(command(&import)).await.expect_err("blank");
+    assert_eq!(error.code, ErrorCode::InvalidArgument, "{error:?}");
+    assert!(jobs(&harness).await.is_empty());
+    let graph = side_store(&harness);
+    let sources: u32 = graph
+        .connection()
+        .query_row("SELECT count(*) FROM sources", [], |row| row.get(0))
+        .expect("count");
+    assert_eq!(sources, 0, "no source is recorded");
+}
+
+#[tokio::test]
+async fn cancelling_a_job_a_worker_claimed_asks_the_worker_and_keeps_its_state() {
+    let harness = running(NoesisSettingsPatch::default()).await;
+    let store = side_store(&harness);
+    seed_source(&store, "s_notes");
+    let queued =
+        job_rows::create(store.connection(), JobKind::ExtractSource, "s_notes").expect("job");
+    let slots = aether_noesis::extract::Slots::new(1);
+    let (_slot, claimed) = aether_noesis::extract::claim_next(store.connection(), &slots)
+        .expect("claim")
+        .expect("a queued job");
+    assert_eq!(
+        (claimed.id.as_str(), claimed.state),
+        (queued.id.as_str(), JobState::Running)
+    );
+    let cancel = format!(r#"{{"cmd":"noesis_cancel_job","job":"{}"}}"#, queued.id);
+    let Reply::NoesisJob { job } = harness.send(command(&cancel)).await.expect("cancel") else {
+        panic!("a job reply");
+    };
+    assert_eq!(
+        job.state,
+        JobState::Running,
+        "a claimed job is not overwritten"
+    );
+    let state = harness.daemon.noesis.state.lock().await;
+    let State::Running(live) = &*state else {
+        panic!("the service runs");
+    };
+    assert!(
+        live.extraction.is_cancelling(&queued.id),
+        "the worker is asked to stop"
+    );
 }
 
 #[tokio::test]
