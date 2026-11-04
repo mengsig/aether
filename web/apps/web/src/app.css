@@ -1,0 +1,8 @@
+@layer app {
+  .app-eyebrow { color: var(--color-accent); font: var(--weight-medium) var(--text-xs) / 1 var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; }
+  .app-pair { display: grid; gap: var(--space-5); max-inline-size: 26rem; margin: var(--space-8) auto; }
+  .app-pair-lede { color: var(--color-text-muted); }
+  .app-pair-phrase { font: var(--weight-regular) var(--text-3xl) / var(--leading-tight) var(--font-display); letter-spacing: -0.02em; }
+  .app-pair-fingerprint { color: var(--color-text-muted); font-size: var(--text-sm); }
+  .app-boot { display: grid; place-items: center; min-block-size: 100dvh; color: var(--color-text-muted); }
+}

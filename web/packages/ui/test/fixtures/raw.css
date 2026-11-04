@@ -1,0 +1,10 @@
+/* A sheet with raw values, for scripts/eslint-tokens.test.ts; nothing imports it. */
+.probe:is(.red) {
+  color: var(--color-text);
+  box-shadow:
+    0 0 0 1px var(--color-border),
+    0 2px 4px #00000033;
+  transition: opacity 150ms ease;
+}
+
+#cafe { background: white; }

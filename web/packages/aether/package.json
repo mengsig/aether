@@ -1,0 +1,11 @@
+{
+  "name": "@aether-ui/aether",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Aether screens: fleet, topology, agents, conversations, controls, inbox, activity and memory.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": ["./src/index.ts", "./src/*/routes.ts"]
+}

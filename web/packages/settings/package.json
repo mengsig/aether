@@ -1,0 +1,11 @@
+{
+  "name": "@aether-ui/settings",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Settings screens.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": ["./src/index.ts", "./src/*/routes.ts"]
+}

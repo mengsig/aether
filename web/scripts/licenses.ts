@@ -18,6 +18,10 @@ export const DEV_ONLY_EXCEPTIONS: Readonly<Record<string, Exception>> = {
     license: "CC-BY-4.0",
     reason: "browser-support data; eslint-plugin-react-hooks reaches it through @babel/core",
   },
+  "axe-core": {
+    license: "MPL-2.0",
+    reason: "accessibility checks in tests only; the web build refuses any chunk that contains it",
+  },
 };
 
 interface LockEntry {

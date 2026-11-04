@@ -1,0 +1,7 @@
+{
+  "name": "@aether-ui/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The browser entry of the unified frontend: the shell, the service worker and the manifest."
+}
