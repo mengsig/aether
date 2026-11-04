@@ -1357,12 +1357,28 @@ fn v29_leaves_existing_agents_without_a_subsystem_and_fixes_it_from_then_on() {
     assert_eq!(indexes, ["agents_run_id", "events_run_type"]);
 }
 
-/// Every table but the one V30 adds, rows included: what an upgrade must not touch.
-fn dump_without_admission(conn: &Connection) -> Vec<String> {
-    dump(conn)
+/// The memory and feedback tables, definitions and rows: what usefulness is
+/// read from, and what V30 must leave exactly as it found it.
+fn dump_memories_and_feedback(conn: &Connection) -> Vec<String> {
+    let lines: Vec<String> = dump(conn)
         .into_iter()
-        .filter(|line| !line.contains("memory_admission"))
-        .collect()
+        .filter(|line| {
+            [
+                "memories ",
+                "memory_feedback ",
+                "table memories ",
+                "table memory_feedback ",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        })
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("memory_feedback "))
+    );
+    lines
 }
 
 fn admission_rows(conn: &Connection) -> Vec<(String, String, String)> {
@@ -1429,7 +1445,7 @@ fn v30_admits_every_memory_of_a_v29_store_as_active_and_leaves_its_usefulness_al
     for verdict in ["helped", "helped", "hurt"] {
         insert_v29_feedback(&v29, records[0].id, verdict);
     }
-    let before = dump_without_admission(&v29);
+    let before = dump_memories_and_feedback(&v29);
     drop(v29);
 
     let store = crate::SqliteStore::open(&path).unwrap();
@@ -1462,7 +1478,7 @@ fn v30_admits_every_memory_of_a_v29_store_as_active_and_leaves_its_usefulness_al
 
     let conn = Connection::open(&path).unwrap();
     assert_eq!(
-        dump_without_admission(&conn),
+        dump_memories_and_feedback(&conn),
         before,
         "no record or feedback row moved"
     );
