@@ -1,0 +1,11 @@
+{
+  "name": "@aether-ui/graph",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Canvas 2D graph rendering, viewport, deterministic worker layouts and the graph model with groups and collapse.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false
+}

@@ -1,9 +1,9 @@
 // The Aether daemon protocol as TypeScript types and command builders.
 // Generated from clients/protocol.schema.json by web/scripts/generate-protocol.ts.
 // Do not edit: regenerate with `npm run generate` in web/.
-// Schema SHA-256: 13ecad3404956102d09556856f6acbbeaed87306a9be80b3c823af460cd0a3cd
+// Schema SHA-256: 63b93961cb2b8409867ee63898c547d0967732b392ff009c5760f229408d064d
 
-export const PROTOCOL_VERSION = 25;
+export const PROTOCOL_VERSION = 26;
 export const MIN_PROTOCOL_VERSION = 17;
 
 /**
@@ -881,6 +881,7 @@ export interface DeltaToolInput {
   "delta": "tool_input";
   "name": string;
   "partial_json": string;
+  "tool_use_id"?: string | null;
 }
 
 /**
@@ -2559,6 +2560,11 @@ export interface ModelRef {
   "provider": string;
 }
 
+/**
+ * What a mount forwards to.
+ */
+export type MountKind = "archon";
+
 export type NetworkPolicy = "denied" | "allowed";
 
 /**
@@ -2999,10 +3005,20 @@ export interface RememberSpec {
 }
 
 /**
+ * One prefix of the listener forwarded to a loopback target.
+ */
+export interface RemoteMount {
+  "kind": MountKind;
+  "prefix": string;
+  "target": string;
+}
+
+/**
  * The runtime-changeable remote settings, saved whole under a revision.
  */
 export interface RemoteSettings {
   "enabled"?: boolean;
+  "mounts"?: Array<RemoteMount> | null;
   "pairing"?: boolean;
   "public_origins"?: Array<string>;
   "push"?: boolean;
@@ -3166,6 +3182,17 @@ export interface ReplyAgents {
   "reply": "agents";
 }
 
+/**
+ * Reply to `list_agents_page`. `next_after` is the cursor for the next
+ * page, absent on the last one. Ids are only ordered, not committed in
+ * order, so a walk covers the agents present when it began; a client
+ * subscribes first and applies the buffered events for creations during it.
+ */
+export interface ReplyAgentsPage {
+  "data": Record<string, unknown>;
+  "reply": "agents_page";
+}
+
 export interface ReplyTree {
   "data": AgentTree;
   "reply": "tree";
@@ -3252,6 +3279,21 @@ export interface ReplyEvents {
 export interface ReplyTranscript {
   "data": Array<TranscriptEntry>;
   "reply": "transcript";
+}
+
+/**
+ * Reply to `get_transcript_page`: entries in ascending `seq`, whether
+ * older or newer ones exist outside it, and the seq of the agent's newest
+ * entry (0 for none).
+ */
+export interface ReplyTranscriptPage {
+  "data": Record<string, unknown>;
+  "reply": "transcript_page";
+}
+
+export interface ReplyUsageBreakdown {
+  "data": UsageBreakdown;
+  "reply": "usage_breakdown";
 }
 
 export interface ReplyInbox {
@@ -3478,6 +3520,7 @@ export type Reply =
   | ReplyPaused
   | ReplyAgent
   | ReplyAgents
+  | ReplyAgentsPage
   | ReplyTree
   | ReplyTask
   | ReplyTasks
@@ -3493,6 +3536,8 @@ export type Reply =
   | ReplySubscribed
   | ReplyEvents
   | ReplyTranscript
+  | ReplyTranscriptPage
+  | ReplyUsageBreakdown
   | ReplyInbox
   | ReplySnapshot
   | ReplyInvocation
@@ -3939,6 +3984,7 @@ export interface ServerFrameDelta {
   "delta": Delta;
   "frame": "delta";
   "invocation": InvocationId;
+  "invocation_seq"?: number | null;
   "sub": number;
 }
 
@@ -4453,6 +4499,41 @@ export interface Usage {
   "input_tokens": number;
   "output_tokens": number;
   "reasoning_tokens"?: number | null;
+}
+
+/**
+ * Reply to `usage_breakdown`: rows ordered by `key`, and the total over
+ * every invocation in scope, those of rows cut by `limit` included.
+ */
+export interface UsageBreakdown {
+  "rows": Array<UsageRow>;
+  "total": Usage;
+  "truncated": boolean;
+}
+
+/**
+ * What each `usage_breakdown` row is keyed by.
+ */
+export type UsageGroup = "provider" | "run" | "model" | "role" | "day";
+
+/**
+ * One group's spend.
+ */
+export interface UsageRow {
+  "invocations": number;
+  "key": string;
+  "usage": Usage;
+}
+
+/**
+ * Which invocations `usage_breakdown` sums. Every field given narrows the
+ * set; none sums the whole fleet.
+ */
+export interface UsageScope {
+  "agent"?: AgentId | null;
+  "role_prefix"?: string | null;
+  "run"?: RunId | null;
+  "subtree"?: AgentId | null;
 }
 
 /**
@@ -5126,11 +5207,30 @@ export function getTranscript(args: Omit<GetTranscriptCommand, "cmd">): GetTrans
 }
 
 /**
+ * A bounded page of an agent's transcript: entries after `after`, the
+ * newest before `before`, or the newest of all when neither is given.
+ * `limit` is 1 to 1000, 200 when absent. Needs `features::TRANSCRIPT_PAGING`.
+ */
+export interface GetTranscriptPageCommand {
+  "cmd": "get_transcript_page";
+  "after"?: number | null;
+  "agent": AgentId;
+  "before"?: number | null;
+  "limit"?: number | null;
+}
+
+export function getTranscriptPage(args: Omit<GetTranscriptPageCommand, "cmd">): GetTranscriptPageCommand {
+  return { cmd: "get_transcript_page", ...args };
+}
+
+/**
  * The live graph: every agent in the run (or all runs) with relations.
  */
 export interface GetTreeCommand {
   "cmd": "get_tree";
   "include_archived"?: boolean;
+  "role_prefix"?: string | null;
+  "root"?: AgentId | null;
   "run"?: RunId | null;
 }
 
@@ -5194,6 +5294,21 @@ export interface ListAgentsCommand {
 
 export function listAgents(args: Omit<ListAgentsCommand, "cmd">): ListAgentsCommand {
   return { cmd: "list_agents", ...args };
+}
+
+/**
+ * One page of agents in `AgentId` order, from just after `after`.
+ * `limit` is 1 to 500, 200 when absent. Needs `features::AGENTS_PAGING`.
+ */
+export interface ListAgentsPageCommand {
+  "cmd": "list_agents_page";
+  "after"?: AgentId | null;
+  "limit"?: number | null;
+  "query"?: AgentQuery;
+}
+
+export function listAgentsPage(args: Omit<ListAgentsPageCommand, "cmd">): ListAgentsPageCommand {
+  return { cmd: "list_agents_page", ...args };
 }
 
 /**
@@ -5907,6 +6022,24 @@ export function updateSchedule(args: Omit<UpdateScheduleCommand, "cmd">): Update
 }
 
 /**
+ * Spend summed from `invocation.completed` events, grouped by `by`, in
+ * `since..until` (completion time, `until` exclusive). `limit` is 1 to
+ * 1000 rows, 1000 when absent. Needs `features::USAGE_BREAKDOWN`.
+ */
+export interface UsageBreakdownCommand {
+  "cmd": "usage_breakdown";
+  "by": UsageGroup;
+  "limit"?: number | null;
+  "scope"?: UsageScope;
+  "since"?: string | null;
+  "until"?: string | null;
+}
+
+export function usageBreakdown(args: Omit<UsageBreakdownCommand, "cmd">): UsageBreakdownCommand {
+  return { cmd: "usage_breakdown", ...args };
+}
+
+/**
  * Whether an agent can be started in `path`, and its canonical form.
  */
 export interface ValidateWorkspaceCommand {
@@ -6013,12 +6146,14 @@ export type Command =
   | GetSnapshotCommand
   | GetTaskCommand
   | GetTranscriptCommand
+  | GetTranscriptPageCommand
   | GetTreeCommand
   | HelloCommand
   | ImportRunCommand
   | InterruptCommand
   | LatestCheckpointCommand
   | ListAgentsCommand
+  | ListAgentsPageCommand
   | ListApprovalRulesCommand
   | ListApprovalsCommand
   | ListArtifactsCommand
@@ -6076,6 +6211,7 @@ export type Command =
   | UpdateAgentCommand
   | UpdateDeviceCommand
   | UpdateScheduleCommand
+  | UsageBreakdownCommand
   | ValidateWorkspaceCommand
   | WakeCommand
   | WorkspaceDiffCommand
