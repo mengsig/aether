@@ -287,10 +287,14 @@ fn run_command(t: &mut Teaching<'_, AetherEngine<'_>>, noesis: &Noesis, command:
             context.as_ref(),
             &practice_targets.unwrap_or_default(),
         ),
-        Command::NoesisSend { session, text, .. } => Done {
-            reply: t.send(&session, &text).map(|()| Reply::Ok),
-            advance: Some(session),
-        },
+        Command::NoesisSend { session, text, .. } => {
+            // A refused message adds nothing for the agent to answer.
+            let sent = t.send(&session, &text);
+            Done {
+                advance: sent.is_ok().then_some(session),
+                reply: sent.map(|()| Reply::Ok),
+            }
+        }
         Command::NoesisAnswer {
             session,
             question,

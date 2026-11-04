@@ -403,6 +403,45 @@ async fn a_sealed_probe_question_is_answered_and_the_learner_model_shows_it() {
     harness.close().await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_message_starts_no_turn_and_a_sent_one_starts_one() {
+    let home = Home::new();
+    let client = Arc::new(ScriptedClient::new());
+    client.push(ScriptedClient::text("What would you like to learn first?"));
+    client.push(ScriptedClient::text("Let us start with limits."));
+    let harness = Harness::open(&home, client).await;
+    harness.configure(teaching_on(|_| {})).await;
+    let created = harness.create(json!({})).await;
+    harness.settled().await;
+    assert_eq!(harness.client.requests().len(), 1, "the opening turn");
+
+    let blank = json!({"cmd": "noesis_send", "session": created.id, "text": "   ",
+                       "idempotency_key": "s1"});
+    let refused = harness.send_json(blank).await.expect_err("blank");
+    assert_eq!(refused.code, ErrorCode::InvalidArgument, "{refused:?}");
+    let unknown = json!({"cmd": "noesis_send", "session": "ns_missing", "text": "hi",
+                         "idempotency_key": "s2"});
+    let missing = harness.send_json(unknown).await.expect_err("unknown");
+    assert_eq!(missing.code, ErrorCode::NotFound, "{missing:?}");
+    harness.settled().await;
+    assert_eq!(
+        harness.client.requests().len(),
+        1,
+        "no billable turn for a refusal"
+    );
+
+    let sent = json!({"cmd": "noesis_send", "session": created.id, "text": "Limits, please",
+                      "idempotency_key": "s3"});
+    harness.send_json(sent).await.expect("sent");
+    harness.settled().await;
+    assert_eq!(
+        harness.client.requests().len(),
+        2,
+        "one turn for the message"
+    );
+    harness.close().await;
+}
+
 /// No `tool_input` delta reaches the bus for the agent, and each of its
 /// invocations is numbered 1, 2, 3, … with no gap.
 fn assert_deltas_sealed_and_gapless(
@@ -809,7 +848,8 @@ fn the_dispatch_table_places_every_noesis_command_in_one_group() {
         .map(|json| (json, Group::Teaching));
     let mut placed = BTreeSet::new();
     for (json, group) in samples.into_iter().chain(teaching) {
-        let command: Command = serde_json::from_value(json.clone()).unwrap_or_else(|e| panic!("{json}: {e}"));
+        let command: Command =
+            serde_json::from_value(json.clone()).unwrap_or_else(|e| panic!("{json}: {e}"));
         assert!(command.is_noesis(), "{json}");
         assert_eq!(group_of(&command), group, "{json}");
         assert!(

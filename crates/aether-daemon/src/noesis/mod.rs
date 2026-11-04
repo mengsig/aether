@@ -89,11 +89,9 @@ pub struct NoesisService {
     gate: NoesisGate,
     state: tokio::sync::Mutex<State>,
     drains: std::sync::atomic::AtomicU64,
-    /// Teaching calls running or waiting for the state, seen by a drain
-    /// without taking the state lock a running turn holds.
+    /// Teaching calls running or waiting for the desk, which a drain
+    /// waits for through the grace.
     teaching_calls: std::sync::atomic::AtomicUsize,
-    /// The running service's cancel token, reachable without the state lock.
-    teaching_cancel: parking_lot::Mutex<tokio_util::sync::CancellationToken>,
     /// Replaces every provider's client for teaching calls, in tests.
     model_client: Option<Arc<dyn aether_model::ModelClient>>,
 }
@@ -134,7 +132,6 @@ impl NoesisService {
             state: tokio::sync::Mutex::new(State::Off),
             drains: std::sync::atomic::AtomicU64::new(0),
             teaching_calls: std::sync::atomic::AtomicUsize::new(0),
-            teaching_cancel: parking_lot::Mutex::new(tokio_util::sync::CancellationToken::new()),
             model_client: None,
         }
     }
@@ -203,7 +200,6 @@ impl NoesisService {
         self.gate.enable(budget.clone());
         debug_assert!(self.gate.is_enabled());
         let cancel = tokio_util::sync::CancellationToken::new();
-        *self.teaching_cancel.lock() = cancel.clone();
         let desk = Desk {
             noesis: Some(noesis),
             undelivered: Default::default(),
@@ -233,7 +229,6 @@ impl NoesisService {
     /// Stop the service with the daemon; in-flight turns end with it.
     pub async fn shutdown(&self) {
         self.gate.disable();
-        self.teaching_cancel.lock().cancel();
         let previous = std::mem::replace(&mut *self.state.lock().await, State::Off);
         let live = match previous {
             State::Off => return,

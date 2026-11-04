@@ -44,14 +44,11 @@ impl NoesisService {
         {
             tokio::time::sleep(DRAIN_POLL.min(grace)).await;
         }
-        if self.current_drain(generation) {
-            // A teaching turn in flight ends at its model call now.
-            self.teaching_cancel.lock().cancel();
-        }
+        // Teaching turns never hold the state lock, so it is free here; a
+        // teaching model call still in flight ends when the service stops.
         let mut state = self.state.lock().await;
         let ours = matches!(&*state, State::Draining { generation: g, .. } if *g == generation);
         if !ours || !self.current_drain(generation) {
-            self.renew_cancel(&mut state);
             return;
         }
         // Retired and disabled first: a turn admitted earlier and registered
@@ -78,19 +75,6 @@ impl NoesisService {
             tracing::error!(%error, "closing noesis.db after the disable failed");
         }
         debug_assert!(matches!(*state, State::Off) && !self.gate.is_enabled());
-    }
-
-    /// A drain called off after it cancelled teaching calls: the service
-    /// that runs on gets a fresh token, or its every model call would end.
-    fn renew_cancel(&self, state: &mut State) {
-        let (State::Running(live) | State::Draining { live, .. }) = state else {
-            return;
-        };
-        if live.cancel.is_cancelled() {
-            live.cancel = tokio_util::sync::CancellationToken::new();
-            *self.teaching_cancel.lock() = live.cancel.clone();
-        }
-        debug_assert!(!live.cancel.is_cancelled());
     }
 
     /// Whether a Noesis turn still runs, or an admission is not yet settled.
