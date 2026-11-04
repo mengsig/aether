@@ -14,14 +14,17 @@ export const AETHER_OBSERVE = words(`hello status preview_retention storage_stat
   subscribe unsubscribe get_events get_transcript get_inbox get_snapshot get_invocation list_invocations get_checkpoint
   latest_checkpoint get_artifact list_artifacts read_artifact memories list_runs get_run_report replay list_models
   auth_status providers get_attention list_workspaces get_push_config list_repository_aliases list_notifications
-  get_notification mcp_servers list_agents_page get_transcript_page usage_breakdown noesis_status`);
+  get_notification mcp_servers list_agents_page get_transcript_page usage_breakdown noesis_status
+  noesis_get_session noesis_list_sessions noesis_graph noesis_jobs noesis_learner noesis_learner_evidence`);
 
 export const AETHER_OPERATE = words(`create_agent reply_to_question send_message append_note cancel interrupt
   configure_github_watcher create_schedule update_schedule trigger restart wake pause resume archive set_approvals
   compact create_task revoke_approval_rule publish_artifact create_memory forget_memory restore_memory pin_memory
   sync_repository_knowledge complete_path validate_workspace get_git_summary workspace_diff workspace_integrate
   workspace_discard refresh_provider_usage post_notification mark_notification_read resolve_notification
-  answer_notification list_devices update_agent resolve_approval add_approval_rule resolve_submission`);
+  answer_notification list_devices update_agent resolve_approval add_approval_rule resolve_submission
+  noesis_configure noesis_create_session noesis_send noesis_answer noesis_delete_session noesis_delete_proposition
+  noesis_delete_source noesis_extract noesis_import_source noesis_cancel_job noesis_correct_learner`);
 
 /** Host-only and remote-admin alike: only a `local` connection may send them. */
 export const AETHER_HOST_ONLY = words(`storage_gc shutdown engine_tool engine_tools export_run import_run alias_repository
@@ -33,7 +36,9 @@ export const AETHER_DEVICE_SELF = words("subscribe_push unsubscribe_push test_pu
 /** Aether commands that accept an `idempotency_key` (generated from the schema; checked by a test). */
 export const AETHER_KEYED = words(`add_approval_rule archive cancel create_agent create_memory create_schedule create_task
   interrupt pause record_memory_feedback reply_to_question resolve_approval restart resume send_message set_approvals
-  trigger update_agent update_schedule`);
+  trigger update_agent update_schedule noesis_answer noesis_cancel_job noesis_configure noesis_correct_learner
+  noesis_create_session noesis_delete_proposition noesis_delete_session noesis_delete_source noesis_extract
+  noesis_import_source noesis_send`);
 
 /** Archon `Read` requests (archon-core Request::class) and the protocol 24 read models. */
 export const ARCHON_READ = words(`hello request_status status guide repo_list list_items list_item_summaries get_item
@@ -61,22 +66,37 @@ export function aetherAccess(command: Json): Access {
 
 /** The guarded arms of access.rs, where a field widens what a command reaches. */
 function fieldAccess(cmd: string, command: Json): Access | null {
-  const field = (name: string): Json => {
-    const value = command[name];
-    return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {};
-  };
+  const field = (name: string): Json => objectAt(command, name);
   if (cmd === "create_memory" && field("spec").proposed === true) return "host_only";
   if (cmd === "memories" && field("query").proposed === true) return "host_only";
   if (cmd === "list_devices") return command.include_revoked === true ? "host_only" : "operate";
   if (cmd === "mcp_servers") return command.refresh === true ? "operate" : "observe";
   if (cmd === "update_agent" && (field("patch").backend != null || field("patch").tools != null)) return "host_only";
   if (isGlobalRule(command)) return "host_only";
+  if (cmd === "noesis_configure") return noesisConfigureAccess(field("patch"));
   if (cmd === "resolve_submission") {
     // Asking what became of a command needs the standing to send it.
     const inner = typeof field("command").cmd === "string" ? aetherAccess(field("command")) : "operate";
     return inner === "observe" ? "operate" : inner;
   }
   return null;
+}
+
+/** The object under `name`, or an empty one when it is absent or not an object. */
+function objectAt(json: Json, name: string): Json {
+  const value = json[name];
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Json) : {};
+}
+
+/** Mirrors noesis::configure_access: enabled, budgets, billing and prompt overrides are the host's. */
+function noesisConfigureAccess(patch: Json): Access {
+  const part = (name: string): Json => objectAt(patch, name);
+  const budget = part("budget");
+  const setsBudget = ["interactive_usd_daily", "background_usd_daily", "background_tokens_daily"]
+    .some((key) => budget[key] != null);
+  const reachesHost = patch.enabled != null || setsBudget || part("billing").allow_api != null
+    || part("prompts").overrides != null;
+  return reachesHost ? "host_only" : "operate";
 }
 
 function isGlobalRule(command: Json): boolean {
