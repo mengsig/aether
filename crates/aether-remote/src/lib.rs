@@ -7,6 +7,7 @@ pub mod connections;
 pub mod http;
 pub mod listener;
 mod lobby;
+pub mod mount;
 pub mod pairing;
 pub mod push;
 #[cfg(test)]
@@ -111,6 +112,12 @@ pub trait RemoteHost: Send + Sync + std::fmt::Debug + 'static {
         gate: DeviceGate,
         shutdown: CancellationToken,
     ) -> anyhow::Result<Ended>;
+
+    /// How the listener is published, read afresh. Mounted traffic flows only while recent
+    /// reads say [`mount::Publication::Private`]; a host that cannot tell keeps mounts closed.
+    async fn publication(&self) -> Result<mount::Publication, String> {
+        Err("this daemon cannot read how its listener is published".into())
+    }
 }
 
 /// What every request is answered by: the settings in force and the
@@ -123,6 +130,9 @@ pub(crate) struct Live {
     pub bound: Option<SocketAddr>,
     /// Why the listener is closed although enabled.
     pub error: Option<String>,
+    /// Cancelled once these mounts are no longer in force: what a request routed by them
+    /// holds, so it never outlives them.
+    pub remounted: CancellationToken,
 }
 
 /// The open listener: how to stop it, and the task to wait for.
@@ -131,6 +141,8 @@ struct Running {
     bound: SocketAddr,
     stop: CancellationToken,
     task: tokio::task::JoinHandle<()>,
+    /// Keeps the publication-status lease while the listener is open.
+    guard: tokio::task::JoinHandle<()>,
 }
 
 /// The remote edge of one daemon: listener, pairing and live sessions.
@@ -150,6 +162,13 @@ pub struct RemoteServer {
     /// WebSockets whose hello was accepted. Theirs alone, so no number of
     /// peers without a key can take a device's place.
     session_slots: Arc<tokio::sync::Semaphore>,
+    /// WebSockets tunnelled to a mounted daemon. Apart from the device sessions, so mounted
+    /// traffic cannot take a device's place.
+    mount_slots: Arc<tokio::sync::Semaphore>,
+    /// What mounted traffic is admitted under.
+    lease: Arc<mount::Lease>,
+    /// Cancelled when the mounts change, closing the tunnels opened under the old ones.
+    remounted: parking_lot::Mutex<CancellationToken>,
     pairing: parking_lot::Mutex<PairingBook>,
     live: parking_lot::RwLock<Arc<Live>>,
     /// Held across a whole settings change, so two cannot interleave.
@@ -186,6 +205,9 @@ impl RemoteServer {
             http_lobby: Lobby::new(config.max_connections, tuning.lobby_patience),
             greeting_lobby: Lobby::new(ungreeted, tuning.lobby_patience),
             session_slots: Arc::new(tokio::sync::Semaphore::new(config.max_connections)),
+            mount_slots: Arc::new(tokio::sync::Semaphore::new(config.max_connections)),
+            lease: Arc::default(),
+            remounted: parking_lot::Mutex::new(CancellationToken::new()),
             config,
             tuning,
             host,
@@ -252,6 +274,15 @@ impl RemoteServer {
         &self.http_lobby
     }
 
+    pub(crate) fn lease(&self) -> &Arc<mount::Lease> {
+        &self.lease
+    }
+
+    /// A place for one mounted WebSocket; `None` when every one is taken.
+    pub(crate) fn mount_slot(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.mount_slots.clone().try_acquire_owned().ok()
+    }
+
     /// A place for a WebSocket until its hello is accepted; `None` when
     /// every one is held by a connection that has only just arrived.
     pub(crate) fn greeting_seat(&self) -> Option<Seat> {
@@ -278,9 +309,12 @@ impl RemoteServer {
     /// Open, close or re-police the listener to match `settings`. A listener that cannot bind is
     /// not an error: the settings stand and [`RemoteServer::status`] says why it is closed.
     pub async fn apply(self: &Arc<Self>, settings: RemoteSettings) -> anyhow::Result<()> {
-        // Checked before anything changes, so bad origins change nothing.
+        // Checked before anything changes, so bad origins or mounts change nothing.
         http::public_origins(&settings.public_origins).map_err(anyhow::Error::msg)?;
+        let mounts = settings.mounts.as_deref().unwrap_or_default();
+        aether_protocol::remote::validate_mounts(mounts).map_err(anyhow::Error::msg)?;
         let mut running = self.running.lock().await;
+        self.follow_mounts(&settings);
         if !settings.enabled || self.is_stopping() {
             self.close(&mut running).await;
             self.replace_live(settings, None, None)?;
@@ -318,6 +352,18 @@ impl RemoteServer {
         Ok(())
     }
 
+    /// Close the tunnels of mounts that are no longer the ones in force.
+    fn follow_mounts(&self, settings: &RemoteSettings) {
+        let live = self.live();
+        let before = live.settings.mounts.as_deref().unwrap_or_default();
+        if before == settings.mounts.as_deref().unwrap_or_default() {
+            return;
+        }
+        let mut remounted = self.remounted.lock();
+        remounted.cancel();
+        *remounted = CancellationToken::new();
+    }
+
     fn open(self: &Arc<Self>, socket: tokio::net::TcpListener, bound: SocketAddr) -> Running {
         let stop = self.shutdown.child_token();
         let serving = listener::serve(socket, self.clone(), stop.clone());
@@ -326,8 +372,15 @@ impl RemoteServer {
                 tracing::error!(error = %format!("{error:#}"), "the remote listener stopped");
             }
         });
+        let lease = self.lease.clone().guard(self.host.clone(), stop.clone());
+        let guard = tokio::spawn(lease);
         tracing::info!(%bound, "the remote listener is open");
-        Running { bound, stop, task }
+        Running {
+            bound,
+            stop,
+            task,
+            guard,
+        }
     }
 
     /// Stop the listener and wait for its connections to end.
@@ -338,6 +391,9 @@ impl RemoteServer {
         open.stop.cancel();
         if let Err(error) = open.task.await {
             tracing::error!(%error, "the remote listener task failed");
+        }
+        if let Err(error) = open.guard.await {
+            tracing::error!(%error, "the publication-status guard failed");
         }
         tracing::info!(bound = %open.bound, "the remote listener is closed");
     }
@@ -354,11 +410,14 @@ impl RemoteServer {
                 OriginPolicy::new(&settings.public_origins, bound).map_err(anyhow::Error::msg)?
             }
         };
+        // Rotated by `follow_mounts` before this, so new routes never get a cancelled token.
+        let remounted = self.remounted.lock().clone();
         *self.live.write() = Arc::new(Live {
             settings,
             policy,
             bound,
             error,
+            remounted,
         });
         Ok(())
     }

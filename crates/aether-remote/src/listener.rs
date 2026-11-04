@@ -12,9 +12,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::http::respond;
+use crate::http::respond::{self, Upgrade};
 use crate::lobby::Seat;
-use crate::{RemoteConfig, RemoteServer, ws};
+use crate::{RemoteConfig, RemoteServer, mount, ws};
 use write_deadline::{Watch, WriteDeadline};
 
 mod write_deadline;
@@ -26,8 +26,9 @@ pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 300;
 /// connections are configured: a hello takes one round trip.
 pub const MAX_UNGREETED_SOCKETS: usize = 8;
 
-/// Most bytes of request line and headers read for one request.
-const MAX_HEAD_BYTES: usize = 32 * 1024;
+/// Most bytes of request line and headers read for one request, or for a mounted daemon's
+/// answer.
+pub(crate) const MAX_HEAD_BYTES: usize = 32 * 1024;
 /// How long to leave the socket alone after an accept fails, so a
 /// descriptor shortage does not become a busy loop.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
@@ -176,8 +177,14 @@ async fn connection(
     }
     // An upgraded connection waits in the greeting lobby, not in this one.
     drop(seat);
-    let Some(pending) = upgrade.take() else {
-        return;
+    let pending = match upgrade.take() {
+        None => return,
+        Some(Upgrade::Tunnel(tunnel)) => {
+            // Each frame the tunnel sends has a stall limit of its own.
+            watch.disarm();
+            return mount::carry(tunnel, *server.tuning(), stop).await;
+        }
+        Some(Upgrade::Carrier(pending)) => pending,
     };
     match pending.on_upgrade.await {
         Ok(upgraded) => {
