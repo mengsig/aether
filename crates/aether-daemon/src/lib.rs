@@ -18,6 +18,7 @@ pub mod remote;
 mod secrets;
 mod startup;
 mod status_reads;
+mod usage_breakdown;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

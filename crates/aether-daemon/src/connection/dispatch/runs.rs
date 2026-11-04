@@ -5,6 +5,7 @@ use aether_protocol::{Command, ErrorReply, Reply};
 
 use crate::connection::dispatch::blocking;
 use crate::connection::{map_err, store_err};
+use crate::projections::TreeFilter;
 
 pub(super) fn owns(command: &Command) -> bool {
     matches!(
@@ -66,14 +67,36 @@ pub(super) async fn dispatch(daemon: &Daemon, command: Command) -> Result<Reply,
         Command::GetTree {
             run,
             include_archived,
+            role_prefix,
+            root,
         } => {
+            if role_prefix.as_deref().is_some_and(str::is_empty) {
+                return Err(ErrorReply::invalid("role_prefix must not be empty"));
+            }
+            let filter = TreeFilter {
+                include_archived,
+                role_prefix,
+                root,
+            };
             let store = rt.store().clone();
-            let tree = blocking(move || {
-                crate::projections::build_tree(store.as_ref(), run, include_archived)
-            })
-            .await?;
-            Ok(Reply::Tree(tree.map_err(store_err)?))
+            let tree = blocking(move || rooted_tree(store.as_ref(), run, &filter)).await?;
+            Ok(Reply::Tree(tree?))
         }
         _ => unreachable!("routed to the wrong command family"),
     }
+}
+
+/// The tree `filter` asks for; a root the store does not know is not found.
+fn rooted_tree(
+    store: &dyn aether_store::Store,
+    run: Option<aether_core::id::RunId>,
+    filter: &TreeFilter,
+) -> Result<aether_protocol::AgentTree, ErrorReply> {
+    if let Some(root) = filter.root {
+        let agent = store.agent(root).map_err(store_err)?;
+        if agent.is_none() {
+            return Err(ErrorReply::not_found(format!("agent {root}")));
+        }
+    }
+    crate::projections::build_tree(store, run, filter).map_err(store_err)
 }

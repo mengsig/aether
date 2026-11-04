@@ -109,6 +109,13 @@ impl Runtime {
         preflight: Preflight<'_>,
         submission: Option<&Submission>,
     ) -> Result<(Agent, Option<Task>)> {
+        let subsystem = spec.subsystem.clone();
+        if subsystem
+            .as_deref()
+            .is_some_and(|name| name.trim().is_empty())
+        {
+            return Err(RuntimeError::Invalid("a subsystem must be named".into()));
+        }
         let PreparedAgent {
             mut agent,
             task,
@@ -140,7 +147,10 @@ impl Runtime {
             crate::cancellation::check_parent(self, &hold, parent.id)?;
         }
         self.recheck_workspace_gc_admission(&agent.scope)?;
-        commit.push_mutation(Mutation::UpsertAgent(agent.clone()));
+        commit.push_mutation(Mutation::CreateAgent {
+            agent: agent.clone(),
+            subsystem,
+        });
         crate::submission::record_receipt(&mut commit, submission, &(agent.clone(), task.clone()))?;
         self.apply_held(hold, commit)?;
         self.seed_repository_knowledge(&agent, by);

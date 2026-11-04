@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::str::FromStr;
+use std::sync::Mutex;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ulid::Ulid;
@@ -36,6 +37,26 @@ pub fn prefix_of(text: &str) -> Option<&str> {
     Some(prefix)
 }
 
+static LAST_ULID: Mutex<Ulid> = Mutex::new(Ulid::nil());
+
+/// A fresh ULID strictly above every one this process minted before, so a
+/// page cursor over ids never skips a later creation.
+fn next_ulid() -> Ulid {
+    let mut last = LAST_ULID
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fresh = Ulid::generate();
+    let next = if fresh > *last {
+        fresh
+    } else {
+        // The 80-bit random part overflowing is out of reach; a new draw is the safe answer.
+        last.increment().unwrap_or_else(|_| Ulid::generate())
+    };
+    assert!(next > *last, "ids rise strictly");
+    *last = next;
+    next
+}
+
 macro_rules! typed_id {
     ($(#[$doc:meta])* $name:ident, $prefix:literal) => {
         $(#[$doc])*
@@ -48,7 +69,7 @@ macro_rules! typed_id {
 
             /// Mint a fresh id from the current time and a random tail.
             pub fn new() -> Self {
-                Self(Ulid::generate())
+                Self(next_ulid())
             }
 
             /// Wrap an existing ULID (used by stores and tests).
@@ -266,6 +287,12 @@ mod tests {
             assert!(invalid.parse::<AgentId>().is_err(), "{invalid}");
             assert_eq!(prefix_of(invalid), None, "{invalid}");
         }
+    }
+
+    #[test]
+    fn ids_minted_in_a_burst_strictly_rise() {
+        let ids: Vec<AgentId> = (0..10_000).map(|_| AgentId::new()).collect();
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]

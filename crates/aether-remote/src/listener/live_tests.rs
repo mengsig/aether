@@ -24,6 +24,7 @@ const PUBLIC_HOST: &str = "host.tailnet.example";
 
 fn settings(public_origins: &[&str]) -> RemoteSettings {
     RemoteSettings {
+        mounts: None,
         enabled: true,
         pairing: true,
         public_origins: public_origins.iter().map(|o| (*o).to_owned()).collect(),

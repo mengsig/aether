@@ -429,6 +429,8 @@ fn command_for(name: &str, arguments: Value) -> Result<Command, String> {
         "get_tree" => {
             let a: RunArg = args(name, arguments)?;
             Command::GetTree {
+                role_prefix: None,
+                root: None,
                 run: a.run.as_deref().map(id).transpose()?,
                 include_archived: a.include_archived,
             }

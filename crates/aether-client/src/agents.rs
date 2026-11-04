@@ -50,6 +50,8 @@ impl Client {
     pub async fn tree(&self, run: Option<RunId>, include_archived: bool) -> Result<AgentTree> {
         match self
             .request(Command::GetTree {
+                role_prefix: None,
+                root: None,
                 run,
                 include_archived,
             })

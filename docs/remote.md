@@ -106,6 +106,7 @@ Unknown keys are refused, as in every other section.
 | `pairing` | bool | `false` | `start_pairing` may open a pairing. |
 | `public_origins` | string[] | `[]` | Exact origins browsers use, e.g. `https://box.tail1234.ts.net`. The Host and Origin allowlist. Each is `https://host[:port]` with no path, query or trailing slash; at most 16. |
 | `push` | bool | `false` | The daemon sends Web Push notifications. |
+| `mounts` | object[] | absent | Local services the listener forwards to, each `{prefix, kind, target}`: `prefix` matches `/[a-z][a-z0-9-]{0,31}`, `kind` is `archon`, `target` is `http://127.0.0.1:<port>` or `http://[::1]:<port>`. At most 4, prefixes distinct. An absent field keeps the saved mounts and an empty list removes them. Needs the `remote_mounts` feature; stored only, as this daemon forwards nothing yet. |
 
 Enabling with no public origin is allowed and reachable only on loopback
 (`http://127.0.0.1:8377`, `http://localhost:8377`), which browsers treat as a
@@ -720,6 +721,9 @@ why `host_only` is open to it; it gains none of the remote administration.
 | `get_agent` | observe | |
 | `list_agents` | observe | |
 | `get_tree` | observe | |
+| `list_agents_page` | observe | |
+| `get_transcript_page` | observe | |
+| `usage_breakdown` | observe | |
 | `update_agent` | operate | `host_only` when `patch.backend` or `patch.tools` is supplied; `subtree` needs nothing more. |
 | `reply_to_question` | operate | |
 | `send_message` | operate | The same with `attachments` (images). |

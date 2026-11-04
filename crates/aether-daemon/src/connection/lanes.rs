@@ -313,6 +313,8 @@ mod tests {
     fn reads_run_aside_and_everything_else_in_order() {
         assert!(is_read(&Command::Status));
         assert!(is_read(&Command::GetTree {
+            role_prefix: None,
+            root: None,
             run: None,
             include_archived: false,
         }));

@@ -2306,6 +2306,45 @@
           "type": "object"
         },
         {
+          "description": "One page of agents in `AgentId` order, from just after `after`.\n`limit` is 1 to 500, 200 when absent. Needs `features::AGENTS_PAGING`.",
+          "properties": {
+            "after": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cmd": {
+              "const": "list_agents_page",
+              "type": "string"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "query": {
+              "$ref": "#/$defs/AgentQuery",
+              "default": {
+                "include_archived": false,
+                "live_only": false,
+                "statuses": []
+              }
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The live graph: every agent in the run (or all runs) with relations.",
           "properties": {
             "cmd": {
@@ -2316,6 +2355,24 @@
               "default": false,
               "description": "Include agents cleared from the view.",
               "type": "boolean"
+            },
+            "role_prefix": {
+              "description": "Only agents whose role starts with this text. Needs\n`features::AGENTS_PAGING`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "root": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/AgentId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this agent and its descendants. Needs `features::AGENTS_PAGING`."
             },
             "run": {
               "anyOf": [
@@ -3321,6 +3378,90 @@
             "cmd",
             "agent",
             "after"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A bounded page of an agent's transcript: entries after `after`, the\nnewest before `before`, or the newest of all when neither is given.\n`limit` is 1 to 1000, 200 when absent. Needs `features::TRANSCRIPT_PAGING`.",
+          "properties": {
+            "after": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "agent": {
+              "$ref": "#/$defs/AgentId"
+            },
+            "before": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cmd": {
+              "const": "get_transcript_page",
+              "type": "string"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "agent"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Spend summed from `invocation.completed` events, grouped by `by`, in\n`since..until` (completion time, `until` exclusive). `limit` is 1 to\n1000 rows, 1000 when absent. Needs `features::USAGE_BREAKDOWN`.",
+          "properties": {
+            "by": {
+              "$ref": "#/$defs/UsageGroup"
+            },
+            "cmd": {
+              "const": "usage_breakdown",
+              "type": "string"
+            },
+            "limit": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "scope": {
+              "$ref": "#/$defs/UsageScope",
+              "default": {}
+            },
+            "since": {
+              "format": "date-time",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "until": {
+              "format": "date-time",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "by"
           ],
           "type": "object"
         },
@@ -5373,6 +5514,13 @@
             },
             "partial_json": {
               "type": "string"
+            },
+            "tool_use_id": {
+              "description": "The tool call's id, as its committed message will carry it. Sent\nonly to a client listing `features::DELTA_ORDER`.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -10395,6 +10543,13 @@
       ],
       "type": "object"
     },
+    "MountKind": {
+      "description": "What a mount forwards to.",
+      "enum": [
+        "archon"
+      ],
+      "type": "string"
+    },
     "NetworkPolicy": {
       "enum": [
         "denied",
@@ -11829,6 +11984,28 @@
       },
       "type": "object"
     },
+    "RemoteMount": {
+      "description": "One prefix of the listener forwarded to a loopback target.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/MountKind"
+        },
+        "prefix": {
+          "description": "One lowercase path segment: `^/[a-z][a-z0-9-]{0,31}$`.",
+          "type": "string"
+        },
+        "target": {
+          "description": "`http://127.0.0.1:<port>` or `http://[::1]:<port>`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "prefix",
+        "kind",
+        "target"
+      ],
+      "type": "object"
+    },
     "RemoteSettings": {
       "description": "The runtime-changeable remote settings, saved whole under a revision.",
       "properties": {
@@ -11836,6 +12013,16 @@
           "default": false,
           "description": "Whether the remote listener is open.",
           "type": "boolean"
+        },
+        "mounts": {
+          "description": "Listener path mounts, at most [`MAX_MOUNTS`]. In `configure_remote`,\nabsent keeps the saved mounts and an empty list removes them; a reply\nomits it when there are none. Needs `features::REMOTE_MOUNTS`.",
+          "items": {
+            "$ref": "#/$defs/RemoteMount"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "pairing": {
           "default": false,
@@ -12434,6 +12621,44 @@
           "type": "object"
         },
         {
+          "description": "Reply to `list_agents_page`. `next_after` is the cursor for the next\npage, absent on the last one. Ids are only ordered, not committed in\norder, so a walk covers the agents present when it began; a client\nsubscribes first and applies the buffered events for creations during it.",
+          "properties": {
+            "data": {
+              "properties": {
+                "agents": {
+                  "items": {
+                    "$ref": "#/$defs/Agent"
+                  },
+                  "type": "array"
+                },
+                "next_after": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/AgentId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "agents"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "agents_page",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "data": {
               "$ref": "#/$defs/AgentTree"
@@ -12749,6 +12974,64 @@
             },
             "reply": {
               "const": "transcript",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reply to `get_transcript_page`: entries in ascending `seq`, whether\nolder or newer ones exist outside it, and the seq of the agent's newest\nentry (0 for none).",
+          "properties": {
+            "data": {
+              "properties": {
+                "entries": {
+                  "items": {
+                    "$ref": "#/$defs/TranscriptEntry"
+                  },
+                  "type": "array"
+                },
+                "has_after": {
+                  "type": "boolean"
+                },
+                "has_before": {
+                  "type": "boolean"
+                },
+                "last_seq": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "entries",
+                "has_before",
+                "has_after",
+                "last_seq"
+              ],
+              "type": "object"
+            },
+            "reply": {
+              "const": "transcript_page",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reply",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/UsageBreakdown"
+            },
+            "reply": {
+              "const": "usage_breakdown",
               "type": "string"
             }
           },
@@ -14700,6 +14983,15 @@
             "invocation": {
               "$ref": "#/$defs/InvocationId"
             },
+            "invocation_seq": {
+              "description": "1 for an invocation's first delta, one more for each after it,\nassigned once when produced: the same on every subscription, so\na jump is a lost delta. Sent only to a client listing\n`features::DELTA_ORDER`.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "sub": {
               "format": "uint64",
               "minimum": 0,
@@ -16215,6 +16507,124 @@
       ],
       "type": "object"
     },
+    "UsageBreakdown": {
+      "description": "Reply to `usage_breakdown`: rows ordered by `key`, and the total over\nevery invocation in scope, those of rows cut by `limit` included.",
+      "properties": {
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/UsageRow"
+          },
+          "type": "array"
+        },
+        "total": {
+          "$ref": "#/$defs/Usage"
+        },
+        "truncated": {
+          "description": "More groups matched than `limit` let through.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rows",
+        "total",
+        "truncated"
+      ],
+      "type": "object"
+    },
+    "UsageGroup": {
+      "description": "What each `usage_breakdown` row is keyed by.",
+      "oneOf": [
+        {
+          "enum": [
+            "provider",
+            "run"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "model",
+          "description": "`provider/model` as the invocation recorded it.",
+          "type": "string"
+        },
+        {
+          "const": "role",
+          "description": "The invoking agent's role.",
+          "type": "string"
+        },
+        {
+          "const": "day",
+          "description": "The UTC date the invocation completed, `YYYY-MM-DD`.",
+          "type": "string"
+        }
+      ]
+    },
+    "UsageRow": {
+      "description": "One group's spend.",
+      "properties": {
+        "invocations": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "key": {
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "required": [
+        "key",
+        "usage",
+        "invocations"
+      ],
+      "type": "object"
+    },
+    "UsageScope": {
+      "description": "Which invocations `usage_breakdown` sums. Every field given narrows the\nset; none sums the whole fleet.",
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "This agent's own invocations."
+        },
+        "role_prefix": {
+          "description": "Agents whose role starts with this text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subtree": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AgentId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "This agent's and every descendant's invocations."
+        }
+      },
+      "type": "object"
+    },
     "UsageWindow": {
       "description": "One named account limit, including limits outside the preferred scheduling window.",
       "properties": {
@@ -16827,7 +17237,7 @@
     "$ref": "#/$defs/ClientFrame"
   },
   "min_protocol_version": 17,
-  "protocol_version": 25,
+  "protocol_version": 26,
   "server_frame": {
     "$ref": "#/$defs/ServerFrame"
   },

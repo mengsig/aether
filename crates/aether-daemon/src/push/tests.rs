@@ -101,6 +101,7 @@ impl Fixture {
 
     pub(crate) fn set_push(&self, push: bool) {
         let settings = RemoteSettings {
+            mounts: None,
             enabled: true,
             pairing: false,
             public_origins: vec![ORIGIN.into()],

@@ -287,7 +287,7 @@ pub(super) async fn drive(
     let mut state = StreamState::new(pricing, resolved.clone());
     runtime.bus.publish_delta(
         ctx.agent.id,
-        state.message_invocation,
+        &mut state.deltas,
         DeltaKind::TurnStarted { turn: ctx.turn },
     );
     // Tools the engine moved to the background: the turn is not over until
@@ -1008,16 +1008,14 @@ pub(super) async fn drive(
         runtime.apply(commit)?;
     }
     let uncommitted = Uncommitted {
-        invocation: Some(state.message_invocation),
+        invocation: Some(state.deltas.invocation()),
         content: state.take_partial(),
     };
     // Under the id of a message left uncommitted, if any: its streamed text
     // stays live until the interrupt or failure that ends the turn keeps it.
-    runtime.bus.publish_delta(
-        ctx.agent.id,
-        state.message_invocation,
-        DeltaKind::TurnFinished,
-    );
+    runtime
+        .bus
+        .publish_delta(ctx.agent.id, &mut state.deltas, DeltaKind::TurnFinished);
     let answer_jobs = match (answered_over_jobs, background.is_empty()) {
         (false, _) => crate::turn::AnswerJobs::Idle,
         (true, true) => crate::turn::AnswerJobs::Finished,

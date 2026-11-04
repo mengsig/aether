@@ -210,6 +210,9 @@ impl Store for CommitsMidPass {
     fn subtree_ids(&self, root: AgentId) -> Result<std::collections::BTreeSet<AgentId>> {
         self.inner.subtree_ids(root)
     }
+    fn expired_child_span(&self, parent: AgentId) -> Result<Option<(u64, u64)>> {
+        self.inner.expired_child_span(parent)
+    }
     fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>> {
         let agents = self.inner.subtree_agents(root)?;
         self.fire(Hook::FleetRead)?;
@@ -275,6 +278,17 @@ impl Store for CommitsMidPass {
             self.fire(Hook::FleetRead)?;
         }
         Ok(agents)
+    }
+    fn agents_page(
+        &self,
+        filter: &AgentFilter,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> Result<aether_store::AgentPage> {
+        self.inner.agents_page(filter, after, limit)
+    }
+    fn agent_subsystem(&self, id: AgentId) -> Result<Option<String>> {
+        self.inner.agent_subsystem(id)
     }
 
     fn inbox_last_seq(&self, agent: AgentId) -> Result<u64> {

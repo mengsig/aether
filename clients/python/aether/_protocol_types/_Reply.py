@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 from ._ReplyAgent import ReplyAgent
 from ._ReplyAgents import ReplyAgents
+from ._ReplyAgentsPage import ReplyAgentsPage
 from ._ReplyApprovalRule import ReplyApprovalRule
 from ._ReplyApprovalRules import ReplyApprovalRules
 from ._ReplyApprovals import ReplyApprovals
@@ -66,7 +67,9 @@ from ._ReplySubscribed import ReplySubscribed
 from ._ReplyTask import ReplyTask
 from ._ReplyTasks import ReplyTasks
 from ._ReplyTranscript import ReplyTranscript
+from ._ReplyTranscriptPage import ReplyTranscriptPage
 from ._ReplyTree import ReplyTree
+from ._ReplyUsageBreakdown import ReplyUsageBreakdown
 from ._ReplyWelcome import ReplyWelcome
 from ._ReplyWorkspaceDiff import ReplyWorkspaceDiff
 from ._ReplyWorkspaceDiscarded import ReplyWorkspaceDiscarded
@@ -89,6 +92,7 @@ Reply = (
     ReplyPaused |
     ReplyAgent |
     ReplyAgents |
+    ReplyAgentsPage |
     ReplyTree |
     ReplyTask |
     ReplyTasks |
@@ -104,6 +108,8 @@ Reply = (
     ReplySubscribed |
     ReplyEvents |
     ReplyTranscript |
+    ReplyTranscriptPage |
+    ReplyUsageBreakdown |
     ReplyInbox |
     ReplySnapshot |
     ReplyInvocation |

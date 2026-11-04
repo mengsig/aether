@@ -160,6 +160,7 @@ impl RemoteControl {
                 aether_protocol::remote::stale_revision_message(current, expected_revision),
             ));
         }
+        settings.mounts = kept_mounts(settings.mounts.take(), &previous.settings)?;
         let revision = current.checked_add(1).ok_or_else(|| {
             AdminError::Internal("the remote settings revision overflowed".into())
         })?;
@@ -407,6 +408,20 @@ fn check_reason(reason: &str) -> Admin<String> {
     Ok(reason.to_owned())
 }
 
+/// The mounts to save: absent keeps the saved ones, an empty list removes
+/// them, so a client that never heard of mounts cannot clear them.
+fn kept_mounts(
+    asked: Option<Vec<aether_protocol::remote::RemoteMount>>,
+    saved: &RemoteSettings,
+) -> Admin<Option<Vec<aether_protocol::remote::RemoteMount>>> {
+    let Some(mounts) = asked else {
+        return Ok(saved.mounts.clone());
+    };
+    aether_protocol::remote::validate_mounts(&mounts).map_err(AdminError::Invalid)?;
+    assert!(mounts.len() <= aether_protocol::remote::MAX_MOUNTS);
+    Ok((!mounts.is_empty()).then_some(mounts))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -548,5 +563,32 @@ mod tests {
         assert!(matches!(not_claimed.into(), AdminError::Transition(_)));
         let disabled = PairingError::Disabled("pairing is disabled");
         assert!(matches!(disabled.into(), AdminError::Invalid(_)));
+    }
+
+    #[test]
+    fn absent_mounts_keep_the_saved_ones_and_an_empty_list_removes_them() {
+        use aether_protocol::remote::{MountKind, RemoteMount};
+        let archon = RemoteMount {
+            prefix: "/archon".into(),
+            kind: MountKind::Archon,
+            target: "http://127.0.0.1:8378".into(),
+        };
+        let saved = RemoteSettings {
+            mounts: Some(vec![archon.clone()]),
+            ..RemoteSettings::default()
+        };
+        assert_eq!(
+            kept_mounts(None, &saved).unwrap(),
+            Some(vec![archon.clone()])
+        );
+        assert_eq!(kept_mounts(Some(vec![]), &saved).unwrap(), None);
+        let outside = RemoteMount {
+            target: "http://example.com:80".into(),
+            ..archon
+        };
+        assert!(matches!(
+            kept_mounts(Some(vec![outside]), &saved),
+            Err(AdminError::Invalid(_))
+        ));
     }
 }

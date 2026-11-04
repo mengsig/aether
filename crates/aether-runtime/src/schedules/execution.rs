@@ -19,6 +19,7 @@ use aether_store::{AgentFilter, Commit, Mutation};
 /// The `create_agent` request one spawn occurrence makes.
 pub(super) fn spawn_request(template: &SpawnSpec, objective: String) -> CreateAgentSpec {
     CreateAgentSpec {
+        subsystem: None,
         role: template.role.clone(),
         name: template.name.clone(),
         objective: Some(objective),

@@ -9,6 +9,9 @@ use aether_core::model::ContentBlock;
 use aether_core::replay::{ReplayFrame, TurnOutcome};
 use serde_json::Value;
 
+mod v26;
+pub use v26::withhold_delta_order;
+
 /// Oldest protocol version this build still serves. Existing frame rewrites
 /// remain small; v20 accounting deltas are withheld from older subscriptions.
 pub const MIN_PROTOCOL_VERSION: u32 = 17;
@@ -58,8 +61,9 @@ pub fn encode_for(version: u32, frame: &ServerFrame) -> Result<String, serde_jso
     if let Some(folded) = older_error_reply(version, frame) {
         return crate::encode(&folded);
     }
-    let rewritten =
-        older_replay_reply(version, frame).or_else(|| older_agents_reply(version, frame));
+    let rewritten = older_replay_reply(version, frame)
+        .or_else(|| older_agents_reply(version, frame))
+        .or_else(|| v26::older_frame(version, frame));
     let line = crate::encode(rewritten.as_ref().unwrap_or(frame))?;
     let hide_images = version < 19 && line.contains(IMAGE_REF_TAG);
     let hide_devices = version < 18 && line.contains(DEVICE_ORIGIN);
@@ -533,6 +537,7 @@ mod tests {
             ("get_snapshot", &["id"]),
             ("get_task", &["id"]),
             ("get_transcript", &["after", "agent"]),
+            ("get_transcript_page", &["agent"]),
             ("get_tree", &[]),
             (
                 "hello",
@@ -542,6 +547,7 @@ mod tests {
             ("interrupt", &["agent"]),
             ("latest_checkpoint", &["agent"]),
             ("list_agents", &["query"]),
+            ("list_agents_page", &[]),
             ("list_approval_rules", &[]),
             ("list_approvals", &[]),
             ("list_artifacts", &["query"]),
@@ -605,6 +611,7 @@ mod tests {
             ("update_agent", &["id", "patch"]),
             ("update_device", &["id"]),
             ("update_schedule", &["action", "id"]),
+            ("usage_breakdown", &["by"]),
             ("validate_workspace", &["path"]),
             ("wake", &["agent"]),
             ("workspace_diff", &["agent"]),
@@ -684,7 +691,7 @@ mod tests {
 
     #[test]
     fn the_window_retains_existing_versions() {
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 25));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 26));
         for version in MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION {
             let mut hello = Hello::new("t", "0");
             hello.protocol_version = version;
@@ -927,7 +934,7 @@ mod tests {
                 .unwrap()
                 .contains(&Value::String("status_since".into()))
         );
-        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 25));
+        assert_eq!((MIN_PROTOCOL_VERSION, PROTOCOL_VERSION), (17, 26));
     }
 
     #[test]

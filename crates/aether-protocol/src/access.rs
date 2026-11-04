@@ -102,7 +102,8 @@ impl Command {
             | Self::ListModels | Self::AuthStatus | Self::Providers | Self::GetAttention
             | Self::ListWorkspaces { .. } | Self::GetPushConfig
             | Self::ListRepositoryAliases | Self::ListNotifications { .. }
-            | Self::GetNotification { .. } => Access::Observe,
+            | Self::GetNotification { .. } | Self::ListAgentsPage { .. }
+            | Self::GetTranscriptPage { .. } | Self::UsageBreakdown { .. } => Access::Observe,
 
             Self::CreateAgent(_) | Self::ReplyToQuestion { .. } | Self::SendMessage { .. }
             | Self::AppendNote { .. } | Self::Cancel { .. } | Self::Interrupt { .. }

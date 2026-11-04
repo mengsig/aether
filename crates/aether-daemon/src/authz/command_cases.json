@@ -62,6 +62,27 @@
     }
   },
   {
+    "access": "observe",
+    "command": {
+      "cmd": "list_agents_page",
+      "query": {}
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "get_transcript_page",
+      "agent": "agt_00000000000000000000000000"
+    }
+  },
+  {
+    "access": "observe",
+    "command": {
+      "cmd": "usage_breakdown",
+      "by": "model"
+    }
+  },
+  {
     "access": "operate",
     "command": {
       "cmd": "update_agent",

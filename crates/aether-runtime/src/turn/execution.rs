@@ -497,11 +497,12 @@ pub(super) async fn run_link(
     }
 
     // ---- 4. invoke the model -------------------------------------------------
-    let invocation_id = InvocationId::new();
+    let mut deltas = DeltaStream::new(InvocationId::new());
+    let invocation_id = deltas.invocation();
     let started_at = now();
     runtime.bus.publish_delta(
         ctx.agent.id,
-        invocation_id,
+        &mut deltas,
         DeltaKind::TurnStarted { turn: ctx.turn },
     );
     // Aliases (`sol`) are Aether's; the provider knows only canonical ids. The
@@ -515,7 +516,7 @@ pub(super) async fn run_link(
         Err(e) => {
             runtime
                 .bus
-                .publish_delta(ctx.agent.id, invocation_id, DeltaKind::TurnFinished);
+                .publish_delta(ctx.agent.id, &mut deltas, DeltaKind::TurnFinished);
             return record_failure(
                 runtime,
                 ctx,
@@ -533,31 +534,32 @@ pub(super) async fn run_link(
     };
     let bus = runtime.bus.clone();
     let agent_id = ctx.agent.id;
-    let mut tool_names: BTreeMap<usize, String> = BTreeMap::new();
+    let mut tool_names: BTreeMap<usize, (String, String)> = BTreeMap::new();
     let mut receipt_seen = false;
     let outcome = collect_partial(stream, |event| match event {
         StreamEvent::MessageStop => receipt_seen = true,
         StreamEvent::TextDelta { text, .. } => bus.publish_delta(
             agent_id,
-            invocation_id,
+            &mut deltas,
             DeltaKind::Text { text: text.clone() },
         ),
         StreamEvent::ThinkingDelta { text, .. } => bus.publish_delta(
             agent_id,
-            invocation_id,
+            &mut deltas,
             DeltaKind::Thinking { text: text.clone() },
         ),
         StreamEvent::BlockStart {
             index,
-            block: aether_core::model::BlockStart::ToolUse { name, .. },
+            block: aether_core::model::BlockStart::ToolUse { id, name, .. },
         } => {
-            tool_names.insert(*index, name.clone());
+            tool_names.insert(*index, (name.clone(), id.clone()));
             bus.publish_delta(
                 agent_id,
-                invocation_id,
+                &mut deltas,
                 DeltaKind::ToolInput {
                     name: name.clone(),
                     partial_json: String::new(),
+                    tool_use_id: Some(id.clone()),
                 },
             );
         }
@@ -565,13 +567,14 @@ pub(super) async fn run_link(
             index,
             partial_json,
         } => {
-            let name = tool_names.get(index).cloned().unwrap_or_default();
+            let (name, id) = tool_names.get(index).cloned().unzip();
             bus.publish_delta(
                 agent_id,
-                invocation_id,
+                &mut deltas,
                 DeltaKind::ToolInput {
-                    name,
+                    name: name.unwrap_or_default(),
                     partial_json: partial_json.clone(),
+                    tool_use_id: id,
                 },
             );
         }
@@ -580,7 +583,7 @@ pub(super) async fn run_link(
     .await;
     runtime
         .bus
-        .publish_delta(ctx.agent.id, invocation_id, DeltaKind::TurnFinished);
+        .publish_delta(ctx.agent.id, &mut deltas, DeltaKind::TurnFinished);
 
     let response = match outcome {
         Ok(r) => r,

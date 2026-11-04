@@ -405,6 +405,19 @@ impl Store for SqliteStore {
         Ok(agents)
     }
 
+    fn agents_page(
+        &self,
+        filter: &AgentFilter,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> Result<crate::AgentPage> {
+        self.page_agents(filter, after, limit)
+    }
+
+    fn agent_subsystem(&self, id: AgentId) -> Result<Option<String>> {
+        self.read_agent_subsystem(id)
+    }
+
     fn is_descendant(&self, root: AgentId, id: AgentId) -> Result<bool> {
         // UNION drops repeated rows, so a corrupt parent cycle ends the walk.
         Ok(self.read_conn()?.query_row(
@@ -452,6 +465,24 @@ impl Store for SqliteStore {
             );
         }
         Ok(ids)
+    }
+
+    fn expired_child_span(&self, parent: AgentId) -> Result<Option<(u64, u64)>> {
+        let (first, last): (Option<i64>, Option<i64>) = self.read_conn()?.query_row(
+            "SELECT MIN(first_seq), MAX(last_seq) FROM expired_event_spans WHERE parent_agent_id = ?1",
+            [parent.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let (Some(first), Some(last)) = (first, last) else {
+            debug_assert!(first.is_none() && last.is_none(), "both aggregate one set");
+            return Ok(None);
+        };
+        if first <= 0 || last < first {
+            return Err(StoreError::Corrupt(format!(
+                "expired span {first}..={last} under {parent} is out of order"
+            )));
+        }
+        Ok(Some((first as u64, last as u64)))
     }
 
     fn subtree_agents(&self, root: AgentId) -> Result<Vec<Agent>> {
@@ -918,8 +949,19 @@ impl Store for SqliteStore {
 /// The agent listing for `filter`. Whole, live-only and per-run listings walk
 /// `agents_created` or `agents_run_created` in order; other filters sort matches.
 pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> String {
+    let mut sql = format!(
+        "SELECT id, body FROM agents WHERE {}",
+        agent_predicate(filter, args)
+    );
+    sql.push_str(" ORDER BY created_at ASC");
+    debug_assert_eq!(sql.matches('?').count(), args.len());
+    sql
+}
+
+/// The `WHERE` condition selecting `filter`'s agents by their columns.
+pub(super) fn agent_predicate(filter: &AgentFilter, args: &mut Arguments) -> String {
     debug_assert!(args.is_empty(), "placeholders are numbered from 1");
-    let mut sql = String::from("SELECT id, body FROM agents WHERE 1 = 1");
+    let mut sql = String::from("1 = 1");
     if let Some(p) = filter.parent {
         args.push(Box::new(p.to_string()));
         sql.push_str(&format!(" AND parent = ?{}", args.len()));
@@ -952,7 +994,6 @@ pub(super) fn agent_list_sql(filter: &AgentFilter, args: &mut Arguments) -> Stri
             .collect();
         sql.push_str(&format!(" AND status IN ({})", placeholders.join(",")));
     }
-    sql.push_str(" ORDER BY created_at ASC");
     debug_assert_eq!(sql.matches('?').count(), args.len());
     sql
 }

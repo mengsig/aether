@@ -161,6 +161,8 @@ where
     let version = Arc::new(AtomicU32::new(aether_protocol::PROTOCOL_VERSION));
     // Whether the hello listed `features::HISTORY_EXPIRED`; shared the same way.
     let history_expired = Arc::new(AtomicBool::new(false));
+    // Whether the hello listed `features::DELTA_ORDER`; shared the same way.
+    let delta_order = Arc::new(AtomicBool::new(false));
 
     let (auth_tx, auth_rx) = tokio::sync::watch::channel::<Option<AuthContext>>(None);
     let writer = writer::run(
@@ -169,6 +171,7 @@ where
         writer::Speaking {
             version: version.clone(),
             history_expired: history_expired.clone(),
+            delta_order: delta_order.clone(),
         },
         auth_rx,
     );
@@ -316,6 +319,13 @@ where
                                         .any(|feature| feature == features::HISTORY_EXPIRED),
                                     Ordering::SeqCst,
                                 );
+                                delta_order.store(
+                                    hello
+                                        .features
+                                        .iter()
+                                        .any(|feature| feature == features::DELTA_ORDER),
+                                    Ordering::SeqCst,
+                                );
                                 match policy.admit(hello) {
                                     Err(refusal) => {
                                         tokio::time::sleep(policy.refusal_delay()).await;
@@ -392,6 +402,11 @@ where
                                                     features::NOTIFICATIONS.into(),
                                                     features::SUBTREE_UPDATE.into(),
                                                     features::HISTORY_EXPIRED.into(),
+                                                    features::AGENTS_PAGING.into(),
+                                                    features::TRANSCRIPT_PAGING.into(),
+                                                    features::DELTA_ORDER.into(),
+                                                    features::USAGE_BREAKDOWN.into(),
+                                                    features::REMOTE_MOUNTS.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,

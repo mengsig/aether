@@ -315,6 +315,15 @@ pub enum Reply {
     },
     Agent(Agent),
     Agents(Vec<Agent>),
+    /// Reply to `list_agents_page`. `next_after` is the cursor for the next
+    /// page, absent on the last one. Ids are only ordered, not committed in
+    /// order, so a walk covers the agents present when it began; a client
+    /// subscribes first and applies the buffered events for creations during it.
+    AgentsPage {
+        agents: Vec<Agent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next_after: Option<AgentId>,
+    },
     Tree(AgentTree),
     Task(Task),
     Tasks(Vec<Task>),
@@ -348,6 +357,16 @@ pub enum Reply {
     },
     Events(Vec<Event>),
     Transcript(Vec<TranscriptEntry>),
+    /// Reply to `get_transcript_page`: entries in ascending `seq`, whether
+    /// older or newer ones exist outside it, and the seq of the agent's newest
+    /// entry (0 for none).
+    TranscriptPage {
+        entries: Vec<TranscriptEntry>,
+        has_before: bool,
+        has_after: bool,
+        last_seq: u64,
+    },
+    UsageBreakdown(crate::read_models::UsageBreakdown),
     Inbox(Vec<InboxItem>),
     Snapshot(InvocationSnapshot),
     Invocation(Invocation),
