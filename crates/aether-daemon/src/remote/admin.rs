@@ -448,6 +448,15 @@ fn kept_mounts(
     };
     aether_protocol::remote::validate_mounts(&mounts).map_err(AdminError::Invalid)?;
     assert!(mounts.len() <= aether_protocol::remote::MAX_MOUNTS);
+    if let Some(taken) = mounts
+        .iter()
+        .find(|mount| aether_remote::mount::is_served_here(&mount.prefix))
+    {
+        return Err(AdminError::Invalid(format!(
+            "mount prefix {} is served by the listener itself",
+            taken.prefix
+        )));
+    }
     Ok((!mounts.is_empty()).then_some(mounts))
 }
 
@@ -719,5 +728,13 @@ mod tests {
             kept_mounts(Some(vec![outside]), &saved),
             Err(AdminError::Invalid(_))
         ));
+        for own in ["/api", "/ws", "/assets"] {
+            let shadowing = RemoteMount {
+                prefix: own.into(),
+                ..archon.clone()
+            };
+            let refused = kept_mounts(Some(vec![shadowing]), &saved);
+            assert!(matches!(refused, Err(AdminError::Invalid(_))), "{own}");
+        }
     }
 }

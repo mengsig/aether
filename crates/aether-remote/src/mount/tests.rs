@@ -384,15 +384,108 @@ fn a_target_is_used_only_when_it_is_exactly_loopback_http() {
         target_address("http://[::1]:8378"),
         Some("[::1]:8378".parse().expect("addr"))
     );
+    assert_eq!(
+        target_address("http://127.0.0.1:08378"),
+        Some("127.0.0.1:8378".parse().expect("addr")),
+        "the spelling validate_mounts accepts is the one forwarded"
+    );
     for refused in [
         "http://10.0.0.1:80",
         "http://127.0.0.1:0",
-        "http://127.0.0.1:08378",
+        "http://127.0.0.1:+8378",
+        "http://127.0.0.1:65536",
+        "http://127.0.0.1:8378/",
         "https://127.0.0.1:1",
         "http://localhost:1",
     ] {
         assert_eq!(target_address(refused), None, "{refused}");
     }
+}
+
+#[test]
+fn prefixes_the_listener_serves_itself_cannot_be_mounted() {
+    for own in ["/api", "/ws", "/assets"] {
+        assert!(super::is_served_here(own), "{own}");
+    }
+    for free in ["/archon", "/apix", "/wss", "/index"] {
+        assert!(!super::is_served_here(free), "{free}");
+    }
+    assert!(super::is_endpoint("/api/health") && super::is_endpoint("/ws"));
+    assert!(!super::is_endpoint("/archon/api/health"));
+}
+
+#[tokio::test]
+async fn a_mount_over_the_api_never_takes_health_from_the_listener() {
+    let (target, seen) = archond().await;
+    let mounted = mounted(target).await;
+    let api = RemoteMount {
+        prefix: "/api".into(),
+        ..archon_mount(target)
+    };
+    mounted
+        .server
+        .apply(settings(Some(vec![api])))
+        .await
+        .expect("apply");
+    let (status, _, body) = raw(mounted.bound, &get("/api/health")).await;
+    assert_eq!(status, 200, "{body}");
+    let health: serde_json::Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(health["status"], "ok");
+    assert!(seen.requests.lock().is_empty(), "nothing was forwarded");
+}
+
+/// A target that sends its answer's head, then its body only once `release` is notified.
+async fn slow_body_target() -> (
+    SocketAddr,
+    tokio::sync::oneshot::Receiver<()>,
+    Arc<tokio::sync::Notify>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address = listener.local_addr().expect("address");
+    let (headed, head_sent) = tokio::sync::oneshot::channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let released = release.clone();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            stream.read_exact(&mut byte).await.expect("a request head");
+            head.push(byte[0]);
+        }
+        let answer = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n";
+        stream.write_all(answer).await.expect("head");
+        let _ = headed.send(());
+        released.notified().await;
+        // The listener may have dropped the connection already: that is the point.
+        let _ = stream.write_all(b"late").await;
+    });
+    (address, head_sent, release)
+}
+
+#[tokio::test]
+async fn a_body_still_arriving_when_its_mount_is_retargeted_is_never_passed_on() {
+    let (target, head_sent, release) = slow_body_target().await;
+    let (elsewhere, _seen) = archond().await;
+    let mounted = mounted(target).await;
+    let bound = mounted.bound;
+    let plain = tokio::spawn(async move { raw(bound, &get("/archon/x")).await });
+    tokio::time::timeout(Duration::from_secs(5), head_sent)
+        .await
+        .expect("the target answered in time")
+        .expect("the head was sent");
+    // Time for the listener to read that head and start on the body.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // A mount stays, so the lease does too: only the changed mounts can stop the answer.
+    let retargeted = settings(Some(vec![archon_mount(elsewhere)]));
+    mounted.server.apply(retargeted).await.expect("retarget");
+    let started = Instant::now();
+    let answered = tokio::time::timeout(Duration::from_secs(5), plain);
+    release.notify_one();
+    let (status, _, body) = answered.await.expect("in time").expect("joined");
+    assert_eq!(status, 503, "{body}");
+    assert!(!body.contains("late"), "{body}");
+    assert!(started.elapsed() < Duration::from_secs(5));
 }
 
 #[test]

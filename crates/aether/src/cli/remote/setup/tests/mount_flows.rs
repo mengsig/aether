@@ -7,12 +7,16 @@ use super::super::report::{Mode, Status, StepId, StepState};
 use super::fakes::{FakeRunner, Fixture, TARGET, out, serve_json, tailscale_json};
 use super::flows::{state_of, yes};
 
-fn mounting(mut fx: Fixture) -> Fixture {
-    fx.daemon.status.settings.mounts = Some(vec![RemoteMount {
+fn archon_mount() -> RemoteMount {
+    RemoteMount {
         prefix: "/archon".into(),
         kind: MountKind::Archon,
         target: "http://127.0.0.1:8378".into(),
-    }]);
+    }
+}
+
+fn mounting(mut fx: Fixture) -> Fixture {
+    fx.daemon.status.settings.mounts = Some(vec![archon_mount()]);
     fx
 }
 
@@ -110,4 +114,28 @@ async fn a_funnel_on_another_port_is_not_kept_while_a_mount_is_present() {
         step.fix
     );
     assert!(fx.daemon.configures.is_empty());
+}
+
+#[tokio::test]
+async fn a_mount_saved_while_setup_runs_stops_the_funnel_before_it_opens() {
+    let funnel = Options {
+        yes: true,
+        funnel: true,
+        ..Options::default()
+    };
+    let command = format!("tailscale funnel --bg --https=443 {TARGET}");
+    let mut fx = Fixture::fresh();
+    fx.runner.on(&command, out(0, "", ""));
+    fx.daemon.stale_once = true;
+    fx.daemon.mount_on_stale = Some(archon_mount());
+    let report = fx.run(&funnel, Mode::Yes).await.expect("runs");
+    assert_eq!(
+        fx.daemon.configures.len(),
+        1,
+        "saved once, after the stale read"
+    );
+    assert_eq!(state_of(&report, StepId::Publish), StepState::Blocked);
+    let step = report.step(StepId::Publish).expect("a publish step");
+    assert!(step.detail.contains("/archon"), "{}", step.detail);
+    assert!(!fx.runner.ran(&command), "Funnel was never turned on");
 }

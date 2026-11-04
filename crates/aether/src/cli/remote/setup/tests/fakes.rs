@@ -7,7 +7,7 @@ use std::time::Duration;
 use aether_client::ClientError;
 use aether_protocol::remote::{
     Device, DeviceId, DeviceIdentity, DeviceRole, Health, Pairing, PairingCandidate, PairingState,
-    RemoteSettings, RemoteStatus,
+    RemoteMount, RemoteSettings, RemoteStatus,
 };
 use aether_protocol::{ErrorCode, ErrorReply};
 use serde_json::json;
@@ -126,6 +126,8 @@ pub(super) struct FakeDaemon {
     /// The listener cannot open: `error` is reported after configuring.
     pub(super) listen_error: Option<String>,
     pub(super) stale_once: bool,
+    /// Saved by somebody else along with the stale revision `stale_once` reports.
+    pub(super) mount_on_stale: Option<RemoteMount>,
     /// The daemon refuses the next configure with this `invalid_argument`.
     pub(super) refusal: Option<String>,
     pub(super) configures: Vec<(RemoteSettings, u64)>,
@@ -253,6 +255,9 @@ impl Daemon for FakeDaemon {
         }
         if std::mem::take(&mut self.stale_once) {
             self.status.revision += 1;
+            if let Some(mount) = self.mount_on_stale.take() {
+                self.status.settings.mounts = Some(vec![mount]);
+            }
             return Err(stale_revision_error());
         }
         assert_eq!(
@@ -264,7 +269,12 @@ impl Daemon for FakeDaemon {
         self.status.listening =
             (settings.enabled && self.listen_error.is_none()).then(|| ADDRESS.to_owned());
         self.status.error = self.listen_error.clone();
-        self.status.settings = settings;
+        // As the daemon does: absent mounts keep the saved ones.
+        let mounts = settings
+            .mounts
+            .clone()
+            .or(self.status.settings.mounts.take());
+        self.status.settings = RemoteSettings { mounts, ..settings };
         Ok(self.status.clone())
     }
 

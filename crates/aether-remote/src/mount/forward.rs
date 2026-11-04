@@ -94,7 +94,7 @@ where
         (Some(client), Some(slot)) if answered.status() == StatusCode::SWITCHING_PROTOCOLS => {
             switched(answered, client, ticket, slot, remounted).await
         }
-        _ => passed_on(answered, &ticket).await,
+        _ => passed_on(answered, &ticket, &remounted).await,
     }
 }
 
@@ -265,11 +265,12 @@ fn unless_lease_ended(failed: Failure, ticket: &Ticket) -> Failure {
     }
 }
 
-/// A plain answer, read whole and passed on with its end-to-end headers. The connection
-/// closes after it, so no kept-alive connection outlives the lease it was served under.
+/// A plain answer, read whole and passed on with its end-to-end headers, unless the lease or
+/// the mount it was routed by ends first. The connection closes after it, outliving neither.
 async fn passed_on(
     answered: Response<hyper::body::Incoming>,
     ticket: &Ticket,
+    remounted: &CancellationToken,
 ) -> Result<Forwarded, Failure> {
     let (parts, body) = answered.into_parts();
     let reading = Limited::new(body, MAX_ANSWER_BYTES).collect();
@@ -283,8 +284,12 @@ async fn passed_on(
             Err(_) => return Err(Failure::Gateway(StatusCode::GATEWAY_TIMEOUT, "the mounted daemon did not answer in time")),
         },
         _ = ticket.ended() => return Err(lease_ended()),
+        _ = remounted.cancelled() => return Err(mount_changed()),
     };
     assert!(body.len() <= MAX_ANSWER_BYTES, "the limit holds");
+    if remounted.is_cancelled() {
+        return Err(mount_changed());
+    }
     let mut response = Response::new(Full::new(body));
     *response.status_mut() = parts.status;
     *response.headers_mut() = end_to_end(&parts.headers);

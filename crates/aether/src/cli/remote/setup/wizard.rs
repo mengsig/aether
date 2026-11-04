@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use aether_client::ClientError;
-use aether_protocol::remote::{RemoteSettings, RemoteStatus};
+use aether_protocol::remote::{RemoteMount, RemoteSettings, RemoteStatus};
 use anyhow::{Context as _, bail};
 
 use super::Options;
@@ -344,6 +344,29 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
         if mounts.is_empty() || !(self.options.funnel || !open.is_empty()) {
             return false;
         }
+        self.refuse_funnel(mounts, open);
+        true
+    }
+
+    /// Whether a mount has appeared since planning, read fresh from the daemon just before
+    /// Funnel is turned on: prompts, a stale-revision retry or a retried publish all wait.
+    pub(super) async fn mounted_since_plan(&mut self) -> anyhow::Result<bool> {
+        assert!(
+            self.options.funnel,
+            "only a Funnel publication is rechecked"
+        );
+        let status = self.daemon.remote().await?;
+        let mounts = status.settings.mounts.as_deref().unwrap_or_default();
+        if mounts.is_empty() {
+            return Ok(false);
+        }
+        self.refuse_funnel(mounts, &[]);
+        Ok(true)
+    }
+
+    /// Records why Funnel is refused: what is mounted, and the ways out.
+    fn refuse_funnel(&mut self, mounts: &[RemoteMount], open: &[String]) {
+        assert!(!mounts.is_empty(), "a refusal names the mounts in the way");
         let prefixes: Vec<&str> = mounts.iter().map(|mount| mount.prefix.as_str()).collect();
         let detail = format!(
             "this daemon mounts {} on its listener, and a mounted daemon is never published \
@@ -364,7 +387,6 @@ impl<'a, R: CommandRunner, D: Daemon, E: Environment, U: Ui> Wizard<'a, R, D, E,
         self.say(&format!("[!!] {detail}"));
         self.report
             .push(Step::new(StepId::Publish, StepState::Blocked, detail).fix(fix));
-        true
     }
 
     fn proxy_publication(&self, status: &RemoteStatus) -> Publication {

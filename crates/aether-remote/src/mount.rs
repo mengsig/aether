@@ -6,7 +6,7 @@ mod lease;
 pub(crate) mod leased;
 pub(crate) mod tunnel;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use aether_protocol::remote::RemoteMount;
 use hyper::HeaderMap;
@@ -38,6 +38,9 @@ const HOP_BY_HOP: [&str; 9] = [
     "transfer-encoding",
     "upgrade",
 ];
+
+/// Everything below it is the listener's own: `/api/health`, pairing, and what may follow.
+const API_ROOT: &str = "/api";
 
 /// A request that falls under a mount: where it goes, and the path it goes with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,12 +95,41 @@ fn under(path: &str, prefix: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
-/// The loopback socket address of a validated `http://127.0.0.1:<port>` or
-/// `http://[::1]:<port>` target; `None` for anything else.
+/// The loopback socket address of a target `validate_mounts` accepts, `http://127.0.0.1:<port>`
+/// or `http://[::1]:<port>` with a decimal port (zero-padded too); `None` for anything else.
 pub(crate) fn target_address(target: &str) -> Option<SocketAddr> {
-    let address: SocketAddr = target.strip_prefix("http://")?.parse().ok()?;
-    let exact = format!("http://{address}") == target;
-    (address.ip().is_loopback() && address.port() != 0 && exact).then_some(address)
+    let (ip, port) = match target.strip_prefix("http://127.0.0.1:") {
+        Some(port) => (IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+        None => (
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            target.strip_prefix("http://[::1]:")?,
+        ),
+    };
+    // Digits only, as the validator reads them: `u16::from_str` would also take a `+`.
+    if port.is_empty() || port.len() > 5 || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let port = port.parse::<u16>().ok().filter(|port| *port != 0)?;
+    let address = SocketAddr::new(ip, port);
+    debug_assert!(address.ip().is_loopback(), "only loopback is built");
+    Some(address)
+}
+
+/// Whether the listener answers paths under `prefix` itself: its endpoints, or an embedded
+/// file. A mount there would shadow them, so none may be made.
+pub fn is_served_here(prefix: &str) -> bool {
+    debug_assert!(prefix.starts_with('/'), "{prefix}");
+    let own = [crate::http::WEBSOCKET, API_ROOT];
+    own.iter()
+        .any(|path| under(path, prefix) || under(prefix, path))
+        || crate::assets::ASSETS
+            .iter()
+            .any(|(path, _)| under(path, prefix))
+}
+
+/// Whether `path` is one of the listener's own endpoints, which no mount may take over.
+pub(crate) fn is_endpoint(path: &str) -> bool {
+    path == crate::http::WEBSOCKET || under(path, API_ROOT)
 }
 
 /// The headers of one hop, without those that belong to it alone: the fixed set, and every

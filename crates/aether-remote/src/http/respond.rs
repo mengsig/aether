@@ -106,7 +106,11 @@ where
     }
     let mounts = live.settings.mounts.as_deref().unwrap_or_default();
     let uri = request.uri();
-    if let Some(found) = mount::find(mounts, uri.path(), uri.query()) {
+    let found = match mount::is_endpoint(uri.path()) {
+        true => None,
+        false => mount::find(mounts, uri.path(), uri.query()),
+    };
+    if let Some(found) = found {
         let remounted = live.remounted.clone();
         return mounted(server, found, remounted, request, upgrade).await;
     }
