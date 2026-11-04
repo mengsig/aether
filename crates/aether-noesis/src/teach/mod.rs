@@ -11,6 +11,7 @@ pub mod question;
 pub mod records;
 mod seal;
 mod service;
+mod sessions;
 mod turn;
 
 #[cfg(test)]
@@ -29,6 +30,7 @@ pub use engine::{
 };
 pub use seal::{REFUSAL_WITHHELD, WITHHELD};
 pub use service::{CallRecord, Caller, StepRecord, Teaching, TurnEnd, TurnReport};
+pub use sessions::{SessionPage, Undelivered};
 
 use crate::budget::{ModelRefusal, Refusal};
 use crate::prompts::{Agent, PromptError};

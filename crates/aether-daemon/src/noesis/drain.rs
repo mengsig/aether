@@ -44,6 +44,8 @@ impl NoesisService {
         {
             tokio::time::sleep(DRAIN_POLL.min(grace)).await;
         }
+        // Teaching turns never hold the state lock, so it is free here; a
+        // teaching model call still in flight ends when the service stops.
         let mut state = self.state.lock().await;
         let ours = matches!(&*state, State::Draining { generation: g, .. } if *g == generation);
         if !ours || !self.current_drain(generation) {
@@ -69,7 +71,7 @@ impl NoesisService {
             debug_assert!(false, "checked to be draining above");
             return;
         };
-        if let Err(error) = live.stop() {
+        if let Err(error) = live.stop().await {
             tracing::error!(%error, "closing noesis.db after the disable failed");
         }
         debug_assert!(matches!(*state, State::Off) && !self.gate.is_enabled());
@@ -78,6 +80,10 @@ impl NoesisService {
     /// Whether a Noesis turn still runs, or an admission is not yet settled.
     async fn turns_left(&self, runtime: &Runtime) -> bool {
         if !runtime.noesis_turns_running().is_empty() {
+            return true;
+        }
+        // Teaching calls run outside the state lock; they count themselves.
+        if self.teaching_calls.load(Ordering::SeqCst) > 0 {
             return true;
         }
         match &*self.state.lock().await {

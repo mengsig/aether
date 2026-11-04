@@ -252,6 +252,9 @@ impl<E: Engine> Teaching<'_, E> {
 
     /// One model call, admitted before it is made and settled after.
     fn model_step(&mut self, agent: &str) -> Result<Step, TeachError> {
+        if self.engine.charges_own_calls() {
+            return Ok(self.engine.step(agent)?);
+        }
         let today = chrono::Local::now().date_naive();
         let estimate = self.engine.estimate(agent);
         let admission = self

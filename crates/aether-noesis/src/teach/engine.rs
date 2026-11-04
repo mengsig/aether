@@ -127,6 +127,11 @@ pub trait Engine {
     fn deliver(&mut self, agent: &str, input: Input) -> Result<(), EngineError>;
     /// The estimated spend of the agent's next step, admitted before it runs.
     fn estimate(&self, agent: &str) -> Spend;
+    /// Whether [`Engine::step`] admits and settles each call against the
+    /// Noesis budget itself (the daemon's runtime charge), so the loop must not.
+    fn charges_own_calls(&self) -> bool {
+        false
+    }
     /// Run one model call over the agent's pending inputs.
     fn step(&mut self, agent: &str) -> Result<Step, EngineError>;
 }
