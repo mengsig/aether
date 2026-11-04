@@ -42,14 +42,15 @@ pub struct ToolCall {
     pub input: Value,
 }
 
-/// Debug shows the sealed projection, as every other read path does.
+/// Debug omits the raw input and an unknown name: either may repeat a
+/// sealed value before the loop has checked it.
 impl std::fmt::Debug for ToolCall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let known = crate::tools::ToolName::parse(&self.name);
         f.debug_struct("ToolCall")
             .field("id", &self.id)
-            .field("name", &self.name)
-            .field("input", &crate::tools::seal_input(&self.name, &self.input))
-            .finish()
+            .field("tool", &known.map(crate::tools::ToolName::as_str))
+            .finish_non_exhaustive()
     }
 }
 

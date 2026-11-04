@@ -146,8 +146,8 @@ fn author_goal(args: &AskArgs, problems: &mut Vec<String>) -> Authored {
     }
 }
 
-/// Whether a field the learner sees repeats a sealed text: a recall key or
-/// the explanation in the prompt or a label, or any key or the explanation in a tag.
+/// Whether a field the learner sees repeats a sealed text: the explanation
+/// anywhere, a recall key in the prompt or a label, any key in a tag.
 fn shown_fields_reveal(args: &AskArgs) -> bool {
     let explanation: Vec<String> = args.explanation.iter().cloned().collect();
     let key: Vec<String> = match args.kind {
@@ -166,6 +166,10 @@ fn shown_fields_reveal(args: &AskArgs) -> bool {
     };
     let mut prose = vec![args.prompt.as_str()];
     prose.extend(args.options.iter().map(|option| option.label.as_str()));
+    let in_values = args
+        .options
+        .iter()
+        .any(|option| seal::holds(&option.value, &explanation));
     let mut tags: Vec<&str> = args.concepts.iter().map(String::as_str).collect();
     tags.extend(args.plan_node.as_deref());
     let in_prose = prose
@@ -174,7 +178,7 @@ fn shown_fields_reveal(args: &AskArgs) -> bool {
     let in_tags = tags
         .iter()
         .any(|tag| seal::holds(tag, &key) || seal::holds(tag, &explanation));
-    in_prose || in_tags
+    in_prose || in_tags || in_values
 }
 
 /// Whether the posing turn's visible text holds a correct option's label or

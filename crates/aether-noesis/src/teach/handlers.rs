@@ -72,7 +72,7 @@ impl<E: Engine> Teaching<'_, E> {
         visible_text: &str,
     ) -> Handled {
         let Some(tool) = ToolName::parse(&call.name) else {
-            return refuse(format!("`{}` is not a Noesis tool", printable(&call.name)));
+            return refuse("this is not a Noesis tool");
         };
         let Some(agent) = agent_for_role(&caller.role) else {
             return refuse("Noesis tools are only for noesis.* roles");

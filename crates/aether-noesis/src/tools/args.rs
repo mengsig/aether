@@ -1,6 +1,6 @@
 //! Typed arguments of the Noesis tools, read from healed JSON. Problems name
-//! fields and what they accept, never a value, so a refusal persisted in a
-//! transcript cannot carry a sealed answer key or solution.
+//! fields and what they accept, never a value, and Debug shows only the
+//! arguments' shape: either may be read before a sealed value is checked.
 
 use std::fmt;
 
@@ -18,13 +18,13 @@ pub struct ArgError {
     pub problems: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OptionArg {
     pub value: String,
     pub label: String,
 }
 
-/// `noesis.ask`. The answer key and explanation are sealed: Debug hides them.
+/// `noesis.ask`; its answer key and explanation are sealed.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AskArgs {
     pub kind: QuestionKind,
@@ -42,17 +42,14 @@ impl fmt::Debug for AskArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AskArgs")
             .field("kind", &self.kind)
-            .field("prompt", &self.prompt)
-            .field("options", &self.options)
-            .field("answer_key", &super::SEALED)
-            .field("explanation", &super::SEALED)
-            .field("plan_node", &self.plan_node)
-            .field("concepts", &self.concepts)
+            .field("options", &self.options.len())
+            .field("tagged", &self.plan_node.is_some())
+            .field("concepts", &self.concepts.len())
             .finish_non_exhaustive()
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StrandArg {
     pub strand: String,
     pub floor: String,
@@ -61,25 +58,25 @@ pub struct StrandArg {
     pub start: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ProbeDoneArgs {
     pub strands: Vec<StrandArg>,
     pub summary: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlanNodeArg {
     pub id: String,
     pub title: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlanArgs {
     pub nodes: Vec<PlanNodeArg>,
     pub edges: Vec<crate::teach::records::PlanEdge>,
 }
 
-/// `noesis.problem`. The solution is sealed: Debug hides it.
+/// `noesis.problem`; its solution is sealed.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ProblemArgs {
     pub statement: String,
@@ -91,11 +88,9 @@ pub struct ProblemArgs {
 impl fmt::Debug for ProblemArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ProblemArgs")
-            .field("statement", &self.statement)
             .field("mode", &self.mode)
-            .field("targets", &self.targets)
-            .field("solution", &super::SEALED)
-            .finish()
+            .field("targets", &self.targets.len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -107,19 +102,19 @@ pub struct ConcludeArgs {
     pub retest: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GraphSearchArgs {
     pub query: String,
     pub limit: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct LearnerReadArgs {
     pub concepts: Vec<String>,
     pub query: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum ToolArgs {
     Ask(AskArgs),
     ProbeDone(ProbeDoneArgs),
@@ -128,6 +123,42 @@ pub enum ToolArgs {
     Conclude(ConcludeArgs),
     GraphSearch(GraphSearchArgs),
     LearnerRead(LearnerReadArgs),
+}
+
+/// Shape-only Debug for arguments that carry free model text.
+macro_rules! shape_debug {
+    ($($ty:ident => |$it:ident| { $($name:literal: $value:expr),* $(,)? }),* $(,)?) => {$(
+        impl fmt::Debug for $ty {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let $it = self;
+                f.debug_struct(stringify!($ty))$(.field($name, &$value))*.finish_non_exhaustive()
+            }
+        }
+    )*};
+}
+
+shape_debug! {
+    OptionArg => |it| { "value_chars": it.value.chars().count() },
+    StrandArg => |it| { "misconceptions": it.misconceptions.len() },
+    ProbeDoneArgs => |it| { "strands": it.strands.len() },
+    PlanNodeArg => |it| { "id_chars": it.id.chars().count() },
+    PlanArgs => |it| { "nodes": it.nodes.len(), "edges": it.edges.len() },
+    GraphSearchArgs => |it| { "limit": it.limit },
+    LearnerReadArgs => |it| { "concepts": it.concepts.len() },
+}
+
+impl fmt::Debug for ToolArgs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ToolArgs::Ask(args) => args.fmt(f),
+            ToolArgs::ProbeDone(args) => args.fmt(f),
+            ToolArgs::Plan(args) => args.fmt(f),
+            ToolArgs::Problem(args) => args.fmt(f),
+            ToolArgs::Conclude(args) => args.fmt(f),
+            ToolArgs::GraphSearch(args) => args.fmt(f),
+            ToolArgs::LearnerRead(args) => args.fmt(f),
+        }
+    }
 }
 
 pub const GRAPH_SEARCH_LIMIT: std::ops::RangeInclusive<u32> = 1..=50;
@@ -339,12 +370,19 @@ impl Reader {
             };
         };
         let known = fields(tool);
-        let mut problems: Vec<String> = object
+        let unknown = object
             .keys()
             .filter(|key| !known.iter().any(|field| field.name == key.as_str()))
-            .map(|key| format!("unknown field `{}`", printable(key)))
-            .collect();
-        problems.sort();
+            .count();
+        // Unknown names are the model's text and may hold a sealed value: never echoed.
+        let mut problems = Vec::new();
+        if unknown > 0 {
+            let names: Vec<&str> = known.iter().map(|field| field.name).collect();
+            problems.push(format!(
+                "{unknown} unknown field(s); the fields are {}",
+                names.join(", ")
+            ));
+        }
         Self {
             tool: name,
             object,
@@ -493,13 +531,4 @@ impl Reader {
             problems: self.problems,
         })
     }
-}
-
-/// An unknown field name is the model's text, so it is shortened and kept
-/// to a safe alphabet before it is echoed into a refusal.
-fn printable(key: &str) -> String {
-    key.chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
-        .take(40)
-        .collect()
 }

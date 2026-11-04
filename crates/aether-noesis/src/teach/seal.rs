@@ -21,13 +21,35 @@ pub(super) fn holds(text: &str, secrets: &[String]) -> bool {
         .any(|secret| contains_phrase(&haystack, &secret.trim().to_lowercase()))
 }
 
-/// Replace every string in `value` that holds a secret by [`SEALED`].
+/// Replace every string in `value`, object keys included, that holds a
+/// secret by [`SEALED`]; keys that collide once sealed are numbered.
 pub(super) fn scrub(value: &mut Value, secrets: &[String]) {
     match value {
         Value::String(text) if holds(text, secrets) => *value = Value::String(SEALED.into()),
         Value::Array(items) => items.iter_mut().for_each(|item| scrub(item, secrets)),
-        Value::Object(map) => map.values_mut().for_each(|item| scrub(item, secrets)),
+        Value::Object(map) => {
+            let entries = std::mem::take(map);
+            for (index, (key, mut item)) in entries.into_iter().enumerate() {
+                scrub(&mut item, secrets);
+                let key = if holds(&key, secrets) {
+                    format!("{SEALED}{index}")
+                } else {
+                    key
+                };
+                map.insert(key, item);
+            }
+            debug_assert!(map.keys().all(|key| !holds(key, secrets)));
+        }
         _ => {}
+    }
+}
+
+/// `text` itself, or [`SEALED`] when it holds a secret.
+pub(super) fn sealed_text(text: &str, secrets: &[String]) -> String {
+    if holds(text, secrets) {
+        SEALED.to_string()
+    } else {
+        text.to_string()
     }
 }
 

@@ -8,7 +8,6 @@ use super::records::*;
 use super::testkit::*;
 use super::*;
 use crate::prompts::Agent;
-use crate::tools::SEALED;
 
 const SECRET: &str = "mitochondria";
 
@@ -44,7 +43,15 @@ fn raw_tool_calls_and_steps_debug_only_the_sealed_projection() {
     for secret in [SECRET, "the-why", "x-equals-4"] {
         assert!(!shown.contains(secret), "{secret} leaked: {shown}");
     }
-    assert!(shown.contains(SEALED) && shown.contains("Name it"));
+    assert!(shown.contains("noesis.ask") && !shown.contains("Name it"));
+    let parsed = crate::tools::parse(crate::tools::ToolName::Ask, ask.input.clone()).unwrap();
+    let search = json!({"query": SECRET});
+    let query = crate::tools::parse(crate::tools::ToolName::GraphSearch, search).unwrap();
+    let shown = format!("{parsed:?} {query:?}");
+    assert!(
+        !shown.contains(SECRET) && !shown.contains("Name it"),
+        "{shown}"
+    );
 }
 
 #[test]
@@ -301,4 +308,37 @@ fn visible_fields_that_repeat_a_sealed_value_are_refused_before_anything_is_stor
     assert!(error.contains("gives away the solution"), "{error}");
     assert!(session(&t, &practice).active_problem.is_none());
     assert!(t.take_events().is_empty(), "nothing was posed");
+}
+
+#[test]
+fn unknown_field_names_and_option_values_cannot_carry_a_sealed_value() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise cells", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let problem = json!({"statement": "Name the powerhouse", "mode": "recall", "solution": SECRET});
+    let search = json!({"query": "cell", SECRET: true});
+    let practitioner = t.engine_mut();
+    practitioner.script(Agent::Practitioner, "", vec![(PROBLEM, problem)]);
+    practitioner.script(
+        Agent::Practitioner,
+        "",
+        vec![("noesis.graph_search", search)],
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert!(
+        report.steps[1].calls[0].is_error,
+        "an unknown field is refused"
+    );
+    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+    let agent = session(&t, &id).agent;
+    assert!(!format!("{:?}", t.engine().inputs_of(&agent)).contains(SECRET));
+
+    let teach = teacher_session(&mut t);
+    let why = "because gravity pulls downward";
+    let mut hidden = choice("Which way?", &[("a", "Down"), (why, "Up")], &["a"]);
+    hidden["explanation"] = json!(why);
+    assert!(error_of(&call(&mut t, &teach, ASK, hidden, "")).contains("gives away"));
 }

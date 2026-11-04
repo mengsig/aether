@@ -111,6 +111,7 @@ impl<E: Engine> Teaching<'_, E> {
         secrets.extend(own.unwrap_or_default());
         record.text = seal::shown_text(step, readable.then_some(secrets.as_slice()));
         for call in &mut record.calls {
+            call.name = seal::sealed_text(&call.name, &secrets);
             seal::scrub(&mut call.input, &secrets);
             if !call.is_error {
                 seal::scrub(&mut call.result, &secrets);
