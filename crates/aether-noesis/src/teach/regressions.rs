@@ -506,3 +506,28 @@ fn a_malformed_sibling_call_does_not_unseal_a_refused_pose_in_its_step() {
     let search = &report.steps[0].calls[2];
     assert_eq!(search.input, json!(crate::tools::SEALED), "{search:?}");
 }
+
+#[test]
+fn a_key_or_solution_ending_in_punctuation_is_sealed_without_it() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    let question = recall("Which city is the capital of France?", "Paris.");
+    let error = error_of(&call(&mut t, &id, ASK, question.clone(), "It is Paris"));
+    assert!(error.contains("gives away the answer"), "{error}");
+    assert!(!call(&mut t, &id, ASK, question, "Name it.").result.is_error);
+
+    let practice = t
+        .create_session("Practise algebra", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let problem = json!({"statement": "Solve 2x = 8", "mode": "recall", "solution": "x = 4."});
+    t.engine_mut().script(
+        Agent::Practitioner,
+        "Try this; answer is x = 4",
+        vec![(PROBLEM, problem)],
+    );
+    let report = t.advance(&practice).unwrap().remove(0);
+    assert_eq!(report.steps[0].text, seal::WITHHELD, "{report:?}");
+    assert!(!format!("{report:?}").contains("x = 4"), "{report:?}");
+}

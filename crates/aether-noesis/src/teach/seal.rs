@@ -39,12 +39,17 @@ impl Sealer {
     pub fn new<S: AsRef<str>>(secrets: impl IntoIterator<Item = S>) -> Self {
         let mut normalised: Vec<String> = Vec::new();
         for secret in secrets {
-            let secret = normalise(secret.as_ref());
+            let secret = matchable(normalise(secret.as_ref()));
             if !secret.is_empty() && !normalised.contains(&secret) {
                 normalised.push(secret);
             }
         }
         debug_assert!(normalised.iter().all(|s| s.trim() == s && !s.is_empty()));
+        debug_assert!(normalised.iter().all(|s| {
+            let alnum = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+            !s.chars().any(char::is_alphanumeric)
+                || (alnum(s.chars().next()) && alnum(s.chars().next_back()))
+        }));
         Self {
             secrets: normalised,
         }
@@ -200,6 +205,17 @@ fn normalise(text: &str) -> String {
     out
 }
 
+/// A normalised secret without its edge punctuation, so "x = 4." still
+/// matches "x = 4"; one with no letter or digit stays literal.
+fn matchable(secret: String) -> String {
+    let trimmed = secret.trim_matches(|c: char| !c.is_alphanumeric());
+    if trimmed.is_empty() {
+        return secret;
+    }
+    debug_assert!(secret.contains(trimmed));
+    trimmed.to_string()
+}
+
 /// Whether `phrase` stands in `haystack` as a whole phrase. A neighbour
 /// rejects a match only when it continues the phrase's edge run of letters
 /// or digits: "42" stands in "42kg" but not in "420".
@@ -297,6 +313,17 @@ mod tests {
         }
         assert!(sealer(&["3.5"]).holds("about 3.5"));
         assert!(sealer(&["4"]).holds("so 4x it is"));
+    }
+
+    #[test]
+    fn a_secret_with_edge_punctuation_matches_without_it() {
+        assert!(sealer(&["x = 4."]).holds("so x = 4"));
+        assert!(sealer(&["Paris."]).holds("it is Paris"));
+        assert!(sealer(&["42."]).holds("it is 42 kg"));
+        assert!(sealer(&["\"(Paris)\""]).holds("PARIS"));
+        assert!(!sealer(&["x = 4."]).holds("x = 45"));
+        assert!(sealer(&["?!"]).holds("what ?! no"));
+        assert!(!sealer(&["?!"]).holds("what? no"));
     }
 
     #[test]
