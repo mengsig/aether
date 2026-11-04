@@ -99,11 +99,17 @@ export function prFromUrl(url: string | null | undefined): archon.PrRef | null {
   return { host: parsed.host, repo: match[1], number, kind: "pull_request" };
 }
 
-/** The item's PR: the summary's, else the delivered pull request link, else the summary's `pr_url`. */
+/**
+ * The item's PR: the newest delivered pull request link, which the page rereads with the detail, else the
+ * summary's. The summary's PR keeps its recorded state while it names the same pull request.
+ */
 export function prOf(summary: archon.ItemSummary | null, links: readonly archon.GithubLink[]): archon.PrRef | null {
-  if (summary?.pr) return summary.pr;
-  const link = links.find((entry) => entry.ref.kind === "pull_request" && entry.relation === "delivered");
-  return link ? { ...link.ref } : prFromUrl(summary?.pr_url);
+  const recorded = summary?.pr ?? prFromUrl(summary?.pr_url);
+  const delivered = links.filter((entry) => entry.ref.kind === "pull_request" && entry.relation === "delivered");
+  const newest = delivered.reduce<archon.GithubLink | null>((best, entry) => (best === null || entry.created_at > best.created_at ? entry : best), null);
+  if (newest === null) return recorded;
+  invariant(newest.ref.kind === "pull_request", "a delivered PR link names a pull request");
+  return recorded !== null && sameRef(recorded, newest.ref) ? recorded : { ...newest.ref };
 }
 
 export interface Outcome { readonly tone: "success" | "danger" | "warning" | "neutral"; readonly title: string; readonly text: string }

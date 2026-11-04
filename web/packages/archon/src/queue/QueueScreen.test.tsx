@@ -123,6 +123,12 @@ describe("the queue list", () => {
     expect(row("qi_pairing")?.querySelector(".ui-pill")?.textContent).toBe("Running");
     expect(row("qi_pairing")?.querySelector(".queue-meta")?.textContent).toContain("stage build");
     expect(chip(container, "Waiting on you").textContent).toBe("Waiting on you 1");
+    // Activity on another item leaves these reread fields alone.
+    h.faux.tell("qi_rate_limit", { subject: "item", item: "qi_rate_limit", state: "queued", waiting_reason: "capacity" });
+    for (let n = 0; n < 30; n += 1) {
+      await h.tick(50);
+      expect(row("qi_pairing")?.querySelector(".ui-pill")?.textContent).toBe("Running");
+    }
   });
 });
 

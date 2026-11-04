@@ -47,6 +47,14 @@ describe("the three states", () => {
     expect(objectFor(ref(7, "pull_request"), [object(7, "issue", "open")])).toBeNull();
   });
 
+  test("takes the newest delivered PR over an older one the summary still names", () => {
+    const delivered = (number: number, at: string): archon.GithubLink =>
+      ({ item: "qi_x", ref: ref(number, "pull_request"), relation: "delivered" as archon.LinkRelation, source: "ship" as archon.LinkSource, created_at: at });
+    const summary = { pr: { ...ref(57, "pull_request"), state: "draft" } } as unknown as archon.ItemSummary;
+    expect(prOf(summary, [delivered(57, "2026-11-04T09:00:00Z")])).toMatchObject({ number: 57, state: "draft" });
+    expect(prOf(summary, [delivered(58, "2026-11-04T10:00:00Z"), delivered(57, "2026-11-04T09:00:00Z")])).toEqual(ref(58, "pull_request"));
+  });
+
   test("falls back to a protocol 23 pr_url, and only one that names a pull request over http", () => {
     const summary = { pr: null, pr_url: "https://github.com/acme/site/pull/57" } as unknown as archon.ItemSummary;
     expect(prOf(summary, [])).toEqual({ host: "github.com", repo: "acme/site", number: 57, kind: "pull_request" });

@@ -25,6 +25,18 @@ async function item(id: string, world = demoWorld()) {
 }
 
 describe("an item's states", () => {
+  test("names the newest delivered PR once the links are reread", async () => {
+    const { h, container } = await item("qi_dark_mode");
+    await h.until(() => facts(container).includes("Pull request: #57 · Draft"), "the first PR");
+    const entry = h.world.items.get("qi_dark_mode");
+    if (!entry) throw new Error("the demo world has qi_dark_mode");
+    const ref = { host: "github.com", repo: "acme/site", number: 58, kind: "pull_request" };
+    const links = entry.links as { links: unknown[]; objects: unknown[] };
+    entry.links = { links: [...links.links, { item: "qi_dark_mode", ref, relation: "delivered", source: "ship", created_at: "2026-11-04T10:00:00Z" }], objects: links.objects };
+    h.faux.tell("qi_dark_mode", { subject: "link", item: "qi_dark_mode" });
+    await h.until(() => facts(container).includes("Pull request: #58 · state unknown"), "the newer PR", 2_000);
+  });
+
   test("names the stage from the reread detail, not the older summary", async () => {
     const { h, container } = await item("qi_dark_mode");
     expect(container.querySelector(".item-fact:nth-child(1)")?.textContent).toContain("stage review");
