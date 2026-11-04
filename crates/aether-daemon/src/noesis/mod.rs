@@ -20,6 +20,7 @@ mod budget;
 mod config_file;
 mod configure;
 mod drain;
+mod graph;
 mod learner;
 mod status;
 #[cfg(test)]
@@ -42,14 +43,19 @@ enum State {
     },
 }
 
-/// A started service and the budget its gate admits through.
+/// A started service, the budget its gate admits through, and its
+/// extraction jobs.
 struct Live {
     noesis: Noesis,
     budget: Arc<ServiceBudget>,
+    extraction: Arc<graph::Extraction>,
 }
 
 impl Live {
+    /// Running jobs stop at their next model-call boundary and keep the
+    /// merge they committed last.
     fn stop(self) -> Result<(), aether_noesis::NoesisError> {
+        self.extraction.stop();
         self.budget.retire();
         self.noesis.stop()
     }
@@ -86,6 +92,8 @@ pub enum NoesisStartError {
     Disabled,
     #[error("reading today's Noesis spend: {0}")]
     Spend(#[from] aether_store::StoreError),
+    #[error("ending the extraction jobs a stopped service left: {0}")]
+    Jobs(#[from] aether_noesis::extract::ExtractError),
 }
 
 impl NoesisService {
@@ -157,9 +165,14 @@ impl NoesisService {
             settings,
             self.models.clone(),
         ));
+        let extraction = graph::Extraction::start(&noesis, budget.clone())?;
         self.gate.enable(budget.clone());
         debug_assert!(self.gate.is_enabled());
-        Ok(Live { noesis, budget })
+        Ok(Live {
+            noesis,
+            budget,
+            extraction,
+        })
     }
 
     /// The settings in effect: their prerequisites applied, and off while
@@ -237,6 +250,11 @@ pub(crate) async fn dispatch(
             if learner::is_learner(&other) {
                 return service
                     .learner(&daemon.runtime, other, by, submission.as_ref())
+                    .await;
+            }
+            if graph::is_graph(&other) {
+                return service
+                    .graph(&daemon.runtime, other, submission.as_ref())
                     .await;
             }
             Err(ErrorReply::unimplemented(format!(

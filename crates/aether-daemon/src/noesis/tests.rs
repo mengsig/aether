@@ -16,14 +16,14 @@ use super::NoesisService;
 use super::budget::{self, ServiceBudget};
 use crate::Daemon;
 
-struct Harness {
-    daemon: Daemon,
+pub(super) struct Harness {
+    pub(super) daemon: Daemon,
     config: tempfile::TempDir,
-    data: tempfile::TempDir,
+    pub(super) data: tempfile::TempDir,
 }
 
 impl Harness {
-    async fn new() -> Self {
+    pub(super) async fn new() -> Self {
         let config = tempfile::tempdir().expect("config dir");
         let data = tempfile::tempdir().expect("data dir");
         let models = Arc::new(
@@ -69,12 +69,18 @@ impl Harness {
         }
     }
 
-    async fn send(&self, command: Command) -> Result<Reply, aether_protocol::ErrorReply> {
+    pub(super) async fn send(
+        &self,
+        command: Command,
+    ) -> Result<Reply, aether_protocol::ErrorReply> {
         let submission = crate::authz::AuthContext::Local.submission(&command)?;
         super::dispatch(&self.daemon, command, Actor::user(), submission).await
     }
 
-    async fn configure(&self, patch: NoesisSettingsPatch) -> aether_protocol::noesis::NoesisStatus {
+    pub(super) async fn configure(
+        &self,
+        patch: NoesisSettingsPatch,
+    ) -> aether_protocol::noesis::NoesisStatus {
         let reply = self
             .send(Command::NoesisConfigure {
                 patch,
@@ -212,10 +218,8 @@ async fn enabling_writes_first_then_opens_the_database_and_announces() {
         Some(true)
     );
     assert_eq!(harness.settings_events(), 1);
-    let error = harness
-        .send(Command::NoesisJobs { state: None })
-        .await
-        .expect_err("not built yet");
+    let sessions = serde_json::from_str(r#"{"cmd":"noesis_list_sessions"}"#).expect("command");
+    let error = harness.send(sessions).await.expect_err("not built yet");
     assert_ne!(
         error.reason.as_deref(),
         Some(aether_protocol::NOESIS_DISABLED)
