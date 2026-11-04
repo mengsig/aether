@@ -2,6 +2,7 @@ import { INITIAL_STATE, Store } from "@aether-ui/core";
 import { visibleGraph } from "@aether-ui/graph";
 import { describe, expect, test } from "vitest";
 import { fixtureAgents, fixtureConnection, seedFleet } from "../fleet/fixture/agents.ts";
+import { must } from "../fleet/fixture/must.ts";
 import { selectFleetSources } from "../fleet/rows.ts";
 import { buildTopology, COLLAPSE_ABOVE, collapsedRuns, EXPANDED_LIMIT, nodeId, overridesForAll, runGroupId, toggleRun, topologyModel } from "./graph.ts";
 
@@ -26,6 +27,20 @@ describe("buildTopology", () => {
     expect(new Set(topology.nodes.map((node) => node.id)).size).toBe(10);
     expect(topology.agentOf.get("aether:b/agt_00004")).toEqual({ conn: "aether:b", agent: "agt_00004" });
     expect(topology.edges.every((edge) => edge.from.slice(0, 8) === edge.to.slice(0, 8))).toBe(true);
+  });
+
+  test("names each daemon's run after its own root when run ids match", () => {
+    const store = new Store(INITIAL_STATE, () => undefined);
+    for (const [conn, root] of [["aether:a", "root-a"], ["aether:b", "root-b"]] as const) {
+      const agents = fixtureAgents(3);
+      agents.agt_00000 = { ...must(agents.agt_00000, "agt_00000"), name: root };
+      seedFleet(store, fixtureConnection(conn, conn), agents);
+    }
+    const groups = buildTopology(selectFleetSources(store.get())).groups;
+    expect(groups.map((group) => [group.id, group.label])).toEqual([
+      ["run:aether:a/run_00000", "Run root-a (Archon run · adaptive)"],
+      ["run:aether:b/run_00000", "Run root-b (Archon run · adaptive)"],
+    ]);
   });
 
   test("leaves an agent whose parent is not in the snapshot a root", () => {

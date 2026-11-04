@@ -2,6 +2,7 @@ import { INITIAL_STATE, Store } from "@aether-ui/core";
 import type { aether, ConnectionInfo } from "@aether-ui/protocol";
 import { describe, expect, test } from "vitest";
 import { fixtureAgents, fixtureConnection, seedFleet } from "./fixture/agents.ts";
+import { must } from "./fixture/must.ts";
 import {
   agentStatus, filterRows, fleetFacets, fleetRows, NO_FILTER, runNames, sameSources, selectFleetSources,
 } from "./rows.ts";
@@ -63,18 +64,47 @@ describe("filters and facets", () => {
     const running = filterRows(rows, { ...NO_FILTER, state: "running" });
     expect(running.length).toBeGreaterThan(0);
     expect(running.every((row) => row.agent.status.state === "running")).toBe(true);
-    const narrow = filterRows(rows, { run: "run_00000", role: "archon-stage:adaptive/build", state: "", model: "" });
-    expect(narrow.map((row) => row.agent.name)).toEqual(["build-2", "build-2"]);
-    expect(filterRows(rows, { ...NO_FILTER, model: "codex/gpt-6-astra", run: "run_00001" }).every((row) => row.agent.model.provider === "codex")).toBe(true);
+    const narrow = filterRows(rows, { ...NO_FILTER, run: "aether:a/run_00000", role: "archon-stage:adaptive/build" });
+    expect(narrow.map((row) => row.key)).toEqual(["aether:a/agt_00002"]);
+    expect(filterRows(rows, { ...NO_FILTER, model: "codex/gpt-6-astra", run: "aether:a/run_00001" }).every((row) => row.agent.model.provider === "codex")).toBe(true);
   });
 
   test("offer each value with its count, and name runs after their root", () => {
     const names = runNames(rows);
-    expect(names.get("run_00000")).toBe("qi-00000 (Archon run · adaptive)");
-    expect(names.get("run_00001")).toBe("run-00001");
+    expect(names.get("aether:a/run_00000")).toBe("qi-00000 (Archon run · adaptive)");
+    expect(names.get("aether:b/run_00001")).toBe("run-00001");
     const facets = fleetFacets(rows, names);
     expect(facets.role.find((option) => option.value === "archon-run:adaptive")).toEqual({ value: "archon-run:adaptive", label: "Archon run · adaptive", count: 2 });
     expect(facets.model.reduce((sum, option) => sum + option.count, 0)).toBe(rows.length);
     expect(facets.run.map((option) => option.value)).toEqual([...facets.run.map((option) => option.value)].sort());
+  });
+});
+
+describe("values that look alike", () => {
+  test("selects agents with no role without meaning every role", () => {
+    const store = new Store(INITIAL_STATE, () => undefined);
+    const agents = fixtureAgents(2);
+    agents.agt_00000 = { ...must(agents.agt_00000, "agt_00000"), role: "" };
+    seedFleet(store, fixtureConnection(), agents);
+    const rows = fleetRows(selectFleetSources(store.get()));
+    const noRole = must(fleetFacets(rows, runNames(rows)).role.find((option) => option.label === "No role"), "the No role option");
+    expect(noRole).toEqual({ value: "", label: "No role", count: 1 });
+    expect(filterRows(rows, { ...NO_FILTER, role: noRole.value }).map((row) => row.agent.id)).toEqual(["agt_00000"]);
+    expect(filterRows(rows, NO_FILTER)).toHaveLength(2);
+  });
+
+  test("keeps runs of two daemons apart when their ids match", () => {
+    const store = new Store(INITIAL_STATE, () => undefined);
+    for (const [conn, root] of [["aether:a", "root-a"], ["aether:b", "root-b"]] as const) {
+      const agents = fixtureAgents(3);
+      agents.agt_00000 = { ...must(agents.agt_00000, "agt_00000"), name: root };
+      seedFleet(store, fixtureConnection(conn, conn), agents);
+    }
+    const rows = fleetRows(selectFleetSources(store.get()));
+    const names = runNames(rows);
+    expect([names.get("aether:a/run_00000"), names.get("aether:b/run_00000")]).toEqual(["root-a (Archon run · adaptive)", "root-b (Archon run · adaptive)"]);
+    const runs = fleetFacets(rows, names).run;
+    expect(runs.map((option) => [option.value, option.count])).toEqual([["aether:a/run_00000", 3], ["aether:b/run_00000", 3]]);
+    expect(filterRows(rows, { ...NO_FILTER, run: "aether:b/run_00000" }).every((row) => row.conn === "aether:b")).toBe(true);
   });
 });

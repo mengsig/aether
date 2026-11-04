@@ -43,17 +43,31 @@ describe("the fleet list", () => {
 
   test("filters by run, role, state and model, and clears back to all", async () => {
     const { container } = await fleet(200);
-    await pick(container, "State", "running");
+    await pick(container, "State", "=running");
     expect(count(container)).toMatch(/^\d+ of 200 agents$/);
     expect([...container.querySelectorAll(".fleet-state .ui-pill")].every((pill) => pill.textContent === "Running")).toBe(true);
     await pick(container, "State", "");
-    await pick(container, "Run", "run_00000");
-    await pick(container, "Role", "archon-stage:adaptive/build");
-    await pick(container, "Model", "claude-code/opus");
+    await pick(container, "Run", "=aether:fixture/run_00000");
+    await pick(container, "Role", "=archon-stage:adaptive/build");
+    await pick(container, "Model", "=claude-code/opus");
     expect(count(container)).toBe("0 of 200 agents");
     const clear = [...container.querySelectorAll("button")].find((button) => button.textContent === "Clear filters");
     await act(async () => clear?.click());
     expect(count(container)).toBe("200 of 200 agents");
+  });
+
+  test("offers No role apart from All, and clears back to All", async () => {
+    const h = harness();
+    const agents = fixtureAgents(5);
+    agents.agt_00003 = { ...must(agents.agt_00003, "agt_00003"), role: "" };
+    seedFleet(h.app.store, fixtureConnection(), agents);
+    const container = await h.mount(<FleetScreen />);
+    const roleOptions = [...container.querySelectorAll(".fleet-filter select")][1]?.querySelectorAll("option") ?? [];
+    expect([...roleOptions].filter((option) => option.textContent === "No role (1)").map((option) => option.value)).toEqual(["="]);
+    await pick(container, "Role", "=");
+    expect(count(container)).toBe("1 of 5 agents");
+    await pick(container, "Role", "");
+    expect(count(container)).toBe("5 of 5 agents");
   });
 
   test("labels Archon-run agents by role with or without archond", async () => {

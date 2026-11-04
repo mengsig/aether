@@ -4,7 +4,7 @@
 import type { ConnId, GEdge, GGroup, GNode, GraphModel } from "@aether-ui/protocol";
 import { invariant } from "../fleet/invariant.ts";
 import { roleLabel } from "../fleet/roles.ts";
-import { agentStatus, fleetRows, runNames, type FleetSource } from "../fleet/rows.ts";
+import { agentStatus, fleetRows, runKey, runNames, type FleetSource } from "../fleet/rows.ts";
 
 /** A run with more agents than this starts collapsed, so a large run opens readable. */
 export const COLLAPSE_ABOVE = 30;
@@ -37,7 +37,7 @@ export function buildTopology(sources: readonly FleetSource[]): Topology {
   for (const { conn, agent } of rows) {
     const id = nodeId(conn, agent.id);
     const group = runGroupId(conn, agent.run);
-    if (!groups.has(group)) groups.set(group, { id: group, label: `Run ${names.get(agent.run) ?? agent.run}` });
+    if (!groups.has(group)) groups.set(group, { id: group, label: `Run ${names.get(runKey(conn, agent.run)) ?? agent.run}` });
     members.set(group, (members.get(group) ?? 0) + 1);
     nodes.push({ id, label: `${agent.name} · ${roleLabel(agent.role).text}`, group, status: agentStatus(agent).status });
     agentOf.set(id, { conn, agent: agent.id });

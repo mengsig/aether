@@ -73,15 +73,18 @@ export function agentStatus(agent: aether.Agent): AgentStatusView {
 
 export const modelName = (agent: aether.Agent): string => `${agent.model.provider}/${agent.model.model}`;
 
-/** Each filter is one value or "" for every value. */
-export interface FleetFilter { readonly run: string; readonly role: string; readonly state: string; readonly model: string }
-export const NO_FILTER: FleetFilter = Object.freeze({ run: "", role: "", state: "", model: "" });
+/** A run is one daemon's: two connections may both have a `run_1`, and they are different runs. */
+export const runKey = (conn: ConnId, run: string): string => `${conn}/${run}`;
+
+/** Each filter is one value, or null for every value; "" is a real value (an agent with no role). */
+export interface FleetFilter { readonly run: string | null; readonly role: string | null; readonly state: string | null; readonly model: string | null }
+export const NO_FILTER: FleetFilter = Object.freeze({ run: null, role: null, state: null, model: null });
 export type FilterKey = keyof FleetFilter;
 export const FILTER_KEYS: readonly FilterKey[] = ["run", "role", "state", "model"];
 
 function valueOf(row: FleetRow, key: FilterKey): string {
   switch (key) {
-    case "run": return row.agent.run;
+    case "run": return runKey(row.conn, row.agent.run);
     case "role": return row.agent.role;
     case "state": return row.agent.status.state;
     case "model": return modelName(row.agent);
@@ -89,7 +92,7 @@ function valueOf(row: FleetRow, key: FilterKey): string {
 }
 
 export function filterRows(rows: readonly FleetRow[], filter: FleetFilter): readonly FleetRow[] {
-  const active = FILTER_KEYS.filter((key) => filter[key] !== "");
+  const active = FILTER_KEYS.filter((key) => filter[key] !== null);
   if (active.length === 0) return rows;
   const kept = rows.filter((row) => active.every((key) => valueOf(row, key) === filter[key]));
   invariant(kept.length <= rows.length, "a filter never adds rows");
@@ -99,16 +102,17 @@ export function filterRows(rows: readonly FleetRow[], filter: FleetFilter): read
 export interface FacetOption { readonly value: string; readonly label: string; readonly count: number }
 export type Facets = Readonly<Record<FilterKey, readonly FacetOption[]>>;
 
-/** A run is named after its root: the first agent of the run without a parent in it. */
+/** Names each run (by runKey) after its root: the first agent of the run without a parent in it. */
 export function runNames(rows: readonly FleetRow[]): ReadonlyMap<string, string> {
   const runOf = new Map(rows.map((row) => [row.key, row.agent.run]));
   const names = new Map<string, string>();
   for (const row of rows) {
     const { agent } = row;
     const parentRun = agent.parent ? runOf.get(`${row.conn}/${agent.parent}`) : undefined;
-    if (parentRun === agent.run || names.has(agent.run)) continue;
+    const key = runKey(row.conn, agent.run);
+    if (parentRun === agent.run || names.has(key)) continue;
     const role = roleLabel(agent.role);
-    names.set(agent.run, role.kind === "archon-run" ? `${agent.name} (${role.text})` : agent.name);
+    names.set(key, role.kind === "archon-run" ? `${agent.name} (${role.text})` : agent.name);
   }
   return names;
 }

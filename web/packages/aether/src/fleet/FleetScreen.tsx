@@ -9,7 +9,7 @@ import { FleetFilters } from "./FleetFilters.tsx";
 import { invariant } from "./invariant.ts";
 import { roleLabel } from "./roles.ts";
 import {
-  agentStatus, filterRows, fleetFacets, fleetRows, modelName, NO_FILTER, runNames, sameSources, selectFleetSources,
+  agentStatus, filterRows, fleetFacets, fleetRows, modelName, NO_FILTER, runKey, runNames, sameSources, selectFleetSources,
   type FleetFilter, type FleetRow,
 } from "./rows.ts";
 
@@ -43,7 +43,7 @@ function FleetList({ rows, names }: { readonly rows: readonly FleetRow[]; readon
   const renderRow = useCallback((index: number) => {
     const row = rows[index];
     invariant(row !== undefined, `the list asked for row ${index} of ${rows.length}`);
-    return <FleetRowView row={row} runName={names.get(row.agent.run) ?? row.agent.run} />;
+    return <FleetRowView row={row} runName={names.get(runKey(row.conn, row.agent.run)) ?? row.agent.run} />;
   }, [rows, names]);
   const rowKey = useCallback((index: number) => rows[index]?.key ?? index, [rows]);
   return (
