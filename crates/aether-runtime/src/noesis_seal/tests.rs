@@ -68,3 +68,14 @@ fn a_stream_withholds_sealed_input_and_noesis_thinking_only() {
     assert!(StreamSeal::Ordinary.admits(&thinking));
     assert!(!StreamSeal::Noesis.admits(&thinking));
 }
+
+#[test]
+fn a_text_encoded_input_of_a_sealed_tool_is_sealed_whole() {
+    let mut input = json!("{\"answer_key\":\"B\",\"question\":\"q?\"}");
+    assert!(seal_input("noesis_ask", &mut input));
+    assert_eq!(input, json!(SEALED));
+    assert!(!seal_input("noesis_ask", &mut input));
+    let raw = json!("{\"solution\":\"x\"}");
+    let view = sealed_view("noesis_problem", &raw);
+    assert_eq!(*view, json!(SEALED));
+}

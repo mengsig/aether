@@ -50,13 +50,17 @@ pub fn sealed_fields(tool: &str) -> Option<&'static [&'static str]> {
 }
 
 /// Replace each sealed field present in `input` with [`SEALED`]. Returns
-/// whether anything changed; an unsealed tool's input is never touched.
+/// whether anything changed; an unsealed tool's input is never touched and
+/// a sealed tool's non-object input is sealed whole.
 pub fn seal_input(tool: &str, input: &mut Value) -> bool {
     let Some(fields) = sealed_fields(tool) else {
         return false;
     };
     let Some(object) = input.as_object_mut() else {
-        return false;
+        // The tool parser also accepts the argument object as JSON text.
+        let already_sealed = input.as_str() == Some(SEALED);
+        *input = Value::String(SEALED.to_owned());
+        return !already_sealed;
     };
     let mut changed = false;
     for field in fields {
