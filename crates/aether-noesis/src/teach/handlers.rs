@@ -13,8 +13,11 @@ use super::records::{
 use super::seal::Sealer;
 use super::service::{Caller, Teaching, TurnEnd, driving_agent};
 use super::{PROBE_DONE_ACK, TeachError, agent_for_role, plan, question};
+use crate::learner::{self, LearnerError, Selection};
 use crate::prompts::Agent;
-use crate::tools::args::{AskArgs, ConcludeArgs, PlanArgs, ProbeDoneArgs, ProblemArgs};
+use crate::tools::args::{
+    AskArgs, ConcludeArgs, LearnerReadArgs, PlanArgs, ProbeDoneArgs, ProblemArgs,
+};
 use crate::tools::{self, ToolArgs, ToolName};
 
 /// One tool call's result, for the engine only, and whether it ends the
@@ -110,10 +113,25 @@ impl<E: Engine> Teaching<'_, E> {
                 let found = db::search_propositions(self.conn(), &args.query, args.limit)?;
                 Ok(Ok((json!({ "propositions": found }), None)))
             }
-            // The learner model arrives with F4; until then it holds nothing.
-            ToolArgs::LearnerRead(_) => {
-                Ok(Ok((json!({ "concepts": [], "available": false }), None)))
-            }
+            ToolArgs::LearnerRead(args) => self.learner_read(args),
+        }
+    }
+
+    /// The learner model's current states, decay applied, for the agent.
+    fn learner_read(&self, args: LearnerReadArgs) -> Handled {
+        let selection = Selection {
+            concepts: (!args.concepts.is_empty()).then_some(args.concepts),
+            query: args.query,
+            limit: None,
+        };
+        match learner::states(self.conn(), &selection, chrono::Utc::now()) {
+            Ok(concepts) => Ok(Ok((
+                json!({ "concepts": concepts, "available": true }),
+                None,
+            ))),
+            Err(LearnerError::Sqlite(error)) => Err(error.into()),
+            Err(LearnerError::Corrupt(why)) => Err(TeachError::Corrupt(why)),
+            Err(other) => refuse(other.to_string()),
         }
     }
 

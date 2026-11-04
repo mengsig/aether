@@ -79,10 +79,16 @@ impl NoesisService {
             State::Off => return Ok(()),
             State::Running(live) | State::Draining { live, .. } => live,
         };
-        if !next.enabled || live.noesis.settings() == next {
+        if !next.enabled || live.settings == *next {
             return Ok(());
         }
-        let outstanding = live.budget.close();
+        let teaching = self
+            .teaching_calls
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let outstanding = live
+            .budget
+            .close()
+            .max(u32::try_from(teaching).unwrap_or(u32::MAX));
         if outstanding == 0 {
             return Ok(());
         }
@@ -113,17 +119,18 @@ impl NoesisService {
             State::Running(live) | State::Draining { live, .. } => Some(live),
         };
         if let Some(live) = running {
-            if live.noesis.settings() == next {
+            if live.settings == *next {
                 self.reopen_gate(&live);
                 *state = State::Running(live);
                 return Ok(());
             }
             debug_assert_eq!(live.budget.outstanding(), 0, "checked by prepare_swap");
-            live.stop().map_err(ErrorReply::internal)?;
+            live.stop().await.map_err(ErrorReply::internal)?;
         }
         match self.start(next, runtime.store()).await {
             Ok(live) => {
                 *state = State::Running(live);
+                self.resume_teaching(runtime);
                 Ok(())
             }
             Err(error) => {

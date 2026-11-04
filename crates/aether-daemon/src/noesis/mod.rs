@@ -20,9 +20,14 @@ mod budget;
 mod config_file;
 mod configure;
 mod drain;
+mod engine;
 mod graph;
 mod learner;
+mod routes;
 mod status;
+mod teaching;
+#[cfg(test)]
+mod teaching_tests;
 #[cfg(test)]
 mod tests;
 
@@ -43,21 +48,40 @@ enum State {
     },
 }
 
-/// A started service, the budget its gate admits through, and its
-/// extraction jobs.
+/// A started service, the budget its gate admits through, what its
+/// teaching loop keeps between calls, and its extraction jobs.
 struct Live {
-    noesis: Noesis,
+    /// Locked by one teaching or learner call at a time, outside the state
+    /// lock, so a disable never waits for a teaching turn to end.
+    desk: Arc<tokio::sync::Mutex<Desk>>,
+    settings: NoesisSettings,
     budget: Arc<ServiceBudget>,
     extraction: Arc<graph::Extraction>,
+    /// Cancelled when this service stops, ending a teaching model call.
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+/// The open `noesis.db` and what teaching calls hand on to the next one.
+struct Desk {
+    /// Taken when the service stops; a call that finds none was too late.
+    noesis: Option<Noesis>,
+    /// Inputs a teaching call could not deliver, for the next call.
+    undelivered: aether_noesis::teach::Undelivered,
+    /// The run every Noesis agent is created in, found on first use.
+    run: Option<aether_core::id::RunId>,
 }
 
 impl Live {
-    /// Running jobs stop at their next model-call boundary and keep the
-    /// merge they committed last.
-    fn stop(self) -> Result<(), aether_noesis::NoesisError> {
+    /// Retire the budget, stop extraction jobs at their next model-call
+    /// boundary, end a teaching model call in flight, and close `noesis.db`
+    /// once the call holding it lets go.
+    async fn stop(self) -> Result<(), aether_noesis::NoesisError> {
         self.extraction.stop();
+        self.cancel.cancel();
         self.budget.retire();
-        self.noesis.stop()
+        let noesis = self.desk.lock().await.noesis.take();
+        debug_assert!(noesis.is_some(), "a service stops once");
+        noesis.map_or(Ok(()), Noesis::stop)
     }
 }
 
@@ -69,6 +93,11 @@ pub struct NoesisService {
     gate: NoesisGate,
     state: tokio::sync::Mutex<State>,
     drains: std::sync::atomic::AtomicU64,
+    /// Teaching calls running or waiting for the desk, which a drain
+    /// waits for through the grace.
+    teaching_calls: std::sync::atomic::AtomicUsize,
+    /// Replaces every provider's client for teaching calls, in tests.
+    model_client: Option<Arc<dyn aether_model::ModelClient>>,
 }
 
 impl std::fmt::Debug for NoesisService {
@@ -108,7 +137,16 @@ impl NoesisService {
             gate,
             state: tokio::sync::Mutex::new(State::Off),
             drains: std::sync::atomic::AtomicU64::new(0),
+            teaching_calls: std::sync::atomic::AtomicUsize::new(0),
+            model_client: None,
         }
+    }
+
+    /// Teaching model calls go to `client` instead of a provider: for tests.
+    #[cfg(test)]
+    pub(crate) fn with_model_client(mut self, client: Arc<dyn aether_model::ModelClient>) -> Self {
+        self.model_client = Some(client);
+        self
     }
 
     /// A stopped service on `runtime`'s gate whose config lives nowhere, so
@@ -168,10 +206,18 @@ impl NoesisService {
         let extraction = graph::Extraction::start(&noesis, budget.clone())?;
         self.gate.enable(budget.clone());
         debug_assert!(self.gate.is_enabled());
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let desk = Desk {
+            noesis: Some(noesis),
+            undelivered: Default::default(),
+            run: None,
+        };
         Ok(Live {
-            noesis,
+            desk: Arc::new(tokio::sync::Mutex::new(desk)),
+            settings: settings.clone(),
             budget,
             extraction,
+            cancel,
         })
     }
 
@@ -196,7 +242,7 @@ impl NoesisService {
             State::Off => return,
             State::Running(live) | State::Draining { live, .. } => live,
         };
-        if let Err(error) = live.stop() {
+        if let Err(error) = live.stop().await {
             tracing::error!(%error, "closing noesis.db failed");
         }
     }
@@ -223,8 +269,9 @@ pub(crate) fn owns(command: &Command) -> bool {
     command.is_noesis()
 }
 
-/// Answer a Noesis command. Every one but status and configure is refused
-/// with `noesis_disabled` while the service is not running, before anything else.
+/// Answer a Noesis command through its group in [`routes::group_of`]. Every
+/// one but status and configure is refused with `noesis_disabled` while the
+/// service is not running, before anything else.
 pub(crate) async fn dispatch(
     daemon: &crate::Daemon,
     command: Command,
@@ -232,6 +279,40 @@ pub(crate) async fn dispatch(
     submission: Option<Submission>,
 ) -> Result<Reply, ErrorReply> {
     debug_assert!(command.is_noesis(), "only noesis commands reach here");
+    let service = &daemon.noesis;
+    let group = routes::group_of(&command);
+    if group == routes::Group::Service {
+        return service_command(daemon, command, by, submission).await;
+    }
+    debug_assert!(command.needs_noesis_service());
+    if !service.gate.is_enabled() {
+        return Err(ErrorReply::noesis_disabled());
+    }
+    aether_protocol::noesis::validate(&command).map_err(ErrorReply::invalid)?;
+    let runtime = &daemon.runtime;
+    match group {
+        routes::Group::Service => Err(ErrorReply::internal("routed above")),
+        routes::Group::Learner => {
+            service
+                .learner(runtime, command, by, submission.as_ref())
+                .await
+        }
+        routes::Group::Teaching => {
+            service
+                .teaching(runtime, command, by, submission.as_ref())
+                .await
+        }
+        routes::Group::Graph => service.graph(runtime, command, submission.as_ref()).await,
+    }
+}
+
+/// `noesis_status` and `noesis_configure`, which work while disabled.
+async fn service_command(
+    daemon: &crate::Daemon,
+    command: Command,
+    by: Actor,
+    submission: Option<Submission>,
+) -> Result<Reply, ErrorReply> {
     let service = &daemon.noesis;
     match command {
         Command::NoesisStatus => Ok(Reply::NoesisStatus(service.status(&daemon.runtime).await?)),
@@ -241,26 +322,9 @@ pub(crate) async fn dispatch(
                 .await?;
             Ok(Reply::NoesisStatus(status))
         }
-        other => {
-            debug_assert!(other.needs_noesis_service());
-            if !service.gate.is_enabled() {
-                return Err(ErrorReply::noesis_disabled());
-            }
-            aether_protocol::noesis::validate(&other).map_err(ErrorReply::invalid)?;
-            if learner::is_learner(&other) {
-                return service
-                    .learner(&daemon.runtime, other, by, submission.as_ref())
-                    .await;
-            }
-            if graph::is_graph(&other) {
-                return service
-                    .graph(&daemon.runtime, other, submission.as_ref())
-                    .await;
-            }
-            Err(ErrorReply::unimplemented(format!(
-                "`{}` (the Noesis teaching and graph services)",
-                other.name()
-            )))
-        }
+        other => Err(ErrorReply::internal(format!(
+            "`{}` is not a service command",
+            other.name()
+        ))),
     }
 }

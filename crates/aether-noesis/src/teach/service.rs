@@ -315,20 +315,23 @@ impl<'a, E: Engine> Teaching<'a, E> {
             "confidence": graded.confidence,
             "thinking": answer.thinking,
         });
-        self.record_and_deliver(&row, question_id, recorded, graded.correct)?;
+        self.record_owed_answer(&row, question_id, recorded, graded.correct)?;
         let result = reveal(&open, graded.correct);
         self.events.push(NoesisEvent::AnswerRecorded {
             session: session.to_string(),
             result: result.clone(),
         });
         self.record_answer_evidence(&row, &open.question, answer.dont_know, &graded);
+        // Recorded and announced first. A failed delivery stays owed in the
+        // store, so the next turn or a restart delivers it, and is returned.
+        self.deliver_queued(session, &row.agent, None)?;
+        debug_assert!(db::owed_answers(self.conn(), session)?.is_empty());
         Ok(result)
     }
 
-    /// Commit the answer as owed to the agent, then deliver it. A failed
-    /// delivery leaves it owed in the store, so the next turn delivers it
-    /// first even after a restart: the record and the agent agree.
-    fn record_and_deliver(
+    /// Commit the answer as owed to the agent; delivering it is the caller's.
+    /// The record and the agent agree even across a restart.
+    fn record_owed_answer(
         &mut self,
         row: &SessionRow,
         question_id: &str,
@@ -346,13 +349,6 @@ impl<'a, E: Engine> Teaching<'a, E> {
         db::touch(&tx, &row.id)?;
         tx.commit()?;
         debug_assert!(db::open_question(self.conn(), &row.id)?.is_none());
-        if let Err(error) = self.deliver_queued(&row.id, &row.agent, None) {
-            // Still owed in the store; the next turn delivers it or fails visibly.
-            debug_assert!(
-                !db::owed_answers(self.conn(), &row.id)?.is_empty(),
-                "{error}"
-            );
-        }
         Ok(())
     }
 
