@@ -9,7 +9,7 @@ import { visibleGraph } from "./model.ts";
 import { GraphNodeList, VISUALLY_HIDDEN } from "./NodeList.tsx";
 import { animationFrames, GraphRenderer } from "./renderer.ts";
 import { buildScene, hitTest, type Hit, type NodeShape, type Scene } from "./scene.ts";
-import { readTheme } from "./theme.ts";
+import { readTheme, watchTheme } from "./theme.ts";
 import { toWorld, Viewport } from "./viewport.ts";
 
 export interface GraphCanvasProps {
@@ -37,6 +37,11 @@ class Surface {
     if (ctx === null) throw new Error("GraphCanvas needs a 2D canvas context");
     this.renderer = new GraphRenderer(ctx, animationFrames,
       { camera: this.viewport.camera, width: 0, height: 0, dpr: devicePixelRatio, theme: readTheme(canvas) });
+  }
+
+  /** Rereads the tokens after a theme switch; the layout and the view stay as they are. */
+  retheme(canvas: HTMLCanvasElement): void {
+    this.renderer.update({ theme: readTheme(canvas) });
   }
 
   setScene(scene: Scene): void {
@@ -93,8 +98,9 @@ function useSurface(canvasRef: RefObject<HTMLCanvasElement | null>): RefObject<S
     const current = new Surface(canvas);
     const observer = new ResizeObserver(() => current.resize(canvas));
     observer.observe(canvas);
+    const unwatch = watchTheme(canvas, () => current.retheme(canvas));
     surface.current = current;
-    return () => { observer.disconnect(); current.renderer.dispose(); surface.current = null; };
+    return () => { observer.disconnect(); unwatch(); current.renderer.dispose(); surface.current = null; };
   }, [canvasRef]);
   return surface;
 }

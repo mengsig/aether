@@ -1,7 +1,18 @@
 // Reads the graph's colours from the design tokens on an element (CONTRACTS.md §4). A missing
 // token falls back to another token, and finally to the element's own text colour.
 
+import { invariant } from "./invariant.ts";
 import type { GraphTheme } from "./renderer.ts";
+
+/** Calls `onChange` when `data-theme` changes on the element or an ancestor, which re-themes it. */
+export function watchTheme(element: Element, onChange: () => void): () => void {
+  invariant(element.isConnected, "watchTheme needs an element in the document");
+  const observer = new MutationObserver((records) => {
+    if (records.some((record) => record.target.contains(element))) onChange();
+  });
+  observer.observe(element.ownerDocument.documentElement, { attributes: true, attributeFilter: ["data-theme"], subtree: true });
+  return () => observer.disconnect();
+}
 
 export function readTheme(element: Element): GraphTheme {
   const style = getComputedStyle(element);
