@@ -223,6 +223,9 @@ impl SqliteStore {
                 tally.row("memory_feedback", reason.len());
             }
             Mutation::PutMemory(mem) => put_memory(tx, &mem, tally)?,
+            Mutation::PutMemoryAdmission(admission) => {
+                super::memories::put_memory_admission(tx, &admission, tally)?
+            }
             Mutation::PutArtifact(art) => {
                 tx.execute(
                     "INSERT OR REPLACE INTO artifacts(id, agent_id, task_id, created_at, digest, evicted, body)

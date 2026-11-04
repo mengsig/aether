@@ -530,6 +530,12 @@ impl Store for CommitsMidPass {
     fn memory(&self, id: MemoryId) -> Result<Option<MemoryRecord>> {
         self.inner.memory(id)
     }
+    fn memory_admission(
+        &self,
+        id: MemoryId,
+    ) -> Result<Option<aether_core::memory_admission::MemoryAdmission>> {
+        self.inner.memory_admission(id)
+    }
     fn memories(&self, query: &MemoryQuery) -> Result<Vec<MemoryRecord>> {
         self.fire(Hook::MemoryRetrievalRead)?;
         self.inner.memories(query)

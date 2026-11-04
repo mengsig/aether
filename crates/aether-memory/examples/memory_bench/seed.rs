@@ -145,6 +145,7 @@ fn admission_row(key: &str, admission: Admission, keys: &Keys) -> BenchResult<Ad
         Admission::Accepted { .. } => ("accepted", None, None),
         Admission::Superseded { old, .. } => ("superseded", None, Some(keys.key(old)?.to_owned())),
         Admission::Rejected { reason } => ("rejected", Some(reason), None),
+        Admission::Reinforced { .. } => ("reinforced", None, None),
     };
     debug_assert!(replaced.as_deref() != Some(key), "{key} replaced itself");
     Ok(AdmissionRow {

@@ -65,6 +65,7 @@ impl MemoryService {
                 Admission::Accepted { .. } => report.admitted += 1,
                 Admission::Superseded { .. } => report.superseded += 1,
                 Admission::Rejected { .. } => report.rejected += 1,
+                Admission::Reinforced { .. } => report.unchanged += 1,
             }
             if let (Some(index), Some(record)) = (&self.index, admission.record()) {
                 index.index(record)?;
