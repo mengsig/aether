@@ -60,6 +60,16 @@ describe("generateProtocol", () => {
     expect(module).toContain("A comment end *\\/ in a description");
   });
 
+  it("suffixes a variant whose name another definition already takes", () => {
+    const taken = archonWith((schema) => {
+      (schema["$defs"] as Record<string, unknown>)["ChangeSubjectItem"] = { type: "string" };
+    });
+    const module = generateProtocol([aether, taken]).get("archon.ts") ?? "";
+    expect(module).toContain("export type ChangeSubject = ChangeSubjectItemVariant | ChangeSubjectDependency;");
+    expect(module).toContain("export interface ChangeSubjectItemVariant {");
+    expect(module).toContain("export type ChangeSubjectItem = string;");
+  });
+
   it("leaves the Archon module out of the index without its schema", () => {
     const files = generateProtocol([aether]);
     expect([...files.keys()].sort()).toEqual(["aether.ts", "index.ts"]);
