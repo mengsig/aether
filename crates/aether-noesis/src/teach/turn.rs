@@ -10,7 +10,7 @@ use super::service::{
 };
 use super::{TeachError, question, role_of, seal};
 use crate::budget::Lane;
-use crate::tools;
+use crate::tools::{self, SEALED};
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run the session's agent until it waits, and on a hand-off run the new
@@ -56,10 +56,12 @@ impl<E: Engine> Teaching<'_, E> {
             }
             if let Some(end) = end {
                 report.end = end;
+                self.reseal_turn(session, &mut report)?;
                 return Ok(report);
             }
         }
         debug_assert_eq!(report.steps.len(), MAX_STEPS);
+        self.reseal_turn(session, &mut report)?;
         Ok(report)
     }
 
@@ -114,14 +116,36 @@ impl<E: Engine> Teaching<'_, E> {
         secrets.extend(own.unwrap_or_default());
         record.text = seal::shown_text(step, readable.then_some(secrets.as_slice()));
         for call in &mut record.calls {
-            call.name = seal::sealed_text(&call.name, &secrets);
-            seal::withhold(&mut call.input, &secrets);
-            seal_result(&mut call.result, call.is_error, &secrets, &live);
+            seal_call(call, &secrets, &live);
         }
         for result in results.iter_mut() {
             seal_result(&mut result.content, result.is_error, &secrets, &live);
         }
         debug_assert!(readable || record.text == seal::WITHHELD);
+        Ok(())
+    }
+
+    /// Re-seal every step of the turn against the secrets live at its end: a
+    /// later step's pose or problem seals what an earlier step showed.
+    fn reseal_turn(&self, session: &str, report: &mut TurnReport) -> Result<(), TeachError> {
+        let live = self.live_secrets(session)?;
+        if live.is_empty() {
+            return Ok(());
+        }
+        for step in &mut report.steps {
+            if seal::holds(&step.text, &live) {
+                step.text = seal::WITHHELD.to_string();
+            }
+            for call in &mut step.calls {
+                seal_call(call, &live, &live);
+            }
+        }
+        debug_assert!(
+            report
+                .steps
+                .iter()
+                .all(|step| step.text == seal::WITHHELD || !seal::holds(&step.text, &live))
+        );
         Ok(())
     }
 
@@ -217,6 +241,17 @@ impl<E: Engine> Teaching<'_, E> {
             Err(error) => Err(error.into()),
         }
     }
+}
+
+/// A call as a turn report may show it: the engine's id and the name are
+/// model text, so each is sealed like the input.
+fn seal_call(call: &mut CallRecord, secrets: &[String], live: &[String]) {
+    call.id = seal::sealed_text(&call.id, secrets);
+    call.name = seal::sealed_text(&call.name, secrets);
+    seal::withhold(&mut call.input, secrets);
+    seal_result(&mut call.result, call.is_error, secrets, live);
+    let sealed = |text: &str| text == SEALED || !seal::holds(text, secrets);
+    debug_assert!(sealed(&call.id) && sealed(&call.name));
 }
 
 /// A result as it may be recorded or delivered. A refusal is withheld whole

@@ -254,3 +254,71 @@ fn a_numeric_key_or_solution_followed_by_a_unit_is_still_sealed() {
     assert_eq!(report.steps[1].text, seal::WITHHELD, "{report:?}");
     assert!(!format!("{report:?}").contains("42kg"), "{report:?}");
 }
+
+#[test]
+fn a_pose_late_in_a_turn_seals_what_its_earlier_steps_showed() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Learn cells", Mode::Teach, &[])
+        .unwrap()
+        .id;
+    let read = json!({"concepts": ["cells"]});
+    let prober = t.engine_mut();
+    prober.script(
+        Agent::Prober,
+        "The answer is mitochondria.",
+        vec![("noesis.learner_read", read)],
+    );
+    prober.script(
+        Agent::Prober,
+        "One question:",
+        vec![(ASK, recall("Which organelle makes ATP?", SECRET))],
+    );
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer);
+    assert_eq!(report.steps.len(), 2);
+    assert_eq!(report.steps[0].text, seal::WITHHELD);
+    assert_eq!(report.steps[1].text, "One question:");
+    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+}
+
+#[test]
+fn an_engine_call_id_cannot_carry_an_active_solution() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = t
+        .create_session("Practise cells", Mode::Practice, &[])
+        .unwrap()
+        .id;
+    let problem = json!({"statement": "Name the powerhouse", "mode": "recall", "solution": SECRET});
+    t.engine_mut()
+        .script(Agent::Practitioner, "", vec![(PROBLEM, problem)]);
+    let read = ToolCall {
+        id: SECRET.into(),
+        name: "noesis.learner_read".into(),
+        input: json!({"concepts": ["cells"]}),
+    };
+    let step = Step {
+        text: String::new(),
+        calls: vec![read],
+        usage: Default::default(),
+    };
+    t.engine_mut().script_step(Agent::Practitioner, step);
+    t.engine_mut()
+        .script(Agent::Practitioner, "Over to you.", vec![]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert!(session(&t, &id).active_problem.is_some(), "not concluded");
+    assert_eq!(report.steps[1].calls[0].id, crate::tools::SEALED);
+    assert!(!format!("{report:?}").contains(SECRET), "{report:?}");
+    let agent = session(&t, &id).agent;
+    let inputs = t.engine().inputs_of(&agent);
+    let raw = inputs.iter().any(|input| {
+        matches!(input, Input::ToolResults(results) if results.iter().any(|r| r.call == SECRET))
+    });
+    assert!(raw, "the engine still correlates by its own id");
+    assert!(
+        !format!("{inputs:?}").contains(SECRET),
+        "Debug omits raw ids"
+    );
+}

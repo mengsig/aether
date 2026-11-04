@@ -58,6 +58,12 @@ impl FauxEngine {
         self
     }
 
+    /// Queue one model step exactly as given, call ids included.
+    pub fn script_step(&mut self, agent: Agent, step: Step) -> &mut Self {
+        self.scripts.entry(agent).or_default().push_back(Ok(step));
+        self
+    }
+
     pub fn fail_next(&mut self, agent: Agent, error: EngineError) -> &mut Self {
         self.scripts.entry(agent).or_default().push_back(Err(error));
         self

@@ -16,9 +16,10 @@ use crate::prompts::Agent;
 use crate::tools::args::{AskArgs, ConcludeArgs, PlanArgs, ProbeDoneArgs, ProblemArgs};
 use crate::tools::{self, ToolArgs, ToolName};
 
-/// One tool call's result and whether it ends the agent's turn.
+/// One tool call's result, for the engine only, and whether it ends the
+/// agent's turn. Readers get the sealed [`super::CallRecord`] instead.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CallOutcome {
+pub(crate) struct CallOutcome {
     pub result: ToolResult,
     /// Set when this call ends the turn: its result arrives later, or never.
     pub ends: Option<TurnEnd>,
@@ -32,7 +33,7 @@ fn refuse(text: impl Into<String>) -> Handled {
 
 impl<E: Engine> Teaching<'_, E> {
     /// Run one Noesis tool call from `caller` in `session`.
-    pub fn call_tool(
+    pub(crate) fn call_tool(
         &mut self,
         session: &str,
         caller: &Caller,

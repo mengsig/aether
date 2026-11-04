@@ -42,23 +42,35 @@ pub struct ToolCall {
     pub input: Value,
 }
 
-/// Debug omits the raw input and an unknown name: either may repeat a
-/// sealed value before the loop has checked it.
+/// Debug omits the raw id, input and an unknown name: each is model text
+/// that may repeat a sealed value before the loop has checked it.
 impl std::fmt::Debug for ToolCall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let known = crate::tools::ToolName::parse(&self.name);
         f.debug_struct("ToolCall")
-            .field("id", &self.id)
+            .field("id_chars", &self.id.chars().count())
             .field("tool", &known.map(crate::tools::ToolName::as_str))
             .finish_non_exhaustive()
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// A tool call's result for the engine. `call` is the engine's own raw id,
+/// kept only to correlate the result; Debug omits it.
+#[derive(Clone, PartialEq)]
 pub struct ToolResult {
     pub call: String,
     pub content: Value,
     pub is_error: bool,
+}
+
+impl std::fmt::Debug for ToolResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolResult")
+            .field("call_chars", &self.call.chars().count())
+            .field("content", &self.content)
+            .field("is_error", &self.is_error)
+            .finish()
+    }
 }
 
 /// What a Noesis agent is given. Inputs are persisted before inference, so
