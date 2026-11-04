@@ -55,6 +55,21 @@ describe("the task DAG", () => {
     expect(inspector?.querySelector("a[href='#/archon/initiatives/in_pairing']")).not.toBeNull();
   });
 
+  it("titles a renamed item as core's summary has it, without a relayout", async () => {
+    stubCanvas();
+    h = await graphHarness();
+    const { calls, layout } = countingLayout();
+    const root = await h.mount(<DagScreen layout={layout} />);
+    await h.until(() => calls.length === 1 && nodeList(root).length > 0, "the first layout");
+    const entry = h.faux.world.base.items.get("qi_sync_api");
+    if (entry === undefined) throw new Error("the demo world has qi_sync_api");
+    entry.summary = { ...entry.summary, title: "Serve sync over HTTP/3" };
+    h.faux.inner.tell("qi_sync_api", { subject: "item", item: "qi_sync_api", state: "queued" });
+    await h.until(() => nodeList(root).some((label) => label.startsWith("Serve sync over HTTP/3, ")), "the renamed node");
+    expect(pathTitles(root)).toContain("Serve sync over HTTP/3");
+    expect(calls).toHaveLength(1);
+  });
+
   it("repaints a status change without a relayout, and relayouts only when the structure changes", async () => {
     const canvas = stubCanvas();
     h = await graphHarness();

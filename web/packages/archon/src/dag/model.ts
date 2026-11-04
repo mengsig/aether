@@ -2,7 +2,7 @@
 // the statuses painted over it, the critical path of open work and why items are held up.
 // Structure and status are kept apart, so a status change repaints and never relayouts.
 
-import type { ArchonGraph } from "@aether-ui/core";
+import type { ArchonGraph, ArchonItem } from "@aether-ui/core";
 import { edgeKey, type Emphasis } from "@aether-ui/graph";
 import type { archon, GEdge, GGroup, GNode, GraphModel } from "@aether-ui/protocol";
 import type { Status } from "@aether-ui/ui";
@@ -49,9 +49,19 @@ function index(edges: readonly TaskEdge[], end: "from" | "to"): Map<string, Task
   return out;
 }
 
-/** Reads the stored graph, or a slice of it, into the shape the DAG derives from. */
-export function dagData(graph: ArchonGraph, only?: (node: TaskNode) => boolean): DagData {
+/** A node titled as core's item summary has it: change frames move a node's state, not its title. */
+function retitled(node: TaskNode, items: Readonly<Record<string, ArchonItem>>): TaskNode {
+  const title = items[node.id]?.summary.title;
+  return typeof title === "string" && title !== node.title ? { ...node, title } : node;
+}
+
+/**
+ * Reads the stored graph, or a slice of it, into the shape the DAG derives from. With `items`, core's
+ * item summaries, a node takes its item's current title.
+ */
+export function dagData(graph: ArchonGraph, only?: (node: TaskNode) => boolean, items?: Readonly<Record<string, ArchonItem>>): DagData {
   const nodes = Object.values(graph.nodes).map(taskNode).filter((node) => only === undefined || only(node))
+    .map((node) => (items === undefined ? node : retitled(node, items)))
     .sort((a, b) => byString(a.id, b.id));
   const byId = new Map(nodes.map((node) => [node.id, node]));
   invariant(byId.size === nodes.length, "task graph node ids are unique");

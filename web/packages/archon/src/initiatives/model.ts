@@ -27,7 +27,7 @@ export interface InitiativeView {
 
 const stateOf = (state: archon.QueueState | string): string => (typeof state === "string" ? state : state.state);
 
-/** The detail core stored, with each member's live state where core's items hold it. */
+/** The detail core stored, with each member's live title, state and spend where core's items hold it. */
 export function initiativeView(detail: archon.InitiativeDetail, items: Readonly<Record<string, ArchonItem>>): InitiativeView {
   invariant(typeof detail.initiative?.id === "string", "an initiative detail names its initiative");
   invariant(Array.isArray(detail.members), "an initiative detail lists its members");
@@ -37,7 +37,9 @@ export function initiativeView(detail: archon.InitiativeDetail, items: Readonly<
     invariant(isStateKind(kind), `member ${member.id} has a known state, not ${kind}`);
     const summary = live?.summary as Partial<archon.ItemSummary> | undefined;
     const pill = statePill(kind, false);
-    return { id: member.id, title: member.title, kind, status: pill.status, label: pill.label, spentUsd: summary?.spent_usd ?? 0, updatedAt: summary?.updated_at ?? member.updated_at };
+    // Core's summary is kept current by the change stream; the detail's member is as of its last read.
+    const title = typeof summary?.title === "string" ? summary.title : member.title;
+    return { id: member.id, title, kind, status: pill.status, label: pill.label, spentUsd: summary?.spent_usd ?? 0, updatedAt: summary?.updated_at ?? member.updated_at };
   });
   const done = members.filter((row) => row.kind === "succeeded").length;
   const failed = members.filter((row) => row.kind === "failed").length;

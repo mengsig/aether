@@ -61,15 +61,18 @@ function Results({ access, query, selected, onSelect }: { readonly access: Archo
       <ul className="history-list" aria-label="Items">
         {rows.map((row) => {
           // Core's item, when it holds one, is newer than the search that listed it.
-          const kind = items[row.id]?.state ?? (typeof row.state === "string" ? row.state : row.state.state);
+          const live = items[row.id];
+          const kind = live?.state ?? (typeof row.state === "string" ? row.state : row.state.state);
+          const title = typeof live?.summary.title === "string" ? live.summary.title : row.title;
+          const moved = typeof live?.summary.updated_at === "string" ? live.summary.updated_at : row.updated_at;
           invariant(isStateKind(kind), `listed item ${row.id} has a known state`);
           const pill = statePill(kind, false);
           return (
             <li key={row.id}>
               <button type="button" className="dag-row history-row" aria-pressed={row.id === selected} onClick={() => onSelect(row.id)}>
-                <span className="dag-row-title">{row.title}</span>
+                <span className="dag-row-title">{title}</span>
                 <StatusPill status={pill.status} label={pill.label} />
-                <span className="dag-reason">Moved {dateTime(row.updated_at)}</span>
+                <span className="dag-reason">Moved {dateTime(moved)}</span>
               </button>
             </li>
           );

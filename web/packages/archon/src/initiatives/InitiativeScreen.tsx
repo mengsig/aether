@@ -21,16 +21,19 @@ import "./initiatives.css";
 export const SETTLE_MS = 500;
 
 /**
- * Moves when the initiative or one of its members does in core's store: the initiative's entry in the
- * graph (state, title) and the states of the items naming it. The detail is reread when it settles.
+ * Moves when the initiative or one of its members does in core's store: core replaces the initiative's
+ * graph entry on each of its change frames, and members move in core's items. The detail is reread
+ * when it settles.
  */
-function useInitiativeSignal(conn: string, id: string): string {
+function useInitiativeSignal(conn: string, id: string): object {
   const items = useSelector(useMemo(() => selectItems(conn), [conn]));
   const graph = useSelector(useMemo(() => selectTaskGraph(conn), [conn]));
   const entry = graph?.initiatives.find((initiative) => initiative.id === id);
-  const signal = useMemo(() => [JSON.stringify(entry ?? null), ...Object.entries(items).filter(([, item]) => item.summary.initiative === id)
-    .map(([key, item]) => `${key}:${item.state}`).sort()].join("|"), [entry, items, id]);
-  return useSettled(signal, SETTLE_MS);
+  const members = useMemo(() => Object.entries(items).filter(([, item]) => item.summary.initiative === id)
+    .map(([key, item]) => `${key}:${item.state}`).sort().join("|"), [items, id]);
+  // A new token for a new entry object or member set, even when its fields read the same.
+  const token = useMemo(() => ({ entry, members }), [entry, members]);
+  return useSettled(token, SETTLE_MS);
 }
 
 function Members({ view, graph, selected, onSelect }: { readonly view: InitiativeView; readonly graph: DagData; readonly selected: string | undefined; readonly onSelect: (id: string) => void }) {
@@ -104,7 +107,7 @@ export function InitiativePage({ detail, access, layout }: InitiativePageProps) 
   const items = useSelector(useMemo(() => selectItems(access.conn), [access.conn]));
   const graph = useSelector(useMemo(() => selectTaskGraph(access.conn), [access.conn]));
   const view = useMemo(() => initiativeView(detail, items), [detail, items]);
-  const data = useMemo(() => graph === null ? null : dagData(graph, (node) => node.initiative === id), [graph, id]);
+  const data = useMemo(() => graph === null ? null : dagData(graph, (node) => node.initiative === id, items), [graph, id, items]);
   const [picked, setPicked] = useState<string>();
   const selected = picked !== undefined && view.members.some((row) => row.id === picked) ? picked : undefined;
   const onSelect = useCallback((item: string) => setPicked(item), []);

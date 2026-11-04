@@ -1,7 +1,7 @@
 // `#/archon/graph`: every item of core's stored task graph, layered and grouped by initiative, with
 // the critical path and why items are held up. Core keeps the graph current from the change stream.
 
-import { selectTaskGraph, useSelector, type ArchonGraph } from "@aether-ui/core";
+import { selectItems, selectTaskGraph, useSelector, type ArchonGraph, type ArchonItem } from "@aether-ui/core";
 import { layeredLayout } from "@aether-ui/graph";
 import type { ConnectionInfo } from "@aether-ui/protocol";
 import { EmptyState, Skeleton } from "@aether-ui/ui";
@@ -17,12 +17,14 @@ import "./dag.css";
 
 export interface DagWorkspaceProps {
   readonly graph: ArchonGraph;
+  /** Core's item summaries, whose titles are newer than the graph's. */
+  readonly items: Readonly<Record<string, ArchonItem>>;
   readonly layout: LayoutFn;
 }
 
 /** The graph, its canvas and its panel; the selection is the only state it keeps. */
-export function DagWorkspace({ graph, layout }: DagWorkspaceProps) {
-  const data = useMemo(() => dagData(graph), [graph]);
+export function DagWorkspace({ graph, items, layout }: DagWorkspaceProps) {
+  const data = useMemo(() => dagData(graph, undefined, items), [graph, items]);
   const path = useMemo(() => criticalPath(data), [data]);
   const held = useMemo(() => heldUp(data), [data]);
   const progress = useMemo(() => initiativeProgress(data, held), [data, held]);
@@ -67,13 +69,14 @@ function Legend() {
 function Graph({ info, layout }: { readonly info: ConnectionInfo; readonly layout: LayoutFn }) {
   const access = useArchonAccess(info);
   const graph = useSelector(useMemo(() => selectTaskGraph(access.conn), [access.conn]));
+  const items = useSelector(useMemo(() => selectItems(access.conn), [access.conn]));
   if (!access.has("task_graph") && access.ready) {
     return <EmptyState title="No task graph on this Archon">This archond does not serve the task graph. Update it to 1.5 or later to see how items depend on each other.</EmptyState>;
   }
   if (graph === null) {
     return <div className="dag" aria-busy="true" aria-label="Loading the task graph"><Skeleton height="1.5rem" width="40%" /><Skeleton height="28rem" /></div>;
   }
-  return <DagWorkspace graph={graph} layout={layout} />;
+  return <DagWorkspace graph={graph} items={items} layout={layout} />;
 }
 
 /** `layout` is for tests, which count layouts; the route renders the worker's layered layout. */

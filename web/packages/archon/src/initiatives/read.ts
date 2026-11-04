@@ -18,11 +18,11 @@ export function failureOf(error: unknown): ReadFailure {
 }
 
 /**
- * Runs `read` when it changes, when `signal` moves and on reload; null reads nothing. `read` is
- * memoized by the caller on what it reads, so a new target is a new read.
+ * Runs `read` when it changes, when `signal` moves (by identity) and on reload; null reads nothing.
+ * `read` is memoized by the caller on what it reads, so a new target is a new read.
  */
-export function useStoreRead(read: (() => Promise<void>) | null, signal: string): StoreRead {
-  invariant(typeof signal === "string", "a read follows a string signal");
+export function useStoreRead(read: (() => Promise<void>) | null, signal: unknown): StoreRead {
+  invariant(read === null || typeof read === "function", "a store read is a function or nothing");
   const [outcome, setOutcome] = useState<{ read: unknown; failure: ReadFailure | null }>({ read: null, failure: null });
   const [nonce, setNonce] = useState(0);
   useEffect(() => {

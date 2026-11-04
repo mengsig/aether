@@ -40,6 +40,20 @@ describe("an initiative page", () => {
     expect(h.app.store.get().archon[CONN]?.initiatives.in_sync).toBeDefined();
   });
 
+  it("shows a member's current title after a rename that keeps its state", async () => {
+    h = await graphHarness();
+    const root = await h.mount(<InitiativeScreen params={{ id: "in_sync" }} layout={gridLayout} />);
+    await h.until(() => root.querySelector(".initiative-title") !== null, "the initiative");
+    const entry = h.faux.world.base.items.get("qi_sync_store");
+    if (entry === undefined) throw new Error("the demo world has qi_sync_store");
+    entry.summary = { ...entry.summary, title: "Renamed sync store" };
+    entry.detail = { ...entry.detail, item: { ...(entry.detail.item as object), title: "Renamed sync store" } };
+    h.faux.inner.tell("qi_sync_store", { subject: "item", item: "qi_sync_store", state: "running" });
+    await h.until(() => h.app.store.get().archon[CONN]?.items.qi_sync_store?.summary.title === "Renamed sync store", "core's renamed summary");
+    await h.tick(2_000);
+    expect(member(root, "qi_sync_store")?.querySelector(".dag-row-title")?.textContent).toBe("Renamed sync store");
+  });
+
   it("rereads the initiative when only the initiative itself changes", async () => {
     h = await graphHarness();
     const root = await h.mount(<InitiativeScreen params={{ id: "in_sync" }} layout={gridLayout} />);
@@ -50,6 +64,16 @@ describe("an initiative page", () => {
     h.faux.inner.tell(null, { subject: "initiative", initiative: "in_sync", state: "shipping" });
     await h.until(() => root.querySelector(".initiative-header")?.textContent?.includes("Shipping") === true, "the shipping initiative");
     expect(h.app.store.get().archon[CONN]?.graph?.initiatives.find((row) => row.id === "in_sync")?.state).toBe("shipping");
+  });
+
+  it("rereads the initiative on its change frame even when the state it carries is the same", async () => {
+    h = await graphHarness();
+    const root = await h.mount(<InitiativeScreen params={{ id: "in_sync" }} layout={gridLayout} />);
+    await h.until(() => root.querySelector(".initiative-title") !== null, "the initiative");
+    Object.assign(h.faux.world.initiatives.find((row) => row.id === "in_sync") ?? {}, { title: "Offline sync, v2" });
+    h.faux.inner.tell(null, { subject: "initiative", initiative: "in_sync", state: "open" });
+    await h.until(() => root.querySelector(".initiative-title")?.textContent === "Offline sync, v2", "the renamed initiative");
+    expect(reads(h)).toBeGreaterThanOrEqual(2);
   });
 
   it("says when archond has no such initiative", async () => {
