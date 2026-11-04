@@ -244,6 +244,7 @@ dependencies = [
  "chrono",
  "parking_lot",
  "rusqlite",
+ "rustix",
  "tempfile",
  "thiserror 2.0.21",
  "toml",

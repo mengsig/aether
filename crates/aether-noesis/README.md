@@ -16,14 +16,17 @@ worker, timer, tool or role exists. `Noesis::start_if_enabled` checks the
 - `settings`: the `[noesis]` keys, their defaults and ranges, and the
   prerequisite rules that turn stored settings into effective ones (a switch
   counts only when the switches it depends on count).
-- `store`: `noesis.db`, created private to its owner, with migration N1
+- `store`: `noesis.db`, kept private to its owner (an existing file and its
+  `-wal`/`-shm` are set to 0600, symlinks are refused), with migration N1
   (sessions, the messages index, questions and problems, plans, the graph
   ledgers, coverage and jobs).
 - `budget`: daily budgets and concurrency caps for interactive and
   background calls. A call is admitted before it is made, so a budget of 0,
-  or one already used up, refuses the call before any model sees it. A model
-  billed per request is used only when `noesis.billing.allow_api = true`; it
-  is never a silent fallback. This crate stores and logs no credentials:
+  or one already used up, refuses the call before any model sees it. Spend is
+  booked in whole micro-USD and charged to the day that admitted the call.
+  An unset model slot takes the first ready subscription model and never a
+  model billed per request; such a model is used only when a slot names it
+  and `noesis.billing.allow_api = true`. This crate stores and logs no credentials:
   models are named by `provider/model` id only.
 
 ## Provenance

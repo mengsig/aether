@@ -40,20 +40,6 @@ impl Spend {
     fn is_valid(self) -> bool {
         self.usd.is_finite() && self.usd >= 0.0
     }
-
-    fn plus(self, other: Spend) -> Spend {
-        Spend {
-            usd: self.usd + other.usd,
-            tokens: self.tokens.saturating_add(other.tokens),
-        }
-    }
-
-    fn minus(self, other: Spend) -> Spend {
-        Spend {
-            usd: (self.usd - other.usd).max(0.0),
-            tokens: self.tokens.saturating_sub(other.tokens),
-        }
-    }
 }
 
 /// Spend already charged today, per lane; the daemon seeds it at start from
@@ -89,16 +75,67 @@ pub enum Refusal {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Limits {
-    usd: [f64; 2],
+    micros: [u64; 2],
     background_tokens: u64,
     caps: [u8; 2],
+}
+
+/// Spend is booked in whole micro-USD, so decimal amounts such as $0.10
+/// add up exactly and a limit is reached when the bills say it is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Amount {
+    micros: u64,
+    tokens: u64,
+}
+
+const MICROS_PER_USD: f64 = 1_000_000.0;
+
+impl Amount {
+    fn of(spend: Spend) -> Self {
+        debug_assert!(spend.is_valid(), "only valid spend is booked: {spend:?}");
+        Self {
+            micros: usd_to_micros(spend.usd),
+            tokens: spend.tokens,
+        }
+    }
+
+    fn plus(self, other: Amount) -> Amount {
+        Amount {
+            micros: self.micros.saturating_add(other.micros),
+            tokens: self.tokens.saturating_add(other.tokens),
+        }
+    }
+
+    fn minus(self, other: Amount) -> Amount {
+        debug_assert!(self.micros >= other.micros && self.tokens >= other.tokens);
+        Amount {
+            micros: self.micros.saturating_sub(other.micros),
+            tokens: self.tokens.saturating_sub(other.tokens),
+        }
+    }
+
+    fn spend(self) -> Spend {
+        Spend {
+            usd: micros_to_usd(self.micros),
+            tokens: self.tokens,
+        }
+    }
+}
+
+/// Rounds to the nearest micro-USD; `as` saturates for huge limits.
+fn usd_to_micros(usd: f64) -> u64 {
+    (usd * MICROS_PER_USD).round() as u64
+}
+
+fn micros_to_usd(micros: u64) -> f64 {
+    micros as f64 / MICROS_PER_USD
 }
 
 #[derive(Debug)]
 struct Ledger {
     day: NaiveDate,
-    spent: [Spend; 2],
-    reserved: [Spend; 2],
+    spent: [Amount; 2],
+    reserved: [Amount; 2],
     running: [u8; 2],
 }
 
@@ -118,7 +155,10 @@ impl Accountant {
         debug_assert!(spent.interactive.is_valid() && spent.background.is_valid());
         let budget = &settings.budget;
         let limits = Limits {
-            usd: [budget.interactive_usd_daily, budget.background_usd_daily],
+            micros: [
+                usd_to_micros(budget.interactive_usd_daily),
+                usd_to_micros(budget.background_usd_daily),
+            ],
             background_tokens: budget.background_tokens_daily,
             caps: [
                 settings.concurrency_interactive,
@@ -131,7 +171,7 @@ impl Accountant {
                 fail_closed(spent.interactive),
                 fail_closed(spent.background),
             ],
-            reserved: [Spend::default(); 2],
+            reserved: [Amount::default(); 2],
             running: [0; 2],
         };
         Self {
@@ -146,6 +186,7 @@ impl Accountant {
         if !estimate.is_valid() {
             return Err(Refusal::InvalidEstimate { usd: estimate.usd });
         }
+        let estimate = Amount::of(estimate);
         let i = lane.index();
         let mut ledger = self.ledger.lock();
         ledger.roll_over(day);
@@ -162,30 +203,31 @@ impl Accountant {
         Ok(Admission {
             ledger: Arc::clone(&self.ledger),
             lane,
+            day: ledger.day,
             estimate,
             settled: false,
         })
     }
 
-    fn check_budget(&self, ledger: &Ledger, lane: Lane, estimate: Spend) -> Result<(), Refusal> {
+    fn check_budget(&self, ledger: &Ledger, lane: Lane, estimate: Amount) -> Result<(), Refusal> {
         let i = lane.index();
-        let limit = self.limits.usd[i];
-        if limit <= 0.0 {
+        let limit = self.limits.micros[i];
+        if limit == 0 {
             return Err(Refusal::BudgetZero { lane });
         }
         let used = ledger.spent[i].plus(ledger.reserved[i]);
-        if used.usd >= limit {
+        if used.micros >= limit {
             return Err(Refusal::BudgetExhausted {
                 lane,
-                limit,
-                used: used.usd,
+                limit: micros_to_usd(limit),
+                used: micros_to_usd(used.micros),
             });
         }
-        if used.usd + estimate.usd > limit {
+        if used.micros.saturating_add(estimate.micros) > limit {
             return Err(Refusal::WouldExceed {
                 lane,
-                limit,
-                estimate: estimate.usd,
+                limit: micros_to_usd(limit),
+                estimate: micros_to_usd(estimate.micros),
             });
         }
         if lane == Lane::Background {
@@ -198,11 +240,11 @@ impl Accountant {
         Ok(())
     }
 
-    /// Spend charged today on `lane`, not counting calls still in flight.
+    /// Spend charged to `day` on `lane`, not counting calls still in flight.
     pub fn spent_today(&self, lane: Lane, day: NaiveDate) -> Spend {
         let mut ledger = self.ledger.lock();
         ledger.roll_over(day);
-        ledger.spent[lane.index()]
+        ledger.spent[lane.index()].spend()
     }
 
     /// Calls admitted on `lane` and not yet settled.
@@ -213,12 +255,12 @@ impl Accountant {
 
 /// A seed that is not a real amount counts as unlimited spend, so a corrupt
 /// usage record refuses calls instead of admitting them all.
-fn fail_closed(spend: Spend) -> Spend {
+fn fail_closed(spend: Spend) -> Amount {
     if spend.is_valid() {
-        return spend;
+        return Amount::of(spend);
     }
-    Spend {
-        usd: f64::INFINITY,
+    Amount {
+        micros: u64::MAX,
         tokens: u64::MAX,
     }
 }
@@ -229,16 +271,21 @@ impl Ledger {
     fn roll_over(&mut self, day: NaiveDate) {
         if day > self.day {
             self.day = day;
-            self.spent = [Spend::default(); 2];
+            self.spent = [Amount::default(); 2];
         }
     }
 
-    fn release(&mut self, lane: Lane, estimate: Spend, charge: Spend) {
+    /// A call is charged to the day that admitted it; once that day has
+    /// rolled over, its charge no longer counts against the current one.
+    fn release(&mut self, lane: Lane, day: NaiveDate, estimate: Amount, charge: Amount) {
         let i = lane.index();
-        assert!(self.running[i] > 0, "a release without an admission");
-        self.running[i] -= 1;
+        debug_assert!(self.running[i] > 0, "a release without an admission");
+        debug_assert!(day <= self.day, "an admission from a day not yet reached");
+        self.running[i] = self.running[i].saturating_sub(1);
         self.reserved[i] = self.reserved[i].minus(estimate);
-        self.spent[i] = self.spent[i].plus(charge);
+        if day == self.day {
+            self.spent[i] = self.spent[i].plus(charge);
+        }
     }
 }
 
@@ -250,7 +297,8 @@ impl Ledger {
 pub struct Admission {
     ledger: Arc<Mutex<Ledger>>,
     lane: Lane,
-    estimate: Spend,
+    day: NaiveDate,
+    estimate: Amount,
     settled: bool,
 }
 
@@ -259,23 +307,31 @@ impl Admission {
         self.lane
     }
 
+    /// The day this call's spend is charged to.
+    pub fn day(&self) -> NaiveDate {
+        self.day
+    }
+
     /// Charge the call's actual (or estimated) spend and free its slot.
     pub fn settle(mut self, actual: Spend) {
         let charge = if actual.is_valid() {
-            actual
+            Amount::of(actual)
         } else {
             debug_assert!(false, "settled with an invalid spend {actual:?}");
             self.estimate
         };
-        self.ledger.lock().release(self.lane, self.estimate, charge);
-        self.settled = true;
+        self.finish(charge);
     }
 
     /// The call was never sent: free the slot and charge nothing.
     pub fn abandon_unsent(mut self) {
-        self.ledger
-            .lock()
-            .release(self.lane, self.estimate, Spend::default());
+        self.finish(Amount::default());
+    }
+
+    fn finish(&mut self, charge: Amount) {
+        debug_assert!(!self.settled, "an admission is finished once");
+        let mut ledger = self.ledger.lock();
+        ledger.release(self.lane, self.day, self.estimate, charge);
         self.settled = true;
     }
 }
@@ -283,9 +339,7 @@ impl Admission {
 impl Drop for Admission {
     fn drop(&mut self) {
         if !self.settled {
-            self.ledger
-                .lock()
-                .release(self.lane, self.estimate, self.estimate);
+            self.finish(self.estimate);
         }
     }
 }
@@ -325,8 +379,8 @@ fn alternatives_hint(alternatives: &[String]) -> String {
 }
 
 /// Pick the model for a slot. A configured model is used only if it is ready
-/// and allowed, never swapped for another; unset takes the first ready
-/// subscription model. An API model is used only when `allow_api` is set.
+/// and allowed, never swapped for another. Unset takes the first ready
+/// subscription model, never an API one: API use is configured and allowed.
 pub fn choose_model(
     configured: Option<&str>,
     offers: &[ModelOffer<'_>],
@@ -356,12 +410,9 @@ pub fn choose_model(
         }
         return Ok(wanted.to_string());
     }
-    let ready = |billing: Billing| {
-        offers
-            .iter()
-            .find(|offer| offer.ready && offer.billing == billing)
-    };
-    let chosen = ready(Billing::Subscription).or_else(|| ready(Billing::Api).filter(allowed));
+    let chosen = offers
+        .iter()
+        .find(|offer| offer.ready && offer.billing == Billing::Subscription);
     chosen
         .map(|offer| offer.id.to_string())
         .ok_or_else(|| no_model(None))
@@ -592,8 +643,8 @@ mod tests {
             .unwrap_err();
         assert!(matches!(refusal, Refusal::InvalidEstimate { .. }));
         assert!(book.admit(Lane::Interactive, usd(-1.0), day(1)).is_err());
-        assert_eq!(fail_closed(usd(f64::NAN)).usd, f64::INFINITY);
-        assert_eq!(fail_closed(usd(0.5)), usd(0.5));
+        assert_eq!(fail_closed(usd(f64::NAN)).micros, u64::MAX);
+        assert_eq!(fail_closed(usd(0.5)).spend(), usd(0.5));
     }
 
     fn offers() -> Vec<ModelOffer<'static>> {
@@ -643,7 +694,15 @@ mod tests {
                 alternatives: vec![]
             }
         );
-        assert_eq!(choose_model(None, &api_only, true).unwrap(), "openai/gpt");
+        let refusal = choose_model(None, &api_only, true).unwrap_err();
+        let alternatives = vec!["openai/gpt".to_string()];
+        assert_eq!(
+            refusal,
+            ModelRefusal::NoModel {
+                wanted: None,
+                alternatives
+            }
+        );
         let refusal = choose_model(Some("openai/gpt"), &offers(), false).unwrap_err();
         assert_eq!(
             refusal,
@@ -713,5 +772,82 @@ mod tests {
         assert!(spent <= 1.0 + 1e-9, "spent {spent} over the limit");
         assert!((spent - f64::from(admitted) * 0.01).abs() < 1e-9);
         assert_eq!(book.running(Lane::Interactive), 0);
+    }
+
+    #[test]
+    fn decimal_amounts_meet_the_limit_exactly() {
+        let made = Cell::new(0);
+        let book = accountant(|s| s.budget.interactive_usd_daily = 0.3);
+        for _ in 0..3 {
+            call(&book, Lane::Interactive, usd(0.1), &made).unwrap();
+        }
+        let refusal = call(&book, Lane::Interactive, usd(0.0), &made).unwrap_err();
+        assert!(
+            matches!(refusal, Refusal::BudgetExhausted { .. }),
+            "{refusal}"
+        );
+        let dollar = accountant(|s| s.budget.interactive_usd_daily = 1.0);
+        for _ in 0..10 {
+            call(&dollar, Lane::Interactive, usd(0.1), &made).unwrap();
+        }
+        let refusal = call(&dollar, Lane::Interactive, usd(0.0), &made).unwrap_err();
+        assert!(
+            matches!(refusal, Refusal::BudgetExhausted { .. }),
+            "{refusal}"
+        );
+        assert_eq!(dollar.spent_today(Lane::Interactive, day(1)), usd(1.0));
+        assert_eq!(
+            made.get(),
+            13,
+            "a call refused below the limit or admitted past it"
+        );
+    }
+
+    #[test]
+    fn a_call_is_charged_to_the_day_that_admitted_it() {
+        for lane in [Lane::Interactive, Lane::Background] {
+            for observe_first in [false, true] {
+                let book = accountant(|_| {});
+                let admission = book.admit(lane, usd(0.5), day(1)).unwrap();
+                assert_eq!(admission.day(), day(1));
+                if observe_first {
+                    assert_eq!(book.spent_today(lane, day(2)), usd(0.0));
+                }
+                admission.settle(usd(0.5));
+                assert_eq!(
+                    book.spent_today(lane, day(2)),
+                    usd(0.0),
+                    "{lane:?} {observe_first}"
+                );
+                assert_eq!(book.running(lane), 0);
+            }
+            let book = accountant(|_| {});
+            let admission = book.admit(lane, usd(0.5), day(1)).unwrap();
+            assert_eq!(book.spent_today(lane, day(2)), usd(0.0));
+            drop(admission);
+            assert_eq!(book.spent_today(lane, day(2)), usd(0.0), "{lane:?} drop");
+        }
+    }
+
+    #[test]
+    fn a_call_admitted_while_the_clock_is_behind_counts_on_the_ledger_day() {
+        let book = Accountant::new(&NoesisSettings::default(), day(2), LaneSpend::default());
+        let admission = book.admit(Lane::Interactive, usd(0.5), day(1)).unwrap();
+        assert_eq!(admission.day(), day(2));
+        admission.settle(usd(0.5));
+        assert_eq!(book.spent_today(Lane::Interactive, day(2)), usd(0.5));
+    }
+
+    #[test]
+    fn in_flight_reservations_across_midnight_still_hold_their_slot() {
+        let book = accountant(|s| {
+            s.budget.interactive_usd_daily = 1.0;
+            s.concurrency_interactive = 1;
+        });
+        let late = book.admit(Lane::Interactive, usd(0.9), day(1)).unwrap();
+        let refusal = book.admit(Lane::Interactive, usd(0.2), day(2)).unwrap_err();
+        assert!(matches!(refusal, Refusal::WouldExceed { .. }), "{refusal}");
+        late.settle(usd(0.9));
+        assert!(book.admit(Lane::Interactive, usd(0.2), day(2)).is_ok());
     }
 }

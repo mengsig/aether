@@ -212,3 +212,46 @@ fn deleting_a_proposition_takes_its_chains_and_a_session_its_rows() {
         .unwrap();
     assert_eq!(count("SELECT count(*) FROM plans"), 0);
 }
+
+#[cfg(unix)]
+#[test]
+fn reopening_a_permissive_store_makes_it_and_its_sidecars_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("noesis.db");
+    NoesisStore::open(&path).unwrap().close().unwrap();
+    let wal = dir.path().join("noesis.db-wal");
+    std::fs::write(&wal, b"").unwrap();
+    for file in [&path, &wal] {
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    let store = NoesisStore::open(&path).unwrap();
+    store
+        .connection()
+        .execute(
+            "INSERT INTO sources VALUES ('s_1', 'notes', 'art_1', 't')",
+            [],
+        )
+        .unwrap();
+    let mode = |name: &str| {
+        let metadata = std::fs::metadata(dir.path().join(name)).unwrap();
+        metadata.permissions().mode() & 0o777
+    };
+    for name in ["noesis.db", "noesis.db-wal", "noesis.db-shm"] {
+        assert_eq!(mode(name), 0o600, "{name}");
+    }
+    store.close().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_in_place_of_the_file_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("elsewhere.db");
+    std::fs::write(&target, b"").unwrap();
+    let path = dir.path().join("noesis.db");
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+    let error = NoesisStore::open(&path).unwrap_err();
+    assert!(matches!(error, StoreError::Io { .. }), "{error}");
+    assert!(error.to_string().contains("symlink"), "{error}");
+}

@@ -38,7 +38,7 @@ impl NoesisStore {
     /// Open `path`, creating it private to its owner if missing, and bring
     /// its schema up to [`SCHEMA_VERSION`].
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        create_private_if_missing(path)?;
+        make_private(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(path, flags)?;
         conn.execute_batch(
@@ -83,27 +83,60 @@ impl NoesisStore {
     }
 }
 
-/// SQLite would create the file with the umask's mode; create it 0600 first.
-/// Its `-wal` and `-shm` files take the same mode from it.
-fn create_private_if_missing(path: &Path) -> Result<(), StoreError> {
-    let io_error = |source| StoreError::Io {
+/// SQLite would create the file with the umask's mode, and a copied or
+/// restored store may carry any mode: create it 0600 and restrict what exists.
+fn make_private(path: &Path) -> Result<(), StoreError> {
+    let io_error = |path: &Path, source| StoreError::Io {
         path: path.to_path_buf(),
         source,
     };
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() => return Ok(()),
-        Ok(_) => {
-            let source = io::Error::new(io::ErrorKind::InvalidInput, "not a regular file");
-            return Err(io_error(source));
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(io_error(error)),
-    }
     match aether_core::private_file::create_new(path) {
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(io_error(error)),
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(io_error(path, error)),
     }
+    let mut sidecars = [path.as_os_str().to_owned(), path.as_os_str().to_owned()];
+    sidecars[0].push("-wal");
+    sidecars[1].push("-shm");
+    restrict_existing(path).map_err(|error| io_error(path, error))?;
+    for sidecar in sidecars.iter().map(Path::new) {
+        restrict_existing(sidecar).map_err(|error| io_error(sidecar, error))?;
+    }
+    Ok(())
+}
+
+/// Set an existing regular file to 0600 through its own handle, refusing
+/// symlinks and anything that is not a regular file. A missing file is fine.
+#[cfg(unix)]
+fn restrict_existing(path: &Path) -> io::Result<()> {
+    use rustix::fs::{FileType, Mode, OFlags};
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK;
+    let fd = match rustix::fs::open(path, flags, Mode::empty()) {
+        Ok(fd) => fd,
+        Err(rustix::io::Errno::NOENT) => return Ok(()),
+        Err(rustix::io::Errno::LOOP) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "refusing to follow a symlink",
+            ));
+        }
+        Err(errno) => return Err(errno.into()),
+    };
+    let stat = rustix::fs::fstat(&fd)?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    rustix::fs::fchmod(&fd, Mode::from_raw_mode(0o600))?;
+    Ok(())
+}
+
+/// Windows has no mode to set; the file inherits the directory's ACL.
+#[cfg(not(unix))]
+fn restrict_existing(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
