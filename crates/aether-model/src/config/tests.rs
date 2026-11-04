@@ -948,3 +948,30 @@ fn quoted_unknown_keys_keep_distinct_paths() {
     );
     assert!(error.contains("Remove or rename them"), "{error}");
 }
+
+#[test]
+fn the_noesis_table_is_kept_as_written_for_the_noesis_crate() {
+    let config = AetherConfig::default();
+    assert!(config.noesis.is_empty());
+    assert!(!toml::to_string(&config).unwrap().contains("noesis"));
+    let dir = tempfile::tempdir().unwrap();
+    let text = "[noesis]\nenabled = true\n[noesis.budget]\ninteractive_usd_daily = 2.5\n";
+    std::fs::write(dir.path().join("config.toml"), text).unwrap();
+    let config = load_config(dir.path()).unwrap();
+    assert_eq!(
+        config.noesis.get("enabled"),
+        Some(&toml::Value::Boolean(true))
+    );
+    let budget = config
+        .noesis
+        .get("budget")
+        .and_then(toml::Value::as_table)
+        .unwrap();
+    assert_eq!(
+        budget.get("interactive_usd_daily"),
+        Some(&toml::Value::Float(2.5))
+    );
+    let written = toml::to_string(&config).unwrap();
+    let reread: AetherConfig = toml::from_str(&written).unwrap();
+    assert_eq!(reread.noesis, config.noesis);
+}

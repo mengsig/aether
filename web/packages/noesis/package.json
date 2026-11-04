@@ -1,0 +1,11 @@
+{
+  "name": "@aether-ui/noesis",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Noesis learning screens and the \"Understand this\" entity actions.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": ["./src/index.ts", "./src/*/routes.ts"]
+}
