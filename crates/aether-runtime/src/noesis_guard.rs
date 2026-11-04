@@ -376,6 +376,50 @@ impl Runtime {
             Some(other) => Err(crate::submission::wrong_shape(&other, "receipt")),
         }
     }
+
+    /// Record one model call a Noesis agent made outside the scheduler: its
+    /// usage and one more turn, with what `with` adds from the fresh row, in
+    /// one commit. The row is reread under the commit hold and only its
+    /// `stats` change, so a pause, cancel, configuration or approval change
+    /// committed while the call ran stands. Returns the row as written.
+    pub fn record_noesis_call(
+        &self,
+        id: AgentId,
+        usage: Usage,
+        with: impl FnOnce(&Agent, &mut aether_store::Commit),
+    ) -> Result<Agent> {
+        debug_assert!(usage.cost_usd >= 0.0, "a call never refunds: {usage:?}");
+        let hold = self.hold();
+        let mut agent = self
+            .store
+            .agent(id)?
+            .ok_or_else(|| RuntimeError::NotFound(id.to_string()))?;
+        if !is_noesis_role(agent.role.as_str()) {
+            return Err(RuntimeError::Invalid(format!(
+                "agent {id} is not a Noesis agent"
+            )));
+        }
+        let turns = agent.stats.turns;
+        agent.stats.usage += usage;
+        agent.stats.turns = turns.saturating_add(1);
+        debug_assert!(agent.stats.turns > turns || turns == u32::MAX);
+        let mut commit = aether_store::Commit::new();
+        with(&agent, &mut commit);
+        commit.push_event(
+            aether_core::event::EventDraft::new(
+                Actor::agent(agent.id),
+                aether_core::event::EventKind::AgentUsageUpdated {
+                    total: agent.stats.usage,
+                    turn_usage: usage,
+                },
+            )
+            .agent(agent.id)
+            .run(agent.run),
+        );
+        commit.push_mutation(aether_store::Mutation::UpsertAgent(agent.clone()));
+        self.apply_held(hold, commit)?;
+        Ok(agent)
+    }
 }
 
 /// Add `submission`'s receipt to `commit`, so the record lands with the work.
