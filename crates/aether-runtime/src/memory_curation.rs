@@ -49,7 +49,9 @@ impl Runtime {
             .memory
             .evaluate_operator(&hold, candidate, by, proposed)?;
         let record = match admission {
-            Admission::Accepted { record } | Admission::Superseded { record, .. } => record,
+            Admission::Accepted { record }
+            | Admission::Superseded { record, .. }
+            | Admission::Reinforced { record, .. } => record,
             Admission::Rejected { reason } => {
                 return Err(RuntimeError::Invalid(format!(
                     "memory not admitted: {reason}"

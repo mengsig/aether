@@ -1,8 +1,9 @@
-use crate::{MemoryError, MemoryService, Result, require_operator};
+use crate::{MemoryError, MemoryService, Result, admission::promotion, require_operator};
 use aether_core::{
     event::{Actor, EventDraft, EventKind},
     id::MemoryId,
     memory::MemoryRecord,
+    memory_admission::{MemoryAdmission, MemoryState, Verification},
     time::now,
 };
 use aether_store::{Commit, Hold, Mutation};
@@ -130,6 +131,30 @@ impl MemoryService {
                 )),
         )?;
         Ok(record)
+    }
+
+    /// Make a candidate active on an operator's word, replacing the memory it
+    /// was written to supersede. Promoting an active memory changes nothing.
+    pub fn promote(&self, id: MemoryId, by: Actor) -> Result<MemoryAdmission> {
+        require_operator(&by)?;
+        let hold = self.gate.hold();
+        let record = self.store.memory(id)?.ok_or(MemoryError::NotFound(id))?;
+        if !record.is_current() {
+            return Err(MemoryError::Invalid(format!(
+                "memory {id} is pending review, forgotten or superseded"
+            )));
+        }
+        let mut admission = self.admission(&record)?;
+        if admission.state == MemoryState::Active {
+            return Ok(admission);
+        }
+        let mut commit = self.promoted_replacement(&record, &by)?;
+        commit.push_event(promotion(&mut admission, Verification::Verified, &by));
+        commit.push_mutation(Mutation::PutMemoryAdmission(admission.clone()));
+        self.commit(&hold, commit)?;
+        debug_assert_eq!(admission.state, MemoryState::Active);
+        debug_assert_eq!(admission.verification, Verification::Verified);
+        Ok(admission)
     }
 
     fn proposal(&self, id: MemoryId) -> Result<MemoryRecord> {
