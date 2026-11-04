@@ -17,11 +17,15 @@ function Row({ label, children }: { readonly label: string; readonly children: R
 
 const REVIEW_LABEL: Readonly<Record<string, string>> = { strict: "Strict", standard: "Standard", none: "None" };
 
-export function Details({ detail, repoName, pipeline }: { readonly detail: archon.ItemDetail; readonly repoName: string | null; readonly pipeline: string }) {
+export function Details({ detail, repoName, pipeline, prUrl }: {
+  readonly detail: archon.ItemDetail; readonly repoName: string | null; readonly pipeline: string; readonly prUrl: string | null;
+}) {
   const item = detail.item;
+  const pr = safeHttpUrl(prUrl ?? "");
   return (
     <dl className="item-facts-list">
       <Row label="Repository">{repoName ?? item.repo ?? "No repository"}</Row>
+      {pr ? <Row label="Pull request"><a className="ui-link" href={pr} target="_blank" rel="noopener noreferrer">Open</a></Row> : null}
       <Row label="Pipeline">{pipeline}{pipeline !== item.pipeline ? ` (queued as ${item.pipeline})` : ""}</Row>
       <Row label="Priority">{priorityLabel(item.priority)}</Row>
       <Row label="Review">{REVIEW_LABEL[item.autonomy?.review ?? ""] ?? "Default"}</Row>

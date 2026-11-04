@@ -42,7 +42,7 @@ function ArtifactSheet({ access, item, name, onClose }: { readonly access: Archo
   );
 }
 
-export function Artifacts({ access, item, version }: { readonly access: ArchonAccess; readonly item: string; readonly version: string }) {
+export function Artifacts({ access, item, version }: { readonly access: ArchonAccess; readonly item: string; readonly version: unknown }) {
   const listing = useRead<archon.ArtifactListing>(access, { cmd: "list_artifacts", item }, ["artifacts"], version);
   const [open, setOpen] = useState<string | null>(null);
   if (listing.error && !listing.data) return <ErrorState title="Could not list artifacts" message={listing.error} onRetry={listing.reload} />;

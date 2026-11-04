@@ -1,7 +1,7 @@
 import type { archon } from "@aether-ui/protocol";
 import { describe, expect, test } from "vitest";
 import { demoWorld } from "../queue/fixture/world.ts";
-import { canCancel, canRetry, executionFact, issueFact, issueOf, objectFor, outcome, prFact, prOf } from "./facts.ts";
+import { canCancel, canRetry, executionFact, issueFact, issueOf, objectFor, outcome, prFact, prFromUrl, prOf } from "./facts.ts";
 
 const ref = (number: number, kind: archon.GithubKind = "issue"): archon.GithubRef => ({ host: "github.com", repo: "acme/site", number, kind });
 const object = (number: number, kind: archon.GithubKind, state: archon.GithubObjectState, extra: Partial<archon.GithubObject> = {}): archon.GithubObject =>
@@ -45,6 +45,14 @@ describe("the three states", () => {
     expect(prOf(null, links)?.number).toBe(8);
     expect(objectFor({ ...ref(7), repo: "Acme/Site" }, [object(7, "issue", "open")])?.state).toBe("open");
     expect(objectFor(ref(7, "pull_request"), [object(7, "issue", "open")])).toBeNull();
+  });
+
+  test("falls back to a protocol 23 pr_url, and only one that names a pull request over http", () => {
+    const summary = { pr: null, pr_url: "https://github.com/acme/site/pull/57" } as unknown as archon.ItemSummary;
+    expect(prOf(summary, [])).toEqual({ host: "github.com", repo: "acme/site", number: 57, kind: "pull_request" });
+    expect(prFact(prOf(summary, []), null).text).toBe("#57 · state unknown");
+    expect(["javascript:alert(1)//github.com/a/b/pull/1", "https://github.com/acme/site/issues/5", "https://github.com/acme/pull/5", null].map(prFromUrl))
+      .toEqual([null, null, null, null]);
   });
 });
 

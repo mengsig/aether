@@ -25,6 +25,21 @@ async function item(id: string, world = demoWorld()) {
 }
 
 describe("an item's states", () => {
+  test("rereads the links, reports and questions after a change names the item", async () => {
+    const { h, container } = await item("qi_rate_limit");
+    expect(facts(container)).toContain("Issue: Not linked");
+    const entry = h.world.items.get("qi_rate_limit");
+    if (!entry) throw new Error("the demo world has qi_rate_limit");
+    const ref = { host: "github.com", repo: "acme/api", number: 61, kind: "issue" };
+    entry.links = { links: [{ item: "qi_rate_limit", ref, relation: "origin", source: "operator", created_at: "2026-11-04T10:00:00Z" }],
+      objects: [{ ref, title: "Rate limits", state: "open", labels: [], updated_at: "2026-11-04T10:00:00Z", fetched_at: "2026-11-04T10:00:00Z" }] };
+    h.world.questions.push({ id: "q_limit", number: 5, item: "qi_rate_limit", text: "Which limit per minute?", options: [], asked_at: "2026-11-04T10:00:00Z" });
+    h.faux.tell("qi_rate_limit", { subject: "question", item: "qi_rate_limit", question: "q_limit", open: true });
+    await h.until(() => facts(container).includes("Issue: #61 · Open"), "the reread links", 2_000);
+    expect(section(container, "Links")?.textContent).toContain("acme/api#61");
+    await h.until(() => container.textContent?.includes("Which limit per minute?") === true, "the reread questions", 2_000);
+  });
+
   test("shows a succeeded item's open PR and open issue as three separate states", async () => {
     const { container } = await item("qi_changelog");
     await vi.waitFor(() => expect(facts(container)).toEqual(["Execution: Succeeded", "Pull request: #52 · Open", "Issue: #38 · Open"]));

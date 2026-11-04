@@ -2,11 +2,11 @@
 // priority and text, with the waiting reasons and spend. Rows come from core's store, which the change
 // stream keeps current; against protocol 23 core refetches them after feed items instead.
 
-import { routeHref, selectItems, useSelector } from "@aether-ui/core";
+import { routeHref, selectItems, useSelector, type ArchonItem } from "@aether-ui/core";
 import type { archon, ConnectionInfo } from "@aether-ui/protocol";
 import { Badge, Button, EmptyState, StatusPill, VirtualList } from "@aether-ui/ui";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { useArchonAccess, useArchonConnection, useRead } from "./archon.ts";
+import { useActivity, useArchonAccess, useArchonConnection, useRead, useSettled, type ArchonAccess } from "./archon.ts";
 import {
   age, compareRows, FILTERS, inScope, invariant, NO_QUERY, PRIORITIES, priorityLabel, queueRow, statePill, usd,
   type QueueQuery, type QueueRow,
@@ -110,12 +110,34 @@ function QueueList({ rows, names, now }: { readonly rows: readonly QueueRow[]; r
   return <div className="queue-list"><VirtualList label="Items" count={rows.length} rowHeight={ROW_HEIGHT} renderRow={renderRow} rowKey={rowKey} overscan={6} /></div>;
 }
 
+/** The newer of core's summary and a reread one; the live state, stage and reason stay core's. */
+export function withNewerSummary(item: ArchonItem, fresh: archon.ItemSummary | undefined): ArchonItem {
+  if (fresh === undefined) return item;
+  invariant(typeof fresh.updated_at === "string", `the reread summary of ${fresh.id} has a time`);
+  const held = Date.parse(String(item.summary.updated_at));
+  return Number.isFinite(held) && held > Date.parse(fresh.updated_at) ? item : { ...item, summary: fresh as unknown as ArchonItem["summary"] };
+}
+
+/**
+ * The rows. Change records move an item's state, stage and reason but not its summary (spend, prompt,
+ * PR), so at protocol 24 the summaries are reread once activity settles; at 23 core rereads them itself.
+ */
+function useRows(access: ArchonAccess, settled: number): { items: Readonly<Record<string, ArchonItem>>; rows: QueueRow[] } {
+  const items = useSelector(useMemo(() => selectItems(access.conn), [access.conn]));
+  const fresh = useRead<archon.ItemSummary[]>(access, access.live && settled > 0 ? { cmd: "list_item_summaries" } : null, ["item_summaries"], settled);
+  const rows = useMemo(() => {
+    const byId = new Map((fresh.data ?? []).map((summary) => [summary.id, summary]));
+    return Object.entries(items).map(([id, item]) => queueRow(id, withNewerSummary(item, byId.get(id)))).sort(compareRows);
+  }, [items, fresh.data]);
+  return { items, rows };
+}
+
 function Queue({ info }: { readonly info: ConnectionInfo }) {
   const access = useArchonAccess(info);
-  const items = useSelector(useMemo(() => selectItems(access.conn), [access.conn]));
+  const settled = useSettled(useActivity(access.conn), 1_000);
+  const { items, rows } = useRows(access, settled);
   const repos = useRead<archon.Repo[]>(access, { cmd: "repo_list" }, ["repos"]);
   const names = useMemo(() => new Map((repos.data ?? []).map((repo) => [repo.id, repo.name])), [repos.data]);
-  const rows = useMemo(() => Object.entries(items).map(([id, item]) => queueRow(id, item)).sort(compareRows), [items]);
   const [query, setQuery] = useState<QueueQuery>(NO_QUERY);
   const now = useNow();
   const scoped = useMemo(() => rows.filter((row) => inScope(row, query, names)), [rows, query, names]);
@@ -126,7 +148,7 @@ function Queue({ info }: { readonly info: ConnectionInfo }) {
   const pipelines = useMemo(() => [...new Set(rows.map((row) => row.pipeline))].sort(), [rows]);
   return (
     <section className="queue" aria-label="Queue">
-      <QueueStatus access={access} items={items} names={names} />
+      <QueueStatus access={access} items={items} names={names} settled={settled} />
       <QueueFilters query={query} onChange={setQuery} counts={counts} repos={[...names.entries()]} pipelines={pipelines} />
       <p className="queue-total" aria-live="polite">{shown.length} of {rows.length} items{access.live ? "" : " · refreshed after each feed event (protocol 23)"}</p>
       {shown.length > 0 ? <QueueList rows={shown} names={names} now={now} />

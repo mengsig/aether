@@ -3,7 +3,7 @@
 
 import type { archon } from "@aether-ui/protocol";
 import type { Status } from "@aether-ui/ui";
-import { invariant, isTerminal, reasonLabel, statePill, type StateKind } from "../queue/model.ts";
+import { invariant, isTerminal, reasonLabel, safeHttpUrl, statePill, type StateKind } from "../queue/model.ts";
 
 export interface Fact {
   readonly label: string;
@@ -77,11 +77,25 @@ export function issueOf(summary: archon.ItemSummary | null, links: readonly arch
   return (issues.find((link) => link.relation === "origin") ?? issues[0])?.ref ?? null;
 }
 
-/** The item's PR: the summary's, else the delivered pull request link. */
+const PR_PATH = /^\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)\/?$/;
+
+/** A PR named only by a protocol 23 `pr_url`: its number and repository, with no recorded state. */
+export function prFromUrl(url: string | null | undefined): archon.PrRef | null {
+  const safe = safeHttpUrl(url ?? "");
+  if (safe === null) return null;
+  const parsed = new URL(safe);
+  const match = PR_PATH.exec(parsed.pathname);
+  if (!match?.[1] || !match[2]) return null;
+  const number = Number(match[2]);
+  invariant(Number.isSafeInteger(number) && number > 0, `a PR number is a positive integer, not ${match[2]}`);
+  return { host: parsed.host, repo: match[1], number, kind: "pull_request" };
+}
+
+/** The item's PR: the summary's, else the delivered pull request link, else the summary's `pr_url`. */
 export function prOf(summary: archon.ItemSummary | null, links: readonly archon.GithubLink[]): archon.PrRef | null {
   if (summary?.pr) return summary.pr;
   const link = links.find((entry) => entry.ref.kind === "pull_request" && entry.relation === "delivered");
-  return link ? { ...link.ref } : null;
+  return link ? { ...link.ref } : prFromUrl(summary?.pr_url);
 }
 
 export interface Outcome { readonly tone: "success" | "danger" | "warning" | "neutral"; readonly title: string; readonly text: string }

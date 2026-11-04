@@ -13,6 +13,7 @@ export const FOLLOW_MS = 300;
 export const POLL_MS = 15_000;
 
 export interface ItemDetailRead {
+  /** A new object on every reread, live or polled: reads tied to the item (links, artifacts, plans) key on it. */
   readonly detail: archon.ItemDetail | undefined;
   readonly error: string | null;
   readonly reload: () => void;
@@ -65,11 +66,4 @@ export function useItemDetail(access: ArchonAccess, item: string): ItemDetailRea
   const polled = useRead<archon.ItemDetail>(access, live ? null : { cmd: "get_item", item }, ["item_detail"], key);
   if (live) return { detail: stored, error: null, reload: () => undefined };
   return { detail: polled.data, error: polled.error, reload: polled.reload };
-}
-
-/** Changes whenever the detail does, so reads tied to it (links, artifacts, plans) follow it. */
-export function detailVersion(detail: archon.ItemDetail | undefined): string {
-  if (!detail) return "";
-  const stages = detail.stages.map((stage) => `${stage.id}:${stage.state.state}`).join(",");
-  return `${detail.item.updated_at}|${detail.item.state.state}|${detail.runs.length}|${stages}|${detail.gates?.length ?? 0}`;
 }

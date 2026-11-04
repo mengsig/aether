@@ -62,9 +62,10 @@ describe("a protocol 23 archond", () => {
     await h.until(() => reads() === 3, "the follow-up read after the feed mention", 1_000);
     expect(sentAny(h, NOT_IN_23)).toEqual([]);
     expect(container.querySelector('section[aria-label="Links"]')?.textContent).toContain("does not list GitHub links");
-    // The PR and issue still come from the queue summary, each as its own state.
+    // A 23 summary names the PR only by pr_url, and no issue: each fact stays its own.
     expect([...container.querySelectorAll(".item-fact")].map((fact) => fact.getAttribute("aria-label")))
-      .toEqual(["Execution: Running", "Pull request: #57 · Draft", "Issue: #41 · state not read"]);
+      .toEqual(["Execution: Running", "Pull request: #57 · state unknown", "Issue: Not linked"]);
+    expect(byText(container, ".item-facts-list a", "Open").getAttribute("href")).toBe("https://github.com/acme/site/pull/57");
   });
 
   test("stops polling a finished item, and refreshes it after a change it made", async () => {

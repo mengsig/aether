@@ -71,7 +71,8 @@ export class FauxArchond {
       case "subscribe_feed": return reply("subscribed", { id: this.feedSub, last_seq: this.feedSeq });
       case "feed_history": return reply("feed", []);
       case "list_item_summaries": {
-        const rows = [...this.world.items.values()].map((entry) => entry.summary);
+        // Protocol 23 summaries carry pr_url but not the 24 issue and pr refs.
+        const rows = [...this.world.items.values()].map(({ summary }) => (v24 ? summary : Object.fromEntries(Object.entries(summary).filter(([key]) => key !== "issue" && key !== "pr"))));
         return command.with_as_of === true && v24 ? reply("item_summaries_at", { summaries: rows, as_of: this.seq }) : reply("item_summaries", rows);
       }
       case "get_item": { const entry = this.entry(command.item); return entry ? reply("item_detail", entry.detail) : missing; }

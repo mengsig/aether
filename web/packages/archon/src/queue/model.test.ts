@@ -25,6 +25,13 @@ describe("a queue row", () => {
     expect(queueRow("qi_pairing", stored("qi_pairing", { state: "succeeded" }))).toMatchObject({ waitsOnYou: false, waitingText: null });
   });
 
+  test("drops the summary's prompt and reason once the live reason has moved on", () => {
+    const { summary, state } = stored("qi_pairing");
+    const moved = queueRow("qi_pairing", { summary, state, stage: "build" });
+    expect(moved).toMatchObject({ waitsOnYou: false, waitingText: null, waitingCode: null });
+    expect(queueRow("qi_pairing", stored("qi_pairing")).waitingText).toBe("Approve the proposal to shorten pairing codes to eight characters?");
+  });
+
   test("rejects a state the queue does not know", () => {
     expect(() => queueRow("qi_pairing", stored("qi_pairing", { state: "merged" }))).toThrow(/known state/);
   });

@@ -1,9 +1,9 @@
 // The archond connection the screens read, and replies they read on demand. The queue's items and an item's
 // detail come from core's store; read models core does not keep (status, questions, plans) are read here.
 
-import { selectConnections, useCapabilities, useCommand, useSelector } from "@aether-ui/core";
+import { selectConnections, useCapabilities, useCommand, useSelector, type State } from "@aether-ui/core";
 import type { ConnectionInfo } from "@aether-ui/protocol";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invariant, replyOf } from "./model.ts";
 
 /** The one archond connection (ARCHITECTURE.md §b): the ready one, else any, else none. */
@@ -31,6 +31,40 @@ export function useArchonAccess(info: ConnectionInfo): ArchonAccess {
   const operate = caps[`can.operate.${info.id}`] === true;
   const refusal = !ready ? "Archon is not connected" : operate ? null : "This device only observes Archon";
   return { conn: info.id, ready, live: features.includes("changes"), has, refusal };
+}
+
+/**
+ * Moves whenever archond reports anything: a change record at protocol 24, a feed entry at 23. Read
+ * models core does not keep (status, questions, summaries' spend) are reread when it settles.
+ */
+export function useActivity(conn: string): string {
+  invariant(conn.length > 0, "activity is read for a connection");
+  const select = useCallback((state: State) => {
+    const archond = state.archon[conn];
+    return `${String(archond?.changeCursor ?? "")}|${String(archond?.feedSeq ?? "")}`;
+  }, [conn]);
+  return useSelector(select);
+}
+
+/**
+ * A counter that moves `ms` after `value` first changes, then again for later changes: a burst rereads
+ * once, and a steady stream still rereads every `ms`. It does not move on mount.
+ */
+export function useSettled(value: unknown, ms: number): number {
+  invariant(ms > 0, "a settle window is positive");
+  const [count, setCount] = useState(0);
+  const seen = useRef(value);
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (Object.is(seen.current, value) || pending.current !== null) return;
+    seen.current = value;
+    pending.current = setTimeout(() => { pending.current = null; setCount((n) => n + 1); }, ms);
+  }, [value, ms]);
+  useEffect(() => () => {
+    if (pending.current !== null) clearTimeout(pending.current);
+    pending.current = null;
+  }, []);
+  return count;
 }
 
 export interface Read<T> {

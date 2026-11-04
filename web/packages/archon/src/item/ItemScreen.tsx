@@ -5,12 +5,12 @@ import { routeHref, selectItem, selectItems, useSelector } from "@aether-ui/core
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
 import { EmptyState, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
-import { useArchonAccess, useArchonConnection, useRead, type ArchonAccess } from "../queue/archon.ts";
+import { useActivity, useArchonAccess, useArchonConnection, useRead, useSettled, type ArchonAccess } from "../queue/archon.ts";
 import { invariant, isStateKind, type StateKind } from "../queue/model.ts";
 import { NotConnected, useNow } from "../queue/QueueScreen.tsx";
 import { QuestionList } from "../queue/Questions.tsx";
 import { Artifacts } from "./Artifacts.tsx";
-import { detailVersion, useItemDetail } from "./detail.ts";
+import { useItemDetail } from "./detail.ts";
 import { executionFact, issueFact, issueOf, objectFor, outcome, prFact, prOf, type Fact } from "./facts.ts";
 import { ItemActions } from "./ItemActions.tsx";
 import { Details, Gates, Links, Reports, Runs, Section, Stages } from "./ItemSections.tsx";
@@ -58,13 +58,14 @@ interface PageProps {
 
 function ItemPage({ access, detail, kind, summary, stage, reload }: PageProps) {
   const item = detail.item;
-  const version = detailVersion(detail);
   const now = useNow();
+  // The pause and the questions move with any activity; the rest follows each reread of this detail.
+  const settled = useSettled(useActivity(access.conn), 1_000);
   const repos = useRead<archon.Repo[]>(access, { cmd: "repo_list" }, ["repos"]);
-  const status = useRead<archon.DaemonStatus>(access, { cmd: "status" }, ["status"], version);
-  const questions = useRead<archon.Question[]>(access, { cmd: "list_questions", open_only: false }, ["questions"], version);
-  const reports = useRead<archon.ReportSummary[]>(access, { cmd: "list_reports" }, ["reports"], version);
-  const links = useRead<LinksReply>(access, access.has("github_links") ? { cmd: "item_links", item: item.id } : null, ["item_links"], version);
+  const status = useRead<archon.DaemonStatus>(access, { cmd: "status" }, ["status"], settled);
+  const questions = useRead<archon.Question[]>(access, { cmd: "list_questions", open_only: false }, ["questions"], settled);
+  const reports = useRead<archon.ReportSummary[]>(access, { cmd: "list_reports" }, ["reports"], detail);
+  const links = useRead<LinksReply>(access, access.has("github_links") ? { cmd: "item_links", item: item.id } : null, ["item_links"], detail);
   const repoName = item.repo ? repos.data?.find((repo) => repo.id === item.repo)?.name ?? null : null;
   const mine = (questions.data ?? []).filter((question) => question.item === item.id && !question.answer);
   const reported = (reports.data ?? []).filter((report) => report.item === item.id);
@@ -82,7 +83,7 @@ function ItemPage({ access, detail, kind, summary, stage, reload }: PageProps) {
       <ItemActions access={access} item={item} kind={kind} repoName={repoName} pause={status.data?.pause ?? null} onDone={done} />
       {mine.length > 0 ? <QuestionList access={access} questions={mine} titles={null} onAnswered={done} /> : null}
       <div className="item-grid">
-        <Section title="Details"><Details detail={detail} repoName={repoName} pipeline={pipeline} /></Section>
+        <Section title="Details"><Details detail={detail} repoName={repoName} pipeline={pipeline} prUrl={summary?.pr_url ?? null} /></Section>
         <Section title="Brief"><p className="item-brief">{item.brief}</p></Section>
         <Section title="Runs"><Runs item={item.id} runs={detail.runs} now={now} /></Section>
         <Section title="Stages"><Stages detail={detail} now={now} /></Section>
@@ -92,7 +93,7 @@ function ItemPage({ access, detail, kind, summary, stage, reload }: PageProps) {
             : <p className="item-muted">This archond does not list GitHub links; the PR and issue above come from the queue summary.</p>}
           {links.error ? <p role="alert" className="item-error">{links.error}</p> : null}
         </Section>
-        <Section title="Artifacts"><Artifacts access={access} item={item.id} version={version} /></Section>
+        <Section title="Artifacts"><Artifacts access={access} item={item.id} version={detail} /></Section>
         {reported.length > 0 ? <Section title="Reports"><Reports reports={reported} /></Section> : null}
       </div>
     </article>

@@ -4,22 +4,11 @@
 import type { ArchonItem } from "@aether-ui/core";
 import type { archon } from "@aether-ui/protocol";
 import { Badge, Button, ErrorState } from "@aether-ui/ui";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useChange, useRead, type ArchonAccess } from "./archon.ts";
-import { invariant, usd } from "./model.ts";
+import { usd } from "./model.ts";
 import { NewItemDialog, SayDialog } from "./NewItemDialog.tsx";
 import { QuestionList } from "./Questions.tsx";
-
-/** A counter that moves `ms` after `value` last changed, so a burst of changes rereads once. */
-export function useSettled(value: unknown, ms: number): number {
-  invariant(ms > 0, "a settle window is positive");
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    const timer = setTimeout(() => setCount((n) => n + 1), ms);
-    return () => clearTimeout(timer);
-  }, [value, ms]);
-  return count;
-}
 
 const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
@@ -55,8 +44,10 @@ function PauseControl({ access, status, onDone }: { readonly access: ArchonAcces
   );
 }
 
-function Spend({ access, status, names }: { readonly access: ArchonAccess; readonly status: archon.DaemonStatus; readonly names: ReadonlyMap<string, string> }) {
-  const cost = useRead<archon.CostReport>(access, { cmd: "cost_report", since: null, until: null, by: "repo" }, ["cost_report"]);
+function Spend({ access, status, names, settled }: {
+  readonly access: ArchonAccess; readonly status: archon.DaemonStatus; readonly names: ReadonlyMap<string, string>; readonly settled: number;
+}) {
+  const cost = useRead<archon.CostReport>(access, { cmd: "cost_report", since: null, until: null, by: "repo" }, ["cost_report"], settled);
   const caps = status.caps;
   return (
     <div className="queue-spend-box" aria-label="Spend">
@@ -72,11 +63,10 @@ function Spend({ access, status, names }: { readonly access: ArchonAccess; reado
   );
 }
 
-export function QueueStatus({ access, items, names }: {
-  readonly access: ArchonAccess; readonly items: Readonly<Record<string, ArchonItem>>; readonly names: ReadonlyMap<string, string>;
+/** `settled` moves once archond's activity settles: status, counts and questions are reread then. */
+export function QueueStatus({ access, items, names, settled }: {
+  readonly access: ArchonAccess; readonly items: Readonly<Record<string, ArchonItem>>; readonly names: ReadonlyMap<string, string>; readonly settled: number;
 }) {
-  // Status, counts and questions are reread a second after the queue settles.
-  const settled = useSettled(items, 1_000);
   const status = useRead<archon.DaemonStatus>(access, { cmd: "status" }, ["status"], settled);
   const questions = useRead<archon.Question[]>(access, { cmd: "list_questions", open_only: false }, ["questions"], settled);
   const [dialog, setDialog] = useState<"item" | "say" | null>(null);
@@ -98,7 +88,7 @@ export function QueueStatus({ access, items, names }: {
             <span><Badge tone={status.data.open_questions ? "warning" : "neutral"}>{count(status.data.open_questions, "open question")}</Badge></span>
             <span><Badge tone={status.data.open_gates ? "warning" : "neutral"}>{count(status.data.open_gates, "open gate")}</Badge></span>
           </div>
-          <Spend access={access} status={status.data} names={names} />
+          <Spend access={access} status={status.data} names={names} settled={settled} />
         </div>
       ) : null}
       {open.length > 0 ? <QuestionList access={access} questions={open} titles={titles} onAnswered={questions.reload} /> : null}

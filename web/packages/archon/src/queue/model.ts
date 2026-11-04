@@ -54,11 +54,13 @@ export function queueRow(id: string, item: ArchonItem): QueueRow {
   invariant(typeof summary.title === "string", `item ${id} has a title`);
   invariant(isStateKind(item.state), `item ${id} has a known state, not ${item.state}`);
   const kind = item.state;
+  // The summary's words describe its own state and reason; once the live ones have moved on they are stale.
   const reason = summary.waiting_reason ?? null;
+  const current = !isTerminal(kind) && summary.state.state === kind && (reason?.code ?? null) === (item.waitingReason ?? null);
   const waitingCode = isTerminal(kind) ? null : item.waitingReason ?? null;
   const waitingText = waitingCode !== null && reason?.code === waitingCode ? reason.message : waitingCode === null ? null : reasonLabel(waitingCode);
   const blockedReason = kind === "blocked" && summary.state.state === "blocked" ? summary.state.reason : null;
-  const waitingOn = !isTerminal(kind) && summary.waiting_on ? summary.waiting_on.prompt : null;
+  const waitingOn = current && summary.waiting_on ? summary.waiting_on.prompt : null;
   return {
     id, title: summary.title, kind, priority: summary.priority, repo: summary.repo ?? null, pipeline: summary.switched_to ?? summary.pipeline,
     stage: item.stage ?? null, waitingCode, waitingText: waitingOn ?? waitingText,

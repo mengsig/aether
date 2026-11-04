@@ -5,7 +5,7 @@ import { routeHref, useSelector, selectItem } from "@aether-ui/core";
 import type { archon, ConnectionInfo, RouteProps } from "@aether-ui/protocol";
 import { Badge, EmptyState, ErrorState, Skeleton, StatusPill } from "@aether-ui/ui";
 import { useMemo } from "react";
-import { detailVersion, useItemDetail } from "../item/detail.ts";
+import { useItemDetail } from "../item/detail.ts";
 import { runPill } from "../item/facts.ts";
 import { StageNode } from "../item/ItemSections.tsx";
 import { useArchonAccess, useArchonConnection, useRead, type ArchonAccess } from "../queue/archon.ts";
@@ -44,8 +44,7 @@ function PlanSource({ view, error }: { readonly view: PipelineView; readonly err
 
 function RunView({ access, detail, run, title }: { readonly access: ArchonAccess; readonly detail: archon.ItemDetail; readonly run: archon.PipelineRun; readonly title: string }) {
   const now = useNow();
-  const version = detailVersion(detail);
-  const plan = useRead<archon.RunPlan>(access, access.has("run_plan") ? { cmd: "run_plan", run: run.id } : null, ["run_plan"], version);
+  const plan = useRead<archon.RunPlan>(access, access.has("run_plan") ? { cmd: "run_plan", run: run.id } : null, ["run_plan"], detail);
   const waitingForPlan = access.has("run_plan") && plan.data === undefined && plan.error === null;
   const view = useMemo(() => pipelineView(run, detail.stages, plan.data ?? null), [run, detail.stages, plan.data]);
   const pill = runPill(run.state);

@@ -72,9 +72,34 @@ describe("the queue list", () => {
     h.faux.tell("qi_rate_limit", { subject: "item", item: "qi_rate_limit", state: "running", stage: "plan" });
     await h.until(() => container.querySelector('[data-item="qi_rate_limit"] .ui-pill')?.textContent === "Running", "the live state");
     expect(container.querySelector('[data-item="qi_rate_limit"] .queue-meta')?.textContent).toContain("stage plan");
+    expect(h.faux.commands("list_item_summaries")).toHaveLength(1);
     h.faux.tell("qi_rate_limit", { subject: "item", item: "qi_rate_limit", state: "failed" });
     await h.until(() => total(container) === "3 of 7 items", "the failed item to leave the active list");
+  });
+
+  test("rereads the summaries at most once a second, even while changes keep coming", async () => {
+    const { h } = await queue();
+    for (let n = 0; n < 6; n += 1) {
+      h.faux.tell("qi_rate_limit", { subject: "item", item: "qi_rate_limit", state: n % 2 ? "queued" : "running" });
+      await h.tick(500);
+    }
+    // A debounce would reread only once the stream stops; a throttle rereads within it.
+    expect(h.faux.commands("list_item_summaries").length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("drops a stale prompt at once and rereads spend once the changes settle", async () => {
+    const { h, container } = await queue();
+    const entry = h.world.items.get("qi_pairing");
+    if (!entry) throw new Error("the demo world has qi_pairing");
+    entry.summary = { ...entry.summary, stage: "build", waiting_reason: null, waiting_on: null, spent_usd: 2.5, updated_at: "2026-11-04T10:00:30Z" };
+    const row = () => container.querySelector('[data-item="qi_pairing"]');
+    h.faux.tell("qi_pairing", { subject: "item", item: "qi_pairing", state: "running", stage: "build" });
+    await h.until(() => row()?.querySelector(".ui-pill")?.textContent === "Running", "the live state");
+    expect(row()?.querySelector(".queue-note")).toBeNull();
+    expect(chip(container, "Waiting on you").textContent).toBe("Waiting on you 1");
     expect(h.faux.commands("list_item_summaries")).toHaveLength(1);
+    await h.until(() => row()?.querySelector(".queue-spend")?.textContent === "$2.50", "the reread spend", 2_000);
+    expect(h.faux.commands("list_item_summaries")).toHaveLength(2);
   });
 });
 
@@ -129,6 +154,14 @@ describe("the queue's changes", () => {
     await click(h, byText(card as Element, "button", "Approve"));
     expect(h.faux.commands("answer")).toEqual([expect.objectContaining({ question: "q_review_gate", text: "Approve" })]);
     await h.until(() => container.querySelector(".queue-question") === null, "the answered question to leave");
+  });
+
+  test("rereads the questions when the change stream names one", async () => {
+    const { h, container } = await queue();
+    h.world.questions.push({ id: "q_new", number: 4, item: null, text: "May the docs work wait until Friday?", options: [], asked_at: "2026-11-04T10:00:00Z" });
+    h.faux.tell(null, { subject: "question", question: "q_new", open: true });
+    await h.until(() => container.querySelectorAll(".queue-question").length === 2, "the new question", 2_000);
+    expect(container.textContent).toContain("May the docs work wait until Friday?");
   });
 
   test("shows spend against the budgets and a cost report", async () => {
