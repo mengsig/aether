@@ -753,6 +753,66 @@ agents of one run share a partition and can read and overwrite each other's
 output; partitions of different runs are separate directories under one
 user, not an operating-system boundary.
 
+## Noesis
+
+Noesis, the learning service, is off unless `[noesis] enabled = true`. While
+it is off the daemon opens no `noesis.db`, starts no Noesis model call, and
+answers every `noesis_*` command except `noesis_status` and
+`noesis_configure` with `unavailable` (reason `noesis_disabled`). Noesis
+agents that a message, an answer, a wake, a resume or a steer reaches are
+parked, not run.
+
+```toml
+[noesis]
+enabled = false
+engineering_context = false
+
+[noesis.extraction]
+sessions = "manual"        # or "auto"
+engineering = "off"        # or "auto"
+
+[noesis.budget]
+interactive_usd_daily = 5.0
+background_usd_daily = 1.0
+background_tokens_daily = 2000000
+
+[noesis.concurrency]
+interactive = 2            # 1-4
+background = 1             # 0-3
+
+[noesis.priority]
+background = "low"         # or "normal"
+
+[noesis.models]
+# strong = "claude-code/opus"
+# cheap = "claude-code/haiku"
+
+[noesis.billing]
+allow_api = false
+
+[noesis.disable]
+grace_seconds = 60         # 0-300
+
+[noesis.prompts]
+overrides = false
+```
+
+`noesis_configure` rewrites only the `[noesis]` tables of `config.toml`,
+atomically, and keeps every other line as written; a `noesis` key spelled
+inline or with dotted keys is refused rather than rewritten. The write
+comes first: enabling then opens `<data dir>/noesis.db`, and disabling then
+stops new Noesis work at once, lets turns in flight finish for up to
+`disable.grace_seconds`, cancels what is left and closes the database.
+Writing `enabled`, a budget, `billing` or `prompts` needs a host-only
+connection; the rest needs operate.
+
+Every Noesis turn is charged to the Noesis budgets, interactive or
+background by its role, with subscription engines counted at their
+estimated cost. Today's spend is read back from Aether's usage records, so
+a restart does not reset it. A model chain with an API-billed link is
+refused unless `billing.allow_api = true`: a fallback never reaches a billed
+endpoint silently.
+
 ## Signed webhook door
 
 `aether serve` reads `[[serve.webhook]]` routes from `config.toml`. Each

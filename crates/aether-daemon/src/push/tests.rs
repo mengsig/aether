@@ -77,6 +77,7 @@ impl Fixture {
         )
         .expect("push");
         let daemon = Daemon {
+            noesis: crate::noesis::NoesisService::detached(&runtime, &models),
             runtime,
             models,
             instance_id: "inst".into(),

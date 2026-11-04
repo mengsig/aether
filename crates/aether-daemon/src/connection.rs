@@ -41,7 +41,7 @@ const MAX_SUBSCRIPTIONS: usize = 16;
 const MAX_LINE: usize = 64 * 1024 * 1024;
 const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 
-fn map_err(e: RuntimeError) -> ErrorReply {
+pub(crate) fn map_err(e: RuntimeError) -> ErrorReply {
     match e {
         busy if busy.is_store_contended() => store_busy(&busy),
         RuntimeError::NotFound(what) => {
@@ -62,13 +62,14 @@ fn map_err(e: RuntimeError) -> ErrorReply {
         }
         RuntimeError::Model(m) => ErrorReply::new(ErrorCode::Unavailable, m.to_string()),
         RuntimeError::Store(e) => store_err(e),
+        RuntimeError::NoesisDisabled(_) => ErrorReply::noesis_disabled(),
         other => ErrorReply::internal(other),
     }
 }
 
 /// Expired history carries its span; the writer turns it back into today's
 /// `NotFound` for a client whose hello did not list `features::HISTORY_EXPIRED`.
-fn store_err(e: aether_store::StoreError) -> ErrorReply {
+pub(crate) fn store_err(e: aether_store::StoreError) -> ErrorReply {
     match e {
         aether_store::StoreError::HistoryExpired {
             first_seq,
@@ -163,6 +164,8 @@ where
     let history_expired = Arc::new(AtomicBool::new(false));
     // Whether the hello listed `features::DELTA_ORDER`; shared the same way.
     let delta_order = Arc::new(AtomicBool::new(false));
+    // Whether the hello listed `features::NOESIS`; shared the same way.
+    let noesis = Arc::new(AtomicBool::new(false));
 
     let (auth_tx, auth_rx) = tokio::sync::watch::channel::<Option<AuthContext>>(None);
     let writer = writer::run(
@@ -172,6 +175,7 @@ where
             version: version.clone(),
             history_expired: history_expired.clone(),
             delta_order: delta_order.clone(),
+            noesis: noesis.clone(),
         },
         auth_rx,
     );
@@ -326,6 +330,13 @@ where
                                         .any(|feature| feature == features::DELTA_ORDER),
                                     Ordering::SeqCst,
                                 );
+                                noesis.store(
+                                    hello
+                                        .features
+                                        .iter()
+                                        .any(|feature| feature == features::NOESIS),
+                                    Ordering::SeqCst,
+                                );
                                 match policy.admit(hello) {
                                     Err(refusal) => {
                                         tokio::time::sleep(policy.refusal_delay()).await;
@@ -407,6 +418,7 @@ where
                                                     features::DELTA_ORDER.into(),
                                                     features::USAGE_BREAKDOWN.into(),
                                                     features::REMOTE_MOUNTS.into(),
+                                                    features::NOESIS.into(),
                                                 ],
                                                 daemon_protocol_version: Some(
                                                     aether_protocol::PROTOCOL_VERSION,
