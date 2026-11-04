@@ -260,6 +260,46 @@ pub fn shuffle(question_id: &str, options: &[ChoiceOption]) -> Vec<ChoiceOption>
     shuffled
 }
 
+/// Options as the learner sees them: each value replaced by its display
+/// position ("1", "2", ...), with `key` mapped to match. The model's own
+/// values never reach a reader, so no text it writes can name the key by one.
+pub fn rekey(shuffled: &[ChoiceOption], key: &[String]) -> (Vec<ChoiceOption>, Vec<String>) {
+    let mut shown = Vec::with_capacity(shuffled.len());
+    let mut shown_key = Vec::with_capacity(key.len());
+    for (index, option) in shuffled.iter().enumerate() {
+        let value = (index + 1).to_string();
+        if key.contains(&option.value) {
+            shown_key.push(value.clone());
+        }
+        shown.push(ChoiceOption {
+            value,
+            label: option.label.clone(),
+        });
+    }
+    assert_eq!(
+        shown_key.len(),
+        key.len(),
+        "every key entry names one option"
+    );
+    debug_assert_eq!(shown.len(), shuffled.len());
+    (shown, shown_key)
+}
+
+/// The labels of the options a learner chose, for the agent, which knows
+/// its options by label once they are re-keyed.
+pub fn chosen_labels(options: &[ChoiceOption], choices: &[String]) -> Vec<String> {
+    let labels: Vec<String> = options
+        .iter()
+        .filter(|option| choices.contains(&option.value))
+        .map(|option| option.label.clone())
+        .collect();
+    debug_assert!(
+        labels.len() <= choices.len(),
+        "choices are distinct options"
+    );
+    labels
+}
+
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)

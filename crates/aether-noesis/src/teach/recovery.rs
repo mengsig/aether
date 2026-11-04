@@ -103,7 +103,7 @@ fn a_failed_answer_delivery_is_queued_after_the_commit_and_sent_before_the_next_
     let id = posed_session(&mut t);
     let open = session(&t, &id).open_question.expect("posed").id;
     let answer = Answer {
-        choices: vec!["a".into()],
+        choices: shown_values(&t, &id, &["Paris"]),
         ..Answer::default()
     };
     t.engine_mut().fail_deliveries = 1;
@@ -154,7 +154,7 @@ fn results_kept_back_by_a_failed_delivery_arrive_before_the_answer() {
         .id;
 
     let answer = Answer {
-        choices: vec!["b".into()],
+        choices: shown_values(&t, &id, &["Rome"]),
         ..Answer::default()
     };
     assert_eq!(t.answer(&id, &open, &answer).unwrap().correct, Some(false));
@@ -490,7 +490,7 @@ fn the_record_of_a_choice_never_marks_which_options_are_correct() {
         .script(Agent::Teacher, "", vec![(ASK, single.clone())]);
     let first = t.advance(&id).unwrap().remove(0);
     assert_eq!(first.steps[0].calls[0].input, json!(crate::tools::SEALED));
-    answer_choice(&mut t, &id, &["a"]);
+    answer_choice(&mut t, &id, &["Paris"]);
 
     let mut multi = choice("Which cities are capitals?", &options, &["a", "c"]);
     multi["multi"] = json!(true);

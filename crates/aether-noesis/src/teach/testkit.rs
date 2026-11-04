@@ -107,14 +107,31 @@ pub(super) fn error_of(outcome: &CallOutcome) -> String {
         .to_string()
 }
 
+/// The values the learner sees for the open question's options `labels`;
+/// posing re-keys options, so tests answer by label.
+pub(super) fn shown_values(t: &Teaching<'_, FauxEngine>, id: &str, labels: &[&str]) -> Vec<String> {
+    let open = session(t, id).open_question.expect("an open question");
+    let options = open.options.expect("a question with options");
+    let values: Vec<String> = labels
+        .iter()
+        .map(|label| {
+            let option = options.iter().find(|option| option.label == *label);
+            option.expect("a label of the question").value.clone()
+        })
+        .collect();
+    assert_eq!(values.len(), labels.len());
+    values
+}
+
+/// Answer the open question with the options labelled `labels`.
 pub(super) fn answer_choice(
     t: &mut Teaching<'_, FauxEngine>,
     id: &str,
-    choices: &[&str],
+    labels: &[&str],
 ) -> QuestionResult {
     let question = session(t, id).open_question.expect("an open question").id;
     let answer = Answer {
-        choices: choices.iter().map(|c| c.to_string()).collect(),
+        choices: shown_values(t, id, labels),
         confidence: Some(70),
         ..Answer::default()
     };

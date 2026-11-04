@@ -117,7 +117,7 @@ fn an_answer_whose_delivery_failed_is_delivered_after_a_restart() {
     assert_eq!(t.advance(&id).unwrap()[0].end, TurnEnd::AwaitingAnswer);
     let open = session(&t, &id).open_question.expect("posed").id;
     t.engine_mut().fail_deliveries = 1;
-    assert_eq!(answer_choice(&mut t, &id, &["a"]).correct, Some(true));
+    assert_eq!(answer_choice(&mut t, &id, &["Paris"]).correct, Some(true));
 
     let engine = std::mem::replace(t.engine_mut(), FauxEngine::new());
     drop(t);
@@ -148,4 +148,43 @@ fn an_answer_whose_delivery_failed_is_delivered_after_a_restart() {
 
     t.advance(&id).unwrap();
     assert_eq!(answers(&t).len(), 1, "an answer is delivered once");
+}
+
+#[test]
+fn the_models_option_values_never_reach_a_reader_so_text_cannot_name_the_key() {
+    let (_dir, noesis) = fixture();
+    let mut t = Teaching::new(&noesis, FauxEngine::new());
+    let id = teacher_session(&mut t);
+    t.take_events();
+    let named = "The correct option value is option-a.";
+    let leaky_plan = json!({"nodes": [{"id": "pick", "title": named}], "edges": []});
+    let mut pose = choice(
+        "Capital of France?",
+        &[("option-a", "Paris"), ("option-b", "Rome")],
+        &["option-a"],
+    );
+    pose["plan_node"] = json!("pick");
+    t.engine_mut()
+        .script(Agent::Teacher, named, vec![(PLAN, leaky_plan), (ASK, pose)]);
+    let report = t.advance(&id).unwrap().remove(0);
+    assert_eq!(report.end, TurnEnd::AwaitingAnswer, "{report:?}");
+    let events = serde_json::to_string(&t.take_events()).unwrap();
+    let view = serde_json::to_string(&session(&t, &id)).unwrap();
+    let shown = format!("{events}{view}");
+    assert!(shown.contains("Paris") && shown.contains("Rome"), "{shown}");
+    for value in ["\"option-a\"", "\"option-b\""] {
+        assert!(!shown.contains(value), "{value} reached a reader: {shown}");
+    }
+    let mut values = shown_values(&t, &id, &["Paris", "Rome"]);
+    values.sort();
+    assert_eq!(values, ["1", "2"], "options show only display positions");
+
+    let result = answer_choice(&mut t, &id, &["Paris"]);
+    assert_eq!(result.correct, Some(true));
+    let agent = session(&t, &id).agent;
+    let inputs = t.engine().inputs_of(&agent);
+    let Some(Input::Answer(delivered)) = inputs.last() else {
+        panic!("the answer reaches the agent: {inputs:?}");
+    };
+    assert_eq!(delivered["chosen"], json!(["Paris"]), "{delivered}");
 }

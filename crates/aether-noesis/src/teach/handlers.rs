@@ -134,8 +134,13 @@ impl<E: Engine> Teaching<'_, E> {
             }
         };
         let id = db::fresh_id("q");
-        let options =
-            (!authored.options.is_empty()).then(|| question::shuffle(&id, &authored.options));
+        let (options, answer_key) = if authored.options.is_empty() {
+            (None, authored.answer_key)
+        } else {
+            let shuffled = question::shuffle(&id, &authored.options);
+            let (shown, key) = question::rekey(&shuffled, &authored.answer_key);
+            (Some(shown), key)
+        };
         let posed = Question {
             id: id.clone(),
             kind: args.kind,
@@ -149,7 +154,7 @@ impl<E: Engine> Teaching<'_, E> {
         };
         let stored = QuestionRow {
             question: posed,
-            answer_key: authored.answer_key,
+            answer_key,
             explanation: args.explanation.clone(),
         };
         // The plan is shown in full while the question is open.

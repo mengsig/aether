@@ -104,8 +104,8 @@ pub fn seal_input(tool: &str, input: &Value) -> Value {
 }
 
 /// Every sealed text a call carries, read as the parser reads it: the sealed
-/// fields, a choice key shown as its options' labels (values are ids the
-/// learner sees). `None` when a sealed input is no object: fail closed.
+/// fields, a choice key shown as its options' labels (posing re-keys the
+/// values, so no reader sees them). `None` when a sealed input is no object.
 pub fn sealed_texts(tool: &str, input: &Value) -> Option<Vec<String>> {
     let Some(tool) = ToolName::parse(tool) else {
         return Some(Vec::new());

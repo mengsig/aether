@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use super::faux::FauxEngine;
 use super::phase::fold;
-use super::question::shuffle;
+use super::question::{rekey, shuffle};
 use super::records::*;
 use super::testkit::*;
 use super::*;
@@ -83,7 +83,7 @@ fn t02_probe_done_is_refused_while_a_question_is_open_and_on_a_second_call() {
             .contains("question is open")
     );
     assert_eq!(session(&t, &id).phase, Phase::Probe);
-    answer_choice(&mut t, &id, &["a"]);
+    answer_choice(&mut t, &id, &["Paris"]);
 
     t.engine_mut().script(
         Agent::Prober,
@@ -314,13 +314,13 @@ fn t05_question_authoring_reports_every_problem() {
     );
     assert!(session(&t, &id).open_question.unwrap().multi);
     assert_eq!(
-        answer_choice(&mut t, &id, &["a"]).correct,
+        answer_choice(&mut t, &id, &["Alpha"]).correct,
         Some(false),
         "a subset is wrong"
     );
     assert!(!call(&mut t, &id, ASK, two_keys, "").result.is_error);
     assert_eq!(
-        answer_choice(&mut t, &id, &["b", "a"]).correct,
+        answer_choice(&mut t, &id, &["Beta", "Alpha"]).correct,
         Some(true),
         "the exact set is right"
     );
@@ -360,13 +360,16 @@ fn t06_answers_grade_locally_with_confidence_stops() {
         value: v.into(),
         label: l.into(),
     });
+    let (shown, key) = rekey(&shuffle(&posed.id, &authored), &["a".to_string()]);
+    assert_eq!(posed.options.clone().unwrap(), shown);
     assert_eq!(
-        posed.options.clone().unwrap(),
-        shuffle(&posed.id, &authored)
+        key,
+        shown_values(&t, &id, &["Paris"]),
+        "the key follows its option"
     );
 
     let bad = Answer {
-        choices: vec!["a".into()],
+        choices: key.clone(),
         confidence: Some(45),
         ..Answer::default()
     };
@@ -385,15 +388,12 @@ fn t06_answers_grade_locally_with_confidence_stops() {
     ));
     let steps_before = t.engine().steps_run;
     let plain = Answer {
-        choices: vec!["a".into()],
+        choices: key.clone(),
         ..Answer::default()
     };
     let result = t.answer(&id, &posed.id, &plain).unwrap();
     assert_eq!(result.correct, Some(true));
-    assert_eq!(
-        result.answer_key,
-        Some(RevealedKey::Choices(vec!["a".into()]))
-    );
+    assert_eq!(result.answer_key, Some(RevealedKey::Choices(key)));
     assert_eq!(
         t.engine().steps_run,
         steps_before,
@@ -479,7 +479,7 @@ fn t07_teach_checks_collapse_and_predictions_probes_and_goals_never_do() {
                 ..Answer::default()
             },
             _ => Answer {
-                choices: vec!["a".into()],
+                choices: shown_values(&t, &id, &["Paris"]),
                 ..Answer::default()
             },
         };
@@ -552,7 +552,7 @@ fn t09_plan_node_status_follows_the_latest_tagged_question() {
         let mut check = capital_question();
         check["plan_node"] = json!(node);
         assert!(!call(&mut t, &id, ASK, check, "").result.is_error);
-        answer_choice(&mut t, &id, &["a"]);
+        answer_choice(&mut t, &id, &["Paris"]);
     }
     assert_eq!(
         statuses(&t),

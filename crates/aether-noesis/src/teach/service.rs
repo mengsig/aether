@@ -306,8 +306,10 @@ impl<'a, E: Engine> Teaching<'a, E> {
             answer_key: &open.answer_key,
         };
         let graded = question::grade(&posed, answer).map_err(TeachError::Invalid)?;
+        let chosen = question::chosen_labels(posed.options, &answer.choices);
         let recorded = json!({
             "choices": answer.choices,
+            "chosen": chosen,
             "text": answer.text,
             "dont_know": answer.dont_know,
             "confidence": graded.confidence,
