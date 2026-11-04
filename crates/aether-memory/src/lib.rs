@@ -6,9 +6,14 @@
 //! recency) and lexical second, and never puts more than a handful of facts
 //! in front of a model.
 
+pub mod consolidation;
 pub mod index;
 pub mod repo;
 
+pub use consolidation::{
+    AbstractionBudget, AbstractionOptions, AbstractionOutcome, Abstractor, ClusterOutcome,
+    ConsolidationOptions, ConsolidationReport,
+};
 pub use index::{LocalEmbeddingIndex, MemoryIndex};
 pub use tiers::{AdmissionMode, PROMOTION_SUPPORT};
 
