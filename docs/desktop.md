@@ -1,0 +1,182 @@
+# Desktop app
+
+The desktop app (`web/apps/desktop/`) is a thin Electron window over the same
+frontend the daemon serves to a browser: it loads the committed `web/dist/`,
+byte for byte, from `app://aether`, and reaches local daemons only through
+the validated `window.desktop` bridge in its main process. It has no screens
+of its own. This page covers how to package it, sign it, install it and keep
+it up to date.
+
+## Contents
+
+1. [Packages](#packages)
+2. [Building the packages](#building-the-packages)
+3. [Signing](#signing)
+4. [What "unsigned build" means](#what-unsigned-build-means)
+5. [Installing](#installing)
+6. [Updates](#updates)
+7. [CI](#ci)
+
+## Packages
+
+| System | Files | Signed |
+| --- | --- | --- |
+| Linux (x86-64) | `Aether-<version>-linux-x86_64-unsigned.AppImage`, `Aether-<version>-linux-amd64-unsigned.deb` | never: electron-builder signs neither format |
+| macOS (arm64, x64) | `Aether-<version>-mac-<arch>-<signing>.dmg` and `.zip` | when the maintainer's credentials are present |
+
+`<signing>` is `unsigned`, `signed` or `signed-notarized`. Every file name
+carries it, so a copied file still says how it was built. The packages carry
+the workspace version from `Cargo.toml`, the version release tags name.
+
+Windows is not packaged.
+
+## Building the packages
+
+From a checkout, with Node.js 22.18 or later:
+
+```sh
+(cd web && npm ci)
+cd web/apps/desktop
+npm ci
+npm run package                    # this system's packages
+npm run package -- --target linux  # AppImage and deb
+npm run package -- --dir           # only the unpacked app, for a quick look
+```
+
+Always package through `npm run package` (`build/package.ts`), never by
+calling electron-builder directly. The script sets the version, decides the
+signing (below), records it in the packaged `package.json` as `aetherBuild`,
+and names the files. electron-builder alone stops at the artifact name,
+which needs that decision.
+
+The packages land in `target/desktop/` at the repository root, beside an
+update file (`latest-linux.yml` or `latest-mac.yml`) that lists each
+package's SHA-512 checksum. macOS packages build only on a Mac.
+
+To check a build, start it headless and let it report itself:
+
+```sh
+xvfb-run -a node build/smoke.ts --exec ../../../target/desktop/linux-unpacked/aether-desktop \
+  --resources ../../../target/desktop/linux-unpacked/resources --signing unsigned
+```
+
+The smoke test checks that the package holds exactly the committed
+`web/dist/` and protocol schemas, byte for byte. It then starts the app with
+`AETHER_DESKTOP_SMOKE=1`, in a scratch home, with discovery pointed at
+sockets that do not exist, so it never reaches a running daemon. Once the
+window has loaded `app://aether/index.html`, the app prints the page title,
+whether `window.desktop` is there, and the build's signing label, then exits.
+The test passes when all of these match and the app exits with status 0.
+
+## Signing
+
+The build signs only when electron-builder's standard credentials are in the
+environment. They come from CI secrets, never from a file in the repository:
+
+| Variable | What it is |
+| --- | --- |
+| `CSC_LINK`, `CSC_KEY_PASSWORD` | the Developer ID Application certificate (a base64 `.p12` or a path) and its password |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | notarization with an Apple ID |
+| `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | or notarization with an App Store Connect key |
+
+The rules (`build/signing.ts`):
+
+- With no certificate, the build is unsigned. It is never signed with
+  whatever identity the machine's keychain holds: signing is switched off
+  outright (`mac.identity: null`, `CSC_IDENTITY_AUTO_DISCOVERY=false`).
+- With a certificate, the build must sign: electron-builder runs with
+  `forceCodeSigning`, so a signing failure fails the build instead of
+  producing an unsigned package under a signed name.
+- A notarization set is used only with a certificate, and only one set at a
+  time.
+- A set given only in part (a certificate without its password, say) is an
+  error, not a quiet fallback to unsigned. An empty variable counts as unset.
+- Linux packages are always unsigned.
+
+The script prints only its decision ("unsigned", "signed, not notarized"…),
+never a credential.
+
+## What "unsigned build" means
+
+An unsigned build carries no publisher signature. The system cannot tell
+who made it, and it cannot tell a modified copy from the original. It is the
+same code, built the same way: unsigned changes who vouches for the files,
+not what they do.
+
+- **macOS** quarantines an unsigned app downloaded from the web, and
+  Gatekeeper refuses to open it. To run it, open it once from Finder with
+  right-click → Open, or clear the quarantine flag with
+  `xattr -dr com.apple.quarantine /Applications/Aether.app`. An unsigned Mac
+  build cannot update itself (Squirrel.Mac checks signatures), so it never
+  offers updates: install the new version by hand.
+- **Linux** has no system-wide signature check for AppImage or deb files.
+  Check the SHA-256 checksum in the release's `SHA256SUMS.desktop` before
+  you install.
+
+The app says when it is unsigned:
+
+- the macOS About panel shows "unsigned build" beside the version;
+- `window.desktop.diagnostics()` reports it as `versions.build`;
+- every update prompt says so before you confirm anything.
+
+## Installing
+
+- **deb** (Debian, Ubuntu): `sudo apt install ./Aether-<version>-linux-amd64-unsigned.deb`.
+  The app goes to `/opt/Aether/`, with `aether-desktop` on the `PATH` (not
+  `aether`, which stays the daemon's command), and is listed in the
+  application menu. Remove it with `sudo apt remove aether-desktop`.
+- **AppImage**: `chmod +x Aether-*.AppImage`, then run it. It needs FUSE
+  (`libfuse2`). Without it, run it with `--appimage-extract-and-run`.
+- **macOS**: open the dmg and drag Aether to Applications.
+
+The app never starts or stops a daemon unless you turn on managed start in
+its settings, and even then it never stops one. Install and run the daemons
+as [install.md](install.md) describes.
+
+## Updates
+
+A packaged app checks for an update once each time it starts. It never
+downloads or installs one by itself:
+
+1. It asks the GitHub releases of `mengsig/aether` for a newer published
+   release, and only that feed. The address is fixed in the app
+   (`src/update/updates.ts`) and in `electron-builder.yml`. Drafts and
+   prereleases are ignored, and so is anything older than the running
+   version.
+2. If there is one, a native dialog names the new version, your current
+   version and whether the build is signed. Download it, or cancel.
+3. Once it has downloaded and its SHA-512 checksum matches the release's
+   update file, a second dialog asks whether to install and restart. If you
+   cancel, nothing installs, now or when you quit.
+
+electron-updater runs with `autoDownload` and `autoInstallOnAppQuit` off.
+The flow refuses to run if either is on. The version from the feed is checked
+before any dialog shows it. A deb update asks for your password (through
+`pkexec` or `sudo`) to install. An AppImage replaces itself in place.
+
+A check that fails (offline, or a release without desktop packages) is
+logged and changes nothing. A download that fails after you confirmed it is
+shown in a dialog.
+
+## CI
+
+`.github/workflows/desktop.yml`:
+
+- **linux** (every pull request into `main` or `next`, and pushes to them,
+  that touch `web/`, the protocol schema or `Cargo.toml`; and every release
+  tag): runs the packaging tests, builds the AppImage and deb, installs the
+  deb with `apt`, and smoke-tests the installed app and the extracted
+  AppImage under `xvfb`. The packages are uploaded as the `desktop-linux`
+  workflow artifact.
+- **macos** (opt-in, like `ci-macos`): runs when a pull request carries the
+  `ci:macos` label, when a manual run ticks *macos*, or on a release tag when
+  the repository variable `DESKTOP_MACOS` is `true`. It builds the dmg and
+  zip, signed when the secrets above are set.
+- **publish** (release tags only): waits for the draft release that
+  `release.yml` opens for the tag, then attaches the packages, the update
+  files and a `SHA256SUMS.desktop`. Apps see the update once the owner
+  publishes the draft.
+
+The workflow's token is read-only except in the publish job, which may write
+release assets. The signing secrets reach only the macOS build step, and only
+on a push or a manual run: never on a pull request, whoever opened it.
