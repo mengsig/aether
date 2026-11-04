@@ -115,6 +115,8 @@ export class ArchonSync {
   private collecting: Json[] | null = null;
   private rereadAgain = false;
   private onScreen: ReadonlySet<string> = new Set();
+  /** Changes applied per item, so a detail read that one overtook is not installed. */
+  private readonly changed = new Map<string, number>();
 
   constructor(ctx: SyncContext) {
     this.ctx = ctx;
@@ -200,6 +202,7 @@ export class ArchonSync {
     const before = this.state;
     const { state, item, unknown } = applyChange(before, change);
     if (state === before) return;
+    if (item !== undefined) this.changed.set(item, (this.changed.get(item) ?? 0) + 1);
     const visible = item !== undefined && this.onScreen.has(item);
     const detail = visible && !state.staleItems.includes(item);
     const details = item !== undefined && !visible && item in state.details ? omit(state.details, item) : state.details;
@@ -301,8 +304,14 @@ export class ArchonSync {
   /** Clears the marker first; a lost link puts it back for the next ready, a daemon answer does not. */
   private async refetchItem(item: string): Promise<void> {
     this.set((s) => ({ ...s, staleItems: s.staleItems.filter((id) => id !== item) }));
+    const version = this.changed.get(item) ?? 0;
     try {
       const detail = replyObject(await this.ctx.request({ cmd: "get_item", item }), "item");
+      if ((this.changed.get(item) ?? 0) !== version) {
+        // A later change made this reply old: it re-marked the item if visible, or dropped its detail.
+        invariant(!this.onScreen.has(item) || this.state.staleItems.includes(item), "an overtaken visible item is refetched again");
+        return;
+      }
       this.set((s) => ({ ...s, details: { ...s.details, [item]: detail } }));
     } catch (error) {
       if (!LINK_LOST.has(codeOf(error) ?? "")) return this.fail(`item ${item}`, error);

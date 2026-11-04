@@ -296,5 +296,25 @@ describe("Archon resync, third review", () => {
     expect(daemon.commands("get_item")).toHaveLength(2);
     expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1" });
   });
+
+  it("does not install a detail read that an off-screen change overtook", async () => {
+    let hold = true;
+    const { store, daemon, manager } = setup(archond({ get_item: () => (hold ? undefined : { ok: { reply: "item", data: { id: "qi_1", state: "succeeded" } } }) }));
+    manager.start();
+    await settle();
+    manager.showItems(CONN, ["qi_1"]);
+    await vi.advanceTimersByTimeAsync(250);
+    const pending = daemon.commands("get_item")[0];
+    manager.showItems(CONN, []);
+    daemon.push({ frame: "change", sub: 6, change: { seq: 130, at: "2026-11-04T03:00:09Z", subject: { subject: "item", item: "qi_1", state: "succeeded" } } });
+    daemon.push({ frame: "reply", id: pending?.req, result: { Ok: { reply: "item", data: { id: "qi_1", state: "running" } } } });
+    await settle();
+    expect(store.get().archon[CONN]?.details.qi_1).toBeUndefined();
+    hold = false;
+    manager.showItems(CONN, ["qi_1"]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(daemon.commands("get_item")).toHaveLength(2);
+    expect(store.get().archon[CONN]?.details.qi_1).toEqual({ id: "qi_1", state: "succeeded" });
+  });
 });
 
