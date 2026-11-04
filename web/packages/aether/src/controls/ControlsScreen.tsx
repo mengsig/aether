@@ -78,12 +78,12 @@ export function ControlsScreen({ conn, id }: { readonly conn: ConnId; readonly i
   if (!agent) return <EmptyState title="No such agent">{info.label} has no agent {id}. <a className="ui-link" href="#/fleet">Back to the fleet</a></EmptyState>;
   invariant(agent.id === id, "the store returns the agent the route names");
   const tabs = [
-    { id: "lifecycle", label: "Lifecycle", panel: <LifecyclePanel conn={conn} agent={agent} /> },
-    { id: "steer", label: "Steer", panel: <SteerPanel conn={conn} agent={agent} /> },
-    { id: "configure", label: "Model & limits", panel: <ConfigurePanel conn={conn} agent={agent} /> },
-    { id: "approvals", label: "Approvals", panel: <ApprovalsPanel conn={conn} agent={agent} /> },
-    { id: "schedules", label: "Schedules", panel: <SchedulesPanel conn={conn} agent={agent} /> },
-    { id: "records", label: "Records", panel: <RecordsPanel conn={conn} agent={agent} /> },
+    { id: "lifecycle", label: "Lifecycle", panel: <div className="b3-panel"><LifecyclePanel conn={conn} agent={agent} /></div> },
+    { id: "steer", label: "Steer", panel: <div className="b3-panel"><SteerPanel conn={conn} agent={agent} /></div> },
+    { id: "configure", label: "Model & limits", panel: <div className="b3-panel"><ConfigurePanel conn={conn} agent={agent} /></div> },
+    { id: "approvals", label: "Approvals", panel: <div className="b3-panel"><ApprovalsPanel conn={conn} agent={agent} /></div> },
+    { id: "schedules", label: "Schedules", panel: <div className="b3-panel"><SchedulesPanel conn={conn} agent={agent} /></div> },
+    { id: "records", label: "Records", panel: <div className="b3-panel"><RecordsPanel conn={conn} agent={agent} /></div> },
   ];
   return (
     <section className="b3-screen" aria-label={`Controls for ${agent.name}`}>

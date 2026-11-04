@@ -32,7 +32,7 @@ export default function MemoryScreen({ params }: RouteProps) {
     <Section title="Memories"><Field label="Search memories" value={text} onChange={e => setText(e.target.value)} />
       <Tabs label="Scope" selected={scope} onSelect={setScope} tabs={[{ id: "all", label: "All scopes", panel: null }, { id: "global", label: "Global", panel: null }, { id: "repository", label: "Repository", panel: <Field label="Repository filter" value={repository} onChange={e => setRepository(e.target.value)} /> }]} />
       <Tabs label="Kind" selected={kind} onSelect={setKind} tabs={["all", ...kinds].map(id => ({ id, label: id, panel: null }))} />
-      <Field label="Include forgotten" type="checkbox" checked={forgotten} onChange={e => setForgotten(e.target.checked)} />
+      <label className="b3-check"><input type="checkbox" checked={forgotten} onChange={e => setForgotten(e.target.checked)} /><span>Include forgotten</span></label>
       <ReadNote entry={entry} retry={refresh} />
       {entry?.issued && !rows.length ? <EmptyState title="No memories yet" /> : null}
       {rows.map(memory => <MemoryRow key={memory.id} conn={conn} memory={memory} refresh={refresh} />)}

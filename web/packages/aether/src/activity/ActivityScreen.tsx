@@ -17,9 +17,12 @@ export default function ActivityScreen() {
   </div>;
 }
 
+/** The first history page reads the newest events, so the screen is not empty until something happens. */
+const NEWEST = Number.MAX_SAFE_INTEGER;
+
 function ConnectionActivity({ conn, label }: { conn: string; label: string }) {
   const live = useSelector(selectEvents(conn));
-  const [cursors, setCursors] = useState<number[]>([]);
+  const [cursors, setCursors] = useState<number[]>([NEWEST]);
   const [family, setFamily] = useState("");
   const [agent, setAgent] = useState("");
   const [open, setOpen] = useState(false);

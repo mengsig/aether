@@ -18,7 +18,7 @@ export function MemoryRow({ conn, memory, refresh, proposal = false }: {
   const restore = { cmd: "restore_memory", id: memory.id };
   return <article className="b3-item">
     <p className="b3-prose">{memory.text}</p>
-    <div className="b3-row"><Badge>{memory.kind}</Badge><span>{JSON.stringify(memory.scope)}</span>
+    <div className="b3-row"><Badge>{memory.kind}</Badge><span className="b3-meta">{scopeText(memory.scope)}</span>
       {memory.pinned && <Badge>Pinned</Badge>}{memory.forgotten_at && <Badge>Forgotten</Badge>}
       {memory.superseded_by && <Badge>Superseded by {memory.superseded_by}</Badge>}</div>
     <p className="b3-meta">{memory.tags?.join(" · ")} · {memory.created_at}</p>
@@ -34,4 +34,12 @@ export function MemoryRow({ conn, memory, refresh, proposal = false }: {
       </>}
     </div><RunNote status={run.status} />
   </article>;
+}
+
+/** "Global", or the repository a memory belongs to, in words. */
+function scopeText(scope: aether.MemoryRecord["scope"]): string {
+  const record = scope as { scope?: string; repository?: string };
+  if (record.scope === "global") return "Global";
+  if (record.scope === "repository") return `Repository ${record.repository ?? ""}`.trim();
+  return record.scope ?? "Unknown scope";
 }

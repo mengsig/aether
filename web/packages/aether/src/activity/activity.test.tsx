@@ -24,9 +24,10 @@ test("shows live events, backward store pages, filters, and agent links", async 
   const root = await h.mount(<ActivityScreen />);
   await act(async () => { h.daemon.emit(agent.id, { type: "invocation.completed" }); }); await h.settle();
   expect(root.textContent).toContain("invocation.completed");
+  expect(h.daemon.commands("get_events")[0]).toMatchObject({ after: 0, limit: 100, query: { before: Number.MAX_SAFE_INTEGER } });
+  expect(h.app.store.get().reads[h.conn]?.[`activity:before:${Number.MAX_SAFE_INTEGER}`]?.value).toEqual([event(10)]);
   await click(h, root, "Show older"); await h.settle();
-  expect(h.daemon.commands("get_events").at(-1)).toMatchObject({ after: 0, limit: 100, query: { before: 21 } });
-  expect(h.app.store.get().reads[h.conn]?.["activity:before:21"]?.value).toEqual([event(10)]);
+  expect(h.daemon.commands("get_events").at(-1)).toMatchObject({ after: 0, limit: 100, query: { before: 10 } });
   expect(root.querySelectorAll('a[href*="#/agents/"]').length).toBe(2);
   expect(root.querySelector('a[href*="#/controls/"]')).not.toBeNull();
   await type(h, root, "Kind family", "invocation");
@@ -99,7 +100,6 @@ test("history retries errors, pages backwards, and stops at an empty page", asyn
   h = await connected({ script: { get_events: c => fail ? { code: "internal", message: "History unavailable" } :
     { tag: "events", data: (c.query as { before: number }).before > 10 ? [event(10)] : [] } } });
   const root = await h.mount(<ActivityScreen />);
-  await click(h, root, "Show older"); await h.settle();
   expect(root.textContent).toContain("History unavailable");
   fail = false;
   await click(h, root, "Try again"); await h.settle();
