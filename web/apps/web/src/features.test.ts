@@ -6,11 +6,12 @@ import * as github from "@aether-ui/github";
 import * as noesis from "@aether-ui/noesis";
 import * as settings from "@aether-ui/settings";
 
-describe("feature package skeletons", () => {
-  test("each loads its routes.ts files by glob and none has any yet", () => {
+describe("feature packages", () => {
+  test("each loads its routes.ts files by glob and registers their routes", () => {
     const packages = { aether, archon, github, noesis, settings };
-    for (const [name, feature] of Object.entries(packages)) expect(feature.registeredModules, name).toEqual([]);
-    expect(registry.routes()).toEqual([]);
+    const loaded: Record<string, readonly string[]> = { aether: ["./fleet/routes.ts", "./topology/routes.ts"] };
+    for (const [name, feature] of Object.entries(packages)) expect(feature.registeredModules, name).toEqual(loaded[name] ?? []);
+    expect(registry.routes().map((route) => [route.path, route.owner])).toEqual([["#/fleet", "B1"], ["#/fleet/topology", "B1"]]);
     expect(registry.actions()).toEqual([]);
   });
 });
